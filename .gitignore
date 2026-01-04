@@ -1,0 +1,26 @@
+# Scala/SBT
+target/
+.bsp/
+.metals/
+.bloop/
+project/project/
+project/metals.sbt
+.scala-build/
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Coverage
+scoverage-data/
+coverage-report/
+
+# Misc
+*.log
+*.swp
+*~

@@ -28,9 +28,21 @@ trait FeatureFlags:
   def globalContext: UIO[EvaluationContext]
   def withContext[R, E, A](ctx: EvaluationContext)(zio: ZIO[R, E, A]): ZIO[R, E, A]
 
+  def transaction[R, E, A](
+    overrides: Map[String, Any] = Map.empty,
+    context: EvaluationContext = EvaluationContext.empty
+  )(zio: ZIO[R, E, A]): ZIO[R, E | FeatureFlagError, TransactionResult[A]]
+
+  def inTransaction: UIO[Boolean]
+  def currentEvaluatedFlags: UIO[Map[String, FlagEvaluation[?]]]
+
   def events: ZStream[Any, Nothing, ProviderEvent]
   def providerStatus: UIO[ProviderStatus]
   def providerMetadata: UIO[ProviderMetadata]
+
+  def addHook(hook: FeatureHook): UIO[Unit]
+  def clearHooks: UIO[Unit]
+  def hooks: UIO[List[FeatureHook]]
 
 object FeatureFlags:
   def boolean(key: String, default: Boolean): ZIO[FeatureFlags, FeatureFlagError, Boolean] =
@@ -93,6 +105,18 @@ object FeatureFlags:
   def withContext[R, E, A](ctx: EvaluationContext)(zio: ZIO[R, E, A]): ZIO[R & FeatureFlags, E, A] =
     ZIO.serviceWithZIO[FeatureFlags](_.withContext(ctx)(zio))
 
+  def transaction[R, E, A](
+    overrides: Map[String, Any] = Map.empty,
+    context: EvaluationContext = EvaluationContext.empty
+  )(zio: ZIO[R, E, A]): ZIO[R & FeatureFlags, E | FeatureFlagError, TransactionResult[A]] =
+    ZIO.serviceWithZIO[FeatureFlags](_.transaction(overrides, context)(zio))
+
+  def inTransaction: ZIO[FeatureFlags, Nothing, Boolean] =
+    ZIO.serviceWithZIO(_.inTransaction)
+
+  def currentEvaluatedFlags: ZIO[FeatureFlags, Nothing, Map[String, FlagEvaluation[?]]] =
+    ZIO.serviceWithZIO(_.currentEvaluatedFlags)
+
   def events: ZStream[FeatureFlags, Nothing, ProviderEvent] =
     ZStream.serviceWithStream(_.events)
 
@@ -102,11 +126,45 @@ object FeatureFlags:
   def providerMetadata: ZIO[FeatureFlags, Nothing, ProviderMetadata] =
     ZIO.serviceWithZIO(_.providerMetadata)
 
+  def addHook(hook: FeatureHook): ZIO[FeatureFlags, Nothing, Unit] =
+    ZIO.serviceWithZIO(_.addHook(hook))
+
+  def clearHooks: ZIO[FeatureFlags, Nothing, Unit] =
+    ZIO.serviceWithZIO(_.clearHooks)
+
+  def hooks: ZIO[FeatureFlags, Nothing, List[FeatureHook]] =
+    ZIO.serviceWithZIO(_.hooks)
+
   val live: ZLayer[FeatureProvider, Nothing, FeatureFlags] =
     ZLayer.scoped {
       for
         provider         <- ZIO.service[FeatureProvider]
         globalContextRef <- Ref.make(EvaluationContext.empty)
         fiberContextRef  <- FiberRef.make(EvaluationContext.empty)
-      yield FeatureFlagsLive(provider, globalContextRef, fiberContextRef)
+        transactionRef   <- FiberRef.make[Option[TransactionState]](None)
+        hooksRef         <- Ref.make(List.empty[FeatureHook])
+      yield FeatureFlagsLive(
+        provider,
+        globalContextRef,
+        fiberContextRef,
+        transactionRef,
+        hooksRef
+      )
+    }
+
+  def liveWithHooks(initialHooks: List[FeatureHook]): ZLayer[FeatureProvider, Nothing, FeatureFlags] =
+    ZLayer.scoped {
+      for
+        provider         <- ZIO.service[FeatureProvider]
+        globalContextRef <- Ref.make(EvaluationContext.empty)
+        fiberContextRef  <- FiberRef.make(EvaluationContext.empty)
+        transactionRef   <- FiberRef.make[Option[TransactionState]](None)
+        hooksRef         <- Ref.make(initialHooks)
+      yield FeatureFlagsLive(
+        provider,
+        globalContextRef,
+        fiberContextRef,
+        transactionRef,
+        hooksRef
+      )
     }

@@ -45,7 +45,7 @@ lazy val commonSettings = Seq(
 )
 
 lazy val root = (project in file("."))
-  .aggregate(core)
+  .aggregate(core, testkit)
   .settings(
     name := "zio-openfeature",
     publish / skip := true
@@ -58,5 +58,16 @@ lazy val core = (project in file("core"))
     libraryDependencies ++= Seq(
       "dev.zio" %% "zio" % zioVersion,
       "dev.zio" %% "zio-streams" % zioVersion
+    )
+  )
+
+lazy val testkit = (project in file("testkit"))
+  .dependsOn(core)
+  .settings(
+    name := "zio-openfeature-testkit",
+    commonSettings,
+    libraryDependencies ++= Seq(
+      "dev.zio" %% "zio" % zioVersion,
+      "dev.zio" %% "zio-test" % zioVersion
     )
   )

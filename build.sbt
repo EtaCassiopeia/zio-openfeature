@@ -1,3 +1,5 @@
+import xerial.sbt.Sonatype.sonatypeCentralHost
+
 val scala3Version = "3.3.4"
 val zioVersion    = "2.1.14"
 
@@ -25,10 +27,8 @@ ThisBuild / scmInfo := Some(
   )
 )
 
-// Publishing to Sonatype / Maven Central
-ThisBuild / sonatypeCredentialHost := "s01.oss.sonatype.org"
-ThisBuild / sonatypeRepository     := "https://s01.oss.sonatype.org/service/local"
-ThisBuild / publishTo              := sonatypePublishToBundle.value
+// Publishing to Sonatype Central
+ThisBuild / sonatypeCredentialHost := sonatypeCentralHost
 ThisBuild / versionScheme          := Some("semver-spec")
 
 ThisBuild / scalacOptions ++= Seq(

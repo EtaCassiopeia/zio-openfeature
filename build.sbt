@@ -45,7 +45,7 @@ lazy val commonSettings = Seq(
 )
 
 lazy val root = (project in file("."))
-  .aggregate(core, testkit)
+  .aggregate(core, testkit, optimizely)
   .settings(
     name := "zio-openfeature",
     publish / skip := true
@@ -69,5 +69,17 @@ lazy val testkit = (project in file("testkit"))
     libraryDependencies ++= Seq(
       "dev.zio" %% "zio" % zioVersion,
       "dev.zio" %% "zio-test" % zioVersion
+    )
+  )
+
+lazy val optimizely = (project in file("optimizely"))
+  .dependsOn(core, testkit % Test)
+  .settings(
+    name := "zio-openfeature-optimizely",
+    commonSettings,
+    libraryDependencies ++= Seq(
+      "dev.zio" %% "zio" % zioVersion,
+      "com.optimizely.ab" % "core-api" % "4.1.1",
+      "com.google.code.gson" % "gson" % "2.10.1"
     )
   )

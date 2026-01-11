@@ -7,12 +7,12 @@ on:
       - 'docs/**'
       - '*.md'
       - 'RELEASING.md'
+  workflow_dispatch:
 
 jobs:
   publish-snapshot:
     runs-on: ubuntu-latest
-    # Only run if secrets are configured
-    if: github.event_name == 'push' && github.repository == 'EtaCassiopeia/zio-openfeature'
+    if: github.repository == 'EtaCassiopeia/zio-openfeature'
     steps:
       - uses: actions/checkout@v4
         with:

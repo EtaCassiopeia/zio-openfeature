@@ -57,9 +57,7 @@ gpg --keyserver keyserver.ubuntu.com --send-keys YOUR_KEY_ID
 
 ### Automatic Releases
 
-1. **Snapshots**: Every push to `main` automatically publishes a SNAPSHOT version
-
-2. **Releases**: Create and push a tag to trigger a release:
+Create and push a tag to trigger a release:
 
 ```bash
 # Create a tag following SemVer

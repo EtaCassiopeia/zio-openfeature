@@ -34,16 +34,6 @@ libraryDependencies += "io.github.etacassiopeia" %% "zio-openfeature-testkit" % 
 libraryDependencies += "io.github.etacassiopeia" %% "zio-openfeature-optimizely" % zioOpenFeatureVersion
 ```
 
-### Snapshot Versions
-
-Snapshot versions are published on every push to `main`:
-
-```scala
-resolvers += "Sonatype OSS Snapshots" at "https://s01.oss.sonatype.org/content/repositories/snapshots"
-
-libraryDependencies += "io.github.etacassiopeia" %% "zio-openfeature-core" % "0.1.0+N-SNAPSHOT"
-```
-
 ## Quick Start
 
 ```scala

@@ -48,13 +48,16 @@ Each environment has its own SDK key, allowing different flag configurations per
 import zio.*
 import zio.openfeature.*
 import zio.openfeature.provider.optimizely.*
-import com.optimizely.ab.Optimizely
-import com.optimizely.ab.OptimizelyFactory
 
 object MyApp extends ZIOAppDefault:
 
-  // Create Optimizely client with SDK key (recommended)
-  val optimizelyClient = OptimizelyFactory.newDefaultInstance("YOUR_SDK_KEY")
+  // Create options with SDK key and access token
+  val options = OptimizelyOptions
+    .builder()
+    .withSdkKey("YOUR_SDK_KEY")
+    .withAccessToken("YOUR_ACCESS_TOKEN")  // Required for authenticated datafile access
+    .withPollingIntervalSeconds(30)        // Poll for updates every 30 seconds
+    .build()
 
   val program = for
     flags   <- ZIO.service[FeatureFlags]
@@ -65,60 +68,70 @@ object MyApp extends ZIOAppDefault:
 
   def run = program.provide(
     FeatureFlags.live,
-    OptimizelyProvider.layer(optimizelyClient)
+    OptimizelyProvider.layerFromOptions(options)
   )
+```
+
+### Configuration Options
+
+Use `OptimizelyOptions` to configure the provider:
+
+```scala
+import zio.openfeature.provider.optimizely.*
+import scala.concurrent.duration.*
+
+val options = OptimizelyOptions(
+  sdkKey = "YOUR_SDK_KEY",
+  accessToken = Some("YOUR_ACCESS_TOKEN"),  // For authenticated datafile access
+  pollingInterval = 30.seconds,              // How often to poll for updates
+  blockingTimeout = 10.seconds               // Initial datafile fetch timeout
+)
+
+// Or use the builder
+val optionsFromBuilder = OptimizelyOptions
+  .builder()
+  .withSdkKey("YOUR_SDK_KEY")
+  .withAccessToken("YOUR_ACCESS_TOKEN")
+  .withPollingIntervalSeconds(30)
+  .build()
 ```
 
 ### Initialization Methods
 
-#### Using SDK Key (Recommended)
-
-The SDK key method automatically fetches and polls for datafile updates:
+#### Using OptimizelyOptions (Recommended)
 
 ```scala
-import com.optimizely.ab.OptimizelyFactory
+// Simple: SDK key only (public datafile)
+val provider1 = OptimizelyProvider.fromSdkKey("YOUR_SDK_KEY")
 
-// Default polling interval (5 minutes)
-val client = OptimizelyFactory.newDefaultInstance("YOUR_SDK_KEY")
+// With access token (authenticated datafile)
+val provider2 = OptimizelyProvider.fromSdkKey("YOUR_SDK_KEY", "YOUR_ACCESS_TOKEN")
 
-// Custom polling interval (in seconds)
-val clientWithPolling = OptimizelyFactory.newDefaultInstance(
-  "YOUR_SDK_KEY",
-  60  // Poll every 60 seconds
-)
+// Full options
+val options = OptimizelyOptions
+  .builder()
+  .withSdkKey("YOUR_SDK_KEY")
+  .withAccessToken("YOUR_ACCESS_TOKEN")
+  .withPollingIntervalSeconds(30)
+  .build()
+
+val provider3 = OptimizelyProvider.fromOptions(options)
 ```
 
-#### Using Datafile Directly
+#### Using Pre-built Client
 
-For offline or embedded scenarios, provide the datafile JSON directly:
+For advanced scenarios, you can create the Optimizely client manually:
 
 ```scala
 import com.optimizely.ab.Optimizely
 
-val datafileJson = """
-{
-  "version": "4",
-  "projectId": "12345",
-  "featureFlags": [...],
-  ...
-}
-"""
+val datafileJson = """{"version": "4", ...}"""
 
 val client = Optimizely.builder()
   .withDatafile(datafileJson)
   .build()
-```
 
-#### Loading Datafile from Resources
-
-```scala
-import scala.io.Source
-
-val datafile = Source.fromResource("optimizely-datafile.json").mkString
-
-val client = Optimizely.builder()
-  .withDatafile(datafile)
-  .build()
+val provider = OptimizelyProvider.layer(client)
 ```
 
 ### Scoped Provider (Recommended)
@@ -317,6 +330,26 @@ val safeEvaluation = flags.flatMap(
     ZIO.debug(s"Unexpected error: $other") *> ZIO.succeed(false)
 }
 ```
+
+### Flat Flags
+
+OpenFeature supports non-boolean flag values (String, Int, Double, Object), but Optimizely flags are fundamentally boolean. To bridge this gap, the provider supports "flat" flags:
+
+A **flat flag** is an Optimizely feature with a single variable named `_` that holds the non-boolean value.
+
+**Example in Optimizely:**
+- Feature key: `discount-percentage`
+- Variable name: `_`
+- Variable type: `Double`
+- Variable value: `15.0`
+
+**Usage in code:**
+```scala
+// Returns 15.0 from the "_" variable
+val discount = flags.flatMap(_.getDoubleValue("discount-percentage", 0.0, ctx))
+```
+
+This convention ensures consistent mapping between OpenFeature's type system and Optimizely's feature model.
 
 ### Best Practices
 

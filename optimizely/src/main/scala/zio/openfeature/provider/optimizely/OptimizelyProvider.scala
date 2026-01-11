@@ -4,10 +4,22 @@ import zio.*
 import zio.stream.*
 import zio.openfeature.*
 import com.optimizely.ab.Optimizely
+import com.optimizely.ab.OptimizelyFactory
 import com.optimizely.ab.OptimizelyUserContext
+import com.optimizely.ab.config.HttpProjectConfigManager
 import com.optimizely.ab.optimizelydecision.OptimizelyDecision
 import scala.jdk.CollectionConverters.*
+import java.util.concurrent.TimeUnit
 
+/** OpenFeature provider for Optimizely Feature Experimentation.
+  *
+  * Supports:
+  *   - Boolean, String, Int, Double, and Object flag evaluations
+  *   - User targeting via EvaluationContext
+  *   - "Flat" flags (single variable named "_" for non-boolean values)
+  *   - Authenticated datafile access via access token
+  *   - Configurable polling intervals
+  */
 final class OptimizelyProvider private (
   client: Optimizely,
   statusRef: Ref[ProviderStatus],
@@ -109,6 +121,11 @@ final class OptimizelyProvider private (
       decision.getVariationKey != null &&
       decision.getVariationKey.nonEmpty
 
+  /** Extracts a value from Optimizely flag variables.
+    *
+    * Supports "flat" flags where a single variable named "_" holds the value. This allows non-boolean OpenFeature flags
+    * to be represented in Optimizely.
+    */
   private def extractFromVariables[A](decision: OptimizelyDecision)(
     extract: Any => Option[A]
   ): Option[A] =
@@ -116,7 +133,15 @@ final class OptimizelyProvider private (
     if json != null then
       try
         val map = json.toMap.asScala
-        map.values.headOption.flatMap(extract)
+        if map.isEmpty then None
+        else if map.size == 1 then
+          // Check for "flat" flag pattern (single variable named "_")
+          map.get("_") match
+            case Some(value) => extract(value)
+            case None        => map.values.headOption.flatMap(extract)
+        else
+          // Multiple variables - try to extract from first value
+          map.values.headOption.flatMap(extract)
       catch case _: Exception => None
     else None
 
@@ -136,9 +161,25 @@ final class OptimizelyProvider private (
         if userContext == null then FlagResolution.default(key, defaultValue)
         else
           val decision = userContext.decide(key)
-          extract(decision) match
-            case Some(value) => FlagResolution.targetingMatch(key, value)
-            case None        => FlagResolution.default(key, defaultValue)
+          if decision == null || decision.getVariationKey == null then FlagResolution.default(key, defaultValue)
+          else
+            extract(decision) match
+              case Some(value) =>
+                // Include rule key in metadata if available
+                val ruleKey = Option(decision.getRuleKey)
+                val meta = ruleKey match
+                  case Some(rk) => FlagMetadata("ruleKey" -> rk)
+                  case None     => FlagMetadata.empty
+                FlagResolution(
+                  value = value,
+                  variant = Some(decision.getVariationKey),
+                  reason = ResolutionReason.TargetingMatch,
+                  metadata = meta,
+                  flagKey = key,
+                  errorCode = None,
+                  errorMessage = None
+                )
+              case None => FlagResolution.default(key, defaultValue)
       }
       .mapError(e => FeatureFlagError.ProviderError(e))
 
@@ -155,15 +196,21 @@ final class OptimizelyProvider private (
       m.map { case (k, v) => k -> attributeToJava(v) }.asJava
 
 object OptimizelyProvider:
+
+  // ============ Create from pre-built client ============
+
+  /** Create provider from an existing Optimizely client */
   def make(client: Optimizely): UIO[OptimizelyProvider] =
     for
       statusRef <- Ref.make[ProviderStatus](ProviderStatus.NotReady)
       eventsHub <- Hub.unbounded[ProviderEvent]
     yield OptimizelyProvider(client, statusRef, eventsHub)
 
+  /** Create a layer from an existing Optimizely client */
   def layer(client: Optimizely): ULayer[FeatureProvider] =
     ZLayer.fromZIO(make(client))
 
+  /** Create a scoped provider from an existing Optimizely client */
   def scoped(client: Optimizely): ZIO[Scope, Nothing, OptimizelyProvider] =
     for
       provider <- make(client)
@@ -171,5 +218,66 @@ object OptimizelyProvider:
       _        <- ZIO.addFinalizer(provider.shutdown)
     yield provider
 
+  /** Create a scoped layer from an existing Optimizely client */
   def scopedLayer(client: Optimizely): ZLayer[Scope, Nothing, FeatureProvider] =
     ZLayer.fromZIO(scoped(client))
+
+  // ============ Create from options ============
+
+  /** Create provider from OptimizelyOptions (builds client internally) */
+  def fromOptions(options: OptimizelyOptions): Task[OptimizelyProvider] =
+    ZIO.attempt(buildClient(options)).flatMap(make)
+
+  /** Create a layer from OptimizelyOptions */
+  def layerFromOptions(options: OptimizelyOptions): TaskLayer[FeatureProvider] =
+    ZLayer.fromZIO(fromOptions(options))
+
+  /** Create a scoped provider from OptimizelyOptions */
+  def scopedFromOptions(options: OptimizelyOptions): ZIO[Scope, Throwable, OptimizelyProvider] =
+    for
+      client   <- ZIO.attempt(buildClient(options))
+      provider <- make(client)
+      _        <- provider.initialize
+      _        <- ZIO.addFinalizer(provider.shutdown)
+    yield provider
+
+  /** Create a scoped layer from OptimizelyOptions */
+  def scopedLayerFromOptions(options: OptimizelyOptions): ZLayer[Scope, Throwable, FeatureProvider] =
+    ZLayer.fromZIO(scopedFromOptions(options))
+
+  // ============ Convenience methods ============
+
+  /** Create provider with just an SDK key (public datafile) */
+  def fromSdkKey(sdkKey: String): Task[OptimizelyProvider] =
+    fromOptions(OptimizelyOptions(sdkKey))
+
+  /** Create provider with SDK key and access token (authenticated datafile) */
+  def fromSdkKey(sdkKey: String, accessToken: String): Task[OptimizelyProvider] =
+    fromOptions(OptimizelyOptions(sdkKey, accessToken))
+
+  /** Create provider with SDK key, access token, and polling interval */
+  def fromSdkKey(sdkKey: String, accessToken: String, pollingIntervalSeconds: Int): Task[OptimizelyProvider] =
+    fromOptions(OptimizelyOptions(sdkKey, accessToken, pollingIntervalSeconds))
+
+  /** Create a layer with just an SDK key */
+  def layerFromSdkKey(sdkKey: String): TaskLayer[FeatureProvider] =
+    layerFromOptions(OptimizelyOptions(sdkKey))
+
+  /** Create a layer with SDK key and access token */
+  def layerFromSdkKey(sdkKey: String, accessToken: String): TaskLayer[FeatureProvider] =
+    layerFromOptions(OptimizelyOptions(sdkKey, accessToken))
+
+  // ============ Internal helpers ============
+
+  private def buildClient(options: OptimizelyOptions): Optimizely =
+    val configManagerBuilder = HttpProjectConfigManager
+      .builder()
+      .withSdkKey(options.sdkKey)
+      .withPollingInterval(options.pollingInterval.toSeconds, TimeUnit.SECONDS)
+
+    // Add access token if provided (for authenticated datafile access)
+    val configManager = options.accessToken match
+      case Some(token) => configManagerBuilder.withDatafileAccessToken(token).build()
+      case None        => configManagerBuilder.build()
+
+    Optimizely.builder().withConfigManager(configManager).build()

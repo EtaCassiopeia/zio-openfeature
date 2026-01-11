@@ -87,8 +87,9 @@ lazy val optimizely = (project in file("optimizely"))
     name := "zio-openfeature-optimizely",
     commonSettings,
     libraryDependencies ++= Seq(
-      "dev.zio"              %% "zio"      % zioVersion,
-      "com.optimizely.ab"     % "core-api" % "4.1.1",
-      "com.google.code.gson"  % "gson"     % "2.10.1"
+      "dev.zio"              %% "zio"                  % zioVersion,
+      "com.optimizely.ab"     % "core-api"             % "4.1.1",
+      "com.optimizely.ab"     % "core-httpclient-impl" % "4.1.1",
+      "com.google.code.gson"  % "gson"                 % "2.10.1"
     )
   )

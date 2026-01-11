@@ -19,16 +19,28 @@ nav_order: 7
 
 Providers are the bridge between the OpenFeature API and your feature flag management system. ZIO OpenFeature includes:
 
+- **OptimizelyProvider** - For Optimizely Feature Experimentation (recommended for production)
 - **TestFeatureProvider** - For testing (see [Testkit]({{ site.baseurl }}/testkit))
-- **OptimizelyProvider** - For Optimizely Feature Experimentation
+
+---
 
 ## Optimizely Provider
+
+The Optimizely provider integrates with [Optimizely Feature Experimentation](https://www.optimizely.com/products/feature-experimentation/) to deliver feature flags and A/B testing capabilities.
 
 ### Installation
 
 ```scala
-libraryDependencies += "io.github.etacassiopeia" %% "zio-openfeature-optimizely" % "0.1.0-SNAPSHOT"
+libraryDependencies += "io.github.etacassiopeia" %% "zio-openfeature-optimizely" % "0.1.0"
 ```
+
+### Getting Your SDK Key
+
+1. Log in to [Optimizely](https://app.optimizely.com)
+2. Navigate to **Settings** → **Environments**
+3. Copy the **SDK Key** for your environment (Development, Staging, or Production)
+
+Each environment has its own SDK key, allowing different flag configurations per environment.
 
 ### Basic Setup
 
@@ -37,52 +49,314 @@ import zio.*
 import zio.openfeature.*
 import zio.openfeature.provider.optimizely.*
 import com.optimizely.ab.Optimizely
+import com.optimizely.ab.OptimizelyFactory
 
-val optimizelyClient = Optimizely.builder()
-  .withDatafile(datafileJson)
-  .build()
+object MyApp extends ZIOAppDefault:
 
-val program = for
-  flags <- ZIO.service[FeatureFlags]
-  _     <- flags.initialize
-  // Use feature flags...
-yield ()
+  // Create Optimizely client with SDK key (recommended)
+  val optimizelyClient = OptimizelyFactory.newDefaultInstance("YOUR_SDK_KEY")
 
-program.provide(
-  FeatureFlags.live,
-  OptimizelyProvider.layer(optimizelyClient)
-)
+  val program = for
+    flags   <- ZIO.service[FeatureFlags]
+    _       <- flags.initialize
+    enabled <- flags.getBooleanValue("new-checkout-flow", false)
+    _       <- ZIO.when(enabled)(ZIO.debug("New checkout flow is enabled!"))
+  yield ()
+
+  def run = program.provide(
+    FeatureFlags.live,
+    OptimizelyProvider.layer(optimizelyClient)
+  )
 ```
 
-### Scoped Provider
+### Initialization Methods
 
-For automatic cleanup, use the scoped layer:
+#### Using SDK Key (Recommended)
+
+The SDK key method automatically fetches and polls for datafile updates:
 
 ```scala
-val program = for
-  flags <- ZIO.service[FeatureFlags]
-  // Provider is automatically initialized and shutdown
-yield ()
+import com.optimizely.ab.OptimizelyFactory
 
-program.provide(
-  FeatureFlags.live,
-  OptimizelyProvider.scopedLayer(optimizelyClient)
+// Default polling interval (5 minutes)
+val client = OptimizelyFactory.newDefaultInstance("YOUR_SDK_KEY")
+
+// Custom polling interval (in seconds)
+val clientWithPolling = OptimizelyFactory.newDefaultInstance(
+  "YOUR_SDK_KEY",
+  60  // Poll every 60 seconds
 )
 ```
 
-### Using with SDK Key
+#### Using Datafile Directly
+
+For offline or embedded scenarios, provide the datafile JSON directly:
 
 ```scala
 import com.optimizely.ab.Optimizely
-import com.optimizely.ab.OptimizelyFactory
 
-val client = OptimizelyFactory.newDefaultInstance("YOUR_SDK_KEY")
+val datafileJson = """
+{
+  "version": "4",
+  "projectId": "12345",
+  "featureFlags": [...],
+  ...
+}
+"""
 
-program.provide(
-  FeatureFlags.live,
-  OptimizelyProvider.layer(client)
+val client = Optimizely.builder()
+  .withDatafile(datafileJson)
+  .build()
+```
+
+#### Loading Datafile from Resources
+
+```scala
+import scala.io.Source
+
+val datafile = Source.fromResource("optimizely-datafile.json").mkString
+
+val client = Optimizely.builder()
+  .withDatafile(datafile)
+  .build()
+```
+
+### Scoped Provider (Recommended)
+
+For automatic initialization and cleanup, use the scoped layer:
+
+```scala
+val program = for
+  flags   <- ZIO.service[FeatureFlags]
+  // Provider is automatically initialized
+  enabled <- flags.getBooleanValue("feature-x", false)
+yield enabled
+// Provider is automatically shutdown when scope ends
+
+ZIO.scoped {
+  program.provide(
+    FeatureFlags.live,
+    OptimizelyProvider.scopedLayer(optimizelyClient)
+  )
+}
+```
+
+### User Targeting
+
+Optimizely evaluates flags based on user attributes. Use `EvaluationContext` to pass user information:
+
+```scala
+// Create context with user ID (targeting key)
+val userContext = EvaluationContext("user-12345")
+  .withAttribute("email", "user@example.com")
+  .withAttribute("plan", "premium")
+  .withAttribute("country", "US")
+  .withAttribute("age", 28)
+  .withAttribute("beta_user", true)
+
+// Evaluate with user context
+val result = flags.flatMap(
+  _.getBooleanValue("premium-feature", false, userContext)
 )
 ```
+
+#### Setting Global Context
+
+For attributes that apply to all evaluations (e.g., app version, environment):
+
+```scala
+val globalContext = EvaluationContext.empty
+  .withAttribute("app_version", "2.1.0")
+  .withAttribute("platform", "ios")
+
+flags.flatMap(_.setGlobalContext(globalContext))
+```
+
+#### Setting Fiber-Local Context
+
+For request-scoped attributes:
+
+```scala
+val requestContext = EvaluationContext("user-123")
+  .withAttribute("session_id", sessionId)
+
+flags.flatMap(_.setFiberContext(requestContext))
+```
+
+### Feature Types
+
+#### Boolean Flags (Feature Toggles)
+
+```scala
+// Simple on/off feature
+val isEnabled = flags.flatMap(
+  _.getBooleanValue("new-dashboard", false)
+)
+
+// With user targeting
+val isEnabledForUser = flags.flatMap(
+  _.getBooleanValue("new-dashboard", false, userContext)
+)
+```
+
+#### String Flags (Variations)
+
+```scala
+// Get variation key for A/B tests
+val variation = flags.flatMap(
+  _.getStringValue("checkout-button-color", "blue", userContext)
+)
+
+// Use the variation
+variation.flatMap {
+  case "blue"  => renderBlueButton
+  case "green" => renderGreenButton
+  case "red"   => renderRedButton
+  case _       => renderDefaultButton
+}
+```
+
+#### Numeric Flags (Feature Variables)
+
+```scala
+// Integer variables
+val maxItems = flags.flatMap(
+  _.getIntValue("cart-max-items", 10, userContext)
+)
+
+// Double variables
+val discountRate = flags.flatMap(
+  _.getDoubleValue("discount-percentage", 0.0, userContext)
+)
+```
+
+#### JSON/Object Flags
+
+```scala
+// Complex configuration as JSON
+val config = flags.flatMap(
+  _.getObjectValue(
+    "feature-config",
+    Map("timeout" -> 30, "retries" -> 3),
+    userContext
+  )
+)
+```
+
+### Complete Example Application
+
+```scala
+import zio.*
+import zio.openfeature.*
+import zio.openfeature.provider.optimizely.*
+import com.optimizely.ab.OptimizelyFactory
+
+object FeatureFlagApp extends ZIOAppDefault:
+
+  // Configuration
+  val sdkKey = sys.env.getOrElse("OPTIMIZELY_SDK_KEY", "YOUR_SDK_KEY")
+
+  // Create Optimizely client
+  val optimizelyClient = OptimizelyFactory.newDefaultInstance(sdkKey)
+
+  // Simulate a user request
+  def handleUserRequest(userId: String, plan: String) = for
+    flags <- ZIO.service[FeatureFlags]
+
+    // Create user context
+    ctx = EvaluationContext(userId)
+      .withAttribute("plan", plan)
+      .withAttribute("registered_at", java.time.Instant.now())
+
+    // Check if new checkout is enabled for this user
+    newCheckout <- flags.getBooleanValue("new-checkout-flow", false, ctx)
+
+    // Get the button variation
+    buttonColor <- flags.getStringValue("checkout-button", "blue", ctx)
+
+    // Get max cart items
+    maxItems <- flags.getIntValue("max-cart-items", 10, ctx)
+
+    _ <- ZIO.debug(s"User $userId (plan: $plan):")
+    _ <- ZIO.debug(s"  - New checkout: $newCheckout")
+    _ <- ZIO.debug(s"  - Button color: $buttonColor")
+    _ <- ZIO.debug(s"  - Max items: $maxItems")
+  yield ()
+
+  val program = for
+    flags <- ZIO.service[FeatureFlags]
+    _     <- flags.initialize
+
+    // Simulate different users
+    _ <- handleUserRequest("user-001", "free")
+    _ <- handleUserRequest("user-002", "premium")
+    _ <- handleUserRequest("user-003", "enterprise")
+  yield ()
+
+  def run = program.provide(
+    FeatureFlags.live,
+    OptimizelyProvider.layer(optimizelyClient)
+  )
+```
+
+### Error Handling
+
+```scala
+import zio.openfeature.FeatureFlagError
+
+val safeEvaluation = flags.flatMap(
+  _.getBooleanValue("risky-feature", false)
+).catchAll {
+  case FeatureFlagError.FlagNotFound(key) =>
+    ZIO.debug(s"Flag $key not found, using default") *> ZIO.succeed(false)
+  case FeatureFlagError.ProviderError(cause) =>
+    ZIO.debug(s"Provider error: ${cause.getMessage}") *> ZIO.succeed(false)
+  case FeatureFlagError.TypeMismatch(key, expected, actual) =>
+    ZIO.debug(s"Type mismatch for $key") *> ZIO.succeed(false)
+  case other =>
+    ZIO.debug(s"Unexpected error: $other") *> ZIO.succeed(false)
+}
+```
+
+### Best Practices
+
+1. **Use Environment Variables for SDK Keys**
+   ```scala
+   val sdkKey = sys.env.getOrElse("OPTIMIZELY_SDK_KEY", "fallback-key")
+   ```
+
+2. **Initialize Early**: Initialize the provider at application startup to ensure the datafile is fetched before flag evaluations.
+
+3. **Use Scoped Layer**: Prefer `scopedLayer` for automatic resource management.
+
+4. **Provide User Context**: Always include a targeting key (user ID) for consistent user experiences and accurate experiment results.
+
+5. **Handle Defaults Gracefully**: Choose sensible default values that provide a safe fallback experience.
+
+6. **Use Typed Methods**: Use `getBooleanValue`, `getStringValue`, etc. instead of generic methods for type safety.
+
+### Optimizely Dashboard Setup
+
+To use this provider, configure your flags in Optimizely:
+
+1. **Create a Feature Flag**:
+   - Go to **Features** → **Create New Feature**
+   - Add a feature key (e.g., `new-checkout-flow`)
+   - Configure targeting rules
+
+2. **Add Variables** (for non-boolean values):
+   - In your feature, add variables with types (string, integer, double, JSON)
+   - Set default values and variation-specific values
+
+3. **Configure Audiences**:
+   - Define audiences based on user attributes
+   - Target specific user segments
+
+4. **Enable the Feature**:
+   - Toggle the feature on for your environment
+   - Set traffic allocation for gradual rollouts
+
+---
 
 ## Custom Providers
 
@@ -134,37 +408,9 @@ class MyProvider(
           ZIO.succeed(FlagResolution.default(key, defaultValue))
     yield result
 
-  def resolveStringValue(
-    key: String,
-    defaultValue: String,
-    context: EvaluationContext
-  ): IO[FeatureFlagError, FlagResolution[String]] =
-    // Similar implementation...
+  // Implement other resolve methods similarly...
 
-  def resolveIntValue(
-    key: String,
-    defaultValue: Int,
-    context: EvaluationContext
-  ): IO[FeatureFlagError, FlagResolution[Int]] =
-    // Similar implementation...
-
-  def resolveDoubleValue(
-    key: String,
-    defaultValue: Double,
-    context: EvaluationContext
-  ): IO[FeatureFlagError, FlagResolution[Double]] =
-    // Similar implementation...
-
-  def resolveObjectValue(
-    key: String,
-    defaultValue: Map[String, Any],
-    context: EvaluationContext
-  ): IO[FeatureFlagError, FlagResolution[Map[String, Any]]] =
-    // Similar implementation...
-
-  private def loadConfiguration: Task[Unit] =
-    // Load from your configuration source
-    ZIO.unit
+  private def loadConfiguration: Task[Unit] = ZIO.unit
 ```
 
 ### Provider Companion Object
@@ -192,6 +438,8 @@ object MyProvider:
     ZLayer.fromZIO(scoped)
 ```
 
+---
+
 ## Flag Resolution
 
 ### Resolution Types
@@ -211,23 +459,11 @@ FlagResolution.cached(key, cachedValue)
 FlagResolution.error(key, defaultValue, ErrorCode.FlagNotFound, "Flag not found")
 ```
 
-### Resolution Metadata
-
-```scala
-val resolution = FlagResolution(
-  value = true,
-  variant = Some("control"),
-  reason = ResolutionReason.TargetingMatch,
-  metadata = FlagMetadata("source" -> "remote", "version" -> "1.2.3"),
-  flagKey = "my-flag",
-  errorCode = None,
-  errorMessage = None
-)
-```
+---
 
 ## Provider Events
 
-Providers should emit events to notify the system of state changes:
+Providers emit events to notify the system of state changes:
 
 ```scala
 // Provider is ready
@@ -250,25 +486,4 @@ eventsHub.publish(ProviderEvent.Stale(
   reason = "Cache expired",
   metadata = metadata
 ))
-
-// Provider is reconnecting
-eventsHub.publish(ProviderEvent.Reconnecting(metadata))
-```
-
-## Error Handling
-
-Providers should return appropriate errors:
-
-```scala
-// Flag not found
-ZIO.fail(FeatureFlagError.FlagNotFound(key))
-
-// Type mismatch
-ZIO.fail(FeatureFlagError.TypeMismatch(key, "Boolean", "String"))
-
-// Parse error
-ZIO.fail(FeatureFlagError.ParseError(key, parseException))
-
-// Provider error
-ZIO.fail(FeatureFlagError.ProviderError(underlyingException))
 ```

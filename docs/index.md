@@ -14,6 +14,8 @@ A type-safe, ZIO-native implementation of the [OpenFeature](https://openfeature.
 [Get Started]({{ site.baseurl }}/getting-started){: .btn .btn-primary .fs-5 .mb-4 .mb-md-0 .mr-2 }
 [View on GitHub](https://github.com/EtaCassiopeia/zio-openfeature){: .btn .fs-5 .mb-4 .mb-md-0 }
 
+[![Maven Central](https://img.shields.io/maven-central/v/io.github.etacassiopeia/zio-openfeature-core_3.svg)](https://search.maven.org/search?q=g:io.github.etacassiopeia%20AND%20a:zio-openfeature-core_3)
+
 ---
 
 ## Features

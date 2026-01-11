@@ -1,6 +1,6 @@
 # Releasing ZIO OpenFeature
 
-This project uses [sbt-ci-release](https://github.com/sbt/sbt-ci-release) for automated releases to Maven Central.
+This project uses [sbt-ci-release](https://github.com/sbt/sbt-ci-release) for automated releases to Maven Central via Sonatype Central.
 
 ## Version Scheme
 
@@ -11,15 +11,16 @@ Versions follow [Semantic Versioning](https://semver.org/):
 
 Versions are derived automatically from git tags using [sbt-dynver](https://github.com/sbt/sbt-dynver):
 - Tagged commits: `v0.1.0` → version `0.1.0`
-- Untagged commits: `0.1.0+3-abcd1234-SNAPSHOT` (3 commits after v0.1.0)
+
+**Note:** Sonatype Central does not support snapshot releases. Only tagged versions are published.
 
 ## Setup (One-time)
 
-### 1. Create Sonatype Account
+### 1. Create Sonatype Central Account
 
-1. Create an account at https://issues.sonatype.org
-2. Create a New Project ticket requesting access to `io.github.etacassiopeia`
-3. Wait for approval (usually within 2 business days)
+1. Create an account at https://central.sonatype.com
+2. Verify your namespace `io.github.etacassiopeia` (automatic for GitHub usernames)
+3. Generate a user token for authentication
 
 ### 2. Generate PGP Key
 
@@ -89,7 +90,7 @@ sbt ci-release
 
 After a release, artifacts will be available:
 
-1. **Immediately** on Sonatype staging: https://s01.oss.sonatype.org
+1. **Immediately** on Sonatype Central: https://central.sonatype.com/namespace/io.github.etacassiopeia
 2. **Within ~30 minutes** on Maven Central: https://repo1.maven.org/maven2/io/github/etacassiopeia/
 
 ### Check Maven Central
@@ -98,6 +99,8 @@ After a release, artifacts will be available:
 # Check if published
 curl -s "https://repo1.maven.org/maven2/io/github/etacassiopeia/zio-openfeature-core_3/maven-metadata.xml"
 ```
+
+Or search on Maven Central: https://search.maven.org/search?q=g:io.github.etacassiopeia
 
 ## Troubleshooting
 

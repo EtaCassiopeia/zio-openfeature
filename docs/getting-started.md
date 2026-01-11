@@ -17,16 +17,18 @@ nav_order: 2
 
 ## Installation
 
+[![Maven Central](https://img.shields.io/maven-central/v/io.github.etacassiopeia/zio-openfeature-core_3.svg)](https://search.maven.org/search?q=g:io.github.etacassiopeia%20AND%20a:zio-openfeature-core_3)
+
 Add the following to your `build.sbt`:
 
 ```scala
-libraryDependencies += "io.github.etacassiopeia" %% "zio-openfeature-core" % "0.1.0-SNAPSHOT"
+libraryDependencies += "io.github.etacassiopeia" %% "zio-openfeature-core" % "0.1.0"
 
 // For testing support
-libraryDependencies += "io.github.etacassiopeia" %% "zio-openfeature-testkit" % "0.1.0-SNAPSHOT" % Test
+libraryDependencies += "io.github.etacassiopeia" %% "zio-openfeature-testkit" % "0.1.0" % Test
 
 // For Optimizely integration
-libraryDependencies += "io.github.etacassiopeia" %% "zio-openfeature-optimizely" % "0.1.0-SNAPSHOT"
+libraryDependencies += "io.github.etacassiopeia" %% "zio-openfeature-optimizely" % "0.1.0"
 ```
 
 ## Basic Usage

@@ -23,7 +23,7 @@ A type-safe, ZIO-native implementation of the [OpenFeature](https://openfeature.
 Add the following to your `build.sbt`:
 
 ```scala
-val zioOpenFeatureVersion = "0.1.0" // Check Maven Central for latest version
+val zioOpenFeatureVersion = "0.1.0"
 
 libraryDependencies += "io.github.etacassiopeia" %% "zio-openfeature-core" % zioOpenFeatureVersion
 

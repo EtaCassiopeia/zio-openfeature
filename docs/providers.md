@@ -262,15 +262,16 @@ val config = flags.flatMap(
 import zio.*
 import zio.openfeature.*
 import zio.openfeature.provider.optimizely.*
-import com.optimizely.ab.OptimizelyFactory
 
 object FeatureFlagApp extends ZIOAppDefault:
 
-  // Configuration
-  val sdkKey = sys.env.getOrElse("OPTIMIZELY_SDK_KEY", "YOUR_SDK_KEY")
-
-  // Create Optimizely client
-  val optimizelyClient = OptimizelyFactory.newDefaultInstance(sdkKey)
+  // Configuration from environment variables
+  val options = OptimizelyOptions
+    .builder()
+    .withSdkKey(sys.env.getOrElse("OPTIMIZELY_SDK_KEY", "YOUR_SDK_KEY"))
+    .withAccessToken(sys.env.getOrElse("OPTIMIZELY_ACCESS_TOKEN", "YOUR_TOKEN"))
+    .withPollingIntervalSeconds(30)
+    .build()
 
   // Simulate a user request
   def handleUserRequest(userId: String, plan: String) = for
@@ -308,7 +309,7 @@ object FeatureFlagApp extends ZIOAppDefault:
 
   def run = program.provide(
     FeatureFlags.live,
-    OptimizelyProvider.layer(optimizelyClient)
+    OptimizelyProvider.layerFromOptions(options)
   )
 ```
 
@@ -350,6 +351,23 @@ val discount = flags.flatMap(_.getDoubleValue("discount-percentage", 0.0, ctx))
 ```
 
 This convention ensures consistent mapping between OpenFeature's type system and Optimizely's feature model.
+
+### Resolution Metadata
+
+When a flag is successfully evaluated, the resolution includes metadata from Optimizely:
+
+```scala
+val resolution = flags.flatMap(_.booleanDetails("my-feature", false, ctx))
+
+resolution.map { res =>
+  println(s"Value: ${res.value}")
+  println(s"Variant: ${res.variant}")           // e.g., "control" or "treatment"
+  println(s"Rule Key: ${res.metadata.get("ruleKey")}")  // Optimizely rule that matched
+  println(s"Reason: ${res.reason}")             // e.g., TargetingMatch
+}
+```
+
+The `ruleKey` in metadata identifies which Optimizely targeting rule was applied, useful for debugging and analytics.
 
 ### Best Practices
 

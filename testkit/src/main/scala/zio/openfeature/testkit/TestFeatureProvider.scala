@@ -261,3 +261,12 @@ object TestFeatureProvider:
   /** Create just the TestFeatureProvider layer with initial flags. */
   def providerLayer(flags: Map[String, Any]): ULayer[TestFeatureProvider] =
     ZLayer.fromZIO(make(flags))
+
+  /** Create a FeatureFlags layer from an existing TestFeatureProvider.
+    *
+    * This is useful when you need to manipulate the provider before creating the layer,
+    * or when you want to share a provider across multiple tests.
+    */
+  def layerFrom(provider: TestFeatureProvider): ZLayer[Scope, Throwable, FeatureFlags] =
+    val domain = s"test-${java.util.UUID.randomUUID()}"
+    FeatureFlags.fromProviderWithDomain(provider, domain)

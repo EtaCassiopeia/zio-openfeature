@@ -1,7 +1,7 @@
 ---
 layout: default
 title: Hooks
-nav_order: 5
+nav_order: 6
 ---
 
 # Hooks
@@ -17,7 +17,9 @@ nav_order: 5
 
 ## Overview
 
-Hooks provide a mechanism to add cross-cutting concerns to flag evaluation. They can execute code before, after, on error, and finally after each evaluation.
+Hooks provide a mechanism to add cross-cutting concerns to flag evaluation. They can execute code before, after, on error, and finally after each evaluation. ZIO OpenFeature hooks are ZIO-native, meaning all hook methods return ZIO effects.
+
+---
 
 ## Hook Lifecycle
 
@@ -28,9 +30,45 @@ Each hook can implement four stages:
 3. **error** - Runs when evaluation fails
 4. **finallyAfter** - Always runs, regardless of success or failure
 
+```
+┌─────────────────────────────────────────────────────────────┐
+│                      Evaluation Request                      │
+└─────────────────────────────────────────────────────────────┘
+                            │
+                            ▼
+┌─────────────────────────────────────────────────────────────┐
+│                    BEFORE hooks (in order)                   │
+│  - Can modify evaluation context                             │
+│  - Can pass hints to later stages                            │
+└─────────────────────────────────────────────────────────────┘
+                            │
+                            ▼
+┌─────────────────────────────────────────────────────────────┐
+│                     Flag Resolution                          │
+└─────────────────────────────────────────────────────────────┘
+                            │
+            ┌───────────────┴───────────────┐
+            │ Success                       │ Failure
+            ▼                               ▼
+┌───────────────────────┐       ┌───────────────────────┐
+│  AFTER hooks          │       │  ERROR hooks          │
+│  (reverse order)      │       │  (reverse order)      │
+└───────────────────────┘       └───────────────────────┘
+            │                               │
+            └───────────────┬───────────────┘
+                            ▼
+┌─────────────────────────────────────────────────────────────┐
+│                 FINALLY hooks (reverse order)                │
+└─────────────────────────────────────────────────────────────┘
+```
+
+---
+
 ## Built-in Hooks
 
 ### Logging Hook
+
+Logs flag evaluations to ZIO's logging system:
 
 ```scala
 import zio.*
@@ -48,6 +86,8 @@ FeatureFlags.addHook(loggingHook)
 
 ### Metrics Hook
 
+Records evaluation metrics:
+
 ```scala
 val metricsHook = FeatureHook.metrics { (flagKey, duration, success) =>
   ZIO.succeed {
@@ -61,6 +101,8 @@ FeatureFlags.addHook(metricsHook)
 
 ### Context Validator Hook
 
+Validates evaluation context before evaluation:
+
 ```scala
 val validatorHook = FeatureHook.contextValidator(
   requireTargetingKey = true,
@@ -70,9 +112,13 @@ val validatorHook = FeatureHook.contextValidator(
 FeatureFlags.addHook(validatorHook)
 ```
 
+---
+
 ## Custom Hooks
 
 ### Creating a Custom Hook
+
+Implement the `FeatureHook` trait:
 
 ```scala
 val customHook = new FeatureHook:
@@ -131,6 +177,8 @@ val timingHook = new FeatureHook:
     ZIO.unit
 ```
 
+---
+
 ## Composing Hooks
 
 ### Combining Multiple Hooks
@@ -150,23 +198,30 @@ FeatureFlags.addHook(combined)
 Hooks are executed in the order they were added:
 
 ```scala
-FeatureFlags.addHook(loggingHook)   // Runs first
-FeatureFlags.addHook(metricsHook)   // Runs second
-FeatureFlags.addHook(validatorHook) // Runs third
+FeatureFlags.addHook(loggingHook)   // Runs first in before
+FeatureFlags.addHook(metricsHook)   // Runs second in before
+FeatureFlags.addHook(validatorHook) // Runs third in before
 ```
 
 For the `before` stage, hooks run in order. For `after`, `error`, and `finallyAfter`, they run in reverse order.
+
+---
 
 ## Managing Hooks
 
 ### Adding Hooks
 
 ```scala
-// Add a single hook
+// Add a single hook at runtime
 FeatureFlags.addHook(myHook)
 
-// Create service with hooks
-val layer = FeatureFlags.liveWithHooks(List(hook1, hook2))
+// Create layer with initial hooks
+val hooks = List(
+  FeatureHook.logging(),
+  FeatureHook.metrics((k, d, s) => ZIO.unit)
+)
+
+val layer = FeatureFlags.fromProviderWithHooks(provider, hooks)
 ```
 
 ### Clearing Hooks
@@ -180,12 +235,19 @@ val currentHooks: ZIO[FeatureFlags, Nothing, List[FeatureHook]] =
   FeatureFlags.hooks
 ```
 
+---
+
 ## Use Cases
 
 ### Audit Logging
 
+Track all flag evaluations for compliance:
+
 ```scala
 val auditHook = new FeatureHook:
+  override def before(ctx: HookContext, hints: HookHints): UIO[Option[(EvaluationContext, HookHints)]] =
+    ZIO.none
+
   override def after[A](ctx: HookContext, details: FlagResolution[A], hints: HookHints): UIO[Unit] =
     ZIO.logInfo(
       s"AUDIT: User ${ctx.evaluationContext.targetingKey.getOrElse("anonymous")} " +
@@ -194,9 +256,14 @@ val auditHook = new FeatureHook:
 
   override def error(ctx: HookContext, error: FeatureFlagError, hints: HookHints): UIO[Unit] =
     ZIO.logError(s"AUDIT: Flag evaluation failed: ${error.message}")
+
+  override def finallyAfter(ctx: HookContext, hints: HookHints): UIO[Unit] =
+    ZIO.unit
 ```
 
 ### Feature Flag Analytics
+
+Send evaluation data to your analytics platform:
 
 ```scala
 val analyticsHook = FeatureHook.metrics { (flagKey, duration, success) =>
@@ -206,3 +273,106 @@ val analyticsHook = FeatureHook.metrics { (flagKey, duration, success) =>
   yield ()
 }
 ```
+
+### Context Enrichment
+
+Automatically add attributes to evaluation context:
+
+```scala
+val enrichmentHook = new FeatureHook:
+  override def before(ctx: HookContext, hints: HookHints): UIO[Option[(EvaluationContext, HookHints)]] =
+    for
+      now <- Clock.instant
+      enrichedCtx = ctx.evaluationContext
+        .withAttribute("timestamp", now.toString)
+        .withAttribute("region", currentRegion)
+    yield Some((enrichedCtx, hints))
+
+  override def after[A](ctx: HookContext, details: FlagResolution[A], hints: HookHints): UIO[Unit] =
+    ZIO.unit
+
+  override def error(ctx: HookContext, error: FeatureFlagError, hints: HookHints): UIO[Unit] =
+    ZIO.unit
+
+  override def finallyAfter(ctx: HookContext, hints: HookHints): UIO[Unit] =
+    ZIO.unit
+```
+
+### Error Alerting
+
+Send alerts when flag evaluations fail:
+
+```scala
+val alertingHook = new FeatureHook:
+  override def before(ctx: HookContext, hints: HookHints): UIO[Option[(EvaluationContext, HookHints)]] =
+    ZIO.none
+
+  override def after[A](ctx: HookContext, details: FlagResolution[A], hints: HookHints): UIO[Unit] =
+    ZIO.unit
+
+  override def error(ctx: HookContext, error: FeatureFlagError, hints: HookHints): UIO[Unit] =
+    alertService.sendAlert(
+      level = AlertLevel.Warning,
+      message = s"Flag evaluation failed: ${ctx.flagKey}",
+      details = Map("error" -> error.message)
+    ).ignore
+
+  override def finallyAfter(ctx: HookContext, hints: HookHints): UIO[Unit] =
+    ZIO.unit
+```
+
+---
+
+## Best Practices
+
+### 1. Keep Hooks Fast
+
+Hooks run synchronously for each evaluation. Avoid slow operations:
+
+```scala
+// Good: Fast, in-memory operation
+override def after[A](...): UIO[Unit] =
+  ZIO.succeed(counter.increment())
+
+// Consider: Fork slow operations
+override def after[A](...): UIO[Unit] =
+  sendToAnalytics(details).forkDaemon.unit
+```
+
+### 2. Handle Errors Gracefully
+
+Hooks should not throw exceptions:
+
+```scala
+override def after[A](ctx: HookContext, details: FlagResolution[A], hints: HookHints): UIO[Unit] =
+  riskyOperation.catchAll { error =>
+    ZIO.logError(s"Hook error: $error")
+  }
+```
+
+### 3. Use Hints for Inter-Stage Communication
+
+Pass data between hook stages using hints:
+
+```scala
+override def before(...): UIO[Option[(EvaluationContext, HookHints)]] =
+  ZIO.some((ctx.evaluationContext, hints + ("key" -> value)))
+
+override def after[A](...): UIO[Unit] =
+  val storedValue = hints.get[String]("key")
+  // Use the stored value
+```
+
+### 4. Order Hooks Appropriately
+
+Consider hook order for dependencies:
+
+```scala
+// Validation should run first
+FeatureFlags.addHook(validatorHook)
+// Then enrichment
+FeatureFlags.addHook(enrichmentHook)
+// Then logging/metrics
+FeatureFlags.addHook(loggingHook)
+```
+

@@ -1,7 +1,7 @@
 ---
 layout: default
 title: Testkit
-nav_order: 7
+nav_order: 8
 ---
 
 # Testkit
@@ -17,22 +17,30 @@ nav_order: 7
 
 ## Overview
 
-The testkit module provides `TestFeatureProvider`, a configurable in-memory provider designed for testing. It allows you to:
+The testkit module provides `TestFeatureProvider`, an in-memory OpenFeature provider designed for testing. It allows you to:
 
 - Pre-configure flag values
 - Dynamically update flags during tests
 - Track which flags were evaluated
 - Verify evaluation counts and contexts
 
+The `TestFeatureProvider` implements the OpenFeature `FeatureProvider` interface, so it works seamlessly with the ZIO OpenFeature layer system.
+
+---
+
 ## Installation
 
 ```scala
-libraryDependencies += "io.github.etacassiopeia" %% "zio-openfeature-testkit" % "0.1.0" % Test
+libraryDependencies += "io.github.etacassiopeia" %% "zio-openfeature-testkit" % "0.2.0" % Test
 ```
+
+---
 
 ## Basic Usage
 
-### Creating a Test Provider
+### Creating a Test Layer
+
+The simplest way to use the testkit is with `TestFeatureProvider.layer`:
 
 ```scala
 import zio.*
@@ -40,31 +48,37 @@ import zio.test.*
 import zio.openfeature.*
 import zio.openfeature.testkit.*
 
-// Create with initial flags
-val provider = TestFeatureProvider.make(Map(
+// Create layer with initial flags
+val testLayer = TestFeatureProvider.layer(Map(
   "feature-a" -> true,
   "feature-b" -> "variant-1",
   "max-items" -> 100
 ))
 
-// Create empty provider
-val emptyProvider = TestFeatureProvider.make
-```
-
-### Using as a Layer
-
-```scala
-val testLayer = TestFeatureProvider.layer(Map(
-  "feature" -> true
-))
-
+// Use in tests
 val test = for
-  flags  <- ZIO.service[FeatureFlags]
-  result <- flags.boolean("feature", false)
+  result <- FeatureFlags.boolean("feature-a", false)
 yield assertTrue(result == true)
 
-test.provide(FeatureFlags.live, testLayer)
+test.provide(Scope.default >>> testLayer)
 ```
+
+### Creating a Provider Directly
+
+For more control, create the provider directly:
+
+```scala
+for
+  provider <- TestFeatureProvider.make(Map(
+    "feature" -> true,
+    "variant" -> "control"
+  ))
+  // Use provider methods directly
+  _ <- provider.setFlag("new-flag", "value")
+yield ()
+```
+
+---
 
 ## Managing Flags
 
@@ -72,7 +86,7 @@ test.provide(FeatureFlags.live, testLayer)
 
 ```scala
 for
-  provider <- TestFeatureProvider.make
+  provider <- TestFeatureProvider.make(Map.empty)
   _        <- provider.setFlag("new-flag", true)
   _        <- provider.setFlag("count", 42)
   _        <- provider.setFlag("name", "test")
@@ -99,6 +113,8 @@ provider.removeFlag("flag-to-remove")
 provider.clearFlags
 ```
 
+---
+
 ## Tracking Evaluations
 
 ### Check If Flag Was Evaluated
@@ -106,8 +122,8 @@ provider.clearFlags
 ```scala
 for
   provider <- TestFeatureProvider.make(Map("feature" -> true))
-  _        <- provider.initialize
-  _        <- provider.resolveBooleanValue("feature", false, EvaluationContext.empty)
+  layer     = TestFeatureProvider.layerFrom(provider)
+  _        <- FeatureFlags.boolean("feature", false).provide(Scope.default >>> layer)
   was      <- provider.wasEvaluated("feature")
   wasNot   <- provider.wasEvaluated("other-flag")
 yield assertTrue(was) && assertTrue(!wasNot)
@@ -118,9 +134,10 @@ yield assertTrue(was) && assertTrue(!wasNot)
 ```scala
 for
   provider <- TestFeatureProvider.make(Map("feature" -> true))
-  _        <- provider.resolveBooleanValue("feature", false, EvaluationContext.empty)
-  _        <- provider.resolveBooleanValue("feature", false, EvaluationContext.empty)
-  _        <- provider.resolveBooleanValue("feature", false, EvaluationContext.empty)
+  layer     = TestFeatureProvider.layerFrom(provider)
+  _        <- FeatureFlags.boolean("feature", false).provide(Scope.default >>> layer)
+  _        <- FeatureFlags.boolean("feature", false).provide(Scope.default >>> layer)
+  _        <- FeatureFlags.boolean("feature", false).provide(Scope.default >>> layer)
   count    <- provider.evaluationCount("feature")
 yield assertTrue(count == 3)
 ```
@@ -129,9 +146,12 @@ yield assertTrue(count == 3)
 
 ```scala
 for
-  provider <- TestFeatureProvider.make
-  _        <- provider.resolveBooleanValue("flag-a", false, EvaluationContext("user-1"))
-  _        <- provider.resolveStringValue("flag-b", "", EvaluationContext("user-2"))
+  provider <- TestFeatureProvider.make(Map("flag-a" -> true, "flag-b" -> "value"))
+  layer     = TestFeatureProvider.layerFrom(provider)
+  _        <- FeatureFlags.boolean("flag-a", false, EvaluationContext("user-1"))
+               .provide(Scope.default >>> layer)
+  _        <- FeatureFlags.string("flag-b", "", EvaluationContext("user-2"))
+               .provide(Scope.default >>> layer)
   evals    <- provider.getEvaluations
 yield
   // evals is List[(String, EvaluationContext)]
@@ -144,15 +164,17 @@ yield
 provider.clearEvaluations
 ```
 
+---
+
 ## Provider Status
 
 ### Managing Status
 
 ```scala
 for
-  provider <- TestFeatureProvider.make
+  provider <- TestFeatureProvider.make(Map.empty)
   initial  <- provider.status
-  _        <- provider.initialize
+  _        <- provider.setStatus(ProviderStatus.Ready)
   ready    <- provider.status
   _        <- provider.setStatus(ProviderStatus.Error)
   error    <- provider.status
@@ -171,28 +193,42 @@ provider.emitEvent(ProviderEvent.ConfigurationChanged(
 ))
 ```
 
+---
+
 ## Testing Patterns
 
-### Testing Feature Flag Logic
+### Simple Flag Testing
 
 ```scala
+import zio.test.*
+import zio.openfeature.*
+import zio.openfeature.testkit.*
+
 object MyServiceSpec extends ZIOSpecDefault:
   def spec = suite("MyService")(
     test("shows premium content for premium users") {
-      val testFlags = TestFeatureProvider.layer(Map(
+      val testLayer = TestFeatureProvider.layer(Map(
         "premium-content" -> true
       ))
 
       for
         result <- MyService.getContent("user-123")
       yield assertTrue(result.hasPremiumContent)
-    }.provide(MyService.live, FeatureFlags.live, testFlags)
+    }.provide(
+      MyService.live,
+      Scope.default >>> testLayer
+    )
   )
 ```
 
 ### Testing Multiple Scenarios
 
 ```scala
+def testWithFlags[R, E, A](flags: Map[String, Any])(
+  test: ZIO[R & FeatureFlags, E, A]
+): ZIO[R, E, A] =
+  test.provide(Scope.default >>> TestFeatureProvider.layer(flags))
+
 suite("Feature variations")(
   test("enabled") {
     testWithFlags(Map("feature" -> true)) {
@@ -205,14 +241,6 @@ suite("Feature variations")(
     }
   }
 )
-
-def testWithFlags[R, E, A](flags: Map[String, Any])(
-  test: ZIO[R & FeatureFlags, E, A]
-): ZIO[R, E, A] =
-  test.provide(
-    FeatureFlags.live,
-    TestFeatureProvider.layer(flags)
-  )
 ```
 
 ### Verifying Flag Usage
@@ -224,8 +252,8 @@ test("service evaluates expected flags") {
       "feature-a" -> true,
       "feature-b" -> "variant"
     ))
-    _        <- provider.initialize
-    _        <- MyService.doSomething
+    layer     = TestFeatureProvider.layerFrom(provider)
+    _        <- MyService.doSomething.provide(Scope.default >>> layer)
     wasA     <- provider.wasEvaluated("feature-a")
     wasB     <- provider.wasEvaluated("feature-b")
     wasC     <- provider.wasEvaluated("feature-c")
@@ -233,10 +261,7 @@ test("service evaluates expected flags") {
     assertTrue(wasA) &&
     assertTrue(wasB) &&
     assertTrue(!wasC)  // Should not evaluate feature-c
-}.provide(
-  FeatureFlags.live,
-  ZLayer.fromZIO(TestFeatureProvider.make)
-)
+}
 ```
 
 ### Testing Context Propagation
@@ -248,7 +273,9 @@ test("context is passed to provider") {
 
   for
     provider <- TestFeatureProvider.make(Map("feature" -> true))
-    _        <- provider.resolveBooleanValue("feature", false, ctx)
+    layer     = TestFeatureProvider.layerFrom(provider)
+    _        <- FeatureFlags.boolean("feature", false, ctx)
+                 .provide(Scope.default >>> layer)
     evals    <- provider.getEvaluations
     (_, evalCtx) = evals.head
   yield
@@ -256,3 +283,143 @@ test("context is passed to provider") {
     assertTrue(evalCtx.attributes.contains("plan"))
 }
 ```
+
+### Using Transactions for Override Testing
+
+Combine testkit with transactions for fine-grained control:
+
+```scala
+test("feature logic with overrides") {
+  val baseLayer = TestFeatureProvider.layer(Map(
+    "feature-a" -> true,
+    "feature-b" -> false
+  ))
+
+  // Test with base values
+  val baseTest = for
+    a <- FeatureFlags.boolean("feature-a", false)
+    b <- FeatureFlags.boolean("feature-b", false)
+  yield assertTrue(a == true) && assertTrue(b == false)
+
+  // Test with overrides
+  val overrideTest = FeatureFlags.transaction(Map("feature-b" -> true)) {
+    for
+      a <- FeatureFlags.boolean("feature-a", false)
+      b <- FeatureFlags.boolean("feature-b", false)
+    yield assertTrue(a == true) && assertTrue(b == true)
+  }
+
+  (baseTest *> overrideTest.map(_.result)).provide(Scope.default >>> baseLayer)
+}
+```
+
+---
+
+## Test Isolation
+
+### Domain-Based Isolation
+
+Use `FeatureFlags.fromProviderWithDomain` for test isolation when tests run in parallel:
+
+```scala
+test("isolated test 1") {
+  val provider = new TestFeatureProvider(Map("flag" -> true))
+  val layer = FeatureFlags.fromProviderWithDomain(provider, "test-1")
+
+  FeatureFlags.boolean("flag", false)
+    .provide(Scope.default >>> layer)
+}
+
+test("isolated test 2") {
+  val provider = new TestFeatureProvider(Map("flag" -> false))
+  val layer = FeatureFlags.fromProviderWithDomain(provider, "test-2")
+
+  FeatureFlags.boolean("flag", false)
+    .provide(Scope.default >>> layer)
+}
+```
+
+### Sequential Tests
+
+For tests that share state, run them sequentially:
+
+```scala
+suite("shared state tests")(
+  test("test 1") { ... },
+  test("test 2") { ... }
+) @@ TestAspect.sequential
+```
+
+---
+
+## Best Practices
+
+### 1. Use Descriptive Flag Names
+
+```scala
+val testLayer = TestFeatureProvider.layer(Map(
+  "premium-feature-enabled" -> true,
+  "max-upload-size-mb" -> 100,
+  "checkout-variant" -> "new"
+))
+```
+
+### 2. Create Test Fixtures
+
+```scala
+object TestFixtures:
+  val premiumUser = TestFeatureProvider.layer(Map(
+    "premium" -> true,
+    "max-items" -> 1000
+  ))
+
+  val freeUser = TestFeatureProvider.layer(Map(
+    "premium" -> false,
+    "max-items" -> 10
+  ))
+
+// Usage
+test("premium user behavior") {
+  myTest.provide(Scope.default >>> TestFixtures.premiumUser)
+}
+```
+
+### 3. Verify Expected Evaluations
+
+```scala
+test("service only evaluates necessary flags") {
+  for
+    provider <- TestFeatureProvider.make(Map(
+      "needed-flag" -> true,
+      "unneeded-flag" -> true
+    ))
+    layer     = TestFeatureProvider.layerFrom(provider)
+    _        <- myService.provide(Scope.default >>> layer)
+    evals    <- provider.getEvaluations
+  yield
+    assertTrue(evals.map(_._1).contains("needed-flag")) &&
+    assertTrue(!evals.map(_._1).contains("unneeded-flag"))
+}
+```
+
+### 4. Test Edge Cases
+
+```scala
+suite("edge cases")(
+  test("handles missing flag") {
+    val layer = TestFeatureProvider.layer(Map.empty)
+
+    FeatureFlags.boolean("missing", false)
+      .map(result => assertTrue(result == false))
+      .provide(Scope.default >>> layer)
+  },
+  test("handles type mismatch") {
+    val layer = TestFeatureProvider.layer(Map("flag" -> "string"))
+
+    FeatureFlags.boolean("flag", false)
+      .map(result => assertTrue(result == false))  // Uses default
+      .provide(Scope.default >>> layer)
+  }
+)
+```
+

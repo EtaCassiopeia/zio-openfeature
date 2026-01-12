@@ -1,7 +1,7 @@
 ---
 layout: default
 title: Providers
-nav_order: 8
+nav_order: 4
 ---
 
 # Providers
@@ -17,145 +17,296 @@ nav_order: 8
 
 ## Overview
 
-Providers are the bridge between the OpenFeature API and your feature flag management system. ZIO OpenFeature includes:
-
-- **OptimizelyProvider** - For Optimizely Feature Experimentation (recommended for production)
-- **TestFeatureProvider** - For testing (see [Testkit]({{ site.baseurl }}/testkit))
-
----
-
-## Optimizely Provider
-
-The Optimizely provider integrates with [Optimizely Feature Experimentation](https://www.optimizely.com/products/feature-experimentation/) to deliver feature flags and A/B testing capabilities.
-
-### Installation
-
-```scala
-libraryDependencies += "io.github.etacassiopeia" %% "zio-openfeature-optimizely" % "0.1.0"
-```
-
-### Getting Your SDK Key
-
-1. Log in to [Optimizely](https://app.optimizely.com)
-2. Navigate to **Settings** → **Environments**
-3. Copy the **SDK Key** for your environment (Development, Staging, or Production)
-
-Each environment has its own SDK key, allowing different flag configurations per environment.
-
-### Basic Setup
+ZIO OpenFeature wraps the [OpenFeature Java SDK](https://openfeature.dev/docs/reference/technologies/server/java), giving you access to the entire ecosystem of OpenFeature providers. Use any provider that implements the OpenFeature specification.
 
 ```scala
 import zio.*
 import zio.openfeature.*
-import zio.openfeature.provider.optimizely.*
+import dev.openfeature.contrib.providers.flagd.FlagdProvider
+
+val layer = FeatureFlags.fromProvider(new FlagdProvider())
+
+program.provide(Scope.default >>> layer)
+```
+
+---
+
+## Available Providers
+
+The OpenFeature ecosystem includes providers for major feature flag services:
+
+| Provider | Dependency | Documentation |
+|:---------|:-----------|:--------------|
+| [flagd](https://flagd.dev/) | `"dev.openfeature.contrib.providers" % "flagd" % "0.8.x"` | [Docs](https://openfeature.dev/docs/reference/technologies/server/java/#flagd) |
+| [LaunchDarkly](https://launchdarkly.com/) | `"dev.openfeature.contrib.providers" % "launchdarkly" % "1.1.x"` | [Docs](https://openfeature.dev/docs/reference/technologies/server/java/#launchdarkly) |
+| [Flagsmith](https://flagsmith.com/) | `"dev.openfeature.contrib.providers" % "flagsmith" % "0.1.x"` | [Docs](https://openfeature.dev/docs/reference/technologies/server/java/#flagsmith) |
+| [CloudBees](https://www.cloudbees.com/) | `"dev.openfeature.contrib.providers" % "cloudbees" % "0.0.x"` | [Docs](https://openfeature.dev/docs/reference/technologies/server/java/#cloudbees) |
+| [Flipt](https://flipt.io/) | `"dev.openfeature.contrib.providers" % "flipt" % "0.2.x"` | [Docs](https://openfeature.dev/docs/reference/technologies/server/java/#flipt) |
+| [Split](https://www.split.io/) | `"dev.openfeature.contrib.providers" % "split" % "0.1.x"` | [Docs](https://openfeature.dev/docs/reference/technologies/server/java/#split) |
+| [Statsig](https://statsig.com/) | `"dev.openfeature.contrib.providers" % "statsig" % "0.1.x"` | [Docs](https://openfeature.dev/docs/reference/technologies/server/java/#statsig) |
+| [Optimizely](https://www.optimizely.com/) | `"dev.openfeature.contrib.providers" % "optimizely" % "0.1.x"` | [Docs](https://openfeature.dev/docs/reference/technologies/server/java/#optimizely) |
+
+Check the [OpenFeature ecosystem](https://openfeature.dev/ecosystem?instant_search%5BrefinementList%5D%5Bvendor%5D%5B0%5D=Community&instant_search%5BrefinementList%5D%5Btechnology%5D%5B0%5D=Java) for the latest provider versions.
+
+---
+
+## Using flagd
+
+[flagd](https://flagd.dev/) is an open-source, cloud-native feature flag evaluation engine.
+
+### Installation
+
+```scala
+libraryDependencies ++= Seq(
+  "io.github.etacassiopeia" %% "zio-openfeature-core" % "0.2.0",
+  "dev.openfeature.contrib.providers" % "flagd" % "0.8.9"
+)
+```
+
+### Setup
+
+```scala
+import zio.*
+import zio.openfeature.*
+import dev.openfeature.contrib.providers.flagd.FlagdProvider
+import dev.openfeature.contrib.providers.flagd.FlagdOptions
 
 object MyApp extends ZIOAppDefault:
 
-  // Create options with SDK key and access token
-  val options = OptimizelyOptions
-    .builder()
-    .withSdkKey("YOUR_SDK_KEY")
-    .withAccessToken("YOUR_ACCESS_TOKEN")  // Required for authenticated datafile access
-    .withPollingIntervalSeconds(30)        // Poll for updates every 30 seconds
-    .build()
+  // Default: connects to localhost:8013
+  val provider = new FlagdProvider()
+
+  // Or with custom options
+  val customProvider = new FlagdProvider(
+    FlagdOptions.builder()
+      .host("flagd.example.com")
+      .port(8013)
+      .tls(true)
+      .build()
+  )
 
   val program = for
-    flags   <- ZIO.service[FeatureFlags]
-    enabled <- flags.boolean("new-checkout-flow", false)
-    _       <- ZIO.when(enabled)(ZIO.debug("New checkout flow is enabled!"))
+    enabled <- FeatureFlags.boolean("new-feature", default = false)
+    _       <- ZIO.when(enabled)(Console.printLine("Feature enabled!"))
   yield ()
 
   def run = program.provide(
-    FeatureFlags.live,
-    OptimizelyProvider.layerFromOptions(options)
+    Scope.default >>> FeatureFlags.fromProvider(provider)
   )
 ```
 
-### Configuration Options
+---
 
-Use `OptimizelyOptions` to configure the provider:
+## Using LaunchDarkly
+
+[LaunchDarkly](https://launchdarkly.com/) is an enterprise feature management platform.
+
+### Installation
 
 ```scala
-import zio.openfeature.provider.optimizely.*
-import scala.concurrent.duration.*
+libraryDependencies ++= Seq(
+  "io.github.etacassiopeia" %% "zio-openfeature-core" % "0.2.0",
+  "dev.openfeature.contrib.providers" % "launchdarkly" % "1.1.0"
+)
+```
 
-val options = OptimizelyOptions(
-  sdkKey = "YOUR_SDK_KEY",
-  accessToken = Some("YOUR_ACCESS_TOKEN"),  // For authenticated datafile access
-  pollingInterval = 30.seconds,              // How often to poll for updates
-  blockingTimeout = 10.seconds               // Initial datafile fetch timeout
+### Setup
+
+```scala
+import zio.*
+import zio.openfeature.*
+import dev.openfeature.contrib.providers.launchdarkly.LaunchDarklyProvider
+import dev.openfeature.contrib.providers.launchdarkly.LaunchDarklyProviderOptions
+
+object MyApp extends ZIOAppDefault:
+
+  val sdkKey = sys.env.getOrElse("LAUNCHDARKLY_SDK_KEY", "your-sdk-key")
+
+  val options = LaunchDarklyProviderOptions.builder()
+    .sdkKey(sdkKey)
+    .build()
+
+  val provider = new LaunchDarklyProvider(options)
+
+  val program = for
+    enabled <- FeatureFlags.boolean("my-flag", default = false)
+    _       <- ZIO.debug(s"Flag enabled: $enabled")
+  yield ()
+
+  def run = program.provide(
+    Scope.default >>> FeatureFlags.fromProvider(provider)
+  )
+```
+
+---
+
+## Using Flagsmith
+
+[Flagsmith](https://flagsmith.com/) is an open-source feature flag and remote config service.
+
+### Installation
+
+```scala
+libraryDependencies ++= Seq(
+  "io.github.etacassiopeia" %% "zio-openfeature-core" % "0.2.0",
+  "dev.openfeature.contrib.providers" % "flagsmith" % "0.1.0"
+)
+```
+
+### Setup
+
+```scala
+import zio.*
+import zio.openfeature.*
+import dev.openfeature.contrib.providers.flagsmith.FlagsmithProvider
+import dev.openfeature.contrib.providers.flagsmith.FlagsmithProviderOptions
+
+object MyApp extends ZIOAppDefault:
+
+  val apiKey = sys.env.getOrElse("FLAGSMITH_API_KEY", "your-api-key")
+
+  val options = FlagsmithProviderOptions.builder()
+    .apiKey(apiKey)
+    .build()
+
+  val provider = new FlagsmithProvider(options)
+
+  def run = program.provide(
+    Scope.default >>> FeatureFlags.fromProvider(provider)
+  )
+```
+
+---
+
+## Factory Methods
+
+ZIO OpenFeature provides several factory methods to create the `FeatureFlags` layer:
+
+### fromProvider
+
+Create from any OpenFeature provider:
+
+```scala
+import dev.openfeature.sdk.FeatureProvider
+
+val provider: FeatureProvider = new FlagdProvider()
+
+val layer: ZLayer[Scope, Throwable, FeatureFlags] =
+  FeatureFlags.fromProvider(provider)
+```
+
+### fromProviderWithDomain
+
+Create with a named domain for test isolation. Each domain gets its own client:
+
+```scala
+val layer = FeatureFlags.fromProviderWithDomain(provider, "my-service")
+
+// Useful for testing - each test can use a different domain
+val testLayer = FeatureFlags.fromProviderWithDomain(testProvider, "test-domain-123")
+```
+
+### fromProviderWithHooks
+
+Create with initial hooks:
+
+```scala
+val hooks = List(
+  FeatureHook.logging(),
+  FeatureHook.metrics((k, d, s) => ZIO.unit)
 )
 
-// Or use the builder
-val optionsFromBuilder = OptimizelyOptions
-  .builder()
-  .withSdkKey("YOUR_SDK_KEY")
-  .withAccessToken("YOUR_ACCESS_TOKEN")
-  .withPollingIntervalSeconds(30)
-  .build()
+val layer = FeatureFlags.fromProviderWithHooks(provider, hooks)
 ```
 
-### Initialization Methods
+---
 
-#### Using OptimizelyOptions (Recommended)
+## Provider Lifecycle
+
+### Initialization
+
+When you create a `FeatureFlags` layer, the provider is automatically initialized using `setProviderAndWait`. This ensures the provider is ready before any flag evaluations:
 
 ```scala
-// Simple: SDK key only (public datafile)
-val provider1 = OptimizelyProvider.fromSdkKey("YOUR_SDK_KEY")
-
-// With access token (authenticated datafile)
-val provider2 = OptimizelyProvider.fromSdkKey("YOUR_SDK_KEY", "YOUR_ACCESS_TOKEN")
-
-// Full options
-val options = OptimizelyOptions
-  .builder()
-  .withSdkKey("YOUR_SDK_KEY")
-  .withAccessToken("YOUR_ACCESS_TOKEN")
-  .withPollingIntervalSeconds(30)
-  .build()
-
-val provider3 = OptimizelyProvider.fromOptions(options)
+// Provider is initialized when layer is provided
+program.provide(Scope.default >>> FeatureFlags.fromProvider(provider))
 ```
 
-#### Using Pre-built Client
+### Shutdown
 
-For advanced scenarios, you can create the Optimizely client manually:
-
-```scala
-import com.optimizely.ab.Optimizely
-
-val datafileJson = """{"version": "4", ...}"""
-
-val client = Optimizely.builder()
-  .withDatafile(datafileJson)
-  .build()
-
-val provider = OptimizelyProvider.layer(client)
-```
-
-### Scoped Provider (Recommended)
-
-For automatic initialization and cleanup, use the scoped layer:
+When the scope ends, the OpenFeature API is automatically shut down:
 
 ```scala
-val program = for
-  flags   <- ZIO.service[FeatureFlags]
-  // Provider is automatically initialized
-  enabled <- flags.boolean("feature-x", false)
-yield enabled
-// Provider is automatically shutdown when scope ends
-
 ZIO.scoped {
-  program.provide(
-    FeatureFlags.live,
-    OptimizelyProvider.scopedLayer(optimizelyClient)
-  )
+  for
+    ff <- ZIO.service[FeatureFlags]
+    // Use feature flags
+  yield ()
 }
+// Provider shutdown automatically on scope exit
 ```
 
-### User Targeting
+### Provider Status
 
-Optimizely evaluates flags based on user attributes. Use `EvaluationContext` to pass user information:
+Check if the provider is ready:
+
+```scala
+for
+  status <- FeatureFlags.providerStatus
+  _      <- ZIO.when(status == ProviderStatus.Ready) {
+              Console.printLine("Provider is ready")
+            }
+yield ()
+```
+
+### Provider Metadata
+
+Get information about the current provider:
+
+```scala
+for
+  metadata <- FeatureFlags.providerMetadata
+  _        <- Console.printLine(s"Provider: ${metadata.name}")
+yield ()
+```
+
+---
+
+## Provider Events
+
+Subscribe to provider lifecycle events using the event stream:
+
+```scala
+val eventHandler = FeatureFlags.events.foreach { event =>
+  event match
+    case ProviderEvent.Ready(meta) =>
+      ZIO.logInfo(s"Provider ${meta.name} is ready")
+    case ProviderEvent.ConfigurationChanged(flags, meta) =>
+      ZIO.logInfo(s"Flags changed: ${flags.mkString(", ")}")
+    case ProviderEvent.Stale(reason, meta) =>
+      ZIO.logWarning(s"Provider data stale: $reason")
+    case ProviderEvent.Error(error, meta) =>
+      ZIO.logError(s"Provider error: ${error.getMessage}")
+}
+
+// Run event handler in background
+eventHandler.fork
+```
+
+### Event Types
+
+| Event | Description |
+|:------|:------------|
+| `Ready` | Provider initialized successfully |
+| `ConfigurationChanged` | Flag definitions updated (with affected flag keys) |
+| `Stale` | Provider data may be outdated |
+| `Error` | Provider encountered an error |
+
+---
+
+## User Targeting
+
+Pass user information using `EvaluationContext` for targeted flag evaluation:
 
 ```scala
 // Create context with user ID (targeting key)
@@ -167,27 +318,24 @@ val userContext = EvaluationContext("user-12345")
   .withAttribute("beta_user", true)
 
 // Evaluate with user context
-val result = for
-  flags <- ZIO.service[FeatureFlags]
-  value <- flags.boolean("premium-feature", false, userContext)
-yield value
+val result = FeatureFlags.boolean("premium-feature", false, userContext)
 ```
 
-#### Setting Global Context
+### Global Context
 
-For attributes that apply to all evaluations (e.g., app version, environment):
+Set attributes that apply to all evaluations:
 
 ```scala
 val globalContext = EvaluationContext.empty
   .withAttribute("app_version", "2.1.0")
-  .withAttribute("platform", "ios")
+  .withAttribute("environment", "production")
 
 FeatureFlags.setGlobalContext(globalContext)
 ```
 
-#### Setting Fiber-Local Context
+### Scoped Context
 
-For request-scoped attributes, use `withContext` to scope context to a block:
+Apply context to a block of code:
 
 ```scala
 val requestContext = EvaluationContext("user-123")
@@ -199,478 +347,130 @@ FeatureFlags.withContext(requestContext) {
 }
 ```
 
-### Feature Types
+See [Evaluation Context]({{ site.baseurl }}/context) for more details.
 
-#### Boolean Flags (Feature Toggles)
+---
 
-```scala
-// Simple on/off feature
-val isEnabled = FeatureFlags.boolean("new-dashboard", false)
+## Optimizely Flat Flags
 
-// With user targeting
-val isEnabledForUser = FeatureFlags.boolean("new-dashboard", false, userContext)
-```
+The `contrib-optimizely` module provides extensions for [Optimizely](https://www.optimizely.com/)'s variable pattern.
 
-#### String Flags (Variations)
+### Installation
 
 ```scala
-// Get variation key for A/B tests
-val variation = FeatureFlags.string("checkout-button-color", "blue", userContext)
-
-// Use the variation
-variation.flatMap {
-  case "blue"  => renderBlueButton
-  case "green" => renderGreenButton
-  case "red"   => renderRedButton
-  case _       => renderDefaultButton
-}
-```
-
-#### Numeric Flags (Feature Variables)
-
-```scala
-// Integer variables
-val maxItems = FeatureFlags.int("cart-max-items", 10, userContext)
-
-// Double variables
-val discountRate = FeatureFlags.double("discount-percentage", 0.0, userContext)
-```
-
-#### JSON/Object Flags
-
-```scala
-// Complex configuration as JSON
-val config = FeatureFlags.obj(
-  "feature-config",
-  Map("timeout" -> 30, "retries" -> 3),
-  userContext
+libraryDependencies ++= Seq(
+  "io.github.etacassiopeia" %% "zio-openfeature-core" % "0.2.0",
+  "io.github.etacassiopeia" %% "zio-openfeature-contrib-optimizely" % "0.2.0",
+  "dev.openfeature.contrib.providers" % "optimizely" % "0.1.0"
 )
 ```
 
-### Complete Example Application
+### What are Flat Flags?
 
-```scala
-import zio.*
-import zio.openfeature.*
-import zio.openfeature.provider.optimizely.*
+Optimizely features are boolean toggles with optional variables. **Flat flags** are a convention where a feature has a single variable named `_` that holds a non-boolean value:
 
-object FeatureFlagApp extends ZIOAppDefault:
+```
+Optimizely Feature: discount-percentage
+├── Enabled: true
+└── Variables:
+    └── _ (Double): 15.0
 
-  // Configuration from environment variables
-  val options = OptimizelyOptions
-    .builder()
-    .withSdkKey(sys.env.getOrElse("OPTIMIZELY_SDK_KEY", "YOUR_SDK_KEY"))
-    .withAccessToken(sys.env.getOrElse("OPTIMIZELY_ACCESS_TOKEN", "YOUR_TOKEN"))
-    .withPollingIntervalSeconds(30)
-    .build()
-
-  // Simulate a user request
-  def handleUserRequest(userId: String, plan: String) = for
-    flags <- ZIO.service[FeatureFlags]
-
-    // Create user context
-    ctx = EvaluationContext(userId)
-      .withAttribute("plan", plan)
-      .withAttribute("registered_at", java.time.Instant.now())
-
-    // Check if new checkout is enabled for this user
-    newCheckout <- flags.boolean("new-checkout-flow", false, ctx)
-
-    // Get the button variation
-    buttonColor <- flags.string("checkout-button", "blue", ctx)
-
-    // Get max cart items
-    maxItems <- flags.int("max-cart-items", 10, ctx)
-
-    _ <- ZIO.debug(s"User $userId (plan: $plan):")
-    _ <- ZIO.debug(s"  - New checkout: $newCheckout")
-    _ <- ZIO.debug(s"  - Button color: $buttonColor")
-    _ <- ZIO.debug(s"  - Max items: $maxItems")
-  yield ()
-
-  val program = for
-    // Simulate different users
-    _ <- handleUserRequest("user-001", "free")
-    _ <- handleUserRequest("user-002", "premium")
-    _ <- handleUserRequest("user-003", "enterprise")
-  yield ()
-
-  def run = program.provide(
-    FeatureFlags.live,
-    OptimizelyProvider.layerFromOptions(options)
-  )
+OpenFeature API:
+FeatureFlags.double("discount-percentage", 0.0)  → 15.0
 ```
 
-### Error Handling
+### Using Flat Flags
 
 ```scala
-import zio.openfeature.FeatureFlagError
+import zio.openfeature.contrib.optimizely.*
 
-val safeEvaluation = FeatureFlags.boolean("risky-feature", false)
+val program = for
+  ff <- ZIO.service[FeatureFlags]
+  // Use flat flag extensions
+  discount <- ff.flatDouble("discount-rate", 0.0)
+  limit    <- ff.flatInt("max-items", 10)
+  label    <- ff.flatString("button-label", "Submit")
+yield (discount, limit, label)
+```
+
+### Setting Up in Optimizely
+
+1. Create a feature in Optimizely (e.g., `discount-rate`)
+2. Add a variable named `_` with appropriate type (Integer, Double, String)
+3. Set values per variation
+4. Configure targeting rules
+
+---
+
+## Testing
+
+For testing, use `TestFeatureProvider` from the testkit module:
+
+```scala
+import zio.openfeature.testkit.*
+
+val testLayer = TestFeatureProvider.layer(Map(
+  "feature-a" -> true,
+  "feature-b" -> "variant-1",
+  "max-items" -> 50
+))
+
+val testProgram = for
+  a <- FeatureFlags.boolean("feature-a", false)
+  b <- FeatureFlags.string("feature-b", "control")
+  n <- FeatureFlags.int("max-items", 10)
+yield (a, b, n)  // (true, "variant-1", 50)
+
+testProgram.provide(Scope.default >>> testLayer)
+```
+
+See [Testkit]({{ site.baseurl }}/testkit) for more testing utilities.
+
+---
+
+## Best Practices
+
+### 1. Use Environment Variables for Credentials
+
+```scala
+val sdkKey = sys.env.getOrElse("PROVIDER_SDK_KEY", "fallback-key")
+```
+
+### 2. Initialize Early
+
+Create the FeatureFlags layer at application startup to ensure providers are ready before flag evaluations.
+
+### 3. Handle Errors Gracefully
+
+```scala
+FeatureFlags.boolean("feature", false)
   .catchAll {
-    case FeatureFlagError.FlagNotFound(key) =>
-      ZIO.debug(s"Flag $key not found, using default") *> ZIO.succeed(false)
+    case FeatureFlagError.ProviderNotReady =>
+      ZIO.succeed(false)  // Safe default
     case FeatureFlagError.ProviderError(cause) =>
-      ZIO.debug(s"Provider error: ${cause.getMessage}") *> ZIO.succeed(false)
-    case FeatureFlagError.TypeMismatch(key, expected, actual) =>
-      ZIO.debug(s"Type mismatch for $key") *> ZIO.succeed(false)
-    case other =>
-      ZIO.debug(s"Unexpected error: $other") *> ZIO.succeed(false)
+      ZIO.logError(s"Provider error: $cause") *> ZIO.succeed(false)
+    case _ =>
+      ZIO.succeed(false)
   }
 ```
 
-### Flat Flags
+### 4. Provide User Context
 
-OpenFeature supports multiple flag value types (String, Int, Double, Object), but Optimizely features are fundamentally boolean toggles with optional variables. To bridge this gap, the provider supports **flat flags** - a convention for mapping non-boolean OpenFeature flags to Optimizely features.
-
-#### What is a Flat Flag?
-
-A **flat flag** is an Optimizely feature with a single variable named `_` (underscore) that holds the non-boolean value. When the provider evaluates a non-boolean flag, it looks for this special variable first.
-
-```
-┌─────────────────────────────────────────────────────────┐
-│ Optimizely Feature                                      │
-├─────────────────────────────────────────────────────────┤
-│ Key: discount-percentage                                │
-│ Enabled: true                                           │
-│ Variables:                                              │
-│   ┌─────────────────────────────────────────────────┐   │
-│   │ Name: _                                         │   │
-│   │ Type: Double                                    │   │
-│   │ Value: 15.0                                     │   │
-│   └─────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────┘
-           │
-           ▼
-┌─────────────────────────────────────────────────────────┐
-│ OpenFeature API                                         │
-├─────────────────────────────────────────────────────────┤
-│ FeatureFlags.double("discount-percentage", 0.0)         │
-│                                                         │
-│ Returns: 15.0                                           │
-└─────────────────────────────────────────────────────────┘
-```
-
-#### Why Flat Flags?
-
-| OpenFeature Type | Optimizely Concept | Flat Flag Solution |
-|------------------|-------------------|-------------------|
-| Boolean | Feature toggle (on/off) | Direct mapping |
-| String | Variation key | Direct mapping |
-| Int | Feature variable | Single `_` variable |
-| Double | Feature variable | Single `_` variable |
-| Object | Feature variables (JSON) | All variables as map |
-
-Without flat flags, you'd need to know the variable name in advance, breaking the abstraction between OpenFeature's generic API and Optimizely's variable-based model.
-
-#### Integer Flat Flags
-
-**Optimizely Setup:**
-1. Create a feature: `max-cart-items`
-2. Add a variable named `_` with type `Integer`
-3. Set the default value (e.g., `25`)
-4. Configure variations with different values
+Always include a targeting key for consistent user experiences:
 
 ```scala
-// Code usage
-val maxItems = FeatureFlags.int("max-cart-items", 10, userContext)
+val ctx = EvaluationContext(userId)
+  .withAttribute("plan", userPlan)
 
-// Or with detailed resolution
-val resolution = FeatureFlags.intDetails("max-cart-items", 10, userContext)
-resolution.map { res =>
-  println(s"Max items: ${res.value}")        // 25
-  println(s"Variation: ${res.variant}")      // "high-limit"
-}
+FeatureFlags.boolean("feature", false, ctx)
 ```
 
-#### Double Flat Flags
-
-**Optimizely Setup:**
-1. Create a feature: `discount-rate`
-2. Add a variable named `_` with type `Double`
-3. Set values per variation
+### 5. Use Domain Isolation in Tests
 
 ```scala
-// Get discount rate for user
-val discount = FeatureFlags.double("discount-rate", 0.0, userContext)
-
-// Apply discount
-discount.map { rate =>
-  val finalPrice = originalPrice * (1 - rate)
-}
-```
-
-#### Long Flat Flags
-
-For large numbers that exceed Int range:
-
-```scala
-// Optimizely variable type: Integer (will be converted to Long)
-val maxBytes = FeatureFlags.long("max-upload-bytes", 1000000L, userContext)
-```
-
-#### Object Flags (Multiple Variables)
-
-For complex configurations, use multiple variables instead of a single `_`:
-
-**Optimizely Setup:**
-```
-Feature: rate-limit-config
-Variables:
-  - requests_per_minute (Integer): 100
-  - burst_limit (Integer): 150
-  - cooldown_seconds (Integer): 60
-```
-
-```scala
-val config = FeatureFlags.obj(
-  "rate-limit-config",
-  Map("requests_per_minute" -> 50, "burst_limit" -> 75, "cooldown_seconds" -> 30),
-  userContext
+val testLayer = FeatureFlags.fromProviderWithDomain(
+  testProvider,
+  s"test-${java.util.UUID.randomUUID()}"
 )
-
-config.map { cfg =>
-  val rpm = cfg("requests_per_minute").asInstanceOf[Int]
-  val burst = cfg("burst_limit").asInstanceOf[Int]
-}
 ```
 
-#### Setting Up Flat Flags in Optimizely
-
-1. **Navigate to Features**
-   - Go to Optimizely dashboard → **Features**
-   - Click **Create New Feature**
-
-2. **Create the Feature**
-   - Enter the feature key (e.g., `discount-percentage`)
-   - This key will be used in your code
-
-3. **Add the Flat Variable**
-   - Under **Variables**, click **Add Variable**
-   - Set **Name** to `_` (single underscore)
-   - Choose the appropriate **Type** (Integer, Double, String)
-   - Set the **Default Value**
-
-4. **Configure Variations** (optional)
-   - Add variations with different `_` values
-   - Example: `control` with `_` = 10, `treatment` with `_` = 25
-
-5. **Set Up Targeting Rules**
-   - Define which users get which variation
-   - Configure traffic allocation
-
-#### Variable Extraction Priority
-
-When extracting values, the provider follows this priority:
-
-1. **Single `_` variable** - If a variable named `_` exists, use its value
-2. **Single variable (any name)** - If only one variable exists, use it regardless of name
-3. **Multiple variables** - Returns as a Map for Object flags
-
-```scala
-// All these work with flat flags:
-
-// Feature with "_" variable
-FeatureFlags.int("feature-with-underscore", 0)
-
-// Feature with single variable named anything
-FeatureFlags.int("feature-with-single-var", 0)
-
-// Feature with multiple variables (use obj)
-FeatureFlags.obj("feature-with-many-vars", Map.empty)
-```
-
-#### Best Practices for Flat Flags
-
-1. **Use `_` consistently** - Always name your single-value variable `_` for clarity
-2. **Document the convention** - Ensure your team knows about flat flags
-3. **Prefer typed methods** - Use `int`, `double`, `long` instead of generic `value[A]`
-4. **Test with defaults** - Verify behavior when the feature is disabled
-5. **Monitor variations** - Use `valueDetails` to log which variation was served
-
-### Resolution Metadata
-
-When a flag is successfully evaluated, the resolution includes metadata from Optimizely:
-
-```scala
-val resolution = FeatureFlags.booleanDetails("my-feature", false)
-
-resolution.map { res =>
-  println(s"Value: ${res.value}")
-  println(s"Variant: ${res.variant}")           // e.g., "control" or "treatment"
-  println(s"Rule Key: ${res.metadata.get("ruleKey")}")  // Optimizely rule that matched
-  println(s"Reason: ${res.reason}")             // e.g., TargetingMatch
-}
-```
-
-The `ruleKey` in metadata identifies which Optimizely targeting rule was applied, useful for debugging and analytics.
-
-### Best Practices
-
-1. **Use Environment Variables for SDK Keys**
-   ```scala
-   val sdkKey = sys.env.getOrElse("OPTIMIZELY_SDK_KEY", "fallback-key")
-   ```
-
-2. **Initialize Early**: Initialize the provider at application startup to ensure the datafile is fetched before flag evaluations.
-
-3. **Use Scoped Layer**: Prefer `scopedLayer` for automatic resource management.
-
-4. **Provide User Context**: Always include a targeting key (user ID) for consistent user experiences and accurate experiment results.
-
-5. **Handle Defaults Gracefully**: Choose sensible default values that provide a safe fallback experience.
-
-6. **Use Typed Methods**: Use `boolean`, `string`, `int`, `double` methods instead of generic `value[A]` for type safety.
-
-### Optimizely Dashboard Setup
-
-To use this provider, configure your flags in Optimizely:
-
-1. **Create a Feature Flag**:
-   - Go to **Features** → **Create New Feature**
-   - Add a feature key (e.g., `new-checkout-flow`)
-   - Configure targeting rules
-
-2. **Add Variables** (for non-boolean values):
-   - In your feature, add variables with types (string, integer, double, JSON)
-   - Set default values and variation-specific values
-
-3. **Configure Audiences**:
-   - Define audiences based on user attributes
-   - Target specific user segments
-
-4. **Enable the Feature**:
-   - Toggle the feature on for your environment
-   - Set traffic allocation for gradual rollouts
-
----
-
-## Custom Providers
-
-### Implementing FeatureProvider
-
-```scala
-import zio.*
-import zio.stream.*
-import zio.openfeature.*
-
-class MyProvider(
-  configRef: Ref[Map[String, Any]],
-  statusRef: Ref[ProviderStatus],
-  eventsHub: Hub[ProviderEvent]
-) extends FeatureProvider:
-
-  val metadata: ProviderMetadata = ProviderMetadata("MyProvider", "1.0.0")
-
-  def status: UIO[ProviderStatus] = statusRef.get
-
-  def events: UStream[ProviderEvent] = ZStream.fromHub(eventsHub)
-
-  def initialize: Task[Unit] =
-    for
-      _ <- loadConfiguration
-      _ <- statusRef.set(ProviderStatus.Ready)
-      _ <- eventsHub.publish(ProviderEvent.Ready(metadata))
-    yield ()
-
-  def shutdown: UIO[Unit] =
-    for
-      _ <- statusRef.set(ProviderStatus.NotReady)
-      _ <- eventsHub.shutdown
-    yield ()
-
-  def resolveBooleanValue(
-    key: String,
-    defaultValue: Boolean,
-    context: EvaluationContext
-  ): IO[FeatureFlagError, FlagResolution[Boolean]] =
-    for
-      config <- configRef.get
-      result <- config.get(key) match
-        case Some(v: Boolean) =>
-          ZIO.succeed(FlagResolution.targetingMatch(key, v))
-        case Some(_) =>
-          ZIO.fail(FeatureFlagError.TypeMismatch(key, "Boolean", "other"))
-        case None =>
-          ZIO.succeed(FlagResolution.default(key, defaultValue))
-    yield result
-
-  // Implement other resolve methods similarly...
-
-  private def loadConfiguration: Task[Unit] = ZIO.unit
-```
-
-### Provider Companion Object
-
-```scala
-object MyProvider:
-  def make: UIO[MyProvider] =
-    for
-      configRef <- Ref.make(Map.empty[String, Any])
-      statusRef <- Ref.make[ProviderStatus](ProviderStatus.NotReady)
-      eventsHub <- Hub.unbounded[ProviderEvent]
-    yield MyProvider(configRef, statusRef, eventsHub)
-
-  def layer: ULayer[FeatureProvider] =
-    ZLayer.fromZIO(make)
-
-  def scoped: ZIO[Scope, Nothing, MyProvider] =
-    for
-      provider <- make
-      _        <- provider.initialize.orDie
-      _        <- ZIO.addFinalizer(provider.shutdown)
-    yield provider
-
-  def scopedLayer: ZLayer[Scope, Nothing, FeatureProvider] =
-    ZLayer.fromZIO(scoped)
-```
-
----
-
-## Flag Resolution
-
-### Resolution Types
-
-```scala
-// Flag found and evaluated
-FlagResolution.targetingMatch(key, value)
-FlagResolution.targetingMatch(key, value, Some("variant-name"))
-
-// Flag not found, using default
-FlagResolution.default(key, defaultValue)
-
-// Value from cache
-FlagResolution.cached(key, cachedValue)
-
-// Error during evaluation
-FlagResolution.error(key, defaultValue, ErrorCode.FlagNotFound, "Flag not found")
-```
-
----
-
-## Provider Events
-
-Providers emit events to notify the system of state changes:
-
-```scala
-// Provider is ready
-eventsHub.publish(ProviderEvent.Ready(metadata))
-
-// Configuration changed
-eventsHub.publish(ProviderEvent.ConfigurationChanged(
-  changedFlags = Set("flag-1", "flag-2"),
-  metadata = metadata
-))
-
-// Provider encountered an error
-eventsHub.publish(ProviderEvent.Error(
-  error = new Exception("Connection lost"),
-  metadata = metadata
-))
-
-// Provider data is stale
-eventsHub.publish(ProviderEvent.Stale(
-  reason = "Cache expired",
-  metadata = metadata
-))
-```

@@ -1,37 +1,38 @@
 # ZIO OpenFeature
 
-A type-safe, ZIO-native implementation of the [OpenFeature](https://openfeature.dev/) specification for Scala 3.
+A ZIO-native wrapper around the [OpenFeature](https://openfeature.dev/) Java SDK for Scala 3.
 
-## Features
+## What is ZIO OpenFeature?
 
-- Type-safe flag evaluation with `FlagType` type class
-- Hierarchical evaluation context (global, scoped, transaction, invocation)
-- Hook system for cross-cutting concerns (logging, metrics, validation)
-- Transaction support with override injection and evaluation tracking
-- Testkit module for easy testing
-- Optimizely provider implementation
+ZIO OpenFeature provides a type-safe, functional interface for feature flag evaluation using any OpenFeature-compatible provider. It wraps the OpenFeature Java SDK, giving you:
+
+- **Any OpenFeature Provider**: Use LaunchDarkly, Flagsmith, CloudBees, Flipt, or any other OpenFeature provider
+- **Type Safety**: Compile-time guarantees with the `FlagType` type class
+- **ZIO Integration**: First-class effect handling, resource management, and fiber-local context
+- **Transactions**: Scoped flag overrides with evaluation caching and tracking
+- **Hooks**: Cross-cutting concerns for logging, metrics, and validation
 
 ## Requirements
 
 - Scala 3.3+
 - ZIO 2.1+
+- Java 11+ (required by OpenFeature SDK)
 
 ## Installation
 
 [![Maven Central](https://img.shields.io/maven-central/v/io.github.etacassiopeia/zio-openfeature-core_3.svg)](https://search.maven.org/search?q=g:io.github.etacassiopeia%20AND%20a:zio-openfeature-core_3)
 
-Add the following to your `build.sbt`:
-
 ```scala
-val zioOpenFeatureVersion = "0.1.0"
+val zioOpenFeatureVersion = "0.2.0"
 
+// Core library (includes OpenFeature SDK)
 libraryDependencies += "io.github.etacassiopeia" %% "zio-openfeature-core" % zioOpenFeatureVersion
 
-// For testing support
+// For testing
 libraryDependencies += "io.github.etacassiopeia" %% "zio-openfeature-testkit" % zioOpenFeatureVersion % Test
 
-// For Optimizely integration
-libraryDependencies += "io.github.etacassiopeia" %% "zio-openfeature-optimizely" % zioOpenFeatureVersion
+// For Optimizely flat flags support (optional)
+libraryDependencies += "io.github.etacassiopeia" %% "zio-openfeature-contrib-optimizely" % zioOpenFeatureVersion
 ```
 
 ## Quick Start
@@ -44,16 +45,47 @@ import zio.openfeature.testkit.*
 object MyApp extends ZIOAppDefault:
 
   val program = for
-    flags   <- ZIO.service[FeatureFlags]
-    enabled <- flags.boolean("my-feature", false)
-    _       <- ZIO.when(enabled)(ZIO.debug("Feature is enabled!"))
+    enabled <- FeatureFlags.boolean("my-feature", default = false)
+    _       <- ZIO.when(enabled)(Console.printLine("Feature is enabled!"))
   yield ()
 
   def run = program.provide(
-    FeatureFlags.live,
-    TestFeatureProvider.layer(Map("my-feature" -> true))
+    Scope.default >>> TestFeatureProvider.layer(Map("my-feature" -> true))
   )
 ```
+
+## Using OpenFeature Providers
+
+ZIO OpenFeature works with any OpenFeature Java SDK provider:
+
+```scala
+import zio.*
+import zio.openfeature.*
+import dev.openfeature.contrib.providers.flagd.FlagdProvider
+
+object ProductionApp extends ZIOAppDefault:
+
+  val program = for
+    enabled <- FeatureFlags.boolean("new-checkout", default = false)
+    variant <- FeatureFlags.string("button-color", default = "blue")
+  yield (enabled, variant)
+
+  def run = program.provide(
+    Scope.default >>> FeatureFlags.fromProvider(new FlagdProvider())
+  )
+```
+
+### Popular Providers
+
+| Provider | Dependency |
+|----------|------------|
+| [flagd](https://flagd.dev/) | `"dev.openfeature.contrib.providers" % "flagd" % "x.y.z"` |
+| [LaunchDarkly](https://launchdarkly.com/) | `"dev.openfeature.contrib.providers" % "launchdarkly" % "x.y.z"` |
+| [CloudBees](https://www.cloudbees.com/) | `"dev.openfeature.contrib.providers" % "cloudbees" % "x.y.z"` |
+| [Flagsmith](https://flagsmith.com/) | `"dev.openfeature.contrib.providers" % "flagsmith" % "x.y.z"` |
+| [Flipt](https://flipt.io/) | `"dev.openfeature.contrib.providers" % "flipt" % "x.y.z"` |
+
+See the [OpenFeature ecosystem](https://openfeature.dev/ecosystem) for all available providers.
 
 ## Core Concepts
 
@@ -61,144 +93,99 @@ object MyApp extends ZIOAppDefault:
 
 ```scala
 // Boolean flags
-val enabled: ZIO[FeatureFlags, FeatureFlagError, Boolean] =
-  FeatureFlags.boolean("feature", false)
+val enabled = FeatureFlags.boolean("feature", default = false)
 
 // String flags
-val variant: ZIO[FeatureFlags, FeatureFlagError, String] =
-  FeatureFlags.string("variant", "default")
+val variant = FeatureFlags.string("variant", default = "control")
 
-// Typed flags with FlagType
-val count: ZIO[FeatureFlags, FeatureFlagError, Int] =
-  FeatureFlags.value[Int]("count", 0)
+// Numeric flags
+val limit = FeatureFlags.int("max-items", default = 100)
+val rate  = FeatureFlags.double("sample-rate", default = 0.1)
+
+// Detailed evaluation with metadata
+val details = FeatureFlags.booleanDetails("feature", default = false)
+details.map { resolution =>
+  println(s"Value: ${resolution.value}")
+  println(s"Reason: ${resolution.reason}")
+  println(s"Variant: ${resolution.variant}")
+}
 ```
 
 ### Evaluation Context
 
 ```scala
-// Create context with targeting key
+// Create context for targeting
 val ctx = EvaluationContext("user-123")
   .withAttribute("plan", "premium")
   .withAttribute("country", "US")
 
 // Evaluate with context
-FeatureFlags.boolean("premium-feature", false, ctx)
+FeatureFlags.boolean("premium-feature", default = false, ctx)
 
-// Set global context
+// Set global context for all evaluations
 FeatureFlags.setGlobalContext(ctx)
 
-// Scoped context for a block of code
+// Scope context to a block
 FeatureFlags.withContext(ctx) {
-  FeatureFlags.boolean("feature", false)
+  FeatureFlags.boolean("feature", default = false)
+}
+```
+
+### Transactions
+
+```scala
+// Run code with flag overrides and evaluation tracking
+val result = FeatureFlags.transaction(
+  overrides = Map("feature-a" -> true, "max-items" -> 50)
+) {
+  for
+    a <- FeatureFlags.boolean("feature-a", default = false)
+    n <- FeatureFlags.int("max-items", default = 10)
+  yield (a, n)
+}
+
+result.map { txResult =>
+  println(s"Result: ${txResult.result}")        // (true, 50)
+  println(s"Flags evaluated: ${txResult.flagCount}")
+  println(s"Overrides used: ${txResult.overrideCount}")
 }
 ```
 
 ### Hooks
 
 ```scala
-// Add logging hook
-val loggingHook = FeatureHook.logging()
-FeatureFlags.addHook(loggingHook)
+// Add logging
+FeatureFlags.addHook(FeatureHook.logging())
 
-// Add metrics hook
-val metricsHook = FeatureHook.metrics { (key, duration, success) =>
-  ZIO.succeed(println(s"Flag $key evaluated in ${duration.toMillis}ms (success=$success)"))
-}
-FeatureFlags.addHook(metricsHook)
+// Add metrics
+FeatureFlags.addHook(FeatureHook.metrics { (key, duration, success) =>
+  ZIO.succeed(println(s"Flag $key evaluated in ${duration.toMillis}ms"))
+})
 
-// Context validation hook
-val validationHook = FeatureHook.contextValidator(requireTargetingKey = true)
-FeatureFlags.addHook(validationHook)
-```
-
-### Transactions
-
-```scala
-// Run code with flag overrides
-val overrides = Map("feature-a" -> true, "feature-b" -> "variant-x")
-
-val result = FeatureFlags.transaction(overrides) {
-  for
-    a <- FeatureFlags.boolean("feature-a", false)
-    b <- FeatureFlags.string("feature-b", "default")
-  yield (a, b)
-}
-
-// Access transaction result with evaluation tracking
-result.map { txResult =>
-  println(s"Result: ${txResult.result}")
-  println(s"Flags evaluated: ${txResult.flagCount}")
-  println(s"Overrides used: ${txResult.overrideCount}")
-}
-```
-
-## Custom Provider
-
-Implement the `FeatureProvider` trait:
-
-```scala
-class MyProvider extends FeatureProvider:
-  val metadata = ProviderMetadata("MyProvider", "1.0.0")
-
-  def status = Ref.make(ProviderStatus.Ready).flatMap(_.get)
-  def events = ZStream.empty
-  def initialize = ZIO.unit
-  def shutdown = ZIO.unit
-
-  def resolveBooleanValue(
-    key: String,
-    defaultValue: Boolean,
-    context: EvaluationContext
-  ): IO[FeatureFlagError, FlagResolution[Boolean]] =
-    // Your implementation
-    ZIO.succeed(FlagResolution.default(key, defaultValue))
-
-  // Implement other resolve methods...
-```
-
-## Testing
-
-Use the testkit module for testing:
-
-```scala
-import zio.openfeature.testkit.*
-
-val testLayer = TestFeatureProvider.layer(Map(
-  "feature-a" -> true,
-  "feature-b" -> "variant-1",
-  "count" -> 42
-))
-
-val test = for
-  provider <- ZIO.service[TestFeatureProvider]
-  _        <- provider.initialize
-
-  // Verify flag evaluations
-  _        <- myCode.provide(FeatureFlags.live, testLayer)
-
-  // Check what was evaluated
-  was      <- provider.wasEvaluated("feature-a")
-  count    <- provider.evaluationCount("feature-a")
-yield assertTrue(was) && assertTrue(count == 1)
+// Validate context
+FeatureFlags.addHook(FeatureHook.contextValidator(requireTargetingKey = true))
 ```
 
 ## Modules
 
-- **core**: Core abstractions and FeatureFlags service
-- **testkit**: Testing utilities including TestFeatureProvider
-- **optimizely**: Optimizely feature flag provider
+| Module | Description |
+|--------|-------------|
+| **core** | ZIO wrapper around OpenFeature SDK with FeatureFlags service |
+| **testkit** | TestFeatureProvider for testing without external dependencies |
+| **contrib-optimizely** | Flat flags DSL for Optimizely's variable pattern |
 
 ## Documentation
 
-Full documentation is available at: https://etacassiopeia.github.io/zio-openfeature/
+Full documentation: https://etacassiopeia.github.io/zio-openfeature/
 
-- [Getting Started](https://etacassiopeia.github.io/zio-openfeature/getting-started)
-- [Architecture](https://etacassiopeia.github.io/zio-openfeature/architecture) - Core concepts and design
-- [Evaluation Context](https://etacassiopeia.github.io/zio-openfeature/context)
-- [Hooks](https://etacassiopeia.github.io/zio-openfeature/hooks)
-- [Transactions](https://etacassiopeia.github.io/zio-openfeature/transactions)
-- [Testkit](https://etacassiopeia.github.io/zio-openfeature/testkit)
-- [Providers](https://etacassiopeia.github.io/zio-openfeature/providers)
+- [Getting Started](https://etacassiopeia.github.io/zio-openfeature/getting-started) - Installation and basic usage
+- [Architecture](https://etacassiopeia.github.io/zio-openfeature/architecture) - Design and components
+- [Providers](https://etacassiopeia.github.io/zio-openfeature/providers) - Using OpenFeature providers
+- [Evaluation Context](https://etacassiopeia.github.io/zio-openfeature/context) - Targeting and context hierarchy
+- [Hooks](https://etacassiopeia.github.io/zio-openfeature/hooks) - Cross-cutting concerns
+- [Transactions](https://etacassiopeia.github.io/zio-openfeature/transactions) - Overrides and tracking
+- [Testkit](https://etacassiopeia.github.io/zio-openfeature/testkit) - Testing utilities
+- [Spec Compliance](https://etacassiopeia.github.io/zio-openfeature/spec-compliance) - OpenFeature specification compliance
 
 ## License
 

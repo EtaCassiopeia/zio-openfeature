@@ -490,14 +490,10 @@ zio-openfeature/
 │       └── internal/
 │           └── ContextConverter.scala  # ZIO ↔ OpenFeature conversion
 │
-├── testkit/                 # Testing utilities
-│   └── src/main/scala/zio/openfeature/testkit/
-│       ├── TestFeatureProvider.scala # In-memory OpenFeature provider
-│       └── TestAssertions.scala      # Test helpers
-│
-└── contrib/optimizely/      # Optimizely-specific features
-    └── src/main/scala/zio/openfeature/contrib/optimizely/
-        └── FlatFlags.scala           # Flat flags for Optimizely
+└── testkit/                 # Testing utilities
+    └── src/main/scala/zio/openfeature/testkit/
+        ├── TestFeatureProvider.scala # In-memory OpenFeature provider
+        └── TestAssertions.scala      # Test helpers
 ```
 
 ---

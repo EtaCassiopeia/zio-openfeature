@@ -55,7 +55,7 @@ lazy val commonSettings = Seq(
 )
 
 lazy val root = (project in file("."))
-  .aggregate(core, testkit, `contrib-optimizely`)
+  .aggregate(core, testkit)
   .settings(
     name           := "zio-openfeature",
     publish / skip := true
@@ -82,18 +82,5 @@ lazy val testkit = (project in file("testkit"))
     libraryDependencies ++= Seq(
       "dev.zio" %% "zio"      % zioVersion,
       "dev.zio" %% "zio-test" % zioVersion
-    )
-  )
-
-// Contrib: Optimizely-specific features (flat flags)
-lazy val `contrib-optimizely` = (project in file("contrib/optimizely"))
-  .dependsOn(core, testkit % Test)
-  .settings(
-    name := "zio-openfeature-contrib-optimizely",
-    commonSettings,
-    libraryDependencies ++= Seq(
-      "dev.zio" %% "zio" % zioVersion
-      // Note: Users should add their own Optimizely provider dependency
-      // e.g., "dev.openfeature.contrib.providers" % "optimizely" % "x.y.z"
     )
   )

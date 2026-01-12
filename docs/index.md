@@ -66,7 +66,6 @@ object MyApp extends ZIOAppDefault:
 |:-------|:------------|
 | **core** | ZIO wrapper around OpenFeature SDK |
 | **testkit** | In-memory provider for testing |
-| **contrib-optimizely** | Flat flags DSL for Optimizely |
 
 ## Requirements
 

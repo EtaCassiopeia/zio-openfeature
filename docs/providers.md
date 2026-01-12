@@ -42,9 +42,6 @@ libraryDependencies ++= Seq(
   "io.github.etacassiopeia" %% "zio-openfeature-core" % "0.2.0",
   "dev.openfeature.contrib.providers" % "optimizely" % "0.1.0"
 )
-
-// Optional: for flat flags support
-libraryDependencies += "io.github.etacassiopeia" %% "zio-openfeature-contrib-optimizely" % "0.2.0"
 ```
 
 ### Getting Your SDK Key
@@ -109,22 +106,6 @@ To use a different variable name, add the `variableKey` attribute to the context
 val ctx = userContext.withAttribute("variableKey", "custom_variable_name")
 val value = FeatureFlags.string("feature-key", "default", ctx)
 ```
-
-### Flat Flags (contrib-optimizely)
-
-For Optimizely features using a single variable named `_`, use the flat flags extension:
-
-```scala
-import zio.openfeature.contrib.optimizely.*
-
-val program = for
-  ff       <- ZIO.service[FeatureFlags]
-  discount <- ff.flatDouble("discount-rate", 0.0)
-  limit    <- ff.flatInt("max-items", 10)
-yield (discount, limit)
-```
-
-See [Flat Flags](#flat-flags-contrib-optimizely) section below for setup details.
 
 ### Complete Example
 
@@ -393,57 +374,6 @@ val eventHandler = FeatureFlags.events.foreach { event =>
 // Run event handler in background
 eventHandler.fork
 ```
-
----
-
-## Flat Flags (contrib-optimizely)
-
-The `contrib-optimizely` module provides extensions for Optimizely's variable pattern.
-
-### Installation
-
-```scala
-libraryDependencies ++= Seq(
-  "io.github.etacassiopeia" %% "zio-openfeature-core" % "0.2.0",
-  "io.github.etacassiopeia" %% "zio-openfeature-contrib-optimizely" % "0.2.0",
-  "dev.openfeature.contrib.providers" % "optimizely" % "0.1.0"
-)
-```
-
-### What are Flat Flags?
-
-Optimizely features are boolean toggles with optional variables. **Flat flags** are a convention where a feature has a single variable named `_` that holds a non-boolean value:
-
-```
-Optimizely Feature: discount-percentage
-├── Enabled: true
-└── Variables:
-    └── _ (Double): 15.0
-
-Using flat flags:
-ff.flatDouble("discount-percentage", 0.0)  → 15.0
-```
-
-### Using Flat Flags
-
-```scala
-import zio.openfeature.contrib.optimizely.*
-
-val program = for
-  ff <- ZIO.service[FeatureFlags]
-  // Use flat flag extensions
-  discount <- ff.flatDouble("discount-rate", 0.0)
-  limit    <- ff.flatInt("max-items", 10)
-  label    <- ff.flatString("button-label", "Submit")
-yield (discount, limit, label)
-```
-
-### Setting Up in Optimizely
-
-1. Create a feature in Optimizely (e.g., `discount-rate`)
-2. Add a variable named `_` with appropriate type (Integer, Double, String)
-3. Set values per variation
-4. Configure targeting rules
 
 ---
 

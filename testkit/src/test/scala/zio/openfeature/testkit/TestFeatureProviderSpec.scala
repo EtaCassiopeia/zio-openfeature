@@ -157,7 +157,7 @@ object TestFeatureProviderSpec extends ZIOSpecDefault:
         for
           provider <- TestFeatureProvider.make
           ctx = new ImmutableContext("user-123")
-          _ = provider.getBooleanEvaluation("flag", true, ctx)
+          _   = provider.getBooleanEvaluation("flag", true, ctx)
           evals <- provider.getEvaluations
         yield assertTrue(evals.head._2.getTargetingKey == "user-123")
       }
@@ -173,9 +173,9 @@ object TestFeatureProviderSpec extends ZIOSpecDefault:
         effect.provide(Scope.default >>> TestFeatureProvider.layer)
       },
       test("layer with flags provides pre-configured flags") {
-        val effect = for
-          result <- FeatureFlags.boolean("preset", default = false)
-        yield assertTrue(result == true)
+        val effect =
+          for result <- FeatureFlags.boolean("preset", default = false)
+          yield assertTrue(result == true)
 
         effect.provide(Scope.default >>> TestFeatureProvider.layer(Map("preset" -> true)))
       },

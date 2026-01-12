@@ -145,7 +145,7 @@ final private[openfeature] class FeatureFlagsLive(
     default: A,
     context: EvaluationContext
   ): IO[FeatureFlagError, FlagResolution[A]] =
-    val flagType = FlagType[A]
+    val flagType  = FlagType[A]
     val ofContext = ContextConverter.toOpenFeature(context)
 
     val evaluation: IO[FeatureFlagError, FlagResolution[A]] = flagType.typeName match

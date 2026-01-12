@@ -7,7 +7,9 @@ import zio.openfeature.*
 
 object FeatureFlagsSpec extends ZIOSpecDefault:
 
-  private def testLayer(flags: Map[String, Any] = Map.empty): ZLayer[Any, Throwable, TestFeatureProvider & FeatureFlags] =
+  private def testLayer(
+    flags: Map[String, Any] = Map.empty
+  ): ZLayer[Any, Throwable, TestFeatureProvider & FeatureFlags] =
     Scope.default >>> TestFeatureProvider.layer(flags)
 
   def spec = suite("FeatureFlagsSpec")(

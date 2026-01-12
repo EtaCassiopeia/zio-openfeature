@@ -128,16 +128,19 @@ final class TestFeatureProvider private (
       .build()
 
   private def anyToValue(any: Any): Value = any match
-    case b: Boolean              => new Value(b)
-    case s: String               => new Value(s)
-    case i: Int                  => new Value(i)
-    case l: Long                 => new Value(l.toDouble)
-    case d: Double               => new Value(d)
-    case list: List[?]           => new Value(list.map(anyToValue).asJava)
+    case b: Boolean    => new Value(b)
+    case s: String     => new Value(s)
+    case i: Int        => new Value(i)
+    case l: Long       => new Value(l.toDouble)
+    case d: Double     => new Value(d)
+    case list: List[?] => new Value(list.map(anyToValue).asJava)
     case map: Map[?, ?] =>
-      val javaMap: java.util.Map[String, Object] = map.asInstanceOf[Map[String, Any]].map { case (k, v) =>
-        k -> anyToValue(v).asObject()
-      }.asJava
+      val javaMap: java.util.Map[String, Object] = map
+        .asInstanceOf[Map[String, Any]]
+        .map { case (k, v) =>
+          k -> anyToValue(v).asObject()
+        }
+        .asJava
       new Value(Structure.mapToStructure(javaMap))
     case null  => new Value()
     case other => new Value(other.toString)
@@ -231,26 +234,27 @@ object TestFeatureProvider:
 
   /** Create a FeatureFlags layer from TestFeatureProvider.
     *
-    * This provides both TestFeatureProvider (for test helpers) and FeatureFlags (for flag evaluation).
-    * Each layer gets a unique domain for test isolation.
+    * This provides both TestFeatureProvider (for test helpers) and FeatureFlags (for flag evaluation). Each layer gets
+    * a unique domain for test isolation.
     */
   def layer: ZLayer[Scope, Throwable, TestFeatureProvider & FeatureFlags] =
     layer(Map.empty)
 
-  /** Create a FeatureFlags layer with initial flags.
-    * Uses a unique domain per invocation to ensure test isolation.
+  /** Create a FeatureFlags layer with initial flags. Uses a unique domain per invocation to ensure test isolation.
     */
   def layer(flags: Map[String, Any]): ZLayer[Scope, Throwable, TestFeatureProvider & FeatureFlags] =
-    ZLayer.scoped {
-      for
-        testProvider <- make(flags)
-        domain = s"test-${java.util.UUID.randomUUID()}"
-        featureFlags <- FeatureFlags.fromProviderWithDomain(testProvider, domain).build.map(_.get)
-      yield (testProvider, featureFlags)
-    }.flatMap { env =>
-      val (testProvider, featureFlags) = env.get[(TestFeatureProvider, FeatureFlags)]
-      ZLayer.succeed(testProvider) ++ ZLayer.succeed(featureFlags)
-    }
+    ZLayer
+      .scoped {
+        for
+          testProvider <- make(flags)
+          domain = s"test-${java.util.UUID.randomUUID()}"
+          featureFlags <- FeatureFlags.fromProviderWithDomain(testProvider, domain).build.map(_.get)
+        yield (testProvider, featureFlags)
+      }
+      .flatMap { env =>
+        val (testProvider, featureFlags) = env.get[(TestFeatureProvider, FeatureFlags)]
+        ZLayer.succeed(testProvider) ++ ZLayer.succeed(featureFlags)
+      }
 
   /** Create just the TestFeatureProvider layer (without FeatureFlags). */
   def providerLayer: ULayer[TestFeatureProvider] =
@@ -262,8 +266,8 @@ object TestFeatureProvider:
 
   /** Create a FeatureFlags layer from an existing TestFeatureProvider.
     *
-    * This is useful when you need to manipulate the provider before creating the layer,
-    * or when you want to share a provider across multiple tests.
+    * This is useful when you need to manipulate the provider before creating the layer, or when you want to share a
+    * provider across multiple tests.
     */
   def layerFrom(provider: TestFeatureProvider): ZLayer[Scope, Throwable, FeatureFlags] =
     val domain = s"test-${java.util.UUID.randomUUID()}"

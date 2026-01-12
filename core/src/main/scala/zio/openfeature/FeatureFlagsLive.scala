@@ -394,6 +394,102 @@ final private[openfeature] class FeatureFlagsLive(
       runWithHooks(key, default, ctx, effectCtx => evaluateFlag(key, default, effectCtx))
     }
 
+  // Evaluation with options (invocation-level hooks)
+
+  private def runWithAllHooks[A: FlagType](
+    key: String,
+    default: A,
+    context: EvaluationContext,
+    options: EvaluationOptions,
+    evaluate: EvaluationContext => IO[FeatureFlagError, FlagResolution[A]]
+  ): IO[FeatureFlagError, FlagResolution[A]] =
+    for
+      clientHooks <- hooksRef.get
+      // Combine client hooks with invocation hooks (client first, then invocation)
+      allHooks = clientHooks ++ options.hooks
+      metadata = ProviderMetadata(providerName)
+      hookCtx = HookContext(
+        flagKey = key,
+        flagType = FlagValueType.fromFlagType[A],
+        defaultValue = default,
+        evaluationContext = context,
+        providerMetadata = metadata
+      )
+      result <-
+        if allHooks.isEmpty then evaluate(context)
+        else runHookPipelineWithHints(hookCtx, allHooks, context, options.hookHints, evaluate)
+    yield result
+
+  private def runHookPipelineWithHints[A](
+    hookCtx: HookContext,
+    hooks: List[FeatureHook],
+    context: EvaluationContext,
+    initialHints: HookHints,
+    evaluate: EvaluationContext => IO[FeatureFlagError, FlagResolution[A]]
+  ): IO[FeatureFlagError, FlagResolution[A]] =
+    val composedHook = FeatureHook.compose(hooks)
+
+    for
+      beforeResult <- composedHook.before(hookCtx, initialHints)
+      (effectiveCtx, hints) = beforeResult.getOrElse((context, initialHints))
+      result <- evaluate(effectiveCtx)
+        .tapBoth(
+          err => composedHook.error(hookCtx, err, hints),
+          res => composedHook.after(hookCtx, res, hints)
+        )
+        .ensuring(composedHook.finallyAfter(hookCtx, hints).ignore)
+    yield result
+
+  override def booleanDetails(
+    key: String,
+    default: Boolean,
+    ctx: EvaluationContext,
+    options: EvaluationOptions
+  ): IO[FeatureFlagError, FlagResolution[Boolean]] =
+    effectiveContext(ctx).flatMap { effectCtx =>
+      runWithAllHooks(key, default, effectCtx, options, c => evaluateFlag(key, default, c))
+    }
+
+  override def stringDetails(
+    key: String,
+    default: String,
+    ctx: EvaluationContext,
+    options: EvaluationOptions
+  ): IO[FeatureFlagError, FlagResolution[String]] =
+    effectiveContext(ctx).flatMap { effectCtx =>
+      runWithAllHooks(key, default, effectCtx, options, c => evaluateFlag(key, default, c))
+    }
+
+  override def intDetails(
+    key: String,
+    default: Int,
+    ctx: EvaluationContext,
+    options: EvaluationOptions
+  ): IO[FeatureFlagError, FlagResolution[Int]] =
+    effectiveContext(ctx).flatMap { effectCtx =>
+      runWithAllHooks(key, default, effectCtx, options, c => evaluateFlag(key, default, c))
+    }
+
+  override def doubleDetails(
+    key: String,
+    default: Double,
+    ctx: EvaluationContext,
+    options: EvaluationOptions
+  ): IO[FeatureFlagError, FlagResolution[Double]] =
+    effectiveContext(ctx).flatMap { effectCtx =>
+      runWithAllHooks(key, default, effectCtx, options, c => evaluateFlag(key, default, c))
+    }
+
+  override def valueDetails[A: FlagType](
+    key: String,
+    default: A,
+    ctx: EvaluationContext,
+    options: EvaluationOptions
+  ): IO[FeatureFlagError, FlagResolution[A]] =
+    effectiveContext(ctx).flatMap { effectCtx =>
+      runWithAllHooks(key, default, effectCtx, options, c => evaluateFlag(key, default, c))
+    }
+
   override def setGlobalContext(ctx: EvaluationContext): UIO[Unit] =
     globalContextRef.set(ctx)
 

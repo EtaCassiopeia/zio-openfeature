@@ -21,7 +21,7 @@ A type-safe, ZIO-native implementation of the [OpenFeature](https://openfeature.
 ## Features
 
 - **Type-safe flag evaluation** with `FlagType` type class
-- **Hierarchical evaluation context** (global, fiber-local, transaction, invocation)
+- **Hierarchical evaluation context** (global, scoped, transaction, invocation)
 - **Hook system** for cross-cutting concerns (logging, metrics, validation)
 - **Transaction support** with override injection and evaluation tracking
 - **Testkit module** for easy testing

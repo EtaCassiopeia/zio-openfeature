@@ -159,7 +159,7 @@ val plan: IO[FeatureFlagError, Plan] =
 
 ## Context Hierarchy
 
-Evaluation context flows through four levels, with later levels taking precedence:
+Evaluation context flows through multiple levels, with later levels taking precedence:
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -170,9 +170,9 @@ Evaluation context flows through four levels, with later levels taking precedenc
             ┌───────────────┼───────────────┐
             │               │               │
     ┌───────┴───────┐ ┌─────┴─────┐ ┌───────┴───────┐
-    │  Invocation   │ │Transaction│ │    Fiber      │
+    │  Invocation   │ │Transaction│ │    Scoped     │
     │   Context     │ │  Context  │ │   Context     │
-    │  (per-call)   │ │ (scoped)  │ │ (per-fiber)   │
+    │  (per-call)   │ │ (override)│ │ (withContext) │
     └───────────────┘ └───────────┘ └───────────────┘
                             │
                     ┌───────┴───────┐
@@ -187,7 +187,7 @@ Evaluation context flows through four levels, with later levels taking precedenc
 | Level | Scope | Use Case |
 |:------|:------|:---------|
 | **Global** | Application-wide | App version, environment, deployment region |
-| **Fiber** | Per-fiber (request) | User session, request ID, auth context |
+| **Scoped** | Block of code (via `withContext`) | User session, request context |
 | **Transaction** | Within transaction block | Test overrides, experiment context |
 | **Invocation** | Single evaluation | One-off targeting attributes |
 
@@ -197,28 +197,28 @@ When contexts are merged, attributes from higher-precedence levels override lowe
 
 ```scala
 // Global context (lowest precedence)
-flags.setGlobalContext(
+FeatureFlags.setGlobalContext(
   EvaluationContext("app")
-    .withAttribute("env", "prod")
-    .withAttribute("version", "1.0")
+    .withAttribute("env", AttributeValue.string("prod"))
+    .withAttribute("version", AttributeValue.string("1.0"))
 )
 
-// Fiber context (overrides global)
-flags.setFiberContext(
-  EvaluationContext("user-123")
-    .withAttribute("version", "2.0")  // Overrides global
-)
+// Scoped context (overrides global for this block)
+val scopedCtx = EvaluationContext("user-123")
+  .withAttribute("version", AttributeValue.string("2.0"))  // Overrides global
 
-// Invocation context (highest precedence)
-val ctx = EvaluationContext.empty
-  .withAttribute("experiment", "A")
+FeatureFlags.withContext(scopedCtx) {
+  // Invocation context (highest precedence)
+  val ctx = EvaluationContext.empty
+    .withAttribute("experiment", AttributeValue.string("A"))
 
-// Final merged context for this evaluation:
-// - targetingKey: "user-123" (from fiber)
-// - env: "prod" (from global)
-// - version: "2.0" (from fiber, overrides global)
-// - experiment: "A" (from invocation)
-flags.boolean("feature", false, ctx)
+  // Final merged context for this evaluation:
+  // - targetingKey: "user-123" (from scoped)
+  // - env: "prod" (from global)
+  // - version: "2.0" (from scoped, overrides global)
+  // - experiment: "A" (from invocation)
+  FeatureFlags.boolean("feature", false, ctx)
+}
 ```
 
 ---
@@ -460,7 +460,7 @@ zio-openfeature/
 
 All components are designed for concurrent use:
 
-- **FeatureFlags**: Uses `Ref` for global context, `FiberRef` for fiber-local state
+- **FeatureFlags**: Uses `Ref` for global context, `FiberRef` for scoped context and transactions
 - **FeatureProvider**: Implementations should be thread-safe
 - **TestFeatureProvider**: Uses `Ref` for mutable state, safe for concurrent tests
 - **Transactions**: Use `FiberRef` for isolation between concurrent operations

@@ -76,16 +76,16 @@ FeatureFlags.addHook(validatorHook)
 
 ```scala
 val customHook = new FeatureHook:
-  def before(ctx: HookContext): UIO[EvaluationContext] =
-    ZIO.logDebug(s"Evaluating ${ctx.flagKey}").as(ctx.context)
+  override def before(ctx: HookContext, hints: HookHints): UIO[Option[(EvaluationContext, HookHints)]] =
+    ZIO.logDebug(s"Evaluating ${ctx.flagKey}").as(None)
 
-  def after(ctx: HookContext, value: Any): UIO[Unit] =
-    ZIO.logDebug(s"${ctx.flagKey} = $value")
+  override def after[A](ctx: HookContext, details: FlagResolution[A], hints: HookHints): UIO[Unit] =
+    ZIO.logDebug(s"${ctx.flagKey} = ${details.value}")
 
-  def error(ctx: HookContext, error: FeatureFlagError): UIO[Unit] =
+  override def error(ctx: HookContext, error: FeatureFlagError, hints: HookHints): UIO[Unit] =
     ZIO.logError(s"Error evaluating ${ctx.flagKey}: ${error.message}")
 
-  def finallyAfter(ctx: HookContext): UIO[Unit] =
+  override def finallyAfter(ctx: HookContext, hints: HookHints): UIO[Unit] =
     ZIO.unit
 ```
 
@@ -94,35 +94,40 @@ val customHook = new FeatureHook:
 The `HookContext` provides information about the current evaluation:
 
 ```scala
-case class HookContext(
-  flagKey: String,           // The flag being evaluated
-  flagType: FlagValueType,   // Boolean, String, Int, Double, or Object
-  defaultValue: Any,         // The default value
-  context: EvaluationContext // The evaluation context
+final case class HookContext(
+  flagKey: String,                     // The flag being evaluated
+  flagType: FlagValueType,             // Boolean, String, Int, Double, or Object
+  defaultValue: Any,                   // The default value
+  evaluationContext: EvaluationContext, // The evaluation context
+  providerMetadata: ProviderMetadata   // Provider information
 )
 ```
 
 ### Hook Hints
 
-Hooks can pass data between stages using `HookHints`:
+Hooks can pass data between stages using `HookHints`. Return `Some((modifiedContext, newHints))` from `before` to modify context or pass hints:
 
 ```scala
 val timingHook = new FeatureHook:
-  def before(ctx: HookContext): UIO[EvaluationContext] =
-    Clock.nanoTime.flatMap { start =>
-      // Store start time in fiber-local state
-      ZIO.succeed(ctx.context)
+  private val startTimeKey = "timing.start"
+
+  override def before(ctx: HookContext, hints: HookHints): UIO[Option[(EvaluationContext, HookHints)]] =
+    Clock.nanoTime.map { start =>
+      // Store start time in hints for later stages
+      Some((ctx.evaluationContext, hints + (startTimeKey -> start)))
     }
 
-  def after(ctx: HookContext, value: Any): UIO[Unit] =
-    Clock.nanoTime.flatMap { end =>
-      ZIO.logInfo(s"Evaluation took ${end}ns")
-    }
+  override def after[A](ctx: HookContext, details: FlagResolution[A], hints: HookHints): UIO[Unit] =
+    for
+      end <- Clock.nanoTime
+      start = hints.getOrElse[Long](startTimeKey, end)
+      _ <- ZIO.logInfo(s"Evaluation took ${(end - start) / 1_000_000}ms")
+    yield ()
 
-  def error(ctx: HookContext, error: FeatureFlagError): UIO[Unit] =
+  override def error(ctx: HookContext, error: FeatureFlagError, hints: HookHints): UIO[Unit] =
     ZIO.unit
 
-  def finallyAfter(ctx: HookContext): UIO[Unit] =
+  override def finallyAfter(ctx: HookContext, hints: HookHints): UIO[Unit] =
     ZIO.unit
 ```
 
@@ -181,20 +186,14 @@ val currentHooks: ZIO[FeatureFlags, Nothing, List[FeatureHook]] =
 
 ```scala
 val auditHook = new FeatureHook:
-  def before(ctx: HookContext): UIO[EvaluationContext] =
-    ZIO.succeed(ctx.context)
-
-  def after(ctx: HookContext, value: Any): UIO[Unit] =
+  override def after[A](ctx: HookContext, details: FlagResolution[A], hints: HookHints): UIO[Unit] =
     ZIO.logInfo(
-      s"AUDIT: User ${ctx.context.targetingKey.getOrElse("anonymous")} " +
-      s"evaluated ${ctx.flagKey} = $value"
+      s"AUDIT: User ${ctx.evaluationContext.targetingKey.getOrElse("anonymous")} " +
+      s"evaluated ${ctx.flagKey} = ${details.value}"
     )
 
-  def error(ctx: HookContext, error: FeatureFlagError): UIO[Unit] =
+  override def error(ctx: HookContext, error: FeatureFlagError, hints: HookHints): UIO[Unit] =
     ZIO.logError(s"AUDIT: Flag evaluation failed: ${error.message}")
-
-  def finallyAfter(ctx: HookContext): UIO[Unit] =
-    ZIO.unit
 ```
 
 ### Feature Flag Analytics

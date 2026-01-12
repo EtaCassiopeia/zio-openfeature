@@ -371,7 +371,7 @@ The `ruleKey` in metadata identifies which Optimizely targeting rule was applied
 
 5. **Handle Defaults Gracefully**: Choose sensible default values that provide a safe fallback experience.
 
-6. **Use Typed Methods**: Use `getBooleanValue`, `getStringValue`, etc. instead of generic methods for type safety.
+6. **Use Typed Methods**: Use `boolean`, `string`, `int`, `double` methods instead of generic `value[A]` for type safety.
 
 ### Optimizely Dashboard Setup
 

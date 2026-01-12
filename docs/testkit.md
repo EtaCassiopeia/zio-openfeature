@@ -60,8 +60,7 @@ val testLayer = TestFeatureProvider.layer(Map(
 
 val test = for
   flags  <- ZIO.service[FeatureFlags]
-  _      <- flags.initialize
-  result <- flags.getBooleanValue("feature", false)
+  result <- flags.boolean("feature", false)
 yield assertTrue(result == true)
 
 test.provide(FeatureFlags.live, testLayer)

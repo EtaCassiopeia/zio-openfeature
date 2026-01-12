@@ -19,14 +19,13 @@ nav_order: 4
 
 Evaluation context provides information about the current evaluation environment. This includes user information, application state, and any other data that might influence flag evaluation.
 
-ZIO OpenFeature supports a hierarchical context system with four levels:
+ZIO OpenFeature supports a hierarchical context system with three levels:
 
-1. **Global context** - Shared across all fibers
-2. **Fiber-local context** - Specific to the current fiber
-3. **Transaction context** - Active during a transaction
-4. **Invocation context** - Passed directly to evaluation methods
+1. **Global context** - Shared across all evaluations, set via `setGlobalContext`
+2. **Scoped context** - Applied to a block of code via `withContext`
+3. **Invocation context** - Passed directly to evaluation methods
 
-Contexts are merged in order, with later contexts taking precedence.
+Contexts are merged in order, with later contexts taking precedence. Transaction context can also override values within a transaction block.
 
 ## Creating Context
 
@@ -52,10 +51,10 @@ val richCtx = EvaluationContext("user-123")
 
 ```scala
 val ctx = EvaluationContext.builder
-  .withTargetingKey("user-456")
-  .withAttribute("role", "admin")
-  .withAttribute("beta", true)
-  .withAttribute("score", 95.5)
+  .targetingKey("user-456")
+  .attribute("role", "admin")
+  .attribute("beta", true)
+  .attribute("score", 95.5)
   .build
 ```
 
@@ -77,19 +76,18 @@ val program = for
 yield ()
 ```
 
-### Fiber-Local Context
+### Scoped Context
 
-Fiber-local context is specific to the current fiber and its children.
+Use `withContext` to set context for a specific scope of code.
 
 ```scala
-val program = for
-  flags <- ZIO.service[FeatureFlags]
-  _     <- flags.setFiberContext(
-             EvaluationContext("user-123")
-               .withAttribute("session", "abc-xyz")
-           )
-  // This fiber's evaluations include the context
-yield ()
+val ctx = EvaluationContext("user-123")
+  .withAttribute("session", AttributeValue.string("abc-xyz"))
+
+val program = FeatureFlags.withContext(ctx) {
+  // All evaluations in this block use the scoped context
+  FeatureFlags.boolean("feature", false)
+}
 ```
 
 ### Invocation Context
@@ -101,21 +99,6 @@ val ctx = EvaluationContext("user-789")
   .withAttribute("feature-group", "beta")
 
 val result = FeatureFlags.boolean("new-feature", false, ctx)
-```
-
-### Scoped Context
-
-Use `withContext` to temporarily set context for a block of code.
-
-```scala
-val ctx = EvaluationContext("test-user")
-
-val result = FeatureFlags.withContext(ctx) {
-  for
-    a <- FeatureFlags.boolean("feature-a", false)
-    b <- FeatureFlags.string("feature-b", "default")
-  yield (a, b)
-}
 ```
 
 ## Attribute Types
@@ -160,18 +143,18 @@ When multiple contexts are present, they are merged with later contexts taking p
 
 ```scala
 val global = EvaluationContext.empty
-  .withAttribute("env", "prod")
-  .withAttribute("version", "1.0")
+  .withAttribute("env", AttributeValue.string("prod"))
+  .withAttribute("version", AttributeValue.string("1.0"))
 
-val fiber = EvaluationContext("user-123")
-  .withAttribute("version", "2.0")  // Overrides global
+val scoped = EvaluationContext("user-123")
+  .withAttribute("version", AttributeValue.string("2.0"))  // Overrides global
 
 val invocation = EvaluationContext.empty
-  .withAttribute("feature-group", "beta")
+  .withAttribute("feature-group", AttributeValue.string("beta"))
 
-// Effective context:
-// - targetingKey: "user-123" (from fiber)
+// Effective context when using withContext(scoped) and passing invocation:
+// - targetingKey: "user-123" (from scoped)
 // - env: "prod" (from global)
-// - version: "2.0" (from fiber, overrides global)
+// - version: "2.0" (from scoped, overrides global)
 // - feature-group: "beta" (from invocation)
 ```

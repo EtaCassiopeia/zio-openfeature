@@ -9,7 +9,8 @@ import dev.openfeature.sdk.{
   FlagEvaluationDetails,
   Reason as OFReason,
   ErrorCode as OFErrorCode,
-  ProviderState
+  ProviderState,
+  MutableTrackingEventDetails
 }
 import scala.jdk.CollectionConverters.*
 
@@ -454,3 +455,68 @@ final private[openfeature] class FeatureFlagsLive(
 
   override def hooks: UIO[List[FeatureHook]] =
     hooksRef.get
+
+  // Tracking API
+
+  override def track(eventName: String): IO[FeatureFlagError, Unit] =
+    ZIO
+      .attemptBlocking(client.track(eventName))
+      .mapError(e => FeatureFlagError.ProviderError(e))
+
+  override def track(eventName: String, context: EvaluationContext): IO[FeatureFlagError, Unit] =
+    ZIO
+      .attemptBlocking {
+        val ofContext = ContextConverter.toOpenFeature(context)
+        client.track(eventName, ofContext)
+      }
+      .mapError(e => FeatureFlagError.ProviderError(e))
+
+  override def track(eventName: String, details: TrackingEventDetails): IO[FeatureFlagError, Unit] =
+    ZIO
+      .attemptBlocking {
+        val ofDetails = toOpenFeatureDetails(details)
+        client.track(eventName, ofDetails)
+      }
+      .mapError(e => FeatureFlagError.ProviderError(e))
+
+  override def track(
+    eventName: String,
+    context: EvaluationContext,
+    details: TrackingEventDetails
+  ): IO[FeatureFlagError, Unit] =
+    ZIO
+      .attemptBlocking {
+        val ofContext = ContextConverter.toOpenFeature(context)
+        val ofDetails = toOpenFeatureDetails(details)
+        client.track(eventName, ofContext, ofDetails)
+      }
+      .mapError(e => FeatureFlagError.ProviderError(e))
+
+  private def toOpenFeatureDetails(details: TrackingEventDetails): MutableTrackingEventDetails =
+    val result = details.value match
+      case Some(v) => new MutableTrackingEventDetails(v)
+      case None    => new MutableTrackingEventDetails()
+    details.attributes.foreach { case (k, v) =>
+      addAttributeToDetails(result, k, v)
+    }
+    result
+
+  private def addAttributeToDetails(details: MutableTrackingEventDetails, key: String, value: Any): Unit =
+    value match
+      case b: Boolean                 => details.add(key, b)
+      case s: String                  => details.add(key, s)
+      case i: Int                     => details.add(key, Integer.valueOf(i))
+      case l: Long                    => details.add(key, java.lang.Double.valueOf(l.toDouble))
+      case d: Double                  => details.add(key, d)
+      case f: Float                   => details.add(key, java.lang.Double.valueOf(f.toDouble))
+      case instant: java.time.Instant => details.add(key, instant)
+      case list: List[?] =>
+        val values = list.map(v => new dev.openfeature.sdk.Value(anyToObject(v))).asJava
+        details.add(key, values)
+      case map: Map[?, ?] =>
+        val structure = dev.openfeature.sdk.Structure.mapToStructure(
+          map.asInstanceOf[Map[String, Any]].map { case (k, v) => k -> anyToObject(v) }.asJava
+        )
+        details.add(key, structure)
+      case null  => () // Skip null values
+      case other => details.add(key, other.toString)

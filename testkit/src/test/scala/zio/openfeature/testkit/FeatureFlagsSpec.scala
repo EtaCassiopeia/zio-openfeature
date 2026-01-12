@@ -280,5 +280,43 @@ object FeatureFlagsSpec extends ZIOSpecDefault:
         for result <- FeatureFlags.value[String]("str-flag", default = "none", ctx)
         yield assertTrue(result == "found")
       }.provide(testLayer(Map("str-flag" -> "found")))
+    ),
+    suite("Tracking API")(
+      test("track with event name only succeeds") {
+        for _ <- FeatureFlags.track("button-clicked")
+        yield assertTrue(true)
+      }.provide(testLayer()),
+      test("track with context succeeds") {
+        val ctx = EvaluationContext("user-123")
+        for _ <- FeatureFlags.track("purchase-completed", ctx)
+        yield assertTrue(true)
+      }.provide(testLayer()),
+      test("track with details succeeds") {
+        val details = TrackingEventDetails(value = Some(99.99))
+        for _ <- FeatureFlags.track("checkout", details)
+        yield assertTrue(true)
+      }.provide(testLayer()),
+      test("track with context and details succeeds") {
+        val ctx = EvaluationContext("user-456")
+        val details = TrackingEventDetails(
+          value = Some(149.99),
+          attributes = Map("currency" -> "USD", "quantity" -> 2)
+        )
+        for _ <- FeatureFlags.track("order-placed", ctx, details)
+        yield assertTrue(true)
+      }.provide(testLayer()),
+      test("track with empty details succeeds") {
+        for _ <- FeatureFlags.track("page-view", TrackingEventDetails.empty)
+        yield assertTrue(true)
+      }.provide(testLayer()),
+      test("TrackingEventDetails builder methods work") {
+        val details = TrackingEventDetails.empty
+          .withValue(50.0)
+          .withAttribute("item", "product-123")
+          .withAttribute("category", "electronics")
+        assertTrue(details.value.contains(50.0)) &&
+        assertTrue(details.attributes("item") == "product-123") &&
+        assertTrue(details.attributes("category") == "electronics")
+      }
     )
   )

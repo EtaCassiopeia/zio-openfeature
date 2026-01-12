@@ -225,7 +225,6 @@ test("service evaluates expected flags") {
       "feature-b" -> "variant"
     ))
     _        <- provider.initialize
-    _        <- ZIO.serviceWithZIO[FeatureFlags](_.initialize)
     _        <- MyService.doSomething
     wasA     <- provider.wasEvaluated("feature-a")
     wasB     <- provider.wasEvaluated("feature-b")

@@ -321,23 +321,172 @@ val safeEvaluation = FeatureFlags.boolean("risky-feature", false)
 
 ### Flat Flags
 
-OpenFeature supports non-boolean flag values (String, Int, Double, Object), but Optimizely flags are fundamentally boolean. To bridge this gap, the provider supports "flat" flags:
+OpenFeature supports multiple flag value types (String, Int, Double, Object), but Optimizely features are fundamentally boolean toggles with optional variables. To bridge this gap, the provider supports **flat flags** - a convention for mapping non-boolean OpenFeature flags to Optimizely features.
 
-A **flat flag** is an Optimizely feature with a single variable named `_` that holds the non-boolean value.
+#### What is a Flat Flag?
 
-**Example in Optimizely:**
-- Feature key: `discount-percentage`
-- Variable name: `_`
-- Variable type: `Double`
-- Variable value: `15.0`
+A **flat flag** is an Optimizely feature with a single variable named `_` (underscore) that holds the non-boolean value. When the provider evaluates a non-boolean flag, it looks for this special variable first.
 
-**Usage in code:**
-```scala
-// Returns 15.0 from the "_" variable
-val discount = FeatureFlags.double("discount-percentage", 0.0, ctx)
+```
+┌─────────────────────────────────────────────────────────┐
+│ Optimizely Feature                                      │
+├─────────────────────────────────────────────────────────┤
+│ Key: discount-percentage                                │
+│ Enabled: true                                           │
+│ Variables:                                              │
+│   ┌─────────────────────────────────────────────────┐   │
+│   │ Name: _                                         │   │
+│   │ Type: Double                                    │   │
+│   │ Value: 15.0                                     │   │
+│   └─────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────┘
+           │
+           ▼
+┌─────────────────────────────────────────────────────────┐
+│ OpenFeature API                                         │
+├─────────────────────────────────────────────────────────┤
+│ FeatureFlags.double("discount-percentage", 0.0)         │
+│                                                         │
+│ Returns: 15.0                                           │
+└─────────────────────────────────────────────────────────┘
 ```
 
-This convention ensures consistent mapping between OpenFeature's type system and Optimizely's feature model.
+#### Why Flat Flags?
+
+| OpenFeature Type | Optimizely Concept | Flat Flag Solution |
+|------------------|-------------------|-------------------|
+| Boolean | Feature toggle (on/off) | Direct mapping |
+| String | Variation key | Direct mapping |
+| Int | Feature variable | Single `_` variable |
+| Double | Feature variable | Single `_` variable |
+| Object | Feature variables (JSON) | All variables as map |
+
+Without flat flags, you'd need to know the variable name in advance, breaking the abstraction between OpenFeature's generic API and Optimizely's variable-based model.
+
+#### Integer Flat Flags
+
+**Optimizely Setup:**
+1. Create a feature: `max-cart-items`
+2. Add a variable named `_` with type `Integer`
+3. Set the default value (e.g., `25`)
+4. Configure variations with different values
+
+```scala
+// Code usage
+val maxItems = FeatureFlags.int("max-cart-items", 10, userContext)
+
+// Or with detailed resolution
+val resolution = FeatureFlags.intDetails("max-cart-items", 10, userContext)
+resolution.map { res =>
+  println(s"Max items: ${res.value}")        // 25
+  println(s"Variation: ${res.variant}")      // "high-limit"
+}
+```
+
+#### Double Flat Flags
+
+**Optimizely Setup:**
+1. Create a feature: `discount-rate`
+2. Add a variable named `_` with type `Double`
+3. Set values per variation
+
+```scala
+// Get discount rate for user
+val discount = FeatureFlags.double("discount-rate", 0.0, userContext)
+
+// Apply discount
+discount.map { rate =>
+  val finalPrice = originalPrice * (1 - rate)
+}
+```
+
+#### Long Flat Flags
+
+For large numbers that exceed Int range:
+
+```scala
+// Optimizely variable type: Integer (will be converted to Long)
+val maxBytes = FeatureFlags.long("max-upload-bytes", 1000000L, userContext)
+```
+
+#### Object Flags (Multiple Variables)
+
+For complex configurations, use multiple variables instead of a single `_`:
+
+**Optimizely Setup:**
+```
+Feature: rate-limit-config
+Variables:
+  - requests_per_minute (Integer): 100
+  - burst_limit (Integer): 150
+  - cooldown_seconds (Integer): 60
+```
+
+```scala
+val config = FeatureFlags.obj(
+  "rate-limit-config",
+  Map("requests_per_minute" -> 50, "burst_limit" -> 75, "cooldown_seconds" -> 30),
+  userContext
+)
+
+config.map { cfg =>
+  val rpm = cfg("requests_per_minute").asInstanceOf[Int]
+  val burst = cfg("burst_limit").asInstanceOf[Int]
+}
+```
+
+#### Setting Up Flat Flags in Optimizely
+
+1. **Navigate to Features**
+   - Go to Optimizely dashboard → **Features**
+   - Click **Create New Feature**
+
+2. **Create the Feature**
+   - Enter the feature key (e.g., `discount-percentage`)
+   - This key will be used in your code
+
+3. **Add the Flat Variable**
+   - Under **Variables**, click **Add Variable**
+   - Set **Name** to `_` (single underscore)
+   - Choose the appropriate **Type** (Integer, Double, String)
+   - Set the **Default Value**
+
+4. **Configure Variations** (optional)
+   - Add variations with different `_` values
+   - Example: `control` with `_` = 10, `treatment` with `_` = 25
+
+5. **Set Up Targeting Rules**
+   - Define which users get which variation
+   - Configure traffic allocation
+
+#### Variable Extraction Priority
+
+When extracting values, the provider follows this priority:
+
+1. **Single `_` variable** - If a variable named `_` exists, use its value
+2. **Single variable (any name)** - If only one variable exists, use it regardless of name
+3. **Multiple variables** - Returns as a Map for Object flags
+
+```scala
+// All these work with flat flags:
+
+// Feature with "_" variable
+FeatureFlags.int("feature-with-underscore", 0)
+
+// Feature with single variable named anything
+FeatureFlags.int("feature-with-single-var", 0)
+
+// Feature with multiple variables (use obj)
+FeatureFlags.obj("feature-with-many-vars", Map.empty)
+```
+
+#### Best Practices for Flat Flags
+
+1. **Use `_` consistently** - Always name your single-value variable `_` for clarity
+2. **Document the convention** - Ensure your team knows about flat flags
+3. **Prefer typed methods** - Use `int`, `double`, `long` instead of generic `value[A]`
+4. **Test with defaults** - Verify behavior when the feature is disabled
+5. **Monitor variations** - Use `valueDetails` to log which variation was served
 
 ### Resolution Metadata
 

@@ -50,9 +50,8 @@ trait FeatureFlags:
   def hooks: UIO[List[FeatureHook]]
 
 object FeatureFlags:
-  // ============================================================
+
   // Service Accessors
-  // ============================================================
 
   def boolean(key: String, default: Boolean): ZIO[FeatureFlags, FeatureFlagError, Boolean] =
     ZIO.serviceWithZIO(_.boolean(key, default))
@@ -145,9 +144,7 @@ object FeatureFlags:
   def hooks: ZIO[FeatureFlags, Nothing, List[FeatureHook]] =
     ZIO.serviceWithZIO(_.hooks)
 
-  // ============================================================
-  // Factory Methods - Create from OpenFeature Provider
-  // ============================================================
+  // Factory Methods
 
   /** Create a FeatureFlags layer from any OpenFeature provider.
     *

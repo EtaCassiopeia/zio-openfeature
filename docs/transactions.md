@@ -58,6 +58,44 @@ val result = FeatureFlags.transaction(overrides, ctx) {
 }
 ```
 
+### Evaluation Caching
+
+By default, transactions cache flag evaluations. When the same flag is evaluated multiple times within a transaction, only the first evaluation calls the provider:
+
+```scala
+FeatureFlags.transaction() {
+  for
+    a <- FeatureFlags.boolean("feature", false)  // Calls provider
+    b <- FeatureFlags.boolean("feature", false)  // Returns cached value
+    c <- FeatureFlags.boolean("feature", false)  // Returns cached value
+  yield (a, b, c)  // All three have the same value
+}
+```
+
+This behavior:
+- Ensures consistency within a transaction
+- Reduces provider calls for better performance
+- Returns `ResolutionReason.Cached` for subsequent evaluations
+
+To disable caching and call the provider for every evaluation (matching the behavior of some other OpenFeature implementations):
+
+```scala
+FeatureFlags.transaction(cacheEvaluations = false) {
+  for
+    a <- FeatureFlags.boolean("feature", false)  // Calls provider
+    b <- FeatureFlags.boolean("feature", false)  // Calls provider again
+  yield (a, b)
+}
+```
+
+**Parameters:**
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `overrides` | `Map[String, Any]` | `Map.empty` | Flag values to override |
+| `context` | `EvaluationContext` | `empty` | Context for this transaction |
+| `cacheEvaluations` | `Boolean` | `true` | Cache flag values within transaction |
+
 ## Transaction Results
 
 Transactions return a `TransactionResult` containing:

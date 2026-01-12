@@ -180,6 +180,21 @@ object TransactionSpec extends ZIOSpecDefault:
           assertTrue(result.overrideCount == 1) &&
           assertTrue(result.wasOverridden("override")) &&
           assertTrue(!result.wasOverridden("provider"))
+      },
+      test("getCachedEvaluation returns None for uncached flag") {
+        for
+          state  <- TransactionState.make(Map.empty, EvaluationContext.empty)
+          cached <- state.getCachedEvaluation("nonexistent")
+        yield assertTrue(cached.isEmpty)
+      },
+      test("getCachedEvaluation returns evaluation after record") {
+        for
+          state  <- TransactionState.make(Map.empty, EvaluationContext.empty)
+          eval   <- FlagEvaluation.evaluated("cached-flag", FlagResolution.default("cached-flag", "cached-value"))
+          _      <- state.record(eval)
+          cached <- state.getCachedEvaluation("cached-flag")
+        yield assertTrue(cached.isDefined) &&
+          assertTrue(cached.get.value == "cached-value")
       }
     )
   )

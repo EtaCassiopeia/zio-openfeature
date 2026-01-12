@@ -69,6 +69,9 @@ final private[openfeature] case class TransactionState(
   def getOverride(key: String): Option[Any] =
     overrides.get(key)
 
+  def getCachedEvaluation(key: String): UIO[Option[FlagEvaluation[?]]] =
+    evaluated.get.map(_.get(key))
+
   def getEvaluations: UIO[Map[String, FlagEvaluation[?]]] =
     evaluated.get
 

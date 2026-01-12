@@ -81,6 +81,7 @@ final private[openfeature] class FeatureFlagsLive(
     context: EvaluationContext,
     state: TransactionState
   ): IO[FeatureFlagError, FlagResolution[A]] =
+    // First check for explicit overrides
     state.getOverride(key) match
       case Some(overrideValue) =>
         val flagType = FlagType[A]
@@ -100,11 +101,31 @@ final private[openfeature] class FeatureFlagsLive(
             )
 
       case None =>
-        for
-          resolution <- evaluateFromProvider(key, default, context)
-          eval       <- FlagEvaluation.evaluated(key, resolution)
-          _          <- state.record(eval)
-        yield resolution
+        // Check for cached evaluation from previous call in this transaction
+        state.getCachedEvaluation(key).flatMap {
+          case Some(cached) =>
+            val flagType = FlagType[A]
+            flagType.decode(cached.value) match
+              case Right(decoded) =>
+                ZIO.succeed(FlagResolution.cached(key, decoded))
+              case Left(_) =>
+                // Type mismatch with cached value - re-evaluate from provider
+                evaluateAndCache(key, default, context, state)
+          case None =>
+            evaluateAndCache(key, default, context, state)
+        }
+
+  private def evaluateAndCache[A: FlagType](
+    key: String,
+    default: A,
+    context: EvaluationContext,
+    state: TransactionState
+  ): IO[FeatureFlagError, FlagResolution[A]] =
+    for
+      resolution <- evaluateFromProvider(key, default, context)
+      eval       <- FlagEvaluation.evaluated(key, resolution)
+      _          <- state.record(eval)
+    yield resolution
 
   private def evaluateFromProvider[A: FlagType](
     key: String,

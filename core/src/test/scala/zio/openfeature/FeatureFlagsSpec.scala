@@ -210,7 +210,41 @@ object FeatureFlagsSpec extends ZIOSpecDefault:
           }
         yield assertTrue(outsideFlags.isEmpty) &&
           assertTrue(insideResult.result.contains("flag-x"))
-      }.provide(testLayer(Map("flag-x" -> true)))
+      }.provide(testLayer(Map("flag-x" -> true))),
+      test("transaction caches evaluated flags for subsequent calls") {
+        // This test verifies that within a transaction, a flag is only evaluated once
+        // and subsequent evaluations return the cached value
+        for txResult <- FeatureFlags.transaction() {
+            for
+              first  <- FeatureFlags.boolean("cached-flag", default = false)
+              second <- FeatureFlags.boolean("cached-flag", default = false)
+              third  <- FeatureFlags.boolean("cached-flag", default = false)
+            yield (first, second, third)
+          }
+        yield
+          // All three evaluations should return the same value
+          assertTrue(txResult.result == (true, true, true)) &&
+          // Only one evaluation should be recorded (the first one, subsequent ones are cached)
+          assertTrue(txResult.flagCount == 1) &&
+          // The flag should not be marked as overridden (it was evaluated from provider, then cached)
+          assertTrue(!txResult.wasOverridden("cached-flag"))
+      }.provide(testLayer(Map("cached-flag" -> true))),
+      test("transaction caching returns cached reason for subsequent evaluations") {
+        for txResult <- FeatureFlags.transaction() {
+            for
+              first  <- FeatureFlags.booleanDetails("detail-flag", default = false)
+              second <- FeatureFlags.booleanDetails("detail-flag", default = false)
+            yield (first, second)
+          }
+        yield
+          val (firstRes, secondRes) = txResult.result
+          // First evaluation should be from provider (TargetingMatch)
+          assertTrue(firstRes.reason == ResolutionReason.TargetingMatch) &&
+          // Second evaluation should be cached
+          assertTrue(secondRes.reason == ResolutionReason.Cached) &&
+          // Both should have the same value
+          assertTrue(firstRes.value == secondRes.value)
+      }.provide(testLayer(Map("detail-flag" -> true)))
     ),
     suite("Hooks")(
       test("addHook and hooks work") {

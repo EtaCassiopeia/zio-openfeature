@@ -46,6 +46,12 @@ trait FeatureFlags:
   def clearHooks: UIO[Unit]
   def hooks: UIO[List[FeatureHook]]
 
+  // Tracking API
+  def track(eventName: String): IO[FeatureFlagError, Unit]
+  def track(eventName: String, context: EvaluationContext): IO[FeatureFlagError, Unit]
+  def track(eventName: String, details: TrackingEventDetails): IO[FeatureFlagError, Unit]
+  def track(eventName: String, context: EvaluationContext, details: TrackingEventDetails): IO[FeatureFlagError, Unit]
+
 object FeatureFlags:
 
   // Service Accessors
@@ -140,6 +146,24 @@ object FeatureFlags:
 
   def hooks: ZIO[FeatureFlags, Nothing, List[FeatureHook]] =
     ZIO.serviceWithZIO(_.hooks)
+
+  // Tracking API
+
+  def track(eventName: String): ZIO[FeatureFlags, FeatureFlagError, Unit] =
+    ZIO.serviceWithZIO(_.track(eventName))
+
+  def track(eventName: String, context: EvaluationContext): ZIO[FeatureFlags, FeatureFlagError, Unit] =
+    ZIO.serviceWithZIO(_.track(eventName, context))
+
+  def track(eventName: String, details: TrackingEventDetails): ZIO[FeatureFlags, FeatureFlagError, Unit] =
+    ZIO.serviceWithZIO(_.track(eventName, details))
+
+  def track(
+    eventName: String,
+    context: EvaluationContext,
+    details: TrackingEventDetails
+  ): ZIO[FeatureFlags, FeatureFlagError, Unit] =
+    ZIO.serviceWithZIO(_.track(eventName, context, details))
 
   // Factory Methods
 

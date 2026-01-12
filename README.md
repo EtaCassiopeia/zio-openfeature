@@ -30,9 +30,6 @@ libraryDependencies += "io.github.etacassiopeia" %% "zio-openfeature-core" % zio
 
 // For testing
 libraryDependencies += "io.github.etacassiopeia" %% "zio-openfeature-testkit" % zioOpenFeatureVersion % Test
-
-// For Optimizely flat flags support (optional)
-libraryDependencies += "io.github.etacassiopeia" %% "zio-openfeature-contrib-optimizely" % zioOpenFeatureVersion
 ```
 
 ## Quick Start
@@ -172,7 +169,6 @@ FeatureFlags.addHook(FeatureHook.contextValidator(requireTargetingKey = true))
 |--------|-------------|
 | **core** | ZIO wrapper around OpenFeature SDK with FeatureFlags service |
 | **testkit** | TestFeatureProvider for testing without external dependencies |
-| **contrib-optimizely** | Flat flags DSL for Optimizely's variable pattern |
 
 ## Documentation
 

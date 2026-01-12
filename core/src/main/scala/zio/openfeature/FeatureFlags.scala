@@ -30,7 +30,8 @@ trait FeatureFlags:
 
   def transaction[R, E, A](
     overrides: Map[String, Any] = Map.empty,
-    context: EvaluationContext = EvaluationContext.empty
+    context: EvaluationContext = EvaluationContext.empty,
+    cacheEvaluations: Boolean = true
   )(zio: ZIO[R, E, A]): ZIO[R, E | FeatureFlagError, TransactionResult[A]]
 
   def inTransaction: UIO[Boolean]
@@ -107,9 +108,10 @@ object FeatureFlags:
 
   def transaction[R, E, A](
     overrides: Map[String, Any] = Map.empty,
-    context: EvaluationContext = EvaluationContext.empty
+    context: EvaluationContext = EvaluationContext.empty,
+    cacheEvaluations: Boolean = true
   )(zio: ZIO[R, E, A]): ZIO[R & FeatureFlags, E | FeatureFlagError, TransactionResult[A]] =
-    ZIO.serviceWithZIO[FeatureFlags](_.transaction(overrides, context)(zio))
+    ZIO.serviceWithZIO[FeatureFlags](_.transaction(overrides, context, cacheEvaluations)(zio))
 
   def inTransaction: ZIO[FeatureFlags, Nothing, Boolean] =
     ZIO.serviceWithZIO(_.inTransaction)

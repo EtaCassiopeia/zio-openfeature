@@ -215,14 +215,15 @@ final private[openfeature] class FeatureFlagsLive(
 
   override def transaction[R, E, A](
     overrides: Map[String, Any],
-    context: EvaluationContext
+    context: EvaluationContext,
+    cacheEvaluations: Boolean
   )(zio: ZIO[R, E, A]): ZIO[R, E | FeatureFlagError, TransactionResult[A]] =
     for
       current <- transactionRef.get
       _ <- ZIO.when(current.isDefined)(
         ZIO.fail(FeatureFlagError.NestedTransactionNotAllowed)
       )
-      state    <- TransactionState.make(overrides, context)
+      state    <- TransactionState.make(overrides, context, cacheEvaluations)
       result   <- transactionRef.locally(Some(state))(zio)
       txResult <- state.toResult(result)
     yield txResult

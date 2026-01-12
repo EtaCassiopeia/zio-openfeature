@@ -61,7 +61,8 @@ object TransactionResult:
 final private[openfeature] case class TransactionState(
   overrides: Map[String, Any],
   evaluated: Ref[Map[String, FlagEvaluation[?]]],
-  context: EvaluationContext
+  context: EvaluationContext,
+  cacheEvaluations: Boolean
 ):
   def record[A](evaluation: FlagEvaluation[A]): UIO[Unit] =
     evaluated.update(_ + (evaluation.key -> evaluation))
@@ -70,7 +71,8 @@ final private[openfeature] case class TransactionState(
     overrides.get(key)
 
   def getCachedEvaluation(key: String): UIO[Option[FlagEvaluation[?]]] =
-    evaluated.get.map(_.get(key))
+    if cacheEvaluations then evaluated.get.map(_.get(key))
+    else ZIO.none
 
   def getEvaluations: UIO[Map[String, FlagEvaluation[?]]] =
     evaluated.get
@@ -87,8 +89,9 @@ final private[openfeature] case class TransactionState(
 private[openfeature] object TransactionState:
   def make(
     overrides: Map[String, Any],
-    context: EvaluationContext
+    context: EvaluationContext,
+    cacheEvaluations: Boolean = true
   ): UIO[TransactionState] =
     Ref.make(Map.empty[String, FlagEvaluation[?]]).map { evaluated =>
-      TransactionState(overrides, evaluated, context)
+      TransactionState(overrides, evaluated, context, cacheEvaluations)
     }

@@ -244,7 +244,25 @@ object FeatureFlagsSpec extends ZIOSpecDefault:
           assertTrue(secondRes.reason == ResolutionReason.Cached) &&
           // Both should have the same value
           assertTrue(firstRes.value == secondRes.value)
-      }.provide(testLayer(Map("detail-flag" -> true)))
+      }.provide(testLayer(Map("detail-flag" -> true))),
+      test("transaction with cacheEvaluations=false does not cache") {
+        for txResult <- FeatureFlags.transaction(cacheEvaluations = false) {
+            for
+              first  <- FeatureFlags.booleanDetails("no-cache-flag", default = false)
+              second <- FeatureFlags.booleanDetails("no-cache-flag", default = false)
+            yield (first, second)
+          }
+        yield
+          val (firstRes, secondRes) = txResult.result
+          // Both evaluations should be from provider (TargetingMatch), not cached
+          assertTrue(firstRes.reason == ResolutionReason.TargetingMatch) &&
+          assertTrue(secondRes.reason == ResolutionReason.TargetingMatch) &&
+          // Both should have the same value
+          assertTrue(firstRes.value == secondRes.value) &&
+          // With caching disabled, each evaluation is recorded separately
+          // but since they have the same key, the map will have only 1 entry (last one wins)
+          assertTrue(txResult.flagCount == 1)
+      }.provide(testLayer(Map("no-cache-flag" -> true)))
     ),
     suite("Hooks")(
       test("addHook and hooks work") {

@@ -222,8 +222,8 @@ object FeatureFlagsSpec extends ZIOSpecDefault:
             yield (first, second, third)
           }
         yield
-          // All three evaluations should return the same value
-          assertTrue(txResult.result == (true, true, true)) &&
+        // All three evaluations should return the same value
+        assertTrue(txResult.result == (true, true, true)) &&
           // Only one evaluation should be recorded (the first one, subsequent ones are cached)
           assertTrue(txResult.flagCount == 1) &&
           // The flag should not be marked as overridden (it was evaluated from provider, then cached)

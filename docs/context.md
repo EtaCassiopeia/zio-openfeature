@@ -1,7 +1,7 @@
 ---
 layout: default
 title: Evaluation Context
-nav_order: 3
+nav_order: 4
 ---
 
 # Evaluation Context
@@ -100,7 +100,7 @@ Invocation context is passed directly to evaluation methods.
 val ctx = EvaluationContext("user-789")
   .withAttribute("feature-group", "beta")
 
-val result = flags.getBooleanValue("new-feature", false, ctx)
+val result = FeatureFlags.boolean("new-feature", false, ctx)
 ```
 
 ### Scoped Context
@@ -110,10 +110,10 @@ Use `withContext` to temporarily set context for a block of code.
 ```scala
 val ctx = EvaluationContext("test-user")
 
-val result = flags.withContext(ctx) {
+val result = FeatureFlags.withContext(ctx) {
   for
-    a <- flags.getBooleanValue("feature-a", false)
-    b <- flags.getStringValue("feature-b", "default")
+    a <- FeatureFlags.boolean("feature-a", false)
+    b <- FeatureFlags.string("feature-b", "default")
   yield (a, b)
 }
 ```

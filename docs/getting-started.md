@@ -43,9 +43,9 @@ import zio.openfeature.testkit.*
 object MyApp extends ZIOAppDefault:
 
   val program = for
-    flags <- ZIO.service[FeatureFlags]
-    _     <- flags.initialize
-    // Use feature flags...
+    flags   <- ZIO.service[FeatureFlags]
+    enabled <- flags.boolean("my-feature", false)
+    _       <- ZIO.when(enabled)(ZIO.debug("Feature enabled!"))
   yield ()
 
   def run = program.provide(
@@ -59,23 +59,23 @@ object MyApp extends ZIOAppDefault:
 ```scala
 // Boolean flags
 val enabled: ZIO[FeatureFlags, FeatureFlagError, Boolean] =
-  ZIO.serviceWithZIO[FeatureFlags](_.getBooleanValue("feature", false))
+  FeatureFlags.boolean("feature", false)
 
 // String flags
 val variant: ZIO[FeatureFlags, FeatureFlagError, String] =
-  ZIO.serviceWithZIO[FeatureFlags](_.getStringValue("variant", "default"))
+  FeatureFlags.string("variant", "default")
 
 // Integer flags
 val limit: ZIO[FeatureFlags, FeatureFlagError, Int] =
-  ZIO.serviceWithZIO[FeatureFlags](_.getIntValue("limit", 100))
+  FeatureFlags.int("limit", 100)
 
 // Double flags
 val rate: ZIO[FeatureFlags, FeatureFlagError, Double] =
-  ZIO.serviceWithZIO[FeatureFlags](_.getDoubleValue("rate", 0.5))
+  FeatureFlags.double("rate", 0.5)
 
 // Typed flags with FlagType
 val count: ZIO[FeatureFlags, FeatureFlagError, Long] =
-  ZIO.serviceWithZIO[FeatureFlags](_.getValue[Long]("count", 0L))
+  FeatureFlags.long("count", 0L)
 ```
 
 ### Using Evaluation Context
@@ -87,9 +87,7 @@ val ctx = EvaluationContext("user-123")
   .withAttribute("country", "US")
 
 // Evaluate with context
-ZIO.serviceWithZIO[FeatureFlags](
-  _.getBooleanValue("premium-feature", false, ctx)
-)
+FeatureFlags.boolean("premium-feature", false, ctx)
 ```
 
 ## Next Steps

@@ -1,7 +1,7 @@
 ---
 layout: default
 title: Transactions
-nav_order: 5
+nav_order: 6
 ---
 
 # Transactions
@@ -38,11 +38,11 @@ val overrides = Map(
   "max-items" -> 100
 )
 
-val result = flags.transaction(overrides) {
+val result = FeatureFlags.transaction(overrides) {
   for
-    a <- flags.getBooleanValue("feature-a", false)  // Returns true (overridden)
-    b <- flags.getStringValue("feature-b", "default") // Returns "variant-x"
-    c <- flags.getIntValue("max-items", 10)           // Returns 100
+    a <- FeatureFlags.boolean("feature-a", false)  // Returns true (overridden)
+    b <- FeatureFlags.string("feature-b", "default") // Returns "variant-x"
+    c <- FeatureFlags.int("max-items", 10)           // Returns 100
   yield (a, b, c)
 }
 ```
@@ -53,8 +53,8 @@ val result = flags.transaction(overrides) {
 val ctx = EvaluationContext("user-123")
 val overrides = Map("premium" -> true)
 
-val result = flags.transactionWithContext(overrides, ctx) {
-  flags.getBooleanValue("premium", false)
+val result = FeatureFlags.transaction(overrides, ctx) {
+  FeatureFlags.boolean("premium", false)
 }
 ```
 
@@ -67,11 +67,11 @@ Transactions return a `TransactionResult` containing:
 - Which flags were overridden
 
 ```scala
-val result: TransactionResult[(Boolean, String)] =
-  flags.transaction(overrides) {
+val result: ZIO[FeatureFlags, FeatureFlagError, TransactionResult[(Boolean, String)]] =
+  FeatureFlags.transaction(overrides) {
     for
-      a <- flags.getBooleanValue("feature-a", false)
-      b <- flags.getStringValue("feature-b", "default")
+      a <- FeatureFlags.boolean("feature-a", false)
+      b <- FeatureFlags.string("feature-b", "default")
     yield (a, b)
   }
 
@@ -124,8 +124,8 @@ Overrides take precedence over provider values:
 // Provider has "feature" = false
 // Override sets "feature" = true
 
-flags.transaction(Map("feature" -> true)) {
-  flags.getBooleanValue("feature", false) // Returns true (override wins)
+FeatureFlags.transaction(Map("feature" -> true)) {
+  FeatureFlags.boolean("feature", false) // Returns true (override wins)
 }
 ```
 
@@ -135,8 +135,8 @@ Override values must match the expected type:
 
 ```scala
 // This will fail - type mismatch
-flags.transaction(Map("count" -> "not-a-number")) {
-  flags.getIntValue("count", 0) // Error: OverrideTypeMismatch
+FeatureFlags.transaction(Map("count" -> "not-a-number")) {
+  FeatureFlags.int("count", 0) // Error: OverrideTypeMismatch
 }
 ```
 
@@ -145,10 +145,10 @@ flags.transaction(Map("count" -> "not-a-number")) {
 Flags not in the override map are evaluated normally:
 
 ```scala
-flags.transaction(Map("feature-a" -> true)) {
+FeatureFlags.transaction(Map("feature-a" -> true)) {
   for
-    a <- flags.getBooleanValue("feature-a", false) // true (overridden)
-    b <- flags.getBooleanValue("feature-b", false) // Evaluated from provider
+    a <- FeatureFlags.boolean("feature-a", false) // true (overridden)
+    b <- FeatureFlags.boolean("feature-b", false) // Evaluated from provider
   yield (a, b)
 }
 ```
@@ -158,9 +158,9 @@ flags.transaction(Map("feature-a" -> true)) {
 Nested transactions are not allowed and will fail:
 
 ```scala
-flags.transaction(Map("a" -> true)) {
+FeatureFlags.transaction(Map("a" -> true)) {
   // This will fail with NestedTransactionNotAllowed
-  flags.transaction(Map("b" -> true)) {
+  FeatureFlags.transaction(Map("b" -> true)) {
     // ...
   }
 }
@@ -172,7 +172,7 @@ flags.transaction(Map("a" -> true)) {
 
 ```scala
 test("premium users see new feature") {
-  flags.transaction(Map("new-feature" -> true, "user-tier" -> "premium")) {
+  FeatureFlags.transaction(Map("new-feature" -> true, "user-tier" -> "premium")) {
     for
       result <- myFeatureLogic
     yield assertTrue(result.showsNewFeature)
@@ -183,7 +183,7 @@ test("premium users see new feature") {
 ### Debugging Flag Behavior
 
 ```scala
-val debugResult = flags.transaction(Map.empty) {
+val debugResult = FeatureFlags.transaction(Map.empty) {
   // No overrides - just track what gets evaluated
   myComplexBusinessLogic
 }
@@ -199,7 +199,7 @@ debugResult.map { tx =>
 ### Audit Trail
 
 ```scala
-val auditedResult = flags.transaction(Map.empty) {
+val auditedResult = FeatureFlags.transaction(Map.empty) {
   processUserRequest(userId)
 }
 
@@ -208,7 +208,7 @@ auditedResult.flatMap { tx =>
     userId = userId,
     flagsEvaluated = tx.allFlagKeys,
     values = tx.toValueMap,
-    timestamp = Instant.now()
+    timestamp = java.time.Instant.now()
   )
 }
 ```

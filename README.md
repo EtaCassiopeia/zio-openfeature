@@ -44,10 +44,9 @@ import zio.openfeature.testkit.*
 object MyApp extends ZIOAppDefault:
 
   val program = for
-    flags  <- ZIO.service[FeatureFlags]
-    _      <- flags.initialize
-    enabled <- flags.getBooleanValue("my-feature", false)
-    _      <- ZIO.when(enabled)(ZIO.debug("Feature is enabled!"))
+    flags   <- ZIO.service[FeatureFlags]
+    enabled <- flags.boolean("my-feature", false)
+    _       <- ZIO.when(enabled)(ZIO.debug("Feature is enabled!"))
   yield ()
 
   def run = program.provide(
@@ -61,19 +60,17 @@ object MyApp extends ZIOAppDefault:
 ### Flag Evaluation
 
 ```scala
-val flags = ZIO.service[FeatureFlags]
-
 // Boolean flags
 val enabled: ZIO[FeatureFlags, FeatureFlagError, Boolean] =
-  flags.flatMap(_.getBooleanValue("feature", false))
+  FeatureFlags.boolean("feature", false)
 
 // String flags
 val variant: ZIO[FeatureFlags, FeatureFlagError, String] =
-  flags.flatMap(_.getStringValue("variant", "default"))
+  FeatureFlags.string("variant", "default")
 
 // Typed flags with FlagType
 val count: ZIO[FeatureFlags, FeatureFlagError, Int] =
-  flags.flatMap(_.getValue[Int]("count", 0))
+  FeatureFlags.value[Int]("count", 0)
 ```
 
 ### Evaluation Context
@@ -85,38 +82,33 @@ val ctx = EvaluationContext("user-123")
   .withAttribute("country", "US")
 
 // Evaluate with context
-flags.flatMap(_.getBooleanValue("premium-feature", false, ctx))
+FeatureFlags.boolean("premium-feature", false, ctx)
 
 // Set global context
-flags.flatMap(_.setGlobalContext(ctx))
+FeatureFlags.setGlobalContext(ctx)
 
-// Set fiber-local context
-flags.flatMap(_.setFiberContext(ctx))
-
-// Evaluate with invocation context
-flags.flatMap(_.withContext(ctx)(_.getBooleanValue("feature", false)))
+// Scoped context for a block of code
+FeatureFlags.withContext(ctx) {
+  FeatureFlags.boolean("feature", false)
+}
 ```
 
 ### Hooks
 
 ```scala
 // Add logging hook
-val loggingHook = FeatureHook.logging(message => ZIO.logInfo(message))
-flags.flatMap(_.addHook(loggingHook))
+val loggingHook = FeatureHook.logging()
+FeatureFlags.addHook(loggingHook)
 
 // Add metrics hook
-val metricsHook = FeatureHook.metrics { (key, value, duration) =>
-  ZIO.succeed(println(s"Flag $key evaluated to $value in ${duration.toMillis}ms"))
+val metricsHook = FeatureHook.metrics { (key, duration, success) =>
+  ZIO.succeed(println(s"Flag $key evaluated in ${duration.toMillis}ms (success=$success)"))
 }
-flags.flatMap(_.addHook(metricsHook))
+FeatureFlags.addHook(metricsHook)
 
 // Context validation hook
-val validationHook = FeatureHook.contextValidator { ctx =>
-  ZIO.when(ctx.targetingKey.isEmpty)(
-    ZIO.fail(FeatureFlagError.TargetingKeyMissing("validation"))
-  ).as(ctx)
-}
-flags.flatMap(_.addHook(validationHook))
+val validationHook = FeatureHook.contextValidator(requireTargetingKey = true)
+FeatureFlags.addHook(validationHook)
 ```
 
 ### Transactions
@@ -125,12 +117,12 @@ flags.flatMap(_.addHook(validationHook))
 // Run code with flag overrides
 val overrides = Map("feature-a" -> true, "feature-b" -> "variant-x")
 
-val result = flags.flatMap(_.transaction(overrides) {
+val result = FeatureFlags.transaction(overrides) {
   for
-    a <- flags.flatMap(_.getBooleanValue("feature-a", false))
-    b <- flags.flatMap(_.getStringValue("feature-b", "default"))
+    a <- FeatureFlags.boolean("feature-a", false)
+    b <- FeatureFlags.string("feature-b", "default")
   yield (a, b)
-})
+}
 
 // Access transaction result with evaluation tracking
 result.map { txResult =>
@@ -195,6 +187,18 @@ yield assertTrue(was) && assertTrue(count == 1)
 - **core**: Core abstractions and FeatureFlags service
 - **testkit**: Testing utilities including TestFeatureProvider
 - **optimizely**: Optimizely feature flag provider
+
+## Documentation
+
+Full documentation is available at: https://etacassiopeia.github.io/zio-openfeature/
+
+- [Getting Started](https://etacassiopeia.github.io/zio-openfeature/getting-started)
+- [Architecture](https://etacassiopeia.github.io/zio-openfeature/architecture) - Core concepts and design
+- [Evaluation Context](https://etacassiopeia.github.io/zio-openfeature/context)
+- [Hooks](https://etacassiopeia.github.io/zio-openfeature/hooks)
+- [Transactions](https://etacassiopeia.github.io/zio-openfeature/transactions)
+- [Testkit](https://etacassiopeia.github.io/zio-openfeature/testkit)
+- [Providers](https://etacassiopeia.github.io/zio-openfeature/providers)
 
 ## License
 

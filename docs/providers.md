@@ -1,7 +1,7 @@
 ---
 layout: default
 title: Providers
-nav_order: 7
+nav_order: 8
 ---
 
 # Providers
@@ -61,8 +61,7 @@ object MyApp extends ZIOAppDefault:
 
   val program = for
     flags   <- ZIO.service[FeatureFlags]
-    _       <- flags.initialize
-    enabled <- flags.getBooleanValue("new-checkout-flow", false)
+    enabled <- flags.boolean("new-checkout-flow", false)
     _       <- ZIO.when(enabled)(ZIO.debug("New checkout flow is enabled!"))
   yield ()
 
@@ -142,7 +141,7 @@ For automatic initialization and cleanup, use the scoped layer:
 val program = for
   flags   <- ZIO.service[FeatureFlags]
   // Provider is automatically initialized
-  enabled <- flags.getBooleanValue("feature-x", false)
+  enabled <- flags.boolean("feature-x", false)
 yield enabled
 // Provider is automatically shutdown when scope ends
 
@@ -168,9 +167,10 @@ val userContext = EvaluationContext("user-12345")
   .withAttribute("beta_user", true)
 
 // Evaluate with user context
-val result = flags.flatMap(
-  _.getBooleanValue("premium-feature", false, userContext)
-)
+val result = for
+  flags <- ZIO.service[FeatureFlags]
+  value <- flags.boolean("premium-feature", false, userContext)
+yield value
 ```
 
 #### Setting Global Context
@@ -182,18 +182,21 @@ val globalContext = EvaluationContext.empty
   .withAttribute("app_version", "2.1.0")
   .withAttribute("platform", "ios")
 
-flags.flatMap(_.setGlobalContext(globalContext))
+FeatureFlags.setGlobalContext(globalContext)
 ```
 
 #### Setting Fiber-Local Context
 
-For request-scoped attributes:
+For request-scoped attributes, use `withContext` to scope context to a block:
 
 ```scala
 val requestContext = EvaluationContext("user-123")
   .withAttribute("session_id", sessionId)
 
-flags.flatMap(_.setFiberContext(requestContext))
+FeatureFlags.withContext(requestContext) {
+  // All evaluations in this block use requestContext
+  FeatureFlags.boolean("feature", false)
+}
 ```
 
 ### Feature Types
@@ -202,23 +205,17 @@ flags.flatMap(_.setFiberContext(requestContext))
 
 ```scala
 // Simple on/off feature
-val isEnabled = flags.flatMap(
-  _.getBooleanValue("new-dashboard", false)
-)
+val isEnabled = FeatureFlags.boolean("new-dashboard", false)
 
 // With user targeting
-val isEnabledForUser = flags.flatMap(
-  _.getBooleanValue("new-dashboard", false, userContext)
-)
+val isEnabledForUser = FeatureFlags.boolean("new-dashboard", false, userContext)
 ```
 
 #### String Flags (Variations)
 
 ```scala
 // Get variation key for A/B tests
-val variation = flags.flatMap(
-  _.getStringValue("checkout-button-color", "blue", userContext)
-)
+val variation = FeatureFlags.string("checkout-button-color", "blue", userContext)
 
 // Use the variation
 variation.flatMap {
@@ -233,26 +230,20 @@ variation.flatMap {
 
 ```scala
 // Integer variables
-val maxItems = flags.flatMap(
-  _.getIntValue("cart-max-items", 10, userContext)
-)
+val maxItems = FeatureFlags.int("cart-max-items", 10, userContext)
 
 // Double variables
-val discountRate = flags.flatMap(
-  _.getDoubleValue("discount-percentage", 0.0, userContext)
-)
+val discountRate = FeatureFlags.double("discount-percentage", 0.0, userContext)
 ```
 
 #### JSON/Object Flags
 
 ```scala
 // Complex configuration as JSON
-val config = flags.flatMap(
-  _.getObjectValue(
-    "feature-config",
-    Map("timeout" -> 30, "retries" -> 3),
-    userContext
-  )
+val config = FeatureFlags.obj(
+  "feature-config",
+  Map("timeout" -> 30, "retries" -> 3),
+  userContext
 )
 ```
 
@@ -283,13 +274,13 @@ object FeatureFlagApp extends ZIOAppDefault:
       .withAttribute("registered_at", java.time.Instant.now())
 
     // Check if new checkout is enabled for this user
-    newCheckout <- flags.getBooleanValue("new-checkout-flow", false, ctx)
+    newCheckout <- flags.boolean("new-checkout-flow", false, ctx)
 
     // Get the button variation
-    buttonColor <- flags.getStringValue("checkout-button", "blue", ctx)
+    buttonColor <- flags.string("checkout-button", "blue", ctx)
 
     // Get max cart items
-    maxItems <- flags.getIntValue("max-cart-items", 10, ctx)
+    maxItems <- flags.int("max-cart-items", 10, ctx)
 
     _ <- ZIO.debug(s"User $userId (plan: $plan):")
     _ <- ZIO.debug(s"  - New checkout: $newCheckout")
@@ -298,9 +289,6 @@ object FeatureFlagApp extends ZIOAppDefault:
   yield ()
 
   val program = for
-    flags <- ZIO.service[FeatureFlags]
-    _     <- flags.initialize
-
     // Simulate different users
     _ <- handleUserRequest("user-001", "free")
     _ <- handleUserRequest("user-002", "premium")
@@ -318,18 +306,17 @@ object FeatureFlagApp extends ZIOAppDefault:
 ```scala
 import zio.openfeature.FeatureFlagError
 
-val safeEvaluation = flags.flatMap(
-  _.getBooleanValue("risky-feature", false)
-).catchAll {
-  case FeatureFlagError.FlagNotFound(key) =>
-    ZIO.debug(s"Flag $key not found, using default") *> ZIO.succeed(false)
-  case FeatureFlagError.ProviderError(cause) =>
-    ZIO.debug(s"Provider error: ${cause.getMessage}") *> ZIO.succeed(false)
-  case FeatureFlagError.TypeMismatch(key, expected, actual) =>
-    ZIO.debug(s"Type mismatch for $key") *> ZIO.succeed(false)
-  case other =>
-    ZIO.debug(s"Unexpected error: $other") *> ZIO.succeed(false)
-}
+val safeEvaluation = FeatureFlags.boolean("risky-feature", false)
+  .catchAll {
+    case FeatureFlagError.FlagNotFound(key) =>
+      ZIO.debug(s"Flag $key not found, using default") *> ZIO.succeed(false)
+    case FeatureFlagError.ProviderError(cause) =>
+      ZIO.debug(s"Provider error: ${cause.getMessage}") *> ZIO.succeed(false)
+    case FeatureFlagError.TypeMismatch(key, expected, actual) =>
+      ZIO.debug(s"Type mismatch for $key") *> ZIO.succeed(false)
+    case other =>
+      ZIO.debug(s"Unexpected error: $other") *> ZIO.succeed(false)
+  }
 ```
 
 ### Flat Flags
@@ -347,7 +334,7 @@ A **flat flag** is an Optimizely feature with a single variable named `_` that h
 **Usage in code:**
 ```scala
 // Returns 15.0 from the "_" variable
-val discount = flags.flatMap(_.getDoubleValue("discount-percentage", 0.0, ctx))
+val discount = FeatureFlags.double("discount-percentage", 0.0, ctx)
 ```
 
 This convention ensures consistent mapping between OpenFeature's type system and Optimizely's feature model.
@@ -357,7 +344,7 @@ This convention ensures consistent mapping between OpenFeature's type system and
 When a flag is successfully evaluated, the resolution includes metadata from Optimizely:
 
 ```scala
-val resolution = flags.flatMap(_.booleanDetails("my-feature", false, ctx))
+val resolution = FeatureFlags.booleanDetails("my-feature", false)
 
 resolution.map { res =>
   println(s"Value: ${res.value}")

@@ -1,7 +1,7 @@
 ---
 layout: default
 title: Hooks
-nav_order: 4
+nav_order: 5
 ---
 
 # Hooks
@@ -36,37 +36,38 @@ Each hook can implement four stages:
 import zio.*
 import zio.openfeature.*
 
-val loggingHook = FeatureHook.logging { message =>
-  ZIO.logInfo(message)
-}
+val loggingHook = FeatureHook.logging(
+  logBefore = false,
+  logAfter = true,
+  logError = true
+)
 
 // Add to service
-flags.addHook(loggingHook)
+FeatureFlags.addHook(loggingHook)
 ```
 
 ### Metrics Hook
 
 ```scala
-val metricsHook = FeatureHook.metrics { (flagKey, value, duration) =>
+val metricsHook = FeatureHook.metrics { (flagKey, duration, success) =>
   ZIO.succeed {
-    println(s"Flag '$flagKey' evaluated to '$value' in ${duration.toMillis}ms")
+    println(s"Flag '$flagKey' evaluated in ${duration.toMillis}ms (success=$success)")
     // Record to your metrics system
   }
 }
 
-flags.addHook(metricsHook)
+FeatureFlags.addHook(metricsHook)
 ```
 
 ### Context Validator Hook
 
 ```scala
-val validatorHook = FeatureHook.contextValidator { ctx =>
-  ZIO.when(ctx.targetingKey.isEmpty)(
-    ZIO.fail(FeatureFlagError.TargetingKeyMissing("validation"))
-  ).as(ctx)
-}
+val validatorHook = FeatureHook.contextValidator(
+  requireTargetingKey = true,
+  requiredAttributes = List("userId", "sessionId")
+)
 
-flags.addHook(validatorHook)
+FeatureFlags.addHook(validatorHook)
 ```
 
 ## Custom Hooks
@@ -130,13 +131,13 @@ val timingHook = new FeatureHook:
 ### Combining Multiple Hooks
 
 ```scala
-val hook1 = FeatureHook.logging(msg => ZIO.logInfo(msg))
-val hook2 = FeatureHook.metrics((k, v, d) => ZIO.unit)
+val hook1 = FeatureHook.logging()
+val hook2 = FeatureHook.metrics((k, d, s) => ZIO.unit)
 
 // Compose hooks - both will run
-val combined = FeatureHook.compose(hook1, hook2)
+val combined = FeatureHook.compose(List(hook1, hook2))
 
-flags.addHook(combined)
+FeatureFlags.addHook(combined)
 ```
 
 ### Hook Execution Order
@@ -144,9 +145,9 @@ flags.addHook(combined)
 Hooks are executed in the order they were added:
 
 ```scala
-flags.addHook(loggingHook)   // Runs first
-flags.addHook(metricsHook)   // Runs second
-flags.addHook(validatorHook) // Runs third
+FeatureFlags.addHook(loggingHook)   // Runs first
+FeatureFlags.addHook(metricsHook)   // Runs second
+FeatureFlags.addHook(validatorHook) // Runs third
 ```
 
 For the `before` stage, hooks run in order. For `after`, `error`, and `finallyAfter`, they run in reverse order.
@@ -157,7 +158,7 @@ For the `before` stage, hooks run in order. For `after`, `error`, and `finallyAf
 
 ```scala
 // Add a single hook
-flags.addHook(myHook)
+FeatureFlags.addHook(myHook)
 
 // Create service with hooks
 val layer = FeatureFlags.liveWithHooks(List(hook1, hook2))
@@ -167,10 +168,11 @@ val layer = FeatureFlags.liveWithHooks(List(hook1, hook2))
 
 ```scala
 // Remove all hooks
-flags.clearHooks
+FeatureFlags.clearHooks
 
 // Get current hooks
-val hooks: UIO[List[FeatureHook]] = flags.hooks
+val currentHooks: ZIO[FeatureFlags, Nothing, List[FeatureHook]] =
+  FeatureFlags.hooks
 ```
 
 ## Use Cases
@@ -198,9 +200,9 @@ val auditHook = new FeatureHook:
 ### Feature Flag Analytics
 
 ```scala
-val analyticsHook = FeatureHook.metrics { (flagKey, value, duration) =>
+val analyticsHook = FeatureHook.metrics { (flagKey, duration, success) =>
   for
-    _ <- analyticsClient.recordEvaluation(flagKey, value)
+    _ <- analyticsClient.recordEvaluation(flagKey, success)
     _ <- analyticsClient.recordLatency(flagKey, duration)
   yield ()
 }

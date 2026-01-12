@@ -1,7 +1,7 @@
 ---
 layout: default
 title: Testkit
-nav_order: 6
+nav_order: 7
 ---
 
 # Testkit
@@ -27,7 +27,7 @@ The testkit module provides `TestFeatureProvider`, a configurable in-memory prov
 ## Installation
 
 ```scala
-libraryDependencies += "io.github.etacassiopeia" %% "zio-openfeature-testkit" % "0.1.0-SNAPSHOT" % Test
+libraryDependencies += "io.github.etacassiopeia" %% "zio-openfeature-testkit" % "0.1.0" % Test
 ```
 
 ## Basic Usage

@@ -26,11 +26,24 @@ A type-safe, ZIO-native implementation of the [OpenFeature](https://openfeature.
 - **Transaction support** with override injection and evaluation tracking
 - **Testkit module** for easy testing
 - **Optimizely provider** implementation
+- **OpenFeature compliant** - implements the [OpenFeature specification](https://openfeature.dev/specification/)
 
 ## Requirements
 
 - Scala 3.3+
 - ZIO 2.1+
+
+## Documentation
+
+| Section | Description |
+|:--------|:------------|
+| [Getting Started]({{ site.baseurl }}/getting-started) | Installation and basic usage |
+| [Architecture]({{ site.baseurl }}/architecture) | Core concepts, design principles, and component overview |
+| [Evaluation Context]({{ site.baseurl }}/context) | Hierarchical context system for targeting |
+| [Hooks]({{ site.baseurl }}/hooks) | Cross-cutting concerns pipeline |
+| [Transactions]({{ site.baseurl }}/transactions) | Flag overrides and evaluation tracking |
+| [Testkit]({{ site.baseurl }}/testkit) | Testing utilities |
+| [Providers]({{ site.baseurl }}/providers) | Optimizely and custom providers |
 
 ## Quick Example
 
@@ -43,8 +56,7 @@ object MyApp extends ZIOAppDefault:
 
   val program = for
     flags   <- ZIO.service[FeatureFlags]
-    _       <- flags.initialize
-    enabled <- flags.getBooleanValue("my-feature", false)
+    enabled <- flags.boolean("my-feature", false)
     _       <- ZIO.when(enabled)(ZIO.debug("Feature is enabled!"))
   yield ()
 

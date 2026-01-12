@@ -174,6 +174,7 @@ final class TestFeatureProvider private (
         case ProviderStatus.NotReady     => state.set(ProviderState.NOT_READY)
         case ProviderStatus.Error        => state.set(ProviderState.ERROR)
         case ProviderStatus.Stale        => state.set(ProviderState.STALE)
+        case ProviderStatus.Fatal        => state.set(ProviderState.FATAL)
         case ProviderStatus.ShuttingDown => state.set(ProviderState.NOT_READY)
     }
 

@@ -13,6 +13,7 @@ object ProviderStatusSpec extends ZIOSpecDefault:
         assertTrue(ProviderStatus.Ready != null) &&
         assertTrue(ProviderStatus.Error != null) &&
         assertTrue(ProviderStatus.Stale != null) &&
+        assertTrue(ProviderStatus.Fatal != null) &&
         assertTrue(ProviderStatus.ShuttingDown != null)
       }
     ),
@@ -29,8 +30,22 @@ object ProviderStatusSpec extends ZIOSpecDefault:
       test("Error cannot evaluate") {
         assertTrue(!ProviderStatus.Error.canEvaluate)
       },
+      test("Fatal cannot evaluate") {
+        assertTrue(!ProviderStatus.Fatal.canEvaluate)
+      },
       test("ShuttingDown cannot evaluate") {
         assertTrue(!ProviderStatus.ShuttingDown.canEvaluate)
+      }
+    ),
+    suite("isRecoverable")(
+      test("Ready is recoverable") {
+        assertTrue(ProviderStatus.Ready.isRecoverable)
+      },
+      test("Error is recoverable") {
+        assertTrue(ProviderStatus.Error.isRecoverable)
+      },
+      test("Fatal is not recoverable") {
+        assertTrue(!ProviderStatus.Fatal.isRecoverable)
       }
     )
   )

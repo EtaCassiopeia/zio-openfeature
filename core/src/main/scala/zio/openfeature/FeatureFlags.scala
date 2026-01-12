@@ -42,6 +42,12 @@ trait FeatureFlags:
   def providerStatus: UIO[ProviderStatus]
   def providerMetadata: UIO[ProviderMetadata]
 
+  // Event Handlers
+  def onProviderReady(handler: ProviderMetadata => UIO[Unit]): UIO[Unit]
+  def onProviderError(handler: (Throwable, ProviderMetadata) => UIO[Unit]): UIO[Unit]
+  def onProviderStale(handler: (String, ProviderMetadata) => UIO[Unit]): UIO[Unit]
+  def onConfigurationChanged(handler: (Set[String], ProviderMetadata) => UIO[Unit]): UIO[Unit]
+
   def addHook(hook: FeatureHook): UIO[Unit]
   def clearHooks: UIO[Unit]
   def hooks: UIO[List[FeatureHook]]
@@ -137,6 +143,20 @@ object FeatureFlags:
 
   def providerMetadata: ZIO[FeatureFlags, Nothing, ProviderMetadata] =
     ZIO.serviceWithZIO(_.providerMetadata)
+
+  // Event Handlers
+
+  def onProviderReady(handler: ProviderMetadata => UIO[Unit]): ZIO[FeatureFlags, Nothing, Unit] =
+    ZIO.serviceWithZIO(_.onProviderReady(handler))
+
+  def onProviderError(handler: (Throwable, ProviderMetadata) => UIO[Unit]): ZIO[FeatureFlags, Nothing, Unit] =
+    ZIO.serviceWithZIO(_.onProviderError(handler))
+
+  def onProviderStale(handler: (String, ProviderMetadata) => UIO[Unit]): ZIO[FeatureFlags, Nothing, Unit] =
+    ZIO.serviceWithZIO(_.onProviderStale(handler))
+
+  def onConfigurationChanged(handler: (Set[String], ProviderMetadata) => UIO[Unit]): ZIO[FeatureFlags, Nothing, Unit] =
+    ZIO.serviceWithZIO(_.onConfigurationChanged(handler))
 
   def addHook(hook: FeatureHook): ZIO[FeatureFlags, Nothing, Unit] =
     ZIO.serviceWithZIO(_.addHook(hook))

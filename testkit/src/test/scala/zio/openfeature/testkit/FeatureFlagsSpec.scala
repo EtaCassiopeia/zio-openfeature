@@ -281,6 +281,31 @@ object FeatureFlagsSpec extends ZIOSpecDefault:
         yield assertTrue(result == "found")
       }.provide(testLayer(Map("str-flag" -> "found")))
     ),
+    suite("Event Handlers")(
+      test("onProviderReady registers handler") {
+        for _ <- FeatureFlags.onProviderReady(_ => ZIO.unit)
+        yield assertTrue(true)
+      }.provide(testLayer()),
+      test("onProviderError registers handler") {
+        for _ <- FeatureFlags.onProviderError((_, _) => ZIO.unit)
+        yield assertTrue(true)
+      }.provide(testLayer()),
+      test("onProviderStale registers handler") {
+        for _ <- FeatureFlags.onProviderStale((_, _) => ZIO.unit)
+        yield assertTrue(true)
+      }.provide(testLayer()),
+      test("onConfigurationChanged registers handler") {
+        for _ <- FeatureFlags.onConfigurationChanged((_, _) => ZIO.unit)
+        yield assertTrue(true)
+      }.provide(testLayer()),
+      test("multiple handlers can be registered") {
+        for
+          _ <- FeatureFlags.onProviderReady(_ => ZIO.unit)
+          _ <- FeatureFlags.onProviderReady(_ => ZIO.unit)
+          _ <- FeatureFlags.onProviderError((_, _) => ZIO.unit)
+        yield assertTrue(true)
+      }.provide(testLayer())
+    ),
     suite("Tracking API")(
       test("track with event name only succeeds") {
         for _ <- FeatureFlags.track("button-clicked")

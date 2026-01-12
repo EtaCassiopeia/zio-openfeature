@@ -16,7 +16,6 @@ ZIO OpenFeature provides a type-safe, functional interface for feature flag eval
 
 - Scala 3.3+
 - ZIO 2.1+
-- Java 11+ (required by OpenFeature SDK)
 
 ## Installation
 
@@ -76,9 +75,9 @@ object ProductionApp extends ZIOAppDefault:
 
 | Provider | Dependency |
 |----------|------------|
+| [Optimizely](https://www.optimizely.com/) | `"dev.openfeature.contrib.providers" % "optimizely" % "x.y.z"` |
 | [flagd](https://flagd.dev/) | `"dev.openfeature.contrib.providers" % "flagd" % "x.y.z"` |
 | [LaunchDarkly](https://launchdarkly.com/) | `"dev.openfeature.contrib.providers" % "launchdarkly" % "x.y.z"` |
-| [CloudBees](https://www.cloudbees.com/) | `"dev.openfeature.contrib.providers" % "cloudbees" % "x.y.z"` |
 | [Flagsmith](https://flagsmith.com/) | `"dev.openfeature.contrib.providers" % "flagsmith" % "x.y.z"` |
 | [Flipt](https://flipt.io/) | `"dev.openfeature.contrib.providers" % "flipt" % "x.y.z"` |
 

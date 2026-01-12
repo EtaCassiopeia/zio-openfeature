@@ -71,7 +71,6 @@ object MyApp extends ZIOAppDefault:
 
 - Scala 3.3+
 - ZIO 2.1+
-- Java 11+ (required by OpenFeature SDK)
 
 ## License
 

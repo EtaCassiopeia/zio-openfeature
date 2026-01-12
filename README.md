@@ -18,16 +18,30 @@ A type-safe, ZIO-native implementation of the [OpenFeature](https://openfeature.
 
 ## Installation
 
+[![Maven Central](https://img.shields.io/maven-central/v/io.github.etacassiopeia/zio-openfeature-core_3.svg)](https://search.maven.org/search?q=g:io.github.etacassiopeia%20AND%20a:zio-openfeature-core_3)
+
 Add the following to your `build.sbt`:
 
 ```scala
-libraryDependencies += "io.github.etacassiopeia" %% "zio-openfeature-core" % "0.1.0-SNAPSHOT"
+val zioOpenFeatureVersion = "0.1.0" // Check Maven Central for latest version
+
+libraryDependencies += "io.github.etacassiopeia" %% "zio-openfeature-core" % zioOpenFeatureVersion
 
 // For testing support
-libraryDependencies += "io.github.etacassiopeia" %% "zio-openfeature-testkit" % "0.1.0-SNAPSHOT" % Test
+libraryDependencies += "io.github.etacassiopeia" %% "zio-openfeature-testkit" % zioOpenFeatureVersion % Test
 
 // For Optimizely integration
-libraryDependencies += "io.github.etacassiopeia" %% "zio-openfeature-optimizely" % "0.1.0-SNAPSHOT"
+libraryDependencies += "io.github.etacassiopeia" %% "zio-openfeature-optimizely" % zioOpenFeatureVersion
+```
+
+### Snapshot Versions
+
+Snapshot versions are published on every push to `main`:
+
+```scala
+resolvers += "Sonatype OSS Snapshots" at "https://s01.oss.sonatype.org/content/repositories/snapshots"
+
+libraryDependencies += "io.github.etacassiopeia" %% "zio-openfeature-core" % "0.1.0+N-SNAPSHOT"
 ```
 
 ## Quick Start

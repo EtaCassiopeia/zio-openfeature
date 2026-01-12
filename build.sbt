@@ -1,9 +1,12 @@
 val scala3Version = "3.3.4"
-val zioVersion = "2.1.14"
+val zioVersion    = "2.1.14"
 
 ThisBuild / scalaVersion := scala3Version
 ThisBuild / organization := "io.github.etacassiopeia"
-ThisBuild / version := "0.1.0-SNAPSHOT"
+
+// Version is derived from git tags by sbt-dynver
+// Tags should follow SemVer: v0.1.0, v1.0.0, etc.
+// Snapshots are automatically versioned as: 0.1.0+3-abcd1234-SNAPSHOT
 
 ThisBuild / homepage := Some(url("https://github.com/EtaCassiopeia/zio-openfeature"))
 ThisBuild / licenses := List("Apache-2.0" -> url("https://www.apache.org/licenses/LICENSE-2.0"))
@@ -22,6 +25,12 @@ ThisBuild / scmInfo := Some(
   )
 )
 
+// Publishing to Sonatype / Maven Central
+ThisBuild / sonatypeCredentialHost := "s01.oss.sonatype.org"
+ThisBuild / sonatypeRepository     := "https://s01.oss.sonatype.org/service/local"
+ThisBuild / publishTo              := sonatypePublishToBundle.value
+ThisBuild / versionScheme          := Some("semver-spec")
+
 ThisBuild / scalacOptions ++= Seq(
   "-deprecation",
   "-feature",
@@ -32,14 +41,14 @@ ThisBuild / scalacOptions ++= Seq(
   "-Yretain-trees"
 )
 
-ThisBuild / coverageEnabled := false
+ThisBuild / coverageEnabled          := false
 ThisBuild / coverageMinimumStmtTotal := 80
-ThisBuild / coverageFailOnMinimum := true
+ThisBuild / coverageFailOnMinimum    := true
 
 lazy val commonSettings = Seq(
   testFrameworks += new TestFramework("zio.test.sbt.ZTestFramework"),
   libraryDependencies ++= Seq(
-    "dev.zio" %% "zio-test" % zioVersion % Test,
+    "dev.zio" %% "zio-test"     % zioVersion % Test,
     "dev.zio" %% "zio-test-sbt" % zioVersion % Test
   )
 )
@@ -47,7 +56,7 @@ lazy val commonSettings = Seq(
 lazy val root = (project in file("."))
   .aggregate(core, testkit, optimizely)
   .settings(
-    name := "zio-openfeature",
+    name           := "zio-openfeature",
     publish / skip := true
   )
 
@@ -56,7 +65,7 @@ lazy val core = (project in file("core"))
     name := "zio-openfeature-core",
     commonSettings,
     libraryDependencies ++= Seq(
-      "dev.zio" %% "zio" % zioVersion,
+      "dev.zio" %% "zio"         % zioVersion,
       "dev.zio" %% "zio-streams" % zioVersion
     )
   )
@@ -67,7 +76,7 @@ lazy val testkit = (project in file("testkit"))
     name := "zio-openfeature-testkit",
     commonSettings,
     libraryDependencies ++= Seq(
-      "dev.zio" %% "zio" % zioVersion,
+      "dev.zio" %% "zio"      % zioVersion,
       "dev.zio" %% "zio-test" % zioVersion
     )
   )
@@ -78,8 +87,8 @@ lazy val optimizely = (project in file("optimizely"))
     name := "zio-openfeature-optimizely",
     commonSettings,
     libraryDependencies ++= Seq(
-      "dev.zio" %% "zio" % zioVersion,
-      "com.optimizely.ab" % "core-api" % "4.1.1",
-      "com.google.code.gson" % "gson" % "2.10.1"
+      "dev.zio"              %% "zio"      % zioVersion,
+      "com.optimizely.ab"     % "core-api" % "4.1.1",
+      "com.google.code.gson"  % "gson"     % "2.10.1"
     )
   )

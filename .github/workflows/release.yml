@@ -18,7 +18,9 @@ jobs:
         with:
           java-version: '21'
           distribution: 'temurin'
-          cache: 'sbt'
+
+      - name: Setup sbt
+        uses: sbt/setup-sbt@v1
 
       - name: Run tests
         run: sbt test
@@ -55,29 +57,11 @@ jobs:
             CHANGELOG=$(git log --pretty=format:"- %s" ${PREV_TAG}..HEAD)
           fi
 
-          # Escape for GitHub Actions
-          CHANGELOG="${CHANGELOG//'%'/'%25'}"
-          CHANGELOG="${CHANGELOG//$'\n'/'%0A'}"
-          CHANGELOG="${CHANGELOG//$'\r'/'%0D'}"
-
-          echo "changelog=$CHANGELOG" >> $GITHUB_OUTPUT
+          # Write to file to preserve newlines
+          echo "$CHANGELOG" > /tmp/changelog.txt
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
         with:
-          body: |
-            ## What's Changed
-            ${{ steps.changelog.outputs.changelog }}
-
-            ## Installation
-
-            Add to your `build.sbt`:
-
-            ```scala
-            libraryDependencies += "io.github.etacassiopeia" %% "zio-openfeature-core" % "${{ github.ref_name }}"
-
-            // Optional modules
-            libraryDependencies += "io.github.etacassiopeia" %% "zio-openfeature-testkit" % "${{ github.ref_name }}" % Test
-            libraryDependencies += "io.github.etacassiopeia" %% "zio-openfeature-optimizely" % "${{ github.ref_name }}"
-            ```
+          body_path: /tmp/changelog.txt
           generate_release_notes: true

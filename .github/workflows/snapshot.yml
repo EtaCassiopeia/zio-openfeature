@@ -6,6 +6,7 @@ on:
     paths-ignore:
       - 'docs/**'
       - '*.md'
+      - 'RELEASING.md'
 
 jobs:
   publish-snapshot:
@@ -20,7 +21,9 @@ jobs:
         with:
           java-version: '21'
           distribution: 'temurin'
-          cache: 'sbt'
+
+      - name: Setup sbt
+        uses: sbt/setup-sbt@v1
 
       - name: Run tests
         run: sbt test

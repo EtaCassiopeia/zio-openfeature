@@ -8,6 +8,7 @@ enum ResolutionReason:
   case Cached
   case Disabled
   case Unknown
+  case Stale
   case Error
 
 final case class FlagMetadata(values: Map[String, String]):

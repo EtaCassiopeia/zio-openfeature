@@ -1,7 +1,7 @@
 ---
 layout: default
 title: Transactions
-nav_order: 6
+nav_order: 7
 ---
 
 # Transactions
@@ -17,12 +17,15 @@ nav_order: 6
 
 ## Overview
 
-Transactions allow you to override flag values and track evaluations within a scoped block of code. This is useful for:
+Transactions are a unique feature of ZIO OpenFeature that allow you to override flag values and track evaluations within a scoped block of code. This is useful for:
 
 - Testing specific flag combinations
 - A/B testing with predetermined values
 - Debugging flag behavior
 - Audit trails of flag usage
+- Caching evaluations for performance
+
+---
 
 ## Basic Usage
 
@@ -58,7 +61,9 @@ val result = FeatureFlags.transaction(overrides, ctx) {
 }
 ```
 
-### Evaluation Caching
+---
+
+## Evaluation Caching
 
 By default, transactions cache flag evaluations. When the same flag is evaluated multiple times within a transaction, only the first evaluation calls the provider:
 
@@ -77,24 +82,28 @@ This behavior:
 - Reduces provider calls for better performance
 - Returns `ResolutionReason.Cached` for subsequent evaluations
 
-To disable caching and call the provider for every evaluation (matching the behavior of some other OpenFeature implementations):
+### Disabling Caching
+
+To disable caching and call the provider for every evaluation:
 
 ```scala
 FeatureFlags.transaction(cacheEvaluations = false) {
   for
     a <- FeatureFlags.boolean("feature", false)  // Calls provider
     b <- FeatureFlags.boolean("feature", false)  // Calls provider again
-  yield (a, b)
+  yield (a, b)  // May differ if flag changed between calls
 }
 ```
 
-**Parameters:**
+### Parameters
 
 | Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
+|:----------|:-----|:--------|:------------|
 | `overrides` | `Map[String, Any]` | `Map.empty` | Flag values to override |
 | `context` | `EvaluationContext` | `empty` | Context for this transaction |
 | `cacheEvaluations` | `Boolean` | `true` | Cache flag values within transaction |
+
+---
 
 ## Transaction Results
 
@@ -121,6 +130,8 @@ result.map { txResult =>
   println(s"All flag keys: ${txResult.allFlagKeys}") // Set("feature-a", "feature-b")
 }
 ```
+
+---
 
 ## Transaction Result API
 
@@ -151,6 +162,8 @@ val valueMap: Map[String, Any] = txResult.toValueMap
 // Get keys evaluated by provider (not overridden)
 val providerKeys: Set[String] = txResult.providerEvaluatedKeys
 ```
+
+---
 
 ## Override Behavior
 
@@ -191,6 +204,8 @@ FeatureFlags.transaction(Map("feature-a" -> true)) {
 }
 ```
 
+---
+
 ## Nested Transactions
 
 Nested transactions are not allowed and will fail:
@@ -203,6 +218,22 @@ FeatureFlags.transaction(Map("a" -> true)) {
   }
 }
 ```
+
+---
+
+## Checking Transaction State
+
+You can check if code is running inside a transaction:
+
+```scala
+val inTx: ZIO[FeatureFlags, Nothing, Boolean] = FeatureFlags.inTransaction
+
+// Get currently evaluated flags in active transaction
+val evaluated: ZIO[FeatureFlags, Nothing, Map[String, FlagEvaluation[?]]] =
+  FeatureFlags.currentEvaluatedFlags
+```
+
+---
 
 ## Use Cases
 
@@ -250,3 +281,95 @@ auditedResult.flatMap { tx =>
   )
 }
 ```
+
+### Consistent Flag Values
+
+Ensure the same flag value is used throughout a request:
+
+```scala
+def handleRequest(request: Request) = {
+  FeatureFlags.transaction() {
+    for
+      // All evaluations of "feature-x" return the same value
+      header   <- renderHeader    // Uses "feature-x"
+      content  <- renderContent   // Uses "feature-x" (cached)
+      footer   <- renderFooter    // Uses "feature-x" (cached)
+    yield Response(header, content, footer)
+  }
+}
+```
+
+### Staged Rollout Testing
+
+```scala
+val scenarios = List(
+  Map("new-checkout" -> true, "new-payment" -> true),
+  Map("new-checkout" -> true, "new-payment" -> false),
+  Map("new-checkout" -> false, "new-payment" -> true),
+  Map("new-checkout" -> false, "new-payment" -> false)
+)
+
+ZIO.foreach(scenarios) { overrides =>
+  FeatureFlags.transaction(overrides) {
+    for
+      result <- runCheckoutFlow
+      _      <- ZIO.logInfo(s"Scenario $overrides: $result")
+    yield result
+  }
+}
+```
+
+---
+
+## Best Practices
+
+### 1. Use Transactions for Testing
+
+```scala
+test("feature behaves correctly when disabled") {
+  val testLayer = TestFeatureProvider.layer(Map("feature" -> true))
+
+  val result = FeatureFlags.transaction(Map("feature" -> false)) {
+    myFeatureLogic
+  }.provide(Scope.default >>> testLayer)
+
+  // Verify behavior with feature disabled
+}
+```
+
+### 2. Keep Transactions Short
+
+Transactions hold state in memory. Keep them focused:
+
+```scala
+// Good: Focused transaction
+FeatureFlags.transaction() {
+  for
+    enabled <- FeatureFlags.boolean("feature", false)
+    config  <- FeatureFlags.obj("config", Map.empty)
+  yield processWithFlags(enabled, config)
+}
+
+// Avoid: Long-running transaction
+FeatureFlags.transaction() {
+  for
+    flags   <- evaluateAllFlags
+    _       <- longRunningOperation  // Transaction state held in memory
+    result  <- processResult
+  yield result
+}
+```
+
+### 3. Use Empty Transactions for Tracking
+
+Track flag usage without overriding:
+
+```scala
+FeatureFlags.transaction(Map.empty) {
+  businessLogic
+}.map { tx =>
+  // Analyze which flags were actually used
+  analytics.record("flags_used", tx.allFlagKeys)
+}
+```
+

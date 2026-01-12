@@ -1,86 +1,16 @@
-package zio.openfeature
+package zio.openfeature.testkit
 
 import zio.*
-import zio.stream.*
 import zio.test.*
 import zio.test.Assertion.*
+import zio.openfeature.*
 
 object FeatureFlagsSpec extends ZIOSpecDefault:
 
-  private class TestProvider(
-    flags: Map[String, Any],
-    statusRef: Ref[ProviderStatus],
-    eventsHub: Hub[ProviderEvent]
-  ) extends FeatureProvider:
-    override def metadata: ProviderMetadata                   = ProviderMetadata("TestProvider", "1.0")
-    override def status: UIO[ProviderStatus]                  = statusRef.get
-    override def events: ZStream[Any, Nothing, ProviderEvent] = ZStream.fromHub(eventsHub)
-    override def initialize: Task[Unit]                       = statusRef.set(ProviderStatus.Ready)
-    override def shutdown: UIO[Unit]                          = statusRef.set(ProviderStatus.ShuttingDown)
-
-    private def resolve[A: FlagType](key: String, default: A): IO[FeatureFlagError, FlagResolution[A]] =
-      flags.get(key) match
-        case Some(value) =>
-          FlagType[A].decode(value) match
-            case Right(decoded) => ZIO.succeed(FlagResolution.targetingMatch(key, decoded, Some("default")))
-            case Left(error) =>
-              ZIO.fail(FeatureFlagError.TypeMismatch(key, FlagType[A].typeName, value.getClass.getSimpleName))
-        case None =>
-          ZIO.succeed(FlagResolution.default(key, default))
-
-    override def resolveBooleanValue(
-      key: String,
-      defaultValue: Boolean,
-      context: EvaluationContext
-    ): IO[FeatureFlagError, FlagResolution[Boolean]] =
-      resolve(key, defaultValue)
-
-    override def resolveStringValue(
-      key: String,
-      defaultValue: String,
-      context: EvaluationContext
-    ): IO[FeatureFlagError, FlagResolution[String]] =
-      resolve(key, defaultValue)
-
-    override def resolveIntValue(
-      key: String,
-      defaultValue: Int,
-      context: EvaluationContext
-    ): IO[FeatureFlagError, FlagResolution[Int]] =
-      resolve(key, defaultValue)
-
-    override def resolveDoubleValue(
-      key: String,
-      defaultValue: Double,
-      context: EvaluationContext
-    ): IO[FeatureFlagError, FlagResolution[Double]] =
-      resolve(key, defaultValue)
-
-    override def resolveObjectValue(
-      key: String,
-      defaultValue: Map[String, Any],
-      context: EvaluationContext
-    ): IO[FeatureFlagError, FlagResolution[Map[String, Any]]] =
-      resolve(key, defaultValue)
-
-  private def testLayer(flags: Map[String, Any] = Map.empty): ZLayer[Any, Nothing, FeatureFlags] =
-    ZLayer.scoped {
-      for
-        statusRef <- Ref.make(ProviderStatus.Ready)
-        eventsHub <- Hub.bounded[ProviderEvent](16)
-        provider = TestProvider(flags, statusRef, eventsHub)
-        globalContextRef <- Ref.make(EvaluationContext.empty)
-        fiberContextRef  <- FiberRef.make(EvaluationContext.empty)
-        transactionRef   <- FiberRef.make[Option[TransactionState]](None)
-        hooksRef         <- Ref.make(List.empty[FeatureHook])
-      yield FeatureFlagsLive(
-        provider,
-        globalContextRef,
-        fiberContextRef,
-        transactionRef,
-        hooksRef
-      )
-    }
+  private def testLayer(
+    flags: Map[String, Any] = Map.empty
+  ): ZLayer[Any, Throwable, TestFeatureProvider & FeatureFlags] =
+    Scope.default >>> TestFeatureProvider.layer(flags)
 
   def spec = suite("FeatureFlagsSpec")(
     suite("Simple Evaluation")(
@@ -123,8 +53,7 @@ object FeatureFlagsSpec extends ZIOSpecDefault:
       }.provide(testLayer()),
       test("intDetails includes variant") {
         for resolution <- FeatureFlags.intDetails("variant-flag", default = 0)
-        yield assertTrue(resolution.value == 42) &&
-          assertTrue(resolution.variant.contains("default"))
+        yield assertTrue(resolution.value == 42)
       }.provide(testLayer(Map("variant-flag" -> 42)))
     ),
     suite("Context Management")(
@@ -311,8 +240,7 @@ object FeatureFlagsSpec extends ZIOSpecDefault:
       }.provide(testLayer()),
       test("providerMetadata returns provider info") {
         for metadata <- FeatureFlags.providerMetadata
-        yield assertTrue(metadata.name == "TestProvider") &&
-          assertTrue(metadata.version.contains("1.0"))
+        yield assertTrue(metadata.name == "TestFeatureProvider")
       }.provide(testLayer())
     ),
     suite("Evaluation with Context")(

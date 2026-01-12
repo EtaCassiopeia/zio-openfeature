@@ -1,7 +1,8 @@
 import xerial.sbt.Sonatype.sonatypeCentralHost
 
-val scala3Version = "3.3.4"
-val zioVersion    = "2.1.14"
+val scala3Version         = "3.3.4"
+val zioVersion            = "2.1.14"
+val openFeatureSdkVersion = "1.14.0"
 
 ThisBuild / scalaVersion := scala3Version
 ThisBuild / organization := "io.github.etacassiopeia"
@@ -54,22 +55,25 @@ lazy val commonSettings = Seq(
 )
 
 lazy val root = (project in file("."))
-  .aggregate(core, testkit, optimizely)
+  .aggregate(core, testkit)
   .settings(
     name           := "zio-openfeature",
     publish / skip := true
   )
 
+// Core module - ZIO wrapper around OpenFeature SDK
 lazy val core = (project in file("core"))
   .settings(
     name := "zio-openfeature-core",
     commonSettings,
     libraryDependencies ++= Seq(
-      "dev.zio" %% "zio"         % zioVersion,
-      "dev.zio" %% "zio-streams" % zioVersion
+      "dev.zio"         %% "zio"         % zioVersion,
+      "dev.zio"         %% "zio-streams" % zioVersion,
+      "dev.openfeature"  % "sdk"         % openFeatureSdkVersion
     )
   )
 
+// Testkit module - testing utilities
 lazy val testkit = (project in file("testkit"))
   .dependsOn(core)
   .settings(
@@ -78,18 +82,5 @@ lazy val testkit = (project in file("testkit"))
     libraryDependencies ++= Seq(
       "dev.zio" %% "zio"      % zioVersion,
       "dev.zio" %% "zio-test" % zioVersion
-    )
-  )
-
-lazy val optimizely = (project in file("optimizely"))
-  .dependsOn(core, testkit % Test)
-  .settings(
-    name := "zio-openfeature-optimizely",
-    commonSettings,
-    libraryDependencies ++= Seq(
-      "dev.zio"              %% "zio"                  % zioVersion,
-      "com.optimizely.ab"     % "core-api"             % "4.1.1",
-      "com.optimizely.ab"     % "core-httpclient-impl" % "4.1.1",
-      "com.google.code.gson"  % "gson"                 % "2.10.1"
     )
   )

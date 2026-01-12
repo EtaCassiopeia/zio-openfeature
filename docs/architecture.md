@@ -17,15 +17,15 @@ nav_order: 3
 
 ## Overview
 
-ZIO OpenFeature is a ZIO-native implementation of the [OpenFeature specification](https://openfeature.dev/specification/), providing a vendor-agnostic API for feature flag evaluation. The library is designed around functional programming principles, leveraging ZIO's effect system for type safety, resource management, and concurrency.
+ZIO OpenFeature is a ZIO-native wrapper around the [OpenFeature Java SDK](https://openfeature.dev/docs/reference/technologies/server/java). It provides a functional, type-safe API for feature flag evaluation while leveraging the entire OpenFeature ecosystem of providers.
 
 ### Design Goals
 
-1. **Type Safety**: Compile-time guarantees for flag types through the `FlagType` type class
-2. **ZIO Integration**: First-class ZIO support with proper resource management and effect handling
-3. **Extensibility**: Easy to implement custom providers for any feature flag backend
-4. **Testability**: Built-in testkit for deterministic testing without external dependencies
-5. **OpenFeature Compliance**: Adherence to the OpenFeature specification for interoperability
+1. **OpenFeature Ecosystem Access**: Use any OpenFeature provider (LaunchDarkly, Flagsmith, flagd, etc.)
+2. **Type Safety**: Compile-time guarantees through the `FlagType` type class
+3. **ZIO Integration**: Effect-based API with proper resource management
+4. **Unique Features**: Transactions, caching, hierarchical context, ZIO-native hooks
+5. **Testability**: In-memory provider for testing without external dependencies
 
 ---
 
@@ -47,14 +47,14 @@ ZIO OpenFeature is a ZIO-native implementation of the [OpenFeature specification
                                 │
                                 ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                       FeatureProvider                            │
-│                    (Provider Abstraction)                        │
+│                     OpenFeature Java SDK                         │
+│              (OpenFeatureAPI, Client, FeatureProvider)           │
 └─────────────────────────────────────────────────────────────────┘
                                 │
             ┌───────────────────┼───────────────────┐
             ▼                   ▼                   ▼
     ┌───────────────┐   ┌───────────────┐   ┌───────────────┐
-    │  Optimizely   │   │    Test       │   │    Custom     │
+    │     flagd     │   │ LaunchDarkly  │   │  Flagsmith    │
     │   Provider    │   │   Provider    │   │   Provider    │
     └───────────────┘   └───────────────┘   └───────────────┘
 ```
@@ -64,41 +64,60 @@ ZIO OpenFeature is a ZIO-native implementation of the [OpenFeature specification
 | Component | Responsibility |
 |:----------|:---------------|
 | **FeatureFlags** | Main service interface for flag evaluation, context management, hooks, and transactions |
-| **FeatureProvider** | Abstraction for flag resolution backends (Optimizely, in-memory, custom) |
+| **OpenFeature SDK** | Underlying Java SDK for provider management and flag resolution |
 | **EvaluationContext** | User and environment attributes for targeting decisions |
 | **FlagType** | Type class for compile-time type safety and value conversion |
 | **FeatureHook** | Cross-cutting concerns (logging, metrics, validation) |
-| **Transaction** | Scoped flag overrides and evaluation tracking |
+| **Transaction** | Scoped flag overrides and evaluation tracking with caching |
 
 ---
 
 ## Layer Architecture
 
-ZIO OpenFeature uses ZIO's layer system for dependency injection:
+ZIO OpenFeature uses ZIO's layer system for dependency injection. The `FeatureFlags` layer is created from any OpenFeature provider:
 
 ```scala
-// Application layer composition
-val appLayer: ZLayer[Any, Throwable, FeatureFlags] =
-  OptimizelyProvider.layerFromOptions(options) >>> FeatureFlags.live
+import zio.*
+import zio.openfeature.*
+import dev.openfeature.contrib.providers.flagd.FlagdProvider
 
-// For testing
-val testLayer: ZLayer[Any, Nothing, FeatureFlags] =
-  TestFeatureProvider.layer(flags) >>> FeatureFlags.live
+// Production: use any OpenFeature provider
+val prodLayer: ZLayer[Scope, Throwable, FeatureFlags] =
+  FeatureFlags.fromProvider(new FlagdProvider())
+
+// Testing: use in-memory provider
+val testLayer: ZLayer[Scope, Throwable, FeatureFlags] =
+  TestFeatureProvider.layer(Map("my-flag" -> true))
+
+// Provide to your application
+program.provide(Scope.default >>> prodLayer)
 ```
 
 ### Layer Dependencies
 
 ```
-FeatureFlags.live
+FeatureFlags.fromProvider(provider)
     │
-    └── requires FeatureProvider
+    └── wraps OpenFeature SDK
               │
-              ├── OptimizelyProvider (production)
-              │       └── requires OptimizelyOptions
-              │
-              └── TestFeatureProvider (testing)
-                      └── requires initial flag map
+              └── OpenFeatureAPI.getInstance()
+                      │
+                      └── FeatureProvider (any OpenFeature provider)
+                              │
+                              ├── FlagdProvider
+                              ├── LaunchDarklyProvider
+                              ├── FlagsmithProvider
+                              ├── TestFeatureProvider (for testing)
+                              └── ... any OpenFeature provider
 ```
+
+### Factory Methods
+
+| Method | Description |
+|:-------|:------------|
+| `fromProvider(provider)` | Create from any OpenFeature provider |
+| `fromProviderWithDomain(provider, domain)` | Create with named domain for test isolation |
+| `fromProviderWithHooks(provider, hooks)` | Create with initial hooks |
 
 ---
 
@@ -116,7 +135,7 @@ trait FlagType[A]:
   def defaultValue: A
 ```
 
-Built-in instances are provided for:
+Built-in instances:
 
 | Type | Description |
 |:-----|:------------|
@@ -133,11 +152,9 @@ Built-in instances are provided for:
 Create custom flag types for domain-specific values:
 
 ```scala
-// Define your domain type
 enum Plan:
   case Free, Premium, Enterprise
 
-// Create a FlagType instance
 given planFlagType: FlagType[Plan] = FlagType.from(
   name = "Plan",
   default = Plan.Free,
@@ -152,7 +169,7 @@ given planFlagType: FlagType[Plan] = FlagType.from(
 
 // Use with type safety
 val plan: IO[FeatureFlagError, Plan] =
-  flags.value[Plan]("user-plan", Plan.Free)
+  FeatureFlags.value[Plan]("user-plan", Plan.Free)
 ```
 
 ---
@@ -199,20 +216,20 @@ When contexts are merged, attributes from higher-precedence levels override lowe
 // Global context (lowest precedence)
 FeatureFlags.setGlobalContext(
   EvaluationContext("app")
-    .withAttribute("env", AttributeValue.string("prod"))
-    .withAttribute("version", AttributeValue.string("1.0"))
+    .withAttribute("env", "prod")
+    .withAttribute("version", "1.0")
 )
 
 // Scoped context (overrides global for this block)
 val scopedCtx = EvaluationContext("user-123")
-  .withAttribute("version", AttributeValue.string("2.0"))  // Overrides global
+  .withAttribute("version", "2.0")  // Overrides global
 
 FeatureFlags.withContext(scopedCtx) {
   // Invocation context (highest precedence)
   val ctx = EvaluationContext.empty
-    .withAttribute("experiment", AttributeValue.string("A"))
+    .withAttribute("experiment", "A")
 
-  // Final merged context for this evaluation:
+  // Final merged context:
   // - targetingKey: "user-123" (from scoped)
   // - env: "prod" (from global)
   // - version: "2.0" (from scoped, overrides global)
@@ -241,8 +258,10 @@ Hooks execute in a defined order around flag evaluation:
                             │
                             ▼
 ┌─────────────────────────────────────────────────────────────┐
-│                   Provider Resolution                        │
-│  - Calls FeatureProvider.resolveXxxValue()                   │
+│                     Flag Resolution                          │
+│  - Calls OpenFeature Client                                  │
+│  - Checks transaction overrides                              │
+│  - Uses cache if in transaction                              │
 └─────────────────────────────────────────────────────────────┘
                             │
             ┌───────────────┴───────────────┐
@@ -270,7 +289,7 @@ Hooks execute in a defined order around flag evaluation:
 
 | Stage | When | Purpose |
 |:------|:-----|:--------|
-| **before** | Before provider call | Modify context, start timers, validate |
+| **before** | Before evaluation | Modify context, start timers, validate |
 | **after** | On successful evaluation | Log results, record metrics |
 | **error** | On evaluation failure | Log errors, alert, fallback logic |
 | **finallyAfter** | Always (like try-finally) | Cleanup, span completion |
@@ -298,15 +317,68 @@ val timingHook = new FeatureHook:
 
 ---
 
+## Transaction System
+
+Transactions provide scoped flag overrides, evaluation caching, and tracking:
+
+```scala
+val overrides = Map("feature-a" -> true, "max-items" -> 100)
+
+FeatureFlags.transaction(overrides) {
+  for
+    a <- FeatureFlags.boolean("feature-a", false)  // Returns true (override)
+    b <- FeatureFlags.boolean("feature-b", false)  // Evaluated from provider
+    n <- FeatureFlags.int("max-items", 10)         // Returns 100 (override)
+  yield (a, b, n)
+}.map { txResult =>
+  // txResult.result = (true, false, 100)
+  // txResult.allFlagKeys = Set("feature-a", "feature-b", "max-items")
+  // txResult.overriddenFlags = Set("feature-a", "max-items")
+}
+```
+
+### Transaction Features
+
+| Feature | Description |
+|:--------|:------------|
+| **Overrides** | Provide values that override provider evaluation |
+| **Caching** | Evaluations cached within transaction (optional) |
+| **Tracking** | Record all flag keys and values evaluated |
+| **Isolation** | Overrides only affect code within the transaction |
+
+### Caching Behavior
+
+By default, transactions cache flag evaluations for performance. Disable with `cacheEvaluations = false`:
+
+```scala
+// Cached (default) - same key returns cached value
+FeatureFlags.transaction(cacheEvaluations = true) {
+  for
+    a <- FeatureFlags.boolean("flag", false)  // Evaluated
+    b <- FeatureFlags.boolean("flag", false)  // Returns cached value
+  yield (a, b)  // Both same value
+}
+
+// Uncached - each evaluation goes to provider
+FeatureFlags.transaction(cacheEvaluations = false) {
+  for
+    a <- FeatureFlags.boolean("flag", false)  // Evaluated
+    b <- FeatureFlags.boolean("flag", false)  // Evaluated again
+  yield (a, b)  // May differ if flag changed
+}
+```
+
+---
+
 ## Provider Lifecycle
 
-Providers follow a defined lifecycle managed by ZIO's resource system:
+The OpenFeature SDK manages provider lifecycle. ZIO OpenFeature adds scoped resource management:
 
 ```
 ┌──────────────┐
 │   NotReady   │ ◄─── Initial state
 └──────┬───────┘
-       │ initialize()
+       │ setProviderAndWait()
        ▼
 ┌──────────────┐
 │    Ready     │ ◄─── Can evaluate flags
@@ -320,7 +392,13 @@ Providers follow a defined lifecycle managed by ZIO's resource system:
 
 ### Provider Events
 
-Providers emit events to notify the system of state changes:
+Subscribe to provider lifecycle events:
+
+```scala
+FeatureFlags.events.foreach { event =>
+  ZIO.logInfo(s"Provider event: $event")
+}
+```
 
 | Event | Meaning |
 |:------|:--------|
@@ -329,50 +407,16 @@ Providers emit events to notify the system of state changes:
 | `Stale` | Provider data may be outdated |
 | `Error` | Provider encountered an error |
 
-### Scoped Provider Management
+### Scoped Resource Management
 
-Use `ZIO.scoped` for automatic lifecycle management:
-
-```scala
-ZIO.scoped {
-  for
-    provider <- OptimizelyProvider.scopedFromOptions(options)
-    // Provider is automatically initialized
-    flags    <- ZIO.service[FeatureFlags]
-    result   <- flags.boolean("feature", false)
-  yield result
-  // Provider is automatically shutdown when scope ends
-}
-```
-
----
-
-## Transaction System
-
-Transactions provide scoped flag overrides and evaluation tracking:
+Use `Scope.default` for automatic cleanup:
 
 ```scala
-val overrides = Map("feature-a" -> true, "max-items" -> 100)
-
-flags.transaction(overrides) {
-  for
-    a <- flags.boolean("feature-a", false)  // Returns true (override)
-    b <- flags.boolean("feature-b", false)  // Evaluated from provider
-    n <- flags.int("max-items", 10)         // Returns 100 (override)
-  yield (a, b, n)
-}.map { txResult =>
-  // txResult.result = (true, false, 100)
-  // txResult.allFlagKeys = Set("feature-a", "feature-b", "max-items")
-  // txResult.overriddenFlags = Set("feature-a", "max-items")
-}
+program.provide(
+  Scope.default >>> FeatureFlags.fromProvider(new FlagdProvider())
+)
+// Provider is automatically shutdown when scope ends
 ```
-
-### Transaction Guarantees
-
-1. **Isolation**: Overrides only affect code within the transaction block
-2. **Tracking**: All flag evaluations are recorded with timestamps
-3. **Type Safety**: Override values must match expected types
-4. **No Nesting**: Nested transactions are not allowed (fails fast)
 
 ---
 
@@ -394,7 +438,7 @@ The library uses `FeatureFlagError` for typed error handling:
 ### Error Recovery
 
 ```scala
-flags.boolean("feature", false)
+FeatureFlags.boolean("feature", false)
   .catchSome {
     case FeatureFlagError.FlagNotFound(_) =>
       ZIO.succeed(false)  // Use default
@@ -405,28 +449,28 @@ flags.boolean("feature", false)
 
 ---
 
-## OpenFeature Compliance
+## OpenFeature Relationship
 
-This library implements the [OpenFeature specification](https://openfeature.dev/specification/) with the following mappings:
+ZIO OpenFeature wraps the OpenFeature Java SDK:
 
-| OpenFeature Concept | ZIO OpenFeature Implementation |
-|:--------------------|:-------------------------------|
-| API | `FeatureFlags` trait |
-| Provider | `FeatureProvider` trait |
-| Evaluation Context | `EvaluationContext` case class |
-| Hooks | `FeatureHook` trait |
-| Flag Resolution | `FlagResolution[A]` case class |
-| Provider Events | `ProviderEvent` enum via `ZStream` |
-| Provider Status | `ProviderStatus` enum |
+| OpenFeature Concept | ZIO OpenFeature |
+|:--------------------|:----------------|
+| `OpenFeatureAPI` | Internal, managed by `FeatureFlags` layer |
+| `Client` | Internal, managed by `FeatureFlagsLive` |
+| `FeatureProvider` | Passed to `FeatureFlags.fromProvider()` |
+| `EvaluationContext` | Our `EvaluationContext`, converted internally |
+| `Hooks` | Our `FeatureHook` trait (ZIO-native) |
+| `ProviderEvent` | Our `ProviderEvent` enum |
 
-### Specification Extensions
+### ZIO-Specific Additions
 
-ZIO OpenFeature extends the specification with:
+These features are unique to ZIO OpenFeature:
 
-1. **FlagType Type Class**: Compile-time type safety beyond the spec's basic types
-2. **Transactions**: Scoped overrides with evaluation tracking (not in spec)
-3. **Fiber-Local Context**: ZIO-specific context propagation
+1. **FlagType Type Class**: Compile-time type safety beyond basic types
+2. **Transactions**: Scoped overrides with caching and tracking
+3. **Fiber-Local Context**: Hierarchical context via `FiberRef`
 4. **Effect-Based API**: All operations return ZIO effects
+5. **ZIO-Native Hooks**: Effectful hook pipeline
 
 ---
 
@@ -434,24 +478,22 @@ ZIO OpenFeature extends the specification with:
 
 ```
 zio-openfeature/
-├── core/                    # Core abstractions and service
+├── core/                    # ZIO wrapper around OpenFeature SDK
 │   └── src/main/scala/zio/openfeature/
-│       ├── FeatureFlags.scala        # Main service trait
+│       ├── FeatureFlags.scala        # Main service trait + factory methods
 │       ├── FeatureFlagsLive.scala    # Service implementation
-│       ├── FeatureProvider.scala     # Provider abstraction
 │       ├── EvaluationContext.scala   # Context for targeting
 │       ├── FlagType.scala            # Type class for flag types
 │       ├── FlagResolution.scala      # Resolution result
 │       ├── Hook.scala                # Hook system
 │       ├── Transaction.scala         # Transaction support
-│       └── ...
-├── testkit/                 # Testing utilities
-│   └── src/main/scala/zio/openfeature/testkit/
-│       └── TestFeatureProvider.scala # In-memory test provider
-└── optimizely/              # Optimizely provider
-    └── src/main/scala/zio/openfeature/provider/optimizely/
-        ├── OptimizelyProvider.scala  # Provider implementation
-        └── OptimizelyOptions.scala   # Configuration
+│       └── internal/
+│           └── ContextConverter.scala  # ZIO ↔ OpenFeature conversion
+│
+└── testkit/                 # Testing utilities
+    └── src/main/scala/zio/openfeature/testkit/
+        ├── TestFeatureProvider.scala # In-memory OpenFeature provider
+        └── TestAssertions.scala      # Test helpers
 ```
 
 ---
@@ -461,9 +503,9 @@ zio-openfeature/
 All components are designed for concurrent use:
 
 - **FeatureFlags**: Uses `Ref` for global context, `FiberRef` for scoped context and transactions
-- **FeatureProvider**: Implementations should be thread-safe
-- **TestFeatureProvider**: Uses `Ref` for mutable state, safe for concurrent tests
-- **Transactions**: Use `FiberRef` for isolation between concurrent operations
+- **OpenFeature SDK**: Thread-safe by design
+- **TestFeatureProvider**: Uses `Ref` for mutable state
+- **Transactions**: Use `FiberRef` for fiber isolation
 
 ---
 
@@ -471,12 +513,13 @@ All components are designed for concurrent use:
 
 1. **Context Merging**: Performed on each evaluation; keep contexts small
 2. **Hook Execution**: Hooks run sequentially; keep them fast
-3. **Provider Caching**: Providers may implement internal caching
+3. **Transaction Caching**: Enable caching to avoid redundant evaluations
 4. **Type Conversion**: `FlagType.decode` runs on each evaluation
 
 ### Optimization Tips
 
-- Set frequently-used attributes in global context (merged once at startup)
-- Use typed methods (`boolean`, `string`) instead of generic `value[A]` when possible
+- Set frequently-used attributes in global context (merged once)
+- Use typed methods (`boolean`, `string`) instead of generic `value[A]`
+- Enable transaction caching for repeated evaluations
 - Keep hooks lightweight; use async operations for heavy work
-- Consider provider-level caching for frequently evaluated flags
+

@@ -2,13 +2,13 @@
 layout: default
 title: Home
 nav_order: 1
-description: "ZIO OpenFeature - Type-safe feature flags for Scala 3"
+description: "ZIO OpenFeature - A ZIO wrapper for the OpenFeature SDK"
 permalink: /
 ---
 
 # ZIO OpenFeature
 
-A type-safe, ZIO-native implementation of the [OpenFeature](https://openfeature.dev/) specification for Scala 3.
+A ZIO-native wrapper around the [OpenFeature](https://openfeature.dev/) Java SDK for Scala 3.
 {: .fs-6 .fw-300 }
 
 [Get Started]({{ site.baseurl }}/getting-started){: .btn .btn-primary .fs-5 .mb-4 .mb-md-0 .mr-2 }
@@ -18,61 +18,59 @@ A type-safe, ZIO-native implementation of the [OpenFeature](https://openfeature.
 
 ---
 
-## Features
+## Why ZIO OpenFeature?
 
-- **Type-safe flag evaluation** with `FlagType` type class
-- **Hierarchical evaluation context** (global, scoped, transaction, invocation)
-- **Hook system** for cross-cutting concerns (logging, metrics, validation)
-- **Transaction support** with override injection and evaluation tracking
-- **Testkit module** for easy testing
-- **Optimizely provider** implementation
-- **OpenFeature compliant** - implements the [OpenFeature specification](https://openfeature.dev/specification/)
+ZIO OpenFeature wraps the OpenFeature Java SDK, giving you access to the entire OpenFeature ecosystem while providing a type-safe, functional API designed for ZIO applications.
 
-## Requirements
-
-- Scala 3.3+
-- ZIO 2.1+
-
-## Documentation
-
-| Section | Description |
-|:--------|:------------|
-| [Getting Started]({{ site.baseurl }}/getting-started) | Installation and basic usage |
-| [Architecture]({{ site.baseurl }}/architecture) | Core concepts, design principles, and component overview |
-| [Evaluation Context]({{ site.baseurl }}/context) | Hierarchical context system for targeting |
-| [Hooks]({{ site.baseurl }}/hooks) | Cross-cutting concerns pipeline |
-| [Transactions]({{ site.baseurl }}/transactions) | Flag overrides and evaluation tracking |
-| [Testkit]({{ site.baseurl }}/testkit) | Testing utilities |
-| [Providers]({{ site.baseurl }}/providers) | Optimizely and custom providers |
+- **Use Any Provider** - Works with all OpenFeature providers: LaunchDarkly, Flagsmith, Flipt, flagd, and more
+- **Type Safety** - Compile-time guarantees with the `FlagType` type class
+- **ZIO Native** - Effect-based API with proper resource management
+- **Transactions** - Scoped flag overrides with caching and evaluation tracking
+- **Testkit** - In-memory provider for testing without external dependencies
 
 ## Quick Example
 
 ```scala
 import zio.*
 import zio.openfeature.*
-import zio.openfeature.testkit.*
+import dev.openfeature.contrib.providers.flagd.FlagdProvider
 
 object MyApp extends ZIOAppDefault:
 
   val program = for
-    flags   <- ZIO.service[FeatureFlags]
-    enabled <- flags.boolean("my-feature", false)
-    _       <- ZIO.when(enabled)(ZIO.debug("Feature is enabled!"))
+    enabled <- FeatureFlags.boolean("new-feature", default = false)
+    _       <- ZIO.when(enabled)(Console.printLine("Feature enabled!"))
   yield ()
 
   def run = program.provide(
-    FeatureFlags.live,
-    TestFeatureProvider.layer(Map("my-feature" -> true))
+    Scope.default >>> FeatureFlags.fromProvider(new FlagdProvider())
   )
 ```
+
+## Documentation
+
+| Section | Description |
+|:--------|:------------|
+| [Getting Started]({{ site.baseurl }}/getting-started) | Installation and basic usage |
+| [Architecture]({{ site.baseurl }}/architecture) | Core design and components |
+| [Providers]({{ site.baseurl }}/providers) | Using OpenFeature providers |
+| [Evaluation Context]({{ site.baseurl }}/context) | Targeting and context hierarchy |
+| [Hooks]({{ site.baseurl }}/hooks) | Cross-cutting concerns |
+| [Transactions]({{ site.baseurl }}/transactions) | Flag overrides and tracking |
+| [Testkit]({{ site.baseurl }}/testkit) | Testing utilities |
+| [Spec Compliance]({{ site.baseurl }}/spec-compliance) | OpenFeature specification compliance |
 
 ## Modules
 
 | Module | Description |
 |:-------|:------------|
-| **core** | Core abstractions and FeatureFlags service |
-| **testkit** | Testing utilities including TestFeatureProvider |
-| **optimizely** | Optimizely feature flag provider |
+| **core** | ZIO wrapper around OpenFeature SDK |
+| **testkit** | In-memory provider for testing |
+
+## Requirements
+
+- Scala 3.3+
+- ZIO 2.1+
 
 ## License
 

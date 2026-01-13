@@ -39,7 +39,7 @@ program.provide(Scope.default >>> layer)
 
 ```scala
 libraryDependencies ++= Seq(
-  "io.github.etacassiopeia" %% "zio-openfeature-core" % "0.3.0",
+  "io.github.etacassiopeia" %% "zio-openfeature-core" % "0.3.2",
   "dev.openfeature.contrib.providers" % "optimizely" % "0.1.0"
 )
 ```
@@ -183,7 +183,7 @@ Check [Maven Central](https://central.sonatype.com/search?q=g:dev.openfeature.co
 
 ```scala
 libraryDependencies ++= Seq(
-  "io.github.etacassiopeia" %% "zio-openfeature-core" % "0.3.0",
+  "io.github.etacassiopeia" %% "zio-openfeature-core" % "0.3.2",
   "dev.openfeature.contrib.providers" % "flagd" % "0.8.9"
 )
 ```
@@ -230,7 +230,7 @@ object MyApp extends ZIOAppDefault:
 
 ```scala
 libraryDependencies ++= Seq(
-  "io.github.etacassiopeia" %% "zio-openfeature-core" % "0.3.0",
+  "io.github.etacassiopeia" %% "zio-openfeature-core" % "0.3.2",
   "dev.openfeature.contrib.providers" % "launchdarkly" % "1.1.0"
 )
 ```

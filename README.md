@@ -22,7 +22,7 @@ ZIO OpenFeature provides a type-safe, functional interface for feature flag eval
 [![Maven Central](https://img.shields.io/maven-central/v/io.github.etacassiopeia/zio-openfeature-core_3.svg)](https://search.maven.org/search?q=g:io.github.etacassiopeia%20AND%20a:zio-openfeature-core_3)
 
 ```scala
-val zioOpenFeatureVersion = "0.3.0"
+val zioOpenFeatureVersion = "0.3.2"
 
 // Core library (includes OpenFeature SDK)
 libraryDependencies += "io.github.etacassiopeia" %% "zio-openfeature-core" % zioOpenFeatureVersion

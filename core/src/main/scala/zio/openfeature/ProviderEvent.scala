@@ -1,35 +1,5 @@
 package zio.openfeature
 
-/** Metadata about the feature flag provider.
-  */
-final case class ProviderMetadata(
-  name: String,
-  version: Option[String] = None
-):
-  override def toString: String = version.fold(name)(v => s"$name v$v")
-
-object ProviderMetadata:
-  def apply(name: String, version: String): ProviderMetadata =
-    ProviderMetadata(name, Some(version))
-
-/** Metadata about the feature flags client.
-  *
-  * Per OpenFeature spec requirement 1.2.2, clients must have immutable metadata containing a domain field.
-  */
-final case class ClientMetadata(
-  domain: Option[String] = None
-):
-  /** Returns true if this client is bound to a specific domain. */
-  def hasDomain: Boolean = domain.isDefined
-
-  override def toString: String = domain.getOrElse("default")
-
-object ClientMetadata:
-  val default: ClientMetadata = ClientMetadata(None)
-
-  def apply(domain: String): ClientMetadata =
-    ClientMetadata(Some(domain))
-
 /** Type of provider event for use with generic event handlers. */
 enum ProviderEventType:
   case Ready
@@ -38,6 +8,11 @@ enum ProviderEventType:
   case ConfigurationChanged
   case Reconnecting
 
+/** Events emitted by feature flag providers during their lifecycle.
+  *
+  * Per OpenFeature spec section 5, providers emit events when their state changes. These events can be used for
+  * logging, monitoring, or triggering application-specific behavior.
+  */
 enum ProviderEvent:
   case Ready(providerMetadata: ProviderMetadata)
   case Error(error: Throwable, providerMetadata: ProviderMetadata)
@@ -55,6 +30,7 @@ enum ProviderEvent:
 
 object ProviderEvent:
   extension (event: ProviderEvent)
+    /** Extract the provider metadata from any event type. */
     def metadata: ProviderMetadata = event match
       case Ready(m)                   => m
       case Error(_, m)                => m
@@ -62,10 +38,12 @@ object ProviderEvent:
       case ConfigurationChanged(_, m) => m
       case Reconnecting(m)            => m
 
+    /** Check if this is an error event. */
     def isError: Boolean = event match
       case Error(_, _) => true
       case _           => false
 
+    /** Check if this event indicates a healthy provider state. */
     def isHealthy: Boolean = event match
       case Ready(_)                   => true
       case ConfigurationChanged(_, _) => true

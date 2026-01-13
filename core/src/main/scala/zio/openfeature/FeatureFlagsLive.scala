@@ -543,6 +543,36 @@ final private[openfeature] class FeatureFlagsLive(
   override def providerMetadata: UIO[ProviderMetadata] =
     ZIO.succeed(ProviderMetadata(providerName))
 
+  // Event Handlers
+
+  override def onProviderReady(handler: ProviderMetadata => UIO[Unit]): UIO[Unit] =
+    events
+      .collect { case ProviderEvent.Ready(metadata) => metadata }
+      .foreach(handler)
+      .forkDaemon
+      .unit
+
+  override def onProviderError(handler: (Throwable, ProviderMetadata) => UIO[Unit]): UIO[Unit] =
+    events
+      .collect { case ProviderEvent.Error(error, metadata) => (error, metadata) }
+      .foreach { case (error, metadata) => handler(error, metadata) }
+      .forkDaemon
+      .unit
+
+  override def onProviderStale(handler: (String, ProviderMetadata) => UIO[Unit]): UIO[Unit] =
+    events
+      .collect { case ProviderEvent.Stale(reason, metadata) => (reason, metadata) }
+      .foreach { case (reason, metadata) => handler(reason, metadata) }
+      .forkDaemon
+      .unit
+
+  override def onConfigurationChanged(handler: (Set[String], ProviderMetadata) => UIO[Unit]): UIO[Unit] =
+    events
+      .collect { case ProviderEvent.ConfigurationChanged(flags, metadata) => (flags, metadata) }
+      .foreach { case (flags, metadata) => handler(flags, metadata) }
+      .forkDaemon
+      .unit
+
   override def addHook(hook: FeatureHook): UIO[Unit] =
     hooksRef.update(_ :+ hook)
 

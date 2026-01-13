@@ -162,6 +162,30 @@ FeatureFlags.addHook(FeatureHook.metrics { (key, duration, success) =>
 FeatureFlags.addHook(FeatureHook.contextValidator(requireTargetingKey = true))
 ```
 
+### Tracking
+
+```scala
+// Track user actions
+FeatureFlags.track("button-clicked")
+
+// Track with details
+val details = TrackingEventDetails(value = Some(99.99))
+FeatureFlags.track("purchase", EvaluationContext("user-123"), details)
+```
+
+### Event Handlers
+
+```scala
+// React to provider events
+FeatureFlags.onProviderReady { metadata =>
+  ZIO.logInfo(s"Provider ${metadata.name} ready")
+}
+
+FeatureFlags.onConfigurationChanged { (flags, _) =>
+  ZIO.logInfo(s"Flags changed: ${flags.mkString(", ")}")
+}
+```
+
 ## Modules
 
 | Module | Description |

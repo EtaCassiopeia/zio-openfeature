@@ -170,19 +170,23 @@ provider.clearEvaluations
 
 ### Managing Status
 
+When using `TestFeatureProvider.layer`, the provider starts in `Ready` status. You can change the status for testing different scenarios:
+
 ```scala
 for
-  provider <- TestFeatureProvider.make(Map.empty)
-  initial  <- provider.status
-  _        <- provider.setStatus(ProviderStatus.Ready)
-  ready    <- provider.status
+  provider <- ZIO.service[TestFeatureProvider]
+  initial  <- provider.status                    // Ready (after layer creation)
   _        <- provider.setStatus(ProviderStatus.Error)
   error    <- provider.status
+  _        <- provider.setStatus(ProviderStatus.Stale)
+  stale    <- provider.status
 yield
-  assertTrue(initial == ProviderStatus.NotReady) &&
-  assertTrue(ready == ProviderStatus.Ready) &&
-  assertTrue(error == ProviderStatus.Error)
+  assertTrue(initial == ProviderStatus.Ready) &&
+  assertTrue(error == ProviderStatus.Error) &&
+  assertTrue(stale == ProviderStatus.Stale)
 ```
+
+The `setStatus` method updates both the ZIO status and the underlying OpenFeature provider state.
 
 ### Emitting Events
 

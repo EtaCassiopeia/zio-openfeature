@@ -207,9 +207,27 @@ For the `before` stage, hooks run in order. For `after`, `error`, and `finallyAf
 
 ---
 
-## Managing Hooks
+## Hook Registration Levels
 
-### Adding Hooks
+Per the OpenFeature specification, hooks can be registered at three levels:
+
+### API-Level Hooks
+
+API-level hooks apply to all clients and use the OpenFeature SDK's Hook interface:
+
+```scala
+import dev.openfeature.sdk.Hook
+
+// Add API-level hook (uses OpenFeature SDK Hook interface)
+FeatureFlags.addApiHook(myOpenFeatureHook)
+
+// Clear all API-level hooks
+FeatureFlags.clearApiHooks
+```
+
+### Client-Level Hooks
+
+Client-level hooks apply to a specific FeatureFlags instance:
 
 ```scala
 // Add a single hook at runtime
@@ -222,18 +240,44 @@ val hooks = List(
 )
 
 val layer = FeatureFlags.fromProviderWithHooks(provider, hooks)
-```
 
-### Clearing Hooks
-
-```scala
-// Remove all hooks
+// Remove all client hooks
 FeatureFlags.clearHooks
 
-// Get current hooks
+// Get current client hooks
 val currentHooks: ZIO[FeatureFlags, Nothing, List[FeatureHook]] =
   FeatureFlags.hooks
 ```
+
+### Invocation-Level Hooks
+
+Invocation-level hooks apply to a single evaluation call:
+
+```scala
+import zio.openfeature.*
+
+// Create hook for this evaluation
+val auditHook = new FeatureHook:
+  override def after[A](ctx: HookContext, details: FlagResolution[A], hints: HookHints): UIO[Unit] =
+    ZIO.logInfo(s"Evaluated ${ctx.flagKey} = ${details.value}")
+
+// Use EvaluationOptions to pass invocation hooks
+val options = EvaluationOptions(
+  hooks = List(auditHook),
+  hookHints = HookHints("audit-id" -> "12345")
+)
+
+// Evaluate with invocation hooks
+FeatureFlags.booleanDetails("feature", false, EvaluationContext.empty, options)
+```
+
+### Hook Execution Order
+
+Per OpenFeature spec, hooks execute in this order:
+
+**Before stage:** API → Client → Invocation (in addition order within each level)
+
+**After/Error/Finally stages:** Invocation → Client → API (reverse order)
 
 ---
 

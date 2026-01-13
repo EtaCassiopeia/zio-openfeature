@@ -19,12 +19,13 @@ nav_order: 5
 
 Evaluation context provides information about the current evaluation environment. This includes user information, application state, and any other data that might influence flag evaluation. The context is converted to OpenFeature SDK format and passed to the underlying provider.
 
-ZIO OpenFeature supports a hierarchical context system with four levels:
+ZIO OpenFeature supports a hierarchical context system with five levels (per OpenFeature spec):
 
-1. **Global context** - Shared across all evaluations, set via `setGlobalContext`
-2. **Scoped context** - Applied to a block of code via `withContext`
-3. **Transaction context** - Applied within a transaction block
-4. **Invocation context** - Passed directly to evaluation methods
+1. **Global context** - API-level, shared across all evaluations, set via `setGlobalContext`
+2. **Client context** - Client-level, persisted on the FeatureFlags instance, set via `setClientContext`
+3. **Scoped context** - Applied to a block of code via `withContext` (fiber-local)
+4. **Transaction context** - Applied within a transaction block
+5. **Invocation context** - Passed directly to evaluation methods
 
 Contexts are merged in order, with later contexts taking precedence.
 
@@ -84,6 +85,30 @@ val program = for
   // All evaluations will include these attributes
   enabled <- FeatureFlags.boolean("feature", false)
 yield enabled
+```
+
+### Client Context
+
+Client context is persisted on the `FeatureFlags` instance and applies to all evaluations made through that client. Per the OpenFeature spec, client context is merged after global context but before scoped/transaction context.
+
+```scala
+// Set client-level context
+FeatureFlags.setClientContext(
+  EvaluationContext.empty
+    .withAttribute("service", "checkout-api")
+    .withAttribute("region", "us-east-1")
+)
+
+// Get client context
+val clientCtx = FeatureFlags.clientContext
+
+// Client context is separate from global context
+for
+  _ <- FeatureFlags.setGlobalContext(EvaluationContext("app"))
+  _ <- FeatureFlags.setClientContext(EvaluationContext("client"))
+  global <- FeatureFlags.globalContext  // "app"
+  client <- FeatureFlags.clientContext  // "client"
+yield (global, client)
 ```
 
 ### Scoped Context
@@ -194,19 +219,26 @@ FeatureFlags.withContext(scopedCtx) {
 
 ### Merge Order
 
+Per the OpenFeature specification, contexts are merged in this order (lowest to highest precedence):
+
 ```
 ┌──────────────────────────────────────────────────────────────┐
 │                     Final Merged Context                      │
-│  (Invocation > Transaction > Scoped > Global)                │
+│  (Invocation > Transaction > Scoped > Client > Global)       │
 └──────────────────────────────────────────────────────────────┘
                             ▲
                             │
-        ┌───────────────────┼───────────────────┐
-        │                   │                   │
- ┌──────┴──────┐     ┌──────┴──────┐     ┌──────┴──────┐
- │ Invocation  │     │ Transaction │     │   Scoped    │
- │  (highest)  │     │  Context    │     │  Context    │
- └─────────────┘     └─────────────┘     └─────────────┘
+    ┌───────────────────────┼───────────────────────┐
+    │                       │                       │
+┌───┴───┐             ┌─────┴─────┐           ┌─────┴─────┐
+│Invoc. │             │Transaction│           │  Scoped   │
+│(high) │             │  Context  │           │  Context  │
+└───────┘             └───────────┘           └───────────┘
+                            │
+                     ┌──────┴──────┐
+                     │   Client    │
+                     │  Context    │
+                     └─────────────┘
                             │
                      ┌──────┴──────┐
                      │   Global    │

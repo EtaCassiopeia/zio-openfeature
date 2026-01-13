@@ -210,6 +210,46 @@ val hooks = List(
 val layer = FeatureFlags.fromProviderWithHooks(provider, hooks)
 ```
 
+## Tracking Events
+
+Track user actions for analytics and experimentation:
+
+```scala
+// Simple event tracking
+FeatureFlags.track("button-clicked")
+
+// Track with user context
+FeatureFlags.track("purchase", EvaluationContext("user-123"))
+
+// Track with event details
+val details = TrackingEventDetails(
+  value = Some(99.99),
+  attributes = Map("currency" -> "USD", "items" -> 3)
+)
+FeatureFlags.track("checkout", details)
+```
+
+## Event Handlers
+
+React to provider lifecycle events:
+
+```scala
+// Handle provider ready
+FeatureFlags.onProviderReady { metadata =>
+  ZIO.logInfo(s"Provider ${metadata.name} is ready")
+}
+
+// Handle configuration changes
+FeatureFlags.onConfigurationChanged { (flags, metadata) =>
+  ZIO.logInfo(s"Flags changed: ${flags.mkString(", ")}")
+}
+
+// Handle errors
+FeatureFlags.onProviderError { (error, metadata) =>
+  ZIO.logError(s"Provider error: ${error.getMessage}")
+}
+```
+
 ## Next Steps
 
 - Learn about [Evaluation Context]({{ site.baseurl }}/context) for targeted flag evaluation
@@ -217,3 +257,4 @@ val layer = FeatureFlags.fromProviderWithHooks(provider, hooks)
 - Use [Transactions]({{ site.baseurl }}/transactions) for flag overrides and tracking
 - See [Testkit]({{ site.baseurl }}/testkit) for testing best practices
 - Check [Providers]({{ site.baseurl }}/providers) for provider-specific features
+- Review [Spec Compliance]({{ site.baseurl }}/spec-compliance) for OpenFeature compatibility

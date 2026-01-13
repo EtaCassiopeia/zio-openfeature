@@ -356,7 +356,54 @@ yield ()
 
 ## Provider Events
 
-Subscribe to provider lifecycle events using the event stream:
+ZIO OpenFeature provides two ways to handle provider events: event handlers and event streams.
+
+### Event Handlers
+
+Register handlers for specific event types. Handlers return a cancellation effect per OpenFeature spec 5.2.7:
+
+```scala
+// Handler for ready events
+val cancelReady = FeatureFlags.onProviderReady { metadata =>
+  ZIO.logInfo(s"Provider ${metadata.name} is ready")
+}
+
+// Handler for error events
+val cancelError = FeatureFlags.onProviderError { (error, metadata) =>
+  ZIO.logError(s"Provider ${metadata.name} error: ${error.getMessage}")
+}
+
+// Handler for stale events
+val cancelStale = FeatureFlags.onProviderStale { (reason, metadata) =>
+  ZIO.logWarning(s"Provider ${metadata.name} stale: $reason")
+}
+
+// Handler for configuration changed events
+val cancelConfig = FeatureFlags.onConfigurationChanged { (flags, metadata) =>
+  ZIO.logInfo(s"Flags changed: ${flags.mkString(", ")}")
+}
+
+// Generic handler for any event type
+val cancelGeneric = FeatureFlags.on(ProviderEventType.Ready, event =>
+  ZIO.logInfo(s"Event: $event")
+)
+
+// Cancel handler when no longer needed
+cancelReady.flatMap(cancel => cancel)
+```
+
+Per OpenFeature spec 5.3.3, handlers run immediately if the provider is already in the matching state:
+
+```scala
+// If provider is already ready, this handler runs immediately
+FeatureFlags.onProviderReady { metadata =>
+  ZIO.logInfo("Provider ready!")  // Runs right away if already ready
+}
+```
+
+### Event Stream
+
+For reactive event processing, use the ZStream:
 
 ```scala
 val eventHandler = FeatureFlags.events.foreach { event =>
@@ -369,6 +416,8 @@ val eventHandler = FeatureFlags.events.foreach { event =>
       ZIO.logWarning(s"Provider data stale: $reason")
     case ProviderEvent.Error(error, meta) =>
       ZIO.logError(s"Provider error: ${error.getMessage}")
+    case ProviderEvent.Reconnecting(meta) =>
+      ZIO.logInfo(s"Provider ${meta.name} reconnecting...")
 }
 
 // Run event handler in background

@@ -73,12 +73,23 @@ trait FeatureFlags:
   def events: ZStream[Any, Nothing, ProviderEvent]
   def providerStatus: UIO[ProviderStatus]
   def providerMetadata: UIO[ProviderMetadata]
+  def clientMetadata: UIO[ClientMetadata]
 
-  // Event Handlers
-  def onProviderReady(handler: ProviderMetadata => UIO[Unit]): UIO[Unit]
-  def onProviderError(handler: (Throwable, ProviderMetadata) => UIO[Unit]): UIO[Unit]
-  def onProviderStale(handler: (String, ProviderMetadata) => UIO[Unit]): UIO[Unit]
-  def onConfigurationChanged(handler: (Set[String], ProviderMetadata) => UIO[Unit]): UIO[Unit]
+  // Event Handlers - return a cancellation effect
+  /** Register a handler for provider ready events. Returns a cancellation effect.
+    *
+    * Per OpenFeature spec 5.2.1 and 5.2.7, handlers can be registered and removed.
+    */
+  def onProviderReady(handler: ProviderMetadata => UIO[Unit]): UIO[UIO[Unit]]
+
+  /** Register a handler for provider error events. Returns a cancellation effect. */
+  def onProviderError(handler: (Throwable, ProviderMetadata) => UIO[Unit]): UIO[UIO[Unit]]
+
+  /** Register a handler for provider stale events. Returns a cancellation effect. */
+  def onProviderStale(handler: (String, ProviderMetadata) => UIO[Unit]): UIO[UIO[Unit]]
+
+  /** Register a handler for configuration changed events. Returns a cancellation effect. */
+  def onConfigurationChanged(handler: (Set[String], ProviderMetadata) => UIO[Unit]): UIO[UIO[Unit]]
 
   def addHook(hook: FeatureHook): UIO[Unit]
   def clearHooks: UIO[Unit]
@@ -218,18 +229,27 @@ object FeatureFlags:
   def providerMetadata: ZIO[FeatureFlags, Nothing, ProviderMetadata] =
     ZIO.serviceWithZIO(_.providerMetadata)
 
-  // Event Handlers
+  def clientMetadata: ZIO[FeatureFlags, Nothing, ClientMetadata] =
+    ZIO.serviceWithZIO(_.clientMetadata)
 
-  def onProviderReady(handler: ProviderMetadata => UIO[Unit]): ZIO[FeatureFlags, Nothing, Unit] =
+  // Event Handlers - return cancellation effects
+
+  /** Register a handler for provider ready events. Returns a cancellation effect. */
+  def onProviderReady(handler: ProviderMetadata => UIO[Unit]): ZIO[FeatureFlags, Nothing, UIO[Unit]] =
     ZIO.serviceWithZIO(_.onProviderReady(handler))
 
-  def onProviderError(handler: (Throwable, ProviderMetadata) => UIO[Unit]): ZIO[FeatureFlags, Nothing, Unit] =
+  /** Register a handler for provider error events. Returns a cancellation effect. */
+  def onProviderError(handler: (Throwable, ProviderMetadata) => UIO[Unit]): ZIO[FeatureFlags, Nothing, UIO[Unit]] =
     ZIO.serviceWithZIO(_.onProviderError(handler))
 
-  def onProviderStale(handler: (String, ProviderMetadata) => UIO[Unit]): ZIO[FeatureFlags, Nothing, Unit] =
+  /** Register a handler for provider stale events. Returns a cancellation effect. */
+  def onProviderStale(handler: (String, ProviderMetadata) => UIO[Unit]): ZIO[FeatureFlags, Nothing, UIO[Unit]] =
     ZIO.serviceWithZIO(_.onProviderStale(handler))
 
-  def onConfigurationChanged(handler: (Set[String], ProviderMetadata) => UIO[Unit]): ZIO[FeatureFlags, Nothing, Unit] =
+  /** Register a handler for configuration changed events. Returns a cancellation effect. */
+  def onConfigurationChanged(
+    handler: (Set[String], ProviderMetadata) => UIO[Unit]
+  ): ZIO[FeatureFlags, Nothing, UIO[Unit]] =
     ZIO.serviceWithZIO(_.onConfigurationChanged(handler))
 
   def addHook(hook: FeatureHook): ZIO[FeatureFlags, Nothing, Unit] =
@@ -240,6 +260,24 @@ object FeatureFlags:
 
   def hooks: ZIO[FeatureFlags, Nothing, List[FeatureHook]] =
     ZIO.serviceWithZIO(_.hooks)
+
+  // API-level Hooks (per OpenFeature spec 4.4.1)
+
+  /** Add an API-level hook that applies to all clients.
+    *
+    * Per OpenFeature spec, hook execution order is: API -> Client -> Invocation -> Provider For before hooks, this
+    * order applies. For after/error/finally hooks, the order is reversed.
+    *
+    * Note: API-level hooks are registered with the global OpenFeature API and persist until cleared. Use the
+    * OpenFeature SDK's Hook interface for API-level hooks. For ZIO-native hooks, use client-level (addHook) or
+    * invocation-level (EvaluationOptions) hooks.
+    */
+  def addApiHook(hook: dev.openfeature.sdk.Hook[?]): UIO[Unit] =
+    ZIO.succeed(OpenFeatureAPI.getInstance().addHooks(hook))
+
+  /** Clear all API-level hooks. */
+  def clearApiHooks: UIO[Unit] =
+    ZIO.succeed(OpenFeatureAPI.getInstance().clearHooks())
 
   // Tracking API
 
@@ -287,6 +325,7 @@ object FeatureFlags:
         client,
         provider,
         providerName,
+        None, // default domain
         globalCtxRef,
         fiberCtxRef,
         transactionRef,
@@ -317,6 +356,7 @@ object FeatureFlags:
         client,
         provider,
         providerName,
+        Some(domain),
         globalCtxRef,
         fiberCtxRef,
         transactionRef,
@@ -347,6 +387,7 @@ object FeatureFlags:
         client,
         provider,
         providerName,
+        None, // default domain
         globalCtxRef,
         fiberCtxRef,
         transactionRef,

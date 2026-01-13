@@ -294,6 +294,11 @@ object FeatureFlagsSpec extends ZIOSpecDefault:
       test("providerMetadata returns provider info") {
         for metadata <- FeatureFlags.providerMetadata
         yield assertTrue(metadata.name == "TestFeatureProvider")
+      }.provide(testLayer()),
+      test("clientMetadata returns client info with domain") {
+        for metadata <- FeatureFlags.clientMetadata
+        yield assertTrue(metadata.hasDomain) &&
+          assertTrue(metadata.domain.exists(_.startsWith("test-")))
       }.provide(testLayer())
     ),
     suite("Evaluation with Context")(
@@ -335,28 +340,54 @@ object FeatureFlagsSpec extends ZIOSpecDefault:
       }.provide(testLayer(Map("str-flag" -> "found")))
     ),
     suite("Event Handlers")(
-      test("onProviderReady registers handler") {
-        for _ <- FeatureFlags.onProviderReady(_ => ZIO.unit)
-        yield assertTrue(true)
+      test("onProviderReady registers handler and returns cancellation") {
+        for cancel <- FeatureFlags.onProviderReady(_ => ZIO.unit)
+        yield assertTrue(cancel != null)
       }.provide(testLayer()),
-      test("onProviderError registers handler") {
-        for _ <- FeatureFlags.onProviderError((_, _) => ZIO.unit)
-        yield assertTrue(true)
+      test("onProviderError registers handler and returns cancellation") {
+        for cancel <- FeatureFlags.onProviderError((_, _) => ZIO.unit)
+        yield assertTrue(cancel != null)
       }.provide(testLayer()),
-      test("onProviderStale registers handler") {
-        for _ <- FeatureFlags.onProviderStale((_, _) => ZIO.unit)
-        yield assertTrue(true)
+      test("onProviderStale registers handler and returns cancellation") {
+        for cancel <- FeatureFlags.onProviderStale((_, _) => ZIO.unit)
+        yield assertTrue(cancel != null)
       }.provide(testLayer()),
-      test("onConfigurationChanged registers handler") {
-        for _ <- FeatureFlags.onConfigurationChanged((_, _) => ZIO.unit)
-        yield assertTrue(true)
+      test("onConfigurationChanged registers handler and returns cancellation") {
+        for cancel <- FeatureFlags.onConfigurationChanged((_, _) => ZIO.unit)
+        yield assertTrue(cancel != null)
       }.provide(testLayer()),
       test("multiple handlers can be registered") {
         for
-          _ <- FeatureFlags.onProviderReady(_ => ZIO.unit)
-          _ <- FeatureFlags.onProviderReady(_ => ZIO.unit)
-          _ <- FeatureFlags.onProviderError((_, _) => ZIO.unit)
+          cancel1 <- FeatureFlags.onProviderReady(_ => ZIO.unit)
+          cancel2 <- FeatureFlags.onProviderReady(_ => ZIO.unit)
+          cancel3 <- FeatureFlags.onProviderError((_, _) => ZIO.unit)
+        yield assertTrue(cancel1 != null && cancel2 != null && cancel3 != null)
+      }.provide(testLayer()),
+      test("handler can be cancelled") {
+        for
+          cancel <- FeatureFlags.onProviderReady(_ => ZIO.unit)
+          _      <- cancel
         yield assertTrue(true)
+      }.provide(testLayer()),
+      test("onProviderReady handler runs immediately when provider is already ready (spec 5.3.3)") {
+        val callsRef = Unsafe.unsafe { implicit u =>
+          Runtime.default.unsafe.run(Ref.make(0)).getOrThrow()
+        }
+        for
+          _     <- FeatureFlags.onProviderReady(_ => callsRef.update(_ + 1))
+          calls <- callsRef.get
+        yield assertTrue(calls == 1)
+      }.provide(testLayer()),
+      test("onProviderStale handler runs immediately when provider is already stale") {
+        val callsRef = Unsafe.unsafe { implicit u =>
+          Runtime.default.unsafe.run(Ref.make(0)).getOrThrow()
+        }
+        for
+          testProvider <- ZIO.service[TestFeatureProvider]
+          _            <- testProvider.setStatus(ProviderStatus.Stale)
+          _            <- FeatureFlags.onProviderStale((_, _) => callsRef.update(_ + 1))
+          calls        <- callsRef.get
+        yield assertTrue(calls == 1)
       }.provide(testLayer())
     ),
     suite("Tracking API")(

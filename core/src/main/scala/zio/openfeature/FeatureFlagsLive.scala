@@ -18,6 +18,7 @@ final private[openfeature] class FeatureFlagsLive(
   client: OFClient,
   provider: OFFeatureProvider,
   providerName: String,
+  domain: Option[String],
   globalContextRef: Ref[EvaluationContext],
   fiberContextRef: FiberRef[EvaluationContext],
   transactionRef: FiberRef[Option[TransactionState]],
@@ -543,35 +544,62 @@ final private[openfeature] class FeatureFlagsLive(
   override def providerMetadata: UIO[ProviderMetadata] =
     ZIO.succeed(ProviderMetadata(providerName))
 
-  // Event Handlers
+  override def clientMetadata: UIO[ClientMetadata] =
+    ZIO.succeed(ClientMetadata(domain))
 
-  override def onProviderReady(handler: ProviderMetadata => UIO[Unit]): UIO[Unit] =
-    events
-      .collect { case ProviderEvent.Ready(metadata) => metadata }
-      .foreach(handler)
-      .forkDaemon
-      .unit
+  // Event Handlers - return cancellation effects per OpenFeature spec 5.2.7
 
-  override def onProviderError(handler: (Throwable, ProviderMetadata) => UIO[Unit]): UIO[Unit] =
-    events
-      .collect { case ProviderEvent.Error(error, metadata) => (error, metadata) }
-      .foreach { case (error, metadata) => handler(error, metadata) }
-      .forkDaemon
-      .unit
+  /** Per OpenFeature spec 5.3.3, handlers attached after the provider reaches an associated state MUST run immediately.
+    */
+  override def onProviderReady(handler: ProviderMetadata => UIO[Unit]): UIO[UIO[Unit]] =
+    for
+      // Check if provider is already ready and call handler immediately if so (spec 5.3.3)
+      status <- providerStatus
+      metadata = ProviderMetadata(providerName)
+      _ <- ZIO.when(status == ProviderStatus.Ready)(handler(metadata))
+      // Subscribe to future events
+      fiber <- events
+        .collect { case ProviderEvent.Ready(m) => m }
+        .foreach(handler)
+        .forkDaemon
+    yield fiber.interrupt.unit
 
-  override def onProviderStale(handler: (String, ProviderMetadata) => UIO[Unit]): UIO[Unit] =
-    events
-      .collect { case ProviderEvent.Stale(reason, metadata) => (reason, metadata) }
-      .foreach { case (reason, metadata) => handler(reason, metadata) }
-      .forkDaemon
-      .unit
+  override def onProviderError(handler: (Throwable, ProviderMetadata) => UIO[Unit]): UIO[UIO[Unit]] =
+    for
+      // Check if provider is already in error state (spec 5.3.3)
+      status <- providerStatus
+      metadata = ProviderMetadata(providerName)
+      _ <- ZIO.when(status == ProviderStatus.Error || status == ProviderStatus.Fatal) {
+        // For immediate execution on error, we don't have the error details, so use a generic error
+        handler(new RuntimeException("Provider in error state"), metadata)
+      }
+      fiber <- events
+        .collect { case ProviderEvent.Error(error, m) => (error, m) }
+        .foreach { case (error, m) => handler(error, m) }
+        .forkDaemon
+    yield fiber.interrupt.unit
 
-  override def onConfigurationChanged(handler: (Set[String], ProviderMetadata) => UIO[Unit]): UIO[Unit] =
+  override def onProviderStale(handler: (String, ProviderMetadata) => UIO[Unit]): UIO[UIO[Unit]] =
+    for
+      // Check if provider is already stale (spec 5.3.3)
+      status <- providerStatus
+      metadata = ProviderMetadata(providerName)
+      _ <- ZIO.when(status == ProviderStatus.Stale) {
+        handler("Provider in stale state", metadata)
+      }
+      fiber <- events
+        .collect { case ProviderEvent.Stale(reason, m) => (reason, m) }
+        .foreach { case (reason, m) => handler(reason, m) }
+        .forkDaemon
+    yield fiber.interrupt.unit
+
+  override def onConfigurationChanged(handler: (Set[String], ProviderMetadata) => UIO[Unit]): UIO[UIO[Unit]] =
+    // Configuration changed doesn't have an "associated state" so no immediate execution needed
     events
-      .collect { case ProviderEvent.ConfigurationChanged(flags, metadata) => (flags, metadata) }
-      .foreach { case (flags, metadata) => handler(flags, metadata) }
+      .collect { case ProviderEvent.ConfigurationChanged(flags, m) => (flags, m) }
+      .foreach { case (flags, m) => handler(flags, m) }
       .forkDaemon
-      .unit
+      .map(fiber => fiber.interrupt.unit)
 
   override def addHook(hook: FeatureHook): UIO[Unit] =
     hooksRef.update(_ :+ hook)

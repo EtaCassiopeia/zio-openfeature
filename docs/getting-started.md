@@ -22,7 +22,7 @@ nav_order: 2
 Add the following to your `build.sbt`:
 
 ```scala
-val zioOpenFeatureVersion = "0.2.0"
+val zioOpenFeatureVersion = "0.3.0"
 
 // Core library (includes OpenFeature SDK)
 libraryDependencies += "io.github.etacassiopeia" %% "zio-openfeature-core" % zioOpenFeatureVersion

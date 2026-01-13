@@ -2,7 +2,7 @@ import xerial.sbt.Sonatype.sonatypeCentralHost
 
 val scala3Version         = "3.3.4"
 val zioVersion            = "2.1.14"
-val openFeatureSdkVersion = "1.14.0"
+val openFeatureSdkVersion = "1.19.2"
 
 ThisBuild / scalaVersion := scala3Version
 ThisBuild / organization := "io.github.etacassiopeia"

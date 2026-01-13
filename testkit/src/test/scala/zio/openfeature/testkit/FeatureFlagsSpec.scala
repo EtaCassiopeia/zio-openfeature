@@ -64,6 +64,24 @@ object FeatureFlagsSpec extends ZIOSpecDefault:
           result <- FeatureFlags.globalContext
         yield assertTrue(result.targetingKey.contains("user-123"))
       }.provide(testLayer()),
+      test("setClientContext and clientContext work") {
+        val ctx = EvaluationContext("client-user")
+        for
+          _      <- FeatureFlags.setClientContext(ctx)
+          result <- FeatureFlags.clientContext
+        yield assertTrue(result.targetingKey.contains("client-user"))
+      }.provide(testLayer()),
+      test("client context is separate from global context") {
+        val globalCtx = EvaluationContext("global-user")
+        val clientCtx = EvaluationContext("client-user")
+        for
+          _      <- FeatureFlags.setGlobalContext(globalCtx)
+          _      <- FeatureFlags.setClientContext(clientCtx)
+          global <- FeatureFlags.globalContext
+          client <- FeatureFlags.clientContext
+        yield assertTrue(global.targetingKey.contains("global-user")) &&
+          assertTrue(client.targetingKey.contains("client-user"))
+      }.provide(testLayer()),
       test("withContext scopes context to block") {
         val globalCtx = EvaluationContext("global-user")
         val localCtx  = EvaluationContext("local-user")

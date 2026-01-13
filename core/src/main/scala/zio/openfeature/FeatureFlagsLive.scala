@@ -20,19 +20,23 @@ final private[openfeature] class FeatureFlagsLive(
   providerName: String,
   domain: Option[String],
   globalContextRef: Ref[EvaluationContext],
+  clientContextRef: Ref[EvaluationContext],
   fiberContextRef: FiberRef[EvaluationContext],
   transactionRef: FiberRef[Option[TransactionState]],
   hooksRef: Ref[List[FeatureHook]],
   eventHub: Hub[ProviderEvent]
 ) extends FeatureFlags:
 
+  // Context merges in order per OpenFeature spec: API (global) → Client → Transaction → Invocation
   private def effectiveContext(invocation: EvaluationContext): UIO[EvaluationContext] =
     for
       global      <- globalContextRef.get
+      clientCtx   <- clientContextRef.get
       fiberLocal  <- fiberContextRef.get
       transaction <- transactionRef.get
       txContext = transaction.map(_.context).getOrElse(EvaluationContext.empty)
     yield global
+      .merge(clientCtx)
       .merge(fiberLocal)
       .merge(txContext)
       .merge(invocation)
@@ -496,6 +500,12 @@ final private[openfeature] class FeatureFlagsLive(
 
   override def globalContext: UIO[EvaluationContext] =
     globalContextRef.get
+
+  override def setClientContext(ctx: EvaluationContext): UIO[Unit] =
+    clientContextRef.set(ctx)
+
+  override def clientContext: UIO[EvaluationContext] =
+    clientContextRef.get
 
   override def withContext[R, E, A](ctx: EvaluationContext)(zio: ZIO[R, E, A]): ZIO[R, E, A] =
     fiberContextRef.get.flatMap { current =>

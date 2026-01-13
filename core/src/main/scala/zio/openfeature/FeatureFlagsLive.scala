@@ -368,7 +368,17 @@ final private[openfeature] class FeatureFlagsLive(
   override def int(key: String, default: Int, ctx: EvaluationContext): IO[FeatureFlagError, Int] =
     runWithHooks(key, default, ctx, effectCtx => evaluateFlag(key, default, effectCtx)).map(_.value)
 
+  override def long(key: String, default: Long, ctx: EvaluationContext): IO[FeatureFlagError, Long] =
+    runWithHooks(key, default, ctx, effectCtx => evaluateFlag(key, default, effectCtx)).map(_.value)
+
   override def double(key: String, default: Double, ctx: EvaluationContext): IO[FeatureFlagError, Double] =
+    runWithHooks(key, default, ctx, effectCtx => evaluateFlag(key, default, effectCtx)).map(_.value)
+
+  override def obj(
+    key: String,
+    default: Map[String, Any],
+    ctx: EvaluationContext
+  ): IO[FeatureFlagError, Map[String, Any]] =
     runWithHooks(key, default, ctx, effectCtx => evaluateFlag(key, default, effectCtx)).map(_.value)
 
   override def value[A: FlagType](key: String, default: A, ctx: EvaluationContext): IO[FeatureFlagError, A] =
@@ -389,7 +399,20 @@ final private[openfeature] class FeatureFlagsLive(
       runWithHooks(key, default, ctx, effectCtx => evaluateFlag(key, default, effectCtx))
     }
 
+  override def longDetails(key: String, default: Long): IO[FeatureFlagError, FlagResolution[Long]] =
+    effectiveContext(EvaluationContext.empty).flatMap { ctx =>
+      runWithHooks(key, default, ctx, effectCtx => evaluateFlag(key, default, effectCtx))
+    }
+
   override def doubleDetails(key: String, default: Double): IO[FeatureFlagError, FlagResolution[Double]] =
+    effectiveContext(EvaluationContext.empty).flatMap { ctx =>
+      runWithHooks(key, default, ctx, effectCtx => evaluateFlag(key, default, effectCtx))
+    }
+
+  override def objDetails(
+    key: String,
+    default: Map[String, Any]
+  ): IO[FeatureFlagError, FlagResolution[Map[String, Any]]] =
     effectiveContext(EvaluationContext.empty).flatMap { ctx =>
       runWithHooks(key, default, ctx, effectCtx => evaluateFlag(key, default, effectCtx))
     }
@@ -399,7 +422,72 @@ final private[openfeature] class FeatureFlagsLive(
       runWithHooks(key, default, ctx, effectCtx => evaluateFlag(key, default, effectCtx))
     }
 
-  // Evaluation with options (invocation-level hooks)
+  // Detailed evaluation with context
+
+  override def booleanDetails(
+    key: String,
+    default: Boolean,
+    ctx: EvaluationContext
+  ): IO[FeatureFlagError, FlagResolution[Boolean]] =
+    effectiveContext(ctx).flatMap { effectCtx =>
+      runWithHooks(key, default, effectCtx, c => evaluateFlag(key, default, c))
+    }
+
+  override def stringDetails(
+    key: String,
+    default: String,
+    ctx: EvaluationContext
+  ): IO[FeatureFlagError, FlagResolution[String]] =
+    effectiveContext(ctx).flatMap { effectCtx =>
+      runWithHooks(key, default, effectCtx, c => evaluateFlag(key, default, c))
+    }
+
+  override def intDetails(
+    key: String,
+    default: Int,
+    ctx: EvaluationContext
+  ): IO[FeatureFlagError, FlagResolution[Int]] =
+    effectiveContext(ctx).flatMap { effectCtx =>
+      runWithHooks(key, default, effectCtx, c => evaluateFlag(key, default, c))
+    }
+
+  override def longDetails(
+    key: String,
+    default: Long,
+    ctx: EvaluationContext
+  ): IO[FeatureFlagError, FlagResolution[Long]] =
+    effectiveContext(ctx).flatMap { effectCtx =>
+      runWithHooks(key, default, effectCtx, c => evaluateFlag(key, default, c))
+    }
+
+  override def doubleDetails(
+    key: String,
+    default: Double,
+    ctx: EvaluationContext
+  ): IO[FeatureFlagError, FlagResolution[Double]] =
+    effectiveContext(ctx).flatMap { effectCtx =>
+      runWithHooks(key, default, effectCtx, c => evaluateFlag(key, default, c))
+    }
+
+  override def objDetails(
+    key: String,
+    default: Map[String, Any],
+    ctx: EvaluationContext
+  ): IO[FeatureFlagError, FlagResolution[Map[String, Any]]] =
+    effectiveContext(ctx).flatMap { effectCtx =>
+      runWithHooks(key, default, effectCtx, c => evaluateFlag(key, default, c))
+    }
+
+  override def valueDetails[A: FlagType](
+    key: String,
+    default: A,
+    ctx: EvaluationContext
+  ): IO[FeatureFlagError, FlagResolution[A]] =
+    effectiveContext(ctx).flatMap { effectCtx =>
+      runWithHooks(key, default, effectCtx, c => evaluateFlag(key, default, c))
+    }
+
+  // Detailed evaluation with context and options (invocation-level hooks)
 
   private def runWithAllHooks[A: FlagType](
     key: String,
@@ -475,12 +563,32 @@ final private[openfeature] class FeatureFlagsLive(
       runWithAllHooks(key, default, effectCtx, options, c => evaluateFlag(key, default, c))
     }
 
+  override def longDetails(
+    key: String,
+    default: Long,
+    ctx: EvaluationContext,
+    options: EvaluationOptions
+  ): IO[FeatureFlagError, FlagResolution[Long]] =
+    effectiveContext(ctx).flatMap { effectCtx =>
+      runWithAllHooks(key, default, effectCtx, options, c => evaluateFlag(key, default, c))
+    }
+
   override def doubleDetails(
     key: String,
     default: Double,
     ctx: EvaluationContext,
     options: EvaluationOptions
   ): IO[FeatureFlagError, FlagResolution[Double]] =
+    effectiveContext(ctx).flatMap { effectCtx =>
+      runWithAllHooks(key, default, effectCtx, options, c => evaluateFlag(key, default, c))
+    }
+
+  override def objDetails(
+    key: String,
+    default: Map[String, Any],
+    ctx: EvaluationContext,
+    options: EvaluationOptions
+  ): IO[FeatureFlagError, FlagResolution[Map[String, Any]]] =
     effectiveContext(ctx).flatMap { effectCtx =>
       runWithAllHooks(key, default, effectCtx, options, c => evaluateFlag(key, default, c))
     }

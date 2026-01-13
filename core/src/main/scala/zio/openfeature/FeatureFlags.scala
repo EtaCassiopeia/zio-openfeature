@@ -59,6 +59,17 @@ trait FeatureFlags:
 
   def setGlobalContext(ctx: EvaluationContext): UIO[Unit]
   def globalContext: UIO[EvaluationContext]
+
+  /** Set the client-level evaluation context.
+    *
+    * Per OpenFeature spec, context merges in order: API (global) -> Client -> Transaction -> Invocation. Client context
+    * is persisted on this FeatureFlags instance.
+    */
+  def setClientContext(ctx: EvaluationContext): UIO[Unit]
+
+  /** Get the client-level evaluation context. */
+  def clientContext: UIO[EvaluationContext]
+
   def withContext[R, E, A](ctx: EvaluationContext)(zio: ZIO[R, E, A]): ZIO[R, E, A]
 
   def transaction[R, E, A](
@@ -90,6 +101,12 @@ trait FeatureFlags:
 
   /** Register a handler for configuration changed events. Returns a cancellation effect. */
   def onConfigurationChanged(handler: (Set[String], ProviderMetadata) => UIO[Unit]): UIO[UIO[Unit]]
+
+  /** Register a handler for any provider event type. Returns a cancellation effect.
+    *
+    * This is a generic alternative to the specific event handler methods (onProviderReady, etc.).
+    */
+  def on(eventType: ProviderEventType, handler: ProviderEvent => UIO[Unit]): UIO[UIO[Unit]]
 
   def addHook(hook: FeatureHook): UIO[Unit]
   def clearHooks: UIO[Unit]
@@ -204,6 +221,12 @@ object FeatureFlags:
   def globalContext: ZIO[FeatureFlags, Nothing, EvaluationContext] =
     ZIO.serviceWithZIO(_.globalContext)
 
+  def setClientContext(ctx: EvaluationContext): ZIO[FeatureFlags, Nothing, Unit] =
+    ZIO.serviceWithZIO(_.setClientContext(ctx))
+
+  def clientContext: ZIO[FeatureFlags, Nothing, EvaluationContext] =
+    ZIO.serviceWithZIO(_.clientContext)
+
   def withContext[R, E, A](ctx: EvaluationContext)(zio: ZIO[R, E, A]): ZIO[R & FeatureFlags, E, A] =
     ZIO.serviceWithZIO[FeatureFlags](_.withContext(ctx)(zio))
 
@@ -251,6 +274,10 @@ object FeatureFlags:
     handler: (Set[String], ProviderMetadata) => UIO[Unit]
   ): ZIO[FeatureFlags, Nothing, UIO[Unit]] =
     ZIO.serviceWithZIO(_.onConfigurationChanged(handler))
+
+  /** Register a handler for any provider event type. Returns a cancellation effect. */
+  def on(eventType: ProviderEventType, handler: ProviderEvent => UIO[Unit]): ZIO[FeatureFlags, Nothing, UIO[Unit]] =
+    ZIO.serviceWithZIO(_.on(eventType, handler))
 
   def addHook(hook: FeatureHook): ZIO[FeatureFlags, Nothing, Unit] =
     ZIO.serviceWithZIO(_.addHook(hook))
@@ -316,6 +343,7 @@ object FeatureFlags:
         client <- ZIO.attempt(api.getClient())
         providerName = Option(provider.getMetadata).map(_.getName).getOrElse("unknown")
         globalCtxRef   <- Ref.make(EvaluationContext.empty)
+        clientCtxRef   <- Ref.make(EvaluationContext.empty)
         fiberCtxRef    <- FiberRef.make(EvaluationContext.empty)
         transactionRef <- FiberRef.make[Option[TransactionState]](None)
         hooksRef       <- Ref.make(List.empty[FeatureHook])
@@ -327,6 +355,7 @@ object FeatureFlags:
         providerName,
         None, // default domain
         globalCtxRef,
+        clientCtxRef,
         fiberCtxRef,
         transactionRef,
         hooksRef,
@@ -347,6 +376,7 @@ object FeatureFlags:
         client <- ZIO.attempt(api.getClient(domain))
         providerName = Option(provider.getMetadata).map(_.getName).getOrElse("unknown")
         globalCtxRef   <- Ref.make(EvaluationContext.empty)
+        clientCtxRef   <- Ref.make(EvaluationContext.empty)
         fiberCtxRef    <- FiberRef.make(EvaluationContext.empty)
         transactionRef <- FiberRef.make[Option[TransactionState]](None)
         hooksRef       <- Ref.make(List.empty[FeatureHook])
@@ -358,6 +388,7 @@ object FeatureFlags:
         providerName,
         Some(domain),
         globalCtxRef,
+        clientCtxRef,
         fiberCtxRef,
         transactionRef,
         hooksRef,
@@ -378,6 +409,7 @@ object FeatureFlags:
         client <- ZIO.attempt(api.getClient())
         providerName = Option(provider.getMetadata).map(_.getName).getOrElse("unknown")
         globalCtxRef   <- Ref.make(EvaluationContext.empty)
+        clientCtxRef   <- Ref.make(EvaluationContext.empty)
         fiberCtxRef    <- FiberRef.make(EvaluationContext.empty)
         transactionRef <- FiberRef.make[Option[TransactionState]](None)
         hooksRef       <- Ref.make(initialHooks)
@@ -389,6 +421,7 @@ object FeatureFlags:
         providerName,
         None, // default domain
         globalCtxRef,
+        clientCtxRef,
         fiberCtxRef,
         transactionRef,
         hooksRef,

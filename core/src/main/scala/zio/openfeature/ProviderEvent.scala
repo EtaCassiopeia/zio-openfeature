@@ -30,12 +30,28 @@ object ClientMetadata:
   def apply(domain: String): ClientMetadata =
     ClientMetadata(Some(domain))
 
+/** Type of provider event for use with generic event handlers. */
+enum ProviderEventType:
+  case Ready
+  case Error
+  case Stale
+  case ConfigurationChanged
+  case Reconnecting
+
 enum ProviderEvent:
   case Ready(providerMetadata: ProviderMetadata)
   case Error(error: Throwable, providerMetadata: ProviderMetadata)
   case Stale(reason: String, providerMetadata: ProviderMetadata)
   case ConfigurationChanged(changedFlags: Set[String], providerMetadata: ProviderMetadata)
   case Reconnecting(providerMetadata: ProviderMetadata)
+
+  /** Get the event type for this event. */
+  def eventType: ProviderEventType = this match
+    case _: ProviderEvent.Ready                => ProviderEventType.Ready
+    case _: ProviderEvent.Error                => ProviderEventType.Error
+    case _: ProviderEvent.Stale                => ProviderEventType.Stale
+    case _: ProviderEvent.ConfigurationChanged => ProviderEventType.ConfigurationChanged
+    case _: ProviderEvent.Reconnecting         => ProviderEventType.Reconnecting
 
 object ProviderEvent:
   extension (event: ProviderEvent)

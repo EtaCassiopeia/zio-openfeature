@@ -64,6 +64,24 @@ object FeatureFlagsSpec extends ZIOSpecDefault:
           result <- FeatureFlags.globalContext
         yield assertTrue(result.targetingKey.contains("user-123"))
       }.provide(testLayer()),
+      test("setClientContext and clientContext work") {
+        val ctx = EvaluationContext("client-user")
+        for
+          _      <- FeatureFlags.setClientContext(ctx)
+          result <- FeatureFlags.clientContext
+        yield assertTrue(result.targetingKey.contains("client-user"))
+      }.provide(testLayer()),
+      test("client context is separate from global context") {
+        val globalCtx = EvaluationContext("global-user")
+        val clientCtx = EvaluationContext("client-user")
+        for
+          _      <- FeatureFlags.setGlobalContext(globalCtx)
+          _      <- FeatureFlags.setClientContext(clientCtx)
+          global <- FeatureFlags.globalContext
+          client <- FeatureFlags.clientContext
+        yield assertTrue(global.targetingKey.contains("global-user")) &&
+          assertTrue(client.targetingKey.contains("client-user"))
+      }.provide(testLayer()),
       test("withContext scopes context to block") {
         val globalCtx = EvaluationContext("global-user")
         val localCtx  = EvaluationContext("local-user")
@@ -386,6 +404,27 @@ object FeatureFlagsSpec extends ZIOSpecDefault:
           testProvider <- ZIO.service[TestFeatureProvider]
           _            <- testProvider.setStatus(ProviderStatus.Stale)
           _            <- FeatureFlags.onProviderStale((_, _) => callsRef.update(_ + 1))
+          calls        <- callsRef.get
+        yield assertTrue(calls == 1)
+      }.provide(testLayer()),
+      test("generic on method registers handler for event type") {
+        val callsRef = Unsafe.unsafe { implicit u =>
+          Runtime.default.unsafe.run(Ref.make(0)).getOrThrow()
+        }
+        for
+          cancel <- FeatureFlags.on(ProviderEventType.Ready, _ => callsRef.update(_ + 1))
+          calls  <- callsRef.get
+        yield assertTrue(calls == 1) && // runs immediately since provider is ready
+          assertTrue(cancel != null)
+      }.provide(testLayer()),
+      test("generic on method works for stale events") {
+        val callsRef = Unsafe.unsafe { implicit u =>
+          Runtime.default.unsafe.run(Ref.make(0)).getOrThrow()
+        }
+        for
+          testProvider <- ZIO.service[TestFeatureProvider]
+          _            <- testProvider.setStatus(ProviderStatus.Stale)
+          _            <- FeatureFlags.on(ProviderEventType.Stale, _ => callsRef.update(_ + 1))
           calls        <- callsRef.get
         yield assertTrue(calls == 1)
       }.provide(testLayer())

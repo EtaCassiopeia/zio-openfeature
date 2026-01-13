@@ -20,19 +20,23 @@ final private[openfeature] class FeatureFlagsLive(
   providerName: String,
   domain: Option[String],
   globalContextRef: Ref[EvaluationContext],
+  clientContextRef: Ref[EvaluationContext],
   fiberContextRef: FiberRef[EvaluationContext],
   transactionRef: FiberRef[Option[TransactionState]],
   hooksRef: Ref[List[FeatureHook]],
   eventHub: Hub[ProviderEvent]
 ) extends FeatureFlags:
 
+  // Context merges in order per OpenFeature spec: API (global) → Client → Transaction → Invocation
   private def effectiveContext(invocation: EvaluationContext): UIO[EvaluationContext] =
     for
       global      <- globalContextRef.get
+      clientCtx   <- clientContextRef.get
       fiberLocal  <- fiberContextRef.get
       transaction <- transactionRef.get
       txContext = transaction.map(_.context).getOrElse(EvaluationContext.empty)
     yield global
+      .merge(clientCtx)
       .merge(fiberLocal)
       .merge(txContext)
       .merge(invocation)
@@ -497,6 +501,12 @@ final private[openfeature] class FeatureFlagsLive(
   override def globalContext: UIO[EvaluationContext] =
     globalContextRef.get
 
+  override def setClientContext(ctx: EvaluationContext): UIO[Unit] =
+    clientContextRef.set(ctx)
+
+  override def clientContext: UIO[EvaluationContext] =
+    clientContextRef.get
+
   override def withContext[R, E, A](ctx: EvaluationContext)(zio: ZIO[R, E, A]): ZIO[R, E, A] =
     fiberContextRef.get.flatMap { current =>
       fiberContextRef.locally(current.merge(ctx))(zio)
@@ -600,6 +610,26 @@ final private[openfeature] class FeatureFlagsLive(
       .foreach { case (flags, m) => handler(flags, m) }
       .forkDaemon
       .map(fiber => fiber.interrupt.unit)
+
+  override def on(eventType: ProviderEventType, handler: ProviderEvent => UIO[Unit]): UIO[UIO[Unit]] =
+    for
+      // Check current status for immediate execution (spec 5.3.3)
+      status <- providerStatus
+      metadata = ProviderMetadata(providerName)
+      _ <- eventType match
+        case ProviderEventType.Ready if status == ProviderStatus.Ready =>
+          handler(ProviderEvent.Ready(metadata))
+        case ProviderEventType.Error if status == ProviderStatus.Error || status == ProviderStatus.Fatal =>
+          handler(ProviderEvent.Error(new RuntimeException("Provider in error state"), metadata))
+        case ProviderEventType.Stale if status == ProviderStatus.Stale =>
+          handler(ProviderEvent.Stale("Provider in stale state", metadata))
+        case _ => ZIO.unit
+      // Subscribe to future events
+      fiber <- events
+        .filter(_.eventType == eventType)
+        .foreach(handler)
+        .forkDaemon
+    yield fiber.interrupt.unit
 
   override def addHook(hook: FeatureHook): UIO[Unit] =
     hooksRef.update(_ :+ hook)

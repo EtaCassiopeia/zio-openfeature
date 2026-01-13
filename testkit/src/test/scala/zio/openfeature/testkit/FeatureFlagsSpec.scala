@@ -406,6 +406,27 @@ object FeatureFlagsSpec extends ZIOSpecDefault:
           _            <- FeatureFlags.onProviderStale((_, _) => callsRef.update(_ + 1))
           calls        <- callsRef.get
         yield assertTrue(calls == 1)
+      }.provide(testLayer()),
+      test("generic on method registers handler for event type") {
+        val callsRef = Unsafe.unsafe { implicit u =>
+          Runtime.default.unsafe.run(Ref.make(0)).getOrThrow()
+        }
+        for
+          cancel <- FeatureFlags.on(ProviderEventType.Ready, _ => callsRef.update(_ + 1))
+          calls  <- callsRef.get
+        yield assertTrue(calls == 1) && // runs immediately since provider is ready
+          assertTrue(cancel != null)
+      }.provide(testLayer()),
+      test("generic on method works for stale events") {
+        val callsRef = Unsafe.unsafe { implicit u =>
+          Runtime.default.unsafe.run(Ref.make(0)).getOrThrow()
+        }
+        for
+          testProvider <- ZIO.service[TestFeatureProvider]
+          _            <- testProvider.setStatus(ProviderStatus.Stale)
+          _            <- FeatureFlags.on(ProviderEventType.Stale, _ => callsRef.update(_ + 1))
+          calls        <- callsRef.get
+        yield assertTrue(calls == 1)
       }.provide(testLayer())
     ),
     suite("Tracking API")(

@@ -611,6 +611,26 @@ final private[openfeature] class FeatureFlagsLive(
       .forkDaemon
       .map(fiber => fiber.interrupt.unit)
 
+  override def on(eventType: ProviderEventType, handler: ProviderEvent => UIO[Unit]): UIO[UIO[Unit]] =
+    for
+      // Check current status for immediate execution (spec 5.3.3)
+      status <- providerStatus
+      metadata = ProviderMetadata(providerName)
+      _ <- eventType match
+        case ProviderEventType.Ready if status == ProviderStatus.Ready =>
+          handler(ProviderEvent.Ready(metadata))
+        case ProviderEventType.Error if status == ProviderStatus.Error || status == ProviderStatus.Fatal =>
+          handler(ProviderEvent.Error(new RuntimeException("Provider in error state"), metadata))
+        case ProviderEventType.Stale if status == ProviderStatus.Stale =>
+          handler(ProviderEvent.Stale("Provider in stale state", metadata))
+        case _ => ZIO.unit
+      // Subscribe to future events
+      fiber <- events
+        .filter(_.eventType == eventType)
+        .foreach(handler)
+        .forkDaemon
+    yield fiber.interrupt.unit
+
   override def addHook(hook: FeatureHook): UIO[Unit] =
     hooksRef.update(_ :+ hook)
 

@@ -102,6 +102,12 @@ trait FeatureFlags:
   /** Register a handler for configuration changed events. Returns a cancellation effect. */
   def onConfigurationChanged(handler: (Set[String], ProviderMetadata) => UIO[Unit]): UIO[UIO[Unit]]
 
+  /** Register a handler for any provider event type. Returns a cancellation effect.
+    *
+    * This is a generic alternative to the specific event handler methods (onProviderReady, etc.).
+    */
+  def on(eventType: ProviderEventType, handler: ProviderEvent => UIO[Unit]): UIO[UIO[Unit]]
+
   def addHook(hook: FeatureHook): UIO[Unit]
   def clearHooks: UIO[Unit]
   def hooks: UIO[List[FeatureHook]]
@@ -268,6 +274,10 @@ object FeatureFlags:
     handler: (Set[String], ProviderMetadata) => UIO[Unit]
   ): ZIO[FeatureFlags, Nothing, UIO[Unit]] =
     ZIO.serviceWithZIO(_.onConfigurationChanged(handler))
+
+  /** Register a handler for any provider event type. Returns a cancellation effect. */
+  def on(eventType: ProviderEventType, handler: ProviderEvent => UIO[Unit]): ZIO[FeatureFlags, Nothing, UIO[Unit]] =
+    ZIO.serviceWithZIO(_.on(eventType, handler))
 
   def addHook(hook: FeatureHook): ZIO[FeatureFlags, Nothing, Unit] =
     ZIO.serviceWithZIO(_.addHook(hook))

@@ -176,116 +176,25 @@ val plan: IO[FeatureFlagError, Plan] =
 
 ## Context Hierarchy
 
-Evaluation context flows through multiple levels, with later levels taking precedence:
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    Final Merged Context                      │
-│  (Used for flag evaluation)                                  │
-└─────────────────────────────────────────────────────────────┘
-                            ▲
-            ┌───────────────┼───────────────┐
-            │               │               │
-    ┌───────┴───────┐ ┌─────┴─────┐ ┌───────┴───────┐
-    │  Invocation   │ │Transaction│ │    Scoped     │
-    │   Context     │ │  Context  │ │   Context     │
-    │  (per-call)   │ │ (override)│ │ (withContext) │
-    └───────────────┘ └───────────┘ └───────────────┘
-                            │
-                    ┌───────┴───────┐
-                    │    Global     │
-                    │   Context     │
-                    │ (application) │
-                    └───────────────┘
-```
-
-### Context Levels
+Evaluation context flows through five levels (per OpenFeature spec), with later levels taking precedence:
 
 | Level | Scope | Use Case |
 |:------|:------|:---------|
 | **Global** | Application-wide | App version, environment, deployment region |
+| **Client** | FeatureFlags instance | Service name, region |
 | **Scoped** | Block of code (via `withContext`) | User session, request context |
 | **Transaction** | Within transaction block | Test overrides, experiment context |
 | **Invocation** | Single evaluation | One-off targeting attributes |
 
-### Merging Strategy
+Contexts merge with higher-precedence levels overriding lower ones: `Invocation > Transaction > Scoped > Client > Global`.
 
-When contexts are merged, attributes from higher-precedence levels override lower ones:
-
-```scala
-// Global context (lowest precedence)
-FeatureFlags.setGlobalContext(
-  EvaluationContext("app")
-    .withAttribute("env", "prod")
-    .withAttribute("version", "1.0")
-)
-
-// Scoped context (overrides global for this block)
-val scopedCtx = EvaluationContext("user-123")
-  .withAttribute("version", "2.0")  // Overrides global
-
-FeatureFlags.withContext(scopedCtx) {
-  // Invocation context (highest precedence)
-  val ctx = EvaluationContext.empty
-    .withAttribute("experiment", "A")
-
-  // Final merged context:
-  // - targetingKey: "user-123" (from scoped)
-  // - env: "prod" (from global)
-  // - version: "2.0" (from scoped, overrides global)
-  // - experiment: "A" (from invocation)
-  FeatureFlags.boolean("feature", false, ctx)
-}
-```
+See [Evaluation Context]({{ site.baseurl }}/context) for detailed usage, attribute types, and practical examples.
 
 ---
 
 ## Hook Pipeline
 
-Hooks execute in a defined order around flag evaluation:
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                      Evaluation Request                      │
-└─────────────────────────────────────────────────────────────┘
-                            │
-                            ▼
-┌─────────────────────────────────────────────────────────────┐
-│                    BEFORE hooks (in order)                   │
-│  - Can modify evaluation context                             │
-│  - Can pass hints to later stages                            │
-└─────────────────────────────────────────────────────────────┘
-                            │
-                            ▼
-┌─────────────────────────────────────────────────────────────┐
-│                     Flag Resolution                          │
-│  - Calls OpenFeature Client                                  │
-│  - Checks transaction overrides                              │
-│  - Uses cache if in transaction                              │
-└─────────────────────────────────────────────────────────────┘
-                            │
-            ┌───────────────┴───────────────┐
-            │ Success                       │ Failure
-            ▼                               ▼
-┌───────────────────────┐       ┌───────────────────────┐
-│  AFTER hooks          │       │  ERROR hooks          │
-│  (reverse order)      │       │  (reverse order)      │
-└───────────────────────┘       └───────────────────────┘
-            │                               │
-            └───────────────┬───────────────┘
-                            ▼
-┌─────────────────────────────────────────────────────────────┐
-│                 FINALLY hooks (reverse order)                │
-│  - Always runs, success or failure                           │
-└─────────────────────────────────────────────────────────────┘
-                            │
-                            ▼
-┌─────────────────────────────────────────────────────────────┐
-│                       Return Result                          │
-└─────────────────────────────────────────────────────────────┘
-```
-
-### Hook Stages
+Hooks execute around flag evaluation in four stages: **before**, **after**, **error**, and **finallyAfter**. Hooks can modify evaluation context, pass data between stages via `HookHints`, and run effects for logging, metrics, or validation.
 
 | Stage | When | Purpose |
 |:------|:-----|:--------|
@@ -294,26 +203,7 @@ Hooks execute in a defined order around flag evaluation:
 | **error** | On evaluation failure | Log errors, alert, fallback logic |
 | **finallyAfter** | Always (like try-finally) | Cleanup, span completion |
 
-### Hook Hints
-
-Hooks can pass data between stages using `HookHints`:
-
-```scala
-val timingHook = new FeatureHook:
-  private val startTimeKey = "timing.start"
-
-  override def before(ctx: HookContext, hints: HookHints) =
-    Clock.nanoTime.map { start =>
-      Some((ctx.evaluationContext, hints + (startTimeKey -> start)))
-    }
-
-  override def after[A](ctx: HookContext, details: FlagResolution[A], hints: HookHints) =
-    for
-      end   <- Clock.nanoTime
-      start  = hints.getOrElse[Long](startTimeKey, end)
-      _     <- ZIO.logInfo(s"Evaluation took ${(end - start) / 1_000_000}ms")
-    yield ()
-```
+See [Hooks]({{ site.baseurl }}/hooks) for the complete hook lifecycle, built-in hooks, and custom hook examples.
 
 ---
 
@@ -321,102 +211,40 @@ val timingHook = new FeatureHook:
 
 Transactions provide scoped flag overrides, evaluation caching, and tracking:
 
-```scala
-val overrides = Map("feature-a" -> true, "max-items" -> 100)
-
-FeatureFlags.transaction(overrides) {
-  for
-    a <- FeatureFlags.boolean("feature-a", false)  // Returns true (override)
-    b <- FeatureFlags.boolean("feature-b", false)  // Evaluated from provider
-    n <- FeatureFlags.int("max-items", 10)         // Returns 100 (override)
-  yield (a, b, n)
-}.map { txResult =>
-  // txResult.result = (true, false, 100)
-  // txResult.allFlagKeys = Set("feature-a", "feature-b", "max-items")
-  // txResult.overriddenFlags = Set("feature-a", "max-items")
-}
-```
-
-### Transaction Features
-
 | Feature | Description |
 |:--------|:------------|
 | **Overrides** | Provide values that override provider evaluation |
-| **Caching** | Evaluations cached within transaction (optional) |
+| **Caching** | Evaluations cached within transaction (optional via `cacheEvaluations`) |
 | **Tracking** | Record all flag keys and values evaluated |
 | **Isolation** | Overrides only affect code within the transaction |
 
-### Caching Behavior
-
-By default, transactions cache flag evaluations for performance. Disable with `cacheEvaluations = false`:
-
 ```scala
-// Cached (default) - same key returns cached value
-FeatureFlags.transaction(cacheEvaluations = true) {
+FeatureFlags.transaction(Map("feature-a" -> true)) {
   for
-    a <- FeatureFlags.boolean("flag", false)  // Evaluated
-    b <- FeatureFlags.boolean("flag", false)  // Returns cached value
-  yield (a, b)  // Both same value
-}
-
-// Uncached - each evaluation goes to provider
-FeatureFlags.transaction(cacheEvaluations = false) {
-  for
-    a <- FeatureFlags.boolean("flag", false)  // Evaluated
-    b <- FeatureFlags.boolean("flag", false)  // Evaluated again
-  yield (a, b)  // May differ if flag changed
+    a <- FeatureFlags.boolean("feature-a", false)  // Returns true (override)
+    b <- FeatureFlags.boolean("feature-b", false)  // Evaluated from provider
+  yield (a, b)
 }
 ```
+
+See [Transactions]({{ site.baseurl }}/transactions) for complete usage, caching behavior, and result API.
 
 ---
 
 ## Provider Lifecycle
 
-The OpenFeature SDK manages provider lifecycle. ZIO OpenFeature adds scoped resource management:
+The OpenFeature SDK manages provider lifecycle. ZIO OpenFeature adds scoped resource management via ZIO's `Scope`:
 
-```
-┌──────────────┐
-│   NotReady   │ ◄─── Initial state
-└──────┬───────┘
-       │ setProviderAndWait()
-       ▼
-┌──────────────┐
-│    Ready     │ ◄─── Can evaluate flags
-└──────┬───────┘
-       │ shutdown() or error
-       ▼
-┌──────────────┐
-│   NotReady   │ ◄─── Cannot evaluate flags
-└──────────────┘
-```
-
-### Provider Events
-
-Subscribe to provider lifecycle events:
-
-```scala
-FeatureFlags.events.foreach { event =>
-  ZIO.logInfo(s"Provider event: $event")
-}
-```
-
-| Event | Meaning |
-|:------|:--------|
-| `Ready` | Provider initialized successfully |
-| `ConfigurationChanged` | Flag definitions updated |
+| State | Description |
+|:------|:------------|
+| `NotReady` | Provider not initialized |
+| `Ready` | Can evaluate flags |
+| `Error` | Provider encountered recoverable error |
 | `Stale` | Provider data may be outdated |
-| `Error` | Provider encountered an error |
 
-### Scoped Resource Management
+Provider events (`Ready`, `ConfigurationChanged`, `Stale`, `Error`) can be observed via `FeatureFlags.events` stream or specific handlers like `onProviderReady`.
 
-Use `Scope.default` for automatic cleanup:
-
-```scala
-program.provide(
-  Scope.default >>> FeatureFlags.fromProvider(new FlagdProvider())
-)
-// Provider is automatically shutdown when scope ends
-```
+See [Providers]({{ site.baseurl }}/providers) for complete lifecycle management, events, and provider setup.
 
 ---
 

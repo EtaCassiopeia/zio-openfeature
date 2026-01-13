@@ -16,6 +16,15 @@ ZIO OpenFeature provides a type-safe, functional interface for feature flag eval
 
 - Scala 3.3+
 - ZIO 2.1+
+- Java 11+
+
+## Version Compatibility
+
+| ZIO OpenFeature | OpenFeature Spec | OpenFeature Java SDK |
+|:----------------|:-----------------|:---------------------|
+| 0.3.x | [v0.8.0](https://github.com/open-feature/spec/releases/tag/v0.8.0) | 1.19.2 |
+
+This library implements the **dynamic-context paradigm** (server-side) of the OpenFeature specification. See [Spec Compliance](https://etacassiopeia.github.io/zio-openfeature/spec-compliance) for details.
 
 ## Installation
 

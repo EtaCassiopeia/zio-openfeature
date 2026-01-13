@@ -10,6 +10,18 @@ ZIO OpenFeature wraps the [OpenFeature Java SDK](https://openfeature.dev/docs/re
 
 ---
 
+## Version Compatibility
+
+| Component | Version | Notes |
+|:----------|:--------|:------|
+| **OpenFeature Spec** | v0.8.0 | [Specification](https://github.com/open-feature/spec) |
+| **OpenFeature Java SDK** | 1.19.2 | [Java SDK](https://github.com/open-feature/java-sdk) |
+| **ZIO OpenFeature** | 0.3.2 | This library |
+
+This library targets the **dynamic-context paradigm** (server-side) of the OpenFeature specification.
+
+---
+
 ## Compliance Summary
 
 The library is **fully compliant** with core OpenFeature functionality:
@@ -29,16 +41,43 @@ The library is **fully compliant** with core OpenFeature functionality:
 
 | Requirement | Status | Implementation |
 |:------------|:-------|:---------------|
-| Boolean evaluation | ✅ | `boolean(key, default)` |
-| String evaluation | ✅ | `string(key, default)` |
-| Integer evaluation | ✅ | `int(key, default)`, `long(key, default)` |
-| Double evaluation | ✅ | `double(key, default)` |
-| Object evaluation | ✅ | `obj(key, default)` |
-| Generic evaluation | ✅ | `value[A](key, default)` with `FlagType` |
-| Detailed evaluation | ✅ | `booleanDetails`, `stringDetails`, etc. |
+| Boolean evaluation | ✅ | `boolean(key, default)`, `boolean(key, default, ctx)` |
+| String evaluation | ✅ | `string(key, default)`, `string(key, default, ctx)` |
+| Integer evaluation | ✅ | `int(key, default)`, `long(key, default)` + context overloads |
+| Double evaluation | ✅ | `double(key, default)`, `double(key, default, ctx)` |
+| Object evaluation | ✅ | `obj(key, default)`, `obj(key, default, ctx)` |
+| Generic evaluation | ✅ | `value[A](key, default)` with `FlagType` + context overload |
+| Detailed evaluation | ✅ | `*Details(key, default)`, `*Details(key, default, ctx)`, `*Details(key, default, ctx, options)` |
 | Context overload | ✅ | All methods accept optional `EvaluationContext` |
-| Options overload | ✅ | Detail methods accept `EvaluationOptions` |
+| Options overload | ✅ | All detail methods accept `EvaluationOptions` |
 | No exceptions | ✅ | Returns ZIO effects with typed errors |
+
+### Evaluation Methods
+
+All types support three overload patterns:
+
+```scala
+// Basic evaluation
+FeatureFlags.boolean("flag", false)
+FeatureFlags.int("flag", 0)
+FeatureFlags.long("flag", 0L)
+FeatureFlags.double("flag", 0.0)
+FeatureFlags.string("flag", "default")
+FeatureFlags.obj("flag", Map.empty)
+FeatureFlags.value[A]("flag", default)
+
+// With context
+FeatureFlags.boolean("flag", false, context)
+FeatureFlags.long("flag", 0L, context)
+FeatureFlags.obj("flag", Map.empty, context)
+
+// Detailed evaluation (all three patterns)
+FeatureFlags.booleanDetails("flag", false)
+FeatureFlags.booleanDetails("flag", false, context)
+FeatureFlags.booleanDetails("flag", false, context, options)
+
+// Same patterns for: stringDetails, intDetails, longDetails, doubleDetails, objDetails, valueDetails
+```
 
 ### Resolution Details
 

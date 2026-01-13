@@ -30,13 +30,25 @@ trait FeatureFlags:
   def valueDetails[A: FlagType](key: String, default: A): IO[FeatureFlagError, FlagResolution[A]]
 
   // Detailed evaluation with context
-  def booleanDetails(key: String, default: Boolean, ctx: EvaluationContext): IO[FeatureFlagError, FlagResolution[Boolean]]
+  def booleanDetails(
+    key: String,
+    default: Boolean,
+    ctx: EvaluationContext
+  ): IO[FeatureFlagError, FlagResolution[Boolean]]
   def stringDetails(key: String, default: String, ctx: EvaluationContext): IO[FeatureFlagError, FlagResolution[String]]
   def intDetails(key: String, default: Int, ctx: EvaluationContext): IO[FeatureFlagError, FlagResolution[Int]]
   def longDetails(key: String, default: Long, ctx: EvaluationContext): IO[FeatureFlagError, FlagResolution[Long]]
   def doubleDetails(key: String, default: Double, ctx: EvaluationContext): IO[FeatureFlagError, FlagResolution[Double]]
-  def objDetails(key: String, default: Map[String, Any], ctx: EvaluationContext): IO[FeatureFlagError, FlagResolution[Map[String, Any]]]
-  def valueDetails[A: FlagType](key: String, default: A, ctx: EvaluationContext): IO[FeatureFlagError, FlagResolution[A]]
+  def objDetails(
+    key: String,
+    default: Map[String, Any],
+    ctx: EvaluationContext
+  ): IO[FeatureFlagError, FlagResolution[Map[String, Any]]]
+  def valueDetails[A: FlagType](
+    key: String,
+    default: A,
+    ctx: EvaluationContext
+  ): IO[FeatureFlagError, FlagResolution[A]]
 
   // Detailed evaluation with context and options (invocation-level hooks)
   def booleanDetails(
@@ -183,7 +195,11 @@ object FeatureFlags:
   def double(key: String, default: Double, ctx: EvaluationContext): ZIO[FeatureFlags, FeatureFlagError, Double] =
     ZIO.serviceWithZIO(_.double(key, default, ctx))
 
-  def obj(key: String, default: Map[String, Any], ctx: EvaluationContext): ZIO[FeatureFlags, FeatureFlagError, Map[String, Any]] =
+  def obj(
+    key: String,
+    default: Map[String, Any],
+    ctx: EvaluationContext
+  ): ZIO[FeatureFlags, FeatureFlagError, Map[String, Any]] =
     ZIO.serviceWithZIO(_.obj(key, default, ctx))
 
   def value[A: FlagType](key: String, default: A, ctx: EvaluationContext): ZIO[FeatureFlags, FeatureFlagError, A] =
@@ -204,7 +220,10 @@ object FeatureFlags:
   def doubleDetails(key: String, default: Double): ZIO[FeatureFlags, FeatureFlagError, FlagResolution[Double]] =
     ZIO.serviceWithZIO(_.doubleDetails(key, default))
 
-  def objDetails(key: String, default: Map[String, Any]): ZIO[FeatureFlags, FeatureFlagError, FlagResolution[Map[String, Any]]] =
+  def objDetails(
+    key: String,
+    default: Map[String, Any]
+  ): ZIO[FeatureFlags, FeatureFlagError, FlagResolution[Map[String, Any]]] =
     ZIO.serviceWithZIO(_.objDetails(key, default))
 
   def valueDetails[A: FlagType](key: String, default: A): ZIO[FeatureFlags, FeatureFlagError, FlagResolution[A]] =
@@ -212,25 +231,53 @@ object FeatureFlags:
 
   // Detailed evaluation with context
 
-  def booleanDetails(key: String, default: Boolean, ctx: EvaluationContext): ZIO[FeatureFlags, FeatureFlagError, FlagResolution[Boolean]] =
+  def booleanDetails(
+    key: String,
+    default: Boolean,
+    ctx: EvaluationContext
+  ): ZIO[FeatureFlags, FeatureFlagError, FlagResolution[Boolean]] =
     ZIO.serviceWithZIO(_.booleanDetails(key, default, ctx))
 
-  def stringDetails(key: String, default: String, ctx: EvaluationContext): ZIO[FeatureFlags, FeatureFlagError, FlagResolution[String]] =
+  def stringDetails(
+    key: String,
+    default: String,
+    ctx: EvaluationContext
+  ): ZIO[FeatureFlags, FeatureFlagError, FlagResolution[String]] =
     ZIO.serviceWithZIO(_.stringDetails(key, default, ctx))
 
-  def intDetails(key: String, default: Int, ctx: EvaluationContext): ZIO[FeatureFlags, FeatureFlagError, FlagResolution[Int]] =
+  def intDetails(
+    key: String,
+    default: Int,
+    ctx: EvaluationContext
+  ): ZIO[FeatureFlags, FeatureFlagError, FlagResolution[Int]] =
     ZIO.serviceWithZIO(_.intDetails(key, default, ctx))
 
-  def longDetails(key: String, default: Long, ctx: EvaluationContext): ZIO[FeatureFlags, FeatureFlagError, FlagResolution[Long]] =
+  def longDetails(
+    key: String,
+    default: Long,
+    ctx: EvaluationContext
+  ): ZIO[FeatureFlags, FeatureFlagError, FlagResolution[Long]] =
     ZIO.serviceWithZIO(_.longDetails(key, default, ctx))
 
-  def doubleDetails(key: String, default: Double, ctx: EvaluationContext): ZIO[FeatureFlags, FeatureFlagError, FlagResolution[Double]] =
+  def doubleDetails(
+    key: String,
+    default: Double,
+    ctx: EvaluationContext
+  ): ZIO[FeatureFlags, FeatureFlagError, FlagResolution[Double]] =
     ZIO.serviceWithZIO(_.doubleDetails(key, default, ctx))
 
-  def objDetails(key: String, default: Map[String, Any], ctx: EvaluationContext): ZIO[FeatureFlags, FeatureFlagError, FlagResolution[Map[String, Any]]] =
+  def objDetails(
+    key: String,
+    default: Map[String, Any],
+    ctx: EvaluationContext
+  ): ZIO[FeatureFlags, FeatureFlagError, FlagResolution[Map[String, Any]]] =
     ZIO.serviceWithZIO(_.objDetails(key, default, ctx))
 
-  def valueDetails[A: FlagType](key: String, default: A, ctx: EvaluationContext): ZIO[FeatureFlags, FeatureFlagError, FlagResolution[A]] =
+  def valueDetails[A: FlagType](
+    key: String,
+    default: A,
+    ctx: EvaluationContext
+  ): ZIO[FeatureFlags, FeatureFlagError, FlagResolution[A]] =
     ZIO.serviceWithZIO(_.valueDetails(key, default, ctx))
 
   // Detailed evaluation with context and options (invocation-level hooks)

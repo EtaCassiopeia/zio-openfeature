@@ -31,7 +31,7 @@ The `TestFeatureProvider` implements the OpenFeature `FeatureProvider` interface
 ## Installation
 
 ```scala
-libraryDependencies += "io.github.etacassiopeia" %% "zio-openfeature-testkit" % "0.3.0" % Test
+libraryDependencies += "io.github.etacassiopeia" %% "zio-openfeature-testkit" % "0.3.2" % Test
 ```
 
 ---

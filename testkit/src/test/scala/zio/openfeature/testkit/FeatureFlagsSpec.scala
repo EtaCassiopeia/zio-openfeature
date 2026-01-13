@@ -231,7 +231,60 @@ object FeatureFlagsSpec extends ZIOSpecDefault:
           _     <- FeatureFlags.boolean("test-flag", default = false)
           calls <- callsRef.get
         yield assertTrue(calls == List("before:test-flag", "after:test-flag"))
-      }.provide(testLayer(Map("test-flag" -> true)))
+      }.provide(testLayer(Map("test-flag" -> true))),
+      test("invocation-level hooks are called") {
+        val callsRef = Unsafe.unsafe { implicit u =>
+          Runtime.default.unsafe.run(Ref.make(List.empty[String])).getOrThrow()
+        }
+
+        val invocationHook = new FeatureHook:
+          override def before(ctx: HookContext, hints: HookHints): UIO[Option[(EvaluationContext, HookHints)]] =
+            callsRef.update(_ :+ s"invocation-before:${ctx.flagKey}").as(None)
+
+          override def after[A](ctx: HookContext, details: FlagResolution[A], hints: HookHints): UIO[Unit] =
+            callsRef.update(_ :+ s"invocation-after:${ctx.flagKey}")
+
+        val options = EvaluationOptions(invocationHook)
+        for
+          _     <- FeatureFlags.booleanDetails("hook-test", default = false, EvaluationContext.empty, options)
+          calls <- callsRef.get
+        yield assertTrue(calls == List("invocation-before:hook-test", "invocation-after:hook-test"))
+      }.provide(testLayer(Map("hook-test" -> true))),
+      test("client hooks run before invocation hooks") {
+        val callsRef = Unsafe.unsafe { implicit u =>
+          Runtime.default.unsafe.run(Ref.make(List.empty[String])).getOrThrow()
+        }
+
+        val clientHook = new FeatureHook:
+          override def before(ctx: HookContext, hints: HookHints): UIO[Option[(EvaluationContext, HookHints)]] =
+            callsRef.update(_ :+ "client-before").as(None)
+
+        val invocationHook = new FeatureHook:
+          override def before(ctx: HookContext, hints: HookHints): UIO[Option[(EvaluationContext, HookHints)]] =
+            callsRef.update(_ :+ "invocation-before").as(None)
+
+        val options = EvaluationOptions(invocationHook)
+        for
+          _     <- FeatureFlags.addHook(clientHook)
+          _     <- FeatureFlags.booleanDetails("order-test", default = false, EvaluationContext.empty, options)
+          calls <- callsRef.get
+        yield assertTrue(calls.take(2) == List("client-before", "invocation-before"))
+      }.provide(testLayer(Map("order-test" -> true))),
+      test("hook hints are passed to invocation hooks") {
+        val receivedHints = Unsafe.unsafe { implicit u =>
+          Runtime.default.unsafe.run(Ref.make(Option.empty[String])).getOrThrow()
+        }
+
+        val hintCheckHook = new FeatureHook:
+          override def before(ctx: HookContext, hints: HookHints): UIO[Option[(EvaluationContext, HookHints)]] =
+            receivedHints.set(hints.get[String]("test-hint")).as(None)
+
+        val options = EvaluationOptions(List(hintCheckHook), HookHints("test-hint" -> "hint-value"))
+        for
+          _    <- FeatureFlags.booleanDetails("hint-test", default = false, EvaluationContext.empty, options)
+          hint <- receivedHints.get
+        yield assertTrue(hint.contains("hint-value"))
+      }.provide(testLayer(Map("hint-test" -> true)))
     ),
     suite("Provider Status")(
       test("providerStatus returns current status") {

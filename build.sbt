@@ -2,7 +2,7 @@ import xerial.sbt.Sonatype.sonatypeCentralHost
 
 val scala3Version         = "3.3.4"
 val zioVersion            = "2.1.14"
-val openFeatureSdkVersion = "1.19.2"
+val openFeatureSdkVersion = "1.20.1"
 
 // OpenFeature Specification Compatibility
 // Spec version: v0.8.0 (https://github.com/open-feature/spec)

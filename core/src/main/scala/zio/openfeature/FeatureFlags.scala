@@ -149,6 +149,9 @@ trait FeatureFlags:
   def clearHooks: UIO[Unit]
   def hooks: UIO[List[FeatureHook]]
 
+  // Shutdown API (spec 1.6.1)
+  def shutdown: UIO[Unit]
+
   // Tracking API
   def track(eventName: String): IO[FeatureFlagError, Unit]
   def track(eventName: String, context: EvaluationContext): IO[FeatureFlagError, Unit]
@@ -401,6 +404,9 @@ object FeatureFlags:
   /** Register a handler for any provider event type. Returns a cancellation effect. */
   def on(eventType: ProviderEventType, handler: ProviderEvent => UIO[Unit]): ZIO[FeatureFlags, Nothing, UIO[Unit]] =
     ZIO.serviceWithZIO(_.on(eventType, handler))
+
+  def shutdown: ZIO[FeatureFlags, Nothing, Unit] =
+    ZIO.serviceWithZIO(_.shutdown)
 
   def addHook(hook: FeatureHook): ZIO[FeatureFlags, Nothing, Unit] =
     ZIO.serviceWithZIO(_.addHook(hook))

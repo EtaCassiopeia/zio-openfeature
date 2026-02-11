@@ -414,8 +414,8 @@ val eventHandler = FeatureFlags.events.foreach { event =>
       ZIO.logInfo(s"Flags changed: ${flags.mkString(", ")}")
     case ProviderEvent.Stale(reason, meta) =>
       ZIO.logWarning(s"Provider data stale: $reason")
-    case ProviderEvent.Error(error, meta) =>
-      ZIO.logError(s"Provider error: ${error.getMessage}")
+    case ProviderEvent.Error(error, meta, errorCode, errorMessage) =>
+      ZIO.logError(s"Provider error: ${errorMessage.getOrElse(error.getMessage)}")
     case ProviderEvent.Reconnecting(meta) =>
       ZIO.logInfo(s"Provider ${meta.name} reconnecting...")
 }

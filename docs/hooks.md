@@ -145,6 +145,7 @@ final case class HookContext(
   flagType: FlagValueType,             // Boolean, String, Int, Double, or Object
   defaultValue: Any,                   // The default value
   evaluationContext: EvaluationContext, // The evaluation context
+  clientMetadata: ClientMetadata,      // Client information (spec 4.1.2)
   providerMetadata: ProviderMetadata   // Provider information
 )
 ```

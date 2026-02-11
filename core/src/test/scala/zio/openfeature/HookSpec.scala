@@ -18,6 +18,7 @@ object HookSpec extends ZIOSpecDefault:
       flagType = flagType,
       defaultValue = defaultValue,
       evaluationContext = EvaluationContext.empty,
+      clientMetadata = ClientMetadata.default,
       providerMetadata = testMetadata
     )
 

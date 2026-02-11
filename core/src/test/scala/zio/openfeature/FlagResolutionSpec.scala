@@ -26,22 +26,48 @@ object FlagResolutionSpec extends ZIOSpecDefault:
         assertTrue(!meta.nonEmpty) &&
         assertTrue(meta.get("key") == None)
       },
-      test("metadata with values") {
-        val meta = FlagMetadata("key1" -> "value1", "key2" -> "value2")
+      test("metadata with string values") {
+        val meta = FlagMetadata(
+          "key1" -> MetadataValue.StringValue("value1"),
+          "key2" -> MetadataValue.StringValue("value2")
+        )
         assertTrue(!meta.isEmpty) &&
         assertTrue(meta.nonEmpty) &&
-        assertTrue(meta.get("key1") == Some("value1")) &&
-        assertTrue(meta.get("key2") == Some("value2")) &&
+        assertTrue(meta.getString("key1") == Some("value1")) &&
+        assertTrue(meta.getString("key2") == Some("value2")) &&
         assertTrue(meta.get("missing") == None)
       },
-      test("metadata from map") {
-        val meta = FlagMetadata(Map("a" -> "b"))
-        assertTrue(meta.get("a") == Some("b"))
+      test("metadata with boolean values") {
+        val meta = FlagMetadata("enabled" -> MetadataValue.BooleanValue(true))
+        assertTrue(meta.getBoolean("enabled") == Some(true))
+      },
+      test("metadata with numeric values") {
+        val meta = FlagMetadata(
+          "count"  -> MetadataValue.IntValue(42),
+          "rate"   -> MetadataValue.DoubleValue(3.14),
+          "bigNum" -> MetadataValue.LongValue(999999999L)
+        )
+        assertTrue(meta.getInt("count") == Some(42)) &&
+        assertTrue(meta.getDouble("rate") == Some(3.14)) &&
+        assertTrue(meta.getLong("bigNum") == Some(999999999L))
+      },
+      test("fromStrings creates string metadata") {
+        val meta = FlagMetadata.fromStrings("a" -> "b")
+        assertTrue(meta.getString("a") == Some("b"))
+      },
+      test("asDouble returns numeric value for int") {
+        val meta = FlagMetadata("count" -> MetadataValue.IntValue(42))
+        assertTrue(meta.getDouble("count") == Some(42.0))
+      },
+      test("asLong returns long value for int") {
+        val meta = FlagMetadata("count" -> MetadataValue.IntValue(42))
+        assertTrue(meta.getLong("count") == Some(42L))
       }
     ),
     suite("ErrorCode enum")(
       test("all error codes exist") {
         assertTrue(ErrorCode.ProviderNotReady != null) &&
+        assertTrue(ErrorCode.ProviderFatal != null) &&
         assertTrue(ErrorCode.FlagNotFound != null) &&
         assertTrue(ErrorCode.ParseError != null) &&
         assertTrue(ErrorCode.TypeMismatch != null) &&
@@ -114,9 +140,9 @@ object FlagResolutionSpec extends ZIOSpecDefault:
         assertTrue(resolution.errorCode == None)
       },
       test("targetingMatch with metadata") {
-        val meta       = FlagMetadata("source" -> "config")
+        val meta       = FlagMetadata("source" -> MetadataValue.StringValue("config"))
         val resolution = FlagResolution.targetingMatch("my-flag", "value", None, meta)
-        assertTrue(resolution.metadata.get("source") == Some("config"))
+        assertTrue(resolution.metadata.getString("source") == Some("config"))
       },
       test("default creates correct resolution") {
         val resolution = FlagResolution.default("my-flag", 42)

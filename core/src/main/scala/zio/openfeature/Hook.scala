@@ -30,6 +30,7 @@ final case class HookContext(
   flagType: FlagValueType,
   defaultValue: Any,
   evaluationContext: EvaluationContext,
+  clientMetadata: ClientMetadata,
   providerMetadata: ProviderMetadata
 )
 

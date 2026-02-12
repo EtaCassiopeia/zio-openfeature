@@ -10,7 +10,9 @@ import dev.openfeature.sdk.{
   Reason => OFReason,
   ErrorCode => OFErrorCode,
   OpenFeatureAPI,
-  MutableTrackingEventDetails
+  MutableTrackingEventDetails,
+  ProviderEvent => JavaProviderEvent,
+  EventDetails
 }
 import scala.jdk.CollectionConverters._
 
@@ -42,6 +44,114 @@ final private[openfeature] class FeatureFlagsLive(
       .merge(txContext)
       .merge(invocation)
 
+  private def getProviderHooks: List[FeatureHook] =
+    try {
+      val javaHooks = provider.getProviderHooks
+      if (javaHooks == null || javaHooks.isEmpty) Nil
+      else javaHooks.asScala.toList.map(wrapJavaHook)
+    } catch { case _: Exception => Nil }
+
+  @SuppressWarnings(Array("unchecked"))
+  private def wrapJavaHook(javaHook: dev.openfeature.sdk.Hook[_]): FeatureHook = {
+    val hook = javaHook.asInstanceOf[dev.openfeature.sdk.Hook[Any]]
+    new FeatureHook {
+      override def before(ctx: HookContext, hints: HookHints): UIO[Option[(EvaluationContext, HookHints)]] =
+        ZIO
+          .attempt {
+            val javaCtx   = toJavaHookContext(ctx)
+            val javaHints = hints.values.map { case (k, v) => k -> v.asInstanceOf[Object] }.asJava
+            val result    = hook.before(javaCtx, javaHints)
+            if (result.isPresent) {
+              val ofCtx = fromJavaEvaluationContext(result.get())
+              Some((ofCtx, hints))
+            } else None
+          }
+          .catchAll(_ => ZIO.none)
+
+      override def after[A](ctx: HookContext, details: FlagResolution[A], hints: HookHints): UIO[Unit] =
+        ZIO.attempt {
+          val javaCtx     = toJavaHookContext(ctx)
+          val javaDetails = toJavaFlagEvalDetails(details)
+          val javaHints   = hints.values.map { case (k, v) => k -> v.asInstanceOf[Object] }.asJava
+          hook.after(javaCtx, javaDetails, javaHints)
+        }.ignore
+
+      override def error(ctx: HookContext, error: FeatureFlagError, hints: HookHints): UIO[Unit] =
+        ZIO.attempt {
+          val javaCtx   = toJavaHookContext(ctx)
+          val javaHints = hints.values.map { case (k, v) => k -> v.asInstanceOf[Object] }.asJava
+          val exception = error.cause.collect { case e: Exception => e }.getOrElse(new Exception(error.message))
+          hook.error(javaCtx, exception, javaHints)
+        }.ignore
+
+      override def finallyAfter(
+        ctx: HookContext,
+        details: Option[FlagResolution[_]],
+        hints: HookHints
+      ): UIO[Unit] =
+        ZIO.attempt {
+          val javaCtx     = toJavaHookContext(ctx)
+          val javaDetails = details.map(toJavaFlagEvalDetails(_)).orNull
+          val javaHints   = hints.values.map { case (k, v) => k -> v.asInstanceOf[Object] }.asJava
+          hook.finallyAfter(javaCtx, javaDetails, javaHints)
+        }.ignore
+    }
+  }
+
+  @scala.annotation.nowarn("msg=deprecated")
+  private def toJavaHookContext(ctx: HookContext): dev.openfeature.sdk.HookContext[Any] = {
+    val javaClientMeta = new dev.openfeature.sdk.ClientMetadata {
+      override def getDomain: String = domain.orNull
+    }
+    val javaProviderMeta = provider.getMetadata
+    dev.openfeature.sdk.HookContext.from[Any](
+      ctx.flagKey,
+      toJavaFlagValueType(ctx.flagType),
+      javaClientMeta,
+      javaProviderMeta,
+      zio.openfeature.internal.ContextConverter.toOpenFeature(ctx.evaluationContext),
+      ctx.defaultValue
+    )
+  }
+
+  private def toJavaFlagValueType(t: FlagValueType): dev.openfeature.sdk.FlagValueType =
+    t match {
+      case FlagValueType.Boolean => dev.openfeature.sdk.FlagValueType.BOOLEAN
+      case FlagValueType.String  => dev.openfeature.sdk.FlagValueType.STRING
+      case FlagValueType.Int     => dev.openfeature.sdk.FlagValueType.INTEGER
+      case FlagValueType.Double  => dev.openfeature.sdk.FlagValueType.DOUBLE
+      case FlagValueType.Object  => dev.openfeature.sdk.FlagValueType.OBJECT
+    }
+
+  private def toJavaFlagEvalDetails[A](res: FlagResolution[A]): FlagEvaluationDetails[Any] = {
+    val builder = FlagEvaluationDetails
+      .builder[Any]()
+      .flagKey(res.flagKey)
+      .value(res.value)
+    res.variant.foreach(builder.variant)
+    builder.reason(res.reason.toString)
+    res.errorCode.foreach(ec => builder.errorCode(toJavaErrorCode(ec)))
+    res.errorMessage.foreach(builder.errorMessage)
+    builder.build()
+  }
+
+  private def toJavaErrorCode(ec: ErrorCode): OFErrorCode =
+    ec match {
+      case ErrorCode.ProviderNotReady    => OFErrorCode.PROVIDER_NOT_READY
+      case ErrorCode.ProviderFatal       => OFErrorCode.PROVIDER_FATAL
+      case ErrorCode.FlagNotFound        => OFErrorCode.FLAG_NOT_FOUND
+      case ErrorCode.ParseError          => OFErrorCode.PARSE_ERROR
+      case ErrorCode.TypeMismatch        => OFErrorCode.TYPE_MISMATCH
+      case ErrorCode.TargetingKeyMissing => OFErrorCode.TARGETING_KEY_MISSING
+      case ErrorCode.InvalidContext      => OFErrorCode.INVALID_CONTEXT
+      case ErrorCode.General             => OFErrorCode.GENERAL
+    }
+
+  private def fromJavaEvaluationContext(
+    javaCtx: dev.openfeature.sdk.EvaluationContext
+  ): EvaluationContext =
+    zio.openfeature.internal.ContextConverter.fromOpenFeature(javaCtx)
+
   private def runWithHooks[A: FlagType](
     key: String,
     default: A,
@@ -49,9 +159,11 @@ final private[openfeature] class FeatureFlagsLive(
     evaluate: EvaluationContext => IO[FeatureFlagError, FlagResolution[A]]
   ): IO[FeatureFlagError, FlagResolution[A]] =
     for {
-      currentHooks <- hooksRef.get
-      metadata   = ProviderMetadata(providerName)
-      clientMeta = ClientMetadata(domain)
+      clientHooks <- hooksRef.get
+      providerHks = getProviderHooks
+      allHooks    = clientHooks ++ providerHks
+      metadata    = ProviderMetadata(providerName)
+      clientMeta  = ClientMetadata(domain)
       hookCtx = HookContext(
         flagKey = key,
         flagType = FlagValueType.fromFlagType[A],
@@ -61,8 +173,8 @@ final private[openfeature] class FeatureFlagsLive(
         providerMetadata = metadata
       )
       result <-
-        if (currentHooks.isEmpty) evaluate(context)
-        else runHookPipeline(hookCtx, currentHooks, context, evaluate)
+        if (allHooks.isEmpty) evaluate(context)
+        else runHookPipeline(hookCtx, allHooks, context, evaluate)
     } yield result
 
   private def runHookPipeline[A](
@@ -76,23 +188,24 @@ final private[openfeature] class FeatureFlagsLive(
     for {
       beforeResult <- composedHook.before(hookCtx, HookHints.empty)
       (effectiveCtx, hints) = beforeResult.getOrElse((context, HookHints.empty))
+      resultRef <- Ref.make[Option[FlagResolution[_]]](None)
       result <- evaluate(effectiveCtx)
+        .tap(res => resultRef.set(Some(res)))
         .tapBoth(
           err => composedHook.error(hookCtx, err, hints),
           res => composedHook.after(hookCtx, res, hints)
         )
-        .ensuring(composedHook.finallyAfter(hookCtx, hints).ignore)
+        .ensuring(
+          resultRef.get.flatMap(details => composedHook.finallyAfter(hookCtx, details, hints)).ignore
+        )
     } yield result
   }
 
   private def checkProviderStatus: IO[FeatureFlagError, Unit] =
-    providerStatus.flatMap { status =>
-      status match {
-        case ProviderStatus.Fatal =>
-          ZIO.fail(FeatureFlagError.ProviderFatal)
-        case _ =>
-          ZIO.unit
-      }
+    providerStatus.flatMap {
+      case ProviderStatus.Fatal    => ZIO.fail(FeatureFlagError.ProviderFatal)
+      case ProviderStatus.NotReady => ZIO.fail(FeatureFlagError.ProviderNotReady(ProviderStatus.NotReady))
+      case _                       => ZIO.unit
     }
 
   private def evaluateFlag[A: FlagType](
@@ -538,8 +651,9 @@ final private[openfeature] class FeatureFlagsLive(
   ): IO[FeatureFlagError, FlagResolution[A]] =
     for {
       clientHooks <- hooksRef.get
-      // Combine client hooks with invocation hooks (client first, then invocation)
-      allHooks   = clientHooks ++ options.hooks
+      providerHks = getProviderHooks
+      // Combine: client hooks -> invocation hooks -> provider hooks
+      allHooks   = clientHooks ++ options.hooks ++ providerHks
       metadata   = ProviderMetadata(providerName)
       clientMeta = ClientMetadata(domain)
       hookCtx = HookContext(
@@ -567,12 +681,16 @@ final private[openfeature] class FeatureFlagsLive(
     for {
       beforeResult <- composedHook.before(hookCtx, initialHints)
       (effectiveCtx, hints) = beforeResult.getOrElse((context, initialHints))
+      resultRef <- Ref.make[Option[FlagResolution[_]]](None)
       result <- evaluate(effectiveCtx)
+        .tap(res => resultRef.set(Some(res)))
         .tapBoth(
           err => composedHook.error(hookCtx, err, hints),
           res => composedHook.after(hookCtx, res, hints)
         )
-        .ensuring(composedHook.finallyAfter(hookCtx, hints).ignore)
+        .ensuring(
+          resultRef.get.flatMap(details => composedHook.finallyAfter(hookCtx, details, hints)).ignore
+        )
     } yield result
   }
 
@@ -780,13 +898,84 @@ final private[openfeature] class FeatureFlagsLive(
   override def hooks: UIO[List[FeatureHook]] =
     hooksRef.get
 
+  // Event Bridge - bridges Java SDK provider events to ZIO event system
+
+  private[openfeature] def startEventBridge: ZIO[Scope, Nothing, Unit] = {
+    val metadata = ProviderMetadata(providerName)
+
+    val readyHandler: java.util.function.Consumer[EventDetails] = _ =>
+      Unsafe.unsafe { implicit u =>
+        Runtime.default.unsafe
+          .run(
+            statusRef.set(ProviderStatus.Ready) *>
+              eventHub.publish(ProviderEvent.Ready(metadata))
+          )
+          .getOrThrowFiberFailure()
+      }
+
+    val errorHandler: java.util.function.Consumer[EventDetails] = details =>
+      Unsafe.unsafe { implicit u =>
+        val errorCode = Option(details.getErrorCode).map(toErrorCode)
+        val message   = Option(details.getMessage)
+        val error     = new RuntimeException(message.getOrElse("Provider error"))
+        Runtime.default.unsafe
+          .run(
+            statusRef.set(ProviderStatus.Error) *>
+              eventHub.publish(ProviderEvent.Error(error, metadata, errorCode, message))
+          )
+          .getOrThrowFiberFailure()
+      }
+
+    val staleHandler: java.util.function.Consumer[EventDetails] = details =>
+      Unsafe.unsafe { implicit u =>
+        val reason = Option(details.getMessage).getOrElse("Provider stale")
+        Runtime.default.unsafe
+          .run(
+            statusRef.set(ProviderStatus.Stale) *>
+              eventHub.publish(ProviderEvent.Stale(reason, metadata))
+          )
+          .getOrThrowFiberFailure()
+      }
+
+    val configHandler: java.util.function.Consumer[EventDetails] = details =>
+      Unsafe.unsafe { implicit u =>
+        val flags = Option(details.getFlagsChanged)
+          .map(_.asScala.toSet)
+          .getOrElse(Set.empty[String])
+        Runtime.default.unsafe
+          .run(
+            eventHub.publish(ProviderEvent.ConfigurationChanged(flags, metadata))
+          )
+          .getOrThrowFiberFailure()
+      }
+
+    for {
+      _ <- ZIO.succeed {
+        client.on(JavaProviderEvent.PROVIDER_READY, readyHandler)
+        client.on(JavaProviderEvent.PROVIDER_ERROR, errorHandler)
+        client.on(JavaProviderEvent.PROVIDER_STALE, staleHandler)
+        client.on(JavaProviderEvent.PROVIDER_CONFIGURATION_CHANGED, configHandler)
+        ()
+      }
+      _ <- ZIO.addFinalizer(ZIO.attempt {
+        client.removeHandler(JavaProviderEvent.PROVIDER_READY, readyHandler)
+        client.removeHandler(JavaProviderEvent.PROVIDER_ERROR, errorHandler)
+        client.removeHandler(JavaProviderEvent.PROVIDER_STALE, staleHandler)
+        client.removeHandler(JavaProviderEvent.PROVIDER_CONFIGURATION_CHANGED, configHandler)
+        ()
+      }.ignore)
+    } yield ()
+  }
+
   // Shutdown API (spec 1.6.1, 1.6.2)
 
   override def shutdown: UIO[Unit] =
     for {
+      _ <- statusRef.set(ProviderStatus.NotReady)
       _ <- hooksRef.set(List.empty)
       _ <- globalContextRef.set(EvaluationContext.empty)
       _ <- clientContextRef.set(EvaluationContext.empty)
+      _ <- eventHub.shutdown
       _ <- ZIO.attemptBlocking(OpenFeatureAPI.getInstance().shutdown()).ignore
     } yield ()
 

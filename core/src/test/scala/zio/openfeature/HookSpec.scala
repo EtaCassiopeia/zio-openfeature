@@ -104,7 +104,7 @@ object HookSpec extends ZIOSpecDefault {
       },
       test("finallyAfter completes successfully") {
         for {
-          _ <- FeatureHook.noop.finallyAfter(makeHookContext(), HookHints.empty)
+          _ <- FeatureHook.noop.finallyAfter(makeHookContext(), None, HookHints.empty)
         } yield assertTrue(true)
       }
     ),
@@ -258,19 +258,19 @@ object HookSpec extends ZIOSpecDefault {
         val callCount = new java.util.concurrent.atomic.AtomicInteger(0)
 
         val hook1 = new FeatureHook {
-          override def finallyAfter(ctx: HookContext, hints: HookHints): UIO[Unit] =
+          override def finallyAfter(ctx: HookContext, details: Option[FlagResolution[_]], hints: HookHints): UIO[Unit] =
             ZIO.succeed(callCount.incrementAndGet())
         }
 
         val hook2 = new FeatureHook {
-          override def finallyAfter(ctx: HookContext, hints: HookHints): UIO[Unit] =
+          override def finallyAfter(ctx: HookContext, details: Option[FlagResolution[_]], hints: HookHints): UIO[Unit] =
             ZIO.succeed(callCount.incrementAndGet())
         }
 
         val composed = FeatureHook.compose(List(hook1, hook2))
 
         for {
-          _ <- composed.finallyAfter(makeHookContext(), HookHints.empty)
+          _ <- composed.finallyAfter(makeHookContext(), None, HookHints.empty)
         } yield assertTrue(callCount.get() == 2)
       },
       test("compose before without modifications returns None") {

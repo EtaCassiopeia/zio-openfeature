@@ -765,22 +765,25 @@ final private[openfeature] class FeatureFlagsLive(
       .map(fiber => fiber.interrupt.unit)
 
   override def on(eventType: ProviderEventType, handler: ProviderEvent => UIO[Unit]): UIO[UIO[Unit]] =
-    eventType match {
-      case ProviderEventType.Ready =>
-        onProviderReady(m => handler(ProviderEvent.Ready(m)))
-      case ProviderEventType.Error =>
-        onProviderError((e, m) => handler(ProviderEvent.Error(e, m)))
-      case ProviderEventType.Stale =>
-        onProviderStale((reason, m) => handler(ProviderEvent.Stale(reason, m)))
-      case ProviderEventType.ConfigurationChanged =>
-        onConfigurationChanged((flags, m) => handler(ProviderEvent.ConfigurationChanged(flags, m)))
-      case ProviderEventType.Reconnecting =>
-        events
-          .filter(_.eventType == ProviderEventType.Reconnecting)
-          .foreach(handler)
-          .forkDaemon
-          .map(fiber => fiber.interrupt.unit)
-    }
+    for {
+      status <- providerStatus
+      metadata = ProviderMetadata(providerName)
+      _ <- ZIO.when(eventType == ProviderEventType.Ready && status == ProviderStatus.Ready) {
+        handler(ProviderEvent.Ready(metadata))
+      }
+      _ <- ZIO.when(
+        eventType == ProviderEventType.Error && (status == ProviderStatus.Error || status == ProviderStatus.Fatal)
+      ) {
+        handler(ProviderEvent.Error(new RuntimeException("Provider in error state"), metadata))
+      }
+      _ <- ZIO.when(eventType == ProviderEventType.Stale && status == ProviderStatus.Stale) {
+        handler(ProviderEvent.Stale("Provider in stale state", metadata))
+      }
+      fiber <- events
+        .filter(_.eventType == eventType)
+        .foreach(handler)
+        .forkDaemon
+    } yield fiber.interrupt.unit
 
   override def addHook(hook: FeatureHook): UIO[Unit] =
     hooksRef.update(_ :+ hook)

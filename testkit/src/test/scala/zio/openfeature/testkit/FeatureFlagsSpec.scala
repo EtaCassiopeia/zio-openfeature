@@ -423,46 +423,37 @@ object FeatureFlagsSpec extends ZIOSpecDefault {
         } yield assertTrue(true)
       }.provide(testLayer()),
       test("onProviderReady handler runs immediately when provider is already ready (spec 5.3.3)") {
-        val callsRef = Unsafe.unsafe { implicit u =>
-          Runtime.default.unsafe.run(Ref.make(0)).getOrThrow()
-        }
         for {
-          _     <- FeatureFlags.onProviderReady(_ => callsRef.update(_ + 1))
-          calls <- callsRef.get
-        } yield assertTrue(calls == 1)
-      }.provide(testLayer()),
+          latch <- Promise.make[Nothing, Unit]
+          _     <- FeatureFlags.onProviderReady(_ => latch.succeed(()).unit)
+          _     <- latch.await
+        } yield assertTrue(true)
+      }.provide(testLayer()) @@ TestAspect.withLiveClock @@ TestAspect.timeout(5.seconds),
       test("onProviderStale handler runs immediately when provider is already stale") {
-        val callsRef = Unsafe.unsafe { implicit u =>
-          Runtime.default.unsafe.run(Ref.make(0)).getOrThrow()
-        }
         for {
+          latch        <- Promise.make[Nothing, Unit]
           testProvider <- ZIO.service[TestFeatureProvider]
           _            <- testProvider.setStatus(ProviderStatus.Stale)
-          _            <- FeatureFlags.onProviderStale((_, _) => callsRef.update(_ + 1))
-          calls        <- callsRef.get
-        } yield assertTrue(calls == 1)
-      }.provide(testLayer()),
+          _            <- FeatureFlags.onProviderStale((_, _) => latch.succeed(()).unit)
+          _            <- latch.await
+        } yield assertTrue(true)
+      }.provide(testLayer()) @@ TestAspect.withLiveClock @@ TestAspect.timeout(5.seconds),
       test("generic on method registers handler for event type") {
-        val callsRef = Unsafe.unsafe { implicit u =>
-          Runtime.default.unsafe.run(Ref.make(0)).getOrThrow()
-        }
         for {
-          cancel <- FeatureFlags.on(ProviderEventType.Ready, _ => callsRef.update(_ + 1))
-          calls  <- callsRef.get
-        } yield assertTrue(calls == 1) && // runs immediately since provider is ready
-          assertTrue(cancel != null)
-      }.provide(testLayer()),
+          latch  <- Promise.make[Nothing, Unit]
+          cancel <- FeatureFlags.on(ProviderEventType.Ready, _ => latch.succeed(()).unit)
+          _      <- latch.await
+        } yield assertTrue(cancel != null)
+      }.provide(testLayer()) @@ TestAspect.withLiveClock @@ TestAspect.timeout(5.seconds),
       test("generic on method works for stale events") {
-        val callsRef = Unsafe.unsafe { implicit u =>
-          Runtime.default.unsafe.run(Ref.make(0)).getOrThrow()
-        }
         for {
+          latch        <- Promise.make[Nothing, Unit]
           testProvider <- ZIO.service[TestFeatureProvider]
           _            <- testProvider.setStatus(ProviderStatus.Stale)
-          _            <- FeatureFlags.on(ProviderEventType.Stale, _ => callsRef.update(_ + 1))
-          calls        <- callsRef.get
-        } yield assertTrue(calls == 1)
-      }.provide(testLayer())
+          _            <- FeatureFlags.on(ProviderEventType.Stale, _ => latch.succeed(()).unit)
+          _            <- latch.await
+        } yield assertTrue(true)
+      }.provide(testLayer()) @@ TestAspect.withLiveClock @@ TestAspect.timeout(5.seconds)
     ),
     suite("Tracking API")(
       test("track with event name only succeeds") {

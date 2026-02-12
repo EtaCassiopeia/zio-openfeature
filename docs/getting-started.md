@@ -210,6 +210,14 @@ val hooks = List(
 val layer = FeatureFlags.fromProviderWithHooks(provider, hooks)
 ```
 
+### With Multiple Providers
+
+Combine multiple providers using the SDK's MultiProvider support:
+
+```scala
+val layer = FeatureFlags.fromMultiProvider(List(localProvider, remoteProvider))
+```
+
 ## Tracking Events
 
 Track user actions for analytics and experimentation:

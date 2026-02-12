@@ -466,5 +466,91 @@ object FeatureFlagsSpec extends ZIOSpecDefault:
         assertTrue(details.attributes("item") == "product-123") &&
         assertTrue(details.attributes("category") == "electronics")
       }
+    ),
+    suite("Shutdown")(
+      test("shutdown clears hooks") {
+        val hook = FeatureHook.noop
+        for
+          _      <- FeatureFlags.addHook(hook)
+          _      <- FeatureFlags.addHook(hook)
+          before <- FeatureFlags.hooks
+          _      <- FeatureFlags.shutdown
+          after  <- FeatureFlags.hooks
+        yield assertTrue(before.length == 2) &&
+          assertTrue(after.isEmpty)
+      }.provide(testLayer()),
+      test("shutdown resets global context") {
+        val ctx = EvaluationContext("user-123")
+        for
+          _      <- FeatureFlags.setGlobalContext(ctx)
+          before <- FeatureFlags.globalContext
+          _      <- FeatureFlags.shutdown
+          after  <- FeatureFlags.globalContext
+        yield assertTrue(before.targetingKey.contains("user-123")) &&
+          assertTrue(after.isEmpty)
+      }.provide(testLayer()),
+      test("shutdown resets client context") {
+        val ctx = EvaluationContext("client-user")
+        for
+          _      <- FeatureFlags.setClientContext(ctx)
+          before <- FeatureFlags.clientContext
+          _      <- FeatureFlags.shutdown
+          after  <- FeatureFlags.clientContext
+        yield assertTrue(before.targetingKey.contains("client-user")) &&
+          assertTrue(after.isEmpty)
+      }.provide(testLayer())
+    ),
+    suite("Provider Fatal Guard")(
+      test("evaluation fails with ProviderFatal when provider status is Fatal") {
+        for
+          testProvider <- ZIO.service[TestFeatureProvider]
+          _            <- testProvider.setStatus(ProviderStatus.Fatal)
+          result       <- FeatureFlags.boolean("test-flag", default = false).exit
+        yield assertTrue(result == Exit.fail(FeatureFlagError.ProviderFatal))
+      }.provide(testLayer(Map("test-flag" -> true))),
+      test("evaluation succeeds after recovering from Fatal") {
+        for
+          testProvider <- ZIO.service[TestFeatureProvider]
+          _            <- testProvider.setStatus(ProviderStatus.Fatal)
+          failed       <- FeatureFlags.boolean("test-flag", default = false).exit
+          _            <- testProvider.setStatus(ProviderStatus.Ready)
+          result       <- FeatureFlags.boolean("test-flag", default = false)
+        yield assertTrue(failed.isFailure) &&
+          assertTrue(result == true)
+      }.provide(testLayer(Map("test-flag" -> true)))
+    ),
+    suite("Hook Context Metadata")(
+      test("hooks receive clientMetadata during evaluation") {
+        val capturedMeta = Unsafe.unsafe { implicit u =>
+          Runtime.default.unsafe.run(Ref.make(Option.empty[ClientMetadata])).getOrThrow()
+        }
+
+        val metaHook = new FeatureHook:
+          override def before(ctx: HookContext, hints: HookHints): UIO[Option[(EvaluationContext, HookHints)]] =
+            capturedMeta.set(Some(ctx.clientMetadata)).as(None)
+
+        for
+          _    <- FeatureFlags.addHook(metaHook)
+          _    <- FeatureFlags.boolean("test-flag", default = false)
+          meta <- capturedMeta.get
+        yield assertTrue(meta.isDefined) &&
+          assertTrue(meta.get.hasDomain)
+      }.provide(testLayer(Map("test-flag" -> true))),
+      test("hooks receive providerMetadata during evaluation") {
+        val capturedMeta = Unsafe.unsafe { implicit u =>
+          Runtime.default.unsafe.run(Ref.make(Option.empty[ProviderMetadata])).getOrThrow()
+        }
+
+        val metaHook = new FeatureHook:
+          override def before(ctx: HookContext, hints: HookHints): UIO[Option[(EvaluationContext, HookHints)]] =
+            capturedMeta.set(Some(ctx.providerMetadata)).as(None)
+
+        for
+          _    <- FeatureFlags.addHook(metaHook)
+          _    <- FeatureFlags.boolean("test-flag", default = false)
+          meta <- capturedMeta.get
+        yield assertTrue(meta.isDefined) &&
+          assertTrue(meta.get.name == "TestFeatureProvider")
+      }.provide(testLayer(Map("test-flag" -> true)))
     )
   )

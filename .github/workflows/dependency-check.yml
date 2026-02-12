@@ -19,26 +19,42 @@ jobs:
 
       - uses: sbt/setup-sbt@v1
 
-      - name: Generate dependency list
+      - name: Collect dependency JARs
         run: |
           sbt 'show core/managedClasspath' 'show testkit/managedClasspath' \
             | grep -oP '/.+?\.jar' | sort -u > /tmp/dep-jars.txt
-          mkdir -p /tmp/deps
-          while read jar; do cp "$jar" /tmp/deps/ 2>/dev/null; done < /tmp/dep-jars.txt
+          mkdir -p build/deps
+          while read jar; do cp "$jar" build/deps/ 2>/dev/null; done < /tmp/dep-jars.txt
 
-      - name: OWASP dependency check
-        uses: dependency-check/Dependency-Check_Action@main
+      - name: Cache NVD database
+        uses: actions/cache@v4
         with:
-          project: zio-openfeature
-          path: /tmp/deps
-          format: HTML
-          args: >-
-            --nvdApiKey ${{ secrets.NVD_API_KEY }}
+          path: ~/.dependency-check
+          key: nvd-db-${{ github.run_id }}
+          restore-keys: nvd-db-
+
+      - name: Install OWASP Dependency-Check
+        run: |
+          DC_VERSION=12.1.0
+          curl -sL "https://github.com/jeremylong/DependencyCheck/releases/download/v${DC_VERSION}/dependency-check-${DC_VERSION}-release.zip" -o /tmp/dc.zip
+          unzip -q /tmp/dc.zip -d /opt
+
+      - name: Run dependency check
+        run: |
+          /opt/dependency-check/bin/dependency-check.sh \
+            --project zio-openfeature \
+            --scan build/deps \
+            --format HTML \
+            --out build/reports \
+            --data ~/.dependency-check \
+            --nvdApiKey "$NVD_API_KEY" \
             --failOnCVSS 7
+        env:
+          NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
 
       - name: Upload report
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: dependency-check-report
-          path: reports/
+          path: build/reports/

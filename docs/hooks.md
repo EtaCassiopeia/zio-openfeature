@@ -131,7 +131,7 @@ val customHook = new FeatureHook:
   override def error(ctx: HookContext, error: FeatureFlagError, hints: HookHints): UIO[Unit] =
     ZIO.logError(s"Error evaluating ${ctx.flagKey}: ${error.message}")
 
-  override def finallyAfter(ctx: HookContext, hints: HookHints): UIO[Unit] =
+  override def finallyAfter(ctx: HookContext, details: Option[FlagResolution[_]], hints: HookHints): UIO[Unit] =
     ZIO.unit
 ```
 
@@ -169,7 +169,7 @@ val spanHook = new FeatureHook:
       recordSpan(spanId, details)
     }
 
-  override def finallyAfter(ctx: HookContext, hints: HookHints): UIO[Unit] =
+  override def finallyAfter(ctx: HookContext, details: Option[FlagResolution[_]], hints: HookHints): UIO[Unit] =
     ZIO.succeed {
       ctx.hookData.clear()
     }
@@ -201,7 +201,7 @@ val timingHook = new FeatureHook:
   override def error(ctx: HookContext, error: FeatureFlagError, hints: HookHints): UIO[Unit] =
     ZIO.unit
 
-  override def finallyAfter(ctx: HookContext, hints: HookHints): UIO[Unit] =
+  override def finallyAfter(ctx: HookContext, details: Option[FlagResolution[_]], hints: HookHints): UIO[Unit] =
     ZIO.unit
 ```
 
@@ -237,7 +237,7 @@ For the `before` stage, hooks run in order. For `after`, `error`, and `finallyAf
 
 ## Hook Registration Levels
 
-Per the OpenFeature specification, hooks can be registered at three levels:
+Per the OpenFeature specification, hooks can be registered at four levels:
 
 ### API-Level Hooks
 
@@ -299,13 +299,17 @@ val options = EvaluationOptions(
 FeatureFlags.booleanDetails("feature", false, EvaluationContext.empty, options)
 ```
 
+### Provider-Level Hooks
+
+Provider hooks are automatically retrieved from the underlying provider via `provider.getProviderHooks()` and included in the hook pipeline. You don't need to register them manually.
+
 ### Hook Execution Order
 
 Per OpenFeature spec, hooks execute in this order:
 
-**Before stage:** API → Client → Invocation (in addition order within each level)
+**Before stage:** API → Client → Invocation → Provider (in addition order within each level)
 
-**After/Error/Finally stages:** Invocation → Client → API (reverse order)
+**After/Error/Finally stages:** Provider → Invocation → Client → API (reverse order)
 
 ---
 
@@ -329,7 +333,7 @@ val auditHook = new FeatureHook:
   override def error(ctx: HookContext, error: FeatureFlagError, hints: HookHints): UIO[Unit] =
     ZIO.logError(s"AUDIT: Flag evaluation failed: ${error.message}")
 
-  override def finallyAfter(ctx: HookContext, hints: HookHints): UIO[Unit] =
+  override def finallyAfter(ctx: HookContext, details: Option[FlagResolution[_]], hints: HookHints): UIO[Unit] =
     ZIO.unit
 ```
 
@@ -366,7 +370,7 @@ val enrichmentHook = new FeatureHook:
   override def error(ctx: HookContext, error: FeatureFlagError, hints: HookHints): UIO[Unit] =
     ZIO.unit
 
-  override def finallyAfter(ctx: HookContext, hints: HookHints): UIO[Unit] =
+  override def finallyAfter(ctx: HookContext, details: Option[FlagResolution[_]], hints: HookHints): UIO[Unit] =
     ZIO.unit
 ```
 
@@ -389,7 +393,7 @@ val alertingHook = new FeatureHook:
       details = Map("error" -> error.message)
     ).ignore
 
-  override def finallyAfter(ctx: HookContext, hints: HookHints): UIO[Unit] =
+  override def finallyAfter(ctx: HookContext, details: Option[FlagResolution[_]], hints: HookHints): UIO[Unit] =
     ZIO.unit
 ```
 

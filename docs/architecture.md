@@ -201,7 +201,7 @@ Hooks execute around flag evaluation in four stages: **before**, **after**, **er
 | **before** | Before evaluation | Modify context, start timers, validate |
 | **after** | On successful evaluation | Log results, record metrics |
 | **error** | On evaluation failure | Log errors, alert, fallback logic |
-| **finallyAfter** | Always (like try-finally) | Cleanup, span completion |
+| **finallyAfter** | Always (like try-finally) | Cleanup, span completion. Receives `Option[FlagResolution[_]]` with evaluation details (spec 4.3.8) |
 
 See [Hooks]({{ site.baseurl }}/hooks) for the complete hook lifecycle, built-in hooks, and custom hook examples.
 
@@ -237,10 +237,11 @@ The OpenFeature SDK manages provider lifecycle. ZIO OpenFeature adds scoped reso
 
 | State | Description |
 |:------|:------------|
-| `NotReady` | Provider not initialized |
+| `NotReady` | Provider not initialized. Evaluations fail with `ProviderNotReady` |
 | `Ready` | Can evaluate flags |
 | `Error` | Provider encountered recoverable error |
 | `Stale` | Provider data may be outdated |
+| `Fatal` | Provider encountered unrecoverable error. Evaluations fail with `ProviderFatal` |
 
 Provider events (`Ready`, `ConfigurationChanged`, `Stale`, `Error`) can be observed via `FeatureFlags.events` stream or specific handlers like `onProviderReady`.
 

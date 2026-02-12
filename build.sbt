@@ -91,8 +91,9 @@ lazy val commonSettings = Seq(
 lazy val root = (project in file("."))
   .aggregate(core, testkit)
   .settings(
-    name           := "zio-openfeature",
-    publish / skip := true
+    name                         := "zio-openfeature",
+    publish / skip               := true,
+    dependencyCheckFailBuildOnCVSS := 7
   )
 
 // Core module - ZIO wrapper around OpenFeature SDK

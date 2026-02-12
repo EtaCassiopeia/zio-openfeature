@@ -16,7 +16,7 @@ ZIO OpenFeature wraps the [OpenFeature Java SDK](https://openfeature.dev/docs/re
 |:----------|:--------|:------|
 | **OpenFeature Spec** | v0.8.0 | [Specification](https://github.com/open-feature/spec) |
 | **OpenFeature Java SDK** | 1.20.1 | [Java SDK](https://github.com/open-feature/java-sdk) |
-| **ZIO OpenFeature** | 0.3.2 | This library |
+| **ZIO OpenFeature** | [![Maven Central](https://img.shields.io/maven-central/v/io.github.etacassiopeia/zio-openfeature-core_3.svg)](https://search.maven.org/search?q=g:io.github.etacassiopeia%20AND%20a:zio-openfeature-core_3) | This library |
 
 This library targets the **dynamic-context paradigm** (server-side) of the OpenFeature specification.
 

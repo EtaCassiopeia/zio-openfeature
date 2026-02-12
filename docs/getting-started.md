@@ -19,16 +19,14 @@ nav_order: 2
 
 [![Maven Central](https://img.shields.io/maven-central/v/io.github.etacassiopeia/zio-openfeature-core_3.svg)](https://search.maven.org/search?q=g:io.github.etacassiopeia%20AND%20a:zio-openfeature-core_3)
 
-Add the following to your `build.sbt`:
+Add the following to your `build.sbt`, replacing `<version>` with the version shown in the badge above:
 
 ```scala
-val zioOpenFeatureVersion = "0.3.2"
-
 // Core library (includes OpenFeature SDK)
-libraryDependencies += "io.github.etacassiopeia" %% "zio-openfeature-core" % zioOpenFeatureVersion
+libraryDependencies += "io.github.etacassiopeia" %% "zio-openfeature-core" % "<version>"
 
 // For testing
-libraryDependencies += "io.github.etacassiopeia" %% "zio-openfeature-testkit" % zioOpenFeatureVersion % Test
+libraryDependencies += "io.github.etacassiopeia" %% "zio-openfeature-testkit" % "<version>" % Test
 ```
 
 You'll also need an OpenFeature provider for your feature flag service:

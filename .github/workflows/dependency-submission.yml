@@ -15,4 +15,5 @@ jobs:
         with:
           java-version: '21'
           distribution: 'temurin'
+      - uses: sbt/setup-sbt@v1
       - uses: scalacenter/sbt-dependency-submission@v3

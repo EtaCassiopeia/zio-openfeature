@@ -1,4 +1,4 @@
 addSbtPlugin("org.scalameta"      % "sbt-scalafmt"         % "2.5.4")
 addSbtPlugin("org.scoverage"      % "sbt-scoverage"        % "2.0.9")
 addSbtPlugin("com.github.sbt"     % "sbt-ci-release"       % "1.9.2")
-addSbtPlugin("net.vonbuchholtz"   % "sbt-dependency-check" % "5.0.0")
+addSbtPlugin("net.nmoncho"         % "sbt-dependency-check" % "1.8.5")

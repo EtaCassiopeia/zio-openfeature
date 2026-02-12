@@ -1,4 +1,5 @@
 import xerial.sbt.Sonatype.sonatypeCentralHost
+import net.nmoncho.sbt.dependencycheck.settings._
 
 val scala213Version       = "2.13.16"
 val scala3Version         = "3.3.4"
@@ -91,9 +92,10 @@ lazy val commonSettings = Seq(
 lazy val root = (project in file("."))
   .aggregate(core, testkit)
   .settings(
-    name                         := "zio-openfeature",
-    publish / skip               := true,
-    dependencyCheckFailBuildOnCVSS := 7
+    name                           := "zio-openfeature",
+    publish / skip                 := true,
+    dependencyCheckFailBuildOnCVSS := 7,
+    dependencyCheckNvdApi          := NvdApiSettings(apiKey = sys.env.getOrElse("NVD_API_KEY", ""))
   )
 
 // Core module - ZIO wrapper around OpenFeature SDK

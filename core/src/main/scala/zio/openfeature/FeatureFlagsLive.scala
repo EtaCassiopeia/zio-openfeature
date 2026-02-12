@@ -10,7 +10,6 @@ import dev.openfeature.sdk.{
   Reason => OFReason,
   ErrorCode => OFErrorCode,
   OpenFeatureAPI,
-  ProviderState,
   MutableTrackingEventDetails
 }
 import scala.jdk.CollectionConverters._
@@ -25,7 +24,8 @@ final private[openfeature] class FeatureFlagsLive(
   fiberContextRef: FiberRef[EvaluationContext],
   transactionRef: FiberRef[Option[TransactionState]],
   hooksRef: Ref[List[FeatureHook]],
-  eventHub: Hub[ProviderEvent]
+  eventHub: Hub[ProviderEvent],
+  statusRef: Ref[ProviderStatus]
 ) extends FeatureFlags {
 
   // Context merges in order per OpenFeature spec: API (global) -> Client -> Transaction -> Invocation
@@ -690,19 +690,8 @@ final private[openfeature] class FeatureFlagsLive(
   override def events: ZStream[Any, Nothing, ProviderEvent] =
     ZStream.fromHub(eventHub)
 
-  @scala.annotation.nowarn("msg=deprecated")
   override def providerStatus: UIO[ProviderStatus] =
-    ZIO.succeed {
-      val state = provider.getState
-      state match {
-        case ProviderState.NOT_READY => ProviderStatus.NotReady
-        case ProviderState.READY     => ProviderStatus.Ready
-        case ProviderState.ERROR     => ProviderStatus.Error
-        case ProviderState.STALE     => ProviderStatus.Stale
-        case ProviderState.FATAL     => ProviderStatus.Fatal
-        case _                       => ProviderStatus.NotReady
-      }
-    }
+    statusRef.get
 
   override def providerMetadata: UIO[ProviderMetadata] =
     ZIO.succeed(ProviderMetadata(providerName))
@@ -765,25 +754,22 @@ final private[openfeature] class FeatureFlagsLive(
       .map(fiber => fiber.interrupt.unit)
 
   override def on(eventType: ProviderEventType, handler: ProviderEvent => UIO[Unit]): UIO[UIO[Unit]] =
-    for {
-      status <- providerStatus
-      metadata = ProviderMetadata(providerName)
-      _ <- ZIO.when(eventType == ProviderEventType.Ready && status == ProviderStatus.Ready) {
-        handler(ProviderEvent.Ready(metadata))
-      }
-      _ <- ZIO.when(
-        eventType == ProviderEventType.Error && (status == ProviderStatus.Error || status == ProviderStatus.Fatal)
-      ) {
-        handler(ProviderEvent.Error(new RuntimeException("Provider in error state"), metadata))
-      }
-      _ <- ZIO.when(eventType == ProviderEventType.Stale && status == ProviderStatus.Stale) {
-        handler(ProviderEvent.Stale("Provider in stale state", metadata))
-      }
-      fiber <- events
-        .filter(_.eventType == eventType)
-        .foreach(handler)
-        .forkDaemon
-    } yield fiber.interrupt.unit
+    eventType match {
+      case ProviderEventType.Ready =>
+        onProviderReady(m => handler(ProviderEvent.Ready(m)))
+      case ProviderEventType.Error =>
+        onProviderError((e, m) => handler(ProviderEvent.Error(e, m)))
+      case ProviderEventType.Stale =>
+        onProviderStale((reason, m) => handler(ProviderEvent.Stale(reason, m)))
+      case ProviderEventType.ConfigurationChanged =>
+        onConfigurationChanged((flags, m) => handler(ProviderEvent.ConfigurationChanged(flags, m)))
+      case ProviderEventType.Reconnecting =>
+        events
+          .filter(_.eventType == ProviderEventType.Reconnecting)
+          .foreach(handler)
+          .forkDaemon
+          .map(fiber => fiber.interrupt.unit)
+    }
 
   override def addHook(hook: FeatureHook): UIO[Unit] =
     hooksRef.update(_ :+ hook)

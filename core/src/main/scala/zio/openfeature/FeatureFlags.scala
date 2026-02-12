@@ -463,6 +463,7 @@ object FeatureFlags {
         transactionRef <- FiberRef.make[Option[TransactionState]](None)
         hooksRef       <- Ref.make(List.empty[FeatureHook])
         eventHub       <- Hub.unbounded[ProviderEvent]
+        statusRef      <- Ref.make[ProviderStatus](ProviderStatus.Ready)
         _              <- ZIO.addFinalizer(ZIO.attemptBlocking(api.shutdown()).ignore)
       } yield new FeatureFlagsLive(
         client,
@@ -474,7 +475,8 @@ object FeatureFlags {
         fiberCtxRef,
         transactionRef,
         hooksRef,
-        eventHub
+        eventHub,
+        statusRef
       )
     }
 
@@ -482,29 +484,48 @@ object FeatureFlags {
   def fromProviderWithDomain(provider: OFFeatureProvider, domain: String): ZLayer[Scope, Throwable, FeatureFlags] =
     ZLayer.scoped {
       for {
-        api    <- ZIO.succeed(OpenFeatureAPI.getInstance())
-        _      <- ZIO.attemptBlocking(api.setProviderAndWait(domain, provider))
-        client <- ZIO.attempt(api.getClient(domain))
-        providerName = Option(provider.getMetadata).map(_.getName).getOrElse("unknown")
-        globalCtxRef   <- Ref.make(EvaluationContext.empty)
-        clientCtxRef   <- Ref.make(EvaluationContext.empty)
-        fiberCtxRef    <- FiberRef.make(EvaluationContext.empty)
-        transactionRef <- FiberRef.make[Option[TransactionState]](None)
-        hooksRef       <- Ref.make(List.empty[FeatureHook])
-        eventHub       <- Hub.unbounded[ProviderEvent]
-      } yield new FeatureFlagsLive(
-        client,
-        provider,
-        providerName,
-        Some(domain),
-        globalCtxRef,
-        clientCtxRef,
-        fiberCtxRef,
-        transactionRef,
-        hooksRef,
-        eventHub
-      )
+        statusRef <- Ref.make[ProviderStatus](ProviderStatus.Ready)
+        ff        <- buildWithDomain(provider, domain, statusRef)
+      } yield ff
     }
+
+  /** Create a FeatureFlags layer with a named domain/client and a shared status ref. */
+  private[openfeature] def fromProviderWithDomain(
+    provider: OFFeatureProvider,
+    domain: String,
+    statusRef: Ref[ProviderStatus]
+  ): ZLayer[Scope, Throwable, FeatureFlags] =
+    ZLayer.scoped(buildWithDomain(provider, domain, statusRef))
+
+  private def buildWithDomain(
+    provider: OFFeatureProvider,
+    domain: String,
+    statusRef: Ref[ProviderStatus]
+  ): ZIO[Scope, Throwable, FeatureFlagsLive] =
+    for {
+      api    <- ZIO.succeed(OpenFeatureAPI.getInstance())
+      _      <- ZIO.attemptBlocking(api.setProviderAndWait(domain, provider))
+      client <- ZIO.attempt(api.getClient(domain))
+      providerName = Option(provider.getMetadata).map(_.getName).getOrElse("unknown")
+      globalCtxRef   <- Ref.make(EvaluationContext.empty)
+      clientCtxRef   <- Ref.make(EvaluationContext.empty)
+      fiberCtxRef    <- FiberRef.make(EvaluationContext.empty)
+      transactionRef <- FiberRef.make[Option[TransactionState]](None)
+      hooksRef       <- Ref.make(List.empty[FeatureHook])
+      eventHub       <- Hub.unbounded[ProviderEvent]
+    } yield new FeatureFlagsLive(
+      client,
+      provider,
+      providerName,
+      Some(domain),
+      globalCtxRef,
+      clientCtxRef,
+      fiberCtxRef,
+      transactionRef,
+      hooksRef,
+      eventHub,
+      statusRef
+    )
 
   /** Create a FeatureFlags layer from multiple providers using the first-match strategy. */
   def fromMultiProvider(providers: List[OFFeatureProvider]): ZLayer[Scope, Throwable, FeatureFlags] = {
@@ -538,6 +559,7 @@ object FeatureFlags {
         transactionRef <- FiberRef.make[Option[TransactionState]](None)
         hooksRef       <- Ref.make(initialHooks)
         eventHub       <- Hub.unbounded[ProviderEvent]
+        statusRef      <- Ref.make[ProviderStatus](ProviderStatus.Ready)
         _              <- ZIO.addFinalizer(ZIO.attemptBlocking(api.shutdown()).ignore)
       } yield new FeatureFlagsLive(
         client,
@@ -549,7 +571,8 @@ object FeatureFlags {
         fiberCtxRef,
         transactionRef,
         hooksRef,
-        eventHub
+        eventHub,
+        statusRef
       )
     }
 }

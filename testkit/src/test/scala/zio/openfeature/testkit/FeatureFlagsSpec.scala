@@ -449,7 +449,7 @@ object FeatureFlagsSpec extends ZIOSpecDefault {
         for {
           cancel <- FeatureFlags.on(ProviderEventType.Ready, _ => callsRef.update(_ + 1))
           calls  <- callsRef.get
-        } yield assertTrue(calls == 1) && // runs immediately since provider is ready
+        } yield assertTrue(calls == 1) &&
           assertTrue(cancel != null)
       }.provide(testLayer()),
       test("generic on method works for stale events") {

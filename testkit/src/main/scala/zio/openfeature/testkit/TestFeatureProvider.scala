@@ -31,7 +31,7 @@ final class TestFeatureProvider private (
   private val state: AtomicReference[ProviderState],
   private val evaluations: CopyOnWriteArrayList[(String, OFEvaluationContext)],
   private val eventsHubRef: Ref[Hub[ProviderEvent]],
-  private val statusRef: Ref[ProviderStatus]
+  private[openfeature] val statusRef: Ref[ProviderStatus]
 ) extends OFFeatureProvider {
 
   @scala.annotation.nowarn("msg=deprecated")
@@ -254,7 +254,10 @@ object TestFeatureProvider {
         for {
           testProvider <- make(flags)
           domain = s"test-${java.util.UUID.randomUUID()}"
-          featureFlags <- FeatureFlags.fromProviderWithDomain(testProvider, domain).build.map(_.get)
+          featureFlags <- FeatureFlags
+            .fromProviderWithDomain(testProvider, domain, testProvider.statusRef)
+            .build
+            .map(_.get)
         } yield (testProvider, featureFlags)
       }
       .flatMap { env =>
@@ -273,6 +276,6 @@ object TestFeatureProvider {
   /** Create a FeatureFlags layer from an existing TestFeatureProvider. */
   def layerFrom(provider: TestFeatureProvider): ZLayer[Scope, Throwable, FeatureFlags] = {
     val domain = s"test-${java.util.UUID.randomUUID()}"
-    FeatureFlags.fromProviderWithDomain(provider, domain)
+    FeatureFlags.fromProviderWithDomain(provider, domain, provider.statusRef)
   }
 }

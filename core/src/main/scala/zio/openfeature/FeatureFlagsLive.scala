@@ -10,7 +10,6 @@ import dev.openfeature.sdk.{
   Reason => OFReason,
   ErrorCode => OFErrorCode,
   OpenFeatureAPI,
-  ProviderState,
   MutableTrackingEventDetails
 }
 import scala.jdk.CollectionConverters._
@@ -25,7 +24,8 @@ final private[openfeature] class FeatureFlagsLive(
   fiberContextRef: FiberRef[EvaluationContext],
   transactionRef: FiberRef[Option[TransactionState]],
   hooksRef: Ref[List[FeatureHook]],
-  eventHub: Hub[ProviderEvent]
+  eventHub: Hub[ProviderEvent],
+  statusRef: Ref[ProviderStatus]
 ) extends FeatureFlags {
 
   // Context merges in order per OpenFeature spec: API (global) -> Client -> Transaction -> Invocation
@@ -690,19 +690,8 @@ final private[openfeature] class FeatureFlagsLive(
   override def events: ZStream[Any, Nothing, ProviderEvent] =
     ZStream.fromHub(eventHub)
 
-  @scala.annotation.nowarn("msg=deprecated")
   override def providerStatus: UIO[ProviderStatus] =
-    ZIO.succeed {
-      val state = provider.getState
-      state match {
-        case ProviderState.NOT_READY => ProviderStatus.NotReady
-        case ProviderState.READY     => ProviderStatus.Ready
-        case ProviderState.ERROR     => ProviderStatus.Error
-        case ProviderState.STALE     => ProviderStatus.Stale
-        case ProviderState.FATAL     => ProviderStatus.Fatal
-        case _                       => ProviderStatus.NotReady
-      }
-    }
+    statusRef.get
 
   override def providerMetadata: UIO[ProviderMetadata] =
     ZIO.succeed(ProviderMetadata(providerName))

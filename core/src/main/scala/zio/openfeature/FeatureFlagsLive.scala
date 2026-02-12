@@ -12,7 +12,9 @@ import dev.openfeature.sdk.{
   OpenFeatureAPI,
   MutableTrackingEventDetails,
   ProviderEvent => JavaProviderEvent,
-  EventDetails
+  EventDetails,
+  FlagValueType => JavaFlagValueType,
+  HookContext => JavaHookContext
 }
 import scala.jdk.CollectionConverters._
 
@@ -121,6 +123,8 @@ final private[openfeature] class FeatureFlagsLive(
   ): IO[FeatureFlagError, FlagResolution[A]] =
     for {
       currentHooks <- hooksRef.get
+      provHooks  = getProviderHooks
+      allHooks   = currentHooks ++ provHooks
       metadata   = ProviderMetadata(providerName)
       clientMeta = ClientMetadata(domain)
       hookCtx = HookContext(
@@ -132,8 +136,8 @@ final private[openfeature] class FeatureFlagsLive(
         providerMetadata = metadata
       )
       result <-
-        if (currentHooks.isEmpty) evaluate(context)
-        else runHookPipeline(hookCtx, currentHooks, context, evaluate)
+        if (allHooks.isEmpty) evaluate(context)
+        else runHookPipeline(hookCtx, allHooks, context, evaluate)
     } yield result
 
   private def runHookPipeline[A](
@@ -610,8 +614,9 @@ final private[openfeature] class FeatureFlagsLive(
   ): IO[FeatureFlagError, FlagResolution[A]] =
     for {
       clientHooks <- hooksRef.get
-      // Combine client hooks with invocation hooks (client first, then invocation)
-      allHooks   = clientHooks ++ options.hooks
+      provHooks = getProviderHooks
+      // Combine client + invocation + provider hooks (per spec order)
+      allHooks   = clientHooks ++ options.hooks ++ provHooks
       metadata   = ProviderMetadata(providerName)
       clientMeta = ClientMetadata(domain)
       hookCtx = HookContext(
@@ -855,6 +860,110 @@ final private[openfeature] class FeatureFlagsLive(
 
   override def hooks: UIO[List[FeatureHook]] =
     hooksRef.get
+
+  // Provider hooks (spec: provider hooks included in hook pipeline)
+
+  private def getProviderHooks: List[FeatureHook] =
+    try {
+      val javaHooks = provider.getProviderHooks
+      if (javaHooks == null || javaHooks.isEmpty) Nil
+      else javaHooks.asScala.toList.map(wrapJavaHook)
+    } catch { case _: Exception => Nil }
+
+  @scala.annotation.nowarn("msg=deprecated")
+  private def toJavaHookContext(ctx: HookContext): JavaHookContext[Any] =
+    JavaHookContext.from[Any](
+      ctx.flagKey,
+      toJavaFlagValueType(ctx.flagType),
+      new dev.openfeature.sdk.ClientMetadata {
+        def getDomain: String = domain.orNull
+      },
+      new dev.openfeature.sdk.Metadata {
+        def getName: String = providerName
+      },
+      ContextConverter.toOpenFeature(ctx.evaluationContext),
+      ctx.defaultValue
+    )
+
+  private def toJavaFlagValueType(fvt: FlagValueType): JavaFlagValueType = fvt match {
+    case FlagValueType.Boolean => JavaFlagValueType.BOOLEAN
+    case FlagValueType.String  => JavaFlagValueType.STRING
+    case FlagValueType.Int     => JavaFlagValueType.INTEGER
+    case FlagValueType.Double  => JavaFlagValueType.DOUBLE
+    case FlagValueType.Object  => JavaFlagValueType.OBJECT
+  }
+
+  private def toJavaFlagEvalDetails[A](res: FlagResolution[A]): FlagEvaluationDetails[Any] = {
+    val details = new FlagEvaluationDetails[Any]()
+    details.setFlagKey(res.flagKey)
+    details.setValue(res.value)
+    res.variant.foreach(details.setVariant)
+    details.setReason(res.reason.toString)
+    res.errorCode.foreach(ec => details.setErrorCode(toJavaErrorCode(ec)))
+    res.errorMessage.foreach(details.setErrorMessage)
+    details
+  }
+
+  private def toJavaErrorCode(ec: ErrorCode): OFErrorCode = ec match {
+    case ErrorCode.ProviderNotReady    => OFErrorCode.PROVIDER_NOT_READY
+    case ErrorCode.ProviderFatal       => OFErrorCode.PROVIDER_FATAL
+    case ErrorCode.FlagNotFound        => OFErrorCode.FLAG_NOT_FOUND
+    case ErrorCode.ParseError          => OFErrorCode.PARSE_ERROR
+    case ErrorCode.TypeMismatch        => OFErrorCode.TYPE_MISMATCH
+    case ErrorCode.TargetingKeyMissing => OFErrorCode.TARGETING_KEY_MISSING
+    case ErrorCode.InvalidContext      => OFErrorCode.INVALID_CONTEXT
+    case ErrorCode.General             => OFErrorCode.GENERAL
+  }
+
+  private def fromJavaEvaluationContext(ctx: dev.openfeature.sdk.EvaluationContext): EvaluationContext =
+    if (ctx == null) EvaluationContext.empty
+    else ContextConverter.fromOpenFeature(ctx)
+
+  private def wrapJavaHook(javaHook: dev.openfeature.sdk.Hook[_]): FeatureHook = {
+    val hook = javaHook.asInstanceOf[dev.openfeature.sdk.Hook[Any]]
+    new FeatureHook {
+      override def before(ctx: HookContext, hints: HookHints): UIO[Option[(EvaluationContext, HookHints)]] =
+        ZIO
+          .attempt {
+            val jCtx   = toJavaHookContext(ctx)
+            val jHints = hints.values.map { case (k, v) => k -> v.asInstanceOf[Object] }.asJava
+            val result = hook.before(jCtx, jHints)
+            if (result != null && result.isPresent) {
+              val newCtx = fromJavaEvaluationContext(result.get())
+              Some((newCtx, hints))
+            } else None
+          }
+          .catchAll(_ => ZIO.none)
+
+      override def after[A](ctx: HookContext, details: FlagResolution[A], hints: HookHints): UIO[Unit] =
+        ZIO.attempt {
+          val jCtx     = toJavaHookContext(ctx)
+          val jDetails = toJavaFlagEvalDetails(details)
+          val jHints   = hints.values.map { case (k, v) => k -> v.asInstanceOf[Object] }.asJava
+          hook.after(jCtx, jDetails, jHints)
+        }.ignore
+
+      override def error(ctx: HookContext, err: FeatureFlagError, hints: HookHints): UIO[Unit] =
+        ZIO.attempt {
+          val jCtx   = toJavaHookContext(ctx)
+          val jHints = hints.values.map { case (k, v) => k -> v.asInstanceOf[Object] }.asJava
+          val ex     = err.cause.getOrElse(new RuntimeException(err.message))
+          hook.error(jCtx, ex.asInstanceOf[Exception], jHints)
+        }.ignore
+
+      override def finallyAfter(
+        ctx: HookContext,
+        details: Option[FlagResolution[_]],
+        hints: HookHints
+      ): UIO[Unit] =
+        ZIO.attempt {
+          val jCtx     = toJavaHookContext(ctx)
+          val jHints   = hints.values.map { case (k, v) => k -> v.asInstanceOf[Object] }.asJava
+          val jDetails = details.map(toJavaFlagEvalDetails(_)).getOrElse(new FlagEvaluationDetails[Any]())
+          hook.finallyAfter(jCtx, jDetails, jHints)
+        }.ignore
+    }
+  }
 
   // Shutdown API (spec 1.6.1, 1.6.2)
 

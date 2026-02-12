@@ -272,6 +272,18 @@ Beyond the OpenFeature spec, ZIO OpenFeature provides:
 
 ---
 
+## Provider SDK Version Compatibility
+
+ZIO OpenFeature ships with OpenFeature Java SDK 1.20.1. You may use providers compiled against older SDK versions, with the following considerations:
+
+**Providers implementing `FeatureProvider` directly — fully compatible.** The `FeatureProvider` interface is identical from v1.14.1 through v1.20.1. No abstract methods were added; every new method (e.g., `track()`) was introduced with a `default` no-op implementation. A provider JAR compiled against any 1.14.x+ SDK will work at runtime without recompilation.
+
+**Providers extending `EventProvider` — requires SDK 1.16.0+.** In SDK v1.16.0, the `emit()` and `emitProvider*()` methods changed their return type from `void` to `Awaitable`. Since return types are part of JVM method descriptors, a provider compiled against a pre-1.16.0 SDK that calls `this.emit(...)` will fail at runtime with `NoSuchMethodError`. Most ecosystem providers (flagd, LaunchDarkly, Optimizely, etc.) extend `EventProvider`, so they need to be compiled against SDK 1.16.0+.
+
+**Recommendation:** Use provider versions that target the same SDK generation as this library (1.16.0+). When in doubt, check the provider's declared `dev.openfeature:sdk` dependency version.
+
+---
+
 ## Not Implemented
 
 The following OpenFeature features are not exposed in the ZIO wrapper:

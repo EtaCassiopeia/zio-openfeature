@@ -1,15 +1,15 @@
 package zio.openfeature.internal
 
 import zio.openfeature.{AttributeValue, EvaluationContext}
-import dev.openfeature.sdk.{EvaluationContext as OFEvaluationContext, MutableContext, Value, Structure}
-import scala.jdk.CollectionConverters.*
+import dev.openfeature.sdk.{EvaluationContext => OFEvaluationContext, MutableContext, Value, Structure}
+import scala.jdk.CollectionConverters._
 import java.time.Instant
 
 /** Internal utility for converting between zio-openfeature and OpenFeature SDK evaluation contexts. */
-private[openfeature] object ContextConverter:
+private[openfeature] object ContextConverter {
 
   /** Convert a zio-openfeature EvaluationContext to an OpenFeature SDK EvaluationContext. */
-  def toOpenFeature(ctx: EvaluationContext): OFEvaluationContext =
+  def toOpenFeature(ctx: EvaluationContext): OFEvaluationContext = {
     val mutableCtx = new MutableContext()
 
     ctx.targetingKey.foreach(key => mutableCtx.setTargetingKey(key))
@@ -19,9 +19,10 @@ private[openfeature] object ContextConverter:
     }
 
     mutableCtx
+  }
 
   private def addAttributeToContext(ctx: MutableContext, key: String, attr: AttributeValue): Unit =
-    attr match
+    attr match {
       case AttributeValue.BoolValue(b)     => ctx.add(key, b)
       case AttributeValue.StringValue(s)   => ctx.add(key, s)
       case AttributeValue.IntValue(i)      => ctx.add(key, Integer.valueOf(i))
@@ -36,8 +37,9 @@ private[openfeature] object ContextConverter:
           k -> attributeToValue(v).asObject()
         }.asJava
         ctx.add(key, Structure.mapToStructure(javaMap))
+    }
 
-  private def attributeToValue(attr: AttributeValue): Value = attr match
+  private def attributeToValue(attr: AttributeValue): Value = attr match {
     case AttributeValue.BoolValue(b)     => new Value(b)
     case AttributeValue.StringValue(s)   => new Value(s)
     case AttributeValue.IntValue(i)      => new Value(i)
@@ -52,9 +54,10 @@ private[openfeature] object ContextConverter:
         k -> attributeToValue(v).asObject()
       }.asJava
       new Value(Structure.mapToStructure(javaMap))
+  }
 
   /** Convert an OpenFeature SDK EvaluationContext to a zio-openfeature EvaluationContext. */
-  def fromOpenFeature(ctx: OFEvaluationContext): EvaluationContext =
+  def fromOpenFeature(ctx: OFEvaluationContext): EvaluationContext = {
     val targetingKey = Option(ctx.getTargetingKey)
 
     val attributes = ctx
@@ -66,18 +69,19 @@ private[openfeature] object ContextConverter:
       .toMap
 
     EvaluationContext(targetingKey, attributes)
+  }
 
   private def valueToAttribute(value: Value): AttributeValue =
-    if value.isBoolean then AttributeValue.BoolValue(value.asBoolean())
-    else if value.isString then AttributeValue.StringValue(value.asString())
-    else if value.isNumber then
+    if (value.isBoolean) AttributeValue.BoolValue(value.asBoolean())
+    else if (value.isString) AttributeValue.StringValue(value.asString())
+    else if (value.isNumber) {
       val num = value.asDouble()
-      if num == num.toLong.toDouble then AttributeValue.IntValue(num.toInt)
+      if (num == num.toLong.toDouble) AttributeValue.IntValue(num.toInt)
       else AttributeValue.DoubleValue(num)
-    else if value.isList then
+    } else if (value.isList) {
       val list = value.asList().asScala.map(valueToAttribute).toList
       AttributeValue.ListValue(list)
-    else if value.isStructure then
+    } else if (value.isStructure) {
       val struct = value
         .asStructure()
         .asMap()
@@ -87,5 +91,6 @@ private[openfeature] object ContextConverter:
         }
         .toMap
       AttributeValue.StructValue(struct)
-    else if value.isInstant then AttributeValue.InstantValue(value.asInstant())
+    } else if (value.isInstant) AttributeValue.InstantValue(value.asInstant())
     else AttributeValue.StringValue(value.asString())
+}

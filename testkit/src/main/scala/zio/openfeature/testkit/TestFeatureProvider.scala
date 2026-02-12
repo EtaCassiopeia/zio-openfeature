@@ -1,18 +1,18 @@
 package zio.openfeature.testkit
 
-import zio.*
-import zio.stream.*
-import zio.openfeature.*
+import zio._
+import zio.stream._
+import zio.openfeature._
 import dev.openfeature.sdk.{
-  EvaluationContext as OFEvaluationContext,
-  FeatureProvider as OFFeatureProvider,
+  EvaluationContext => OFEvaluationContext,
+  FeatureProvider => OFFeatureProvider,
   Metadata,
   ProviderEvaluation,
   ProviderState,
   Value,
   Structure
 }
-import scala.jdk.CollectionConverters.*
+import scala.jdk.CollectionConverters._
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicReference
@@ -32,11 +32,12 @@ final class TestFeatureProvider private (
   private val evaluations: CopyOnWriteArrayList[(String, OFEvaluationContext)],
   private val eventsHubRef: Ref[Hub[ProviderEvent]],
   private val statusRef: Ref[ProviderStatus]
-) extends OFFeatureProvider:
+) extends OFFeatureProvider {
 
   @scala.annotation.nowarn("msg=deprecated")
-  override def getMetadata: Metadata = new Metadata:
+  override def getMetadata: Metadata = new Metadata {
     override def getName: String = "TestFeatureProvider"
+  }
 
   override def getState: ProviderState = state.get()
 
@@ -50,33 +51,35 @@ final class TestFeatureProvider private (
     key: String,
     defaultValue: java.lang.Boolean,
     context: OFEvaluationContext
-  ): ProviderEvaluation[java.lang.Boolean] =
+  ): ProviderEvaluation[java.lang.Boolean] = {
     evaluations.add((key, context))
     val value = Option(flags.get(key)).map(_.asInstanceOf[Boolean]).getOrElse(defaultValue.booleanValue())
     ProviderEvaluation
       .builder[java.lang.Boolean]()
       .value(value)
-      .reason(if flags.containsKey(key) then "TARGETING_MATCH" else "DEFAULT")
+      .reason(if (flags.containsKey(key)) "TARGETING_MATCH" else "DEFAULT")
       .build()
+  }
 
   override def getStringEvaluation(
     key: String,
     defaultValue: String,
     context: OFEvaluationContext
-  ): ProviderEvaluation[String] =
+  ): ProviderEvaluation[String] = {
     evaluations.add((key, context))
     val value = Option(flags.get(key)).map(_.toString).getOrElse(defaultValue)
     ProviderEvaluation
       .builder[String]()
       .value(value)
-      .reason(if flags.containsKey(key) then "TARGETING_MATCH" else "DEFAULT")
+      .reason(if (flags.containsKey(key)) "TARGETING_MATCH" else "DEFAULT")
       .build()
+  }
 
   override def getIntegerEvaluation(
     key: String,
     defaultValue: java.lang.Integer,
     context: OFEvaluationContext
-  ): ProviderEvaluation[java.lang.Integer] =
+  ): ProviderEvaluation[java.lang.Integer] = {
     evaluations.add((key, context))
     val value = Option(flags.get(key))
       .map {
@@ -89,14 +92,15 @@ final class TestFeatureProvider private (
     ProviderEvaluation
       .builder[java.lang.Integer]()
       .value(value)
-      .reason(if flags.containsKey(key) then "TARGETING_MATCH" else "DEFAULT")
+      .reason(if (flags.containsKey(key)) "TARGETING_MATCH" else "DEFAULT")
       .build()
+  }
 
   override def getDoubleEvaluation(
     key: String,
     defaultValue: java.lang.Double,
     context: OFEvaluationContext
-  ): ProviderEvaluation[java.lang.Double] =
+  ): ProviderEvaluation[java.lang.Double] = {
     evaluations.add((key, context))
     val value = Option(flags.get(key))
       .map {
@@ -110,14 +114,15 @@ final class TestFeatureProvider private (
     ProviderEvaluation
       .builder[java.lang.Double]()
       .value(value)
-      .reason(if flags.containsKey(key) then "TARGETING_MATCH" else "DEFAULT")
+      .reason(if (flags.containsKey(key)) "TARGETING_MATCH" else "DEFAULT")
       .build()
+  }
 
   override def getObjectEvaluation(
     key: String,
     defaultValue: Value,
     context: OFEvaluationContext
-  ): ProviderEvaluation[Value] =
+  ): ProviderEvaluation[Value] = {
     evaluations.add((key, context))
     val value = Option(flags.get(key))
       .map(anyToValue)
@@ -125,17 +130,18 @@ final class TestFeatureProvider private (
     ProviderEvaluation
       .builder[Value]()
       .value(value)
-      .reason(if flags.containsKey(key) then "TARGETING_MATCH" else "DEFAULT")
+      .reason(if (flags.containsKey(key)) "TARGETING_MATCH" else "DEFAULT")
       .build()
+  }
 
-  private def anyToValue(any: Any): Value = any match
+  private def anyToValue(any: Any): Value = any match {
     case b: Boolean    => new Value(b)
     case s: String     => new Value(s)
     case i: Int        => new Value(i)
     case l: Long       => new Value(l.toDouble)
     case d: Double     => new Value(d)
-    case list: List[?] => new Value(list.map(anyToValue).asJava)
-    case map: Map[?, ?] =>
+    case list: List[_] => new Value(list.map(anyToValue).asJava)
+    case map: Map[_, _] =>
       val javaMap: java.util.Map[String, Object] = map
         .asInstanceOf[Map[String, Any]]
         .map { case (k, v) =>
@@ -145,6 +151,7 @@ final class TestFeatureProvider private (
       new Value(Structure.mapToStructure(javaMap))
     case null  => new Value()
     case other => new Value(other.toString)
+  }
 
   // Test Helper Methods
 
@@ -170,13 +177,14 @@ final class TestFeatureProvider private (
   /** Set the provider status. */
   def setStatus(status: ProviderStatus): UIO[Unit] =
     statusRef.set(status) *> ZIO.succeed {
-      status match
+      status match {
         case ProviderStatus.Ready        => state.set(ProviderState.READY)
         case ProviderStatus.NotReady     => state.set(ProviderState.NOT_READY)
         case ProviderStatus.Error        => state.set(ProviderState.ERROR)
         case ProviderStatus.Stale        => state.set(ProviderState.STALE)
         case ProviderStatus.Fatal        => state.set(ProviderState.FATAL)
         case ProviderStatus.ShuttingDown => state.set(ProviderState.NOT_READY)
+      }
     }
 
   /** Get the current status. */
@@ -212,8 +220,9 @@ final class TestFeatureProvider private (
 
   /** Get status as ZIO effect. */
   def status: UIO[ProviderStatus] = statusRef.get
+}
 
-object TestFeatureProvider:
+object TestFeatureProvider {
 
   /** Create a new TestFeatureProvider with no initial flags. */
   def make: UIO[TestFeatureProvider] =
@@ -221,7 +230,7 @@ object TestFeatureProvider:
 
   /** Create a new TestFeatureProvider with initial flags. */
   def make(initialFlags: Map[String, Any]): UIO[TestFeatureProvider] =
-    for
+    for {
       eventsHub <- Hub.unbounded[ProviderEvent]
       hubRef    <- Ref.make(eventsHub)
       statusRef <- Ref.make[ProviderStatus](ProviderStatus.Ready)
@@ -232,26 +241,21 @@ object TestFeatureProvider:
         val evaluations = new CopyOnWriteArrayList[(String, OFEvaluationContext)]()
         new TestFeatureProvider(flags, state, evaluations, hubRef, statusRef)
       }
-    yield provider
+    } yield provider
 
-  /** Create a FeatureFlags layer from TestFeatureProvider.
-    *
-    * This provides both TestFeatureProvider (for test helpers) and FeatureFlags (for flag evaluation). Each layer gets
-    * a unique domain for test isolation.
-    */
-  def layer: ZLayer[Scope, Throwable, TestFeatureProvider & FeatureFlags] =
+  /** Create a FeatureFlags layer from TestFeatureProvider. */
+  def layer: ZLayer[Scope, Throwable, TestFeatureProvider with FeatureFlags] =
     layer(Map.empty)
 
-  /** Create a FeatureFlags layer with initial flags. Uses a unique domain per invocation to ensure test isolation.
-    */
-  def layer(flags: Map[String, Any]): ZLayer[Scope, Throwable, TestFeatureProvider & FeatureFlags] =
+  /** Create a FeatureFlags layer with initial flags. Uses a unique domain per invocation to ensure test isolation. */
+  def layer(flags: Map[String, Any]): ZLayer[Scope, Throwable, TestFeatureProvider with FeatureFlags] =
     ZLayer
       .scoped {
-        for
+        for {
           testProvider <- make(flags)
           domain = s"test-${java.util.UUID.randomUUID()}"
           featureFlags <- FeatureFlags.fromProviderWithDomain(testProvider, domain).build.map(_.get)
-        yield (testProvider, featureFlags)
+        } yield (testProvider, featureFlags)
       }
       .flatMap { env =>
         val (testProvider, featureFlags) = env.get[(TestFeatureProvider, FeatureFlags)]
@@ -266,11 +270,9 @@ object TestFeatureProvider:
   def providerLayer(flags: Map[String, Any]): ULayer[TestFeatureProvider] =
     ZLayer.fromZIO(make(flags))
 
-  /** Create a FeatureFlags layer from an existing TestFeatureProvider.
-    *
-    * This is useful when you need to manipulate the provider before creating the layer, or when you want to share a
-    * provider across multiple tests.
-    */
-  def layerFrom(provider: TestFeatureProvider): ZLayer[Scope, Throwable, FeatureFlags] =
+  /** Create a FeatureFlags layer from an existing TestFeatureProvider. */
+  def layerFrom(provider: TestFeatureProvider): ZLayer[Scope, Throwable, FeatureFlags] = {
     val domain = s"test-${java.util.UUID.randomUUID()}"
     FeatureFlags.fromProviderWithDomain(provider, domain)
+  }
+}

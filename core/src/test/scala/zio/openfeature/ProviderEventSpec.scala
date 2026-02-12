@@ -1,10 +1,10 @@
 package zio.openfeature
 
-import zio.*
-import zio.test.*
-import zio.test.Assertion.*
+import zio._
+import zio.test._
+import zio.test.Assertion._
 
-object ProviderEventSpec extends ZIOSpecDefault:
+object ProviderEventSpec extends ZIOSpecDefault {
 
   val testMetadata = ProviderMetadata("TestProvider", "1.0")
 
@@ -75,19 +75,21 @@ object ProviderEventSpec extends ZIOSpecDefault:
           errorCode = Some(ErrorCode.General),
           errorMessage = Some("Something went wrong")
         )
-        event match
+        event match {
           case ProviderEvent.Error(_, _, code, msg) =>
             assertTrue(code == Some(ErrorCode.General)) &&
             assertTrue(msg == Some("Something went wrong"))
           case _ => assertTrue(false)
+        }
       },
       test("Error event defaults to no error code/message") {
         val event = ProviderEvent.Error(new RuntimeException("test"), testMetadata)
-        event match
+        event match {
           case ProviderEvent.Error(_, _, code, msg) =>
             assertTrue(code == None) &&
             assertTrue(msg == None)
           case _ => assertTrue(false)
+        }
       }
     ),
     suite("ProviderEvent isHealthy extension")(
@@ -113,3 +115,4 @@ object ProviderEventSpec extends ZIOSpecDefault:
       }
     )
   )
+}

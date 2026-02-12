@@ -1,19 +1,19 @@
 package zio.openfeature
 
-import zio.*
-import zio.stream.*
+import zio._
+import zio.stream._
 import zio.openfeature.internal.ContextConverter
 import dev.openfeature.sdk.{
-  Client as OFClient,
-  FeatureProvider as OFFeatureProvider,
+  Client => OFClient,
+  FeatureProvider => OFFeatureProvider,
   FlagEvaluationDetails,
-  Reason as OFReason,
-  ErrorCode as OFErrorCode,
+  Reason => OFReason,
+  ErrorCode => OFErrorCode,
   OpenFeatureAPI,
   ProviderState,
   MutableTrackingEventDetails
 }
-import scala.jdk.CollectionConverters.*
+import scala.jdk.CollectionConverters._
 
 final private[openfeature] class FeatureFlagsLive(
   client: OFClient,
@@ -26,17 +26,17 @@ final private[openfeature] class FeatureFlagsLive(
   transactionRef: FiberRef[Option[TransactionState]],
   hooksRef: Ref[List[FeatureHook]],
   eventHub: Hub[ProviderEvent]
-) extends FeatureFlags:
+) extends FeatureFlags {
 
-  // Context merges in order per OpenFeature spec: API (global) → Client → Transaction → Invocation
+  // Context merges in order per OpenFeature spec: API (global) -> Client -> Transaction -> Invocation
   private def effectiveContext(invocation: EvaluationContext): UIO[EvaluationContext] =
-    for
+    for {
       global      <- globalContextRef.get
       clientCtx   <- clientContextRef.get
       fiberLocal  <- fiberContextRef.get
       transaction <- transactionRef.get
       txContext = transaction.map(_.context).getOrElse(EvaluationContext.empty)
-    yield global
+    } yield global
       .merge(clientCtx)
       .merge(fiberLocal)
       .merge(txContext)
@@ -48,7 +48,7 @@ final private[openfeature] class FeatureFlagsLive(
     context: EvaluationContext,
     evaluate: EvaluationContext => IO[FeatureFlagError, FlagResolution[A]]
   ): IO[FeatureFlagError, FlagResolution[A]] =
-    for
+    for {
       currentHooks <- hooksRef.get
       metadata   = ProviderMetadata(providerName)
       clientMeta = ClientMetadata(domain)
@@ -61,19 +61,19 @@ final private[openfeature] class FeatureFlagsLive(
         providerMetadata = metadata
       )
       result <-
-        if currentHooks.isEmpty then evaluate(context)
+        if (currentHooks.isEmpty) evaluate(context)
         else runHookPipeline(hookCtx, currentHooks, context, evaluate)
-    yield result
+    } yield result
 
   private def runHookPipeline[A](
     hookCtx: HookContext,
     hooks: List[FeatureHook],
     context: EvaluationContext,
     evaluate: EvaluationContext => IO[FeatureFlagError, FlagResolution[A]]
-  ): IO[FeatureFlagError, FlagResolution[A]] =
+  ): IO[FeatureFlagError, FlagResolution[A]] = {
     val composedHook = FeatureHook.compose(hooks)
 
-    for
+    for {
       beforeResult <- composedHook.before(hookCtx, HookHints.empty)
       (effectiveCtx, hints) = beforeResult.getOrElse((context, HookHints.empty))
       result <- evaluate(effectiveCtx)
@@ -82,15 +82,17 @@ final private[openfeature] class FeatureFlagsLive(
           res => composedHook.after(hookCtx, res, hints)
         )
         .ensuring(composedHook.finallyAfter(hookCtx, hints).ignore)
-    yield result
+    } yield result
+  }
 
   private def checkProviderStatus: IO[FeatureFlagError, Unit] =
     providerStatus.flatMap { status =>
-      status match
+      status match {
         case ProviderStatus.Fatal =>
           ZIO.fail(FeatureFlagError.ProviderFatal)
         case _ =>
           ZIO.unit
+      }
     }
 
   private def evaluateFlag[A: FlagType](
@@ -98,14 +100,15 @@ final private[openfeature] class FeatureFlagsLive(
     default: A,
     invocationContext: EvaluationContext
   ): IO[FeatureFlagError, FlagResolution[A]] =
-    for
+    for {
       _         <- checkProviderStatus
       txState   <- transactionRef.get
       effectCtx <- effectiveContext(invocationContext)
-      result <- txState match
+      result <- txState match {
         case Some(state) => evaluateWithTransaction(key, default, effectCtx, state)
         case None        => evaluateFromClient(key, default, effectCtx)
-    yield result
+      }
+    } yield result
 
   private def evaluateWithTransaction[A: FlagType](
     key: String,
@@ -114,16 +117,16 @@ final private[openfeature] class FeatureFlagsLive(
     state: TransactionState
   ): IO[FeatureFlagError, FlagResolution[A]] =
     // First check for explicit overrides
-    state.getOverride(key) match
+    state.getOverride(key) match {
       case Some(overrideValue) =>
         val flagType = FlagType[A]
-        flagType.decode(overrideValue) match
+        flagType.decode(overrideValue) match {
           case Right(decoded) =>
             val resolution = FlagResolution.cached(key, decoded)
             FlagEvaluation.overridden(key, decoded).flatMap { eval =>
               state.record(eval).as(resolution)
             }
-          case Left(error) =>
+          case Left(_) =>
             ZIO.fail(
               FeatureFlagError.OverrideTypeMismatch(
                 key,
@@ -131,21 +134,24 @@ final private[openfeature] class FeatureFlagsLive(
                 overrideValue.getClass.getSimpleName
               )
             )
+        }
 
       case None =>
         // Check for cached evaluation from previous call in this transaction
         state.getCachedEvaluation(key).flatMap {
           case Some(cached) =>
             val flagType = FlagType[A]
-            flagType.decode(cached.value) match
+            flagType.decode(cached.value) match {
               case Right(decoded) =>
                 ZIO.succeed(FlagResolution.cached(key, decoded))
               case Left(_) =>
                 // Type mismatch with cached value - re-evaluate from client
                 evaluateAndCache(key, default, context, state)
+            }
           case None =>
             evaluateAndCache(key, default, context, state)
         }
+    }
 
   private def evaluateAndCache[A: FlagType](
     key: String,
@@ -153,21 +159,21 @@ final private[openfeature] class FeatureFlagsLive(
     context: EvaluationContext,
     state: TransactionState
   ): IO[FeatureFlagError, FlagResolution[A]] =
-    for
+    for {
       resolution <- evaluateFromClient(key, default, context)
       eval       <- zio.openfeature.FlagEvaluation.evaluated(key, resolution)
       _          <- state.record(eval)
-    yield resolution
+    } yield resolution
 
   private def evaluateFromClient[A: FlagType](
     key: String,
     default: A,
     context: EvaluationContext
-  ): IO[FeatureFlagError, FlagResolution[A]] =
+  ): IO[FeatureFlagError, FlagResolution[A]] = {
     val flagType  = FlagType[A]
     val ofContext = ContextConverter.toOpenFeature(context)
 
-    val evaluation: IO[FeatureFlagError, FlagResolution[A]] = flagType.typeName match
+    val evaluation: IO[FeatureFlagError, FlagResolution[A]] = flagType.typeName match {
       case "Boolean" =>
         ZIO
           .attemptBlocking {
@@ -258,7 +264,7 @@ final private[openfeature] class FeatureFlagsLive(
           .mapError(e => FeatureFlagError.ProviderError(e))
           .flatMap { details =>
             val rawValue = valueToAny(details.getValue)
-            flagType.decode(rawValue) match
+            flagType.decode(rawValue) match {
               case Right(decoded) =>
                 ZIO.succeed(
                   FlagResolution(
@@ -271,11 +277,14 @@ final private[openfeature] class FeatureFlagsLive(
                     errorMessage = Option(details.getErrorMessage)
                   )
                 )
-              case Left(error) =>
+              case Left(_) =>
                 ZIO.fail(FeatureFlagError.TypeMismatch(key, flagType.typeName, "Object"))
+            }
           }
+    }
 
     evaluation
+  }
 
   private def toFlagResolution[A](key: String, details: FlagEvaluationDetails[A]): FlagResolution[A] =
     FlagResolution(
@@ -289,9 +298,9 @@ final private[openfeature] class FeatureFlagsLive(
     )
 
   private def toResolutionReason(reason: String): ResolutionReason =
-    if reason == null then ResolutionReason.Unknown
+    if (reason == null) ResolutionReason.Unknown
     else
-      reason.toUpperCase match
+      reason.toUpperCase match {
         case "STATIC"          => ResolutionReason.Static
         case "DEFAULT"         => ResolutionReason.Default
         case "TARGETING_MATCH" => ResolutionReason.TargetingMatch
@@ -301,9 +310,10 @@ final private[openfeature] class FeatureFlagsLive(
         case "STALE"           => ResolutionReason.Stale
         case "ERROR"           => ResolutionReason.Error
         case _                 => ResolutionReason.Unknown
+      }
 
   private def toErrorCode(errorCode: OFErrorCode): ErrorCode =
-    errorCode match
+    errorCode match {
       case OFErrorCode.PROVIDER_NOT_READY    => ErrorCode.ProviderNotReady
       case OFErrorCode.PROVIDER_FATAL        => ErrorCode.ProviderFatal
       case OFErrorCode.FLAG_NOT_FOUND        => ErrorCode.FlagNotFound
@@ -312,14 +322,15 @@ final private[openfeature] class FeatureFlagsLive(
       case OFErrorCode.TARGETING_KEY_MISSING => ErrorCode.TargetingKeyMissing
       case OFErrorCode.INVALID_CONTEXT       => ErrorCode.InvalidContext
       case OFErrorCode.GENERAL               => ErrorCode.General
+    }
 
   private def toFlagMetadata(metadata: dev.openfeature.sdk.ImmutableMetadata): FlagMetadata =
-    if metadata == null || metadata.isEmpty then FlagMetadata.empty
+    if (metadata == null || metadata.isEmpty) FlagMetadata.empty
     else
-      try
+      try {
         val javaMap = metadata.asUnmodifiableMap()
-        if javaMap == null || javaMap.isEmpty then FlagMetadata.empty
-        else
+        if (javaMap == null || javaMap.isEmpty) FlagMetadata.empty
+        else {
           val entries = javaMap.asScala.collect {
             case (k, v: java.lang.Boolean) => k -> MetadataValue.BooleanValue(v.booleanValue())
             case (k, v: java.lang.Integer) => k -> MetadataValue.IntValue(v.intValue())
@@ -330,23 +341,25 @@ final private[openfeature] class FeatureFlagsLive(
             case (k, v) if v != null       => k -> MetadataValue.StringValue(v.toString)
           }.toMap
           FlagMetadata(entries)
-      catch case _: Exception => FlagMetadata.empty
+        }
+      } catch { case _: Exception => FlagMetadata.empty }
 
-  private def anyToObject(value: Any): Object = value match
+  private def anyToObject(value: Any): Object = value match {
     case b: Boolean    => java.lang.Boolean.valueOf(b)
     case s: String     => s
     case i: Int        => java.lang.Integer.valueOf(i)
     case l: Long       => java.lang.Long.valueOf(l)
     case d: Double     => java.lang.Double.valueOf(d)
     case f: Float      => java.lang.Float.valueOf(f)
-    case list: List[?] => list.map(anyToObject).asJava
-    case map: Map[?, ?] =>
+    case list: List[_] => list.map(anyToObject).asJava
+    case map: Map[_, _] =>
       map.asInstanceOf[Map[String, Any]].map { case (k, v) => k -> anyToObject(v) }.asJava
     case null  => null
     case other => other.toString
+  }
 
   private def valueToMap(value: dev.openfeature.sdk.Value): Map[String, Any] =
-    if value == null || !value.isStructure then Map.empty
+    if (value == null || !value.isStructure) Map.empty
     else
       value
         .asStructure()
@@ -356,13 +369,13 @@ final private[openfeature] class FeatureFlagsLive(
         .toMap
 
   private def valueToAny(value: dev.openfeature.sdk.Value): Any =
-    if value == null then null
-    else if value.isBoolean then value.asBoolean()
-    else if value.isString then value.asString()
-    else if value.isNumber then value.asDouble()
-    else if value.isList then value.asList().asScala.map(valueToAny).toList
-    else if value.isStructure then valueToMap(value)
-    else if value.isInstant then value.asInstant()
+    if (value == null) null
+    else if (value.isBoolean) value.asBoolean()
+    else if (value.isString) value.asString()
+    else if (value.isNumber) value.asDouble()
+    else if (value.isList) value.asList().asScala.map(valueToAny).toList
+    else if (value.isStructure) valueToMap(value)
+    else if (value.isInstant) value.asInstant()
     else null
 
   override def boolean(key: String, default: Boolean): IO[FeatureFlagError, Boolean] =
@@ -523,7 +536,7 @@ final private[openfeature] class FeatureFlagsLive(
     options: EvaluationOptions,
     evaluate: EvaluationContext => IO[FeatureFlagError, FlagResolution[A]]
   ): IO[FeatureFlagError, FlagResolution[A]] =
-    for
+    for {
       clientHooks <- hooksRef.get
       // Combine client hooks with invocation hooks (client first, then invocation)
       allHooks   = clientHooks ++ options.hooks
@@ -538,9 +551,9 @@ final private[openfeature] class FeatureFlagsLive(
         providerMetadata = metadata
       )
       result <-
-        if allHooks.isEmpty then evaluate(context)
+        if (allHooks.isEmpty) evaluate(context)
         else runHookPipelineWithHints(hookCtx, allHooks, context, options.hookHints, evaluate)
-    yield result
+    } yield result
 
   private def runHookPipelineWithHints[A](
     hookCtx: HookContext,
@@ -548,10 +561,10 @@ final private[openfeature] class FeatureFlagsLive(
     context: EvaluationContext,
     initialHints: HookHints,
     evaluate: EvaluationContext => IO[FeatureFlagError, FlagResolution[A]]
-  ): IO[FeatureFlagError, FlagResolution[A]] =
+  ): IO[FeatureFlagError, FlagResolution[A]] = {
     val composedHook = FeatureHook.compose(hooks)
 
-    for
+    for {
       beforeResult <- composedHook.before(hookCtx, initialHints)
       (effectiveCtx, hints) = beforeResult.getOrElse((context, initialHints))
       result <- evaluate(effectiveCtx)
@@ -560,7 +573,8 @@ final private[openfeature] class FeatureFlagsLive(
           res => composedHook.after(hookCtx, res, hints)
         )
         .ensuring(composedHook.finallyAfter(hookCtx, hints).ignore)
-    yield result
+    } yield result
+  }
 
   override def booleanDetails(
     key: String,
@@ -653,8 +667,8 @@ final private[openfeature] class FeatureFlagsLive(
     overrides: Map[String, Any],
     context: EvaluationContext,
     cacheEvaluations: Boolean
-  )(zio: ZIO[R, E, A]): ZIO[R, E | FeatureFlagError, TransactionResult[A]] =
-    for
+  )(zio: ZIO[R, E, A]): ZIO[R, Compat.OrError[E, FeatureFlagError], TransactionResult[A]] =
+    for {
       current <- transactionRef.get
       _ <- ZIO.when(current.isDefined)(
         ZIO.fail(FeatureFlagError.NestedTransactionNotAllowed)
@@ -662,12 +676,12 @@ final private[openfeature] class FeatureFlagsLive(
       state    <- TransactionState.make(overrides, context, cacheEvaluations)
       result   <- transactionRef.locally(Some(state))(zio)
       txResult <- state.toResult(result)
-    yield txResult
+    } yield txResult
 
   override def inTransaction: UIO[Boolean] =
     transactionRef.get.map(_.isDefined)
 
-  override def currentEvaluatedFlags: UIO[Map[String, zio.openfeature.FlagEvaluation[?]]] =
+  override def currentEvaluatedFlags: UIO[Map[String, zio.openfeature.FlagEvaluation[_]]] =
     transactionRef.get.flatMap {
       case Some(state) => state.getEvaluations
       case None        => ZIO.succeed(Map.empty)
@@ -680,13 +694,14 @@ final private[openfeature] class FeatureFlagsLive(
   override def providerStatus: UIO[ProviderStatus] =
     ZIO.succeed {
       val state = provider.getState
-      state match
+      state match {
         case ProviderState.NOT_READY => ProviderStatus.NotReady
         case ProviderState.READY     => ProviderStatus.Ready
         case ProviderState.ERROR     => ProviderStatus.Error
         case ProviderState.STALE     => ProviderStatus.Stale
         case ProviderState.FATAL     => ProviderStatus.Fatal
         case _                       => ProviderStatus.NotReady
+      }
     }
 
   override def providerMetadata: UIO[ProviderMetadata] =
@@ -700,7 +715,7 @@ final private[openfeature] class FeatureFlagsLive(
   /** Per OpenFeature spec 5.3.3, handlers attached after the provider reaches an associated state MUST run immediately.
     */
   override def onProviderReady(handler: ProviderMetadata => UIO[Unit]): UIO[UIO[Unit]] =
-    for
+    for {
       // Check if provider is already ready and call handler immediately if so (spec 5.3.3)
       status <- providerStatus
       metadata = ProviderMetadata(providerName)
@@ -710,10 +725,10 @@ final private[openfeature] class FeatureFlagsLive(
         .collect { case ProviderEvent.Ready(m) => m }
         .foreach(handler)
         .forkDaemon
-    yield fiber.interrupt.unit
+    } yield fiber.interrupt.unit
 
   override def onProviderError(handler: (Throwable, ProviderMetadata) => UIO[Unit]): UIO[UIO[Unit]] =
-    for
+    for {
       // Check if provider is already in error state (spec 5.3.3)
       status <- providerStatus
       metadata = ProviderMetadata(providerName)
@@ -725,10 +740,10 @@ final private[openfeature] class FeatureFlagsLive(
         .collect { case ProviderEvent.Error(error, m, _, _) => (error, m) }
         .foreach { case (error, m) => handler(error, m) }
         .forkDaemon
-    yield fiber.interrupt.unit
+    } yield fiber.interrupt.unit
 
   override def onProviderStale(handler: (String, ProviderMetadata) => UIO[Unit]): UIO[UIO[Unit]] =
-    for
+    for {
       // Check if provider is already stale (spec 5.3.3)
       status <- providerStatus
       metadata = ProviderMetadata(providerName)
@@ -739,7 +754,7 @@ final private[openfeature] class FeatureFlagsLive(
         .collect { case ProviderEvent.Stale(reason, m) => (reason, m) }
         .foreach { case (reason, m) => handler(reason, m) }
         .forkDaemon
-    yield fiber.interrupt.unit
+    } yield fiber.interrupt.unit
 
   override def onConfigurationChanged(handler: (Set[String], ProviderMetadata) => UIO[Unit]): UIO[UIO[Unit]] =
     // Configuration changed doesn't have an "associated state" so no immediate execution needed
@@ -750,7 +765,7 @@ final private[openfeature] class FeatureFlagsLive(
       .map(fiber => fiber.interrupt.unit)
 
   override def on(eventType: ProviderEventType, handler: ProviderEvent => UIO[Unit]): UIO[UIO[Unit]] =
-    eventType match
+    eventType match {
       case ProviderEventType.Ready =>
         onProviderReady(m => handler(ProviderEvent.Ready(m)))
       case ProviderEventType.Error =>
@@ -765,6 +780,7 @@ final private[openfeature] class FeatureFlagsLive(
           .foreach(handler)
           .forkDaemon
           .map(fiber => fiber.interrupt.unit)
+    }
 
   override def addHook(hook: FeatureHook): UIO[Unit] =
     hooksRef.update(_ :+ hook)
@@ -778,12 +794,12 @@ final private[openfeature] class FeatureFlagsLive(
   // Shutdown API (spec 1.6.1, 1.6.2)
 
   override def shutdown: UIO[Unit] =
-    for
+    for {
       _ <- hooksRef.set(List.empty)
       _ <- globalContextRef.set(EvaluationContext.empty)
       _ <- clientContextRef.set(EvaluationContext.empty)
       _ <- ZIO.attemptBlocking(OpenFeatureAPI.getInstance().shutdown()).ignore
-    yield ()
+    } yield ()
 
   // Tracking API
 
@@ -821,17 +837,19 @@ final private[openfeature] class FeatureFlagsLive(
       }
       .mapError(e => FeatureFlagError.ProviderError(e))
 
-  private def toOpenFeatureDetails(details: TrackingEventDetails): MutableTrackingEventDetails =
-    val result = details.value match
+  private def toOpenFeatureDetails(details: TrackingEventDetails): MutableTrackingEventDetails = {
+    val result = details.value match {
       case Some(v) => new MutableTrackingEventDetails(v)
       case None    => new MutableTrackingEventDetails()
+    }
     details.attributes.foreach { case (k, v) =>
       addAttributeToDetails(result, k, v)
     }
     result
+  }
 
   private def addAttributeToDetails(details: MutableTrackingEventDetails, key: String, value: Any): Unit =
-    value match
+    value match {
       case b: Boolean                 => details.add(key, b)
       case s: String                  => details.add(key, s)
       case i: Int                     => details.add(key, Integer.valueOf(i))
@@ -839,13 +857,15 @@ final private[openfeature] class FeatureFlagsLive(
       case d: Double                  => details.add(key, d)
       case f: Float                   => details.add(key, java.lang.Double.valueOf(f.toDouble))
       case instant: java.time.Instant => details.add(key, instant)
-      case list: List[?] =>
+      case list: List[_] =>
         val values = list.map(v => new dev.openfeature.sdk.Value(anyToObject(v))).asJava
         details.add(key, values)
-      case map: Map[?, ?] =>
+      case map: Map[_, _] =>
         val structure = dev.openfeature.sdk.Structure.mapToStructure(
           map.asInstanceOf[Map[String, Any]].map { case (k, v) => k -> anyToObject(v) }.asJava
         )
         details.add(key, structure)
       case null  => () // Skip null values
       case other => details.add(key, other.toString)
+    }
+}

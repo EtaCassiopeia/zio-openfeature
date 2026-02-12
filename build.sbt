@@ -1,5 +1,6 @@
 import xerial.sbt.Sonatype.sonatypeCentralHost
 
+val scala213Version       = "2.13.16"
 val scala3Version         = "3.3.4"
 val zioVersion            = "2.1.14"
 val openFeatureSdkVersion = "1.20.1"
@@ -8,8 +9,9 @@ val openFeatureSdkVersion = "1.20.1"
 // Spec version: v0.8.0 (https://github.com/open-feature/spec)
 // This library implements the dynamic-context (server-side) paradigm
 
-ThisBuild / scalaVersion := scala3Version
-ThisBuild / organization := "io.github.etacassiopeia"
+ThisBuild / scalaVersion       := scala3Version
+ThisBuild / crossScalaVersions := Seq(scala213Version, scala3Version)
+ThisBuild / organization       := "io.github.etacassiopeia"
 
 // Version is derived from git tags by sbt-dynver
 // Tags should follow SemVer: v0.1.0, v1.0.0, etc.
@@ -36,19 +38,47 @@ ThisBuild / scmInfo := Some(
 ThisBuild / sonatypeCredentialHost := sonatypeCentralHost
 ThisBuild / versionScheme          := Some("semver-spec")
 
+// Common scalac options for both versions
 ThisBuild / scalacOptions ++= Seq(
   "-deprecation",
   "-feature",
   "-unchecked",
-  "-Xfatal-warnings",
   "-language:implicitConversions",
-  "-language:higherKinds",
-  "-Yretain-trees"
+  "-language:higherKinds"
 )
+
+// Version-specific scalac options
+ThisBuild / scalacOptions ++= {
+  CrossVersion.partialVersion(scalaVersion.value) match {
+    case Some((2, _)) => Seq("-Xsource:3", "-Wconf:cat=scala3-migration:w")
+    case Some((3, _)) => Seq("-Xfatal-warnings", "-Yretain-trees")
+    case _            => Seq()
+  }
+}
 
 ThisBuild / coverageEnabled          := false
 ThisBuild / coverageMinimumStmtTotal := 80
 ThisBuild / coverageFailOnMinimum    := true
+
+// Version-specific source directories
+lazy val crossVersionSourceDirs = Seq(
+  Compile / unmanagedSourceDirectories ++= {
+    val sourceDir = (Compile / sourceDirectory).value
+    CrossVersion.partialVersion(scalaVersion.value) match {
+      case Some((2, _)) => Seq(sourceDir / "scala-2")
+      case Some((3, _)) => Seq(sourceDir / "scala-3")
+      case _            => Seq()
+    }
+  },
+  Test / unmanagedSourceDirectories ++= {
+    val sourceDir = (Test / sourceDirectory).value
+    CrossVersion.partialVersion(scalaVersion.value) match {
+      case Some((2, _)) => Seq(sourceDir / "scala-2")
+      case Some((3, _)) => Seq(sourceDir / "scala-3")
+      case _            => Seq()
+    }
+  }
+)
 
 lazy val commonSettings = Seq(
   testFrameworks += new TestFramework("zio.test.sbt.ZTestFramework"),
@@ -56,7 +86,7 @@ lazy val commonSettings = Seq(
     "dev.zio" %% "zio-test"     % zioVersion % Test,
     "dev.zio" %% "zio-test-sbt" % zioVersion % Test
   )
-)
+) ++ crossVersionSourceDirs
 
 lazy val root = (project in file("."))
   .aggregate(core, testkit)

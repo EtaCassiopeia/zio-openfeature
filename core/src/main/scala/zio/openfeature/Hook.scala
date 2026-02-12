@@ -1,36 +1,13 @@
 package zio.openfeature
 
-import zio.*
-
-enum FlagValueType:
-  case Boolean
-  case String
-  case Int
-  case Double
-  case Object
-
-  def name: String = this match
-    case Boolean => "Boolean"
-    case String  => "String"
-    case Int     => "Int"
-    case Double  => "Double"
-    case Object  => "Object"
-
-object FlagValueType:
-  def fromFlagType[A](using ft: FlagType[A]): FlagValueType =
-    ft.typeName match
-      case "Boolean" => Boolean
-      case "String"  => String
-      case "Int"     => Int
-      case "Double"  => Double
-      case _         => Object
+import zio._
 
 /** Per-hook mutable state that persists across hook stages within a single evaluation (spec 4.6.1).
   *
   * Unlike HookHints (which are read-only and shared), HookData is scoped to an individual hook instance. A hook can
   * store state in `before` and retrieve it in `after`, `error`, or `finallyAfter`.
   */
-final class HookData:
+final class HookData {
   private val data: java.util.concurrent.ConcurrentHashMap[String, Any] =
     new java.util.concurrent.ConcurrentHashMap()
 
@@ -45,9 +22,11 @@ final class HookData:
   def remove(key: String): Unit = data.remove(key)
 
   def clear(): Unit = data.clear()
+}
 
-object HookData:
+object HookData {
   def empty: HookData = new HookData
+}
 
 final case class HookContext(
   flagKey: String,
@@ -59,7 +38,7 @@ final case class HookContext(
   hookData: HookData = HookData.empty
 )
 
-final case class HookHints(values: Map[String, Any]):
+final case class HookHints(values: Map[String, Any]) {
   def get[A](key: String): Option[A] =
     values.get(key).map(_.asInstanceOf[A])
 
@@ -71,14 +50,16 @@ final case class HookHints(values: Map[String, Any]):
 
   def ++(other: HookHints): HookHints =
     HookHints(values ++ other.values)
+}
 
-object HookHints:
-  val empty: HookHints = HookHints(Map.empty)
+object HookHints {
+  val empty: HookHints = HookHints(Map.empty[String, Any])
 
   def apply(entries: (String, Any)*): HookHints =
     HookHints(entries.toMap)
+}
 
-trait FeatureHook:
+trait FeatureHook {
   def before(ctx: HookContext, hints: HookHints): UIO[Option[(EvaluationContext, HookHints)]] =
     ZIO.none
 
@@ -90,12 +71,13 @@ trait FeatureHook:
 
   def finallyAfter(ctx: HookContext, hints: HookHints): UIO[Unit] =
     ZIO.unit
+}
 
-object FeatureHook:
+object FeatureHook {
 
   val noop: FeatureHook = new FeatureHook {}
 
-  def compose(hooks: List[FeatureHook]): FeatureHook = new FeatureHook:
+  def compose(hooks: List[FeatureHook]): FeatureHook = new FeatureHook {
     // Each hook gets its own HookData instance (spec 4.6.1 - scoped to individual hook)
     private lazy val hookDataMap: Map[FeatureHook, HookData] =
       hooks.map(h => h -> HookData.empty).toMap
@@ -112,7 +94,7 @@ object FeatureHook:
           }
         }
         .map { case (finalCtx, finalHints, wasModified) =>
-          if wasModified then Some((finalCtx, finalHints)) else None
+          if (wasModified) Some((finalCtx, finalHints)) else None
         }
 
     override def after[A](ctx: HookContext, details: FlagResolution[A], hints: HookHints): UIO[Unit] =
@@ -123,12 +105,13 @@ object FeatureHook:
 
     override def finallyAfter(ctx: HookContext, hints: HookHints): UIO[Unit] =
       ZIO.foreachDiscard(hooks)(hook => hook.finallyAfter(ctxForHook(ctx, hook), hints))
+  }
 
   def logging(
     logBefore: Boolean = false,
     logAfter: Boolean = true,
     logError: Boolean = true
-  ): FeatureHook = new FeatureHook:
+  ): FeatureHook = new FeatureHook {
     override def before(ctx: HookContext, hints: HookHints): UIO[Option[(EvaluationContext, HookHints)]] =
       ZIO
         .when(logBefore)(
@@ -149,9 +132,10 @@ object FeatureHook:
           ZIO.logError(s"Flag '${ctx.flagKey}' evaluation failed: ${err.message}")
         )
         .unit
+  }
 
   def metrics(onEvaluation: (String, Duration, Boolean) => UIO[Unit]): FeatureHook =
-    new FeatureHook:
+    new FeatureHook {
       private val startTimeKey = "metrics.startTime"
 
       override def before(ctx: HookContext, hints: HookHints): UIO[Option[(EvaluationContext, HookHints)]] =
@@ -160,34 +144,38 @@ object FeatureHook:
         }
 
       override def after[A](ctx: HookContext, details: FlagResolution[A], hints: HookHints): UIO[Unit] =
-        for
+        for {
           end <- Clock.nanoTime
           start    = hints.getOrElse[Long](startTimeKey, end)
           duration = Duration.fromNanos(end - start)
           _ <- onEvaluation(ctx.flagKey, duration, true)
-        yield ()
+        } yield ()
 
       override def error(ctx: HookContext, err: FeatureFlagError, hints: HookHints): UIO[Unit] =
-        for
+        for {
           end <- Clock.nanoTime
           start    = hints.getOrElse[Long](startTimeKey, end)
           duration = Duration.fromNanos(end - start)
           _ <- onEvaluation(ctx.flagKey, duration, false)
-        yield ()
+        } yield ()
+    }
 
   def contextValidator(
     requireTargetingKey: Boolean = false,
     requiredAttributes: List[String] = Nil
-  ): FeatureHook = new FeatureHook:
-    override def before(ctx: HookContext, hints: HookHints): UIO[Option[(EvaluationContext, HookHints)]] =
+  ): FeatureHook = new FeatureHook {
+    override def before(ctx: HookContext, hints: HookHints): UIO[Option[(EvaluationContext, HookHints)]] = {
       val warnings = List.newBuilder[String]
 
-      if requireTargetingKey && ctx.evaluationContext.targetingKey.isEmpty then
+      if (requireTargetingKey && ctx.evaluationContext.targetingKey.isEmpty)
         warnings += s"Missing targeting key for flag '${ctx.flagKey}'"
 
-      for attr <- requiredAttributes do
-        if !ctx.evaluationContext.attributes.contains(attr) then
+      for (attr <- requiredAttributes)
+        if (!ctx.evaluationContext.attributes.contains(attr))
           warnings += s"Missing required attribute '$attr' for flag '${ctx.flagKey}'"
 
       val warningList = warnings.result()
       ZIO.foreachDiscard(warningList)(msg => ZIO.logWarning(msg)).as(None)
+    }
+  }
+}

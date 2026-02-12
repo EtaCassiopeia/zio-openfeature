@@ -1,9 +1,9 @@
 package zio.openfeature
 
-import zio.test.*
-import zio.test.Assertion.*
+import zio.test._
+import zio.test.Assertion._
 
-object FlagTypeSpec extends ZIOSpecDefault:
+object FlagTypeSpec extends ZIOSpecDefault {
 
   def spec = suite("FlagTypeSpec")(
     suite("Boolean FlagType")(
@@ -287,7 +287,7 @@ object FlagTypeSpec extends ZIOSpecDefault:
       test("FlagType.from creates custom decoder") {
         case class MyType(value: String)
 
-        given FlagType[MyType] = FlagType.from(
+        implicit val myTypeFlagType: FlagType[MyType] = FlagType.from(
           name = "MyType",
           default = MyType(""),
           decoder = {
@@ -302,7 +302,7 @@ object FlagTypeSpec extends ZIOSpecDefault:
       test("FlagType.mapped creates derived decoder") {
         case class UserId(value: String)
 
-        given FlagType[UserId] = FlagType.mapped[UserId, String](
+        implicit val userIdFlagType: FlagType[UserId] = FlagType.mapped[UserId, String](
           name = "UserId",
           default = UserId("")
         )(
@@ -315,3 +315,4 @@ object FlagTypeSpec extends ZIOSpecDefault:
       }
     )
   )
+}

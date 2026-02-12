@@ -30,14 +30,14 @@ This library implements the **dynamic-context paradigm** (server-side) of the Op
 
 [![Maven Central](https://img.shields.io/maven-central/v/io.github.etacassiopeia/zio-openfeature-core_3.svg)](https://search.maven.org/search?q=g:io.github.etacassiopeia%20AND%20a:zio-openfeature-core_3)
 
-```scala
-val zioOpenFeatureVersion = "0.3.2"
+Replace `<version>` below with the version shown in the badge above.
 
+```scala
 // Core library (includes OpenFeature SDK)
-libraryDependencies += "io.github.etacassiopeia" %% "zio-openfeature-core" % zioOpenFeatureVersion
+libraryDependencies += "io.github.etacassiopeia" %% "zio-openfeature-core" % "<version>"
 
 // For testing
-libraryDependencies += "io.github.etacassiopeia" %% "zio-openfeature-testkit" % zioOpenFeatureVersion % Test
+libraryDependencies += "io.github.etacassiopeia" %% "zio-openfeature-testkit" % "<version>" % Test
 ```
 
 ## Quick Start

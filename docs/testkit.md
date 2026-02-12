@@ -30,8 +30,10 @@ The `TestFeatureProvider` implements the OpenFeature `FeatureProvider` interface
 
 ## Installation
 
+[![Maven Central](https://img.shields.io/maven-central/v/io.github.etacassiopeia/zio-openfeature-core_3.svg)](https://search.maven.org/search?q=g:io.github.etacassiopeia%20AND%20a:zio-openfeature-core_3)
+
 ```scala
-libraryDependencies += "io.github.etacassiopeia" %% "zio-openfeature-testkit" % "0.3.2" % Test
+libraryDependencies += "io.github.etacassiopeia" %% "zio-openfeature-testkit" % "<version>" % Test
 ```
 
 ---

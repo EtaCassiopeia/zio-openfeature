@@ -29,3 +29,6 @@ jobs:
 
       - name: Run tests (Scala 2.13 + 3)
         run: sbt +test
+
+      - name: Dependency vulnerability check
+        run: sbt dependencyCheck

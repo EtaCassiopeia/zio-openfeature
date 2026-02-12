@@ -145,9 +145,37 @@ final case class HookContext(
   flagType: FlagValueType,             // Boolean, String, Int, Double, or Object
   defaultValue: Any,                   // The default value
   evaluationContext: EvaluationContext, // The evaluation context
-  providerMetadata: ProviderMetadata   // Provider information
+  clientMetadata: ClientMetadata,      // Client information (spec 4.1.2)
+  providerMetadata: ProviderMetadata,  // Provider information
+  hookData: HookData                   // Per-hook mutable state (spec 4.6.1)
 )
 ```
+
+### Hook Data (Spec 4.6.1)
+
+Each hook has its own `HookData` instance that persists across all stages of a single evaluation. Unlike `HookHints` (which are shared and read-only after `before`), `HookData` is mutable and scoped to an individual hook instance:
+
+```scala
+val spanHook = new FeatureHook:
+  override def before(ctx: HookContext, hints: HookHints): UIO[Option[(EvaluationContext, HookHints)]] =
+    ZIO.succeed {
+      ctx.hookData.set("spanId", generateSpanId())
+      None
+    }
+
+  override def after[A](ctx: HookContext, details: FlagResolution[A], hints: HookHints): UIO[Unit] =
+    ZIO.succeed {
+      val spanId = ctx.hookData.get[String]("spanId").getOrElse("unknown")
+      recordSpan(spanId, details)
+    }
+
+  override def finallyAfter(ctx: HookContext, hints: HookHints): UIO[Unit] =
+    ZIO.succeed {
+      ctx.hookData.clear()
+    }
+```
+
+When hooks are composed via `FeatureHook.compose`, each hook receives its own isolated `HookData` instance, so hooks cannot interfere with each other's state.
 
 ### Hook Hints
 

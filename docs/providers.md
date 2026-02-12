@@ -301,6 +301,31 @@ val hooks = List(
 val layer = FeatureFlags.fromProviderWithHooks(provider, hooks)
 ```
 
+### fromMultiProvider
+
+Create from multiple providers using the SDK's MultiProvider support. The first provider that returns without error is used:
+
+```scala
+import dev.openfeature.sdk.FeatureProvider
+
+val localProvider: FeatureProvider = // local overrides
+val remoteProvider: FeatureProvider = // remote service
+
+// Uses first-match strategy by default
+val layer = FeatureFlags.fromMultiProvider(List(localProvider, remoteProvider))
+```
+
+You can also supply a custom strategy:
+
+```scala
+import dev.openfeature.sdk.multiprovider.FirstSuccessfulStrategy
+
+val layer = FeatureFlags.fromMultiProvider(
+  List(primaryProvider, fallbackProvider),
+  new FirstSuccessfulStrategy()
+)
+```
+
 ---
 
 ## Provider Lifecycle
@@ -414,8 +439,8 @@ val eventHandler = FeatureFlags.events.foreach { event =>
       ZIO.logInfo(s"Flags changed: ${flags.mkString(", ")}")
     case ProviderEvent.Stale(reason, meta) =>
       ZIO.logWarning(s"Provider data stale: $reason")
-    case ProviderEvent.Error(error, meta) =>
-      ZIO.logError(s"Provider error: ${error.getMessage}")
+    case ProviderEvent.Error(error, meta, errorCode, errorMessage) =>
+      ZIO.logError(s"Provider error: ${errorMessage.getOrElse(error.getMessage)}")
     case ProviderEvent.Reconnecting(meta) =>
       ZIO.logInfo(s"Provider ${meta.name} reconnecting...")
 }

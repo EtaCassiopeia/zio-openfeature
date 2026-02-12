@@ -42,6 +42,9 @@ object FeatureFlagErrorSpec extends ZIOSpecDefault:
         val error = FeatureFlagError.ProviderNotReady(ProviderStatus.NotReady)
         assertTrue(error.message == "Provider not ready: NotReady")
       },
+      test("ProviderFatal has correct message") {
+        assertTrue(FeatureFlagError.ProviderFatal.message == "Provider is in an irrecoverable error state")
+      },
       test("ProviderInitializationFailed has correct message and cause") {
         val underlying = new RuntimeException("Connection failed")
         val error      = FeatureFlagError.ProviderInitializationFailed(underlying)
@@ -91,6 +94,7 @@ object FeatureFlagErrorSpec extends ZIOSpecDefault:
     suite("isProviderError")(
       test("provider errors return true") {
         assertTrue(FeatureFlagError.isProviderError(FeatureFlagError.ProviderNotReady(ProviderStatus.NotReady))) &&
+        assertTrue(FeatureFlagError.isProviderError(FeatureFlagError.ProviderFatal)) &&
         assertTrue(FeatureFlagError.isProviderError(FeatureFlagError.ProviderInitializationFailed(new Exception))) &&
         assertTrue(FeatureFlagError.isProviderError(FeatureFlagError.ProviderError(new Exception))) &&
         assertTrue(FeatureFlagError.isProviderError(FeatureFlagError.InvalidConfiguration("reason")))
@@ -123,6 +127,7 @@ object FeatureFlagErrorSpec extends ZIOSpecDefault:
             FeatureFlagError.ProviderNotReady(ProviderStatus.NotReady)
           ) == ErrorCode.ProviderNotReady
         ) &&
+        assertTrue(FeatureFlagError.toErrorCode(FeatureFlagError.ProviderFatal) == ErrorCode.ProviderFatal) &&
         assertTrue(
           FeatureFlagError.toErrorCode(
             FeatureFlagError.ProviderInitializationFailed(new Exception)

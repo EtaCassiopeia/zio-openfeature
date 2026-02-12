@@ -15,7 +15,7 @@ ZIO OpenFeature wraps the [OpenFeature Java SDK](https://openfeature.dev/docs/re
 | Component | Version | Notes |
 |:----------|:--------|:------|
 | **OpenFeature Spec** | v0.8.0 | [Specification](https://github.com/open-feature/spec) |
-| **OpenFeature Java SDK** | 1.19.2 | [Java SDK](https://github.com/open-feature/java-sdk) |
+| **OpenFeature Java SDK** | 1.20.1 | [Java SDK](https://github.com/open-feature/java-sdk) |
 | **ZIO OpenFeature** | 0.3.2 | This library |
 
 This library targets the **dynamic-context paradigm** (server-side) of the OpenFeature specification.
@@ -86,9 +86,9 @@ FeatureFlags.booleanDetails("flag", false, context, options)
 | value | ✅ | The resolved flag value |
 | variant | ✅ | Optional variant identifier |
 | reason | ✅ | STATIC, DEFAULT, TARGETING_MATCH, SPLIT, CACHED, etc. |
-| errorCode | ✅ | PROVIDER_NOT_READY, FLAG_NOT_FOUND, TYPE_MISMATCH, etc. |
+| errorCode | ✅ | PROVIDER_NOT_READY, PROVIDER_FATAL, FLAG_NOT_FOUND, TYPE_MISMATCH, etc. |
 | errorMessage | ✅ | Optional error description |
-| flagMetadata | ✅ | Additional provider metadata |
+| flagMetadata | ✅ | Typed metadata values (boolean, string, int, long, double, float) per spec 2.2.10 |
 
 ---
 
@@ -120,8 +120,9 @@ FeatureFlags.booleanDetails("flag", false, context, options)
 | Requirement | Status | Implementation |
 |:------------|:-------|:---------------|
 | Hook stages | ✅ | before, after, error, finallyAfter |
-| Hook context | ✅ | flagKey, flagType, defaultValue, context, metadata |
+| Hook context | ✅ | flagKey, flagType, defaultValue, context, clientMetadata, providerMetadata |
 | Hook hints | ✅ | `HookHints` for passing data between stages |
+| Hook data (4.6.1) | ✅ | `HookData` per-hook mutable state across stages |
 | API-level hooks | ✅ | `FeatureFlags.addApiHook` / `clearApiHooks` |
 | Client-level hooks | ✅ | `FeatureFlags.addHook` / `clearHooks` |
 | Invocation-level hooks | ✅ | Via `EvaluationOptions` |
@@ -145,7 +146,7 @@ FeatureFlags.booleanDetails("flag", false, EvaluationContext.empty, options)
 | Requirement | Status | Implementation |
 |:------------|:-------|:---------------|
 | Initialize | ✅ | `setProviderAndWait` on layer creation |
-| Shutdown | ✅ | Automatic via ZIO Scope finalizer |
+| Shutdown (1.6.1) | ✅ | Automatic via ZIO Scope finalizer + explicit `shutdown` method |
 | Provider metadata | ✅ | `providerMetadata` returns name and version |
 | Client metadata | ✅ | `clientMetadata` returns domain |
 | Domain binding | ✅ | `fromProviderWithDomain` |
@@ -171,6 +172,8 @@ for
        }
 yield ()
 ```
+
+When a provider enters the `Fatal` state, all flag evaluations will fail with `FeatureFlagError.ProviderFatal`.
 
 ---
 
@@ -251,6 +254,7 @@ Beyond the OpenFeature spec, ZIO OpenFeature provides:
 | Effect-based hooks | Hooks return `UIO` instead of callbacks |
 | Resource management | Automatic lifecycle via ZIO Scope |
 | Event streaming | Provider events as ZStream |
+| Multi-provider | Combine multiple providers with configurable strategies |
 
 ---
 

@@ -41,6 +41,9 @@ object FeatureFlagError:
   case object NestedTransactionNotAllowed extends FeatureFlagError:
     def message: String = "Nested transactions are not allowed"
 
+  case object ProviderFatal extends FeatureFlagError:
+    def message: String = "Provider is in an irrecoverable error state"
+
   final case class OverrideTypeMismatch(key: String, expected: String, actual: String) extends FeatureFlagError:
     def message: String = s"Override for flag '$key' type mismatch: expected $expected, got $actual"
 
@@ -55,6 +58,7 @@ object FeatureFlagError:
 
   def isProviderError(error: FeatureFlagError): Boolean = error match
     case _: ProviderNotReady             => true
+    case ProviderFatal                   => true
     case _: ProviderInitializationFailed => true
     case _: ProviderError                => true
     case _: InvalidConfiguration         => true
@@ -68,6 +72,7 @@ object FeatureFlagError:
     case _: TargetingKeyMissing          => ErrorCode.TargetingKeyMissing
     case _: InvalidContext               => ErrorCode.InvalidContext
     case _: ProviderNotReady             => ErrorCode.ProviderNotReady
+    case ProviderFatal                   => ErrorCode.ProviderFatal
     case _: ProviderInitializationFailed => ErrorCode.ProviderNotReady
     case _: ProviderError                => ErrorCode.General
     case _: InvalidConfiguration         => ErrorCode.General

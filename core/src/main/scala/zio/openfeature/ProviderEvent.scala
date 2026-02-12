@@ -40,7 +40,12 @@ enum ProviderEventType:
 
 enum ProviderEvent:
   case Ready(providerMetadata: ProviderMetadata)
-  case Error(error: Throwable, providerMetadata: ProviderMetadata)
+  case Error(
+    error: Throwable,
+    providerMetadata: ProviderMetadata,
+    errorCode: Option[ErrorCode] = None,
+    errorMessage: Option[String] = None
+  )
   case Stale(reason: String, providerMetadata: ProviderMetadata)
   case ConfigurationChanged(changedFlags: Set[String], providerMetadata: ProviderMetadata)
   case Reconnecting(providerMetadata: ProviderMetadata)
@@ -57,14 +62,14 @@ object ProviderEvent:
   extension (event: ProviderEvent)
     def metadata: ProviderMetadata = event match
       case Ready(m)                   => m
-      case Error(_, m)                => m
+      case Error(_, m, _, _)          => m
       case Stale(_, m)                => m
       case ConfigurationChanged(_, m) => m
       case Reconnecting(m)            => m
 
     def isError: Boolean = event match
-      case Error(_, _) => true
-      case _           => false
+      case _: Error => true
+      case _        => false
 
     def isHealthy: Boolean = event match
       case Ready(_)                   => true

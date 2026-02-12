@@ -18,6 +18,10 @@ object EvaluationContextSpec extends ZIOSpecDefault:
         assertTrue(ctx.targetingKey.contains("user-123")) &&
         assertTrue(ctx.attributes.isEmpty)
       },
+      test("empty string targeting key is valid") {
+        val ctx = EvaluationContext(Some(""), Map.empty)
+        assertTrue(ctx.targetingKey == Some(""))
+      },
       test("forEntity creates context with targeting key and attributes") {
         val ctx = EvaluationContext.forEntity("entity-456", "account")
         assertTrue(ctx.targetingKey.contains("entity-456")) &&
@@ -158,6 +162,26 @@ object EvaluationContextSpec extends ZIOSpecDefault:
           .withAttribute("key", AttributeValue.string("value"))
         assertTrue(!ctx.isEmpty) &&
         assertTrue(ctx.nonEmpty)
+      }
+    ),
+    suite("ContextConverter roundtrip")(
+      test("empty targeting key survives roundtrip") {
+        val ctx       = EvaluationContext(Some(""), Map.empty)
+        val ofCtx     = zio.openfeature.internal.ContextConverter.toOpenFeature(ctx)
+        val roundTrip = zio.openfeature.internal.ContextConverter.fromOpenFeature(ofCtx)
+        assertTrue(roundTrip.targetingKey == Some(""))
+      },
+      test("non-empty targeting key survives roundtrip") {
+        val ctx       = EvaluationContext("user-123")
+        val ofCtx     = zio.openfeature.internal.ContextConverter.toOpenFeature(ctx)
+        val roundTrip = zio.openfeature.internal.ContextConverter.fromOpenFeature(ofCtx)
+        assertTrue(roundTrip.targetingKey == Some("user-123"))
+      },
+      test("absent targeting key survives roundtrip") {
+        val ctx       = EvaluationContext.empty
+        val ofCtx     = zio.openfeature.internal.ContextConverter.toOpenFeature(ctx)
+        val roundTrip = zio.openfeature.internal.ContextConverter.fromOpenFeature(ofCtx)
+        assertTrue(roundTrip.targetingKey == None)
       }
     )
   )

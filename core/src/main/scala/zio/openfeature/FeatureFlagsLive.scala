@@ -9,6 +9,7 @@ import dev.openfeature.sdk.{
   FlagEvaluationDetails,
   Reason as OFReason,
   ErrorCode as OFErrorCode,
+  OpenFeatureAPI,
   ProviderState,
   MutableTrackingEventDetails
 }
@@ -49,12 +50,14 @@ final private[openfeature] class FeatureFlagsLive(
   ): IO[FeatureFlagError, FlagResolution[A]] =
     for
       currentHooks <- hooksRef.get
-      metadata = ProviderMetadata(providerName)
+      metadata   = ProviderMetadata(providerName)
+      clientMeta = ClientMetadata(domain)
       hookCtx = HookContext(
         flagKey = key,
         flagType = FlagValueType.fromFlagType[A],
         defaultValue = default,
         evaluationContext = context,
+        clientMetadata = clientMeta,
         providerMetadata = metadata
       )
       result <-
@@ -81,12 +84,22 @@ final private[openfeature] class FeatureFlagsLive(
         .ensuring(composedHook.finallyAfter(hookCtx, hints).ignore)
     yield result
 
+  private def checkProviderStatus: IO[FeatureFlagError, Unit] =
+    providerStatus.flatMap { status =>
+      status match
+        case ProviderStatus.Fatal =>
+          ZIO.fail(FeatureFlagError.ProviderFatal)
+        case _ =>
+          ZIO.unit
+    }
+
   private def evaluateFlag[A: FlagType](
     key: String,
     default: A,
     invocationContext: EvaluationContext
   ): IO[FeatureFlagError, FlagResolution[A]] =
     for
+      _         <- checkProviderStatus
       txState   <- transactionRef.get
       effectCtx <- effectiveContext(invocationContext)
       result <- txState match
@@ -292,18 +305,32 @@ final private[openfeature] class FeatureFlagsLive(
   private def toErrorCode(errorCode: OFErrorCode): ErrorCode =
     errorCode match
       case OFErrorCode.PROVIDER_NOT_READY    => ErrorCode.ProviderNotReady
+      case OFErrorCode.PROVIDER_FATAL        => ErrorCode.ProviderFatal
       case OFErrorCode.FLAG_NOT_FOUND        => ErrorCode.FlagNotFound
       case OFErrorCode.PARSE_ERROR           => ErrorCode.ParseError
       case OFErrorCode.TYPE_MISMATCH         => ErrorCode.TypeMismatch
       case OFErrorCode.TARGETING_KEY_MISSING => ErrorCode.TargetingKeyMissing
       case OFErrorCode.INVALID_CONTEXT       => ErrorCode.InvalidContext
       case OFErrorCode.GENERAL               => ErrorCode.General
-      case _                                 => ErrorCode.General
 
   private def toFlagMetadata(metadata: dev.openfeature.sdk.ImmutableMetadata): FlagMetadata =
-    // ImmutableMetadata doesn't expose a direct map, so we return empty for now
-    // In practice, flag metadata is rarely used and providers don't always populate it
-    FlagMetadata.empty
+    if metadata == null || metadata.isEmpty then FlagMetadata.empty
+    else
+      try
+        val javaMap = metadata.asUnmodifiableMap()
+        if javaMap == null || javaMap.isEmpty then FlagMetadata.empty
+        else
+          val entries = javaMap.asScala.collect {
+            case (k, v: java.lang.Boolean) => k -> MetadataValue.BooleanValue(v.booleanValue())
+            case (k, v: java.lang.Integer) => k -> MetadataValue.IntValue(v.intValue())
+            case (k, v: java.lang.Long)    => k -> MetadataValue.LongValue(v.longValue())
+            case (k, v: java.lang.Float)   => k -> MetadataValue.FloatValue(v.floatValue())
+            case (k, v: java.lang.Double)  => k -> MetadataValue.DoubleValue(v.doubleValue())
+            case (k, v: String)            => k -> MetadataValue.StringValue(v)
+            case (k, v) if v != null       => k -> MetadataValue.StringValue(v.toString)
+          }.toMap
+          FlagMetadata(entries)
+      catch case _: Exception => FlagMetadata.empty
 
   private def anyToObject(value: Any): Object = value match
     case b: Boolean    => java.lang.Boolean.valueOf(b)
@@ -499,13 +526,15 @@ final private[openfeature] class FeatureFlagsLive(
     for
       clientHooks <- hooksRef.get
       // Combine client hooks with invocation hooks (client first, then invocation)
-      allHooks = clientHooks ++ options.hooks
-      metadata = ProviderMetadata(providerName)
+      allHooks   = clientHooks ++ options.hooks
+      metadata   = ProviderMetadata(providerName)
+      clientMeta = ClientMetadata(domain)
       hookCtx = HookContext(
         flagKey = key,
         flagType = FlagValueType.fromFlagType[A],
         defaultValue = default,
         evaluationContext = context,
+        clientMetadata = clientMeta,
         providerMetadata = metadata
       )
       result <-
@@ -656,6 +685,7 @@ final private[openfeature] class FeatureFlagsLive(
         case ProviderState.READY     => ProviderStatus.Ready
         case ProviderState.ERROR     => ProviderStatus.Error
         case ProviderState.STALE     => ProviderStatus.Stale
+        case ProviderState.FATAL     => ProviderStatus.Fatal
         case _                       => ProviderStatus.NotReady
     }
 
@@ -692,7 +722,7 @@ final private[openfeature] class FeatureFlagsLive(
         handler(new RuntimeException("Provider in error state"), metadata)
       }
       fiber <- events
-        .collect { case ProviderEvent.Error(error, m) => (error, m) }
+        .collect { case ProviderEvent.Error(error, m, _, _) => (error, m) }
         .foreach { case (error, m) => handler(error, m) }
         .forkDaemon
     yield fiber.interrupt.unit
@@ -747,6 +777,16 @@ final private[openfeature] class FeatureFlagsLive(
 
   override def hooks: UIO[List[FeatureHook]] =
     hooksRef.get
+
+  // Shutdown API (spec 1.6.1, 1.6.2)
+
+  override def shutdown: UIO[Unit] =
+    for
+      _ <- hooksRef.set(List.empty)
+      _ <- globalContextRef.set(EvaluationContext.empty)
+      _ <- clientContextRef.set(EvaluationContext.empty)
+      _ <- ZIO.attemptBlocking(OpenFeatureAPI.getInstance().shutdown()).ignore
+    yield ()
 
   // Tracking API
 

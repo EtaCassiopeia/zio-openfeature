@@ -67,6 +67,29 @@ object ProviderEventSpec extends ZIOSpecDefault:
         assertTrue(!event.isError)
       }
     ),
+    suite("ProviderEvent.Error with error details (spec 5.1.4, 5.1.5)")(
+      test("Error event with error code and message") {
+        val event = ProviderEvent.Error(
+          new RuntimeException("test"),
+          testMetadata,
+          errorCode = Some(ErrorCode.General),
+          errorMessage = Some("Something went wrong")
+        )
+        event match
+          case ProviderEvent.Error(_, _, code, msg) =>
+            assertTrue(code == Some(ErrorCode.General)) &&
+            assertTrue(msg == Some("Something went wrong"))
+          case _ => assertTrue(false)
+      },
+      test("Error event defaults to no error code/message") {
+        val event = ProviderEvent.Error(new RuntimeException("test"), testMetadata)
+        event match
+          case ProviderEvent.Error(_, _, code, msg) =>
+            assertTrue(code == None) &&
+            assertTrue(msg == None)
+          case _ => assertTrue(false)
+      }
+    ),
     suite("ProviderEvent isHealthy extension")(
       test("Ready event is healthy") {
         val event = ProviderEvent.Ready(testMetadata)

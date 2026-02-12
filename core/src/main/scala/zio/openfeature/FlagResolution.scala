@@ -11,17 +11,67 @@ enum ResolutionReason:
   case Stale
   case Error
 
-final case class FlagMetadata(values: Map[String, String]):
-  def get(key: String): Option[String] = values.get(key)
-  def isEmpty: Boolean                 = values.isEmpty
-  def nonEmpty: Boolean                = values.nonEmpty
+enum MetadataValue:
+  case BooleanValue(value: Boolean)
+  case StringValue(value: String)
+  case IntValue(value: Int)
+  case LongValue(value: Long)
+  case DoubleValue(value: Double)
+  case FloatValue(value: Float)
+
+  def asBoolean: Option[Boolean] = this match
+    case BooleanValue(v) => Some(v)
+    case _               => None
+
+  def asString: Option[String] = this match
+    case StringValue(v) => Some(v)
+    case _              => None
+
+  def asInt: Option[Int] = this match
+    case IntValue(v) => Some(v)
+    case _           => None
+
+  def asLong: Option[Long] = this match
+    case LongValue(v) => Some(v)
+    case IntValue(v)  => Some(v.toLong)
+    case _            => None
+
+  def asDouble: Option[Double] = this match
+    case DoubleValue(v) => Some(v)
+    case FloatValue(v)  => Some(v.toDouble)
+    case IntValue(v)    => Some(v.toDouble)
+    case LongValue(v)   => Some(v.toDouble)
+    case _              => None
+
+object MetadataValue:
+  given Conversion[Boolean, MetadataValue] = BooleanValue(_)
+  given Conversion[String, MetadataValue]  = StringValue(_)
+  given Conversion[Int, MetadataValue]     = IntValue(_)
+  given Conversion[Long, MetadataValue]    = LongValue(_)
+  given Conversion[Double, MetadataValue]  = DoubleValue(_)
+  given Conversion[Float, MetadataValue]   = FloatValue(_)
+
+final case class FlagMetadata(values: Map[String, MetadataValue]):
+  def get(key: String): Option[MetadataValue]  = values.get(key)
+  def getString(key: String): Option[String]   = values.get(key).flatMap(_.asString)
+  def getBoolean(key: String): Option[Boolean] = values.get(key).flatMap(_.asBoolean)
+  def getInt(key: String): Option[Int]         = values.get(key).flatMap(_.asInt)
+  def getLong(key: String): Option[Long]       = values.get(key).flatMap(_.asLong)
+  def getDouble(key: String): Option[Double]   = values.get(key).flatMap(_.asDouble)
+  def isEmpty: Boolean                         = values.isEmpty
+  def nonEmpty: Boolean                        = values.nonEmpty
 
 object FlagMetadata:
-  val empty: FlagMetadata                             = FlagMetadata(Map.empty)
-  def apply(entries: (String, String)*): FlagMetadata = FlagMetadata(entries.toMap)
+  val empty: FlagMetadata = FlagMetadata(Map.empty)
+
+  def apply(entries: (String, MetadataValue)*): FlagMetadata = FlagMetadata(entries.toMap)
+
+  def fromStrings(entries: (String, String)*): FlagMetadata =
+    FlagMetadata(entries.map { case (k, v) => k -> MetadataValue.StringValue(v) }.toMap)
 
 enum ErrorCode:
   case ProviderNotReady
+  case ProviderFatal
   case FlagNotFound
   case ParseError
   case TypeMismatch

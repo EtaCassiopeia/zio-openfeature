@@ -8,7 +8,7 @@ package zio.openfeature
 final case class EvaluationOptions(
   hooks: List[FeatureHook] = Nil,
   hookHints: HookHints = HookHints.empty
-):
+) {
   def withHook(hook: FeatureHook): EvaluationOptions =
     copy(hooks = hooks :+ hook)
 
@@ -17,8 +17,9 @@ final case class EvaluationOptions(
 
   def withHint(key: String, value: Any): EvaluationOptions =
     copy(hookHints = hookHints + (key -> value))
+}
 
-object EvaluationOptions:
+object EvaluationOptions {
   val empty: EvaluationOptions = EvaluationOptions()
 
   def apply(hook: FeatureHook): EvaluationOptions =
@@ -26,3 +27,4 @@ object EvaluationOptions:
 
   def apply(hooks: FeatureHook*): EvaluationOptions =
     EvaluationOptions(hooks = hooks.toList)
+}

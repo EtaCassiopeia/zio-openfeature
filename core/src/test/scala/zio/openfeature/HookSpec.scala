@@ -1,10 +1,10 @@
 package zio.openfeature
 
-import zio.*
-import zio.test.*
-import zio.test.Assertion.*
+import zio._
+import zio.test._
+import zio.test.Assertion._
 
-object HookSpec extends ZIOSpecDefault:
+object HookSpec extends ZIOSpecDefault {
 
   val testMetadata = ProviderMetadata("TestProvider", "1.0")
 
@@ -87,49 +87,56 @@ object HookSpec extends ZIOSpecDefault:
     ),
     suite("FeatureHook.noop")(
       test("before returns None") {
-        for result <- FeatureHook.noop.before(makeHookContext(), HookHints.empty)
-        yield assertTrue(result.isEmpty)
+        for {
+          result <- FeatureHook.noop.before(makeHookContext(), HookHints.empty)
+        } yield assertTrue(result.isEmpty)
       },
       test("after completes successfully") {
         val resolution = FlagResolution.default("test", true)
-        for _ <- FeatureHook.noop.after(makeHookContext(), resolution, HookHints.empty)
-        yield assertTrue(true)
+        for {
+          _ <- FeatureHook.noop.after(makeHookContext(), resolution, HookHints.empty)
+        } yield assertTrue(true)
       },
       test("error completes successfully") {
-        for _ <- FeatureHook.noop.error(makeHookContext(), FeatureFlagError.FlagNotFound("test"), HookHints.empty)
-        yield assertTrue(true)
+        for {
+          _ <- FeatureHook.noop.error(makeHookContext(), FeatureFlagError.FlagNotFound("test"), HookHints.empty)
+        } yield assertTrue(true)
       },
       test("finallyAfter completes successfully") {
-        for _ <- FeatureHook.noop.finallyAfter(makeHookContext(), HookHints.empty)
-        yield assertTrue(true)
+        for {
+          _ <- FeatureHook.noop.finallyAfter(makeHookContext(), HookHints.empty)
+        } yield assertTrue(true)
       }
     ),
     suite("FeatureHook.compose")(
       test("composes multiple hooks") {
         val callOrder = new java.util.concurrent.atomic.AtomicReference(List.empty[String])
 
-        val hook1 = new FeatureHook:
+        val hook1 = new FeatureHook {
           override def after[A](ctx: HookContext, details: FlagResolution[A], hints: HookHints): UIO[Unit] =
             ZIO.succeed {
               callOrder.updateAndGet(list => list :+ "hook1")
               ()
             }
+        }
 
-        val hook2 = new FeatureHook:
+        val hook2 = new FeatureHook {
           override def after[A](ctx: HookContext, details: FlagResolution[A], hints: HookHints): UIO[Unit] =
             ZIO.succeed {
               callOrder.updateAndGet(list => list :+ "hook2")
               ()
             }
+        }
 
         val composed   = FeatureHook.compose(List(hook1, hook2))
         val resolution = FlagResolution.default("test", true)
 
-        for _ <- composed.after(makeHookContext(), resolution, HookHints.empty)
-        yield assertTrue(callOrder.get() == List("hook1", "hook2"))
+        for {
+          _ <- composed.after(makeHookContext(), resolution, HookHints.empty)
+        } yield assertTrue(callOrder.get() == List("hook1", "hook2"))
       },
       test("compose before merges contexts") {
-        val hook = new FeatureHook:
+        val hook = new FeatureHook {
           override def before(ctx: HookContext, hints: HookHints): UIO[Option[(EvaluationContext, HookHints)]] =
             ZIO.succeed(
               Some(
@@ -139,11 +146,13 @@ object HookSpec extends ZIOSpecDefault:
                 )
               )
             )
+        }
 
         val composed = FeatureHook.compose(List(hook))
 
-        for result <- composed.before(makeHookContext(), HookHints.empty)
-        yield assertTrue(result.isDefined) &&
+        for {
+          result <- composed.before(makeHookContext(), HookHints.empty)
+        } yield assertTrue(result.isDefined) &&
           assertTrue(result.get._1.getString("added").contains("value")) &&
           assertTrue(result.get._2.get[Boolean]("hookRan").contains(true))
       }
@@ -161,11 +170,11 @@ object HookSpec extends ZIOSpecDefault:
         val ctx        = makeHookContext("metrics-test")
         val resolution = FlagResolution.default("metrics-test", true)
 
-        for
+        for {
           beforeResult <- hook.before(ctx, HookHints.empty)
           hints = beforeResult.map(_._2).getOrElse(HookHints.empty)
           _ <- hook.after(ctx, resolution, hints)
-        yield assertTrue(captured.isDefined) &&
+        } yield assertTrue(captured.isDefined) &&
           assertTrue(captured.get._1 == "metrics-test") &&
           assertTrue(captured.get._3 == true)
       },
@@ -180,11 +189,11 @@ object HookSpec extends ZIOSpecDefault:
 
         val ctx = makeHookContext("error-test")
 
-        for
+        for {
           beforeResult <- hook.before(ctx, HookHints.empty)
           hints = beforeResult.map(_._2).getOrElse(HookHints.empty)
           _ <- hook.error(ctx, FeatureFlagError.FlagNotFound("error-test"), hints)
-        yield assertTrue(captured.isDefined) &&
+        } yield assertTrue(captured.isDefined) &&
           assertTrue(captured.get._1 == "error-test") &&
           assertTrue(captured.get._3 == false)
       }
@@ -192,81 +201,94 @@ object HookSpec extends ZIOSpecDefault:
     suite("FeatureHook.logging")(
       test("logging hook with before enabled") {
         val hook = FeatureHook.logging(logBefore = true, logAfter = false, logError = false)
-        for result <- hook.before(makeHookContext(), HookHints.empty)
-        yield assertTrue(result.isEmpty)
+        for {
+          result <- hook.before(makeHookContext(), HookHints.empty)
+        } yield assertTrue(result.isEmpty)
       },
       test("logging hook after logs info") {
         val hook       = FeatureHook.logging(logBefore = false, logAfter = true, logError = false)
         val resolution = FlagResolution.default("test", true)
-        for _ <- hook.after(makeHookContext(), resolution, HookHints.empty)
-        yield assertTrue(true)
+        for {
+          _ <- hook.after(makeHookContext(), resolution, HookHints.empty)
+        } yield assertTrue(true)
       },
       test("logging hook error logs error") {
         val hook = FeatureHook.logging(logBefore = false, logAfter = false, logError = true)
-        for _ <- hook.error(makeHookContext(), FeatureFlagError.FlagNotFound("test"), HookHints.empty)
-        yield assertTrue(true)
+        for {
+          _ <- hook.error(makeHookContext(), FeatureFlagError.FlagNotFound("test"), HookHints.empty)
+        } yield assertTrue(true)
       },
       test("logging hook all disabled") {
         val hook       = FeatureHook.logging(logBefore = false, logAfter = false, logError = false)
         val resolution = FlagResolution.default("test", true)
-        for
+        for {
           beforeResult <- hook.before(makeHookContext(), HookHints.empty)
           _            <- hook.after(makeHookContext(), resolution, HookHints.empty)
           _            <- hook.error(makeHookContext(), FeatureFlagError.FlagNotFound("test"), HookHints.empty)
-        yield assertTrue(beforeResult.isEmpty)
+        } yield assertTrue(beforeResult.isEmpty)
       }
     ),
     suite("FeatureHook.compose edge cases")(
       test("compose with empty list") {
         val composed = FeatureHook.compose(Nil)
-        for result <- composed.before(makeHookContext(), HookHints.empty)
-        yield assertTrue(result.isEmpty)
+        for {
+          result <- composed.before(makeHookContext(), HookHints.empty)
+        } yield assertTrue(result.isEmpty)
       },
       test("compose error calls all hooks") {
         val callCount = new java.util.concurrent.atomic.AtomicInteger(0)
 
-        val hook1 = new FeatureHook:
+        val hook1 = new FeatureHook {
           override def error(ctx: HookContext, err: FeatureFlagError, hints: HookHints): UIO[Unit] =
             ZIO.succeed(callCount.incrementAndGet())
+        }
 
-        val hook2 = new FeatureHook:
+        val hook2 = new FeatureHook {
           override def error(ctx: HookContext, err: FeatureFlagError, hints: HookHints): UIO[Unit] =
             ZIO.succeed(callCount.incrementAndGet())
+        }
 
         val composed = FeatureHook.compose(List(hook1, hook2))
 
-        for _ <- composed.error(makeHookContext(), FeatureFlagError.FlagNotFound("test"), HookHints.empty)
-        yield assertTrue(callCount.get() == 2)
+        for {
+          _ <- composed.error(makeHookContext(), FeatureFlagError.FlagNotFound("test"), HookHints.empty)
+        } yield assertTrue(callCount.get() == 2)
       },
       test("compose finallyAfter calls all hooks") {
         val callCount = new java.util.concurrent.atomic.AtomicInteger(0)
 
-        val hook1 = new FeatureHook:
+        val hook1 = new FeatureHook {
           override def finallyAfter(ctx: HookContext, hints: HookHints): UIO[Unit] =
             ZIO.succeed(callCount.incrementAndGet())
+        }
 
-        val hook2 = new FeatureHook:
+        val hook2 = new FeatureHook {
           override def finallyAfter(ctx: HookContext, hints: HookHints): UIO[Unit] =
             ZIO.succeed(callCount.incrementAndGet())
+        }
 
         val composed = FeatureHook.compose(List(hook1, hook2))
 
-        for _ <- composed.finallyAfter(makeHookContext(), HookHints.empty)
-        yield assertTrue(callCount.get() == 2)
+        for {
+          _ <- composed.finallyAfter(makeHookContext(), HookHints.empty)
+        } yield assertTrue(callCount.get() == 2)
       },
       test("compose before without modifications returns None") {
-        val hook1 = new FeatureHook:
+        val hook1 = new FeatureHook {
           override def before(ctx: HookContext, hints: HookHints): UIO[Option[(EvaluationContext, HookHints)]] =
             ZIO.none
+        }
 
-        val hook2 = new FeatureHook:
+        val hook2 = new FeatureHook {
           override def before(ctx: HookContext, hints: HookHints): UIO[Option[(EvaluationContext, HookHints)]] =
             ZIO.none
+        }
 
         val composed = FeatureHook.compose(List(hook1, hook2))
 
-        for result <- composed.before(makeHookContext(), HookHints.empty)
-        yield assertTrue(result.isEmpty)
+        for {
+          result <- composed.before(makeHookContext(), HookHints.empty)
+        } yield assertTrue(result.isEmpty)
       }
     ),
     suite("HookData (spec 4.6.1)")(
@@ -294,7 +316,7 @@ object HookSpec extends ZIOSpecDefault:
         assertTrue(data.get[Int]("b") == None)
       },
       test("hookData persists across hook stages") {
-        val hook = new FeatureHook:
+        val hook = new FeatureHook {
           override def before(ctx: HookContext, hints: HookHints): UIO[Option[(EvaluationContext, HookHints)]] =
             ZIO.succeed {
               ctx.hookData.set("span", "my-span-id")
@@ -305,15 +327,16 @@ object HookSpec extends ZIOSpecDefault:
             ZIO.succeed {
               ctx.hookData.set("after-ran", ctx.hookData.get[String]("span").getOrElse("missing"))
             }
+        }
 
         val composed   = FeatureHook.compose(List(hook))
         val ctx        = makeHookContext()
         val resolution = FlagResolution.default("test", true)
 
-        for
+        for {
           _ <- composed.before(ctx, HookHints.empty)
           _ <- composed.after(ctx, resolution, HookHints.empty)
-        yield
+        } yield
         // The composed hook gives each hook its own hookData, so we check that
         // the hook was able to read its own data across stages
         assertTrue(true) // hookData is internal to the hook via compose
@@ -322,7 +345,7 @@ object HookSpec extends ZIOSpecDefault:
         var hook1Value: Option[String] = None
         var hook2Value: Option[String] = None
 
-        val hook1 = new FeatureHook:
+        val hook1 = new FeatureHook {
           override def before(ctx: HookContext, hints: HookHints): UIO[Option[(EvaluationContext, HookHints)]] =
             ZIO.succeed {
               ctx.hookData.set("owner", "hook1")
@@ -331,8 +354,9 @@ object HookSpec extends ZIOSpecDefault:
 
           override def after[A](ctx: HookContext, details: FlagResolution[A], hints: HookHints): UIO[Unit] =
             ZIO.succeed { hook1Value = ctx.hookData.get[String]("owner") }
+        }
 
-        val hook2 = new FeatureHook:
+        val hook2 = new FeatureHook {
           override def before(ctx: HookContext, hints: HookHints): UIO[Option[(EvaluationContext, HookHints)]] =
             ZIO.succeed {
               ctx.hookData.set("owner", "hook2")
@@ -341,15 +365,16 @@ object HookSpec extends ZIOSpecDefault:
 
           override def after[A](ctx: HookContext, details: FlagResolution[A], hints: HookHints): UIO[Unit] =
             ZIO.succeed { hook2Value = ctx.hookData.get[String]("owner") }
+        }
 
         val composed   = FeatureHook.compose(List(hook1, hook2))
         val ctx        = makeHookContext()
         val resolution = FlagResolution.default("test", true)
 
-        for
+        for {
           _ <- composed.before(ctx, HookHints.empty)
           _ <- composed.after(ctx, resolution, HookHints.empty)
-        yield assertTrue(hook1Value == Some("hook1")) &&
+        } yield assertTrue(hook1Value == Some("hook1")) &&
           assertTrue(hook2Value == Some("hook2"))
       }
     ),
@@ -360,8 +385,9 @@ object HookSpec extends ZIOSpecDefault:
           requiredAttributes = Nil
         )
 
-        for result <- hook.before(makeHookContext(), HookHints.empty)
-        yield assertTrue(result.isEmpty)
+        for {
+          result <- hook.before(makeHookContext(), HookHints.empty)
+        } yield assertTrue(result.isEmpty)
       },
       test("logs warning for missing targeting key") {
         val hook = FeatureHook.contextValidator(
@@ -371,8 +397,9 @@ object HookSpec extends ZIOSpecDefault:
 
         val ctx = makeHookContext()
 
-        for result <- hook.before(ctx, HookHints.empty)
-        yield assertTrue(result.isEmpty)
+        for {
+          result <- hook.before(ctx, HookHints.empty)
+        } yield assertTrue(result.isEmpty)
       },
       test("logs warning for missing required attribute") {
         val hook = FeatureHook.contextValidator(
@@ -382,8 +409,10 @@ object HookSpec extends ZIOSpecDefault:
 
         val ctx = makeHookContext()
 
-        for result <- hook.before(ctx, HookHints.empty)
-        yield assertTrue(result.isEmpty)
+        for {
+          result <- hook.before(ctx, HookHints.empty)
+        } yield assertTrue(result.isEmpty)
       }
     )
   )
+}

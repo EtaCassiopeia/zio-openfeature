@@ -1,11 +1,11 @@
 package zio.openfeature
 
-import zio.*
-import zio.stream.*
-import dev.openfeature.sdk.{FeatureProvider as OFFeatureProvider, OpenFeatureAPI}
+import zio._
+import zio.stream._
+import dev.openfeature.sdk.{FeatureProvider => OFFeatureProvider, OpenFeatureAPI}
 import dev.openfeature.sdk.multiprovider.{MultiProvider, Strategy, FirstMatchStrategy, FirstSuccessfulStrategy}
 
-trait FeatureFlags:
+trait FeatureFlags {
   def boolean(key: String, default: Boolean): IO[FeatureFlagError, Boolean]
   def string(key: String, default: String): IO[FeatureFlagError, String]
   def int(key: String, default: Int): IO[FeatureFlagError, Int]
@@ -114,10 +114,10 @@ trait FeatureFlags:
     overrides: Map[String, Any] = Map.empty,
     context: EvaluationContext = EvaluationContext.empty,
     cacheEvaluations: Boolean = true
-  )(zio: ZIO[R, E, A]): ZIO[R, E | FeatureFlagError, TransactionResult[A]]
+  )(zio: ZIO[R, E, A]): ZIO[R, Compat.OrError[E, FeatureFlagError], TransactionResult[A]]
 
   def inTransaction: UIO[Boolean]
-  def currentEvaluatedFlags: UIO[Map[String, FlagEvaluation[?]]]
+  def currentEvaluatedFlags: UIO[Map[String, FlagEvaluation[_]]]
 
   def events: ZStream[Any, Nothing, ProviderEvent]
   def providerStatus: UIO[ProviderStatus]
@@ -158,8 +158,9 @@ trait FeatureFlags:
   def track(eventName: String, context: EvaluationContext): IO[FeatureFlagError, Unit]
   def track(eventName: String, details: TrackingEventDetails): IO[FeatureFlagError, Unit]
   def track(eventName: String, context: EvaluationContext, details: TrackingEventDetails): IO[FeatureFlagError, Unit]
+}
 
-object FeatureFlags:
+object FeatureFlags {
 
   // Service Accessors
 
@@ -354,20 +355,20 @@ object FeatureFlags:
   def clientContext: ZIO[FeatureFlags, Nothing, EvaluationContext] =
     ZIO.serviceWithZIO(_.clientContext)
 
-  def withContext[R, E, A](ctx: EvaluationContext)(zio: ZIO[R, E, A]): ZIO[R & FeatureFlags, E, A] =
+  def withContext[R, E, A](ctx: EvaluationContext)(zio: ZIO[R, E, A]): ZIO[R with FeatureFlags, E, A] =
     ZIO.serviceWithZIO[FeatureFlags](_.withContext(ctx)(zio))
 
   def transaction[R, E, A](
     overrides: Map[String, Any] = Map.empty,
     context: EvaluationContext = EvaluationContext.empty,
     cacheEvaluations: Boolean = true
-  )(zio: ZIO[R, E, A]): ZIO[R & FeatureFlags, E | FeatureFlagError, TransactionResult[A]] =
+  )(zio: ZIO[R, E, A]): ZIO[R with FeatureFlags, Compat.OrError[E, FeatureFlagError], TransactionResult[A]] =
     ZIO.serviceWithZIO[FeatureFlags](_.transaction(overrides, context, cacheEvaluations)(zio))
 
   def inTransaction: ZIO[FeatureFlags, Nothing, Boolean] =
     ZIO.serviceWithZIO(_.inTransaction)
 
-  def currentEvaluatedFlags: ZIO[FeatureFlags, Nothing, Map[String, FlagEvaluation[?]]] =
+  def currentEvaluatedFlags: ZIO[FeatureFlags, Nothing, Map[String, FlagEvaluation[_]]] =
     ZIO.serviceWithZIO(_.currentEvaluatedFlags)
 
   def events: ZStream[FeatureFlags, Nothing, ProviderEvent] =
@@ -420,16 +421,8 @@ object FeatureFlags:
 
   // API-level Hooks (per OpenFeature spec 4.4.1)
 
-  /** Add an API-level hook that applies to all clients.
-    *
-    * Per OpenFeature spec, hook execution order is: API -> Client -> Invocation -> Provider For before hooks, this
-    * order applies. For after/error/finally hooks, the order is reversed.
-    *
-    * Note: API-level hooks are registered with the global OpenFeature API and persist until cleared. Use the
-    * OpenFeature SDK's Hook interface for API-level hooks. For ZIO-native hooks, use client-level (addHook) or
-    * invocation-level (EvaluationOptions) hooks.
-    */
-  def addApiHook(hook: dev.openfeature.sdk.Hook[?]): UIO[Unit] =
+  /** Add an API-level hook that applies to all clients. */
+  def addApiHook(hook: dev.openfeature.sdk.Hook[_]): UIO[Unit] =
     ZIO.succeed(OpenFeatureAPI.getInstance().addHooks(hook))
 
   /** Clear all API-level hooks. */
@@ -456,18 +449,10 @@ object FeatureFlags:
 
   // Factory Methods
 
-  /** Create a FeatureFlags layer from any OpenFeature provider.
-    *
-    * Example:
-    * {{{
-    * import dev.openfeature.contrib.providers.flagd.FlagdProvider
-    *
-    * val layer = FeatureFlags.fromProvider(new FlagdProvider())
-    * }}}
-    */
+  /** Create a FeatureFlags layer from any OpenFeature provider. */
   def fromProvider(provider: OFFeatureProvider): ZLayer[Scope, Throwable, FeatureFlags] =
     ZLayer.scoped {
-      for
+      for {
         api    <- ZIO.succeed(OpenFeatureAPI.getInstance())
         _      <- ZIO.attemptBlocking(api.setProviderAndWait(provider))
         client <- ZIO.attempt(api.getClient())
@@ -479,7 +464,7 @@ object FeatureFlags:
         hooksRef       <- Ref.make(List.empty[FeatureHook])
         eventHub       <- Hub.unbounded[ProviderEvent]
         _              <- ZIO.addFinalizer(ZIO.attemptBlocking(api.shutdown()).ignore)
-      yield FeatureFlagsLive(
+      } yield new FeatureFlagsLive(
         client,
         provider,
         providerName,
@@ -493,14 +478,10 @@ object FeatureFlags:
       )
     }
 
-  /** Create a FeatureFlags layer with a named domain/client.
-    *
-    * Useful for multi-provider setups where you need isolated clients. Note: Does not call shutdown on finalization to
-    * avoid affecting other domains.
-    */
+  /** Create a FeatureFlags layer with a named domain/client. */
   def fromProviderWithDomain(provider: OFFeatureProvider, domain: String): ZLayer[Scope, Throwable, FeatureFlags] =
     ZLayer.scoped {
-      for
+      for {
         api    <- ZIO.succeed(OpenFeatureAPI.getInstance())
         _      <- ZIO.attemptBlocking(api.setProviderAndWait(domain, provider))
         client <- ZIO.attempt(api.getClient(domain))
@@ -511,8 +492,7 @@ object FeatureFlags:
         transactionRef <- FiberRef.make[Option[TransactionState]](None)
         hooksRef       <- Ref.make(List.empty[FeatureHook])
         eventHub       <- Hub.unbounded[ProviderEvent]
-      // Note: We don't shutdown here as it would affect all domains globally
-      yield FeatureFlagsLive(
+      } yield new FeatureFlagsLive(
         client,
         provider,
         providerName,
@@ -526,46 +506,28 @@ object FeatureFlags:
       )
     }
 
-  /** Create a FeatureFlags layer from multiple providers using the first-match strategy.
-    *
-    * The first provider that returns a result without an error will be used. This is useful for layered configurations
-    * (e.g., a local override provider falling back to a remote provider).
-    *
-    * Example:
-    * {{{
-    * val layer = FeatureFlags.fromMultiProvider(List(localProvider, remoteProvider))
-    * }}}
-    */
-  def fromMultiProvider(providers: List[OFFeatureProvider]): ZLayer[Scope, Throwable, FeatureFlags] =
-    import scala.jdk.CollectionConverters.*
+  /** Create a FeatureFlags layer from multiple providers using the first-match strategy. */
+  def fromMultiProvider(providers: List[OFFeatureProvider]): ZLayer[Scope, Throwable, FeatureFlags] = {
+    import scala.jdk.CollectionConverters._
     fromProvider(new MultiProvider(providers.asJava))
+  }
 
-  /** Create a FeatureFlags layer from multiple providers with a custom strategy.
-    *
-    * Built-in strategies:
-    *   - `new FirstMatchStrategy()` - uses the first provider that returns without error
-    *   - `new FirstSuccessfulStrategy()` - uses the first provider that returns successfully
-    *
-    * Example:
-    * {{{
-    * val layer = FeatureFlags.fromMultiProvider(List(p1, p2), new FirstSuccessfulStrategy())
-    * }}}
-    */
+  /** Create a FeatureFlags layer from multiple providers with a custom strategy. */
   def fromMultiProvider(
     providers: List[OFFeatureProvider],
     strategy: Strategy
-  ): ZLayer[Scope, Throwable, FeatureFlags] =
-    import scala.jdk.CollectionConverters.*
+  ): ZLayer[Scope, Throwable, FeatureFlags] = {
+    import scala.jdk.CollectionConverters._
     fromProvider(new MultiProvider(providers.asJava, strategy))
+  }
 
-  /** Create a FeatureFlags layer with initial hooks.
-    */
+  /** Create a FeatureFlags layer with initial hooks. */
   def fromProviderWithHooks(
     provider: OFFeatureProvider,
     initialHooks: List[FeatureHook]
   ): ZLayer[Scope, Throwable, FeatureFlags] =
     ZLayer.scoped {
-      for
+      for {
         api    <- ZIO.succeed(OpenFeatureAPI.getInstance())
         _      <- ZIO.attemptBlocking(api.setProviderAndWait(provider))
         client <- ZIO.attempt(api.getClient())
@@ -577,7 +539,7 @@ object FeatureFlags:
         hooksRef       <- Ref.make(initialHooks)
         eventHub       <- Hub.unbounded[ProviderEvent]
         _              <- ZIO.addFinalizer(ZIO.attemptBlocking(api.shutdown()).ignore)
-      yield FeatureFlagsLive(
+      } yield new FeatureFlagsLive(
         client,
         provider,
         providerName,
@@ -590,3 +552,4 @@ object FeatureFlags:
         eventHub
       )
     }
+}

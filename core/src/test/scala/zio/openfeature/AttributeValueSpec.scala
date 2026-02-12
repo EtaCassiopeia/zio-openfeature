@@ -1,11 +1,11 @@
 package zio.openfeature
 
-import zio.*
-import zio.test.*
-import zio.test.Assertion.*
+import zio._
+import zio.test._
+import zio.test.Assertion._
 import java.time.Instant
 
-object AttributeValueSpec extends ZIOSpecDefault:
+object AttributeValueSpec extends ZIOSpecDefault {
 
   def spec = suite("AttributeValueSpec")(
     suite("Construction helpers")(
@@ -185,3 +185,4 @@ object AttributeValueSpec extends ZIOSpecDefault:
       }
     )
   )
+}

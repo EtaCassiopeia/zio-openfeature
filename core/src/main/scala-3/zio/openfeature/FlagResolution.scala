@@ -62,7 +62,7 @@ final case class FlagMetadata(values: Map[String, MetadataValue]):
   def nonEmpty: Boolean                        = values.nonEmpty
 
 object FlagMetadata:
-  val empty: FlagMetadata = FlagMetadata(Map.empty)
+  val empty: FlagMetadata = FlagMetadata(Map.empty[String, MetadataValue])
 
   def apply(entries: (String, MetadataValue)*): FlagMetadata = FlagMetadata(entries.toMap)
 

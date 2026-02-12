@@ -26,8 +26,8 @@ jobs:
       - name: Setup sbt
         uses: sbt/setup-sbt@v1
 
-      - name: Run tests
-        run: sbt test
+      - name: Run tests (Scala 2.13 + 3)
+        run: sbt +test
 
       - name: Publish to Maven Central
         run: sbt ci-release

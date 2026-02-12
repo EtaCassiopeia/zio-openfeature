@@ -3,7 +3,7 @@ package zio.openfeature
 final case class EvaluationContext(
   targetingKey: Option[String],
   attributes: Map[String, AttributeValue]
-):
+) {
   def merge(other: EvaluationContext): EvaluationContext =
     EvaluationContext(
       targetingKey = other.targetingKey.orElse(targetingKey),
@@ -31,8 +31,9 @@ final case class EvaluationContext(
 
   def isEmpty: Boolean  = targetingKey.isEmpty && attributes.isEmpty
   def nonEmpty: Boolean = !isEmpty
+}
 
-object EvaluationContext:
+object EvaluationContext {
   val empty: EvaluationContext = EvaluationContext(None, Map.empty)
 
   def apply(targetingKey: String): EvaluationContext =
@@ -52,10 +53,11 @@ object EvaluationContext:
 
   def builder: Builder = Builder(None, Map.empty)
 
+  @scala.annotation.nowarn
   final case class Builder private[EvaluationContext] (
     targetingKey: Option[String],
     attributes: Map[String, AttributeValue]
-  ):
+  ) {
     def targetingKey(key: String): Builder                     = copy(targetingKey = Some(key))
     def attribute(key: String, value: AttributeValue): Builder = copy(attributes = attributes + (key -> value))
     def attribute(key: String, value: String): Builder         = attribute(key, AttributeValue.StringValue(value))
@@ -64,3 +66,5 @@ object EvaluationContext:
     def attribute(key: String, value: Double): Builder         = attribute(key, AttributeValue.DoubleValue(value))
     def attributes(attrs: (String, AttributeValue)*): Builder  = copy(attributes = attributes ++ attrs)
     def build: EvaluationContext                               = EvaluationContext(targetingKey, attributes)
+  }
+}

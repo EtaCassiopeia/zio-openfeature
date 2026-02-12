@@ -1,9 +1,9 @@
 package zio.openfeature
 
-import zio.test.*
-import zio.test.Assertion.*
+import zio.test._
+import zio.test.Assertion._
 
-object EvaluationContextSpec extends ZIOSpecDefault:
+object EvaluationContextSpec extends ZIOSpecDefault {
 
   def spec = suite("EvaluationContextSpec")(
     suite("Construction")(
@@ -185,3 +185,4 @@ object EvaluationContextSpec extends ZIOSpecDefault:
       }
     )
   )
+}

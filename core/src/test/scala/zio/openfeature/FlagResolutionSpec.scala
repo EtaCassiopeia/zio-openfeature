@@ -1,10 +1,10 @@
 package zio.openfeature
 
-import zio.*
-import zio.test.*
-import zio.test.Assertion.*
+import zio._
+import zio.test._
+import zio.test.Assertion._
 
-object FlagResolutionSpec extends ZIOSpecDefault:
+object FlagResolutionSpec extends ZIOSpecDefault {
 
   def spec = suite("FlagResolutionSpec")(
     suite("ResolutionReason enum")(
@@ -166,3 +166,4 @@ object FlagResolutionSpec extends ZIOSpecDefault:
       }
     )
   )
+}

@@ -1,36 +1,38 @@
 package zio.openfeature
 
-import zio.*
-import zio.test.*
-import zio.test.Assertion.*
+import zio._
+import zio.test._
+import zio.test.Assertion._
 import java.time.Instant
 
-object TransactionSpec extends ZIOSpecDefault:
+object TransactionSpec extends ZIOSpecDefault {
 
   def spec = suite("TransactionSpec")(
     suite("FlagEvaluation")(
       test("evaluated creates record with wasOverridden = false") {
         val resolution = FlagResolution.targetingMatch("test-flag", true, Some("variant-a"))
-        for eval <- FlagEvaluation.evaluated("test-flag", resolution)
-        yield assertTrue(eval.key == "test-flag") &&
+        for {
+          eval <- FlagEvaluation.evaluated("test-flag", resolution)
+        } yield assertTrue(eval.key == "test-flag") &&
           assertTrue(eval.value == true) &&
           assertTrue(eval.wasOverridden == false) &&
           assertTrue(eval.wasEvaluated == true)
       },
       test("overridden creates record with wasOverridden = true") {
-        for eval <- FlagEvaluation.overridden("override-flag", 42)
-        yield assertTrue(eval.key == "override-flag") &&
+        for {
+          eval <- FlagEvaluation.overridden("override-flag", 42)
+        } yield assertTrue(eval.key == "override-flag") &&
           assertTrue(eval.value == 42) &&
           assertTrue(eval.wasOverridden == true) &&
           assertTrue(eval.wasEvaluated == false)
       },
       test("evaluation has timestamp") {
         val resolution = FlagResolution.default("test", true)
-        for
+        for {
           before <- Clock.instant
           eval   <- FlagEvaluation.evaluated("test", resolution)
           after  <- Clock.instant
-        yield assertTrue(!eval.timestamp.isBefore(before)) &&
+        } yield assertTrue(!eval.timestamp.isBefore(before)) &&
           assertTrue(!eval.timestamp.isAfter(after))
       }
     ),
@@ -118,7 +120,7 @@ object TransactionSpec extends ZIOSpecDefault:
           overriddenFlags = Set.empty
         )
         assertTrue(result.getEvaluation("get-test").isDefined) &&
-        assertTrue(result.getEvaluation("get-test").get.value == "value") &&
+        assertTrue((result.getEvaluation("get-test").get.value: Any) == "value") &&
         assertTrue(result.getEvaluation("missing").isEmpty)
       },
       test("map transforms result value") {
@@ -142,59 +144,62 @@ object TransactionSpec extends ZIOSpecDefault:
     ),
     suite("TransactionState")(
       test("make creates empty state") {
-        for
+        for {
           state <- TransactionState.make(Map.empty, EvaluationContext.empty)
           evals <- state.getEvaluations
-        yield assertTrue(evals.isEmpty)
+        } yield assertTrue(evals.isEmpty)
       },
       test("make stores overrides") {
-        for state <- TransactionState.make(Map("a" -> 1, "b" -> "two"), EvaluationContext.empty)
-        yield assertTrue(state.getOverride("a").contains(1)) &&
+        for {
+          state <- TransactionState.make(Map("a" -> 1, "b" -> "two"), EvaluationContext.empty)
+        } yield assertTrue(state.getOverride("a").contains(1)) &&
           assertTrue(state.getOverride("b").contains("two")) &&
           assertTrue(state.getOverride("c").isEmpty)
       },
       test("make stores context") {
         val ctx = EvaluationContext("user-123")
-        for state <- TransactionState.make(Map.empty, ctx)
-        yield assertTrue(state.context.targetingKey.contains("user-123"))
+        for {
+          state <- TransactionState.make(Map.empty, ctx)
+        } yield assertTrue(state.context.targetingKey.contains("user-123"))
       },
       test("record adds evaluation") {
-        for
+        for {
           state <- TransactionState.make(Map.empty, EvaluationContext.empty)
           eval  <- FlagEvaluation.evaluated("test", FlagResolution.default("test", true))
           _     <- state.record(eval)
           evals <- state.getEvaluations
-        yield assertTrue(evals.size == 1) &&
+        } yield assertTrue(evals.size == 1) &&
           assertTrue(evals.contains("test"))
       },
       test("toResult builds TransactionResult") {
-        for
+        for {
           state  <- TransactionState.make(Map("override" -> 42), EvaluationContext.empty)
           eval1  <- FlagEvaluation.evaluated("provider", FlagResolution.default("provider", true))
           eval2  <- FlagEvaluation.overridden("override", 42)
           _      <- state.record(eval1)
           _      <- state.record(eval2)
           result <- state.toResult("done")
-        yield assertTrue(result.result == "done") &&
+        } yield assertTrue(result.result == "done") &&
           assertTrue(result.flagCount == 2) &&
           assertTrue(result.overrideCount == 1) &&
           assertTrue(result.wasOverridden("override")) &&
           assertTrue(!result.wasOverridden("provider"))
       },
       test("getCachedEvaluation returns None for uncached flag") {
-        for
+        for {
           state  <- TransactionState.make(Map.empty, EvaluationContext.empty)
           cached <- state.getCachedEvaluation("nonexistent")
-        yield assertTrue(cached.isEmpty)
+        } yield assertTrue(cached.isEmpty)
       },
       test("getCachedEvaluation returns evaluation after record") {
-        for
+        for {
           state  <- TransactionState.make(Map.empty, EvaluationContext.empty)
           eval   <- FlagEvaluation.evaluated("cached-flag", FlagResolution.default("cached-flag", "cached-value"))
           _      <- state.record(eval)
           cached <- state.getCachedEvaluation("cached-flag")
-        yield assertTrue(cached.isDefined) &&
-          assertTrue(cached.get.value == "cached-value")
+        } yield assertTrue(cached.isDefined) &&
+          assertTrue((cached.get.value: Any) == "cached-value")
       }
     )
   )
+}

@@ -1,53 +1,67 @@
 package zio.openfeature
 
-sealed trait FeatureFlagError extends Product with Serializable:
+sealed trait FeatureFlagError extends Product with Serializable {
   def message: String
   def cause: Option[Throwable] = None
+}
 
-object FeatureFlagError:
-  final case class FlagNotFound(key: String) extends FeatureFlagError:
+object FeatureFlagError {
+  final case class FlagNotFound(key: String) extends FeatureFlagError {
     def message: String = s"Flag '$key' not found"
+  }
 
-  final case class TypeMismatch(key: String, expected: String, actual: String) extends FeatureFlagError:
+  final case class TypeMismatch(key: String, expected: String, actual: String) extends FeatureFlagError {
     def message: String = s"Flag '$key' type mismatch: expected $expected, got $actual"
+  }
 
-  final case class ParseError(key: String, underlying: Throwable) extends FeatureFlagError:
+  final case class ParseError(key: String, underlying: Throwable) extends FeatureFlagError {
     def message: String                   = s"Failed to parse flag '$key': ${underlying.getMessage}"
     override def cause: Option[Throwable] = Some(underlying)
+  }
 
-  final case class EmptyFlagVariables(key: String) extends FeatureFlagError:
+  final case class EmptyFlagVariables(key: String) extends FeatureFlagError {
     def message: String = s"Flag '$key' has no variables but non-boolean type requested"
+  }
 
-  final case class TargetingKeyMissing(key: String) extends FeatureFlagError:
+  final case class TargetingKeyMissing(key: String) extends FeatureFlagError {
     def message: String = s"Targeting key required for flag '$key' but not provided"
+  }
 
-  final case class InvalidContext(reason: String) extends FeatureFlagError:
+  final case class InvalidContext(reason: String) extends FeatureFlagError {
     def message: String = s"Invalid evaluation context: $reason"
+  }
 
-  final case class ProviderNotReady(status: ProviderStatus) extends FeatureFlagError:
+  final case class ProviderNotReady(status: ProviderStatus) extends FeatureFlagError {
     def message: String = s"Provider not ready: $status"
+  }
 
-  final case class ProviderInitializationFailed(underlying: Throwable) extends FeatureFlagError:
+  final case class ProviderInitializationFailed(underlying: Throwable) extends FeatureFlagError {
     def message: String                   = s"Provider initialization failed: ${underlying.getMessage}"
     override def cause: Option[Throwable] = Some(underlying)
+  }
 
-  final case class ProviderError(underlying: Throwable) extends FeatureFlagError:
+  final case class ProviderError(underlying: Throwable) extends FeatureFlagError {
     def message: String                   = s"Provider error: ${underlying.getMessage}"
     override def cause: Option[Throwable] = Some(underlying)
+  }
 
-  final case class InvalidConfiguration(reason: String) extends FeatureFlagError:
+  final case class InvalidConfiguration(reason: String) extends FeatureFlagError {
     def message: String = s"Invalid provider configuration: $reason"
+  }
 
-  case object NestedTransactionNotAllowed extends FeatureFlagError:
+  case object NestedTransactionNotAllowed extends FeatureFlagError {
     def message: String = "Nested transactions are not allowed"
+  }
 
-  case object ProviderFatal extends FeatureFlagError:
+  case object ProviderFatal extends FeatureFlagError {
     def message: String = "Provider is in an irrecoverable error state"
+  }
 
-  final case class OverrideTypeMismatch(key: String, expected: String, actual: String) extends FeatureFlagError:
+  final case class OverrideTypeMismatch(key: String, expected: String, actual: String) extends FeatureFlagError {
     def message: String = s"Override for flag '$key' type mismatch: expected $expected, got $actual"
+  }
 
-  def isRecoverable(error: FeatureFlagError): Boolean = error match
+  def isRecoverable(error: FeatureFlagError): Boolean = error match {
     case _: FlagNotFound        => true
     case _: TypeMismatch        => true
     case _: ParseError          => true
@@ -55,16 +69,18 @@ object FeatureFlagError:
     case _: TargetingKeyMissing => true
     case _: InvalidContext      => true
     case _                      => false
+  }
 
-  def isProviderError(error: FeatureFlagError): Boolean = error match
+  def isProviderError(error: FeatureFlagError): Boolean = error match {
     case _: ProviderNotReady             => true
     case ProviderFatal                   => true
     case _: ProviderInitializationFailed => true
     case _: ProviderError                => true
     case _: InvalidConfiguration         => true
     case _                               => false
+  }
 
-  def toErrorCode(error: FeatureFlagError): ErrorCode = error match
+  def toErrorCode(error: FeatureFlagError): ErrorCode = error match {
     case _: FlagNotFound                 => ErrorCode.FlagNotFound
     case _: TypeMismatch                 => ErrorCode.TypeMismatch
     case _: ParseError                   => ErrorCode.ParseError
@@ -78,3 +94,5 @@ object FeatureFlagError:
     case _: InvalidConfiguration         => ErrorCode.General
     case NestedTransactionNotAllowed     => ErrorCode.General
     case _: OverrideTypeMismatch         => ErrorCode.TypeMismatch
+  }
+}

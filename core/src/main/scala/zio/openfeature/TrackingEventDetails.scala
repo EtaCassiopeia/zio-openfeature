@@ -10,16 +10,18 @@ package zio.openfeature
 final case class TrackingEventDetails(
   value: Option[Double] = None,
   attributes: Map[String, Any] = Map.empty
-):
+) {
   def withValue(v: Double): TrackingEventDetails = copy(value = Some(v))
   def withAttribute(key: String, v: Any): TrackingEventDetails =
     copy(attributes = attributes + (key -> v))
+}
 
-object TrackingEventDetails:
+object TrackingEventDetails {
   val empty: TrackingEventDetails = TrackingEventDetails()
 
   def apply(value: Double): TrackingEventDetails =
     TrackingEventDetails(value = Some(value))
 
   def apply(attributes: Map[String, Any]): TrackingEventDetails =
-    TrackingEventDetails(attributes = attributes)
+    new TrackingEventDetails(value = None, attributes = attributes)
+}

@@ -1,10 +1,10 @@
 package zio.openfeature
 
-import zio.*
-import zio.test.*
-import zio.test.Assertion.*
+import zio._
+import zio.test._
+import zio.test.Assertion._
 
-object ProviderStatusSpec extends ZIOSpecDefault:
+object ProviderStatusSpec extends ZIOSpecDefault {
 
   def spec = suite("ProviderStatusSpec")(
     suite("ProviderStatus enum")(
@@ -49,3 +49,4 @@ object ProviderStatusSpec extends ZIOSpecDefault:
       }
     )
   )
+}

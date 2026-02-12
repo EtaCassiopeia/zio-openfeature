@@ -69,7 +69,7 @@ trait FeatureHook {
   def error(ctx: HookContext, error: FeatureFlagError, hints: HookHints): UIO[Unit] =
     ZIO.unit
 
-  def finallyAfter(ctx: HookContext, hints: HookHints): UIO[Unit] =
+  def finallyAfter(ctx: HookContext, details: Option[FlagResolution[_]], hints: HookHints): UIO[Unit] =
     ZIO.unit
 }
 
@@ -103,8 +103,8 @@ object FeatureHook {
     override def error(ctx: HookContext, err: FeatureFlagError, hints: HookHints): UIO[Unit] =
       ZIO.foreachDiscard(hooks)(hook => hook.error(ctxForHook(ctx, hook), err, hints))
 
-    override def finallyAfter(ctx: HookContext, hints: HookHints): UIO[Unit] =
-      ZIO.foreachDiscard(hooks)(hook => hook.finallyAfter(ctxForHook(ctx, hook), hints))
+    override def finallyAfter(ctx: HookContext, details: Option[FlagResolution[_]], hints: HookHints): UIO[Unit] =
+      ZIO.foreachDiscard(hooks)(hook => hook.finallyAfter(ctxForHook(ctx, hook), details, hints))
   }
 
   def logging(

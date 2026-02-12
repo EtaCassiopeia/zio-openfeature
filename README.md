@@ -1,6 +1,6 @@
 # ZIO OpenFeature
 
-A ZIO-native wrapper around the [OpenFeature](https://openfeature.dev/) Java SDK for Scala 3.
+A ZIO-native wrapper around the [OpenFeature](https://openfeature.dev/) Java SDK for Scala 2.13 and Scala 3.
 
 ## What is ZIO OpenFeature?
 
@@ -14,7 +14,7 @@ ZIO OpenFeature provides a type-safe, functional interface for feature flag eval
 
 ## Requirements
 
-- Scala 3.3+
+- Scala 2.13+ or Scala 3.3+
 - ZIO 2.1+
 - Java 11+
 

@@ -8,7 +8,7 @@ permalink: /
 
 # ZIO OpenFeature
 
-A ZIO-native wrapper around the [OpenFeature](https://openfeature.dev/) Java SDK for Scala 3.
+A ZIO-native wrapper around the [OpenFeature](https://openfeature.dev/) Java SDK for Scala 2.13 and Scala 3.
 {: .fs-6 .fw-300 }
 
 [Get Started]({{ site.baseurl }}/getting-started){: .btn .btn-primary .fs-5 .mb-4 .mb-md-0 .mr-2 }
@@ -69,7 +69,7 @@ object MyApp extends ZIOAppDefault:
 
 ## Requirements
 
-- Scala 3.3+
+- Scala 2.13+ or Scala 3.3+
 - ZIO 2.1+
 
 ## License

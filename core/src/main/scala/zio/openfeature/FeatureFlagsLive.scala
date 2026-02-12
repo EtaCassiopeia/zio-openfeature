@@ -10,7 +10,9 @@ import dev.openfeature.sdk.{
   Reason => OFReason,
   ErrorCode => OFErrorCode,
   OpenFeatureAPI,
-  MutableTrackingEventDetails
+  MutableTrackingEventDetails,
+  ProviderEvent => JavaProviderEvent,
+  EventDetails
 }
 import scala.jdk.CollectionConverters._
 
@@ -27,6 +29,75 @@ final private[openfeature] class FeatureFlagsLive(
   eventHub: Hub[ProviderEvent],
   statusRef: Ref[ProviderStatus]
 ) extends FeatureFlags {
+
+  // Bridge Java SDK provider events to ZIO event system
+  private[openfeature] def startEventBridge: ZIO[Scope, Nothing, Unit] = {
+    val metadata = ProviderMetadata(providerName)
+
+    val readyHandler: java.util.function.Consumer[EventDetails] = _ =>
+      Unsafe.unsafe { implicit u =>
+        Runtime.default.unsafe
+          .run(
+            statusRef.set(ProviderStatus.Ready) *>
+              eventHub.publish(ProviderEvent.Ready(metadata))
+          )
+          .getOrThrowFiberFailure()
+      }
+
+    val errorHandler: java.util.function.Consumer[EventDetails] = details =>
+      Unsafe.unsafe { implicit u =>
+        val error     = new RuntimeException(Option(details.getMessage).getOrElse("Provider error"))
+        val errorCode = Option(details.getErrorCode).map(toErrorCode)
+        Runtime.default.unsafe
+          .run(
+            statusRef.set(ProviderStatus.Error) *>
+              eventHub.publish(
+                ProviderEvent.Error(error, metadata, errorCode, Option(details.getMessage))
+              )
+          )
+          .getOrThrowFiberFailure()
+      }
+
+    val staleHandler: java.util.function.Consumer[EventDetails] = details =>
+      Unsafe.unsafe { implicit u =>
+        val reason = Option(details.getMessage).getOrElse("Provider stale")
+        Runtime.default.unsafe
+          .run(
+            statusRef.set(ProviderStatus.Stale) *>
+              eventHub.publish(ProviderEvent.Stale(reason, metadata))
+          )
+          .getOrThrowFiberFailure()
+      }
+
+    val configHandler: java.util.function.Consumer[EventDetails] = details =>
+      Unsafe.unsafe { implicit u =>
+        val flags = Option(details.getFlagsChanged)
+          .map(_.asScala.toSet)
+          .getOrElse(Set.empty[String])
+        Runtime.default.unsafe
+          .run(
+            eventHub.publish(ProviderEvent.ConfigurationChanged(flags, metadata))
+          )
+          .getOrThrowFiberFailure()
+      }
+
+    for {
+      _ <- ZIO.succeed {
+        client.on(JavaProviderEvent.PROVIDER_READY, readyHandler)
+        client.on(JavaProviderEvent.PROVIDER_ERROR, errorHandler)
+        client.on(JavaProviderEvent.PROVIDER_STALE, staleHandler)
+        client.on(JavaProviderEvent.PROVIDER_CONFIGURATION_CHANGED, configHandler)
+        ()
+      }
+      _ <- ZIO.addFinalizer(ZIO.attempt {
+        client.removeHandler(JavaProviderEvent.PROVIDER_READY, readyHandler)
+        client.removeHandler(JavaProviderEvent.PROVIDER_ERROR, errorHandler)
+        client.removeHandler(JavaProviderEvent.PROVIDER_STALE, staleHandler)
+        client.removeHandler(JavaProviderEvent.PROVIDER_CONFIGURATION_CHANGED, configHandler)
+        ()
+      }.ignore)
+    } yield ()
+  }
 
   // Context merges in order per OpenFeature spec: API (global) -> Client -> Transaction -> Invocation
   private def effectiveContext(invocation: EvaluationContext): UIO[EvaluationContext] =

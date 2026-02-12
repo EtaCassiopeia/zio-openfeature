@@ -25,13 +25,38 @@ object FlagValueType:
       case "Double"  => Double
       case _         => Object
 
+/** Per-hook mutable state that persists across hook stages within a single evaluation (spec 4.6.1).
+  *
+  * Unlike HookHints (which are read-only and shared), HookData is scoped to an individual hook instance. A hook can
+  * store state in `before` and retrieve it in `after`, `error`, or `finallyAfter`.
+  */
+final class HookData:
+  private val data: java.util.concurrent.ConcurrentHashMap[String, Any] =
+    new java.util.concurrent.ConcurrentHashMap()
+
+  def set(key: String, value: Any): Unit = data.put(key, value)
+
+  def get[A](key: String): Option[A] =
+    Option(data.get(key)).map(_.asInstanceOf[A])
+
+  def getOrElse[A](key: String, default: => A): A =
+    get[A](key).getOrElse(default)
+
+  def remove(key: String): Unit = data.remove(key)
+
+  def clear(): Unit = data.clear()
+
+object HookData:
+  def empty: HookData = new HookData
+
 final case class HookContext(
   flagKey: String,
   flagType: FlagValueType,
   defaultValue: Any,
   evaluationContext: EvaluationContext,
   clientMetadata: ClientMetadata,
-  providerMetadata: ProviderMetadata
+  providerMetadata: ProviderMetadata,
+  hookData: HookData = HookData.empty
 )
 
 final case class HookHints(values: Map[String, Any]):
@@ -71,10 +96,17 @@ object FeatureHook:
   val noop: FeatureHook = new FeatureHook {}
 
   def compose(hooks: List[FeatureHook]): FeatureHook = new FeatureHook:
+    // Each hook gets its own HookData instance (spec 4.6.1 - scoped to individual hook)
+    private lazy val hookDataMap: Map[FeatureHook, HookData] =
+      hooks.map(h => h -> HookData.empty).toMap
+
+    private def ctxForHook(ctx: HookContext, hook: FeatureHook): HookContext =
+      ctx.copy(hookData = hookDataMap.getOrElse(hook, HookData.empty))
+
     override def before(ctx: HookContext, hints: HookHints): UIO[Option[(EvaluationContext, HookHints)]] =
       ZIO
         .foldLeft(hooks)((ctx.evaluationContext, hints, false)) { case ((currentCtx, currentHints, modified), hook) =>
-          hook.before(ctx.copy(evaluationContext = currentCtx), currentHints).map {
+          hook.before(ctxForHook(ctx.copy(evaluationContext = currentCtx), hook), currentHints).map {
             case Some((newCtx, newHints)) => (newCtx, newHints, true)
             case None                     => (currentCtx, currentHints, modified)
           }
@@ -84,13 +116,13 @@ object FeatureHook:
         }
 
     override def after[A](ctx: HookContext, details: FlagResolution[A], hints: HookHints): UIO[Unit] =
-      ZIO.foreachDiscard(hooks)(_.after(ctx, details, hints))
+      ZIO.foreachDiscard(hooks)(hook => hook.after(ctxForHook(ctx, hook), details, hints))
 
     override def error(ctx: HookContext, err: FeatureFlagError, hints: HookHints): UIO[Unit] =
-      ZIO.foreachDiscard(hooks)(_.error(ctx, err, hints))
+      ZIO.foreachDiscard(hooks)(hook => hook.error(ctxForHook(ctx, hook), err, hints))
 
     override def finallyAfter(ctx: HookContext, hints: HookHints): UIO[Unit] =
-      ZIO.foreachDiscard(hooks)(_.finallyAfter(ctx, hints))
+      ZIO.foreachDiscard(hooks)(hook => hook.finallyAfter(ctxForHook(ctx, hook), hints))
 
   def logging(
     logBefore: Boolean = false,

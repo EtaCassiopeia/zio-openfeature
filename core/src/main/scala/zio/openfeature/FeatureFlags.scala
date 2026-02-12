@@ -3,6 +3,7 @@ package zio.openfeature
 import zio.*
 import zio.stream.*
 import dev.openfeature.sdk.{FeatureProvider as OFFeatureProvider, OpenFeatureAPI}
+import dev.openfeature.sdk.multiprovider.{MultiProvider, Strategy, FirstMatchStrategy, FirstSuccessfulStrategy}
 
 trait FeatureFlags:
   def boolean(key: String, default: Boolean): IO[FeatureFlagError, Boolean]
@@ -524,6 +525,38 @@ object FeatureFlags:
         eventHub
       )
     }
+
+  /** Create a FeatureFlags layer from multiple providers using the first-match strategy.
+    *
+    * The first provider that returns a result without an error will be used. This is useful for layered configurations
+    * (e.g., a local override provider falling back to a remote provider).
+    *
+    * Example:
+    * {{{
+    * val layer = FeatureFlags.fromMultiProvider(List(localProvider, remoteProvider))
+    * }}}
+    */
+  def fromMultiProvider(providers: List[OFFeatureProvider]): ZLayer[Scope, Throwable, FeatureFlags] =
+    import scala.jdk.CollectionConverters.*
+    fromProvider(new MultiProvider(providers.asJava))
+
+  /** Create a FeatureFlags layer from multiple providers with a custom strategy.
+    *
+    * Built-in strategies:
+    *   - `new FirstMatchStrategy()` - uses the first provider that returns without error
+    *   - `new FirstSuccessfulStrategy()` - uses the first provider that returns successfully
+    *
+    * Example:
+    * {{{
+    * val layer = FeatureFlags.fromMultiProvider(List(p1, p2), new FirstSuccessfulStrategy())
+    * }}}
+    */
+  def fromMultiProvider(
+    providers: List[OFFeatureProvider],
+    strategy: Strategy
+  ): ZLayer[Scope, Throwable, FeatureFlags] =
+    import scala.jdk.CollectionConverters.*
+    fromProvider(new MultiProvider(providers.asJava, strategy))
 
   /** Create a FeatureFlags layer with initial hooks.
     */

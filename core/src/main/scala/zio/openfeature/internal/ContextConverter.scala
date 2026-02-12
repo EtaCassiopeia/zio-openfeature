@@ -55,7 +55,7 @@ private[openfeature] object ContextConverter:
 
   /** Convert an OpenFeature SDK EvaluationContext to a zio-openfeature EvaluationContext. */
   def fromOpenFeature(ctx: OFEvaluationContext): EvaluationContext =
-    val targetingKey = Option(ctx.getTargetingKey).filter(_.nonEmpty)
+    val targetingKey = Option(ctx.getTargetingKey)
 
     val attributes = ctx
       .asMap()

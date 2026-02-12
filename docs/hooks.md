@@ -146,7 +146,8 @@ final case class HookContext(
   defaultValue: Any,                   // The default value
   evaluationContext: EvaluationContext, // The evaluation context
   clientMetadata: ClientMetadata,      // Client information (spec 4.1.2)
-  providerMetadata: ProviderMetadata   // Provider information
+  providerMetadata: ProviderMetadata,  // Provider information
+  hookData: HookData                   // Per-hook mutable state (spec 4.6.1)
 )
 ```
 

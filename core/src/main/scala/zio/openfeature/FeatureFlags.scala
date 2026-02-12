@@ -465,19 +465,21 @@ object FeatureFlags {
         eventHub       <- Hub.unbounded[ProviderEvent]
         statusRef      <- Ref.make[ProviderStatus](ProviderStatus.Ready)
         _              <- ZIO.addFinalizer(ZIO.attemptBlocking(api.shutdown()).ignore)
-      } yield new FeatureFlagsLive(
-        client,
-        provider,
-        providerName,
-        None, // default domain
-        globalCtxRef,
-        clientCtxRef,
-        fiberCtxRef,
-        transactionRef,
-        hooksRef,
-        eventHub,
-        statusRef
-      )
+        ff = new FeatureFlagsLive(
+          client,
+          provider,
+          providerName,
+          None, // default domain
+          globalCtxRef,
+          clientCtxRef,
+          fiberCtxRef,
+          transactionRef,
+          hooksRef,
+          eventHub,
+          statusRef
+        )
+        _ <- ff.startEventBridge
+      } yield ff
     }
 
   /** Create a FeatureFlags layer with a named domain/client. */
@@ -513,19 +515,21 @@ object FeatureFlags {
       transactionRef <- FiberRef.make[Option[TransactionState]](None)
       hooksRef       <- Ref.make(List.empty[FeatureHook])
       eventHub       <- Hub.unbounded[ProviderEvent]
-    } yield new FeatureFlagsLive(
-      client,
-      provider,
-      providerName,
-      Some(domain),
-      globalCtxRef,
-      clientCtxRef,
-      fiberCtxRef,
-      transactionRef,
-      hooksRef,
-      eventHub,
-      statusRef
-    )
+      ff = new FeatureFlagsLive(
+        client,
+        provider,
+        providerName,
+        Some(domain),
+        globalCtxRef,
+        clientCtxRef,
+        fiberCtxRef,
+        transactionRef,
+        hooksRef,
+        eventHub,
+        statusRef
+      )
+      _ <- ff.startEventBridge
+    } yield ff
 
   /** Create a FeatureFlags layer from multiple providers using the first-match strategy. */
   def fromMultiProvider(providers: List[OFFeatureProvider]): ZLayer[Scope, Throwable, FeatureFlags] = {
@@ -561,18 +565,20 @@ object FeatureFlags {
         eventHub       <- Hub.unbounded[ProviderEvent]
         statusRef      <- Ref.make[ProviderStatus](ProviderStatus.Ready)
         _              <- ZIO.addFinalizer(ZIO.attemptBlocking(api.shutdown()).ignore)
-      } yield new FeatureFlagsLive(
-        client,
-        provider,
-        providerName,
-        None, // default domain
-        globalCtxRef,
-        clientCtxRef,
-        fiberCtxRef,
-        transactionRef,
-        hooksRef,
-        eventHub,
-        statusRef
-      )
+        ff = new FeatureFlagsLive(
+          client,
+          provider,
+          providerName,
+          None, // default domain
+          globalCtxRef,
+          clientCtxRef,
+          fiberCtxRef,
+          transactionRef,
+          hooksRef,
+          eventHub,
+          statusRef
+        )
+        _ <- ff.startEventBridge
+      } yield ff
     }
 }

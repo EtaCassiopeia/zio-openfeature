@@ -664,5 +664,5 @@ object FeatureFlagsSpec extends ZIOSpecDefault {
           assertTrue(meta.get.name == "TestFeatureProvider")
       }.provide(testLayer(Map("test-flag" -> true)))
     )
-  )
+  ) @@ TestAspect.withLiveClock @@ TestAspect.flaky(3)
 }

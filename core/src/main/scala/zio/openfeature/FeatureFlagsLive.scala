@@ -359,7 +359,18 @@ final private[openfeature] class FeatureFlagsLive(
           }
     }
 
-    evaluation
+    // Check resolution error codes for provider-level failures (handles TOCTOU race
+    // where checkProviderStatus passes but the Java SDK's internal state is stale)
+    evaluation.flatMap { resolution =>
+      resolution.errorCode match {
+        case Some(ErrorCode.ProviderNotReady) =>
+          ZIO.fail(FeatureFlagError.ProviderNotReady(ProviderStatus.NotReady))
+        case Some(ErrorCode.ProviderFatal) =>
+          ZIO.fail(FeatureFlagError.ProviderFatal)
+        case _ =>
+          ZIO.succeed(resolution)
+      }
+    }
   }
 
   private def toFlagResolution[A](key: String, details: FlagEvaluationDetails[A]): FlagResolution[A] =

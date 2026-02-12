@@ -341,7 +341,7 @@ program.provide(Scope.default >>> FeatureFlags.fromProvider(provider))
 
 ### Shutdown
 
-When the scope ends, the OpenFeature API is automatically shut down:
+When the scope ends, the OpenFeature API is automatically shut down. Shutdown resets the provider status to `NotReady`, clears hooks and contexts, shuts down the event hub (terminating all event stream subscribers), and calls the SDK's shutdown:
 
 ```scala
 ZIO.scoped {
@@ -351,6 +351,9 @@ ZIO.scoped {
   yield ()
 }
 // Provider shutdown automatically on scope exit
+
+// Explicit shutdown is also available
+FeatureFlags.shutdown
 ```
 
 ### Provider Status
@@ -381,7 +384,9 @@ yield ()
 
 ## Provider Events
 
-ZIO OpenFeature provides two ways to handle provider events: event handlers and event streams.
+Java SDK provider events are automatically bridged to the ZIO event system. When a provider emits events (Ready, Error, Stale, ConfigurationChanged), they are captured via Java SDK event listeners and published to the ZIO event hub. The provider status is also kept in sync automatically. Event bridge handlers are registered during layer creation and cleaned up when the scope ends.
+
+ZIO OpenFeature provides two ways to consume provider events: event handlers and event streams.
 
 ### Event Handlers
 

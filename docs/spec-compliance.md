@@ -126,7 +126,8 @@ FeatureFlags.booleanDetails("flag", false, context, options)
 | API-level hooks | ✅ | `FeatureFlags.addApiHook` / `clearApiHooks` |
 | Client-level hooks | ✅ | `FeatureFlags.addHook` / `clearHooks` |
 | Invocation-level hooks | ✅ | Via `EvaluationOptions` |
-| Execution order | ✅ | API → Client → Invocation (reversed for after/error/finally) |
+| Provider-level hooks | ✅ | Automatically included from `provider.getProviderHooks()` |
+| Execution order | ✅ | API → Client → Invocation → Provider (reversed for after/error/finally) |
 
 ### Invocation-Level Hooks Example
 
@@ -173,7 +174,7 @@ for
 yield ()
 ```
 
-When a provider enters the `Fatal` state, all flag evaluations will fail with `FeatureFlagError.ProviderFatal`.
+When a provider is in the `NotReady` state, all flag evaluations will fail with `FeatureFlagError.ProviderNotReady`. When a provider enters the `Fatal` state, all flag evaluations will fail with `FeatureFlagError.ProviderFatal`.
 
 ---
 
@@ -290,6 +291,5 @@ The following OpenFeature features are not exposed in the ZIO wrapper:
 
 | Feature | Reason |
 |:--------|:-------|
-| Provider-level hooks | Handled internally by OpenFeature SDK |
 | Context change reconciliation | Provider-specific, handled by SDK |
 | Static-context paradigm | Use standard context hierarchy instead |

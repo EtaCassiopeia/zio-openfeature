@@ -556,6 +556,55 @@ object FeatureFlagsSpec extends ZIOSpecDefault {
         } yield assertTrue(result == Exit.fail(FeatureFlagError.ProviderFatal))
       }.provide(testLayer(Map("test-flag" -> true)))
     ),
+    suite("finallyAfter receives evaluation details (spec 4.3.8)")(
+      test("finallyAfter receives details on success") {
+        val capturedDetails = Unsafe.unsafe { implicit u =>
+          Runtime.default.unsafe.run(Ref.make(Option.empty[FlagResolution[_]])).getOrThrow()
+        }
+
+        val hook = new FeatureHook {
+          override def finallyAfter(
+            ctx: HookContext,
+            details: Option[FlagResolution[_]],
+            hints: HookHints
+          ): UIO[Unit] =
+            capturedDetails.set(details)
+        }
+
+        for {
+          _       <- FeatureFlags.addHook(hook)
+          _       <- FeatureFlags.boolean("test-flag", default = false)
+          details <- capturedDetails.get
+        } yield {
+          val d = details.get
+          assertTrue(details.isDefined) &&
+          assertTrue(d.value == (true: Any)) &&
+          assertTrue(d.flagKey == "test-flag")
+        }
+      }.provide(testLayer(Map("test-flag" -> true))),
+      test("finallyAfter receives None on error") {
+        val capturedDetails = Unsafe.unsafe { implicit u =>
+          Runtime.default.unsafe.run(Ref.make(Option.empty[Option[FlagResolution[_]]])).getOrThrow()
+        }
+
+        val hook = new FeatureHook {
+          override def finallyAfter(
+            ctx: HookContext,
+            details: Option[FlagResolution[_]],
+            hints: HookHints
+          ): UIO[Unit] =
+            capturedDetails.set(Some(details))
+        }
+
+        for {
+          _       <- FeatureFlags.addHook(hook)
+          tp      <- ZIO.service[TestFeatureProvider]
+          _       <- tp.setStatus(ProviderStatus.Fatal)
+          _       <- FeatureFlags.boolean("test-flag", default = false).exit
+          details <- capturedDetails.get
+        } yield assertTrue(details.contains(None))
+      }.provide(testLayer(Map("test-flag" -> true)))
+    ),
     suite("Hook Context Metadata")(
       test("hooks receive clientMetadata during evaluation") {
         val capturedMeta = Unsafe.unsafe { implicit u =>

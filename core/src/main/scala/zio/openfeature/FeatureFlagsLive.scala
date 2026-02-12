@@ -76,12 +76,16 @@ final private[openfeature] class FeatureFlagsLive(
     for {
       beforeResult <- composedHook.before(hookCtx, HookHints.empty)
       (effectiveCtx, hints) = beforeResult.getOrElse((context, HookHints.empty))
+      resultRef <- Ref.make[Option[FlagResolution[_]]](None)
       result <- evaluate(effectiveCtx)
+        .tap(res => resultRef.set(Some(res)))
         .tapBoth(
           err => composedHook.error(hookCtx, err, hints),
           res => composedHook.after(hookCtx, res, hints)
         )
-        .ensuring(composedHook.finallyAfter(hookCtx, hints).ignore)
+        .ensuring(
+          resultRef.get.flatMap(details => composedHook.finallyAfter(hookCtx, details, hints)).ignore
+        )
     } yield result
   }
 
@@ -567,12 +571,16 @@ final private[openfeature] class FeatureFlagsLive(
     for {
       beforeResult <- composedHook.before(hookCtx, initialHints)
       (effectiveCtx, hints) = beforeResult.getOrElse((context, initialHints))
+      resultRef <- Ref.make[Option[FlagResolution[_]]](None)
       result <- evaluate(effectiveCtx)
+        .tap(res => resultRef.set(Some(res)))
         .tapBoth(
           err => composedHook.error(hookCtx, err, hints),
           res => composedHook.after(hookCtx, res, hints)
         )
-        .ensuring(composedHook.finallyAfter(hookCtx, hints).ignore)
+        .ensuring(
+          resultRef.get.flatMap(details => composedHook.finallyAfter(hookCtx, details, hints)).ignore
+        )
     } yield result
   }
 

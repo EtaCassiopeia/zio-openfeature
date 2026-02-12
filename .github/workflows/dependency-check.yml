@@ -19,14 +19,26 @@ jobs:
 
       - uses: sbt/setup-sbt@v1
 
-      - name: Cache NVD database
-        uses: actions/cache@v4
-        with:
-          path: ~/.dependency-check
-          key: nvd-db-${{ github.run_id }}
-          restore-keys: nvd-db-
+      - name: Generate dependency list
+        run: |
+          sbt 'show core/managedClasspath' 'show testkit/managedClasspath' \
+            | grep -oP '/.+?\.jar' | sort -u > /tmp/dep-jars.txt
+          mkdir -p /tmp/deps
+          while read jar; do cp "$jar" /tmp/deps/ 2>/dev/null; done < /tmp/dep-jars.txt
 
       - name: OWASP dependency check
-        run: sbt -J-Xmx4g -J-Xss2m dependencyCheck
-        env:
-          NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
+        uses: dependency-check/Dependency-Check_Action@main
+        with:
+          project: zio-openfeature
+          path: /tmp/deps
+          format: HTML
+          args: >-
+            --nvdApiKey ${{ secrets.NVD_API_KEY }}
+            --failOnCVSS 7
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dependency-check-report
+          path: reports/

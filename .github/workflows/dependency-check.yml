@@ -1,0 +1,32 @@
+name: Dependency Check
+
+on:
+  schedule:
+    - cron: '0 8 * * 1' # every Monday at 8am UTC
+  workflow_dispatch:
+
+jobs:
+  dependency-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+
+      - uses: sbt/setup-sbt@v1
+
+      - name: Cache NVD database
+        uses: actions/cache@v4
+        with:
+          path: ~/.dependency-check
+          key: nvd-db-${{ github.run_id }}
+          restore-keys: nvd-db-
+
+      - name: OWASP dependency check
+        run: sbt dependencyCheck
+        env:
+          NVD_API_KEY: ${{ secrets.NVD_API_KEY }}

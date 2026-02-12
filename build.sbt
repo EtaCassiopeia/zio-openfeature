@@ -95,7 +95,8 @@ lazy val root = (project in file("."))
     name                           := "zio-openfeature",
     publish / skip                 := true,
     dependencyCheckFailBuildOnCVSS := 7,
-    dependencyCheckNvdApi          := NvdApiSettings(apiKey = sys.env.getOrElse("NVD_API_KEY", ""))
+    dependencyCheckNvdApi          := NvdApiSettings(apiKey = sys.env.getOrElse("NVD_API_KEY", "")),
+    dependencyCheckDataDirectory   := Some(new File(Path.userHome.absolutePath, ".dependency-check/data"))
   )
 
 // Core module - ZIO wrapper around OpenFeature SDK

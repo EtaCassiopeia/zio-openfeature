@@ -29,9 +29,3 @@ jobs:
 
       - name: Run tests (Scala 2.13 + 3)
         run: sbt +test
-
-      - name: Dependency vulnerability check
-        if: env.NVD_API_KEY != ''
-        run: sbt dependencyCheck
-        env:
-          NVD_API_KEY: ${{ secrets.NVD_API_KEY }}

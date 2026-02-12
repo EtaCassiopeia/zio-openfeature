@@ -860,9 +860,11 @@ final private[openfeature] class FeatureFlagsLive(
 
   override def shutdown: UIO[Unit] =
     for {
+      _ <- statusRef.set(ProviderStatus.NotReady)
       _ <- hooksRef.set(List.empty)
       _ <- globalContextRef.set(EvaluationContext.empty)
       _ <- clientContextRef.set(EvaluationContext.empty)
+      _ <- eventHub.shutdown
       _ <- ZIO.attemptBlocking(OpenFeatureAPI.getInstance().shutdown()).ignore
     } yield ()
 

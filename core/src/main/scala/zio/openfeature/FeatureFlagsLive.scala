@@ -90,13 +90,10 @@ final private[openfeature] class FeatureFlagsLive(
   }
 
   private def checkProviderStatus: IO[FeatureFlagError, Unit] =
-    providerStatus.flatMap { status =>
-      status match {
-        case ProviderStatus.Fatal =>
-          ZIO.fail(FeatureFlagError.ProviderFatal)
-        case _ =>
-          ZIO.unit
-      }
+    providerStatus.flatMap {
+      case ProviderStatus.Fatal    => ZIO.fail(FeatureFlagError.ProviderFatal)
+      case ProviderStatus.NotReady => ZIO.fail(FeatureFlagError.ProviderNotReady(ProviderStatus.NotReady))
+      case _                       => ZIO.unit
     }
 
   private def evaluateFlag[A: FlagType](

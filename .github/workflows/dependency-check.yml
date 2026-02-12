@@ -27,6 +27,6 @@ jobs:
           restore-keys: nvd-db-
 
       - name: OWASP dependency check
-        run: sbt dependencyCheck
+        run: sbt -J-Xmx4g -J-Xss2m dependencyCheck
         env:
           NVD_API_KEY: ${{ secrets.NVD_API_KEY }}

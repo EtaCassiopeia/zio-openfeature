@@ -508,15 +508,12 @@ object FeatureFlagsSpec extends ZIOSpecDefault:
           result       <- FeatureFlags.boolean("test-flag", default = false).exit
         yield assertTrue(result == Exit.fail(FeatureFlagError.ProviderFatal))
       }.provide(testLayer(Map("test-flag" -> true))),
-      test("evaluation succeeds after recovering from Fatal") {
+      test("evaluation fails with ProviderFatal for detailed evaluation too") {
         for
           testProvider <- ZIO.service[TestFeatureProvider]
           _            <- testProvider.setStatus(ProviderStatus.Fatal)
-          failed       <- FeatureFlags.boolean("test-flag", default = false).exit
-          _            <- testProvider.setStatus(ProviderStatus.Ready)
-          result       <- FeatureFlags.boolean("test-flag", default = false)
-        yield assertTrue(failed.isFailure) &&
-          assertTrue(result == true)
+          result       <- FeatureFlags.booleanDetails("test-flag", default = false).exit
+        yield assertTrue(result == Exit.fail(FeatureFlagError.ProviderFatal))
       }.provide(testLayer(Map("test-flag" -> true)))
     ),
     suite("Hook Context Metadata")(

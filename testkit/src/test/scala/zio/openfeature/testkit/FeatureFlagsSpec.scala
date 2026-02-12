@@ -605,6 +605,29 @@ object FeatureFlagsSpec extends ZIOSpecDefault {
         } yield assertTrue(details.contains(None))
       }.provide(testLayer(Map("test-flag" -> true)))
     ),
+    suite("Provider NotReady Guard (spec 1.7.6)")(
+      test("evaluation fails with ProviderNotReady when provider status is NotReady") {
+        for {
+          testProvider <- ZIO.service[TestFeatureProvider]
+          _            <- testProvider.setStatus(ProviderStatus.NotReady)
+          result       <- FeatureFlags.boolean("test-flag", default = false).exit
+        } yield assertTrue(
+          result == Exit.fail(FeatureFlagError.ProviderNotReady(ProviderStatus.NotReady))
+        )
+      }.provide(testLayer(Map("test-flag" -> true))),
+      test("evaluation succeeds when provider is Ready") {
+        for {
+          result <- FeatureFlags.boolean("test-flag", default = false)
+        } yield assertTrue(result == true)
+      }.provide(testLayer(Map("test-flag" -> true))),
+      test("evaluation succeeds when provider is Stale") {
+        for {
+          testProvider <- ZIO.service[TestFeatureProvider]
+          _            <- testProvider.setStatus(ProviderStatus.Stale)
+          result       <- FeatureFlags.boolean("test-flag", default = false)
+        } yield assertTrue(result == true)
+      }.provide(testLayer(Map("test-flag" -> true)))
+    ),
     suite("Hook Context Metadata")(
       test("hooks receive clientMetadata during evaluation") {
         val capturedMeta = Unsafe.unsafe { implicit u =>

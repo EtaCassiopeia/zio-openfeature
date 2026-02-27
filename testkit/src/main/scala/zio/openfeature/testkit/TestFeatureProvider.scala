@@ -280,10 +280,10 @@ object TestFeatureProvider {
   }
 
   /** Self-contained test layer that provides its own Scope. */
-  val testFeatureFlagsLayer: ZLayer[Any, Throwable, TestFeatureProvider with FeatureFlags] =
+  val scopedLayer: ZLayer[Any, Throwable, TestFeatureProvider with FeatureFlags] =
     Scope.default >>> TestFeatureProvider.layer
 
   /** Self-contained test layer with initial flags that provides its own Scope. */
-  def testFeatureFlagsLayer(flags: Map[String, Any]): ZLayer[Any, Throwable, TestFeatureProvider with FeatureFlags] =
+  def scopedLayer(flags: Map[String, Any]): ZLayer[Any, Throwable, TestFeatureProvider with FeatureFlags] =
     Scope.default >>> TestFeatureProvider.layer(flags)
 }

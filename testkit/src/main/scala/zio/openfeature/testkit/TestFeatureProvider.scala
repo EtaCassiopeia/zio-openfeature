@@ -278,4 +278,12 @@ object TestFeatureProvider {
     val domain = s"test-${java.util.UUID.randomUUID()}"
     FeatureFlags.fromProviderWithDomain(provider, domain, provider.statusRef)
   }
+
+  /** Self-contained test layer that provides its own Scope. */
+  val testFeatureFlagsLayer: ZLayer[Any, Throwable, TestFeatureProvider with FeatureFlags] =
+    Scope.default >>> TestFeatureProvider.layer
+
+  /** Self-contained test layer with initial flags that provides its own Scope. */
+  def testFeatureFlagsLayer(flags: Map[String, Any]): ZLayer[Any, Throwable, TestFeatureProvider with FeatureFlags] =
+    Scope.default >>> TestFeatureProvider.layer(flags)
 }

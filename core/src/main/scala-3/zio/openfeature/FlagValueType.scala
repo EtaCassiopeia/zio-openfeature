@@ -7,12 +7,7 @@ enum FlagValueType:
   case Double
   case Object
 
-  def name: String = this match
-    case Boolean => "Boolean"
-    case String  => "String"
-    case Int     => "Int"
-    case Double  => "Double"
-    case Object  => "Object"
+  def name: String = toString
 
 object FlagValueType:
   def fromFlagType[A](using ft: FlagType[A]): FlagValueType =

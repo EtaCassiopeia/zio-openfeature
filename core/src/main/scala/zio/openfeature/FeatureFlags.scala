@@ -6,94 +6,172 @@ import dev.openfeature.sdk.{FeatureProvider => OFFeatureProvider, OpenFeatureAPI
 import dev.openfeature.sdk.multiprovider.{MultiProvider, Strategy, FirstMatchStrategy, FirstSuccessfulStrategy}
 
 trait FeatureFlags {
-  def boolean(key: String, default: Boolean): IO[FeatureFlagError, Boolean]
-  def string(key: String, default: String): IO[FeatureFlagError, String]
-  def int(key: String, default: Int): IO[FeatureFlagError, Int]
-  def long(key: String, default: Long): IO[FeatureFlagError, Long]
-  def double(key: String, default: Double): IO[FeatureFlagError, Double]
-  def obj(key: String, default: Map[String, Any]): IO[FeatureFlagError, Map[String, Any]]
-  def value[A: FlagType](key: String, default: A): IO[FeatureFlagError, A]
 
-  def boolean(key: String, default: Boolean, ctx: EvaluationContext): IO[FeatureFlagError, Boolean]
-  def string(key: String, default: String, ctx: EvaluationContext): IO[FeatureFlagError, String]
-  def int(key: String, default: Int, ctx: EvaluationContext): IO[FeatureFlagError, Int]
-  def long(key: String, default: Long, ctx: EvaluationContext): IO[FeatureFlagError, Long]
-  def double(key: String, default: Double, ctx: EvaluationContext): IO[FeatureFlagError, Double]
-  def obj(key: String, default: Map[String, Any], ctx: EvaluationContext): IO[FeatureFlagError, Map[String, Any]]
-  def value[A: FlagType](key: String, default: A, ctx: EvaluationContext): IO[FeatureFlagError, A]
-
-  def booleanDetails(key: String, default: Boolean): IO[FeatureFlagError, FlagResolution[Boolean]]
-  def stringDetails(key: String, default: String): IO[FeatureFlagError, FlagResolution[String]]
-  def intDetails(key: String, default: Int): IO[FeatureFlagError, FlagResolution[Int]]
-  def longDetails(key: String, default: Long): IO[FeatureFlagError, FlagResolution[Long]]
-  def doubleDetails(key: String, default: Double): IO[FeatureFlagError, FlagResolution[Double]]
-  def objDetails(key: String, default: Map[String, Any]): IO[FeatureFlagError, FlagResolution[Map[String, Any]]]
-  def valueDetails[A: FlagType](key: String, default: A): IO[FeatureFlagError, FlagResolution[A]]
-
-  // Detailed evaluation with context
-  def booleanDetails(
+  // Core abstract method - the single evaluation entry point
+  def valueDetails[A: FlagType](
     key: String,
-    default: Boolean,
-    ctx: EvaluationContext
-  ): IO[FeatureFlagError, FlagResolution[Boolean]]
-  def stringDetails(key: String, default: String, ctx: EvaluationContext): IO[FeatureFlagError, FlagResolution[String]]
-  def intDetails(key: String, default: Int, ctx: EvaluationContext): IO[FeatureFlagError, FlagResolution[Int]]
-  def longDetails(key: String, default: Long, ctx: EvaluationContext): IO[FeatureFlagError, FlagResolution[Long]]
-  def doubleDetails(key: String, default: Double, ctx: EvaluationContext): IO[FeatureFlagError, FlagResolution[Double]]
-  def objDetails(
-    key: String,
-    default: Map[String, Any],
-    ctx: EvaluationContext
-  ): IO[FeatureFlagError, FlagResolution[Map[String, Any]]]
+    default: A,
+    ctx: EvaluationContext,
+    options: EvaluationOptions
+  ): IO[FeatureFlagError, FlagResolution[A]]
+
+  // Generic convenience methods that delegate to the core method
+
+  def value[A: FlagType](key: String, default: A): IO[FeatureFlagError, A] =
+    valueDetails(key, default, EvaluationContext.empty, EvaluationOptions.empty).map(_.value)
+
+  def value[A: FlagType](key: String, default: A, ctx: EvaluationContext): IO[FeatureFlagError, A] =
+    valueDetails(key, default, ctx, EvaluationOptions.empty).map(_.value)
+
+  def valueDetails[A: FlagType](key: String, default: A): IO[FeatureFlagError, FlagResolution[A]] =
+    valueDetails(key, default, EvaluationContext.empty, EvaluationOptions.empty)
+
   def valueDetails[A: FlagType](
     key: String,
     default: A,
     ctx: EvaluationContext
-  ): IO[FeatureFlagError, FlagResolution[A]]
+  ): IO[FeatureFlagError, FlagResolution[A]] =
+    valueDetails(key, default, ctx, EvaluationOptions.empty)
 
-  // Detailed evaluation with context and options (invocation-level hooks)
+  // Typed convenience methods that delegate to generic methods
+
+  def boolean(key: String, default: Boolean): IO[FeatureFlagError, Boolean] =
+    value(key, default)
+
+  def boolean(key: String, default: Boolean, ctx: EvaluationContext): IO[FeatureFlagError, Boolean] =
+    value(key, default, ctx)
+
+  def booleanDetails(key: String, default: Boolean): IO[FeatureFlagError, FlagResolution[Boolean]] =
+    valueDetails(key, default)
+
+  def booleanDetails(
+    key: String,
+    default: Boolean,
+    ctx: EvaluationContext
+  ): IO[FeatureFlagError, FlagResolution[Boolean]] =
+    valueDetails(key, default, ctx)
+
   def booleanDetails(
     key: String,
     default: Boolean,
     ctx: EvaluationContext,
     options: EvaluationOptions
-  ): IO[FeatureFlagError, FlagResolution[Boolean]]
+  ): IO[FeatureFlagError, FlagResolution[Boolean]] =
+    valueDetails(key, default, ctx, options)
+
+  def string(key: String, default: String): IO[FeatureFlagError, String] =
+    value(key, default)
+
+  def string(key: String, default: String, ctx: EvaluationContext): IO[FeatureFlagError, String] =
+    value(key, default, ctx)
+
+  def stringDetails(key: String, default: String): IO[FeatureFlagError, FlagResolution[String]] =
+    valueDetails(key, default)
+
+  def stringDetails(
+    key: String,
+    default: String,
+    ctx: EvaluationContext
+  ): IO[FeatureFlagError, FlagResolution[String]] =
+    valueDetails(key, default, ctx)
+
   def stringDetails(
     key: String,
     default: String,
     ctx: EvaluationContext,
     options: EvaluationOptions
-  ): IO[FeatureFlagError, FlagResolution[String]]
+  ): IO[FeatureFlagError, FlagResolution[String]] =
+    valueDetails(key, default, ctx, options)
+
+  def int(key: String, default: Int): IO[FeatureFlagError, Int] =
+    value(key, default)
+
+  def int(key: String, default: Int, ctx: EvaluationContext): IO[FeatureFlagError, Int] =
+    value(key, default, ctx)
+
+  def intDetails(key: String, default: Int): IO[FeatureFlagError, FlagResolution[Int]] =
+    valueDetails(key, default)
+
+  def intDetails(key: String, default: Int, ctx: EvaluationContext): IO[FeatureFlagError, FlagResolution[Int]] =
+    valueDetails(key, default, ctx)
+
   def intDetails(
     key: String,
     default: Int,
     ctx: EvaluationContext,
     options: EvaluationOptions
-  ): IO[FeatureFlagError, FlagResolution[Int]]
+  ): IO[FeatureFlagError, FlagResolution[Int]] =
+    valueDetails(key, default, ctx, options)
+
+  def long(key: String, default: Long): IO[FeatureFlagError, Long] =
+    value(key, default)
+
+  def long(key: String, default: Long, ctx: EvaluationContext): IO[FeatureFlagError, Long] =
+    value(key, default, ctx)
+
+  def longDetails(key: String, default: Long): IO[FeatureFlagError, FlagResolution[Long]] =
+    valueDetails(key, default)
+
+  def longDetails(key: String, default: Long, ctx: EvaluationContext): IO[FeatureFlagError, FlagResolution[Long]] =
+    valueDetails(key, default, ctx)
+
   def longDetails(
     key: String,
     default: Long,
     ctx: EvaluationContext,
     options: EvaluationOptions
-  ): IO[FeatureFlagError, FlagResolution[Long]]
+  ): IO[FeatureFlagError, FlagResolution[Long]] =
+    valueDetails(key, default, ctx, options)
+
+  def double(key: String, default: Double): IO[FeatureFlagError, Double] =
+    value(key, default)
+
+  def double(key: String, default: Double, ctx: EvaluationContext): IO[FeatureFlagError, Double] =
+    value(key, default, ctx)
+
+  def doubleDetails(key: String, default: Double): IO[FeatureFlagError, FlagResolution[Double]] =
+    valueDetails(key, default)
+
+  def doubleDetails(
+    key: String,
+    default: Double,
+    ctx: EvaluationContext
+  ): IO[FeatureFlagError, FlagResolution[Double]] =
+    valueDetails(key, default, ctx)
+
   def doubleDetails(
     key: String,
     default: Double,
     ctx: EvaluationContext,
     options: EvaluationOptions
-  ): IO[FeatureFlagError, FlagResolution[Double]]
+  ): IO[FeatureFlagError, FlagResolution[Double]] =
+    valueDetails(key, default, ctx, options)
+
+  def obj(key: String, default: Map[String, Any]): IO[FeatureFlagError, Map[String, Any]] =
+    value(key, default)
+
+  def obj(key: String, default: Map[String, Any], ctx: EvaluationContext): IO[FeatureFlagError, Map[String, Any]] =
+    value(key, default, ctx)
+
+  def objDetails(key: String, default: Map[String, Any]): IO[FeatureFlagError, FlagResolution[Map[String, Any]]] =
+    valueDetails(key, default)
+
+  def objDetails(
+    key: String,
+    default: Map[String, Any],
+    ctx: EvaluationContext
+  ): IO[FeatureFlagError, FlagResolution[Map[String, Any]]] =
+    valueDetails(key, default, ctx)
+
   def objDetails(
     key: String,
     default: Map[String, Any],
     ctx: EvaluationContext,
     options: EvaluationOptions
-  ): IO[FeatureFlagError, FlagResolution[Map[String, Any]]]
-  def valueDetails[A: FlagType](
-    key: String,
-    default: A,
-    ctx: EvaluationContext,
-    options: EvaluationOptions
-  ): IO[FeatureFlagError, FlagResolution[A]]
+  ): IO[FeatureFlagError, FlagResolution[Map[String, Any]]] =
+    valueDetails(key, default, ctx, options)
+
+  // Non-evaluation methods (abstract)
 
   def setGlobalContext(ctx: EvaluationContext): UIO[Unit]
   def globalContext: UIO[EvaluationContext]

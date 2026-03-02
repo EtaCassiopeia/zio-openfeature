@@ -149,7 +149,10 @@ final private[openfeature] class FeatureFlagsLive(
 
     for {
       beforeResult <- composedHook.before(hookCtx, initialHints)
-      (effectiveCtx, hints) = beforeResult.getOrElse((context, initialHints))
+      (effectiveCtx, hints) = beforeResult match {
+        case Some((hookCtx, h)) => (context.merge(hookCtx), h)
+        case None               => (context, initialHints)
+      }
       resultRef <- Ref.make[Option[FlagResolution[_]]](None)
       result <- evaluate(effectiveCtx)
         .tap(res => resultRef.set(Some(res)))
@@ -753,38 +756,50 @@ final private[openfeature] class FeatureFlagsLive(
   // Tracking API
 
   override def track(eventName: String): IO[FeatureFlagError, Unit] =
-    ZIO
-      .attemptBlocking(client.track(eventName))
-      .mapError(e => FeatureFlagError.ProviderError(e))
+    effectiveContext(EvaluationContext.empty).flatMap { merged =>
+      ZIO
+        .attemptBlocking {
+          val ofContext = ContextConverter.toOpenFeature(merged)
+          client.track(eventName, ofContext)
+        }
+        .mapError(e => FeatureFlagError.ProviderError(e))
+    }
 
   override def track(eventName: String, context: EvaluationContext): IO[FeatureFlagError, Unit] =
-    ZIO
-      .attemptBlocking {
-        val ofContext = ContextConverter.toOpenFeature(context)
-        client.track(eventName, ofContext)
-      }
-      .mapError(e => FeatureFlagError.ProviderError(e))
+    effectiveContext(context).flatMap { merged =>
+      ZIO
+        .attemptBlocking {
+          val ofContext = ContextConverter.toOpenFeature(merged)
+          client.track(eventName, ofContext)
+        }
+        .mapError(e => FeatureFlagError.ProviderError(e))
+    }
 
   override def track(eventName: String, details: TrackingEventDetails): IO[FeatureFlagError, Unit] =
-    ZIO
-      .attemptBlocking {
-        val ofDetails = toOpenFeatureDetails(details)
-        client.track(eventName, ofDetails)
-      }
-      .mapError(e => FeatureFlagError.ProviderError(e))
+    effectiveContext(EvaluationContext.empty).flatMap { merged =>
+      ZIO
+        .attemptBlocking {
+          val ofContext = ContextConverter.toOpenFeature(merged)
+          val ofDetails = toOpenFeatureDetails(details)
+          client.track(eventName, ofContext, ofDetails)
+        }
+        .mapError(e => FeatureFlagError.ProviderError(e))
+    }
 
   override def track(
     eventName: String,
     context: EvaluationContext,
     details: TrackingEventDetails
   ): IO[FeatureFlagError, Unit] =
-    ZIO
-      .attemptBlocking {
-        val ofContext = ContextConverter.toOpenFeature(context)
-        val ofDetails = toOpenFeatureDetails(details)
-        client.track(eventName, ofContext, ofDetails)
-      }
-      .mapError(e => FeatureFlagError.ProviderError(e))
+    effectiveContext(context).flatMap { merged =>
+      ZIO
+        .attemptBlocking {
+          val ofContext = ContextConverter.toOpenFeature(merged)
+          val ofDetails = toOpenFeatureDetails(details)
+          client.track(eventName, ofContext, ofDetails)
+        }
+        .mapError(e => FeatureFlagError.ProviderError(e))
+    }
 
   private def toOpenFeatureDetails(details: TrackingEventDetails): MutableTrackingEventDetails = {
     val result = details.value match {

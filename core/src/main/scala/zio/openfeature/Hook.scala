@@ -131,7 +131,7 @@ object FeatureHook {
       ZIO
         .foldLeft(hooks)((ctx.evaluationContext, hints, false)) { case ((currentCtx, currentHints, modified), hook) =>
           hook.before(ctxForHook(ctx.copy(evaluationContext = currentCtx), hook), currentHints).map {
-            case Some((newCtx, newHints)) => (newCtx, newHints, true)
+            case Some((newCtx, newHints)) => (currentCtx.merge(newCtx), newHints, true)
             case None                     => (currentCtx, currentHints, modified)
           }
         }

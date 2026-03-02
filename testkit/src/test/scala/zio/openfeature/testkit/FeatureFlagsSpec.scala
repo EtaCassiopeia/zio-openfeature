@@ -497,6 +497,22 @@ object FeatureFlagsSpec extends ZIOSpecDefault {
           _ <- FeatureFlags.track("page-view", TrackingEventDetails.empty)
         } yield assertTrue(true)
       }.provide(testLayer()),
+      test("track merges global and client context") {
+        val globalCtx = EvaluationContext.withAttributes("env" -> AttributeValue.string("prod"))
+        val clientCtx = EvaluationContext.withAttributes("app" -> AttributeValue.string("web"))
+        for {
+          _ <- FeatureFlags.setGlobalContext(globalCtx)
+          _ <- FeatureFlags.setClientContext(clientCtx)
+          _ <- FeatureFlags.track("merged-event")
+          _ <- FeatureFlags.track("merged-event-ctx", EvaluationContext("user-1"))
+          _ <- FeatureFlags.track("merged-event-details", TrackingEventDetails(value = Some(1.0)))
+          _ <- FeatureFlags.track(
+            "merged-event-both",
+            EvaluationContext("user-2"),
+            TrackingEventDetails(value = Some(2.0))
+          )
+        } yield assertTrue(true)
+      }.provide(testLayer()),
       test("TrackingEventDetails builder methods work") {
         val details = TrackingEventDetails.empty
           .withValue(50.0)

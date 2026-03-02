@@ -378,6 +378,46 @@ object HookSpec extends ZIOSpecDefault {
           assertTrue(hook2Value == Some("hook2"))
       }
     ),
+    suite("TypedKey")(
+      test("TypedKey set and get on HookData") {
+        val key  = TypedKey[String]("myKey")
+        val data = HookData.empty
+        data.set(key, "typedValue")
+        assertTrue(data.get(key) == Some("typedValue"))
+      },
+      test("TypedKey get on HookHints") {
+        val key   = TypedKey[Int]("count")
+        val hints = HookHints(Map(key.name -> 42))
+        assertTrue(hints.get(key) == Some(42))
+      },
+      test("TypedKey add on HookHints") {
+        val key   = TypedKey[Boolean]("enabled")
+        val hints = HookHints.empty.add(key, true)
+        assertTrue(hints.get(key) == Some(true))
+      },
+      test("TypedKey getOrElse on HookData") {
+        val key  = TypedKey[Int]("missing")
+        val data = HookData.empty
+        assertTrue(data.getOrElse(key, 99) == 99)
+      },
+      test("TypedKey getOrElse on HookHints") {
+        val key   = TypedKey[String]("missing")
+        val hints = HookHints.empty
+        assertTrue(hints.getOrElse(key, "fallback") == "fallback")
+      },
+      test("TypedKey remove on HookData") {
+        val key  = TypedKey[String]("toRemove")
+        val data = HookData.empty
+        data.set(key, "present")
+        data.remove(key)
+        assertTrue(data.get(key) == None)
+      },
+      test("existing untyped API still works") {
+        val data = HookData.empty
+        data.set("key", "value")
+        assertTrue(data.get[String]("key") == Some("value"))
+      }
+    ),
     suite("FeatureHook.contextValidator")(
       test("does not modify context when valid") {
         val hook = FeatureHook.contextValidator(

@@ -150,7 +150,7 @@ final private[openfeature] class FeatureFlagsLive(
     for {
       beforeResult <- composedHook.before(hookCtx, initialHints)
       (effectiveCtx, hints) = beforeResult match {
-        case Some((hookCtx, h)) => (context.merge(hookCtx), h)
+        case Some((hookCtx, h)) => (hookCtx, h)
         case None               => (context, initialHints)
       }
       resultRef <- Ref.make[Option[FlagResolution[_]]](None)
@@ -173,18 +173,18 @@ final private[openfeature] class FeatureFlagsLive(
       case _                       => ZIO.unit
     }
 
+  // Context is already merged by evaluateWithDetails before entering the hook pipeline
   private def evaluateFlag[A: FlagType](
     key: String,
     default: A,
-    invocationContext: EvaluationContext
+    context: EvaluationContext
   ): IO[FeatureFlagError, FlagResolution[A]] =
     for {
-      _         <- checkProviderStatus
-      txState   <- state.transactionRef.get
-      effectCtx <- effectiveContext(invocationContext)
+      _       <- checkProviderStatus
+      txState <- state.transactionRef.get
       result <- txState match {
-        case Some(ts) => evaluateWithTransaction(key, default, effectCtx, ts)
-        case None     => evaluateFromClient(key, default, effectCtx)
+        case Some(ts) => evaluateWithTransaction(key, default, context, ts)
+        case None     => evaluateFromClient(key, default, context)
       }
     } yield result
 

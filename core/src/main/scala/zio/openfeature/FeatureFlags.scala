@@ -2,6 +2,7 @@ package zio.openfeature
 
 import zio._
 import zio.stream._
+import zio.openfeature.internal.FeatureFlagsState
 import dev.openfeature.sdk.{FeatureProvider => OFFeatureProvider, OpenFeatureAPI}
 import dev.openfeature.sdk.multiprovider.{MultiProvider, Strategy, FirstMatchStrategy, FirstSuccessfulStrategy}
 
@@ -468,27 +469,11 @@ object FeatureFlags {
         case None    => ZIO.attempt(api.getClient())
       }
       providerName = Option(provider.getMetadata).map(_.getName).getOrElse("unknown")
-      globalCtxRef   <- Ref.make(EvaluationContext.empty)
-      clientCtxRef   <- Ref.make(EvaluationContext.empty)
-      fiberCtxRef    <- FiberRef.make(EvaluationContext.empty)
-      transactionRef <- FiberRef.make[Option[TransactionState]](None)
-      hooksRef       <- Ref.make(initialHooks)
-      eventHub       <- Hub.unbounded[ProviderEvent]
-      sRef           <- statusRef.fold(Ref.make[ProviderStatus](ProviderStatus.Ready))(ZIO.succeed(_))
-      _              <- ZIO.when(addShutdownFinalizer)(ZIO.addFinalizer(ZIO.attemptBlocking(api.shutdown()).ignore))
-      ff = new FeatureFlagsLive(
-        client,
-        provider,
-        providerName,
-        domain,
-        globalCtxRef,
-        clientCtxRef,
-        fiberCtxRef,
-        transactionRef,
-        hooksRef,
-        eventHub,
-        sRef
-      )
+      state <- FeatureFlagsState.make
+      _     <- state.hooksRef.set(initialHooks)
+      _     <- statusRef.fold(state.statusRef.set(ProviderStatus.Ready))(ref => ref.get.flatMap(state.statusRef.set))
+      _     <- ZIO.when(addShutdownFinalizer)(ZIO.addFinalizer(ZIO.attemptBlocking(api.shutdown()).ignore))
+      ff = new FeatureFlagsLive(client, provider, providerName, domain, state)
       _ <- ff.startEventBridge
     } yield ff
 

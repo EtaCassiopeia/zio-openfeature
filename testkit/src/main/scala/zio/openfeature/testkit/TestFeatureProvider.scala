@@ -3,11 +3,13 @@ package zio.openfeature.testkit
 import zio._
 import zio.stream._
 import zio.openfeature._
+import zio.openfeature.internal.ErrorCodeConverter
 import dev.openfeature.sdk.{
   EvaluationContext => OFEvaluationContext,
-  FeatureProvider => OFFeatureProvider,
+  EventProvider,
   Metadata,
   ProviderEvaluation,
+  ProviderEventDetails,
   ProviderState,
   Value,
   Structure
@@ -16,7 +18,6 @@ import scala.jdk.CollectionConverters._
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicReference
-import dev.openfeature.sdk.EventProvider
 
 /** A test provider that implements OpenFeature's FeatureProvider interface.
   *
@@ -32,7 +33,7 @@ final class TestFeatureProvider private (
   private val evaluations: CopyOnWriteArrayList[(String, OFEvaluationContext)],
   private val eventsHubRef: Ref[Hub[ProviderEvent]],
   private[openfeature] val statusRef: Ref[ProviderStatus]
-) extends OFFeatureProvider {
+) extends EventProvider {
 
   @scala.annotation.nowarn("msg=deprecated")
   override def getMetadata: Metadata = new Metadata {
@@ -191,9 +192,28 @@ final class TestFeatureProvider private (
   def getStatus: UIO[ProviderStatus] =
     statusRef.get
 
-  /** Emit a provider event. */
+  /** Emit a provider event through the Java SDK event system so it reaches FeatureFlagsLive handlers. */
   def emitEvent(event: ProviderEvent): UIO[Unit] =
-    eventsHubRef.get.flatMap(_.publish(event)).unit
+    eventsHubRef.get.flatMap(_.publish(event)).unit *>
+      ZIO.succeed {
+        event match {
+          case ProviderEvent.Ready(_) =>
+            emitProviderReady(ProviderEventDetails.builder().build())
+          case ProviderEvent.Error(_, _, errorCode, errorMessage) =>
+            val builder = ProviderEventDetails.builder()
+            errorMessage.foreach(builder.message(_))
+            errorCode.foreach(ec => builder.errorCode(ErrorCodeConverter.toJava(ec)))
+            emitProviderError(builder.build())
+          case ProviderEvent.Stale(reason, _) =>
+            emitProviderStale(ProviderEventDetails.builder().message(reason).build())
+          case ProviderEvent.ConfigurationChanged(changedFlags, _) =>
+            emitProviderConfigurationChanged(
+              ProviderEventDetails.builder().flagsChanged(changedFlags.toList.asJava).build()
+            )
+          case ProviderEvent.Reconnecting(_) =>
+            () // No Java SDK equivalent for reconnecting
+        }
+      }
 
   /** Get all evaluations that have been made. */
   def getEvaluations: UIO[List[(String, OFEvaluationContext)]] =

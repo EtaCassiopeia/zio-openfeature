@@ -2,7 +2,7 @@ package zio.openfeature
 
 import zio._
 import zio.stream._
-import zio.openfeature.internal.{ContextConverter, ErrorCodeConverter, FeatureFlagsState}
+import zio.openfeature.internal.{ClientEvaluator, ContextConverter, ErrorCodeConverter, FeatureFlagsState}
 import dev.openfeature.sdk.{
   Client => OFClient,
   FeatureProvider => OFFeatureProvider,
@@ -240,6 +240,19 @@ final private[openfeature] class FeatureFlagsLive(
       _          <- txState.record(eval)
     } yield resolution
 
+  // Evaluate a flag using a ClientEvaluator typeclass instance for type-safe SDK dispatch
+  private def evaluateViaTypeclass[A](
+    key: String,
+    default: A,
+    ofContext: dev.openfeature.sdk.EvaluationContext
+  )(implicit ev: ClientEvaluator[A]): IO[FeatureFlagError, FlagResolution[A]] =
+    ev.evaluate(client, key, default, ofContext)
+      .mapError(e => FeatureFlagError.ProviderError(e))
+      .map { details =>
+        val resolution = toFlagResolution(key, details)
+        resolution.copy(value = ev.extractValue(details))
+      }
+
   private def evaluateFromClient[A: FlagType](
     key: String,
     default: A,
@@ -250,61 +263,28 @@ final private[openfeature] class FeatureFlagsLive(
 
     val evaluation: IO[FeatureFlagError, FlagResolution[A]] = flagType.typeName match {
       case "Boolean" =>
-        ZIO
-          .attemptBlocking {
-            client.getBooleanDetails(key, default.asInstanceOf[Boolean], ofContext)
-          }
-          .mapError(e => FeatureFlagError.ProviderError(e))
-          .map(details => toFlagResolution(key, details).asInstanceOf[FlagResolution[A]])
+        evaluateViaTypeclass(key, default.asInstanceOf[Boolean], ofContext)
+          .map(_.asInstanceOf[FlagResolution[A]])
 
       case "String" =>
-        ZIO
-          .attemptBlocking {
-            client.getStringDetails(key, default.asInstanceOf[String], ofContext)
-          }
-          .mapError(e => FeatureFlagError.ProviderError(e))
-          .map(details => toFlagResolution(key, details).asInstanceOf[FlagResolution[A]])
+        evaluateViaTypeclass(key, default.asInstanceOf[String], ofContext)
+          .map(_.asInstanceOf[FlagResolution[A]])
 
       case "Int" =>
-        ZIO
-          .attemptBlocking {
-            client.getIntegerDetails(key, Integer.valueOf(default.asInstanceOf[Int]), ofContext)
-          }
-          .mapError(e => FeatureFlagError.ProviderError(e))
-          .map { details =>
-            val resolution = toFlagResolution(key, details)
-            resolution.copy(value = details.getValue.intValue()).asInstanceOf[FlagResolution[A]]
-          }
+        evaluateViaTypeclass(key, default.asInstanceOf[Int], ofContext)
+          .map(_.asInstanceOf[FlagResolution[A]])
 
       case "Long" =>
-        ZIO
-          .attemptBlocking {
-            client.getIntegerDetails(key, Integer.valueOf(default.asInstanceOf[Long].toInt), ofContext)
-          }
-          .mapError(e => FeatureFlagError.ProviderError(e))
-          .map { details =>
-            val resolution = toFlagResolution(key, details)
-            resolution.copy(value = details.getValue.longValue()).asInstanceOf[FlagResolution[A]]
-          }
+        evaluateViaTypeclass(key, default.asInstanceOf[Long], ofContext)
+          .map(_.asInstanceOf[FlagResolution[A]])
 
       case "Float" =>
-        ZIO
-          .attemptBlocking {
-            client.getDoubleDetails(key, java.lang.Double.valueOf(default.asInstanceOf[Float].toDouble), ofContext)
-          }
-          .mapError(e => FeatureFlagError.ProviderError(e))
-          .map { details =>
-            val resolution = toFlagResolution(key, details)
-            resolution.copy(value = details.getValue.floatValue()).asInstanceOf[FlagResolution[A]]
-          }
+        evaluateViaTypeclass(key, default.asInstanceOf[Float], ofContext)
+          .map(_.asInstanceOf[FlagResolution[A]])
 
       case "Double" =>
-        ZIO
-          .attemptBlocking {
-            client.getDoubleDetails(key, java.lang.Double.valueOf(default.asInstanceOf[Double]), ofContext)
-          }
-          .mapError(e => FeatureFlagError.ProviderError(e))
-          .map(details => toFlagResolution(key, details).asInstanceOf[FlagResolution[A]])
+        evaluateViaTypeclass(key, default.asInstanceOf[Double], ofContext)
+          .map(_.asInstanceOf[FlagResolution[A]])
 
       case "Object" =>
         ZIO

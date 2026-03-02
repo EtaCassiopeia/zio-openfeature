@@ -339,22 +339,26 @@ final private[openfeature] class FeatureFlagsLive(
           }
           .mapError(e => FeatureFlagError.ProviderError(e))
           .flatMap { details =>
-            val rawValue = valueToAny(details.getValue)
-            flagType.decode(rawValue) match {
-              case Right(decoded) =>
-                ZIO.succeed(
-                  FlagResolution(
-                    value = decoded,
-                    variant = Option(details.getVariant),
-                    reason = toResolutionReason(details.getReason),
-                    metadata = toFlagMetadata(details.getFlagMetadata),
-                    flagKey = key,
-                    errorCode = Option(details.getErrorCode).map(ErrorCodeConverter.fromJava),
-                    errorMessage = Option(details.getErrorMessage)
-                  )
-                )
-              case Left(_) =>
-                ZIO.fail(FeatureFlagError.TypeMismatch(key, flagType.typeName, "Object"))
+            valueToAny(details.getValue) match {
+              case Some(rawValue) =>
+                flagType.decode(rawValue) match {
+                  case Right(decoded) =>
+                    ZIO.succeed(
+                      FlagResolution(
+                        value = decoded,
+                        variant = Option(details.getVariant),
+                        reason = toResolutionReason(details.getReason),
+                        metadata = toFlagMetadata(details.getFlagMetadata),
+                        flagKey = key,
+                        errorCode = Option(details.getErrorCode).map(ErrorCodeConverter.fromJava),
+                        errorMessage = Option(details.getErrorMessage)
+                      )
+                    )
+                  case Left(_) =>
+                    ZIO.fail(FeatureFlagError.TypeMismatch(key, flagType.typeName, "Object"))
+                }
+              case None =>
+                ZIO.fail(FeatureFlagError.TypeMismatch(key, flagType.typeName, "null"))
             }
           }
     }
@@ -385,9 +389,9 @@ final private[openfeature] class FeatureFlagsLive(
     )
 
   private def toResolutionReason(reason: String): ResolutionReason =
-    if (reason == null) ResolutionReason.Unknown
-    else
-      reason.toUpperCase match {
+    Option(reason)
+      .map(_.toUpperCase)
+      .map {
         case "STATIC"          => ResolutionReason.Static
         case "DEFAULT"         => ResolutionReason.Default
         case "TARGETING_MATCH" => ResolutionReason.TargetingMatch
@@ -398,6 +402,7 @@ final private[openfeature] class FeatureFlagsLive(
         case "ERROR"           => ResolutionReason.Error
         case _                 => ResolutionReason.Unknown
       }
+      .getOrElse(ResolutionReason.Unknown)
 
   private def toFlagMetadata(metadata: dev.openfeature.sdk.ImmutableMetadata): FlagMetadata =
     if (metadata == null || metadata.isEmpty) FlagMetadata.empty
@@ -444,18 +449,18 @@ final private[openfeature] class FeatureFlagsLive(
         .asStructure()
         .asMap()
         .asScala
-        .map { case (k, v) => k -> valueToAny(v) }
+        .flatMap { case (k, v) => valueToAny(v).map(k -> _) }
         .toMap
 
-  private def valueToAny(value: dev.openfeature.sdk.Value): Any =
-    if (value == null) null
-    else if (value.isBoolean) value.asBoolean()
-    else if (value.isString) value.asString()
-    else if (value.isNumber) value.asDouble()
-    else if (value.isList) value.asList().asScala.map(valueToAny).toList
-    else if (value.isStructure) valueToMap(value)
-    else if (value.isInstant) value.asInstant()
-    else null
+  private def valueToAny(value: dev.openfeature.sdk.Value): Option[Any] =
+    if (value == null) None
+    else if (value.isBoolean) Some(value.asBoolean())
+    else if (value.isString) Some(value.asString())
+    else if (value.isNumber) Some(value.asDouble())
+    else if (value.isList) Some(value.asList().asScala.flatMap(v => valueToAny(v)).toList)
+    else if (value.isStructure) Some(valueToMap(value))
+    else if (value.isInstant) Some(value.asInstant())
+    else None
 
   override def boolean(key: String, default: Boolean): IO[FeatureFlagError, Boolean] =
     booleanDetails(key, default).map(_.value)

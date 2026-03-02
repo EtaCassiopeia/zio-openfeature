@@ -89,6 +89,9 @@ lazy val commonSettings = Seq(
   )
 ) ++ crossVersionSourceDirs
 
+// Override vulnerable transitive jackson-core (GHSA-72hv-8253-57qq)
+ThisBuild / dependencyOverrides += "com.fasterxml.jackson.core" % "jackson-core" % "2.18.6"
+
 lazy val root = (project in file("."))
   .aggregate(core, testkit)
   .settings(

@@ -512,19 +512,20 @@ object FeatureFlagsSpec extends ZIOSpecDefault {
             TrackingEventDetails(value = Some(2.0))
           )
           events <- FeatureFlags.trackedEvents
-        } yield assertTrue(events.size == 4) &&
+        } yield
         // All merged contexts should contain both global and client attributes
-        assertTrue(events.forall { case (_, ctx, _) =>
-          ctx.getString("env").contains("prod") && ctx.getString("app").contains("web")
-        }) &&
-        // Verify targeting keys from invocation context
-        assertTrue(events(1)._2.targetingKey.contains("user-1")) &&
-        assertTrue(events(3)._2.targetingKey.contains("user-2")) &&
-        // Verify tracking details are passed through
-        assertTrue(events(0)._3.isEmpty) &&
-        assertTrue(events(1)._3.isEmpty) &&
-        assertTrue(events(2)._3.exists(_.value.contains(1.0))) &&
-        assertTrue(events(3)._3.exists(_.value.contains(2.0)))
+        assertTrue(events.size == 4) &&
+          assertTrue(events.forall { case (_, ctx, _) =>
+            ctx.getString("env").contains("prod") && ctx.getString("app").contains("web")
+          }) &&
+          // Verify targeting keys from invocation context
+          assertTrue(events(1)._2.targetingKey.contains("user-1")) &&
+          assertTrue(events(3)._2.targetingKey.contains("user-2")) &&
+          // Verify tracking details are passed through
+          assertTrue(events(0)._3.isEmpty) &&
+          assertTrue(events(1)._3.isEmpty) &&
+          assertTrue(events(2)._3.exists(_.value.contains(1.0))) &&
+          assertTrue(events(3)._3.exists(_.value.contains(2.0)))
       }.provide(testLayer()),
       test("TrackingEventDetails builder methods work") {
         val details = TrackingEventDetails.empty

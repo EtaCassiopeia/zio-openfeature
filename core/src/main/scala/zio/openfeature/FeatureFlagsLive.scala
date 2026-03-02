@@ -2,7 +2,7 @@ package zio.openfeature
 
 import zio._
 import zio.stream._
-import zio.openfeature.internal.ContextConverter
+import zio.openfeature.internal.{ContextConverter, FeatureFlagsState}
 import dev.openfeature.sdk.{
   Client => OFClient,
   FeatureProvider => OFFeatureProvider,
@@ -23,13 +23,7 @@ final private[openfeature] class FeatureFlagsLive(
   provider: OFFeatureProvider,
   providerName: String,
   domain: Option[String],
-  globalContextRef: Ref[EvaluationContext],
-  clientContextRef: Ref[EvaluationContext],
-  fiberContextRef: FiberRef[EvaluationContext],
-  transactionRef: FiberRef[Option[TransactionState]],
-  hooksRef: Ref[List[FeatureHook]],
-  eventHub: Hub[ProviderEvent],
-  statusRef: Ref[ProviderStatus]
+  state: FeatureFlagsState
 ) extends FeatureFlags {
 
   // Bridge Java SDK provider events to ZIO event system
@@ -40,8 +34,8 @@ final private[openfeature] class FeatureFlagsLive(
       Unsafe.unsafe { implicit u =>
         Runtime.default.unsafe
           .run(
-            statusRef.set(ProviderStatus.Ready) *>
-              eventHub.publish(ProviderEvent.Ready(metadata))
+            state.status.set(ProviderStatus.Ready) *>
+              state.eventHub.publish(ProviderEvent.Ready(metadata))
           )
           .getOrThrowFiberFailure()
       }
@@ -52,8 +46,8 @@ final private[openfeature] class FeatureFlagsLive(
         val errorCode = Option(details.getErrorCode).map(toErrorCode)
         Runtime.default.unsafe
           .run(
-            statusRef.set(ProviderStatus.Error) *>
-              eventHub.publish(
+            state.status.set(ProviderStatus.Error) *>
+              state.eventHub.publish(
                 ProviderEvent.Error(error, metadata, errorCode, Option(details.getMessage))
               )
           )
@@ -65,8 +59,8 @@ final private[openfeature] class FeatureFlagsLive(
         val reason = Option(details.getMessage).getOrElse("Provider stale")
         Runtime.default.unsafe
           .run(
-            statusRef.set(ProviderStatus.Stale) *>
-              eventHub.publish(ProviderEvent.Stale(reason, metadata))
+            state.status.set(ProviderStatus.Stale) *>
+              state.eventHub.publish(ProviderEvent.Stale(reason, metadata))
           )
           .getOrThrowFiberFailure()
       }
@@ -78,7 +72,7 @@ final private[openfeature] class FeatureFlagsLive(
           .getOrElse(Set.empty[String])
         Runtime.default.unsafe
           .run(
-            eventHub.publish(ProviderEvent.ConfigurationChanged(flags, metadata))
+            state.eventHub.publish(ProviderEvent.ConfigurationChanged(flags, metadata))
           )
           .getOrThrowFiberFailure()
       }
@@ -104,10 +98,10 @@ final private[openfeature] class FeatureFlagsLive(
   // Context merges in order per OpenFeature spec: API (global) -> Client -> Transaction -> Invocation
   private def effectiveContext(invocation: EvaluationContext): UIO[EvaluationContext] =
     for {
-      global      <- globalContextRef.get
-      clientCtx   <- clientContextRef.get
-      fiberLocal  <- fiberContextRef.get
-      transaction <- transactionRef.get
+      global      <- state.globalContext.get
+      clientCtx   <- state.clientContext.get
+      fiberLocal  <- state.fiberContext.get
+      transaction <- state.transaction.get
       txContext = transaction.map(_.context).getOrElse(EvaluationContext.empty)
     } yield global
       .merge(clientCtx)
@@ -122,7 +116,7 @@ final private[openfeature] class FeatureFlagsLive(
     evaluate: EvaluationContext => IO[FeatureFlagError, FlagResolution[A]]
   ): IO[FeatureFlagError, FlagResolution[A]] =
     for {
-      currentHooks <- hooksRef.get
+      currentHooks <- state.hooks.get
       provHooks  = getProviderHooks
       allHooks   = currentHooks ++ provHooks
       metadata   = ProviderMetadata(providerName)
@@ -178,7 +172,7 @@ final private[openfeature] class FeatureFlagsLive(
   ): IO[FeatureFlagError, FlagResolution[A]] =
     for {
       _         <- checkProviderStatus
-      txState   <- transactionRef.get
+      txState   <- state.transaction.get
       effectCtx <- effectiveContext(invocationContext)
       result <- txState match {
         case Some(state) => evaluateWithTransaction(key, default, effectCtx, state)
@@ -624,7 +618,7 @@ final private[openfeature] class FeatureFlagsLive(
     evaluate: EvaluationContext => IO[FeatureFlagError, FlagResolution[A]]
   ): IO[FeatureFlagError, FlagResolution[A]] =
     for {
-      clientHooks <- hooksRef.get
+      clientHooks <- state.hooks.get
       provHooks = getProviderHooks
       // Combine client + invocation + provider hooks (per spec order)
       allHooks   = clientHooks ++ options.hooks ++ provHooks
@@ -739,20 +733,20 @@ final private[openfeature] class FeatureFlagsLive(
     }
 
   override def setGlobalContext(ctx: EvaluationContext): UIO[Unit] =
-    globalContextRef.set(ctx)
+    state.globalContext.set(ctx)
 
   override def globalContext: UIO[EvaluationContext] =
-    globalContextRef.get
+    state.globalContext.get
 
   override def setClientContext(ctx: EvaluationContext): UIO[Unit] =
-    clientContextRef.set(ctx)
+    state.clientContext.set(ctx)
 
   override def clientContext: UIO[EvaluationContext] =
-    clientContextRef.get
+    state.clientContext.get
 
   override def withContext[R, E, A](ctx: EvaluationContext)(zio: ZIO[R, E, A]): ZIO[R, E, A] =
-    fiberContextRef.get.flatMap { current =>
-      fiberContextRef.locally(current.merge(ctx))(zio)
+    state.fiberContext.get.flatMap { current =>
+      state.fiberContext.locally(current.merge(ctx))(zio)
     }
 
   override def transaction[R, E, A](
@@ -761,29 +755,29 @@ final private[openfeature] class FeatureFlagsLive(
     cacheEvaluations: Boolean
   )(zio: ZIO[R, E, A]): ZIO[R, Compat.OrError[E, FeatureFlagError], TransactionResult[A]] =
     for {
-      current <- transactionRef.get
+      current <- state.transaction.get
       _ <- ZIO.when(current.isDefined)(
         ZIO.fail(FeatureFlagError.NestedTransactionNotAllowed)
       )
-      state    <- TransactionState.make(overrides, context, cacheEvaluations)
-      result   <- transactionRef.locally(Some(state))(zio)
-      txResult <- state.toResult(result)
+      txState  <- TransactionState.make(overrides, context, cacheEvaluations)
+      result   <- state.transaction.locally(Some(txState))(zio)
+      txResult <- txState.toResult(result)
     } yield txResult
 
   override def inTransaction: UIO[Boolean] =
-    transactionRef.get.map(_.isDefined)
+    state.transaction.get.map(_.isDefined)
 
   override def currentEvaluatedFlags: UIO[Map[String, zio.openfeature.FlagEvaluation[_]]] =
-    transactionRef.get.flatMap {
+    state.transaction.get.flatMap {
       case Some(state) => state.getEvaluations
       case None        => ZIO.succeed(Map.empty)
     }
 
   override def events: ZStream[Any, Nothing, ProviderEvent] =
-    ZStream.fromHub(eventHub)
+    ZStream.fromHub(state.eventHub)
 
   override def providerStatus: UIO[ProviderStatus] =
-    statusRef.get
+    state.status.get
 
   override def providerMetadata: UIO[ProviderMetadata] =
     ZIO.succeed(ProviderMetadata(providerName))
@@ -864,13 +858,13 @@ final private[openfeature] class FeatureFlagsLive(
     }
 
   override def addHook(hook: FeatureHook): UIO[Unit] =
-    hooksRef.update(_ :+ hook)
+    state.hooks.update(_ :+ hook)
 
   override def clearHooks: UIO[Unit] =
-    hooksRef.set(List.empty)
+    state.hooks.set(List.empty)
 
   override def hooks: UIO[List[FeatureHook]] =
-    hooksRef.get
+    state.hooks.get
 
   // Provider hooks (spec: provider hooks included in hook pipeline)
 
@@ -980,11 +974,11 @@ final private[openfeature] class FeatureFlagsLive(
 
   override def shutdown: UIO[Unit] =
     for {
-      _ <- statusRef.set(ProviderStatus.NotReady)
-      _ <- hooksRef.set(List.empty)
-      _ <- globalContextRef.set(EvaluationContext.empty)
-      _ <- clientContextRef.set(EvaluationContext.empty)
-      _ <- eventHub.shutdown
+      _ <- state.status.set(ProviderStatus.NotReady)
+      _ <- state.hooks.set(List.empty)
+      _ <- state.globalContext.set(EvaluationContext.empty)
+      _ <- state.clientContext.set(EvaluationContext.empty)
+      _ <- state.eventHub.shutdown
       _ <- ZIO.attemptBlocking(OpenFeatureAPI.getInstance().shutdown()).ignore
     } yield ()
 

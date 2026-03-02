@@ -2,6 +2,7 @@ package zio.openfeature
 
 import zio._
 import zio.stream._
+import zio.openfeature.internal.FeatureFlagsState
 import dev.openfeature.sdk.{FeatureProvider => OFFeatureProvider, OpenFeatureAPI}
 import dev.openfeature.sdk.multiprovider.{MultiProvider, Strategy, FirstMatchStrategy, FirstSuccessfulStrategy}
 
@@ -457,27 +458,9 @@ object FeatureFlags {
         _      <- ZIO.attemptBlocking(api.setProviderAndWait(provider))
         client <- ZIO.attempt(api.getClient())
         providerName = Option(provider.getMetadata).map(_.getName).getOrElse("unknown")
-        globalCtxRef   <- Ref.make(EvaluationContext.empty)
-        clientCtxRef   <- Ref.make(EvaluationContext.empty)
-        fiberCtxRef    <- FiberRef.make(EvaluationContext.empty)
-        transactionRef <- FiberRef.make[Option[TransactionState]](None)
-        hooksRef       <- Ref.make(List.empty[FeatureHook])
-        eventHub       <- Hub.unbounded[ProviderEvent]
-        statusRef      <- Ref.make[ProviderStatus](ProviderStatus.Ready)
-        _              <- ZIO.addFinalizer(ZIO.attemptBlocking(api.shutdown()).ignore)
-        ff = new FeatureFlagsLive(
-          client,
-          provider,
-          providerName,
-          None, // default domain
-          globalCtxRef,
-          clientCtxRef,
-          fiberCtxRef,
-          transactionRef,
-          hooksRef,
-          eventHub,
-          statusRef
-        )
+        state <- FeatureFlagsState.make()
+        _     <- ZIO.addFinalizer(ZIO.attemptBlocking(api.shutdown()).ignore)
+        ff = new FeatureFlagsLive(client, provider, providerName, None, state)
         _ <- ff.startEventBridge
       } yield ff
     }
@@ -509,25 +492,8 @@ object FeatureFlags {
       _      <- ZIO.attemptBlocking(api.setProviderAndWait(domain, provider))
       client <- ZIO.attempt(api.getClient(domain))
       providerName = Option(provider.getMetadata).map(_.getName).getOrElse("unknown")
-      globalCtxRef   <- Ref.make(EvaluationContext.empty)
-      clientCtxRef   <- Ref.make(EvaluationContext.empty)
-      fiberCtxRef    <- FiberRef.make(EvaluationContext.empty)
-      transactionRef <- FiberRef.make[Option[TransactionState]](None)
-      hooksRef       <- Ref.make(List.empty[FeatureHook])
-      eventHub       <- Hub.unbounded[ProviderEvent]
-      ff = new FeatureFlagsLive(
-        client,
-        provider,
-        providerName,
-        Some(domain),
-        globalCtxRef,
-        clientCtxRef,
-        fiberCtxRef,
-        transactionRef,
-        hooksRef,
-        eventHub,
-        statusRef
-      )
+      state <- FeatureFlagsState.make(statusRef = Some(statusRef))
+      ff = new FeatureFlagsLive(client, provider, providerName, Some(domain), state)
       _ <- ff.startEventBridge
     } yield ff
 
@@ -557,27 +523,9 @@ object FeatureFlags {
         _      <- ZIO.attemptBlocking(api.setProviderAndWait(provider))
         client <- ZIO.attempt(api.getClient())
         providerName = Option(provider.getMetadata).map(_.getName).getOrElse("unknown")
-        globalCtxRef   <- Ref.make(EvaluationContext.empty)
-        clientCtxRef   <- Ref.make(EvaluationContext.empty)
-        fiberCtxRef    <- FiberRef.make(EvaluationContext.empty)
-        transactionRef <- FiberRef.make[Option[TransactionState]](None)
-        hooksRef       <- Ref.make(initialHooks)
-        eventHub       <- Hub.unbounded[ProviderEvent]
-        statusRef      <- Ref.make[ProviderStatus](ProviderStatus.Ready)
-        _              <- ZIO.addFinalizer(ZIO.attemptBlocking(api.shutdown()).ignore)
-        ff = new FeatureFlagsLive(
-          client,
-          provider,
-          providerName,
-          None, // default domain
-          globalCtxRef,
-          clientCtxRef,
-          fiberCtxRef,
-          transactionRef,
-          hooksRef,
-          eventHub,
-          statusRef
-        )
+        state <- FeatureFlagsState.make(initialHooks = initialHooks)
+        _     <- ZIO.addFinalizer(ZIO.attemptBlocking(api.shutdown()).ignore)
+        ff = new FeatureFlagsLive(client, provider, providerName, None, state)
         _ <- ff.startEventBridge
       } yield ff
     }

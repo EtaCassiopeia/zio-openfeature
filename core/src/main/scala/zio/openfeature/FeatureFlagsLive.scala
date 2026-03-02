@@ -2,7 +2,7 @@ package zio.openfeature
 
 import zio._
 import zio.stream._
-import zio.openfeature.internal.ContextConverter
+import zio.openfeature.internal.{ClientEvaluator, ContextConverter}
 import dev.openfeature.sdk.{
   Client => OFClient,
   FeatureProvider => OFFeatureProvider,
@@ -249,65 +249,17 @@ final private[openfeature] class FeatureFlagsLive(
     val flagType  = FlagType[A]
     val ofContext = ContextConverter.toOpenFeature(context)
 
-    val evaluation: IO[FeatureFlagError, FlagResolution[A]] = flagType.typeName match {
-      case "Boolean" =>
-        ZIO
-          .attemptBlocking {
-            client.getBooleanDetails(key, default.asInstanceOf[Boolean], ofContext)
-          }
-          .mapError(e => FeatureFlagError.ProviderError(e))
-          .map(details => toFlagResolution(key, details).asInstanceOf[FlagResolution[A]])
-
-      case "String" =>
-        ZIO
-          .attemptBlocking {
-            client.getStringDetails(key, default.asInstanceOf[String], ofContext)
-          }
-          .mapError(e => FeatureFlagError.ProviderError(e))
-          .map(details => toFlagResolution(key, details).asInstanceOf[FlagResolution[A]])
-
-      case "Int" =>
-        ZIO
-          .attemptBlocking {
-            client.getIntegerDetails(key, Integer.valueOf(default.asInstanceOf[Int]), ofContext)
-          }
+    val evaluation: IO[FeatureFlagError, FlagResolution[A]] = ClientEvaluator.forType(flagType) match {
+      case Some(evaluator) =>
+        evaluator
+          .evaluate(client, key, default, ofContext)
           .mapError(e => FeatureFlagError.ProviderError(e))
           .map { details =>
-            val resolution = toFlagResolution(key, details)
-            resolution.copy(value = details.getValue.intValue()).asInstanceOf[FlagResolution[A]]
+            val base = toFlagResolution(key, details)
+            base.copy(value = evaluator.extractValue(details))
           }
 
-      case "Long" =>
-        ZIO
-          .attemptBlocking {
-            client.getIntegerDetails(key, Integer.valueOf(default.asInstanceOf[Long].toInt), ofContext)
-          }
-          .mapError(e => FeatureFlagError.ProviderError(e))
-          .map { details =>
-            val resolution = toFlagResolution(key, details)
-            resolution.copy(value = details.getValue.longValue()).asInstanceOf[FlagResolution[A]]
-          }
-
-      case "Float" =>
-        ZIO
-          .attemptBlocking {
-            client.getDoubleDetails(key, java.lang.Double.valueOf(default.asInstanceOf[Float].toDouble), ofContext)
-          }
-          .mapError(e => FeatureFlagError.ProviderError(e))
-          .map { details =>
-            val resolution = toFlagResolution(key, details)
-            resolution.copy(value = details.getValue.floatValue()).asInstanceOf[FlagResolution[A]]
-          }
-
-      case "Double" =>
-        ZIO
-          .attemptBlocking {
-            client.getDoubleDetails(key, java.lang.Double.valueOf(default.asInstanceOf[Double]), ofContext)
-          }
-          .mapError(e => FeatureFlagError.ProviderError(e))
-          .map(details => toFlagResolution(key, details).asInstanceOf[FlagResolution[A]])
-
-      case "Object" =>
+      case None if flagType.typeName == "Object" =>
         ZIO
           .attemptBlocking {
             val defaultValue = new dev.openfeature.sdk.Value(
@@ -331,7 +283,7 @@ final private[openfeature] class FeatureFlagsLive(
             )
           }
 
-      case _ =>
+      case None =>
         // Custom type - try to decode from object
         ZIO
           .attemptBlocking {

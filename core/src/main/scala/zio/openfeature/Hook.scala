@@ -1,6 +1,15 @@
 package zio.openfeature
 
+import scala.annotation.targetName
+
 import zio._
+
+/** A type-safe key for storing and retrieving values from HookData and HookHints.
+  *
+  * Using TypedKey instead of raw String keys ensures that the type of the value is tracked at compile time, avoiding
+  * unsafe `asInstanceOf` casts.
+  */
+final case class TypedKey[A](name: String)
 
 /** Per-hook mutable state that persists across hook stages within a single evaluation (spec 4.6.1).
   *
@@ -22,6 +31,18 @@ final class HookData {
   def remove(key: String): Unit = data.remove(key)
 
   def clear(): Unit = data.clear()
+
+  // Type-safe API
+
+  def set[A](key: TypedKey[A], value: A): Unit = data.put(key.name, value)
+
+  def get[A](key: TypedKey[A]): Option[A] =
+    Option(data.get(key.name)).map(_.asInstanceOf[A])
+
+  def getOrElse[A](key: TypedKey[A], default: => A): A =
+    get(key).getOrElse(default)
+
+  def remove[A](key: TypedKey[A]): Unit = data.remove(key.name)
 }
 
 object HookData {
@@ -50,6 +71,18 @@ final case class HookHints(values: Map[String, Any]) {
 
   def ++(other: HookHints): HookHints =
     HookHints(values ++ other.values)
+
+  // Type-safe API
+
+  def get[A](key: TypedKey[A]): Option[A] =
+    values.get(key.name).map(_.asInstanceOf[A])
+
+  def getOrElse[A](key: TypedKey[A], default: => A): A =
+    get(key).getOrElse(default)
+
+  @targetName("addTyped")
+  def +[A](entry: (TypedKey[A], A)): HookHints =
+    HookHints(values + (entry._1.name -> entry._2))
 }
 
 object HookHints {
@@ -136,7 +169,7 @@ object FeatureHook {
 
   def metrics(onEvaluation: (String, Duration, Boolean) => UIO[Unit]): FeatureHook =
     new FeatureHook {
-      private val startTimeKey = "metrics.startTime"
+      private val startTimeKey = TypedKey[Long]("metrics.startTime")
 
       override def before(ctx: HookContext, hints: HookHints): UIO[Option[(EvaluationContext, HookHints)]] =
         Clock.nanoTime.map { start =>
@@ -146,7 +179,7 @@ object FeatureHook {
       override def after[A](ctx: HookContext, details: FlagResolution[A], hints: HookHints): UIO[Unit] =
         for {
           end <- Clock.nanoTime
-          start    = hints.getOrElse[Long](startTimeKey, end)
+          start    = hints.getOrElse(startTimeKey, end)
           duration = Duration.fromNanos(end - start)
           _ <- onEvaluation(ctx.flagKey, duration, true)
         } yield ()
@@ -154,7 +187,7 @@ object FeatureHook {
       override def error(ctx: HookContext, err: FeatureFlagError, hints: HookHints): UIO[Unit] =
         for {
           end <- Clock.nanoTime
-          start    = hints.getOrElse[Long](startTimeKey, end)
+          start    = hints.getOrElse(startTimeKey, end)
           duration = Duration.fromNanos(end - start)
           _ <- onEvaluation(ctx.flagKey, duration, false)
         } yield ()

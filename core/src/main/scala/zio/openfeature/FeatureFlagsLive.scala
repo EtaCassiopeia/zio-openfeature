@@ -123,7 +123,7 @@ final private[openfeature] class FeatureFlagsLive(
   ): IO[FeatureFlagError, FlagResolution[A]] =
     for {
       currentHooks <- hooksRef.get
-      provHooks  = getProviderHooks
+      provHooks    <- getProviderHooks
       allHooks   = currentHooks ++ provHooks
       metadata   = ProviderMetadata(providerName)
       clientMeta = ClientMetadata(domain)
@@ -417,7 +417,11 @@ final private[openfeature] class FeatureFlagsLive(
           }.toMap
           FlagMetadata(entries)
         }
-      } catch { case _: Exception => FlagMetadata.empty }
+      } catch {
+        case e: Exception =>
+          java.lang.System.err.println(s"[zio-openfeature] Failed to parse flag metadata: ${e.getMessage}")
+          FlagMetadata.empty
+      }
 
   private def anyToObject(value: Any): Object = value match {
     case b: Boolean    => java.lang.Boolean.valueOf(b)
@@ -613,7 +617,7 @@ final private[openfeature] class FeatureFlagsLive(
   ): IO[FeatureFlagError, FlagResolution[A]] =
     for {
       clientHooks <- hooksRef.get
-      provHooks = getProviderHooks
+      provHooks   <- getProviderHooks
       // Combine client + invocation + provider hooks (per spec order)
       allHooks   = clientHooks ++ options.hooks ++ provHooks
       metadata   = ProviderMetadata(providerName)
@@ -862,12 +866,14 @@ final private[openfeature] class FeatureFlagsLive(
 
   // Provider hooks (spec: provider hooks included in hook pipeline)
 
-  private def getProviderHooks: List[FeatureHook] =
-    try {
-      val javaHooks = provider.getProviderHooks
-      if (javaHooks == null || javaHooks.isEmpty) Nil
-      else javaHooks.asScala.toList.map(wrapJavaHook)
-    } catch { case _: Exception => Nil }
+  private def getProviderHooks: UIO[List[FeatureHook]] =
+    ZIO
+      .attempt {
+        val javaHooks = provider.getProviderHooks
+        if (javaHooks == null || javaHooks.isEmpty) Nil
+        else javaHooks.asScala.toList.map(wrapJavaHook)
+      }
+      .catchAll(e => ZIO.logWarning(s"Failed to get provider hooks: ${e.getMessage}").as(Nil))
 
   @scala.annotation.nowarn("msg=deprecated")
   private def toJavaHookContext(ctx: HookContext): JavaHookContext[Any] =

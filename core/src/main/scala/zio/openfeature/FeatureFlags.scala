@@ -469,10 +469,11 @@ object FeatureFlags {
         case None    => ZIO.attempt(api.getClient())
       }
       providerName = Option(provider.getMetadata).map(_.getName).getOrElse("unknown")
-      state <- FeatureFlagsState.make
-      _     <- state.hooksRef.set(initialHooks)
-      _     <- statusRef.fold(state.statusRef.set(ProviderStatus.Ready))(ref => ref.get.flatMap(state.statusRef.set))
-      _     <- ZIO.when(addShutdownFinalizer)(ZIO.addFinalizer(ZIO.attemptBlocking(api.shutdown()).ignore))
+      baseState <- FeatureFlagsState.make
+      state = statusRef.fold(baseState)(ref => baseState.copy(statusRef = ref))
+      _ <- state.hooksRef.set(initialHooks)
+      _ <- statusRef.fold(state.statusRef.set(ProviderStatus.Ready))(_ => ZIO.unit)
+      _ <- ZIO.when(addShutdownFinalizer)(ZIO.addFinalizer(ZIO.attemptBlocking(api.shutdown()).ignore))
       ff = new FeatureFlagsLive(client, provider, providerName, domain, state)
       _ <- ff.startEventBridge
     } yield ff

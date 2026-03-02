@@ -14,7 +14,7 @@ final case class FeatureFlagsState(
 )
 
 object FeatureFlagsState {
-  def make: UIO[FeatureFlagsState] =
+  def make: URIO[Scope, FeatureFlagsState] =
     for {
       globalCtxRef   <- Ref.make(EvaluationContext.empty)
       clientCtxRef   <- Ref.make(EvaluationContext.empty)

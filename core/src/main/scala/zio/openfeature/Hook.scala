@@ -1,7 +1,5 @@
 package zio.openfeature
 
-import scala.annotation.targetName
-
 import zio._
 
 /** A type-safe key for storing and retrieving values from HookData and HookHints.
@@ -80,9 +78,8 @@ final case class HookHints(values: Map[String, Any]) {
   def getOrElse[A](key: TypedKey[A], default: => A): A =
     get(key).getOrElse(default)
 
-  @targetName("addTyped")
-  def +[A](entry: (TypedKey[A], A)): HookHints =
-    HookHints(values + (entry._1.name -> entry._2))
+  def add[A](key: TypedKey[A], value: A): HookHints =
+    HookHints(values + (key.name -> value))
 }
 
 object HookHints {
@@ -173,7 +170,7 @@ object FeatureHook {
 
       override def before(ctx: HookContext, hints: HookHints): UIO[Option[(EvaluationContext, HookHints)]] =
         Clock.nanoTime.map { start =>
-          Some((ctx.evaluationContext, hints + (startTimeKey -> start)))
+          Some((ctx.evaluationContext, hints.add(startTimeKey, start)))
         }
 
       override def after[A](ctx: HookContext, details: FlagResolution[A], hints: HookHints): UIO[Unit] =

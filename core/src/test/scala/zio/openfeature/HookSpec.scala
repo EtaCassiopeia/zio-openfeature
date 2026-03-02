@@ -390,9 +390,9 @@ object HookSpec extends ZIOSpecDefault {
         val hints = HookHints(Map(key.name -> 42))
         assertTrue(hints.get(key) == Some(42))
       },
-      test("TypedKey + on HookHints") {
+      test("TypedKey add on HookHints") {
         val key   = TypedKey[Boolean]("enabled")
-        val hints = HookHints.empty + (key -> true)
+        val hints = HookHints.empty.add(key, true)
         assertTrue(hints.get(key) == Some(true))
       },
       test("TypedKey getOrElse on HookData") {

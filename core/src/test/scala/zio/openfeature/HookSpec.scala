@@ -135,13 +135,13 @@ object HookSpec extends ZIOSpecDefault {
           _ <- composed.after(makeHookContext(), resolution, HookHints.empty)
         } yield assertTrue(callOrder.get() == List("hook1", "hook2"))
       },
-      test("compose before merges contexts") {
+      test("compose before merges contexts preserving existing attributes") {
         val hook = new FeatureHook {
           override def before(ctx: HookContext, hints: HookHints): UIO[Option[(EvaluationContext, HookHints)]] =
             ZIO.succeed(
               Some(
                 (
-                  ctx.evaluationContext.withAttribute("added", AttributeValue.string("value")),
+                  EvaluationContext.withAttributes("added" -> AttributeValue.string("value")),
                   hints + ("hookRan" -> true)
                 )
               )
@@ -149,12 +149,53 @@ object HookSpec extends ZIOSpecDefault {
         }
 
         val composed = FeatureHook.compose(List(hook))
+        val inputCtx = makeHookContext().copy(
+          evaluationContext = EvaluationContext.withAttributes("existing" -> AttributeValue.string("keep"))
+        )
 
         for {
-          result <- composed.before(makeHookContext(), HookHints.empty)
+          result <- composed.before(inputCtx, HookHints.empty)
         } yield assertTrue(result.isDefined) &&
           assertTrue(result.get._1.getString("added").contains("value")) &&
+          assertTrue(result.get._1.getString("existing").contains("keep")) &&
           assertTrue(result.get._2.get[Boolean]("hookRan").contains(true))
+      },
+      test("compose before merges contexts from multiple hooks") {
+        val hook1 = new FeatureHook {
+          override def before(ctx: HookContext, hints: HookHints): UIO[Option[(EvaluationContext, HookHints)]] =
+            ZIO.succeed(
+              Some(
+                (
+                  EvaluationContext.withAttributes("from-hook1" -> AttributeValue.string("h1")),
+                  hints + ("hook1" -> true)
+                )
+              )
+            )
+        }
+
+        val hook2 = new FeatureHook {
+          override def before(ctx: HookContext, hints: HookHints): UIO[Option[(EvaluationContext, HookHints)]] =
+            ZIO.succeed(
+              Some(
+                (
+                  EvaluationContext.withAttributes("from-hook2" -> AttributeValue.string("h2")),
+                  hints + ("hook2" -> true)
+                )
+              )
+            )
+        }
+
+        val composed = FeatureHook.compose(List(hook1, hook2))
+        val inputCtx = makeHookContext().copy(
+          evaluationContext = EvaluationContext.withAttributes("original" -> AttributeValue.string("orig"))
+        )
+
+        for {
+          result <- composed.before(inputCtx, HookHints.empty)
+        } yield assertTrue(result.isDefined) &&
+          assertTrue(result.get._1.getString("original").contains("orig")) &&
+          assertTrue(result.get._1.getString("from-hook1").contains("h1")) &&
+          assertTrue(result.get._1.getString("from-hook2").contains("h2"))
       }
     ),
     suite("FeatureHook.metrics")(

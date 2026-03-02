@@ -449,47 +449,60 @@ object FeatureFlags {
 
   // Factory Methods
 
+  /** Shared initialization logic for all factory methods. */
+  private def build(
+    provider: OFFeatureProvider,
+    domain: Option[String],
+    initialHooks: List[FeatureHook],
+    statusRef: Option[Ref[ProviderStatus]],
+    addShutdownFinalizer: Boolean
+  ): ZIO[Scope, Throwable, FeatureFlagsLive] =
+    for {
+      api <- ZIO.succeed(OpenFeatureAPI.getInstance())
+      _ <- domain match {
+        case Some(d) => ZIO.attemptBlocking(api.setProviderAndWait(d, provider))
+        case None    => ZIO.attemptBlocking(api.setProviderAndWait(provider))
+      }
+      client <- domain match {
+        case Some(d) => ZIO.attempt(api.getClient(d))
+        case None    => ZIO.attempt(api.getClient())
+      }
+      providerName = Option(provider.getMetadata).map(_.getName).getOrElse("unknown")
+      globalCtxRef   <- Ref.make(EvaluationContext.empty)
+      clientCtxRef   <- Ref.make(EvaluationContext.empty)
+      fiberCtxRef    <- FiberRef.make(EvaluationContext.empty)
+      transactionRef <- FiberRef.make[Option[TransactionState]](None)
+      hooksRef       <- Ref.make(initialHooks)
+      eventHub       <- Hub.unbounded[ProviderEvent]
+      sRef           <- statusRef.fold(Ref.make[ProviderStatus](ProviderStatus.Ready))(ZIO.succeed(_))
+      _              <- ZIO.when(addShutdownFinalizer)(ZIO.addFinalizer(ZIO.attemptBlocking(api.shutdown()).ignore))
+      ff = new FeatureFlagsLive(
+        client,
+        provider,
+        providerName,
+        domain,
+        globalCtxRef,
+        clientCtxRef,
+        fiberCtxRef,
+        transactionRef,
+        hooksRef,
+        eventHub,
+        sRef
+      )
+      _ <- ff.startEventBridge
+    } yield ff
+
   /** Create a FeatureFlags layer from any OpenFeature provider. */
   def fromProvider(provider: OFFeatureProvider): ZLayer[Scope, Throwable, FeatureFlags] =
-    ZLayer.scoped {
-      for {
-        api    <- ZIO.succeed(OpenFeatureAPI.getInstance())
-        _      <- ZIO.attemptBlocking(api.setProviderAndWait(provider))
-        client <- ZIO.attempt(api.getClient())
-        providerName = Option(provider.getMetadata).map(_.getName).getOrElse("unknown")
-        globalCtxRef   <- Ref.make(EvaluationContext.empty)
-        clientCtxRef   <- Ref.make(EvaluationContext.empty)
-        fiberCtxRef    <- FiberRef.make(EvaluationContext.empty)
-        transactionRef <- FiberRef.make[Option[TransactionState]](None)
-        hooksRef       <- Ref.make(List.empty[FeatureHook])
-        eventHub       <- Hub.unbounded[ProviderEvent]
-        statusRef      <- Ref.make[ProviderStatus](ProviderStatus.Ready)
-        _              <- ZIO.addFinalizer(ZIO.attemptBlocking(api.shutdown()).ignore)
-        ff = new FeatureFlagsLive(
-          client,
-          provider,
-          providerName,
-          None, // default domain
-          globalCtxRef,
-          clientCtxRef,
-          fiberCtxRef,
-          transactionRef,
-          hooksRef,
-          eventHub,
-          statusRef
-        )
-        _ <- ff.startEventBridge
-      } yield ff
-    }
+    ZLayer.scoped(
+      build(provider, domain = None, initialHooks = Nil, statusRef = None, addShutdownFinalizer = true)
+    )
 
   /** Create a FeatureFlags layer with a named domain/client. */
   def fromProviderWithDomain(provider: OFFeatureProvider, domain: String): ZLayer[Scope, Throwable, FeatureFlags] =
-    ZLayer.scoped {
-      for {
-        statusRef <- Ref.make[ProviderStatus](ProviderStatus.Ready)
-        ff        <- buildWithDomain(provider, domain, statusRef)
-      } yield ff
-    }
+    ZLayer.scoped(
+      build(provider, domain = Some(domain), initialHooks = Nil, statusRef = None, addShutdownFinalizer = false)
+    )
 
   /** Create a FeatureFlags layer with a named domain/client and a shared status ref. */
   private[openfeature] def fromProviderWithDomain(
@@ -497,39 +510,15 @@ object FeatureFlags {
     domain: String,
     statusRef: Ref[ProviderStatus]
   ): ZLayer[Scope, Throwable, FeatureFlags] =
-    ZLayer.scoped(buildWithDomain(provider, domain, statusRef))
-
-  private def buildWithDomain(
-    provider: OFFeatureProvider,
-    domain: String,
-    statusRef: Ref[ProviderStatus]
-  ): ZIO[Scope, Throwable, FeatureFlagsLive] =
-    for {
-      api    <- ZIO.succeed(OpenFeatureAPI.getInstance())
-      _      <- ZIO.attemptBlocking(api.setProviderAndWait(domain, provider))
-      client <- ZIO.attempt(api.getClient(domain))
-      providerName = Option(provider.getMetadata).map(_.getName).getOrElse("unknown")
-      globalCtxRef   <- Ref.make(EvaluationContext.empty)
-      clientCtxRef   <- Ref.make(EvaluationContext.empty)
-      fiberCtxRef    <- FiberRef.make(EvaluationContext.empty)
-      transactionRef <- FiberRef.make[Option[TransactionState]](None)
-      hooksRef       <- Ref.make(List.empty[FeatureHook])
-      eventHub       <- Hub.unbounded[ProviderEvent]
-      ff = new FeatureFlagsLive(
-        client,
+    ZLayer.scoped(
+      build(
         provider,
-        providerName,
-        Some(domain),
-        globalCtxRef,
-        clientCtxRef,
-        fiberCtxRef,
-        transactionRef,
-        hooksRef,
-        eventHub,
-        statusRef
+        domain = Some(domain),
+        initialHooks = Nil,
+        statusRef = Some(statusRef),
+        addShutdownFinalizer = false
       )
-      _ <- ff.startEventBridge
-    } yield ff
+    )
 
   /** Create a FeatureFlags layer from multiple providers using the first-match strategy. */
   def fromMultiProvider(providers: List[OFFeatureProvider]): ZLayer[Scope, Throwable, FeatureFlags] = {
@@ -551,34 +540,7 @@ object FeatureFlags {
     provider: OFFeatureProvider,
     initialHooks: List[FeatureHook]
   ): ZLayer[Scope, Throwable, FeatureFlags] =
-    ZLayer.scoped {
-      for {
-        api    <- ZIO.succeed(OpenFeatureAPI.getInstance())
-        _      <- ZIO.attemptBlocking(api.setProviderAndWait(provider))
-        client <- ZIO.attempt(api.getClient())
-        providerName = Option(provider.getMetadata).map(_.getName).getOrElse("unknown")
-        globalCtxRef   <- Ref.make(EvaluationContext.empty)
-        clientCtxRef   <- Ref.make(EvaluationContext.empty)
-        fiberCtxRef    <- FiberRef.make(EvaluationContext.empty)
-        transactionRef <- FiberRef.make[Option[TransactionState]](None)
-        hooksRef       <- Ref.make(initialHooks)
-        eventHub       <- Hub.unbounded[ProviderEvent]
-        statusRef      <- Ref.make[ProviderStatus](ProviderStatus.Ready)
-        _              <- ZIO.addFinalizer(ZIO.attemptBlocking(api.shutdown()).ignore)
-        ff = new FeatureFlagsLive(
-          client,
-          provider,
-          providerName,
-          None, // default domain
-          globalCtxRef,
-          clientCtxRef,
-          fiberCtxRef,
-          transactionRef,
-          hooksRef,
-          eventHub,
-          statusRef
-        )
-        _ <- ff.startEventBridge
-      } yield ff
-    }
+    ZLayer.scoped(
+      build(provider, domain = None, initialHooks = initialHooks, statusRef = None, addShutdownFinalizer = true)
+    )
 }

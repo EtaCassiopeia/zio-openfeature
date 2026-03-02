@@ -709,6 +709,15 @@ object FeatureFlagsSpec extends ZIOSpecDefault {
           _            <- testProvider.setStatus(ProviderStatus.Stale)
           result       <- FeatureFlags.boolean("test-flag", default = false)
         } yield assertTrue(result == true)
+      }.provide(testLayer(Map("test-flag" -> true))),
+      test("evaluation fails with ProviderNotReady when provider is in Error status (spec 1.7.3)") {
+        for {
+          testProvider <- ZIO.service[TestFeatureProvider]
+          _            <- testProvider.setStatus(ProviderStatus.Error)
+          result       <- FeatureFlags.boolean("test-flag", default = false).exit
+        } yield assertTrue(
+          result == Exit.fail(FeatureFlagError.ProviderNotReady(ProviderStatus.Error))
+        )
       }.provide(testLayer(Map("test-flag" -> true)))
     ),
     suite("Hook Context Metadata")(

@@ -170,6 +170,7 @@ final private[openfeature] class FeatureFlagsLive(
     providerStatus.flatMap {
       case ProviderStatus.Fatal    => ZIO.fail(FeatureFlagError.ProviderFatal)
       case ProviderStatus.NotReady => ZIO.fail(FeatureFlagError.ProviderNotReady(ProviderStatus.NotReady))
+      case ProviderStatus.Error    => ZIO.fail(FeatureFlagError.ProviderNotReady(ProviderStatus.Error))
       case _                       => ZIO.unit
     }
 

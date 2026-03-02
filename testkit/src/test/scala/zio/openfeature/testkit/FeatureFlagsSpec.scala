@@ -308,6 +308,34 @@ object FeatureFlagsSpec extends ZIOSpecDefault {
           calls <- callsRef.get
         } yield assertTrue(calls.take(2) == List("client-before", "invocation-before"))
       }.provide(testLayer(Map("order-test" -> true))),
+      test("after hooks run in reverse order (spec 4.4.6)") {
+        val callsRef = Unsafe.unsafe { implicit u =>
+          Runtime.default.unsafe.run(Ref.make(List.empty[String])).getOrThrow()
+        }
+
+        val hook1 = new FeatureHook {
+          override def after[A](ctx: HookContext, details: FlagResolution[A], hints: HookHints): UIO[Unit] =
+            callsRef.update(_ :+ "first")
+        }
+
+        val hook2 = new FeatureHook {
+          override def after[A](ctx: HookContext, details: FlagResolution[A], hints: HookHints): UIO[Unit] =
+            callsRef.update(_ :+ "second")
+        }
+
+        val hook3 = new FeatureHook {
+          override def after[A](ctx: HookContext, details: FlagResolution[A], hints: HookHints): UIO[Unit] =
+            callsRef.update(_ :+ "third")
+        }
+
+        for {
+          _     <- FeatureFlags.addHook(hook1)
+          _     <- FeatureFlags.addHook(hook2)
+          _     <- FeatureFlags.addHook(hook3)
+          _     <- FeatureFlags.boolean("test-flag", default = false)
+          calls <- callsRef.get
+        } yield assertTrue(calls == List("third", "second", "first"))
+      }.provide(testLayer(Map("test-flag" -> true))),
       test("hook hints are passed to invocation hooks") {
         val receivedHints = Unsafe.unsafe { implicit u =>
           Runtime.default.unsafe.run(Ref.make(Option.empty[String])).getOrThrow()

@@ -140,13 +140,13 @@ object FeatureHook {
         }
 
     override def after[A](ctx: HookContext, details: FlagResolution[A], hints: HookHints): UIO[Unit] =
-      ZIO.foreachDiscard(hooks)(hook => hook.after(ctxForHook(ctx, hook), details, hints))
+      ZIO.foreachDiscard(hooks.reverse)(hook => hook.after(ctxForHook(ctx, hook), details, hints))
 
     override def error(ctx: HookContext, err: FeatureFlagError, hints: HookHints): UIO[Unit] =
-      ZIO.foreachDiscard(hooks)(hook => hook.error(ctxForHook(ctx, hook), err, hints))
+      ZIO.foreachDiscard(hooks.reverse)(hook => hook.error(ctxForHook(ctx, hook), err, hints))
 
     override def finallyAfter(ctx: HookContext, details: Option[FlagResolution[_]], hints: HookHints): UIO[Unit] =
-      ZIO.foreachDiscard(hooks)(hook => hook.finallyAfter(ctxForHook(ctx, hook), details, hints))
+      ZIO.foreachDiscard(hooks.reverse)(hook => hook.finallyAfter(ctxForHook(ctx, hook), details, hints))
   }
 
   def logging(

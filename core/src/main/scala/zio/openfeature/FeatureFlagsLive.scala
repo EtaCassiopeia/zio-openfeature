@@ -979,14 +979,14 @@ final private[openfeature] class FeatureFlagsLive(
   // Shutdown API (spec 1.6.1, 1.6.2)
 
   override def shutdown: UIO[Unit] =
-    for {
-      _ <- statusRef.set(ProviderStatus.NotReady)
-      _ <- hooksRef.set(List.empty)
-      _ <- globalContextRef.set(EvaluationContext.empty)
-      _ <- clientContextRef.set(EvaluationContext.empty)
-      _ <- eventHub.shutdown
-      _ <- ZIO.attemptBlocking(OpenFeatureAPI.getInstance().shutdown()).ignore
-    } yield ()
+    ZIO.collectAllParDiscard(
+      List(
+        statusRef.set(ProviderStatus.NotReady),
+        hooksRef.set(List.empty),
+        globalContextRef.set(EvaluationContext.empty),
+        clientContextRef.set(EvaluationContext.empty)
+      )
+    ) *> eventHub.shutdown *> ZIO.attemptBlocking(OpenFeatureAPI.getInstance().shutdown()).ignore
 
   // Tracking API
 

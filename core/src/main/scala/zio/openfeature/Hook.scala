@@ -15,32 +15,44 @@ final case class TypedKey[A](name: String)
   * store state in `before` and retrieve it in `after`, `error`, or `finallyAfter`.
   */
 final class HookData {
-  private val data: java.util.concurrent.ConcurrentHashMap[String, Any] =
-    new java.util.concurrent.ConcurrentHashMap()
+  private val data = new java.util.concurrent.atomic.AtomicReference(Map.empty[String, Any])
 
-  def set(key: String, value: Any): Unit = data.put(key, value)
+  def set(key: String, value: Any): Unit = {
+    data.updateAndGet(_ + (key -> value))
+    ()
+  }
 
   def get[A](key: String): Option[A] =
-    Option(data.get(key)).map(_.asInstanceOf[A])
+    data.get().get(key).map(_.asInstanceOf[A])
 
   def getOrElse[A](key: String, default: => A): A =
     get[A](key).getOrElse(default)
 
-  def remove(key: String): Unit = data.remove(key)
+  def remove(key: String): Unit = {
+    data.updateAndGet(_ - key)
+    ()
+  }
 
-  def clear(): Unit = data.clear()
+  def clear(): Unit =
+    data.set(Map.empty)
 
   // Type-safe API
 
-  def set[A](key: TypedKey[A], value: A): Unit = data.put(key.name, value)
+  def set[A](key: TypedKey[A], value: A): Unit = {
+    data.updateAndGet(_ + (key.name -> value))
+    ()
+  }
 
   def get[A](key: TypedKey[A]): Option[A] =
-    Option(data.get(key.name)).map(_.asInstanceOf[A])
+    data.get().get(key.name).map(_.asInstanceOf[A])
 
   def getOrElse[A](key: TypedKey[A], default: => A): A =
     get(key).getOrElse(default)
 
-  def remove[A](key: TypedKey[A]): Unit = data.remove(key.name)
+  def remove[A](key: TypedKey[A]): Unit = {
+    data.updateAndGet(_ - key.name)
+    ()
+  }
 }
 
 object HookData {

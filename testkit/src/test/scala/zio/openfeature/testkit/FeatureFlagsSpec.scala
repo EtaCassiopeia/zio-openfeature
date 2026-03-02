@@ -351,7 +351,32 @@ object FeatureFlagsSpec extends ZIOSpecDefault {
           _    <- FeatureFlags.booleanDetails("hint-test", default = false, EvaluationContext.empty, options)
           hint <- receivedHints.get
         } yield assertTrue(hint.contains("hint-value"))
-      }.provide(testLayer(Map("hint-test" -> true)))
+      }.provide(testLayer(Map("hint-test" -> true))),
+      test("hooks with unsupported flag type are skipped (spec 4.4.2.1)") {
+        val callsRef = Unsafe.unsafe { implicit u =>
+          Runtime.default.unsafe.run(Ref.make(List.empty[String])).getOrThrow()
+        }
+
+        // Hook that only supports String flags
+        val stringOnlyHook = new FeatureHook {
+          override def supportedFlagTypes: Set[FlagValueType] = Set(FlagValueType.String)
+
+          override def before(ctx: HookContext, hints: HookHints): UIO[Option[(EvaluationContext, HookHints)]] =
+            callsRef.update(_ :+ s"before:${ctx.flagKey}").as(None)
+
+          override def after[A](ctx: HookContext, details: FlagResolution[A], hints: HookHints): UIO[Unit] =
+            callsRef.update(_ :+ s"after:${ctx.flagKey}")
+        }
+
+        for {
+          _         <- FeatureFlags.addHook(stringOnlyHook)
+          _         <- FeatureFlags.boolean("bool-flag", default = false)
+          afterBool <- callsRef.get
+          _         <- FeatureFlags.string("str-flag", default = "default")
+          afterStr  <- callsRef.get
+        } yield assertTrue(afterBool.isEmpty) &&
+          assertTrue(afterStr == List("before:str-flag", "after:str-flag"))
+      }.provide(testLayer(Map("bool-flag" -> true, "str-flag" -> "hello")))
     ),
     suite("Provider Status")(
       test("providerStatus returns current status") {

@@ -17,6 +17,8 @@ object FlagValueType {
   case object Double  extends FlagValueType
   case object Object  extends FlagValueType
 
+  val allTypes: Set[FlagValueType] = Set(Boolean, String, Int, Double, Object)
+
   def fromFlagType[A](implicit ft: FlagType[A]): FlagValueType =
     ft.typeName match {
       case "Boolean" => Boolean

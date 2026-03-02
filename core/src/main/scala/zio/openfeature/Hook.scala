@@ -102,6 +102,12 @@ object HookHints {
 }
 
 trait FeatureHook {
+
+  /** The set of flag value types this hook supports. Hooks are only invoked for evaluations whose flag type is in this
+    * set. By default all types are supported, matching the Java SDK's `Hook.supportsFlagValueType()` (spec 4.4.2.1).
+    */
+  def supportedFlagTypes: Set[FlagValueType] = FlagValueType.allTypes
+
   def before(ctx: HookContext, hints: HookHints): UIO[Option[(EvaluationContext, HookHints)]] =
     ZIO.none
 
@@ -127,26 +133,35 @@ object FeatureHook {
     private def ctxForHook(ctx: HookContext, hook: FeatureHook): HookContext =
       ctx.copy(hookData = hookDataMap.getOrElse(hook, HookData.empty))
 
+    // Filter hooks to those that support the given flag type (spec 4.4.2.1)
+    private def applicableHooks(flagType: FlagValueType): List[FeatureHook] =
+      hooks.filter(_.supportedFlagTypes.contains(flagType))
+
     override def before(ctx: HookContext, hints: HookHints): UIO[Option[(EvaluationContext, HookHints)]] =
       ZIO
-        .foldLeft(hooks)((ctx.evaluationContext, hints, false)) { case ((currentCtx, currentHints, modified), hook) =>
-          hook.before(ctxForHook(ctx.copy(evaluationContext = currentCtx), hook), currentHints).map {
-            case Some((newCtx, newHints)) => (currentCtx.merge(newCtx), newHints, true)
-            case None                     => (currentCtx, currentHints, modified)
-          }
+        .foldLeft(applicableHooks(ctx.flagType))((ctx.evaluationContext, hints, false)) {
+          case ((currentCtx, currentHints, modified), hook) =>
+            hook.before(ctxForHook(ctx.copy(evaluationContext = currentCtx), hook), currentHints).map {
+              case Some((newCtx, newHints)) => (currentCtx.merge(newCtx), newHints, true)
+              case None                     => (currentCtx, currentHints, modified)
+            }
         }
         .map { case (finalCtx, finalHints, wasModified) =>
           if (wasModified) Some((finalCtx, finalHints)) else None
         }
 
     override def after[A](ctx: HookContext, details: FlagResolution[A], hints: HookHints): UIO[Unit] =
-      ZIO.foreachDiscard(hooks.reverse)(hook => hook.after(ctxForHook(ctx, hook), details, hints))
+      ZIO.foreachDiscard(applicableHooks(ctx.flagType).reverse)(hook =>
+        hook.after(ctxForHook(ctx, hook), details, hints)
+      )
 
     override def error(ctx: HookContext, err: FeatureFlagError, hints: HookHints): UIO[Unit] =
-      ZIO.foreachDiscard(hooks.reverse)(hook => hook.error(ctxForHook(ctx, hook), err, hints))
+      ZIO.foreachDiscard(applicableHooks(ctx.flagType).reverse)(hook => hook.error(ctxForHook(ctx, hook), err, hints))
 
     override def finallyAfter(ctx: HookContext, details: Option[FlagResolution[_]], hints: HookHints): UIO[Unit] =
-      ZIO.foreachDiscard(hooks.reverse)(hook => hook.finallyAfter(ctxForHook(ctx, hook), details, hints))
+      ZIO.foreachDiscard(applicableHooks(ctx.flagType).reverse)(hook =>
+        hook.finallyAfter(ctxForHook(ctx, hook), details, hints)
+      )
   }
 
   def logging(

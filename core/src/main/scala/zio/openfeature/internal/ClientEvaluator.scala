@@ -79,7 +79,7 @@ private[openfeature] object ClientEvaluator {
       details.getValue.asInstanceOf[java.lang.Integer].intValue()
   }
 
-  // Long uses Integer SDK method with conversion
+  // Long uses Double SDK method (exact integers up to 2^53)
   implicit val longEvaluator: ClientEvaluator[Long] = new ClientEvaluator[Long] {
     def evaluate(
       client: OFClient,
@@ -87,10 +87,12 @@ private[openfeature] object ClientEvaluator {
       default: Long,
       context: dev.openfeature.sdk.EvaluationContext
     ): Task[FlagEvaluationDetails[_]] =
-      ZIO.attemptBlocking(client.getIntegerDetails(key, Integer.valueOf(default.toInt), context))
+      ZIO.attemptBlocking(
+        client.getDoubleDetails(key, java.lang.Double.valueOf(default.toDouble), context)
+      )
 
     def extractValue(details: FlagEvaluationDetails[_]): Long =
-      details.getValue.asInstanceOf[java.lang.Integer].longValue()
+      details.getValue.asInstanceOf[java.lang.Double].longValue()
   }
 
   // Float uses Double SDK method with conversion

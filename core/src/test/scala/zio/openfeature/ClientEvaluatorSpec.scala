@@ -56,15 +56,16 @@ object ClientEvaluatorSpec extends ZIOSpecDefault {
       }
     ),
     suite("Long instance")(
-      test("extractValue converts Java Integer to Scala Long") {
-        val details = makeDetails[java.lang.Integer](java.lang.Integer.valueOf(42))
+      test("extractValue converts Java Double to Scala Long") {
+        val details = makeDetails[java.lang.Double](java.lang.Double.valueOf(42.0))
         val result  = ClientEvaluator.longEvaluator.extractValue(details)
         assertTrue(result == 42L)
       },
-      test("extractValue handles large values") {
-        val details = makeDetails[java.lang.Integer](java.lang.Integer.valueOf(Int.MaxValue))
-        val result  = ClientEvaluator.longEvaluator.extractValue(details)
-        assertTrue(result == Int.MaxValue.toLong)
+      test("extractValue handles values larger than Int.MaxValue") {
+        val largeValue = Int.MaxValue.toLong + 1000L
+        val details    = makeDetails[java.lang.Double](java.lang.Double.valueOf(largeValue.toDouble))
+        val result     = ClientEvaluator.longEvaluator.extractValue(details)
+        assertTrue(result == largeValue)
       }
     ),
     suite("Float instance")(

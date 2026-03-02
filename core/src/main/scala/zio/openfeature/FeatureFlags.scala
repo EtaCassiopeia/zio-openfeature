@@ -166,6 +166,7 @@ trait FeatureFlags {
   def track(eventName: String, context: EvaluationContext): IO[FeatureFlagError, Unit]
   def track(eventName: String, details: TrackingEventDetails): IO[FeatureFlagError, Unit]
   def track(eventName: String, context: EvaluationContext, details: TrackingEventDetails): IO[FeatureFlagError, Unit]
+  def trackedEvents: UIO[List[(String, EvaluationContext, Option[TrackingEventDetails])]]
 }
 
 object FeatureFlags {
@@ -379,6 +380,9 @@ object FeatureFlags {
     details: TrackingEventDetails
   ): ZIO[FeatureFlags, FeatureFlagError, Unit] =
     ZIO.serviceWithZIO(_.track(eventName, context, details))
+
+  def trackedEvents: ZIO[FeatureFlags, Nothing, List[(String, EvaluationContext, Option[TrackingEventDetails])]] =
+    ZIO.serviceWithZIO(_.trackedEvents)
 
   // Factory Methods
 

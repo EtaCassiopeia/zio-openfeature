@@ -251,9 +251,8 @@ final private[openfeature] class FeatureFlagsLive(
   )(implicit ev: ClientEvaluator[A]): IO[FeatureFlagError, FlagResolution[A]] =
     ev.evaluate(client, key, default, ofContext)
       .mapError(e => FeatureFlagError.ProviderError(e))
-      .map { details =>
-        val resolution = toFlagResolution(key, details)
-        resolution.copy(value = ev.extractValue(details))
+      .flatMap { details =>
+        toFlagResolution(key, details).map(_.copy(value = ev.extractValue(details)))
       }
 
   private def evaluateFromClient[A: FlagType](
@@ -300,17 +299,19 @@ final private[openfeature] class FeatureFlagsLive(
             client.getObjectDetails(key, defaultValue, ofContext)
           }
           .mapError(e => FeatureFlagError.ProviderError(e))
-          .map { details =>
+          .flatMap { details =>
             val value = valueToMap(details.getValue)
-            FlagResolution(
-              value = value.asInstanceOf[A],
-              variant = Option(details.getVariant),
-              reason = toResolutionReason(details.getReason),
-              metadata = toFlagMetadata(details.getFlagMetadata),
-              flagKey = key,
-              errorCode = Option(details.getErrorCode).map(ErrorCodeConverter.fromJava),
-              errorMessage = Option(details.getErrorMessage)
-            )
+            toFlagMetadata(details.getFlagMetadata).map { metadata =>
+              FlagResolution(
+                value = value.asInstanceOf[A],
+                variant = Option(details.getVariant),
+                reason = toResolutionReason(details.getReason),
+                metadata = metadata,
+                flagKey = key,
+                errorCode = Option(details.getErrorCode).map(ErrorCodeConverter.fromJava),
+                errorMessage = Option(details.getErrorMessage)
+              )
+            }
           }
 
       case _ =>
@@ -325,17 +326,17 @@ final private[openfeature] class FeatureFlagsLive(
               case Some(rawValue) =>
                 flagType.decode(rawValue) match {
                   case Right(decoded) =>
-                    ZIO.succeed(
+                    toFlagMetadata(details.getFlagMetadata).map { metadata =>
                       FlagResolution(
                         value = decoded,
                         variant = Option(details.getVariant),
                         reason = toResolutionReason(details.getReason),
-                        metadata = toFlagMetadata(details.getFlagMetadata),
+                        metadata = metadata,
                         flagKey = key,
                         errorCode = Option(details.getErrorCode).map(ErrorCodeConverter.fromJava),
                         errorMessage = Option(details.getErrorMessage)
                       )
-                    )
+                    }
                   case Left(_) =>
                     ZIO.fail(FeatureFlagError.TypeMismatch(key, flagType.typeName, "Object"))
                 }
@@ -359,16 +360,18 @@ final private[openfeature] class FeatureFlagsLive(
     }
   }
 
-  private def toFlagResolution[A](key: String, details: FlagEvaluationDetails[A]): FlagResolution[A] =
-    FlagResolution(
-      value = details.getValue,
-      variant = Option(details.getVariant),
-      reason = toResolutionReason(details.getReason),
-      metadata = toFlagMetadata(details.getFlagMetadata),
-      flagKey = key,
-      errorCode = Option(details.getErrorCode).map(ErrorCodeConverter.fromJava),
-      errorMessage = Option(details.getErrorMessage)
-    )
+  private def toFlagResolution[A](key: String, details: FlagEvaluationDetails[A]): UIO[FlagResolution[A]] =
+    toFlagMetadata(details.getFlagMetadata).map { metadata =>
+      FlagResolution(
+        value = details.getValue,
+        variant = Option(details.getVariant),
+        reason = toResolutionReason(details.getReason),
+        metadata = metadata,
+        flagKey = key,
+        errorCode = Option(details.getErrorCode).map(ErrorCodeConverter.fromJava),
+        errorMessage = Option(details.getErrorMessage)
+      )
+    }
 
   private def toResolutionReason(reason: String): ResolutionReason =
     Option(reason)
@@ -386,29 +389,27 @@ final private[openfeature] class FeatureFlagsLive(
       }
       .getOrElse(ResolutionReason.Unknown)
 
-  private def toFlagMetadata(metadata: dev.openfeature.sdk.ImmutableMetadata): FlagMetadata =
-    if (metadata == null || metadata.isEmpty) FlagMetadata.empty
+  private def toFlagMetadata(metadata: dev.openfeature.sdk.ImmutableMetadata): UIO[FlagMetadata] =
+    if (metadata == null || metadata.isEmpty) ZIO.succeed(FlagMetadata.empty)
     else
-      try {
-        val javaMap = metadata.asUnmodifiableMap()
-        if (javaMap == null || javaMap.isEmpty) FlagMetadata.empty
-        else {
-          val entries = javaMap.asScala.collect {
-            case (k, v: java.lang.Boolean) => k -> MetadataValue.BooleanValue(v.booleanValue())
-            case (k, v: java.lang.Integer) => k -> MetadataValue.IntValue(v.intValue())
-            case (k, v: java.lang.Long)    => k -> MetadataValue.LongValue(v.longValue())
-            case (k, v: java.lang.Float)   => k -> MetadataValue.FloatValue(v.floatValue())
-            case (k, v: java.lang.Double)  => k -> MetadataValue.DoubleValue(v.doubleValue())
-            case (k, v: String)            => k -> MetadataValue.StringValue(v)
-            case (k, v) if v != null       => k -> MetadataValue.StringValue(v.toString)
-          }.toMap
-          FlagMetadata(entries)
+      ZIO
+        .attempt {
+          val javaMap = metadata.asUnmodifiableMap()
+          if (javaMap == null || javaMap.isEmpty) FlagMetadata.empty
+          else {
+            val entries = javaMap.asScala.collect {
+              case (k, v: java.lang.Boolean) => k -> MetadataValue.BooleanValue(v.booleanValue())
+              case (k, v: java.lang.Integer) => k -> MetadataValue.IntValue(v.intValue())
+              case (k, v: java.lang.Long)    => k -> MetadataValue.LongValue(v.longValue())
+              case (k, v: java.lang.Float)   => k -> MetadataValue.FloatValue(v.floatValue())
+              case (k, v: java.lang.Double)  => k -> MetadataValue.DoubleValue(v.doubleValue())
+              case (k, v: String)            => k -> MetadataValue.StringValue(v)
+              case (k, v) if v != null       => k -> MetadataValue.StringValue(v.toString)
+            }.toMap
+            FlagMetadata(entries)
+          }
         }
-      } catch {
-        case e: Exception =>
-          java.lang.System.err.println(s"[zio-openfeature] Failed to parse flag metadata: ${e.getMessage}")
-          FlagMetadata.empty
-      }
+        .catchAll(e => ZIO.logWarning(s"Failed to parse flag metadata: ${e.getMessage}").as(FlagMetadata.empty))
 
   private def anyToObject(value: Any): Object = value match {
     case b: Boolean    => java.lang.Boolean.valueOf(b)
@@ -749,7 +750,8 @@ final private[openfeature] class FeatureFlagsLive(
         state.statusRef.set(ProviderStatus.NotReady),
         state.hooksRef.set(List.empty),
         state.globalContextRef.set(EvaluationContext.empty),
-        state.clientContextRef.set(EvaluationContext.empty)
+        state.clientContextRef.set(EvaluationContext.empty),
+        state.trackRecorder.set(List.empty)
       )
     ) *> state.eventHub.shutdown *> ZIO.attemptBlocking(OpenFeatureAPI.getInstance().shutdown()).ignore
 
@@ -757,33 +759,36 @@ final private[openfeature] class FeatureFlagsLive(
 
   override def track(eventName: String): IO[FeatureFlagError, Unit] =
     effectiveContext(EvaluationContext.empty).flatMap { merged =>
-      ZIO
-        .attemptBlocking {
-          val ofContext = ContextConverter.toOpenFeature(merged)
-          client.track(eventName, ofContext)
-        }
-        .mapError(e => FeatureFlagError.ProviderError(e))
+      state.trackRecorder.update(_ :+ (eventName, merged, None)) *>
+        ZIO
+          .attemptBlocking {
+            val ofContext = ContextConverter.toOpenFeature(merged)
+            client.track(eventName, ofContext)
+          }
+          .mapError(e => FeatureFlagError.ProviderError(e))
     }
 
   override def track(eventName: String, context: EvaluationContext): IO[FeatureFlagError, Unit] =
     effectiveContext(context).flatMap { merged =>
-      ZIO
-        .attemptBlocking {
-          val ofContext = ContextConverter.toOpenFeature(merged)
-          client.track(eventName, ofContext)
-        }
-        .mapError(e => FeatureFlagError.ProviderError(e))
+      state.trackRecorder.update(_ :+ (eventName, merged, None)) *>
+        ZIO
+          .attemptBlocking {
+            val ofContext = ContextConverter.toOpenFeature(merged)
+            client.track(eventName, ofContext)
+          }
+          .mapError(e => FeatureFlagError.ProviderError(e))
     }
 
   override def track(eventName: String, details: TrackingEventDetails): IO[FeatureFlagError, Unit] =
     effectiveContext(EvaluationContext.empty).flatMap { merged =>
-      ZIO
-        .attemptBlocking {
-          val ofContext = ContextConverter.toOpenFeature(merged)
-          val ofDetails = toOpenFeatureDetails(details)
-          client.track(eventName, ofContext, ofDetails)
-        }
-        .mapError(e => FeatureFlagError.ProviderError(e))
+      state.trackRecorder.update(_ :+ (eventName, merged, Some(details))) *>
+        ZIO
+          .attemptBlocking {
+            val ofContext = ContextConverter.toOpenFeature(merged)
+            val ofDetails = toOpenFeatureDetails(details)
+            client.track(eventName, ofContext, ofDetails)
+          }
+          .mapError(e => FeatureFlagError.ProviderError(e))
     }
 
   override def track(
@@ -792,14 +797,18 @@ final private[openfeature] class FeatureFlagsLive(
     details: TrackingEventDetails
   ): IO[FeatureFlagError, Unit] =
     effectiveContext(context).flatMap { merged =>
-      ZIO
-        .attemptBlocking {
-          val ofContext = ContextConverter.toOpenFeature(merged)
-          val ofDetails = toOpenFeatureDetails(details)
-          client.track(eventName, ofContext, ofDetails)
-        }
-        .mapError(e => FeatureFlagError.ProviderError(e))
+      state.trackRecorder.update(_ :+ (eventName, merged, Some(details))) *>
+        ZIO
+          .attemptBlocking {
+            val ofContext = ContextConverter.toOpenFeature(merged)
+            val ofDetails = toOpenFeatureDetails(details)
+            client.track(eventName, ofContext, ofDetails)
+          }
+          .mapError(e => FeatureFlagError.ProviderError(e))
     }
+
+  override def trackedEvents: UIO[List[(String, EvaluationContext, Option[TrackingEventDetails])]] =
+    state.trackRecorder.get
 
   private def toOpenFeatureDetails(details: TrackingEventDetails): MutableTrackingEventDetails = {
     val result = details.value match {

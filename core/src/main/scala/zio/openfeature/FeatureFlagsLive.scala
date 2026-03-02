@@ -2,7 +2,7 @@ package zio.openfeature
 
 import zio._
 import zio.stream._
-import zio.openfeature.internal.ContextConverter
+import zio.openfeature.internal.{ContextConverter, ErrorCodeConverter}
 import dev.openfeature.sdk.{
   Client => OFClient,
   FeatureProvider => OFFeatureProvider,
@@ -49,7 +49,7 @@ final private[openfeature] class FeatureFlagsLive(
     val errorHandler: java.util.function.Consumer[EventDetails] = details =>
       Unsafe.unsafe { implicit u =>
         val error     = new RuntimeException(Option(details.getMessage).getOrElse("Provider error"))
-        val errorCode = Option(details.getErrorCode).map(toErrorCode)
+        val errorCode = Option(details.getErrorCode).map(ErrorCodeConverter.fromJava)
         Runtime.default.unsafe
           .run(
             statusRef.set(ProviderStatus.Error) *>
@@ -326,7 +326,7 @@ final private[openfeature] class FeatureFlagsLive(
               reason = toResolutionReason(details.getReason),
               metadata = toFlagMetadata(details.getFlagMetadata),
               flagKey = key,
-              errorCode = Option(details.getErrorCode).map(toErrorCode),
+              errorCode = Option(details.getErrorCode).map(ErrorCodeConverter.fromJava),
               errorMessage = Option(details.getErrorMessage)
             )
           }
@@ -349,7 +349,7 @@ final private[openfeature] class FeatureFlagsLive(
                     reason = toResolutionReason(details.getReason),
                     metadata = toFlagMetadata(details.getFlagMetadata),
                     flagKey = key,
-                    errorCode = Option(details.getErrorCode).map(toErrorCode),
+                    errorCode = Option(details.getErrorCode).map(ErrorCodeConverter.fromJava),
                     errorMessage = Option(details.getErrorMessage)
                   )
                 )
@@ -380,7 +380,7 @@ final private[openfeature] class FeatureFlagsLive(
       reason = toResolutionReason(details.getReason),
       metadata = toFlagMetadata(details.getFlagMetadata),
       flagKey = key,
-      errorCode = Option(details.getErrorCode).map(toErrorCode),
+      errorCode = Option(details.getErrorCode).map(ErrorCodeConverter.fromJava),
       errorMessage = Option(details.getErrorMessage)
     )
 
@@ -398,18 +398,6 @@ final private[openfeature] class FeatureFlagsLive(
         case "ERROR"           => ResolutionReason.Error
         case _                 => ResolutionReason.Unknown
       }
-
-  private def toErrorCode(errorCode: OFErrorCode): ErrorCode =
-    errorCode match {
-      case OFErrorCode.PROVIDER_NOT_READY    => ErrorCode.ProviderNotReady
-      case OFErrorCode.PROVIDER_FATAL        => ErrorCode.ProviderFatal
-      case OFErrorCode.FLAG_NOT_FOUND        => ErrorCode.FlagNotFound
-      case OFErrorCode.PARSE_ERROR           => ErrorCode.ParseError
-      case OFErrorCode.TYPE_MISMATCH         => ErrorCode.TypeMismatch
-      case OFErrorCode.TARGETING_KEY_MISSING => ErrorCode.TargetingKeyMissing
-      case OFErrorCode.INVALID_CONTEXT       => ErrorCode.InvalidContext
-      case OFErrorCode.GENERAL               => ErrorCode.General
-    }
 
   private def toFlagMetadata(metadata: dev.openfeature.sdk.ImmutableMetadata): FlagMetadata =
     if (metadata == null || metadata.isEmpty) FlagMetadata.empty
@@ -910,20 +898,9 @@ final private[openfeature] class FeatureFlagsLive(
     details.setValue(res.value)
     res.variant.foreach(details.setVariant)
     details.setReason(res.reason.toString)
-    res.errorCode.foreach(ec => details.setErrorCode(toJavaErrorCode(ec)))
+    res.errorCode.foreach(ec => details.setErrorCode(ErrorCodeConverter.toJava(ec)))
     res.errorMessage.foreach(details.setErrorMessage)
     details
-  }
-
-  private def toJavaErrorCode(ec: ErrorCode): OFErrorCode = ec match {
-    case ErrorCode.ProviderNotReady    => OFErrorCode.PROVIDER_NOT_READY
-    case ErrorCode.ProviderFatal       => OFErrorCode.PROVIDER_FATAL
-    case ErrorCode.FlagNotFound        => OFErrorCode.FLAG_NOT_FOUND
-    case ErrorCode.ParseError          => OFErrorCode.PARSE_ERROR
-    case ErrorCode.TypeMismatch        => OFErrorCode.TYPE_MISMATCH
-    case ErrorCode.TargetingKeyMissing => OFErrorCode.TARGETING_KEY_MISSING
-    case ErrorCode.InvalidContext      => OFErrorCode.INVALID_CONTEXT
-    case ErrorCode.General             => OFErrorCode.GENERAL
   }
 
   private def fromJavaEvaluationContext(ctx: dev.openfeature.sdk.EvaluationContext): EvaluationContext =

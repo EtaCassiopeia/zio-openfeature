@@ -48,6 +48,8 @@ jobs:
             --out build/reports \
             --data ~/.dependency-check \
             --nvdApiKey "$NVD_API_KEY" \
+            --suppression dependency-check-suppressions.xml \
+            --disableOssIndex \
             --failOnCVSS 7
         env:
           NVD_API_KEY: ${{ secrets.NVD_API_KEY }}

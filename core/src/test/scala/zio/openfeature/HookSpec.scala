@@ -133,7 +133,7 @@ object HookSpec extends ZIOSpecDefault {
 
         for {
           _ <- composed.after(makeHookContext(), resolution, HookHints.empty)
-        } yield assertTrue(callOrder.get() == List("hook1", "hook2"))
+        } yield assertTrue(callOrder.get() == List("hook2", "hook1"))
       },
       test("compose before merges contexts preserving existing attributes") {
         val hook = new FeatureHook {

@@ -10,6 +10,8 @@ enum FlagValueType:
   def name: String = toString
 
 object FlagValueType:
+  val allTypes: Set[FlagValueType] = FlagValueType.values.toSet
+
   def fromFlagType[A](using ft: FlagType[A]): FlagValueType =
     ft.typeName match
       case "Boolean" => Boolean

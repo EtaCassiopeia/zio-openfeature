@@ -499,7 +499,7 @@ Create the FeatureFlags layer at application startup to ensure providers are rea
 ```scala
 FeatureFlags.boolean("feature", false)
   .catchAll {
-    case FeatureFlagError.ProviderNotReady =>
+    case _: FeatureFlagError.ProviderNotReady =>
       ZIO.succeed(false)  // Safe default
     case FeatureFlagError.ProviderError(cause) =>
       ZIO.logError(s"Provider error: $cause") *> ZIO.succeed(false)

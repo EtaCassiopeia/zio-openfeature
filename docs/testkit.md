@@ -156,7 +156,8 @@ for
                .provide(Scope.default >>> layer)
   evals    <- provider.getEvaluations
 yield
-  // evals is List[(String, EvaluationContext)]
+  // evals is List[(String, dev.openfeature.sdk.EvaluationContext)]
+  // The context is the OpenFeature SDK's EvaluationContext (after conversion)
   assertTrue(evals.length == 2)
 ```
 
@@ -272,6 +273,8 @@ test("service evaluates expected flags") {
 
 ### Testing Context Propagation
 
+The `getEvaluations` method returns OpenFeature SDK contexts (after conversion from ZIO contexts). You can verify that context attributes were correctly propagated:
+
 ```scala
 test("context is passed to provider") {
   val ctx = EvaluationContext("user-123")
@@ -283,10 +286,11 @@ test("context is passed to provider") {
     _        <- FeatureFlags.boolean("feature", false, ctx)
                  .provide(Scope.default >>> layer)
     evals    <- provider.getEvaluations
-    (_, evalCtx) = evals.head
+    (_, sdkCtx) = evals.head
   yield
-    assertTrue(evalCtx.targetingKey == Some("user-123")) &&
-    assertTrue(evalCtx.attributes.contains("plan"))
+    // sdkCtx is dev.openfeature.sdk.EvaluationContext (Java SDK type)
+    assertTrue(sdkCtx.getTargetingKey == "user-123") &&
+    assertTrue(sdkCtx.getValue("plan") != null)
 }
 ```
 
@@ -329,19 +333,19 @@ Use `FeatureFlags.fromProviderWithDomain` for test isolation when tests run in p
 
 ```scala
 test("isolated test 1") {
-  val provider = new TestFeatureProvider(Map("flag" -> true))
-  val layer = FeatureFlags.fromProviderWithDomain(provider, "test-1")
-
-  FeatureFlags.boolean("flag", false)
-    .provide(Scope.default >>> layer)
+  for
+    provider <- TestFeatureProvider.make(Map("flag" -> true))
+    layer     = TestFeatureProvider.layerFrom(provider)
+    result   <- FeatureFlags.boolean("flag", false).provide(Scope.default >>> layer)
+  yield assertTrue(result == true)
 }
 
 test("isolated test 2") {
-  val provider = new TestFeatureProvider(Map("flag" -> false))
-  val layer = FeatureFlags.fromProviderWithDomain(provider, "test-2")
-
-  FeatureFlags.boolean("flag", false)
-    .provide(Scope.default >>> layer)
+  for
+    provider <- TestFeatureProvider.make(Map("flag" -> false))
+    layer     = TestFeatureProvider.layerFrom(provider)
+    result   <- FeatureFlags.boolean("flag", false).provide(Scope.default >>> layer)
+  yield assertTrue(result == false)
 }
 ```
 
@@ -392,6 +396,8 @@ test("premium user behavior") {
 
 ### 3. Verify Expected Evaluations
 
+Use `wasEvaluated` for cleaner flag usage assertions:
+
 ```scala
 test("service only evaluates necessary flags") {
   for
@@ -401,10 +407,11 @@ test("service only evaluates necessary flags") {
     ))
     layer     = TestFeatureProvider.layerFrom(provider)
     _        <- myService.provide(Scope.default >>> layer)
-    evals    <- provider.getEvaluations
+    wasNeeded   <- provider.wasEvaluated("needed-flag")
+    wasUnneeded <- provider.wasEvaluated("unneeded-flag")
   yield
-    assertTrue(evals.map(_._1).contains("needed-flag")) &&
-    assertTrue(!evals.map(_._1).contains("unneeded-flag"))
+    assertTrue(wasNeeded) &&
+    assertTrue(!wasUnneeded)
 }
 ```
 

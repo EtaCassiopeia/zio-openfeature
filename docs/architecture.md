@@ -118,6 +118,8 @@ FeatureFlags.fromProvider(provider)
 | `fromProvider(provider)` | Create from any OpenFeature provider |
 | `fromProviderWithDomain(provider, domain)` | Create with named domain for test isolation |
 | `fromProviderWithHooks(provider, hooks)` | Create with initial hooks |
+| `fromMultiProvider(providers)` | Combine multiple providers (first-match strategy) |
+| `fromMultiProvider(providers, strategy)` | Combine multiple providers with custom strategy |
 
 ---
 
@@ -271,7 +273,7 @@ FeatureFlags.boolean("feature", false)
   .catchSome {
     case FeatureFlagError.FlagNotFound(_) =>
       ZIO.succeed(false)  // Use default
-    case FeatureFlagError.ProviderNotReady =>
+    case _: FeatureFlagError.ProviderNotReady =>
       ZIO.succeed(false)  // Fail safe
   }
 ```
@@ -321,8 +323,7 @@ zio-openfeature/
 │
 └── testkit/                 # Testing utilities
     └── src/main/scala/zio/openfeature/testkit/
-        ├── TestFeatureProvider.scala # In-memory OpenFeature provider
-        └── TestAssertions.scala      # Test helpers
+        └── TestFeatureProvider.scala # In-memory OpenFeature provider
 ```
 
 ---

@@ -326,6 +326,45 @@ val layer = FeatureFlags.fromMultiProvider(
 )
 ```
 
+### Async Variants (Non-Blocking Initialization)
+
+Every factory method has an async counterpart that uses the Java SDK's non-blocking `setProvider` instead of `setProviderAndWait`. The provider initializes in the background; evaluations fail with `ProviderNotReady` until the provider is ready.
+
+This is useful for microservices that need fast startup and can tolerate returning default flag values during the brief initialization window.
+
+```scala
+// Non-blocking: layer is available immediately
+val layer = FeatureFlags.fromProviderAsync(provider)
+
+// With domain
+val domainLayer = FeatureFlags.fromProviderWithDomainAsync(provider, "my-service")
+
+// With hooks
+val hookedLayer = FeatureFlags.fromProviderWithHooksAsync(provider, hooks)
+
+// Multi-provider
+val multiLayer = FeatureFlags.fromMultiProviderAsync(List(provider1, provider2))
+```
+
+Use `onProviderReady` or `providerStatus` to detect when the provider becomes available:
+
+```scala
+val program = for
+  // Register a handler that fires when the provider is ready
+  _ <- FeatureFlags.onProviderReady { metadata =>
+    ZIO.logInfo(s"Provider ${metadata.name} is ready")
+  }
+  // Evaluations before ready will fail with ProviderNotReady
+  result <- FeatureFlags.boolean("feature", default = false).catchAll {
+    case _: FeatureFlagError.ProviderNotReady =>
+      ZIO.succeed(false) // Safe default while provider initializes
+    case other => ZIO.fail(other)
+  }
+yield result
+
+program.provide(Scope.default >>> FeatureFlags.fromProviderAsync(provider))
+```
+
 ---
 
 ## Provider Lifecycle
@@ -335,8 +374,11 @@ val layer = FeatureFlags.fromMultiProvider(
 When you create a `FeatureFlags` layer, the provider is automatically initialized using `setProviderAndWait`. This ensures the provider is ready before any flag evaluations:
 
 ```scala
-// Provider is initialized when layer is provided
+// Provider is initialized when layer is provided (blocking)
 program.provide(Scope.default >>> FeatureFlags.fromProvider(provider))
+
+// Or use the async variant for non-blocking initialization
+program.provide(Scope.default >>> FeatureFlags.fromProviderAsync(provider))
 ```
 
 ### Shutdown

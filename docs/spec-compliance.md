@@ -146,7 +146,8 @@ FeatureFlags.booleanDetails("flag", false, EvaluationContext.empty, options)
 
 | Requirement | Status | Implementation |
 |:------------|:-------|:---------------|
-| Initialize | ✅ | `setProviderAndWait` on layer creation |
+| Initialize (blocking) | ✅ | `setProviderAndWait` on layer creation |
+| Initialize (async) | ✅ | `setProvider` via `fromProviderAsync` variants |
 | Shutdown (1.6.1) | ✅ | Automatic via ZIO Scope finalizer + explicit `shutdown` method |
 | Provider metadata | ✅ | `providerMetadata` returns name and version |
 | Client metadata | ✅ | `clientMetadata` returns domain |

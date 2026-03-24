@@ -323,6 +323,28 @@ test("feature logic with overrides") {
 }
 ```
 
+### Testing Async Initialization
+
+Use `TestFeatureProvider.asyncLayer` to test how your code handles a provider that isn't ready yet:
+
+```scala
+test("service handles provider not ready") {
+  for
+    result <- MyService.getFeature.either
+  yield assertTrue(result.isLeft)  // Fails with ProviderNotReady
+}.provide(Scope.default >>> TestFeatureProvider.asyncLayer(Map("feature" -> true)))
+
+test("service works after provider becomes ready") {
+  for
+    tp     <- ZIO.service[TestFeatureProvider]
+    _      <- tp.setStatus(ProviderStatus.Ready)
+    result <- MyService.getFeature
+  yield assertTrue(result == true)
+}.provide(Scope.default >>> TestFeatureProvider.asyncLayer(Map("feature" -> true)))
+```
+
+The `asyncLayer` creates a provider that starts in `NotReady` state. Call `setStatus(ProviderStatus.Ready)` to simulate the provider becoming ready. This is useful for testing graceful degradation and startup behavior.
+
 ---
 
 ## Test Isolation

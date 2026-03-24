@@ -15,8 +15,7 @@ import dev.openfeature.sdk.{
   Structure
 }
 import scala.jdk.CollectionConverters._
-import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.{ConcurrentHashMap, CopyOnWriteArrayList, CountDownLatch}
 import java.util.concurrent.atomic.AtomicReference
 
 /** A test provider that implements OpenFeature's FeatureProvider interface.
@@ -32,7 +31,8 @@ final class TestFeatureProvider private (
   private val state: AtomicReference[ProviderState],
   private val evaluations: CopyOnWriteArrayList[(String, OFEvaluationContext)],
   private val eventsHubRef: Ref[Hub[ProviderEvent]],
-  private[openfeature] val statusRef: Ref[ProviderStatus]
+  private[openfeature] val statusRef: Ref[ProviderStatus],
+  private val initLatch: Option[CountDownLatch]
 ) extends EventProvider {
 
   @scala.annotation.nowarn("msg=deprecated")
@@ -42,11 +42,18 @@ final class TestFeatureProvider private (
 
   override def getState: ProviderState = state.get()
 
-  override def initialize(context: OFEvaluationContext): Unit =
+  override def initialize(context: OFEvaluationContext): Unit = {
+    initLatch match {
+      case Some(latch) => latch.await() // Block until released
+      case None        => ()
+    }
     state.set(ProviderState.READY)
+  }
 
-  override def shutdown(): Unit =
+  override def shutdown(): Unit = {
+    initLatch.foreach(_.countDown()) // Release blocked initialize() if still waiting
     state.set(ProviderState.NOT_READY)
+  }
 
   override def getBooleanEvaluation(
     key: String,
@@ -175,11 +182,13 @@ final class TestFeatureProvider private (
   def clearFlags: UIO[Unit] =
     ZIO.succeed(flags.clear())
 
-  /** Set the provider status. */
+  /** Set the provider status. For async test layers, setting Ready releases the init latch. */
   def setStatus(status: ProviderStatus): UIO[Unit] =
     statusRef.set(status) *> ZIO.succeed {
       status match {
-        case ProviderStatus.Ready        => state.set(ProviderState.READY)
+        case ProviderStatus.Ready =>
+          state.set(ProviderState.READY)
+          initLatch.foreach(_.countDown())
         case ProviderStatus.NotReady     => state.set(ProviderState.NOT_READY)
         case ProviderStatus.Error        => state.set(ProviderState.ERROR)
         case ProviderStatus.Stale        => state.set(ProviderState.STALE)
@@ -259,7 +268,7 @@ object TestFeatureProvider {
         initialFlags.foreach { case (k, v) => flags.put(k, v) }
         val state       = new AtomicReference[ProviderState](ProviderState.READY)
         val evaluations = new CopyOnWriteArrayList[(String, OFEvaluationContext)]()
-        new TestFeatureProvider(flags, state, evaluations, hubRef, statusRef)
+        new TestFeatureProvider(flags, state, evaluations, hubRef, statusRef, initLatch = None)
       }
     } yield provider
 
@@ -306,4 +315,62 @@ object TestFeatureProvider {
   /** Self-contained test layer with initial flags that provides its own Scope. */
   def scopedLayer(flags: Map[String, Any]): ZLayer[Any, Throwable, TestFeatureProvider with FeatureFlags] =
     Scope.default >>> TestFeatureProvider.layer(flags)
+
+  /** Create a FeatureFlags layer with async (non-blocking) initialization.
+    *
+    * The provider starts in NotReady state. Use `setStatus(ProviderStatus.Ready)` or emit a `ProviderEvent.Ready` event
+    * to simulate the provider becoming ready. Evaluations will fail with `ProviderNotReady` until then.
+    */
+  def asyncLayer: ZLayer[Scope, Throwable, TestFeatureProvider with FeatureFlags] =
+    asyncLayer(Map.empty)
+
+  /** Create a FeatureFlags layer with async initialization and initial flags.
+    *
+    * The provider starts in NotReady state and does not auto-initialize. Call `setStatus(ProviderStatus.Ready)` to
+    * simulate the provider becoming ready. Evaluations will fail with `ProviderNotReady` until then.
+    */
+  def asyncLayer(flags: Map[String, Any]): ZLayer[Scope, Throwable, TestFeatureProvider with FeatureFlags] =
+    ZLayer
+      .scoped {
+        for {
+          testProvider <- makeNotReady(flags)
+          domain = s"test-async-${java.util.UUID.randomUUID()}"
+          featureFlags <- FeatureFlags
+            .fromProviderWithDomainAsync(testProvider, domain, testProvider.statusRef)
+            .build
+            .map(_.get)
+        } yield (testProvider, featureFlags)
+      }
+      .flatMap { env =>
+        val (testProvider, featureFlags) = env.get[(TestFeatureProvider, FeatureFlags)]
+        ZLayer.succeed(testProvider) ++ ZLayer.succeed(featureFlags)
+      }
+
+  /** Create a TestFeatureProvider that starts in NotReady state.
+    *
+    * The provider's `initialize()` blocks until `setStatus(ProviderStatus.Ready)` is called, simulating a
+    * slow-connecting provider (e.g., one that needs to establish a network connection).
+    */
+  private[testkit] def makeNotReady(initialFlags: Map[String, Any]): UIO[TestFeatureProvider] =
+    for {
+      eventsHub <- Hub.unbounded[ProviderEvent]
+      hubRef    <- Ref.make(eventsHub)
+      statusRef <- Ref.make[ProviderStatus](ProviderStatus.NotReady)
+      provider <- ZIO.succeed {
+        val flags = new ConcurrentHashMap[String, Any]()
+        initialFlags.foreach { case (k, v) => flags.put(k, v) }
+        val state       = new AtomicReference[ProviderState](ProviderState.NOT_READY)
+        val evaluations = new CopyOnWriteArrayList[(String, OFEvaluationContext)]()
+        new TestFeatureProvider(flags, state, evaluations, hubRef, statusRef, initLatch = Some(new CountDownLatch(1)))
+      }
+    } yield provider
+
+  /** Self-contained async test layer that provides its own Scope. */
+  val scopedAsyncLayer: ZLayer[Any, Throwable, TestFeatureProvider with FeatureFlags] =
+    Scope.default >>> TestFeatureProvider.asyncLayer
+
+  /** Self-contained async test layer with initial flags. */
+  def scopedAsyncLayer(flags: Map[String, Any]): ZLayer[Any, Throwable, TestFeatureProvider with FeatureFlags] =
+    Scope.default >>> TestFeatureProvider.asyncLayer(flags)
+
 }

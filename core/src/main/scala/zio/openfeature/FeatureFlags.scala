@@ -465,4 +465,100 @@ object FeatureFlags {
     ZLayer.scoped(
       build(provider, domain = None, initialHooks = initialHooks, statusRef = None, addShutdownFinalizer = true)
     )
+
+  // Async Factory Methods (non-blocking provider initialization)
+
+  /** Shared initialization logic for async factory methods.
+    *
+    * Uses `setProvider` (non-blocking) instead of `setProviderAndWait`. The provider initializes in the background;
+    * evaluations fail with `ProviderNotReady` until the event bridge receives a `PROVIDER_READY` event. To avoid a race
+    * where the provider becomes ready before the event bridge is registered, we start the event bridge first and then
+    * check the provider's actual state.
+    */
+  private def buildAsync(
+    provider: OFFeatureProvider,
+    domain: Option[String],
+    initialHooks: List[FeatureHook],
+    statusRef: Option[Ref[ProviderStatus]],
+    addShutdownFinalizer: Boolean
+  ): ZIO[Scope, Throwable, FeatureFlagsLive] =
+    for {
+      api <- ZIO.succeed(OpenFeatureAPI.getInstance())
+      // Register provider FIRST so the client binds to it (not the NoOp default)
+      _ <- domain match {
+        case Some(d) => ZIO.succeed(api.setProvider(d, provider))
+        case None    => ZIO.succeed(api.setProvider(provider))
+      }
+      client <- domain match {
+        case Some(d) => ZIO.attempt(api.getClient(d))
+        case None    => ZIO.attempt(api.getClient())
+      }
+      providerName = Option(provider.getMetadata).map(_.getName).getOrElse("unknown")
+      baseState <- FeatureFlagsState.make
+      state = statusRef.fold(baseState)(ref => baseState.copy(statusRef = ref))
+      _ <- state.hooksRef.set(initialHooks)
+      _ <- ZIO.when(addShutdownFinalizer)(ZIO.addFinalizer(ZIO.attemptBlocking(api.shutdown()).ignore))
+      ff = new FeatureFlagsLive(client, provider, providerName, domain, state)
+      // Start event bridge — if provider is already ready, replay fires immediately
+      _ <- ff.startEventBridge
+    } yield ff
+
+  /** Create a FeatureFlags layer from any OpenFeature provider (non-blocking).
+    *
+    * The provider initializes in the background. Evaluations fail with `ProviderNotReady` until the provider is ready.
+    * Use `onProviderReady` or `providerStatus` to detect when the provider becomes available.
+    */
+  def fromProviderAsync(provider: OFFeatureProvider): ZLayer[Scope, Throwable, FeatureFlags] =
+    ZLayer.scoped(
+      buildAsync(provider, domain = None, initialHooks = Nil, statusRef = None, addShutdownFinalizer = true)
+    )
+
+  /** Create a FeatureFlags layer with a named domain (non-blocking). */
+  def fromProviderWithDomainAsync(
+    provider: OFFeatureProvider,
+    domain: String
+  ): ZLayer[Scope, Throwable, FeatureFlags] =
+    ZLayer.scoped(
+      buildAsync(provider, domain = Some(domain), initialHooks = Nil, statusRef = None, addShutdownFinalizer = false)
+    )
+
+  /** Create a FeatureFlags layer with a named domain and shared status ref (non-blocking). */
+  private[openfeature] def fromProviderWithDomainAsync(
+    provider: OFFeatureProvider,
+    domain: String,
+    statusRef: Ref[ProviderStatus]
+  ): ZLayer[Scope, Throwable, FeatureFlags] =
+    ZLayer.scoped(
+      buildAsync(
+        provider,
+        domain = Some(domain),
+        initialHooks = Nil,
+        statusRef = Some(statusRef),
+        addShutdownFinalizer = false
+      )
+    )
+
+  /** Create a FeatureFlags layer with initial hooks (non-blocking). */
+  def fromProviderWithHooksAsync(
+    provider: OFFeatureProvider,
+    initialHooks: List[FeatureHook]
+  ): ZLayer[Scope, Throwable, FeatureFlags] =
+    ZLayer.scoped(
+      buildAsync(provider, domain = None, initialHooks = initialHooks, statusRef = None, addShutdownFinalizer = true)
+    )
+
+  /** Create a FeatureFlags layer from multiple providers (non-blocking, first-match strategy). */
+  def fromMultiProviderAsync(providers: List[OFFeatureProvider]): ZLayer[Scope, Throwable, FeatureFlags] = {
+    import scala.jdk.CollectionConverters._
+    fromProviderAsync(new MultiProvider(providers.asJava))
+  }
+
+  /** Create a FeatureFlags layer from multiple providers with a custom strategy (non-blocking). */
+  def fromMultiProviderAsync(
+    providers: List[OFFeatureProvider],
+    strategy: Strategy
+  ): ZLayer[Scope, Throwable, FeatureFlags] = {
+    import scala.jdk.CollectionConverters._
+    fromProviderAsync(new MultiProvider(providers.asJava, strategy))
+  }
 }

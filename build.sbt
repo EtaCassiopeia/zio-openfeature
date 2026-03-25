@@ -120,9 +120,6 @@ lazy val testkit = (project in file("testkit"))
   .settings(
     name := "zio-openfeature-testkit",
     commonSettings,
-    // Some tests exercise public factory methods that use the global OpenFeatureAPI singleton.
-    // Run test classes sequentially to prevent cross-spec singleton contamination.
-    Test / parallelExecution := false,
     libraryDependencies ++= Seq(
       "dev.zio" %% "zio"      % zioVersion,
       "dev.zio" %% "zio-test" % zioVersion

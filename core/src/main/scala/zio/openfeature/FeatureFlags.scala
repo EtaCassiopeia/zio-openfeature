@@ -155,6 +155,7 @@ trait FeatureFlags {
   def on(eventType: ProviderEventType, handler: ProviderEvent => UIO[Unit]): UIO[UIO[Unit]]
 
   def addHook(hook: FeatureHook): UIO[Unit]
+  def addHooks(hooks: List[FeatureHook]): UIO[Unit]
   def clearHooks: UIO[Unit]
   def hooks: UIO[List[FeatureHook]]
 
@@ -346,6 +347,9 @@ object FeatureFlags {
 
   def addHook(hook: FeatureHook): ZIO[FeatureFlags, Nothing, Unit] =
     ZIO.serviceWithZIO(_.addHook(hook))
+
+  def addHooks(hooks: List[FeatureHook]): ZIO[FeatureFlags, Nothing, Unit] =
+    ZIO.serviceWithZIO(_.addHooks(hooks))
 
   def clearHooks: ZIO[FeatureFlags, Nothing, Unit] =
     ZIO.serviceWithZIO(_.clearHooks)

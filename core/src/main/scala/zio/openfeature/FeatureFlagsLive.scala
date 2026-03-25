@@ -658,6 +658,9 @@ final private[openfeature] class FeatureFlagsLive(
   override def addHook(hook: FeatureHook): UIO[Unit] =
     state.hooksRef.update(_ :+ hook)
 
+  override def addHooks(hooks: List[FeatureHook]): UIO[Unit] =
+    state.hooksRef.update(_ ++ hooks)
+
   override def clearHooks: UIO[Unit] =
     state.hooksRef.set(List.empty)
 

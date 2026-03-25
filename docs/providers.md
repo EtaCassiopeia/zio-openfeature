@@ -29,6 +29,18 @@ val layer = FeatureFlags.fromProvider(provider)
 program.provide(Scope.default >>> layer)
 ```
 
+### Built-in Providers
+
+The `zio-openfeature-extras` module includes providers for common use cases — no external vendor required:
+
+| Provider | Use case |
+|:---------|:---------|
+| `HoconProvider` | Read flags from `application.conf` (Typesafe Config) |
+| `EnvVarProvider` | Read flags from environment variables |
+| `CachingProvider` | Wrap any provider with zio-cache backed evaluation caching |
+
+See [Extras]({{ site.baseurl }}/extras) for details.
+
 ---
 
 ## Using Optimizely

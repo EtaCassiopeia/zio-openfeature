@@ -832,9 +832,12 @@ object FeatureFlagsSpec extends ZIOSpecDefault {
           assertTrue(effective.getString("invocation-only").contains("yes"))
         }
       }.provide(testLayer(Map("flag" -> true))),
-      test("transaction context merges between scoped and invocation") {
-        val globalCtx = EvaluationContext.empty.withAttribute("source", "global")
-        val txCtx     = EvaluationContext.empty.withAttribute("source", "transaction")
+      test(
+        "transaction context merges between global and client per spec (API -> Transaction -> Client -> Invocation)"
+      ) {
+        val globalCtx = EvaluationContext.empty.withAttribute("source", "global").withAttribute("global-only", "yes")
+        val txCtx     = EvaluationContext.empty.withAttribute("source", "transaction").withAttribute("tx-only", "yes")
+        val clientCtx = EvaluationContext.empty.withAttribute("source", "client").withAttribute("client-only", "yes")
 
         val capturedCtx = Unsafe.unsafe { implicit u =>
           Runtime.default.unsafe.run(Ref.make(Option.empty[EvaluationContext])).getOrThrow()
@@ -847,6 +850,7 @@ object FeatureFlagsSpec extends ZIOSpecDefault {
 
         for {
           _ <- FeatureFlags.setGlobalContext(globalCtx)
+          _ <- FeatureFlags.setClientContext(clientCtx)
           _ <- FeatureFlags.addHook(ctxCapture)
           _ <- FeatureFlags.transaction(context = txCtx) {
             FeatureFlags.boolean("flag", default = false)
@@ -854,7 +858,12 @@ object FeatureFlagsSpec extends ZIOSpecDefault {
           ctx <- capturedCtx.get
         } yield {
           val effective = ctx.get
-          assertTrue(effective.getString("source").contains("transaction"))
+          // Client overrides Transaction (spec: API -> Transaction -> Client -> Invocation)
+          assertTrue(effective.getString("source").contains("client")) &&
+          // All unique attributes from each level are present
+          assertTrue(effective.getString("global-only").contains("yes")) &&
+          assertTrue(effective.getString("tx-only").contains("yes")) &&
+          assertTrue(effective.getString("client-only").contains("yes"))
         }
       }.provide(testLayer(Map("flag" -> true)))
     ),

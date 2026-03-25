@@ -188,6 +188,7 @@ When a provider is in the `NotReady` state, all flag evaluations will fail with 
 | Stale event | ✅ | `ProviderEvent.Stale` |
 | ConfigurationChanged | ✅ | `ProviderEvent.ConfigurationChanged` |
 | Reconnecting event | ✅ | `ProviderEvent.Reconnecting` |
+| Event metadata | ✅ | All events carry `eventMetadata: FlagMetadata` from provider |
 | Event stream | ✅ | `FeatureFlags.events` returns ZStream |
 | Handler registration | ✅ | `onProviderReady`, `onProviderError`, etc. |
 | Handler cancellation | ✅ | Handlers return cancellation effect |

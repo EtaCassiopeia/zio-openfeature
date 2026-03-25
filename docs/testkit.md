@@ -194,9 +194,17 @@ The `setStatus` method updates both the ZIO status and the underlying OpenFeatur
 ### Emitting Events
 
 ```scala
+// Simple event
 provider.emitEvent(ProviderEvent.ConfigurationChanged(
   Set("flag-1", "flag-2"),
   provider.metadata
+))
+
+// Event with metadata
+provider.emitEvent(ProviderEvent.ConfigurationChanged(
+  Set("flag-1"),
+  provider.metadata,
+  FlagMetadata.fromStrings("source" -> "webhook")
 ))
 ```
 

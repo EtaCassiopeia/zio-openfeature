@@ -480,21 +480,27 @@ For reactive event processing, use the ZStream:
 ```scala
 val eventHandler = FeatureFlags.events.foreach { event =>
   event match
-    case ProviderEvent.Ready(meta) =>
+    case ProviderEvent.Ready(meta, _) =>
       ZIO.logInfo(s"Provider ${meta.name} is ready")
-    case ProviderEvent.ConfigurationChanged(flags, meta) =>
-      ZIO.logInfo(s"Flags changed: ${flags.mkString(", ")}")
-    case ProviderEvent.Stale(reason, meta) =>
+    case ProviderEvent.ConfigurationChanged(flags, meta, eventMeta) =>
+      ZIO.logInfo(s"Flags changed: ${flags.mkString(", ")}") *>
+        ZIO.logDebug(s"Event metadata: $eventMeta")
+    case ProviderEvent.Stale(reason, meta, _) =>
       ZIO.logWarning(s"Provider data stale: $reason")
-    case ProviderEvent.Error(error, meta, errorCode, errorMessage) =>
+    case ProviderEvent.Error(error, meta, errorCode, errorMessage, _) =>
       ZIO.logError(s"Provider error: ${errorMessage.getOrElse(error.getMessage)}")
-    case ProviderEvent.Reconnecting(meta) =>
+    case ProviderEvent.Reconnecting(meta, _) =>
       ZIO.logInfo(s"Provider ${meta.name} reconnecting...")
 }
 
 // Run event handler in background
 eventHandler.fork
 ```
+
+> **Event Metadata:** All provider events carry an optional `eventMetadata: FlagMetadata` field
+> (defaults to `FlagMetadata.empty`). Providers can attach arbitrary metadata to events — for
+> example, diagnostic info or the source of a configuration change. Access it via the `eventMeta`
+> extension method: `event.eventMeta.getString("source")`.
 
 ---
 

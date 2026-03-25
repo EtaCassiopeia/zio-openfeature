@@ -1065,6 +1065,23 @@ object FeatureFlagsSpec extends ZIOSpecDefault {
           ran <- finallyRan.get
         } yield assertTrue(ran)
       }.provide(testLayer(Map("flag" -> true)))
+    ),
+    suite("Event Metadata Propagation")(
+      test("event metadata from ConfigurationChanged is propagated through the event bridge") {
+        for {
+          tp    <- ZIO.service[TestFeatureProvider]
+          queue <- Queue.unbounded[ProviderEvent]
+          _     <- FeatureFlags.events.foreach(e => queue.offer(e)).fork
+          _     <- ZIO.sleep(100.millis)
+          meta = FlagMetadata.fromStrings("source" -> "webhook", "region" -> "us-east")
+          _     <- tp.emitEvent(ProviderEvent.ConfigurationChanged(Set("flag-1"), tp.metadata, meta))
+          event <- queue.take.timeout(5.seconds)
+        } yield {
+          val em = event.get.eventMeta
+          assertTrue(em.getString("source").contains("webhook")) &&
+          assertTrue(em.getString("region").contains("us-east"))
+        }
+      }.provide(testLayer())
     )
   ) @@ TestAspect.withLiveClock
 }

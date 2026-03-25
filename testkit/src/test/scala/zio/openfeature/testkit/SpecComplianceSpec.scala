@@ -34,8 +34,8 @@ object SpecComplianceSpec extends ZIOSpecDefault {
           event <- queue.take.timeout(5.seconds)
           _     <- fiber.interrupt
         } yield assertTrue(event.exists {
-          case ProviderEvent.ConfigurationChanged(flags, _) => flags == Set("x")
-          case _                                            => false
+          case ProviderEvent.ConfigurationChanged(flags, _, _) => flags == Set("x")
+          case _                                               => false
         })
       }.provide(testLayer()),
       test("error in one handler doesn't prevent others (spec 5.2.6)") {

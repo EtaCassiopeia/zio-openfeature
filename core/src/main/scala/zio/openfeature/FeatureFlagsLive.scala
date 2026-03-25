@@ -32,12 +32,20 @@ final private[openfeature] class FeatureFlagsLive(
     val metadata = ProviderMetadata(providerName)
 
     ZIO.runtime[Any].flatMap { runtime =>
-      val readyHandler: java.util.function.Consumer[EventDetails] = _ =>
+      def extractEventMetadata(details: EventDetails): FlagMetadata =
+        try {
+          val javaMeta = details.getEventMetadata
+          if (javaMeta == null || javaMeta.isEmpty) FlagMetadata.empty
+          else convertImmutableMetadata(javaMeta)
+        } catch { case _: Exception => FlagMetadata.empty }
+
+      val readyHandler: java.util.function.Consumer[EventDetails] = details =>
         Unsafe.unsafe { implicit u =>
+          val em = extractEventMetadata(details)
           runtime.unsafe
             .run(
               state.statusRef.set(ProviderStatus.Ready) *>
-                state.eventHub.publish(ProviderEvent.Ready(metadata))
+                state.eventHub.publish(ProviderEvent.Ready(metadata, em))
             )
             .getOrThrowFiberFailure()
         }
@@ -46,11 +54,12 @@ final private[openfeature] class FeatureFlagsLive(
         Unsafe.unsafe { implicit u =>
           val error     = new RuntimeException(Option(details.getMessage).getOrElse("Provider error"))
           val errorCode = Option(details.getErrorCode).map(ErrorCodeConverter.fromJava)
+          val em        = extractEventMetadata(details)
           runtime.unsafe
             .run(
               state.statusRef.set(ProviderStatus.Error) *>
                 state.eventHub.publish(
-                  ProviderEvent.Error(error, metadata, errorCode, Option(details.getMessage))
+                  ProviderEvent.Error(error, metadata, errorCode, Option(details.getMessage), em)
                 )
             )
             .getOrThrowFiberFailure()
@@ -59,10 +68,11 @@ final private[openfeature] class FeatureFlagsLive(
       val staleHandler: java.util.function.Consumer[EventDetails] = details =>
         Unsafe.unsafe { implicit u =>
           val reason = Option(details.getMessage).getOrElse("Provider stale")
+          val em     = extractEventMetadata(details)
           runtime.unsafe
             .run(
               state.statusRef.set(ProviderStatus.Stale) *>
-                state.eventHub.publish(ProviderEvent.Stale(reason, metadata))
+                state.eventHub.publish(ProviderEvent.Stale(reason, metadata, em))
             )
             .getOrThrowFiberFailure()
         }
@@ -72,9 +82,10 @@ final private[openfeature] class FeatureFlagsLive(
           val flags = Option(details.getFlagsChanged)
             .map(_.asScala.toSet)
             .getOrElse(Set.empty[String])
+          val em = extractEventMetadata(details)
           runtime.unsafe
             .run(
-              state.eventHub.publish(ProviderEvent.ConfigurationChanged(flags, metadata))
+              state.eventHub.publish(ProviderEvent.ConfigurationChanged(flags, metadata, em))
             )
             .getOrThrowFiberFailure()
         }
@@ -391,26 +402,28 @@ final private[openfeature] class FeatureFlagsLive(
       }
       .getOrElse(ResolutionReason.Unknown)
 
+  private def convertImmutableMetadata(javaMeta: dev.openfeature.sdk.ImmutableMetadata): FlagMetadata = {
+    val javaMap = javaMeta.asUnmodifiableMap()
+    if (javaMap == null || javaMap.isEmpty) FlagMetadata.empty
+    else {
+      val entries = javaMap.asScala.collect {
+        case (k, v: java.lang.Boolean) => k -> MetadataValue.BooleanValue(v.booleanValue())
+        case (k, v: java.lang.Integer) => k -> MetadataValue.IntValue(v.intValue())
+        case (k, v: java.lang.Long)    => k -> MetadataValue.LongValue(v.longValue())
+        case (k, v: java.lang.Float)   => k -> MetadataValue.FloatValue(v.floatValue())
+        case (k, v: java.lang.Double)  => k -> MetadataValue.DoubleValue(v.doubleValue())
+        case (k, v: String)            => k -> MetadataValue.StringValue(v)
+        case (k, v) if v != null       => k -> MetadataValue.StringValue(v.toString)
+      }.toMap
+      FlagMetadata(entries)
+    }
+  }
+
   private def toFlagMetadata(metadata: dev.openfeature.sdk.ImmutableMetadata): UIO[FlagMetadata] =
     if (metadata == null || metadata.isEmpty) ZIO.succeed(FlagMetadata.empty)
     else
       ZIO
-        .attempt {
-          val javaMap = metadata.asUnmodifiableMap()
-          if (javaMap == null || javaMap.isEmpty) FlagMetadata.empty
-          else {
-            val entries = javaMap.asScala.collect {
-              case (k, v: java.lang.Boolean) => k -> MetadataValue.BooleanValue(v.booleanValue())
-              case (k, v: java.lang.Integer) => k -> MetadataValue.IntValue(v.intValue())
-              case (k, v: java.lang.Long)    => k -> MetadataValue.LongValue(v.longValue())
-              case (k, v: java.lang.Float)   => k -> MetadataValue.FloatValue(v.floatValue())
-              case (k, v: java.lang.Double)  => k -> MetadataValue.DoubleValue(v.doubleValue())
-              case (k, v: String)            => k -> MetadataValue.StringValue(v)
-              case (k, v) if v != null       => k -> MetadataValue.StringValue(v.toString)
-            }.toMap
-            FlagMetadata(entries)
-          }
-        }
+        .attempt(convertImmutableMetadata(metadata))
         .catchAll(e => ZIO.logWarning(s"Failed to parse flag metadata: ${e.getMessage}").as(FlagMetadata.empty))
 
   private def anyToObject(value: Any): Object = value match {
@@ -589,7 +602,7 @@ final private[openfeature] class FeatureFlagsLive(
     subscribeToEvent(
       _ == ProviderStatus.Ready,
       metadata,
-      { case ProviderEvent.Ready(m) => m },
+      { case ProviderEvent.Ready(m, _) => m },
       handler
     )
   }
@@ -599,7 +612,7 @@ final private[openfeature] class FeatureFlagsLive(
     subscribeToEvent(
       s => s == ProviderStatus.Error || s == ProviderStatus.Fatal,
       (new RuntimeException("Provider in error state"), metadata),
-      { case ProviderEvent.Error(error, m, _, _) => (error, m) },
+      { case ProviderEvent.Error(error, m, _, _, _) => (error, m) },
       (handler(_, _)).tupled
     )
   }
@@ -609,7 +622,7 @@ final private[openfeature] class FeatureFlagsLive(
     subscribeToEvent(
       _ == ProviderStatus.Stale,
       ("Provider in stale state", metadata),
-      { case ProviderEvent.Stale(reason, m) => (reason, m) },
+      { case ProviderEvent.Stale(reason, m, _) => (reason, m) },
       (handler(_, _)).tupled
     )
   }
@@ -617,7 +630,7 @@ final private[openfeature] class FeatureFlagsLive(
   override def onConfigurationChanged(handler: (Set[String], ProviderMetadata) => UIO[Unit]): UIO[UIO[Unit]] =
     // Configuration changed doesn't have an "associated state" so no immediate execution needed
     events
-      .collect { case ProviderEvent.ConfigurationChanged(flags, m) => (flags, m) }
+      .collect { case ProviderEvent.ConfigurationChanged(flags, m, _) => (flags, m) }
       .foreach { case (flags, m) => handler(flags, m) }
       .forkDaemon
       .map(fiber => fiber.interrupt.unit)

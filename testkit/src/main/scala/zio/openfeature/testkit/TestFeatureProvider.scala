@@ -7,6 +7,7 @@ import zio.openfeature.internal.ErrorCodeConverter
 import dev.openfeature.sdk.{
   EvaluationContext => OFEvaluationContext,
   EventProvider,
+  ImmutableMetadata,
   Metadata,
   OpenFeatureAPIFactory,
   ProviderEvaluation,
@@ -210,25 +211,47 @@ final class TestFeatureProvider private (
   def getStatus: UIO[ProviderStatus] =
     statusRef.get
 
+  private def toJavaMetadata(meta: FlagMetadata): ImmutableMetadata =
+    if (meta.isEmpty) ImmutableMetadata.builder().build()
+    else {
+      val builder = ImmutableMetadata.builder()
+      meta.values.foreach {
+        case (k, MetadataValue.BooleanValue(v)) => builder.addBoolean(k, v)
+        case (k, MetadataValue.StringValue(v))  => builder.addString(k, v)
+        case (k, MetadataValue.IntValue(v))     => builder.addInteger(k, v)
+        case (k, MetadataValue.LongValue(v))    => builder.addLong(k, v)
+        case (k, MetadataValue.FloatValue(v))   => builder.addFloat(k, v)
+        case (k, MetadataValue.DoubleValue(v))  => builder.addDouble(k, v)
+      }
+      builder.build()
+    }
+
   /** Emit a provider event through the Java SDK event system so it reaches FeatureFlagsLive handlers. */
   def emitEvent(event: ProviderEvent): UIO[Unit] =
     eventsHubRef.get.flatMap(_.publish(event)).unit *>
       ZIO.succeed {
         event match {
-          case ProviderEvent.Ready(_) =>
-            emitProviderReady(ProviderEventDetails.builder().build())
-          case ProviderEvent.Error(_, _, errorCode, errorMessage) =>
+          case ProviderEvent.Ready(_, em) =>
+            emitProviderReady(ProviderEventDetails.builder().eventMetadata(toJavaMetadata(em)).build())
+          case ProviderEvent.Error(_, _, errorCode, errorMessage, em) =>
             val builder = ProviderEventDetails.builder()
             errorMessage.foreach(builder.message(_))
             errorCode.foreach(ec => builder.errorCode(ErrorCodeConverter.toJava(ec)))
+            builder.eventMetadata(toJavaMetadata(em))
             emitProviderError(builder.build())
-          case ProviderEvent.Stale(reason, _) =>
-            emitProviderStale(ProviderEventDetails.builder().message(reason).build())
-          case ProviderEvent.ConfigurationChanged(changedFlags, _) =>
-            emitProviderConfigurationChanged(
-              ProviderEventDetails.builder().flagsChanged(changedFlags.toList.asJava).build()
+          case ProviderEvent.Stale(reason, _, em) =>
+            emitProviderStale(
+              ProviderEventDetails.builder().message(reason).eventMetadata(toJavaMetadata(em)).build()
             )
-          case ProviderEvent.Reconnecting(_) =>
+          case ProviderEvent.ConfigurationChanged(changedFlags, _, em) =>
+            emitProviderConfigurationChanged(
+              ProviderEventDetails
+                .builder()
+                .flagsChanged(changedFlags.toList.asJava)
+                .eventMetadata(toJavaMetadata(em))
+                .build()
+            )
+          case ProviderEvent.Reconnecting(_, _) =>
             () // No Java SDK equivalent for reconnecting
         }
       }

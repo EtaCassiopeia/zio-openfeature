@@ -76,7 +76,7 @@ object ProviderEventSpec extends ZIOSpecDefault {
           errorMessage = Some("Something went wrong")
         )
         event match {
-          case ProviderEvent.Error(_, _, code, msg) =>
+          case ProviderEvent.Error(_, _, code, msg, _) =>
             assertTrue(code == Some(ErrorCode.General)) &&
             assertTrue(msg == Some("Something went wrong"))
           case _ => assertTrue(false)
@@ -85,7 +85,7 @@ object ProviderEventSpec extends ZIOSpecDefault {
       test("Error event defaults to no error code/message") {
         val event = ProviderEvent.Error(new RuntimeException("test"), testMetadata)
         event match {
-          case ProviderEvent.Error(_, _, code, msg) =>
+          case ProviderEvent.Error(_, _, code, msg, _) =>
             assertTrue(code == None) &&
             assertTrue(msg == None)
           case _ => assertTrue(false)
@@ -112,6 +112,31 @@ object ProviderEventSpec extends ZIOSpecDefault {
       test("Reconnecting event is not healthy") {
         val event = ProviderEvent.Reconnecting(testMetadata)
         assertTrue(!event.isHealthy)
+      }
+    ),
+    suite("ProviderEvent eventMeta extension")(
+      test("eventMeta returns empty by default") {
+        val event = ProviderEvent.Ready(testMetadata)
+        assertTrue(event.eventMeta.isEmpty)
+      },
+      test("eventMeta returns attached metadata") {
+        val meta  = FlagMetadata.fromStrings("source" -> "webhook", "region" -> "us-east")
+        val event = ProviderEvent.ConfigurationChanged(Set("flag-1"), testMetadata, meta)
+        assertTrue(event.eventMeta.getString("source").contains("webhook")) &&
+        assertTrue(event.eventMeta.getString("region").contains("us-east"))
+      },
+      test("all event types carry eventMetadata") {
+        val meta    = FlagMetadata.fromStrings("key" -> "value")
+        val ready   = ProviderEvent.Ready(testMetadata, meta)
+        val error   = ProviderEvent.Error(new RuntimeException("x"), testMetadata, eventMetadata = meta)
+        val stale   = ProviderEvent.Stale("stale", testMetadata, meta)
+        val changed = ProviderEvent.ConfigurationChanged(Set.empty, testMetadata, meta)
+        val recon   = ProviderEvent.Reconnecting(testMetadata, meta)
+        assertTrue(ready.eventMeta == meta) &&
+        assertTrue(error.eventMeta == meta) &&
+        assertTrue(stale.eventMeta == meta) &&
+        assertTrue(changed.eventMeta == meta) &&
+        assertTrue(recon.eventMeta == meta)
       }
     )
   )

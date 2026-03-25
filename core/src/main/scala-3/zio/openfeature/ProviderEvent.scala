@@ -39,16 +39,21 @@ enum ProviderEventType:
   case Reconnecting
 
 enum ProviderEvent:
-  case Ready(providerMetadata: ProviderMetadata)
+  case Ready(providerMetadata: ProviderMetadata, eventMetadata: FlagMetadata = FlagMetadata.empty)
   case Error(
     error: Throwable,
     providerMetadata: ProviderMetadata,
     errorCode: Option[ErrorCode] = None,
-    errorMessage: Option[String] = None
+    errorMessage: Option[String] = None,
+    eventMetadata: FlagMetadata = FlagMetadata.empty
   )
-  case Stale(reason: String, providerMetadata: ProviderMetadata)
-  case ConfigurationChanged(changedFlags: Set[String], providerMetadata: ProviderMetadata)
-  case Reconnecting(providerMetadata: ProviderMetadata)
+  case Stale(reason: String, providerMetadata: ProviderMetadata, eventMetadata: FlagMetadata = FlagMetadata.empty)
+  case ConfigurationChanged(
+    changedFlags: Set[String],
+    providerMetadata: ProviderMetadata,
+    eventMetadata: FlagMetadata = FlagMetadata.empty
+  )
+  case Reconnecting(providerMetadata: ProviderMetadata, eventMetadata: FlagMetadata = FlagMetadata.empty)
 
   /** Get the event type for this event. */
   def eventType: ProviderEventType = this match
@@ -61,17 +66,24 @@ enum ProviderEvent:
 object ProviderEvent:
   extension (event: ProviderEvent)
     def metadata: ProviderMetadata = event match
-      case Ready(m)                   => m
-      case Error(_, m, _, _)          => m
-      case Stale(_, m)                => m
-      case ConfigurationChanged(_, m) => m
-      case Reconnecting(m)            => m
+      case Ready(m, _)                   => m
+      case Error(_, m, _, _, _)          => m
+      case Stale(_, m, _)                => m
+      case ConfigurationChanged(_, m, _) => m
+      case Reconnecting(m, _)            => m
+
+    def eventMeta: FlagMetadata = event match
+      case Ready(_, em)                   => em
+      case Error(_, _, _, _, em)          => em
+      case Stale(_, _, em)                => em
+      case ConfigurationChanged(_, _, em) => em
+      case Reconnecting(_, em)            => em
 
     def isError: Boolean = event match
       case _: Error => true
       case _        => false
 
     def isHealthy: Boolean = event match
-      case Ready(_)                   => true
-      case ConfigurationChanged(_, _) => true
-      case _                          => false
+      case Ready(_, _)                   => true
+      case ConfigurationChanged(_, _, _) => true
+      case _                             => false

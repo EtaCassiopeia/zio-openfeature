@@ -56,25 +56,43 @@ sealed trait ProviderEvent extends Product with Serializable {
 }
 
 object ProviderEvent {
-  final case class Ready(providerMetadata: ProviderMetadata) extends ProviderEvent
+  final case class Ready(providerMetadata: ProviderMetadata, eventMetadata: FlagMetadata = FlagMetadata.empty)
+      extends ProviderEvent
   final case class Error(
     error: Throwable,
     providerMetadata: ProviderMetadata,
     errorCode: Option[ErrorCode] = None,
-    errorMessage: Option[String] = None
+    errorMessage: Option[String] = None,
+    eventMetadata: FlagMetadata = FlagMetadata.empty
   ) extends ProviderEvent
-  final case class Stale(reason: String, providerMetadata: ProviderMetadata) extends ProviderEvent
-  final case class ConfigurationChanged(changedFlags: Set[String], providerMetadata: ProviderMetadata)
+  final case class Stale(
+    reason: String,
+    providerMetadata: ProviderMetadata,
+    eventMetadata: FlagMetadata = FlagMetadata.empty
+  ) extends ProviderEvent
+  final case class ConfigurationChanged(
+    changedFlags: Set[String],
+    providerMetadata: ProviderMetadata,
+    eventMetadata: FlagMetadata = FlagMetadata.empty
+  ) extends ProviderEvent
+  final case class Reconnecting(providerMetadata: ProviderMetadata, eventMetadata: FlagMetadata = FlagMetadata.empty)
       extends ProviderEvent
-  final case class Reconnecting(providerMetadata: ProviderMetadata) extends ProviderEvent
 
   implicit class ProviderEventOps(val event: ProviderEvent) extends AnyVal {
     def metadata: ProviderMetadata = event match {
-      case Ready(m)                   => m
-      case Error(_, m, _, _)          => m
-      case Stale(_, m)                => m
-      case ConfigurationChanged(_, m) => m
-      case Reconnecting(m)            => m
+      case Ready(m, _)                   => m
+      case Error(_, m, _, _, _)          => m
+      case Stale(_, m, _)                => m
+      case ConfigurationChanged(_, m, _) => m
+      case Reconnecting(m, _)            => m
+    }
+
+    def eventMeta: FlagMetadata = event match {
+      case Ready(_, em)                   => em
+      case Error(_, _, _, _, em)          => em
+      case Stale(_, _, em)                => em
+      case ConfigurationChanged(_, _, em) => em
+      case Reconnecting(_, em)            => em
     }
 
     def isError: Boolean = event match {

@@ -226,9 +226,8 @@ FeatureFlags.addHook(combined)
 Hooks are executed in the order they were added:
 
 ```scala
-FeatureFlags.addHook(loggingHook)   // Runs first in before
-FeatureFlags.addHook(metricsHook)   // Runs second in before
-FeatureFlags.addHook(validatorHook) // Runs third in before
+// Hooks run in registration order (first added = first to run in `before`)
+FeatureFlags.addHooks(List(loggingHook, metricsHook, validatorHook))
 ```
 
 For the `before` stage, hooks run in order. For `after`, `error`, and `finallyAfter`, they run in reverse order.
@@ -260,6 +259,9 @@ Client-level hooks apply to a specific FeatureFlags instance:
 ```scala
 // Add a single hook at runtime
 FeatureFlags.addHook(myHook)
+
+// Add multiple hooks atomically
+FeatureFlags.addHooks(List(loggingHook, metricsHook, validatorHook))
 
 // Create layer with initial hooks
 val hooks = List(
@@ -444,11 +446,7 @@ override def after[A](...): UIO[Unit] =
 Consider hook order for dependencies:
 
 ```scala
-// Validation should run first
-FeatureFlags.addHook(validatorHook)
-// Then enrichment
-FeatureFlags.addHook(enrichmentHook)
-// Then logging/metrics
-FeatureFlags.addHook(loggingHook)
+// Order matters: validation → enrichment → logging
+FeatureFlags.addHooks(List(validatorHook, enrichmentHook, loggingHook))
 ```
 

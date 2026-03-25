@@ -15,7 +15,7 @@ ZIO OpenFeature wraps the [OpenFeature Java SDK](https://openfeature.dev/docs/re
 | Component | Version | Notes |
 |:----------|:--------|:------|
 | **OpenFeature Spec** | v0.8.0 | [Specification](https://github.com/open-feature/spec) |
-| **OpenFeature Java SDK** | 1.20.1 | [Java SDK](https://github.com/open-feature/java-sdk) |
+| **OpenFeature Java SDK** | 1.20.2 | [Java SDK](https://github.com/open-feature/java-sdk) |
 | **ZIO OpenFeature** | [![Maven Central](https://img.shields.io/maven-central/v/io.github.etacassiopeia/zio-openfeature-core_3.svg)](https://search.maven.org/search?q=g:io.github.etacassiopeia%20AND%20a:zio-openfeature-core_3) | This library |
 
 This library targets the **dynamic-context paradigm** (server-side) of the OpenFeature specification.
@@ -277,9 +277,9 @@ Beyond the OpenFeature spec, ZIO OpenFeature provides:
 
 ## Provider SDK Version Compatibility
 
-ZIO OpenFeature ships with OpenFeature Java SDK 1.20.1. You may use providers compiled against older SDK versions, with the following considerations:
+ZIO OpenFeature ships with OpenFeature Java SDK 1.20.2. You may use providers compiled against older SDK versions, with the following considerations:
 
-**Providers implementing `FeatureProvider` directly — fully compatible.** The `FeatureProvider` interface is identical from v1.14.1 through v1.20.1. No abstract methods were added; every new method (e.g., `track()`) was introduced with a `default` no-op implementation. A provider JAR compiled against any 1.14.x+ SDK will work at runtime without recompilation.
+**Providers implementing `FeatureProvider` directly — fully compatible.** The `FeatureProvider` interface is identical from v1.14.1 through v1.20.2. No abstract methods were added; every new method (e.g., `track()`) was introduced with a `default` no-op implementation. A provider JAR compiled against any 1.14.x+ SDK will work at runtime without recompilation.
 
 **Providers extending `EventProvider` — requires SDK 1.16.0+.** In SDK v1.16.0, the `emit()` and `emitProvider*()` methods changed their return type from `void` to `Awaitable`. Since return types are part of JVM method descriptors, a provider compiled against a pre-1.16.0 SDK that calls `this.emit(...)` will fail at runtime with `NoSuchMethodError`. Most ecosystem providers (flagd, LaunchDarkly, Optimizely, etc.) extend `EventProvider`, so they need to be compiled against SDK 1.16.0+.
 

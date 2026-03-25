@@ -183,12 +183,12 @@ Evaluation context flows through five levels (per OpenFeature spec), with later 
 | Level | Scope | Use Case |
 |:------|:------|:---------|
 | **Global** | Application-wide | App version, environment, deployment region |
+| **Transaction** | Within transaction block | Test overrides, experiment context |
 | **Client** | FeatureFlags instance | Service name, region |
 | **Scoped** | Block of code (via `withContext`) | User session, request context |
-| **Transaction** | Within transaction block | Test overrides, experiment context |
 | **Invocation** | Single evaluation | One-off targeting attributes |
 
-Contexts merge with higher-precedence levels overriding lower ones: `Invocation > Transaction > Scoped > Client > Global`.
+Contexts merge with higher-precedence levels overriding lower ones: `Invocation > Scoped > Client > Transaction > Global`.
 
 See [Evaluation Context]({{ site.baseurl }}/context) for detailed usage, attribute types, and practical examples.
 

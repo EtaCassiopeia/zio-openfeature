@@ -22,9 +22,9 @@ Evaluation context provides information about the current evaluation environment
 ZIO OpenFeature supports a hierarchical context system with five levels (per OpenFeature spec):
 
 1. **Global context** - API-level, shared across all evaluations, set via `setGlobalContext`
-2. **Client context** - Client-level, persisted on the FeatureFlags instance, set via `setClientContext`
-3. **Scoped context** - Applied to a block of code via `withContext` (fiber-local)
-4. **Transaction context** - Applied within a transaction block
+2. **Transaction context** - Applied within a transaction block
+3. **Client context** - Client-level, persisted on the FeatureFlags instance, set via `setClientContext`
+4. **Scoped context** - Applied to a block of code via `withContext` (fiber-local)
 5. **Invocation context** - Passed directly to evaluation methods
 
 Contexts are merged in order, with later contexts taking precedence.
@@ -224,19 +224,19 @@ Per the OpenFeature specification, contexts are merged in this order (lowest to 
 ```
 ┌──────────────────────────────────────────────────────────────┐
 │                     Final Merged Context                      │
-│  (Invocation > Transaction > Scoped > Client > Global)       │
+│  (Invocation > Scoped > Client > Transaction > Global)       │
 └──────────────────────────────────────────────────────────────┘
                             ▲
                             │
     ┌───────────────────────┼───────────────────────┐
     │                       │                       │
 ┌───┴───┐             ┌─────┴─────┐           ┌─────┴─────┐
-│Invoc. │             │Transaction│           │  Scoped   │
+│Invoc. │             │  Scoped   │           │  Client   │
 │(high) │             │  Context  │           │  Context  │
 └───────┘             └───────────┘           └───────────┘
                             │
                      ┌──────┴──────┐
-                     │   Client    │
+                     │Transaction  │
                      │  Context    │
                      └─────────────┘
                             │

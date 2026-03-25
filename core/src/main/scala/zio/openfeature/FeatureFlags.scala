@@ -108,7 +108,7 @@ trait FeatureFlags {
 
   /** Set the client-level evaluation context.
     *
-    * Per OpenFeature spec, context merges in order: API (global) -> Client -> Transaction -> Invocation. Client context
+    * Per OpenFeature spec, context merges in order: API (global) -> Transaction -> Client -> Invocation. Client context
     * is persisted on this FeatureFlags instance.
     */
   def setClientContext(ctx: EvaluationContext): UIO[Unit]

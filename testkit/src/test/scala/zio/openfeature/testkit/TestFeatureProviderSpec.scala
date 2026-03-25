@@ -1,6 +1,7 @@
 package zio.openfeature.testkit
 
 import zio._
+import zio.stream._
 import zio.test._
 import zio.test.Assertion._
 import zio.openfeature._
@@ -190,6 +191,46 @@ object TestFeatureProviderSpec extends ZIOSpecDefault {
 
         effect.provide(TestFeatureProvider.providerLayer)
       }
+    ),
+    suite("event streaming")(
+      test("events stream receives emitted events") {
+        for {
+          provider <- TestFeatureProvider.make
+          queue    <- Queue.unbounded[ProviderEvent]
+          fiber    <- provider.events.foreach(e => queue.offer(e)).fork
+          _        <- ZIO.sleep(100.millis)
+          _        <- provider.emitEvent(ProviderEvent.ConfigurationChanged(Set("x"), provider.metadata))
+          event    <- queue.take.timeout(5.seconds)
+          _        <- fiber.interrupt
+        } yield assertTrue(event.exists {
+          case ProviderEvent.ConfigurationChanged(flags, _) => flags == Set("x")
+          case _                                            => false
+        })
+      },
+      test("metadata has expected values") {
+        for {
+          provider <- TestFeatureProvider.make
+        } yield assertTrue(provider.metadata.name == "TestFeatureProvider") &&
+          assertTrue(provider.metadata.version.contains("1.0.0"))
+      }
+    ),
+    suite("scoped layer")(
+      test("scopedLayer provides both TestFeatureProvider and FeatureFlags") {
+        val program = for {
+          _      <- ZIO.service[TestFeatureProvider]
+          _      <- ZIO.service[FeatureFlags]
+          result <- FeatureFlags.boolean("flag", default = false)
+        } yield assertTrue(result == true)
+
+        program.provide(TestFeatureProvider.scopedLayer(Map("flag" -> true)))
+      },
+      test("scopedLayer with empty flags works") {
+        val program = for {
+          result <- FeatureFlags.boolean("missing", default = true)
+        } yield assertTrue(result == true)
+
+        program.provide(TestFeatureProvider.scopedLayer)
+      }
     )
-  )
+  ) @@ TestAspect.withLiveClock
 }

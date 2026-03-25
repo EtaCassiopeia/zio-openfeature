@@ -52,5 +52,5 @@ object SpecComplianceSpec extends ZIOSpecDefault {
         } yield assertTrue(didFire.contains(true))
       }.provide(testLayer())
     )
-  ) @@ TestAspect.withLiveClock @@ TestAspect.timeout(30.seconds) @@ TestAspect.flaky(3)
+  ) @@ TestAspect.withLiveClock @@ TestAspect.timeout(30.seconds)
 }

@@ -93,7 +93,7 @@ lazy val commonSettings = Seq(
 ThisBuild / dependencyOverrides += "com.fasterxml.jackson.core" % "jackson-core" % "2.18.6"
 
 lazy val root = (project in file("."))
-  .aggregate(core, testkit)
+  .aggregate(core, testkit, extras)
   .settings(
     name                           := "zio-openfeature",
     publish / skip                 := true,
@@ -111,6 +111,19 @@ lazy val core = (project in file("core"))
       "dev.zio"         %% "zio"         % zioVersion,
       "dev.zio"         %% "zio-streams" % zioVersion,
       "dev.openfeature"  % "sdk"         % openFeatureSdkVersion
+    )
+  )
+
+// Extras module - built-in providers (HOCON, env vars, caching wrapper)
+lazy val extras = (project in file("extras"))
+  .dependsOn(core)
+  .settings(
+    name := "zio-openfeature-extras",
+    commonSettings,
+    libraryDependencies ++= Seq(
+      "dev.zio"      %% "zio"       % zioVersion,
+      "dev.zio"      %% "zio-cache" % "0.2.3",
+      "com.typesafe"  % "config"    % "1.4.3"
     )
   )
 

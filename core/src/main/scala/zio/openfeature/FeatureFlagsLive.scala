@@ -23,7 +23,8 @@ final private[openfeature] class FeatureFlagsLive(
   provider: OFFeatureProvider,
   providerName: String,
   domain: Option[String],
-  state: FeatureFlagsState
+  state: FeatureFlagsState,
+  api: OpenFeatureAPI
 ) extends FeatureFlags {
 
   // Bridge Java SDK provider events to ZIO event system
@@ -754,7 +755,7 @@ final private[openfeature] class FeatureFlagsLive(
         state.clientContextRef.set(EvaluationContext.empty),
         state.trackRecorder.set(List.empty)
       )
-    ) *> state.eventHub.shutdown *> ZIO.attemptBlocking(OpenFeatureAPI.getInstance().shutdown()).ignore
+    ) *> state.eventHub.shutdown *> ZIO.attemptBlocking(api.shutdown()).ignore
 
   // Tracking API
 

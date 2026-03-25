@@ -3,7 +3,7 @@ package zio.openfeature
 import zio._
 import zio.stream._
 import zio.openfeature.internal.FeatureFlagsState
-import dev.openfeature.sdk.{FeatureProvider => OFFeatureProvider, OpenFeatureAPI}
+import dev.openfeature.sdk.{FeatureProvider => OFFeatureProvider, OpenFeatureAPI, OpenFeatureAPIFactory}
 import dev.openfeature.sdk.multiprovider.{MultiProvider, Strategy, FirstMatchStrategy, FirstSuccessfulStrategy}
 
 trait FeatureFlags {
@@ -392,10 +392,11 @@ object FeatureFlags {
     domain: Option[String],
     initialHooks: List[FeatureHook],
     statusRef: Option[Ref[ProviderStatus]],
-    addShutdownFinalizer: Boolean
+    addShutdownFinalizer: Boolean,
+    apiOverride: Option[OpenFeatureAPI] = None
   ): ZIO[Scope, Throwable, FeatureFlagsLive] =
     for {
-      api <- ZIO.succeed(OpenFeatureAPI.getInstance())
+      api <- ZIO.succeed(apiOverride.getOrElse(OpenFeatureAPI.getInstance()))
       _ <- domain match {
         case Some(d) => ZIO.attemptBlocking(api.setProviderAndWait(d, provider))
         case None    => ZIO.attemptBlocking(api.setProviderAndWait(provider))
@@ -410,7 +411,7 @@ object FeatureFlags {
       _ <- state.hooksRef.set(initialHooks)
       _ <- statusRef.fold(state.statusRef.set(ProviderStatus.Ready))(_ => ZIO.unit)
       _ <- ZIO.when(addShutdownFinalizer)(ZIO.addFinalizer(ZIO.attemptBlocking(api.shutdown()).ignore))
-      ff = new FeatureFlagsLive(client, provider, providerName, domain, state)
+      ff = new FeatureFlagsLive(client, provider, providerName, domain, state, api)
       _ <- ff.startEventBridge
     } yield ff
 
@@ -430,7 +431,8 @@ object FeatureFlags {
   private[openfeature] def fromProviderWithDomain(
     provider: OFFeatureProvider,
     domain: String,
-    statusRef: Ref[ProviderStatus]
+    statusRef: Ref[ProviderStatus],
+    api: Option[OpenFeatureAPI] = None
   ): ZLayer[Scope, Throwable, FeatureFlags] =
     ZLayer.scoped(
       build(
@@ -438,7 +440,8 @@ object FeatureFlags {
         domain = Some(domain),
         initialHooks = Nil,
         statusRef = Some(statusRef),
-        addShutdownFinalizer = false
+        addShutdownFinalizer = false,
+        apiOverride = api
       )
     )
 
@@ -480,10 +483,11 @@ object FeatureFlags {
     domain: Option[String],
     initialHooks: List[FeatureHook],
     statusRef: Option[Ref[ProviderStatus]],
-    addShutdownFinalizer: Boolean
+    addShutdownFinalizer: Boolean,
+    apiOverride: Option[OpenFeatureAPI] = None
   ): ZIO[Scope, Throwable, FeatureFlagsLive] =
     for {
-      api <- ZIO.succeed(OpenFeatureAPI.getInstance())
+      api <- ZIO.succeed(apiOverride.getOrElse(OpenFeatureAPI.getInstance()))
       // Register provider FIRST so the client binds to it (not the NoOp default)
       _ <- domain match {
         case Some(d) => ZIO.succeed(api.setProvider(d, provider))
@@ -498,7 +502,7 @@ object FeatureFlags {
       state = statusRef.fold(baseState)(ref => baseState.copy(statusRef = ref))
       _ <- state.hooksRef.set(initialHooks)
       _ <- ZIO.when(addShutdownFinalizer)(ZIO.addFinalizer(ZIO.attemptBlocking(api.shutdown()).ignore))
-      ff = new FeatureFlagsLive(client, provider, providerName, domain, state)
+      ff = new FeatureFlagsLive(client, provider, providerName, domain, state, api)
       // Start event bridge — if provider is already ready, replay fires immediately
       _ <- ff.startEventBridge
     } yield ff
@@ -526,7 +530,8 @@ object FeatureFlags {
   private[openfeature] def fromProviderWithDomainAsync(
     provider: OFFeatureProvider,
     domain: String,
-    statusRef: Ref[ProviderStatus]
+    statusRef: Ref[ProviderStatus],
+    api: Option[OpenFeatureAPI] = None
   ): ZLayer[Scope, Throwable, FeatureFlags] =
     ZLayer.scoped(
       buildAsync(
@@ -534,7 +539,8 @@ object FeatureFlags {
         domain = Some(domain),
         initialHooks = Nil,
         statusRef = Some(statusRef),
-        addShutdownFinalizer = false
+        addShutdownFinalizer = false,
+        apiOverride = api
       )
     )
 

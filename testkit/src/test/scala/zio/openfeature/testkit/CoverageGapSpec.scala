@@ -27,10 +27,12 @@ object CoverageGapSpec extends ZIOSpecDefault {
     testFeatureProviderEventsSuite,
     scopedLayerSuite,
     evaluationContextFactorySuite,
-    fromProviderWithHooksSuite,
-    fromMultiProviderSuite,
+    suite("Global singleton API tests")(
+      fromProviderWithHooksSuite,
+      fromMultiProviderSuite
+    ) @@ TestAspect.sequential,
     errorHookSuite
-  ) @@ TestAspect.withLiveClock @@ TestAspect.flaky(3)
+  ) @@ TestAspect.withLiveClock
 
   // Object flag evaluation (obj/objDetails) - completely untested before
   private val objectEvaluationSuite = suite("Object Evaluation")(
@@ -389,7 +391,7 @@ object CoverageGapSpec extends ZIOSpecDefault {
     }
   )
 
-  // fromProviderWithHooks factory
+  // fromProviderWithHooks factory — uses global singleton API
   private val fromProviderWithHooksSuite = suite("fromProviderWithHooks")(
     test("layer created with initial hooks has those hooks") {
       val callsRef = Unsafe.unsafe { implicit u =>
@@ -410,7 +412,7 @@ object CoverageGapSpec extends ZIOSpecDefault {
     }
   )
 
-  // fromMultiProvider factory
+  // fromMultiProvider factory — uses global singleton API, must run sequentially
   private val fromMultiProviderSuite = suite("fromMultiProvider")(
     test("fromMultiProvider creates a usable layer") {
       // fromMultiProvider uses the global (non-domain) provider path which can conflict

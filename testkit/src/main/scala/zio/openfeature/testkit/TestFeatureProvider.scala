@@ -8,6 +8,7 @@ import dev.openfeature.sdk.{
   EvaluationContext => OFEvaluationContext,
   EventProvider,
   Metadata,
+  OpenFeatureAPIFactory,
   ProviderEvaluation,
   ProviderEventDetails,
   ProviderState,
@@ -32,7 +33,8 @@ final class TestFeatureProvider private (
   private val evaluations: CopyOnWriteArrayList[(String, OFEvaluationContext)],
   private val eventsHubRef: Ref[Hub[ProviderEvent]],
   private[openfeature] val statusRef: Ref[ProviderStatus],
-  private val initLatch: Option[CountDownLatch]
+  private val initLatch: Option[CountDownLatch],
+  private val initDone: Option[CountDownLatch]
 ) extends EventProvider {
 
   @scala.annotation.nowarn("msg=deprecated")
@@ -48,10 +50,12 @@ final class TestFeatureProvider private (
       case None        => ()
     }
     state.set(ProviderState.READY)
+    initDone.foreach(_.countDown()) // Signal that initialize() has completed
   }
 
   override def shutdown(): Unit = {
     initLatch.foreach(_.countDown()) // Release blocked initialize() if still waiting
+    initDone.foreach(_.countDown())  // Unblock any waiter if initialize() never ran
     state.set(ProviderState.NOT_READY)
   }
 
@@ -182,13 +186,18 @@ final class TestFeatureProvider private (
   def clearFlags: UIO[Unit] =
     ZIO.succeed(flags.clear())
 
-  /** Set the provider status. For async test layers, setting Ready releases the init latch. */
+  /** Set the provider status. For async test layers, setting Ready releases the init latch and waits for the Java SDK's
+    * background `initialize()` thread to complete, ensuring the provider is fully ready before returning.
+    */
   def setStatus(status: ProviderStatus): UIO[Unit] =
     statusRef.set(status) *> ZIO.succeed {
       status match {
         case ProviderStatus.Ready =>
           state.set(ProviderState.READY)
           initLatch.foreach(_.countDown())
+          // Wait for the Java SDK's background initialize() thread to complete, ensuring
+          // the provider is fully registered before evaluations are attempted.
+          initDone.foreach(_.await())
         case ProviderStatus.NotReady     => state.set(ProviderState.NOT_READY)
         case ProviderStatus.Error        => state.set(ProviderState.ERROR)
         case ProviderStatus.Stale        => state.set(ProviderState.STALE)
@@ -268,7 +277,7 @@ object TestFeatureProvider {
         initialFlags.foreach { case (k, v) => flags.put(k, v) }
         val state       = new AtomicReference[ProviderState](ProviderState.READY)
         val evaluations = new CopyOnWriteArrayList[(String, OFEvaluationContext)]()
-        new TestFeatureProvider(flags, state, evaluations, hubRef, statusRef, initLatch = None)
+        new TestFeatureProvider(flags, state, evaluations, hubRef, statusRef, initLatch = None, initDone = None)
       }
     } yield provider
 
@@ -276,17 +285,27 @@ object TestFeatureProvider {
   def layer: ZLayer[Scope, Throwable, TestFeatureProvider with FeatureFlags] =
     layer(Map.empty)
 
-  /** Create a FeatureFlags layer with initial flags. Uses a unique domain per invocation to ensure test isolation. */
+  /** Create a FeatureFlags layer with initial flags.
+    *
+    * Each invocation creates an isolated OpenFeatureAPI instance and a unique domain, ensuring full test isolation.
+    * Tests using this layer can safely run in parallel without cross-test event contamination.
+    */
   def layer(flags: Map[String, Any]): ZLayer[Scope, Throwable, TestFeatureProvider with FeatureFlags] =
     ZLayer
       .scoped {
         for {
           testProvider <- make(flags)
+          api    = OpenFeatureAPIFactory.create()
           domain = s"test-${java.util.UUID.randomUUID()}"
           featureFlags <- FeatureFlags
-            .fromProviderWithDomain(testProvider, domain, testProvider.statusRef)
+            .fromProviderWithDomain(testProvider, domain, testProvider.statusRef, api = Some(api))
             .build
             .map(_.get)
+          // The Java SDK dispatches an initial PROVIDER_READY event asynchronously when
+          // handlers are registered on an already-ready provider. Wait briefly for this
+          // event to settle so that subsequent setStatus() calls in tests are not overwritten.
+          // Use the live clock to avoid blocking on ZIO's TestClock.
+          _ <- ZIO.attemptBlocking(Thread.sleep(50)).ignore
         } yield (testProvider, featureFlags)
       }
       .flatMap { env =>
@@ -304,8 +323,9 @@ object TestFeatureProvider {
 
   /** Create a FeatureFlags layer from an existing TestFeatureProvider. */
   def layerFrom(provider: TestFeatureProvider): ZLayer[Scope, Throwable, FeatureFlags] = {
+    val api    = OpenFeatureAPIFactory.create()
     val domain = s"test-${java.util.UUID.randomUUID()}"
-    FeatureFlags.fromProviderWithDomain(provider, domain, provider.statusRef)
+    FeatureFlags.fromProviderWithDomain(provider, domain, provider.statusRef, api = Some(api))
   }
 
   /** Self-contained test layer that provides its own Scope. */
@@ -334,9 +354,10 @@ object TestFeatureProvider {
       .scoped {
         for {
           testProvider <- makeNotReady(flags)
+          api    = OpenFeatureAPIFactory.create()
           domain = s"test-async-${java.util.UUID.randomUUID()}"
           featureFlags <- FeatureFlags
-            .fromProviderWithDomainAsync(testProvider, domain, testProvider.statusRef)
+            .fromProviderWithDomainAsync(testProvider, domain, testProvider.statusRef, api = Some(api))
             .build
             .map(_.get)
         } yield (testProvider, featureFlags)
@@ -361,7 +382,15 @@ object TestFeatureProvider {
         initialFlags.foreach { case (k, v) => flags.put(k, v) }
         val state       = new AtomicReference[ProviderState](ProviderState.NOT_READY)
         val evaluations = new CopyOnWriteArrayList[(String, OFEvaluationContext)]()
-        new TestFeatureProvider(flags, state, evaluations, hubRef, statusRef, initLatch = Some(new CountDownLatch(1)))
+        new TestFeatureProvider(
+          flags,
+          state,
+          evaluations,
+          hubRef,
+          statusRef,
+          initLatch = Some(new CountDownLatch(1)),
+          initDone = Some(new CountDownLatch(1))
+        )
       }
     } yield provider
 

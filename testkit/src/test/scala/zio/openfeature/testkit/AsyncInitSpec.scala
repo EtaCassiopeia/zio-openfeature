@@ -167,7 +167,7 @@ object AsyncInitSpec extends ZIOSpecDefault {
         } yield assertTrue(result == true)
       }.provide(asyncLayer(Map("flag" -> true)))
     ),
-    suite("Async factory methods")(
+    suite("Async factory methods — uses global singleton API, must run sequentially")(
       test("fromProviderAsync creates a working layer") {
         for {
           tp <- TestFeatureProvider.make(Map("flag" -> true))
@@ -224,6 +224,6 @@ object AsyncInitSpec extends ZIOSpecDefault {
           }
         } yield assertTrue(result == true)
       }
-    )
-  ) @@ TestAspect.sequential @@ TestAspect.withLiveClock @@ TestAspect.flaky(3)
+    ) @@ TestAspect.sequential
+  ) @@ TestAspect.withLiveClock
 }

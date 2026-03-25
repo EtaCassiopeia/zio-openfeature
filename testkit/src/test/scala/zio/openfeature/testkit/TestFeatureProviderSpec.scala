@@ -196,12 +196,13 @@ object TestFeatureProviderSpec extends ZIOSpecDefault {
       test("events stream receives emitted events") {
         for {
           provider <- TestFeatureProvider.make
-          queue    <- Queue.unbounded[ProviderEvent]
-          fiber    <- provider.events.foreach(e => queue.offer(e)).fork
-          _        <- ZIO.sleep(100.millis)
-          _        <- provider.emitEvent(ProviderEvent.ConfigurationChanged(Set("x"), provider.metadata))
-          event    <- queue.take.timeout(5.seconds)
-          _        <- fiber.interrupt
+          received <- Promise.make[Nothing, ProviderEvent]
+          fiber    <- provider.events.foreach(e => received.succeed(e)).fork
+          // Retry emit until the stream subscription is registered on the Hub
+          _ <- (provider.emitEvent(ProviderEvent.ConfigurationChanged(Set("x"), provider.metadata)) *>
+            received.isDone.flatMap(done => ZIO.fail(()).unless(done))).retry(Schedule.spaced(10.millis))
+          event <- received.await.timeout(5.seconds)
+          _     <- fiber.interrupt
         } yield assertTrue(event.exists {
           case ProviderEvent.ConfigurationChanged(flags, _, _) => flags == Set("x")
           case _                                               => false

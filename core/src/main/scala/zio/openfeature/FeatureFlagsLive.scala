@@ -111,7 +111,7 @@ final private[openfeature] class FeatureFlagsLive(
     }
   }
 
-  // Context merges in order per OpenFeature spec: API (global) -> Client -> Transaction -> Invocation
+  // Context merges per OpenFeature spec: API (global) -> Transaction -> Client -> FiberLocal -> Invocation
   private def effectiveContext(invocation: EvaluationContext): UIO[EvaluationContext] =
     for {
       global      <- state.globalContextRef.get
@@ -120,9 +120,9 @@ final private[openfeature] class FeatureFlagsLive(
       transaction <- state.transactionRef.get
       txContext = transaction.map(_.context).getOrElse(EvaluationContext.empty)
     } yield global
+      .merge(txContext)
       .merge(clientCtx)
       .merge(fiberLocal)
-      .merge(txContext)
       .merge(invocation)
 
   private def runWithHooks[A: FlagType](

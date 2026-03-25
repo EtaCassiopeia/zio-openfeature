@@ -124,7 +124,7 @@ FeatureFlags.booleanDetails("flag", false, context, options)
 | Hook hints | ✅ | `HookHints` for passing data between stages |
 | Hook data (4.6.1) | ✅ | `HookData` per-hook mutable state across stages |
 | API-level hooks | ✅ | `FeatureFlags.addApiHook` / `clearApiHooks` |
-| Client-level hooks | ✅ | `FeatureFlags.addHook` / `clearHooks` |
+| Client-level hooks | ✅ | `FeatureFlags.addHook` / `addHooks` / `clearHooks` |
 | Invocation-level hooks | ✅ | Via `EvaluationOptions` |
 | Provider-level hooks | ✅ | Automatically included from `provider.getProviderHooks()` |
 | Execution order | ✅ | API → Client → Invocation → Provider (reversed for after/error/finally) |

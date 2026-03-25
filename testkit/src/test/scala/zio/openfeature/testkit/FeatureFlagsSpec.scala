@@ -237,6 +237,13 @@ object FeatureFlagsSpec extends ZIOSpecDefault {
         } yield assertTrue(initial.isEmpty) &&
           assertTrue(after.length == 1)
       }.provide(testLayer()),
+      test("addHooks adds multiple hooks atomically") {
+        val hooks = List(FeatureHook.noop, FeatureHook.noop, FeatureHook.noop)
+        for {
+          _     <- FeatureFlags.addHooks(hooks)
+          after <- FeatureFlags.hooks
+        } yield assertTrue(after.length == 3)
+      }.provide(testLayer()),
       test("clearHooks removes all hooks") {
         val hook = FeatureHook.noop
         for {

@@ -11,11 +11,24 @@ import dev.openfeature.sdk.{
 import zio._
 import zio.cache.{Cache, Lookup}
 import java.util.concurrent.ConcurrentHashMap
+import scala.jdk.CollectionConverters._
 
-/** Configuration for the caching provider. */
+/** Configuration for the caching provider.
+  *
+  * @param maxEntries
+  *   Maximum number of cached entries before LRU eviction
+  * @param ttl
+  *   Time-to-live for cached entries
+  * @param contextKeys
+  *   If set, only these context attribute keys (plus the targeting key) are included in the cache key hash. Use this
+  *   when contexts contain high-cardinality fields (e.g., per-request UUIDs) that would defeat caching. For example,
+  *   `contextKeys = Some(Set("plan", "region"))` caches by plan and region, ignoring `userId`. If `None` (default), the
+  *   full context is hashed.
+  */
 final case class CachingConfig(
   maxEntries: Int = 1000,
-  ttl: Duration = 5.minutes
+  ttl: Duration = 5.minutes,
+  contextKeys: Option[Set[String]] = None
 )
 
 /** A cache key combining the flag key, evaluation type, and a hash of the evaluation context. */
@@ -62,8 +75,20 @@ final class CachingProvider private (
   private def contextHash(ctx: OFEvaluationContext): Int =
     if (ctx == null) 0
     else {
-      val tk    = Option(ctx.getTargetingKey).getOrElse("")
-      val attrs = Option(ctx.asUnmodifiableMap()).map(_.hashCode()).getOrElse(0)
+      val tk = config.contextKeys match {
+        case Some(_) => "" // targeting key is often high-cardinality; only include if in contextKeys
+        case None    => Option(ctx.getTargetingKey).getOrElse("")
+      }
+      val attrs = config.contextKeys match {
+        case Some(keys) =>
+          Option(ctx.asUnmodifiableMap())
+            .map { m =>
+              m.asScala.filter { case (k, _) => keys.contains(k) }.hashCode()
+            }
+            .getOrElse(0)
+        case None =>
+          Option(ctx.asUnmodifiableMap()).map(_.hashCode()).getOrElse(0)
+      }
       (tk, attrs).hashCode()
     }
 

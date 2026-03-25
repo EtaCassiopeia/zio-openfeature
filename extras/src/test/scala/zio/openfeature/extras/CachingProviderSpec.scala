@@ -140,6 +140,64 @@ object CachingProviderSpec extends ZIOSpecDefault {
         assertTrue(underlying.evaluationCount.get() == 1)
       }
     ),
+    suite("Context key filtering")(
+      test("contextKeys filters high-cardinality fields from cache key") {
+        val underlying = new CountingProvider(Map("flag" -> true))
+        val cached = CachingProvider(
+          underlying,
+          CachingConfig(contextKeys = Some(Set("plan")))
+        )
+        // Two contexts with same "plan" but different targeting key (e.g., per-request UUID)
+        val attrs1 = new java.util.HashMap[String, Value]()
+        attrs1.put("plan", new Value("premium"))
+        val attrs2 = new java.util.HashMap[String, Value]()
+        attrs2.put("plan", new Value("premium"))
+        val ctx1 = new ImmutableContext("user-aaa-111", attrs1)
+        val ctx2 = new ImmutableContext("user-bbb-222", attrs2)
+        cached.getBooleanEvaluation("flag", false, ctx1) // miss
+        val r2 = cached.getBooleanEvaluation("flag", false, ctx2) // hit — same "plan"
+        assertTrue(r2.getReason == "CACHED") &&
+        assertTrue(underlying.evaluationCount.get() == 1)
+      },
+      test("different values in contextKeys produce separate cache entries") {
+        val underlying = new CountingProvider(Map("flag" -> true))
+        val cached = CachingProvider(
+          underlying,
+          CachingConfig(contextKeys = Some(Set("plan")))
+        )
+        val premium = new java.util.HashMap[String, Value]()
+        premium.put("plan", new Value("premium"))
+        val free = new java.util.HashMap[String, Value]()
+        free.put("plan", new Value("free"))
+        val ctx1 = new ImmutableContext("user-1", premium)
+        val ctx2 = new ImmutableContext("user-2", free)
+        cached.getBooleanEvaluation("flag", false, ctx1)
+        cached.getBooleanEvaluation("flag", false, ctx2)
+        assertTrue(underlying.evaluationCount.get() == 2)
+      },
+      test("empty contextKeys ignores all context — caches by flag key only") {
+        val underlying = new CountingProvider(Map("flag" -> true))
+        val cached = CachingProvider(
+          underlying,
+          CachingConfig(contextKeys = Some(Set.empty))
+        )
+        val ctx1 = new ImmutableContext("user-1")
+        val ctx2 = new ImmutableContext("user-2")
+        cached.getBooleanEvaluation("flag", false, ctx1) // miss
+        val r2 = cached.getBooleanEvaluation("flag", false, ctx2) // hit — context ignored
+        assertTrue(r2.getReason == "CACHED") &&
+        assertTrue(underlying.evaluationCount.get() == 1)
+      },
+      test("without contextKeys, different targeting keys produce cache misses") {
+        val underlying = new CountingProvider(Map("flag" -> true))
+        val cached     = CachingProvider(underlying) // default: contextKeys = None
+        val ctx1       = new ImmutableContext("user-1")
+        val ctx2       = new ImmutableContext("user-2")
+        cached.getBooleanEvaluation("flag", false, ctx1)
+        cached.getBooleanEvaluation("flag", false, ctx2)
+        assertTrue(underlying.evaluationCount.get() == 2)
+      }
+    ),
     suite("All flag types")(
       test("caches boolean, string, integer, double, and object evaluations") {
         val underlying =

@@ -189,6 +189,25 @@ yield layer
 - **Different contexts**: Cached separately (cache key includes context hash)
 - **TTL expiry**: Re-evaluates from the underlying provider after TTL
 
+### High-cardinality contexts
+
+If your evaluation context includes per-request fields (e.g., a random UUID as targeting key), every evaluation produces a unique cache key — defeating the cache entirely.
+
+Use `contextKeys` to specify which context attributes matter for caching:
+
+```scala
+val cached = CachingProvider(remoteProvider, CachingConfig(
+  ttl = 5.minutes,
+  contextKeys = Some(Set("plan", "region"))  // only cache by plan + region
+))
+```
+
+| `contextKeys` value | Behavior |
+|:---------------------|:---------|
+| `None` (default) | Full context hashed — every unique targeting key / attribute combo is a separate entry |
+| `Some(Set("plan"))` | Only the `plan` attribute is hashed — different users with the same plan share a cache entry |
+| `Some(Set.empty)` | Context ignored entirely — cache by flag key only (useful for flags that don't depend on context) |
+
 ### Invalidation
 
 Invalidate the cache when receiving `ConfigurationChanged` events:

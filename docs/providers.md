@@ -279,14 +279,13 @@ val layer: ZLayer[Scope, Throwable, FeatureFlags] =
 
 ### fromProviderWithDomain
 
-Create with a named domain for test isolation. Each domain gets its own client:
+Create with a named domain. Each domain gets its own client, useful for segmenting feature flag configuration:
 
 ```scala
 val layer = FeatureFlags.fromProviderWithDomain(provider, "my-service")
-
-// Useful for testing - each test can use a different domain
-val testLayer = FeatureFlags.fromProviderWithDomain(testProvider, "test-domain-123")
 ```
+
+> For test isolation, prefer `TestFeatureProvider.layer` which automatically creates isolated API instances.
 
 ### fromProviderWithHooks
 
@@ -567,12 +566,14 @@ val ctx = EvaluationContext(userId)
 FeatureFlags.boolean("feature", false, ctx)
 ```
 
-### 5. Use Domain Isolation in Tests
+### 5. Use Testkit Layers for Isolation
+
+`TestFeatureProvider.layer` creates an isolated API instance per test — no manual domain management needed:
 
 ```scala
-val testLayer = FeatureFlags.fromProviderWithDomain(
-  testProvider,
-  s"test-${java.util.UUID.randomUUID()}"
-)
+test("my test") {
+  for result <- FeatureFlags.boolean("flag", false)
+  yield assertTrue(result == true)
+}.provide(Scope.default >>> TestFeatureProvider.layer(Map("flag" -> true)))
 ```
 

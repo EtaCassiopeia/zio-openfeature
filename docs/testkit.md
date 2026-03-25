@@ -357,38 +357,39 @@ The `asyncLayer` creates a provider that starts in `NotReady` state. Call `setSt
 
 ## Test Isolation
 
-### Domain-Based Isolation
+### Automatic Isolation
 
-Use `FeatureFlags.fromProviderWithDomain` for test isolation when tests run in parallel:
+`TestFeatureProvider.layer`, `asyncLayer`, and `layerFrom` each create an **isolated `OpenFeatureAPI` instance** with its own provider repository and event support. This means tests using these layers can run in parallel without cross-test contamination — no extra configuration needed.
 
 ```scala
-test("isolated test 1") {
+// These tests run in parallel safely — each gets its own isolated API instance
+test("test 1") {
+  for result <- FeatureFlags.boolean("flag", false)
+  yield assertTrue(result == true)
+}.provide(Scope.default >>> TestFeatureProvider.layer(Map("flag" -> true)))
+
+test("test 2") {
+  for result <- FeatureFlags.boolean("flag", false)
+  yield assertTrue(result == false)
+}.provide(Scope.default >>> TestFeatureProvider.layer(Map("flag" -> false)))
+```
+
+If you need to access both the provider and the `FeatureFlags` service (e.g. to track evaluations or emit events), use `layerFrom`:
+
+```scala
+test("tracks evaluations") {
   for
     provider <- TestFeatureProvider.make(Map("flag" -> true))
     layer     = TestFeatureProvider.layerFrom(provider)
-    result   <- FeatureFlags.boolean("flag", false).provide(Scope.default >>> layer)
-  yield assertTrue(result == true)
-}
-
-test("isolated test 2") {
-  for
-    provider <- TestFeatureProvider.make(Map("flag" -> false))
-    layer     = TestFeatureProvider.layerFrom(provider)
-    result   <- FeatureFlags.boolean("flag", false).provide(Scope.default >>> layer)
-  yield assertTrue(result == false)
+    _        <- FeatureFlags.boolean("flag", false).provide(Scope.default >>> layer)
+    was      <- provider.wasEvaluated("flag")
+  yield assertTrue(was)
 }
 ```
 
-### Sequential Tests
-
-For tests that share state, run them sequentially:
-
-```scala
-suite("shared state tests")(
-  test("test 1") { ... },
-  test("test 2") { ... }
-) @@ TestAspect.sequential
-```
+> **Note:** The public factory methods (`FeatureFlags.fromProvider`, `fromMultiProvider`, etc.)
+> use the global `OpenFeatureAPI` singleton and are **not** isolated. If you test with these
+> directly, use `@@ TestAspect.sequential` to prevent conflicts.
 
 ---
 

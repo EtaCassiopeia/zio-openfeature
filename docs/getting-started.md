@@ -25,6 +25,9 @@ Add the following to your `build.sbt`, replacing `<version>` with the version sh
 // Core library (includes OpenFeature SDK)
 libraryDependencies += "io.github.etacassiopeia" %% "zio-openfeature-core" % "<version>"
 
+// Built-in providers: HOCON, env vars, caching wrapper (optional)
+libraryDependencies += "io.github.etacassiopeia" %% "zio-openfeature-extras" % "<version>"
+
 // For testing
 libraryDependencies += "io.github.etacassiopeia" %% "zio-openfeature-testkit" % "<version>" % Test
 ```

@@ -24,7 +24,8 @@ final private[openfeature] class FeatureFlagsLive(
   providerName: String,
   domain: Option[String],
   state: FeatureFlagsState,
-  api: OpenFeatureAPI
+  api: OpenFeatureAPI,
+  onReady: Option[java.util.concurrent.CountDownLatch] = None
 ) extends FeatureFlags {
 
   // Bridge Java SDK provider events to ZIO event system
@@ -48,6 +49,7 @@ final private[openfeature] class FeatureFlagsLive(
                 state.eventHub.publish(ProviderEvent.Ready(metadata, em))
             )
             .getOrThrowFiberFailure()
+          onReady.foreach(_.countDown())
         }
 
       val errorHandler: java.util.function.Consumer[EventDetails] = details =>

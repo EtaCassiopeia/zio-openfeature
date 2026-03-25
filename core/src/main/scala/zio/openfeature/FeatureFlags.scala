@@ -484,7 +484,8 @@ object FeatureFlags {
     initialHooks: List[FeatureHook],
     statusRef: Option[Ref[ProviderStatus]],
     addShutdownFinalizer: Boolean,
-    apiOverride: Option[OpenFeatureAPI] = None
+    apiOverride: Option[OpenFeatureAPI] = None,
+    onReady: Option[java.util.concurrent.CountDownLatch] = None
   ): ZIO[Scope, Throwable, FeatureFlagsLive] =
     for {
       api <- ZIO.succeed(apiOverride.getOrElse(OpenFeatureAPI.getInstance()))
@@ -502,7 +503,7 @@ object FeatureFlags {
       state = statusRef.fold(baseState)(ref => baseState.copy(statusRef = ref))
       _ <- state.hooksRef.set(initialHooks)
       _ <- ZIO.when(addShutdownFinalizer)(ZIO.addFinalizer(ZIO.attemptBlocking(api.shutdown()).ignore))
-      ff = new FeatureFlagsLive(client, provider, providerName, domain, state, api)
+      ff = new FeatureFlagsLive(client, provider, providerName, domain, state, api, onReady)
       // Start event bridge — if provider is already ready, replay fires immediately
       _ <- ff.startEventBridge
     } yield ff
@@ -531,7 +532,8 @@ object FeatureFlags {
     provider: OFFeatureProvider,
     domain: String,
     statusRef: Ref[ProviderStatus],
-    api: Option[OpenFeatureAPI] = None
+    api: Option[OpenFeatureAPI] = None,
+    onReady: Option[java.util.concurrent.CountDownLatch] = None
   ): ZLayer[Scope, Throwable, FeatureFlags] =
     ZLayer.scoped(
       buildAsync(
@@ -540,7 +542,8 @@ object FeatureFlags {
         initialHooks = Nil,
         statusRef = Some(statusRef),
         addShutdownFinalizer = false,
-        apiOverride = api
+        apiOverride = api,
+        onReady = onReady
       )
     )
 

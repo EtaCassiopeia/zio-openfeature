@@ -35,7 +35,7 @@ final class TestFeatureProvider private (
   private val eventsHubRef: Ref[Hub[ProviderEvent]],
   private[openfeature] val statusRef: Ref[ProviderStatus],
   private val initLatch: Option[CountDownLatch],
-  private val initDone: Option[CountDownLatch]
+  private[testkit] val initDone: Option[CountDownLatch]
 ) extends EventProvider {
 
   @scala.annotation.nowarn("msg=deprecated")
@@ -51,7 +51,9 @@ final class TestFeatureProvider private (
       case None        => ()
     }
     state.set(ProviderState.READY)
-    initDone.foreach(_.countDown()) // Signal that initialize() has completed
+    // Note: initDone is NOT counted down here. It is counted down by the event bridge's
+    // readyHandler when the Java SDK fires PROVIDER_READY, ensuring the SDK has fully
+    // processed the initialization before setStatus(Ready) returns.
   }
 
   override def shutdown(): Unit = {
@@ -196,8 +198,9 @@ final class TestFeatureProvider private (
         case ProviderStatus.Ready =>
           state.set(ProviderState.READY)
           initLatch.foreach(_.countDown())
-          // Wait for the Java SDK's background initialize() thread to complete, ensuring
-          // the provider is fully registered before evaluations are attempted.
+          // Wait for the event bridge to receive PROVIDER_READY from the Java SDK.
+          // This confirms the SDK has fully processed the initialization and the
+          // provider is registered as ready — no sleep needed.
           initDone.foreach(_.await())
         case ProviderStatus.NotReady     => state.set(ProviderState.NOT_READY)
         case ProviderStatus.Error        => state.set(ProviderState.ERROR)
@@ -380,7 +383,13 @@ object TestFeatureProvider {
           api    = OpenFeatureAPIFactory.create()
           domain = s"test-async-${java.util.UUID.randomUUID()}"
           featureFlags <- FeatureFlags
-            .fromProviderWithDomainAsync(testProvider, domain, testProvider.statusRef, api = Some(api))
+            .fromProviderWithDomainAsync(
+              testProvider,
+              domain,
+              testProvider.statusRef,
+              api = Some(api),
+              onReady = testProvider.initDone
+            )
             .build
             .map(_.get)
         } yield (testProvider, featureFlags)

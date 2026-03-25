@@ -86,9 +86,21 @@ provider.reload() // or provider.reload("custom-path")
 
 Reads flag values from environment variables with a configurable prefix and naming convention.
 
-### Convention
+### Key mapping
 
-Flag keys are mapped to env var names: `new-checkout` → `FF_NEW_CHECKOUT`
+Flag keys are mapped to env var names by combining a **prefix** with a **key transform**:
+
+```
+env var name = prefix + keyTransform(flagKey)
+```
+
+The default transform uppercases the key and replaces `-` and `.` with `_`:
+
+| Flag key | Env var (default) |
+|:---------|:------------------|
+| `new-checkout` | `FF_NEW_CHECKOUT` |
+| `max-items` | `FF_MAX_ITEMS` |
+| `app.feature.enabled` | `FF_APP_FEATURE_ENABLED` |
 
 ```bash
 export FF_NEW_CHECKOUT=true

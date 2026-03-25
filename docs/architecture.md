@@ -116,7 +116,7 @@ FeatureFlags.fromProvider(provider)
 | Method | Description |
 |:-------|:------------|
 | `fromProvider(provider)` | Create from any OpenFeature provider |
-| `fromProviderWithDomain(provider, domain)` | Create with named domain for test isolation |
+| `fromProviderWithDomain(provider, domain)` | Create with named domain/client |
 | `fromProviderWithHooks(provider, hooks)` | Create with initial hooks |
 | `fromMultiProvider(providers)` | Combine multiple providers (first-match strategy) |
 | `fromMultiProvider(providers, strategy)` | Combine multiple providers with custom strategy |

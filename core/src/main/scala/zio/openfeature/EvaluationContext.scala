@@ -7,7 +7,7 @@ final case class EvaluationContext(
   def merge(other: EvaluationContext): EvaluationContext =
     EvaluationContext(
       targetingKey = other.targetingKey.orElse(targetingKey),
-      attributes = attributes ++ other.attributes
+      attributes = EvaluationContext.mergeAttributes(attributes, other.attributes)
     )
 
   def withTargetingKey(key: String): EvaluationContext =
@@ -34,6 +34,22 @@ final case class EvaluationContext(
 }
 
 object EvaluationContext {
+  private def mergeAttributes(
+    base: Map[String, AttributeValue],
+    overrides: Map[String, AttributeValue]
+  ): Map[String, AttributeValue] =
+    base ++ overrides.map { case (key, overrideVal) =>
+      key -> (base.get(key) match {
+        case Some(AttributeValue.StructValue(baseFields)) =>
+          overrideVal match {
+            case AttributeValue.StructValue(overrideFields) =>
+              AttributeValue.StructValue(mergeAttributes(baseFields, overrideFields))
+            case other => other
+          }
+        case _ => overrideVal
+      })
+    }
+
   val empty: EvaluationContext = EvaluationContext(None, Map.empty)
 
   def apply(targetingKey: String): EvaluationContext =

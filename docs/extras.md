@@ -192,12 +192,59 @@ yield ()
 
 ### Combining providers
 
-Use the caching provider with the multi-provider pattern:
+The real power of the extras module comes from combining providers. The multi-provider pattern lets you layer local overrides on top of remote providers, with caching in between.
+
+**Example: env var overrides → HOCON defaults → cached remote provider**
 
 ```scala
-// Local flags (fast) with cached remote flags (slow, expensive)
-val envProvider    = EnvVarProvider()
-val cachedRemote  = CachingProvider(remoteProvider, CachingConfig(ttl = 5.minutes))
+import zio.*
+import zio.openfeature.*
+import zio.openfeature.extras.*
 
-val layer = FeatureFlags.fromMultiProvider(List(envProvider, cachedRemote))
+object MyApp extends ZIOAppDefault:
+
+  val program = for
+    // Create providers — first match wins
+    envProvider    <- ZIO.succeed(EnvVarProvider())            // Env vars: highest priority
+    hoconProvider  <- ZIO.succeed(HoconProvider())             // application.conf: local defaults
+    cachedRemote   <- CachingProvider.make(                    // Remote: cached, lowest priority
+                        myRemoteProvider,
+                        CachingConfig(maxEntries = 1000, ttl = 5.minutes)
+                      )
+
+    // Combine: env vars → HOCON → cached remote
+    layer = FeatureFlags.fromMultiProvider(List(envProvider, hoconProvider, cachedRemote))
+
+    // Use feature flags
+    _ <- FeatureFlags.boolean("new-checkout", default = false).flatMap { enabled =>
+           ZIO.logInfo(s"new-checkout: $enabled")
+         }.provide(Scope.default >>> layer)
+  yield ()
+
+  def run = program
+```
+
+With this setup:
+- Set `FF_NEW_CHECKOUT=true` in the environment → overrides everything
+- Add `new-checkout = true` to `application.conf` → overrides remote, but not env
+- If neither is set → falls through to the cached remote provider
+- Remote evaluations are cached for 5 minutes with concurrent dedup
+
+**Example: cached remote provider with automatic invalidation**
+
+```scala
+for
+  cached <- CachingProvider.make(remoteProvider, CachingConfig(ttl = 2.minutes))
+  layer   = FeatureFlags.fromProvider(cached)
+  ff     <- layer.build.map(_.get)
+
+  // Wire up automatic cache invalidation on config changes
+  _ <- ff.onConfigurationChanged { (changedFlags, _) =>
+         ZIO.logInfo(s"Flags changed: $changedFlags") *>
+           cached.invalidateAll
+       }
+
+  // Evaluations are now cached with automatic invalidation
+  result <- ff.boolean("feature", default = false)
+yield result
 ```

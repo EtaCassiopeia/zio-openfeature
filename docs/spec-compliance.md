@@ -102,14 +102,14 @@ FeatureFlags.booleanDetails("flag", false, context, options)
 | Client context | ✅ | `setClientContext` / `clientContext` |
 | Scoped context | ✅ | `withContext` |
 | Invocation context | ✅ | Per-evaluation parameter |
-| Context merging | ✅ | Global → Client → Scoped → Transaction → Invocation |
+| Context merging | ✅ | Global → Transaction → Client → Scoped → Invocation |
 
 ### Context Merge Order
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
 │                     Final Merged Context                      │
-│  (Invocation > Transaction > Scoped > Client > Global)       │
+│  (Invocation > Scoped > Client > Transaction > Global)       │
 └──────────────────────────────────────────────────────────────┘
 ```
 

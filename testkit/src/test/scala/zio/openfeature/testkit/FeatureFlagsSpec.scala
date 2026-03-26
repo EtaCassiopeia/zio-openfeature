@@ -401,6 +401,11 @@ object FeatureFlagsSpec extends ZIOSpecDefault {
           metadata <- FeatureFlags.clientMetadata
         } yield assertTrue(metadata.hasDomain) &&
           assertTrue(metadata.domain.exists(_.startsWith("test-")))
+      }.provide(testLayer()),
+      test("clientMetadata version is None by default") {
+        for {
+          metadata <- FeatureFlags.clientMetadata
+        } yield assertTrue(metadata.version.isEmpty)
       }.provide(testLayer())
     ),
     suite("Evaluation with Context")(

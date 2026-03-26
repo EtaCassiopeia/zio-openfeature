@@ -198,6 +198,9 @@ For multi-provider setups, use domains to isolate providers:
 
 ```scala
 val layer = FeatureFlags.fromProviderWithDomain(provider, "my-domain")
+
+// Optionally include a version for telemetry/debugging
+val versionedLayer = FeatureFlags.fromProviderWithDomain(provider, "my-domain", "1.0.0")
 ```
 
 ### With Initial Hooks

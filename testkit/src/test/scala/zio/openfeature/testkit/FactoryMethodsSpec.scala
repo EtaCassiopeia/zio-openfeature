@@ -32,6 +32,25 @@ object FactoryMethodsSpec extends ZIOSpecDefault {
         } yield assertTrue(calls == 1)
       }
     ),
+    suite("fromProviderWithDomain")(
+      test("fromProviderWithDomain with version exposes version in clientMetadata") {
+        for {
+          provider <- TestFeatureProvider.make(Map("flag" -> true))
+          domain = s"test-versioned-${java.util.UUID.randomUUID()}"
+          result <- ZIO.scoped {
+            FeatureFlags.fromProviderWithDomain(provider, domain, "2.0.0").build.flatMap { env =>
+              val ff = env.get[FeatureFlags]
+              for {
+                meta <- ff.clientMetadata
+                flag <- ff.boolean("flag", default = false)
+              } yield assertTrue(meta.domain.contains(domain)) &&
+                assertTrue(meta.version.contains("2.0.0")) &&
+                assertTrue(flag == true)
+            }
+          }
+        } yield result
+      }
+    ),
     suite("fromMultiProvider")(
       test("fromMultiProvider creates a usable layer") {
         ZIO.scoped {
@@ -93,6 +112,19 @@ object FactoryMethodsSpec extends ZIOSpecDefault {
           domain = s"test-async-factory-${java.util.UUID.randomUUID()}"
           result <- ZIO.scoped {
             FeatureFlags.fromProviderWithDomainAsync(tp, domain).build.flatMap { env =>
+              val ff = env.get[FeatureFlags]
+              ff.providerStatus.repeatUntil(_ == ProviderStatus.Ready).timeout(2.seconds) *>
+                ff.boolean("flag", default = false)
+            }
+          }
+        } yield assertTrue(result == true)
+      },
+      test("fromProviderWithDomainAsync with version creates a working layer") {
+        for {
+          tp <- TestFeatureProvider.make(Map("flag" -> true))
+          domain = s"test-async-versioned-${java.util.UUID.randomUUID()}"
+          result <- ZIO.scoped {
+            FeatureFlags.fromProviderWithDomainAsync(tp, domain, "1.2.3").build.flatMap { env =>
               val ff = env.get[FeatureFlags]
               ff.providerStatus.repeatUntil(_ == ProviderStatus.Ready).timeout(2.seconds) *>
                 ff.boolean("flag", default = false)

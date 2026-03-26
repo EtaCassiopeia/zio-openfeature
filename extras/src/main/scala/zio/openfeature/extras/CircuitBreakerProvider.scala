@@ -91,7 +91,7 @@ final class CircuitBreakerProvider private (
 
   @scala.annotation.nowarn("msg=deprecated")
   override def getState: ProviderState = stateRef.get().circuit match {
-    case Closed      => underlying.getState
+    case Closed      => delegateState()
     case _: Open     => ProviderState.ERROR
     case _: HalfOpen => ProviderState.STALE
   }
@@ -254,12 +254,21 @@ final class CircuitBreakerProvider private (
     }
   }
 
-  /** Check the delegate provider's state and open the circuit immediately if unhealthy. */
+  // Uses the deprecated FeatureProvider.getState() because it is the only way
+  // for a provider wrapper to query the delegate's state. The deprecation targets
+  // application code (which should use Client.getProviderState() instead), not
+  // provider-to-provider communication. EventProvider.attach() — the event-based
+  // alternative — is package-private in the Java SDK and inaccessible from here.
+  // This call is isolated in a single method so it can be updated if the SDK
+  // provides a replacement API for provider wrappers in the future.
   @scala.annotation.nowarn("msg=deprecated")
+  private def delegateState(): ProviderState = underlying.getState
+
+  /** Check the delegate provider's state and open the circuit immediately if unhealthy. */
   private def checkDelegateState(): Unit = {
-    val delegateState    = underlying.getState
-    val shouldOpen       = delegateState == ProviderState.ERROR || delegateState == ProviderState.FATAL
-    val shouldApplyStale = delegateState == ProviderState.STALE
+    val state            = delegateState()
+    val shouldOpen       = state == ProviderState.ERROR || state == ProviderState.FATAL
+    val shouldApplyStale = state == ProviderState.STALE
 
     if (shouldOpen) {
       tripCircuit()
@@ -269,7 +278,7 @@ final class CircuitBreakerProvider private (
         case StalePolicy.HalfOpen => transitionToHalfOpen()
         case StalePolicy.Ignore   => ()
       }
-    } else if (delegateState == ProviderState.READY) {
+    } else if (state == ProviderState.READY) {
       // Only reset if the circuit was opened by delegate state detection.
       // Failure-count opens should recover through the half-open probe mechanism.
       val current = stateRef.get()

@@ -17,18 +17,24 @@ object ProviderMetadata:
   * Per OpenFeature spec requirement 1.2.2, clients must have immutable metadata containing a domain field.
   */
 final case class ClientMetadata(
-  domain: Option[String] = None
+  domain: Option[String] = None,
+  version: Option[String] = None
 ):
   /** Returns true if this client is bound to a specific domain. */
   def hasDomain: Boolean = domain.isDefined
 
-  override def toString: String = domain.getOrElse("default")
+  override def toString: String =
+    val base = domain.getOrElse("default")
+    version.fold(base)(v => s"$base@$v")
 
 object ClientMetadata:
-  val default: ClientMetadata = ClientMetadata(None)
+  val default: ClientMetadata = ClientMetadata(None, None)
 
   def apply(domain: String): ClientMetadata =
-    ClientMetadata(Some(domain))
+    ClientMetadata(Some(domain), None)
+
+  def apply(domain: String, version: String): ClientMetadata =
+    ClientMetadata(Some(domain), Some(version))
 
 /** Type of provider event for use with generic event handlers. */
 enum ProviderEventType:

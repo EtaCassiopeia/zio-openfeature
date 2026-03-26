@@ -297,6 +297,21 @@ Create with a named domain. Each domain gets its own client, useful for segmenti
 val layer = FeatureFlags.fromProviderWithDomain(provider, "my-service")
 ```
 
+Optionally include a version string (useful for telemetry and debugging):
+
+```scala
+val layer = FeatureFlags.fromProviderWithDomain(provider, "my-service", "1.2.3")
+```
+
+The version is available via `clientMetadata`:
+
+```scala
+for {
+  meta <- FeatureFlags.clientMetadata
+  _    <- ZIO.logInfo(s"Client: ${meta.domain} version: ${meta.version}")
+} yield ()
+```
+
 > For test isolation, prefer `TestFeatureProvider.layer` which automatically creates isolated API instances.
 
 ### fromProviderWithHooks
@@ -349,6 +364,9 @@ val layer = FeatureFlags.fromProviderAsync(provider)
 
 // With domain
 val domainLayer = FeatureFlags.fromProviderWithDomainAsync(provider, "my-service")
+
+// With domain and version
+val versionedLayer = FeatureFlags.fromProviderWithDomainAsync(provider, "my-service", "1.0.0")
 
 // With hooks
 val hookedLayer = FeatureFlags.fromProviderWithHooksAsync(provider, hooks)

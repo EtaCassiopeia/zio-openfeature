@@ -23,6 +23,7 @@ final private[openfeature] class FeatureFlagsLive(
   provider: OFFeatureProvider,
   providerName: String,
   domain: Option[String],
+  version: Option[String],
   state: FeatureFlagsState,
   api: OpenFeatureAPI,
   onReady: Option[java.util.concurrent.CountDownLatch] = None
@@ -138,7 +139,7 @@ final private[openfeature] class FeatureFlagsLive(
       provHooks    <- getProviderHooks
       allHooks   = currentHooks ++ extraHooks ++ provHooks
       metadata   = ProviderMetadata(providerName)
-      clientMeta = ClientMetadata(domain)
+      clientMeta = ClientMetadata(domain, version)
       hookCtx = HookContext(
         flagKey = key,
         flagType = FlagValueType.fromFlagType[A],
@@ -581,7 +582,7 @@ final private[openfeature] class FeatureFlagsLive(
     ZIO.succeed(ProviderMetadata(providerName))
 
   override def clientMetadata: UIO[ClientMetadata] =
-    ZIO.succeed(ClientMetadata(domain))
+    ZIO.succeed(ClientMetadata(domain, version))
 
   // Event Handlers - return cancellation effects per OpenFeature spec 5.2.7
 

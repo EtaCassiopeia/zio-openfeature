@@ -394,6 +394,7 @@ object FeatureFlags {
   private def build(
     provider: OFFeatureProvider,
     domain: Option[String],
+    version: Option[String],
     initialHooks: List[FeatureHook],
     statusRef: Option[Ref[ProviderStatus]],
     addShutdownFinalizer: Boolean,
@@ -405,9 +406,10 @@ object FeatureFlags {
         case Some(d) => ZIO.attemptBlocking(api.setProviderAndWait(d, provider))
         case None    => ZIO.attemptBlocking(api.setProviderAndWait(provider))
       }
-      client <- domain match {
-        case Some(d) => ZIO.attempt(api.getClient(d))
-        case None    => ZIO.attempt(api.getClient())
+      client <- (domain, version) match {
+        case (Some(d), Some(v)) => ZIO.attempt(api.getClient(d, v))
+        case (Some(d), None)    => ZIO.attempt(api.getClient(d))
+        case _                  => ZIO.attempt(api.getClient())
       }
       providerName = Option(provider.getMetadata).map(_.getName).getOrElse("unknown")
       baseState <- FeatureFlagsState.make
@@ -415,20 +417,44 @@ object FeatureFlags {
       _ <- state.hooksRef.set(initialHooks)
       _ <- statusRef.fold(state.statusRef.set(ProviderStatus.Ready))(_ => ZIO.unit)
       _ <- ZIO.when(addShutdownFinalizer)(ZIO.addFinalizer(ZIO.attemptBlocking(api.shutdown()).ignore))
-      ff = new FeatureFlagsLive(client, provider, providerName, domain, state, api)
+      ff = new FeatureFlagsLive(client, provider, providerName, domain, version, state, api)
       _ <- ff.startEventBridge
     } yield ff
 
   /** Create a FeatureFlags layer from any OpenFeature provider. */
   def fromProvider(provider: OFFeatureProvider): ZLayer[Scope, Throwable, FeatureFlags] =
     ZLayer.scoped(
-      build(provider, domain = None, initialHooks = Nil, statusRef = None, addShutdownFinalizer = true)
+      build(provider, domain = None, version = None, initialHooks = Nil, statusRef = None, addShutdownFinalizer = true)
     )
 
   /** Create a FeatureFlags layer with a named domain/client. */
   def fromProviderWithDomain(provider: OFFeatureProvider, domain: String): ZLayer[Scope, Throwable, FeatureFlags] =
     ZLayer.scoped(
-      build(provider, domain = Some(domain), initialHooks = Nil, statusRef = None, addShutdownFinalizer = false)
+      build(
+        provider,
+        domain = Some(domain),
+        version = None,
+        initialHooks = Nil,
+        statusRef = None,
+        addShutdownFinalizer = false
+      )
+    )
+
+  /** Create a FeatureFlags layer with a named domain/client and version. */
+  def fromProviderWithDomain(
+    provider: OFFeatureProvider,
+    domain: String,
+    version: String
+  ): ZLayer[Scope, Throwable, FeatureFlags] =
+    ZLayer.scoped(
+      build(
+        provider,
+        domain = Some(domain),
+        version = Some(version),
+        initialHooks = Nil,
+        statusRef = None,
+        addShutdownFinalizer = false
+      )
     )
 
   /** Create a FeatureFlags layer with a named domain/client and a shared status ref. */
@@ -442,6 +468,7 @@ object FeatureFlags {
       build(
         provider,
         domain = Some(domain),
+        version = None,
         initialHooks = Nil,
         statusRef = Some(statusRef),
         addShutdownFinalizer = false,
@@ -470,7 +497,14 @@ object FeatureFlags {
     initialHooks: List[FeatureHook]
   ): ZLayer[Scope, Throwable, FeatureFlags] =
     ZLayer.scoped(
-      build(provider, domain = None, initialHooks = initialHooks, statusRef = None, addShutdownFinalizer = true)
+      build(
+        provider,
+        domain = None,
+        version = None,
+        initialHooks = initialHooks,
+        statusRef = None,
+        addShutdownFinalizer = true
+      )
     )
 
   // Async Factory Methods (non-blocking provider initialization)
@@ -485,6 +519,7 @@ object FeatureFlags {
   private def buildAsync(
     provider: OFFeatureProvider,
     domain: Option[String],
+    version: Option[String],
     initialHooks: List[FeatureHook],
     statusRef: Option[Ref[ProviderStatus]],
     addShutdownFinalizer: Boolean,
@@ -498,16 +533,17 @@ object FeatureFlags {
         case Some(d) => ZIO.succeed(api.setProvider(d, provider))
         case None    => ZIO.succeed(api.setProvider(provider))
       }
-      client <- domain match {
-        case Some(d) => ZIO.attempt(api.getClient(d))
-        case None    => ZIO.attempt(api.getClient())
+      client <- (domain, version) match {
+        case (Some(d), Some(v)) => ZIO.attempt(api.getClient(d, v))
+        case (Some(d), None)    => ZIO.attempt(api.getClient(d))
+        case _                  => ZIO.attempt(api.getClient())
       }
       providerName = Option(provider.getMetadata).map(_.getName).getOrElse("unknown")
       baseState <- FeatureFlagsState.make
       state = statusRef.fold(baseState)(ref => baseState.copy(statusRef = ref))
       _ <- state.hooksRef.set(initialHooks)
       _ <- ZIO.when(addShutdownFinalizer)(ZIO.addFinalizer(ZIO.attemptBlocking(api.shutdown()).ignore))
-      ff = new FeatureFlagsLive(client, provider, providerName, domain, state, api, onReady)
+      ff = new FeatureFlagsLive(client, provider, providerName, domain, version, state, api, onReady)
       // Start event bridge — if provider is already ready, replay fires immediately
       _ <- ff.startEventBridge
     } yield ff
@@ -519,7 +555,14 @@ object FeatureFlags {
     */
   def fromProviderAsync(provider: OFFeatureProvider): ZLayer[Scope, Throwable, FeatureFlags] =
     ZLayer.scoped(
-      buildAsync(provider, domain = None, initialHooks = Nil, statusRef = None, addShutdownFinalizer = true)
+      buildAsync(
+        provider,
+        domain = None,
+        version = None,
+        initialHooks = Nil,
+        statusRef = None,
+        addShutdownFinalizer = true
+      )
     )
 
   /** Create a FeatureFlags layer with a named domain (non-blocking). */
@@ -528,7 +571,31 @@ object FeatureFlags {
     domain: String
   ): ZLayer[Scope, Throwable, FeatureFlags] =
     ZLayer.scoped(
-      buildAsync(provider, domain = Some(domain), initialHooks = Nil, statusRef = None, addShutdownFinalizer = false)
+      buildAsync(
+        provider,
+        domain = Some(domain),
+        version = None,
+        initialHooks = Nil,
+        statusRef = None,
+        addShutdownFinalizer = false
+      )
+    )
+
+  /** Create a FeatureFlags layer with a named domain and version (non-blocking). */
+  def fromProviderWithDomainAsync(
+    provider: OFFeatureProvider,
+    domain: String,
+    version: String
+  ): ZLayer[Scope, Throwable, FeatureFlags] =
+    ZLayer.scoped(
+      buildAsync(
+        provider,
+        domain = Some(domain),
+        version = Some(version),
+        initialHooks = Nil,
+        statusRef = None,
+        addShutdownFinalizer = false
+      )
     )
 
   /** Create a FeatureFlags layer with a named domain and shared status ref (non-blocking). */
@@ -543,6 +610,7 @@ object FeatureFlags {
       buildAsync(
         provider,
         domain = Some(domain),
+        version = None,
         initialHooks = Nil,
         statusRef = Some(statusRef),
         addShutdownFinalizer = false,
@@ -557,7 +625,14 @@ object FeatureFlags {
     initialHooks: List[FeatureHook]
   ): ZLayer[Scope, Throwable, FeatureFlags] =
     ZLayer.scoped(
-      buildAsync(provider, domain = None, initialHooks = initialHooks, statusRef = None, addShutdownFinalizer = true)
+      buildAsync(
+        provider,
+        domain = None,
+        version = None,
+        initialHooks = initialHooks,
+        statusRef = None,
+        addShutdownFinalizer = true
+      )
     )
 
   /** Create a FeatureFlags layer from multiple providers (non-blocking, first-match strategy). */

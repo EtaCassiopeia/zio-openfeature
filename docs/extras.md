@@ -17,7 +17,7 @@ nav_order: 7
 
 ## Overview
 
-The `zio-openfeature-extras` module provides built-in providers for common use cases — reading flags from local config, environment variables, and wrapping any provider with evaluation caching.
+The `zio-openfeature-extras` module provides built-in providers for common use cases — reading flags from local config, environment variables, wrapping any provider with evaluation caching, and adding circuit breaker logic for fast failover.
 
 ```scala
 libraryDependencies += "io.github.etacassiopeia" %% "zio-openfeature-extras" % "<version>"
@@ -144,6 +144,110 @@ Use `withLookup` to provide a custom env var source:
 val testEnv = Map("FF_MY_FLAG" -> "true")
 val provider = EnvVarProvider.withLookup(testEnv.get)
 ```
+
+---
+
+## Circuit Breaker Provider
+
+A decorator that wraps any provider with circuit breaker logic for fast failover. When the delegate provider fails repeatedly or becomes unhealthy, the circuit opens and evaluations fail immediately (< 1ms) — enabling instant fallback when composed with `MultiProvider` and `FirstSuccessfulStrategy`.
+
+### When to use
+
+Use this when your primary provider is an external service (e.g., Optimizely, LaunchDarkly) and you need guaranteed fast failover to a local fallback (e.g., `EnvVarProvider`) if the service is slow or unavailable.
+
+### State machine
+
+The circuit breaker has three states:
+
+| State | Behavior |
+|:------|:---------|
+| **Closed** | Normal operation. Evaluations forwarded to the delegate. Consecutive failures tracked. |
+| **Open** | Evaluations fail immediately without calling the delegate (< 1ms). After `resetTimeout`, transitions to Half-Open. |
+| **Half-Open** | A single probe evaluation is allowed through. On success → Closed. On failure → Open. |
+
+### Two tripping mechanisms
+
+1. **Failure-count**: After `failureThreshold` consecutive evaluation failures (including timeouts), the circuit opens.
+2. **State-driven**: Before each evaluation, the delegate's state is checked. If `ERROR` or `FATAL`, the circuit opens immediately — no failed evaluations needed. When the delegate recovers to `READY`, the circuit closes automatically.
+
+### Usage
+
+```scala
+import zio.*
+import zio.openfeature.*
+import zio.openfeature.extras.*
+import dev.openfeature.sdk.multiprovider.FirstSuccessfulStrategy
+
+// Wrap the primary provider with circuit breaker
+val resilientProvider = CircuitBreakerProvider(
+  optimizelyProvider,
+  CircuitBreakerConfig(
+    failureThreshold  = 3,           // open after 3 consecutive failures
+    resetTimeout      = 30.seconds,  // probe recovery after 30s
+    evaluationTimeout = 50.millis,   // timeout per delegate call
+    halfOpenMaxCalls  = 1,           // probes before closing
+    stalePolicy       = StalePolicy.Open
+  )
+)
+
+// Compose with fallback using MultiProvider
+val layer = FeatureFlags.fromMultiProvider(
+  List(resilientProvider, EnvVarProvider()),
+  new FirstSuccessfulStrategy()
+)
+```
+
+Or using the ZIO-based factory:
+
+```scala
+for
+  cb   <- CircuitBreakerProvider.make(optimizelyProvider, CircuitBreakerConfig(
+             evaluationTimeout = 50.millis
+           ))
+  layer = FeatureFlags.fromMultiProvider(
+            List(cb, EnvVarProvider()),
+            new FirstSuccessfulStrategy()
+          )
+yield layer
+```
+
+### Configuration
+
+| Parameter | Default | Description |
+|:----------|:--------|:------------|
+| `failureThreshold` | `5` | Consecutive failures before the circuit opens |
+| `resetTimeout` | `30.seconds` | Time in open state before allowing a probe |
+| `evaluationTimeout` | `100.millis` | Max duration for a single delegate evaluation |
+| `halfOpenMaxCalls` | `1` | Successful probes required to close the circuit |
+| `stalePolicy` | `StalePolicy.Open` | Behavior when delegate reports `STALE` state |
+
+### Stale policy
+
+Controls how the circuit breaker reacts when the delegate provider is in `STALE` state:
+
+| Policy | Behavior |
+|:-------|:---------|
+| `StalePolicy.Open` | Treat stale as failure — open the circuit |
+| `StalePolicy.Ignore` | Keep the current circuit state |
+| `StalePolicy.HalfOpen` | Transition to half-open for probing |
+
+### Failover latency comparison
+
+| Approach | During outage | Failover latency |
+|:---------|:--------------|:-----------------|
+| `MultiProvider` + `FirstSuccessfulStrategy` alone | Tries primary every time, waits for failure | Up to minutes |
+| Add timeout only (e.g., 50ms) | Still tries primary every time | 50ms per call |
+| **Circuit breaker** | Skips primary entirely when open | **< 1ms** |
+
+### State-driven failover example (Optimizely)
+
+For providers like Optimizely Local that poll for configuration:
+
+1. **Startup** → datafile fetch fails → provider reports `ERROR` → circuit opens instantly → fallback to `EnvVarProvider`
+2. **30s later** → next poll succeeds → provider reports `READY` → circuit closes → evaluations resume via Optimizely
+3. **Later poll fails** → provider reports `ERROR` → circuit opens again instantly
+
+No evaluation failures needed — the circuit breaker reacts to the provider's health state directly.
 
 ---
 

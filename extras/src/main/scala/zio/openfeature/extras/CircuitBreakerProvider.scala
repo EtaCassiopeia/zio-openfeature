@@ -180,6 +180,7 @@ final class CircuitBreakerProvider private (
           .run(
             ZIO
               .attemptBlocking(evaluate())
+              .disconnect // detach so timeout can complete without waiting for the blocking call
               .timeoutFail(new java.util.concurrent.TimeoutException("Evaluation timed out"))(config.evaluationTimeout)
           )
           .getOrThrowFiberFailure()

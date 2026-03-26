@@ -374,6 +374,109 @@ object CircuitBreakerProviderSpec extends ZIOSpecDefault {
         assertTrue(shutdownCalled)
       }
     ),
+    suite("Initialization")(
+      test("trips circuit if delegate is in ERROR state during initialize") {
+        val underlying = new FailableProvider(Map("flag" -> true))
+        underlying.setState(ProviderState.ERROR)
+        val cb = CircuitBreakerProvider(underlying)
+        cb.initialize(ctx)
+        val stateAfterInit = cb.getState
+        val result         = scala.util.Try(cb.getBooleanEvaluation("flag", false, ctx))
+        assertTrue(stateAfterInit == ProviderState.ERROR) &&
+        assertTrue(result.isFailure) &&
+        assertTrue(underlying.evaluationCount.get() == 0)
+      },
+      test("does not trip circuit if delegate is READY during initialize") {
+        val underlying = new FailableProvider(Map("flag" -> true))
+        val cb         = CircuitBreakerProvider(underlying)
+        cb.initialize(ctx)
+        val result = cb.getBooleanEvaluation("flag", false, ctx)
+        assertTrue(result.getValue == true) &&
+        assertTrue(cb.getState == ProviderState.READY)
+      }
+    ),
+    suite("Concurrent probe contention")(
+      test("only one probe runs at a time in half-open state") {
+        val underlying = new FailableProvider(Map("flag" -> true), delay = Some(50.millis))
+        val clock      = new TestClock()
+        val config     = CircuitBreakerConfig(failureThreshold = 2, resetTimeout = 1.second)
+        val cb         = CircuitBreakerProvider(underlying, config, clock)
+        // Trip
+        underlying.setFailing(true)
+        (1 to 2).foreach(_ => scala.util.Try(cb.getBooleanEvaluation("flag", false, ctx)))
+        // Wait for reset
+        clock.advance(2.seconds)
+        underlying.setFailing(false)
+        // Launch many concurrent evaluations — only 1 should reach the delegate as a probe
+        for {
+          results <- ZIO.collectAllPar(
+            (1 to 10).map(_ => ZIO.attempt(cb.getBooleanEvaluation("flag", false, ctx)).either)
+          )
+          successes = results.count(_.isRight)
+          failures  = results.count(_.isLeft)
+        } yield
+        // Exactly 1 probe succeeds; the rest fail fast because a probe is in progress
+        assertTrue(successes == 1) &&
+          assertTrue(failures == 9)
+      } @@ TestAspect.withLiveClock
+    ),
+    suite("Composability")(
+      test("works with MultiProvider and FirstSuccessfulStrategy for failover") {
+        import dev.openfeature.sdk.multiprovider.{MultiProvider, FirstSuccessfulStrategy}
+        import scala.jdk.CollectionConverters._
+
+        val primary     = new FailableProvider(Map("flag" -> true))
+        val fallbackEnv = Map("FF_FLAG" -> "false")
+        val fallback    = EnvVarProvider.withLookup(fallbackEnv.get)
+        val cb          = CircuitBreakerProvider(primary, CircuitBreakerConfig(failureThreshold = 2))
+
+        val multi = new MultiProvider(
+          List(cb, fallback).map(_.asInstanceOf[dev.openfeature.sdk.FeatureProvider]).asJava,
+          new FirstSuccessfulStrategy()
+        )
+
+        // Primary works — should return true
+        val r1 = multi.getBooleanEvaluation("flag", false, ctx)
+        assertTrue(r1.getValue == true) && {
+          // Primary fails — circuit opens, falls through to EnvVarProvider
+          primary.setFailing(true)
+          (1 to 2).foreach(_ => scala.util.Try(cb.getBooleanEvaluation("flag", false, ctx)))
+          val r2 = multi.getBooleanEvaluation("flag", true, ctx)
+          // EnvVarProvider returns false from FF_FLAG=false
+          assertTrue(r2.getValue == false)
+        }
+      }
+    ),
+    suite("Edge cases")(
+      test("default config values are sensible") {
+        val config = CircuitBreakerConfig()
+        assertTrue(config.failureThreshold == 5) &&
+        assertTrue(config.resetTimeout == 30.seconds) &&
+        assertTrue(config.evaluationTimeout == 100.millis) &&
+        assertTrue(config.halfOpenMaxCalls == 1) &&
+        assertTrue(config.stalePolicy == StalePolicy.Open)
+      },
+      test("single failure does not open circuit with default threshold") {
+        val underlying = new FailableProvider(Map("flag" -> true))
+        val cb         = CircuitBreakerProvider(underlying)
+        underlying.setFailing(true)
+        scala.util.Try(cb.getBooleanEvaluation("flag", false, ctx))
+        underlying.setFailing(false)
+        val result = cb.getBooleanEvaluation("flag", false, ctx)
+        assertTrue(result.getValue == true) &&
+        assertTrue(cb.getState == ProviderState.READY)
+      },
+      test("timeout does not block longer than configured duration") {
+        val underlying = new FailableProvider(Map("flag" -> true), delay = Some(5.seconds))
+        val config     = CircuitBreakerConfig(evaluationTimeout = 50.millis, failureThreshold = 100)
+        val cb         = CircuitBreakerProvider(underlying, config)
+        val start      = java.lang.System.currentTimeMillis()
+        scala.util.Try(cb.getBooleanEvaluation("flag", false, ctx))
+        val elapsed = java.lang.System.currentTimeMillis() - start
+        // Should complete well under 1 second, not 5 seconds
+        assertTrue(elapsed < 1000L)
+      } @@ TestAspect.withLiveClock
+    ),
     suite("make() factory")(
       test("creates a working CircuitBreakerProvider via ZIO") {
         for {

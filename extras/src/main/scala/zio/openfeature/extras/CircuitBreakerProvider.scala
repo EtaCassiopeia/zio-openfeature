@@ -27,7 +27,8 @@ object StalePolicy {
   * @param resetTimeout
   *   How long the circuit stays open before transitioning to half-open
   * @param evaluationTimeout
-  *   Maximum time to wait for a single delegate evaluation call
+  *   Maximum time to wait for a single delegate evaluation call. Timed-out calls count as infrastructure failures. Set
+  *   this higher than your provider's typical response time but low enough to fail fast during outages.
   * @param halfOpenMaxCalls
   *   Number of successful probes in half-open state required to close the circuit
   * @param stalePolicy
@@ -36,7 +37,7 @@ object StalePolicy {
 final case class CircuitBreakerConfig(
   failureThreshold: Int = 5,
   resetTimeout: Duration = 30.seconds,
-  evaluationTimeout: Duration = 100.millis,
+  evaluationTimeout: Duration = 500.millis,
   halfOpenMaxCalls: Int = 1,
   stalePolicy: StalePolicy = StalePolicy.Open
 )
@@ -76,9 +77,8 @@ final private[extras] case class CircuitBreakerState(
   *
   * '''Error classification''': Only infrastructure errors (timeouts, connection failures, `GeneralError`,
   * `ProviderNotReadyError`, `FatalError`) count toward the failure threshold. Application-level errors
-  * (`FlagNotFoundError`, `TypeMismatchError`, `ParseError`, `TargetingKeyMissingError`, `InvalidContextError`) pass
-  * through without affecting circuit state — these indicate the provider is healthy but the specific evaluation failed
-  * for a non-infrastructure reason.
+  * (`FlagNotFoundError`, `TypeMismatchError`, `ParseError`, `TargetingKeyMissingError`, `InvalidContextError`) indicate
+  * the provider is reachable — they reset the failure counter and pass through without tripping the circuit.
   */
 final class CircuitBreakerProvider private (
   val underlying: EventProvider,
@@ -97,15 +97,22 @@ final class CircuitBreakerProvider private (
 
   @scala.annotation.nowarn("msg=deprecated")
   override def getState: ProviderState = stateRef.get().circuit match {
-    case Closed      => delegateState()
+    case Closed =>
+      try delegateState()
+      catch { case _: Exception => ProviderState.ERROR }
     case _: Open     => ProviderState.ERROR
     case _: HalfOpen => ProviderState.STALE
   }
 
-  override def initialize(context: OFEvaluationContext): Unit = {
-    underlying.initialize(context)
-    checkDelegateState()
-  }
+  override def initialize(context: OFEvaluationContext): Unit =
+    try {
+      underlying.initialize(context)
+      checkDelegateState()
+    } catch {
+      case e: Exception =>
+        tripCircuit()
+        throw e
+    }
 
   override def shutdown(): Unit = underlying.shutdown()
 
@@ -185,8 +192,7 @@ final class CircuitBreakerProvider private (
         runtime.unsafe
           .run(
             ZIO
-              .attemptBlocking(evaluate())
-              .disconnect // detach so timeout can complete without waiting for the blocking call
+              .attemptBlockingInterrupt(evaluate())
               .timeoutFail(new java.util.concurrent.TimeoutException("Evaluation timed out"))(config.evaluationTimeout)
           )
           .getOrThrowFiberFailure()
@@ -196,11 +202,17 @@ final class CircuitBreakerProvider private (
     } catch {
       case e: Throwable if isApplicationError(e) =>
         // Application-level errors (flag not found, type mismatch, etc.) indicate
-        // the provider is healthy — re-throw without counting toward the threshold.
+        // the provider is reachable — reset failure counter and re-throw.
+        onSuccess()
         throw unwrapFiberFailure(e)
+      case e: VirtualMachineError => throw e
+      case e: LinkageError        => throw e
       case e: Throwable =>
         onFailure()
-        throw new GeneralError(s"Circuit breaker: delegate failed: ${e.getMessage}")
+        val unwrapped = unwrapFiberFailure(e)
+        val error     = new GeneralError(s"Circuit breaker: delegate failed: ${unwrapped.getMessage}")
+        error.initCause(unwrapped)
+        throw error
     }
 
   // Application-level errors that do NOT indicate provider health issues.
@@ -215,16 +227,16 @@ final class CircuitBreakerProvider private (
 
   private def unwrapFiberFailure(e: Throwable): Throwable = e match {
     case ff: zio.FiberFailure =>
-      ff.cause.failureOption match {
-        case Some(t: Throwable) => t
-        case _                  => ff
-      }
+      ff.cause.failureOption
+        .collect { case t: Throwable => t }
+        .orElse(ff.cause.dieOption)
+        .getOrElse(ff)
     case other => other
   }
 
   private def isApplicationError(e: Throwable): Boolean = {
-    val underlying = unwrapFiberFailure(e)
-    underlying match {
+    val cause = unwrapFiberFailure(e)
+    cause match {
       case ofe: dev.openfeature.sdk.exceptions.OpenFeatureError =>
         applicationErrorCodes.contains(ofe.getErrorCode)
       case _ => false
@@ -237,17 +249,21 @@ final class CircuitBreakerProvider private (
       val current = stateRef.get()
       current.circuit match {
         case Closed =>
-          val next = CircuitBreakerState(Closed, consecutiveFailures = 0)
-          done = stateRef.compareAndSet(current, next)
+          if (current.consecutiveFailures == 0) {
+            done = true
+          } else {
+            val next = CircuitBreakerState(Closed, consecutiveFailures = 0)
+            done = stateRef.compareAndSet(current, next)
+          }
 
         case ho: HalfOpen =>
           val newSuccesses = ho.successes + 1
           if (newSuccesses >= config.halfOpenMaxCalls) {
             val next = CircuitBreakerState(Closed, consecutiveFailures = 0)
             done = stateRef.compareAndSet(current, next)
-            if (done) emitProviderReady(dev.openfeature.sdk.ProviderEventDetails.builder().build())
+            if (done) safeEmitReady()
           } else {
-            val next = CircuitBreakerState(HalfOpen(newSuccesses, probing = false), current.consecutiveFailures)
+            val next = CircuitBreakerState(HalfOpen(newSuccesses, probing = false), 0)
             done = stateRef.compareAndSet(current, next)
           }
 
@@ -267,10 +283,7 @@ final class CircuitBreakerProvider private (
           if (newFailures >= config.failureThreshold) {
             val next = CircuitBreakerState(Open(clock.millis(), OpenReason.Failures), newFailures)
             done = stateRef.compareAndSet(current, next)
-            if (done)
-              emitProviderStale(
-                dev.openfeature.sdk.ProviderEventDetails.builder().message("Circuit breaker opened").build()
-              )
+            if (done) safeEmitStale("Circuit breaker opened")
           } else {
             val next = CircuitBreakerState(Closed, newFailures)
             done = stateRef.compareAndSet(current, next)
@@ -279,19 +292,23 @@ final class CircuitBreakerProvider private (
         case _: HalfOpen =>
           val next = CircuitBreakerState(Open(clock.millis(), OpenReason.Failures), newFailures)
           done = stateRef.compareAndSet(current, next)
-          if (done)
-            emitProviderStale(
-              dev.openfeature.sdk.ProviderEventDetails
-                .builder()
-                .message("Circuit breaker re-opened after failed probe")
-                .build()
-            )
+          if (done) safeEmitStale("Circuit breaker re-opened after failed probe")
 
         case _: Open =>
           done = true
       }
     }
   }
+
+  // Guard event emission so failures don't corrupt circuit state or propagate
+  // up through executeWithTimeout's catch block.
+  private def safeEmitReady(): Unit =
+    try emitProviderReady(dev.openfeature.sdk.ProviderEventDetails.builder().build())
+    catch { case _: Exception => () }
+
+  private def safeEmitStale(message: String): Unit =
+    try emitProviderStale(dev.openfeature.sdk.ProviderEventDetails.builder().message(message).build())
+    catch { case _: Exception => () }
 
   // Uses the deprecated FeatureProvider.getState() because it is the only way
   // for a provider wrapper to query the delegate's state. The deprecation targets
@@ -360,9 +377,12 @@ final class CircuitBreakerProvider private (
       val current = stateRef.get()
       current.circuit match {
         case Closed if current.consecutiveFailures == 0 => done = true
-        case _ =>
+        case Open(_, OpenReason.DelegateState) =>
           val next = CircuitBreakerState(Closed, consecutiveFailures = 0)
           done = stateRef.compareAndSet(current, next)
+        case _ =>
+          // Do not reset failure-opened or half-open circuits
+          done = true
       }
     }
   }

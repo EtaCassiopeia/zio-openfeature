@@ -217,7 +217,7 @@ yield layer
 |:----------|:--------|:------------|
 | `failureThreshold` | `5` | Consecutive failures before the circuit opens |
 | `resetTimeout` | `30.seconds` | Time in open state before allowing a probe |
-| `evaluationTimeout` | `100.millis` | Max duration for a single delegate evaluation |
+| `evaluationTimeout` | `500.millis` | Max duration for a single delegate evaluation |
 | `halfOpenMaxCalls` | `1` | Successful probes required to close the circuit |
 | `stalePolicy` | `StalePolicy.Open` | Behavior when delegate reports `STALE` state |
 
@@ -248,7 +248,7 @@ Not all errors indicate a provider health issue. The circuit breaker distinguish
 | **Infrastructure errors** | **Yes** | Timeouts, connection refused, `GeneralError`, `ProviderNotReadyError`, `FatalError` |
 | **Application errors** | **No** | `FlagNotFoundError`, `TypeMismatchError`, `ParseError`, `TargetingKeyMissingError`, `InvalidContextError` |
 
-Application-level errors pass through without affecting circuit state. A burst of `FlagNotFoundError` calls for missing flags will **not** trip the circuit — the provider is healthy, the flag just doesn't exist.
+Application-level errors **reset the consecutive failure counter** because they prove the provider is reachable. A burst of `FlagNotFoundError` calls for missing flags will **not** trip the circuit — in fact, they actively prevent it from tripping by resetting the failure count.
 
 ### State-driven failover example (Optimizely)
 

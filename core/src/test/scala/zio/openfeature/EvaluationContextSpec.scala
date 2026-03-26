@@ -76,6 +76,56 @@ object EvaluationContextSpec extends ZIOSpecDefault {
 
         val merged = ctx1.merge(ctx2)
         assertTrue(merged.targetingKey.contains("user-1"))
+      },
+      test("merge recursively merges StructValue attributes") {
+        val ctx1 = EvaluationContext.empty.withAttribute(
+          "user",
+          AttributeValue.struct(
+            "name" -> AttributeValue.string("Alice"),
+            "role" -> AttributeValue.string("admin")
+          )
+        )
+        val ctx2 = EvaluationContext.empty.withAttribute(
+          "user",
+          AttributeValue.struct("name" -> AttributeValue.string("Bob"))
+        )
+
+        val merged = ctx1.merge(ctx2)
+        val user   = merged.get("user").flatMap(_.asStruct).get
+        assertTrue(user("name") == AttributeValue.string("Bob")) &&
+        assertTrue(user("role") == AttributeValue.string("admin"))
+      },
+      test("merge replaces StructValue with non-struct override") {
+        val ctx1 = EvaluationContext.empty.withAttribute(
+          "data",
+          AttributeValue.struct("key" -> AttributeValue.string("value"))
+        )
+        val ctx2 = EvaluationContext.empty.withAttribute("data", AttributeValue.string("replaced"))
+
+        val merged = ctx1.merge(ctx2)
+        assertTrue(merged.getString("data").contains("replaced"))
+      },
+      test("merge handles deeply nested StructValue recursion") {
+        val ctx1 = EvaluationContext.empty.withAttribute(
+          "a",
+          AttributeValue.struct(
+            "b" -> AttributeValue.struct(
+              "c" -> AttributeValue.string("deep"),
+              "d" -> AttributeValue.string("keep")
+            )
+          )
+        )
+        val ctx2 = EvaluationContext.empty.withAttribute(
+          "a",
+          AttributeValue.struct(
+            "b" -> AttributeValue.struct("c" -> AttributeValue.string("overridden"))
+          )
+        )
+
+        val merged = ctx1.merge(ctx2)
+        val b      = merged.get("a").flatMap(_.asStruct).get("b").asStruct.get
+        assertTrue(b("c") == AttributeValue.string("overridden")) &&
+        assertTrue(b("d") == AttributeValue.string("keep"))
       }
     ),
     suite("Attribute Operations")(

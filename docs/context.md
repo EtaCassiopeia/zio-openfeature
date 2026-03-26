@@ -217,6 +217,23 @@ FeatureFlags.withContext(scopedCtx) {
 }
 ```
 
+### Recursive Struct Merging
+
+Per the OpenFeature specification (section 3.2.3), nested objects are merged recursively rather than replaced entirely. When both the base and overriding context have a `StructValue` attribute with the same key, their fields are merged:
+
+```scala
+val ctx1 = EvaluationContext.empty.withAttribute("user",
+  AttributeValue.struct("name" -> AttributeValue.string("Alice"), "role" -> AttributeValue.string("admin")))
+
+val ctx2 = EvaluationContext.empty.withAttribute("user",
+  AttributeValue.struct("name" -> AttributeValue.string("Bob")))
+
+val merged = ctx1.merge(ctx2)
+// user = {name: "Bob", role: "admin"}  — "role" is preserved from ctx1
+```
+
+Non-struct values still replace entirely, even if the base attribute was a struct.
+
 ### Merge Order
 
 Per the OpenFeature specification, contexts are merged in this order (lowest to highest precedence):

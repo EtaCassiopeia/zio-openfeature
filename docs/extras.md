@@ -239,6 +239,17 @@ Controls how the circuit breaker reacts when the delegate provider is in `STALE`
 | Add timeout only (e.g., 50ms) | Still tries primary every time | 50ms per call |
 | **Circuit breaker** | Skips primary entirely when open | **< 1ms** |
 
+### Error classification
+
+Not all errors indicate a provider health issue. The circuit breaker distinguishes between infrastructure failures and application-level errors:
+
+| Error type | Counts toward threshold? | Examples |
+|:-----------|:------------------------|:---------|
+| **Infrastructure errors** | **Yes** | Timeouts, connection refused, `GeneralError`, `ProviderNotReadyError`, `FatalError` |
+| **Application errors** | **No** | `FlagNotFoundError`, `TypeMismatchError`, `ParseError`, `TargetingKeyMissingError`, `InvalidContextError` |
+
+Application-level errors pass through without affecting circuit state. A burst of `FlagNotFoundError` calls for missing flags will **not** trip the circuit — the provider is healthy, the flag just doesn't exist.
+
 ### State-driven failover example (Optimizely)
 
 For providers like Optimizely Local that poll for configuration:

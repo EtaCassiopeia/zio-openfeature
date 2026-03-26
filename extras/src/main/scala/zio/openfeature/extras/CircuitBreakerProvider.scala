@@ -73,6 +73,12 @@ final private[extras] case class CircuitBreakerState(
   *
   * In open state, after `resetTimeout` elapses, the circuit transitions to half-open and allows a single probe
   * evaluation through. On success the circuit closes; on failure it re-opens.
+  *
+  * '''Error classification''': Only infrastructure errors (timeouts, connection failures, `GeneralError`,
+  * `ProviderNotReadyError`, `FatalError`) count toward the failure threshold. Application-level errors
+  * (`FlagNotFoundError`, `TypeMismatchError`, `ParseError`, `TargetingKeyMissingError`, `InvalidContextError`) pass
+  * through without affecting circuit state — these indicate the provider is healthy but the specific evaluation failed
+  * for a non-infrastructure reason.
   */
 final class CircuitBreakerProvider private (
   val underlying: EventProvider,
@@ -188,10 +194,42 @@ final class CircuitBreakerProvider private (
       onSuccess()
       result
     } catch {
+      case e: Throwable if isApplicationError(e) =>
+        // Application-level errors (flag not found, type mismatch, etc.) indicate
+        // the provider is healthy — re-throw without counting toward the threshold.
+        throw unwrapFiberFailure(e)
       case e: Throwable =>
         onFailure()
         throw new GeneralError(s"Circuit breaker: delegate failed: ${e.getMessage}")
     }
+
+  // Application-level errors that do NOT indicate provider health issues.
+  // These should pass through without affecting circuit breaker state.
+  private val applicationErrorCodes: Set[dev.openfeature.sdk.ErrorCode] = Set(
+    dev.openfeature.sdk.ErrorCode.FLAG_NOT_FOUND,
+    dev.openfeature.sdk.ErrorCode.TYPE_MISMATCH,
+    dev.openfeature.sdk.ErrorCode.PARSE_ERROR,
+    dev.openfeature.sdk.ErrorCode.TARGETING_KEY_MISSING,
+    dev.openfeature.sdk.ErrorCode.INVALID_CONTEXT
+  )
+
+  private def unwrapFiberFailure(e: Throwable): Throwable = e match {
+    case ff: zio.FiberFailure =>
+      ff.cause.failureOption match {
+        case Some(t: Throwable) => t
+        case _                  => ff
+      }
+    case other => other
+  }
+
+  private def isApplicationError(e: Throwable): Boolean = {
+    val underlying = unwrapFiberFailure(e)
+    underlying match {
+      case ofe: dev.openfeature.sdk.exceptions.OpenFeatureError =>
+        applicationErrorCodes.contains(ofe.getErrorCode)
+      case _ => false
+    }
+  }
 
   private def onSuccess(): Unit = {
     var done = false

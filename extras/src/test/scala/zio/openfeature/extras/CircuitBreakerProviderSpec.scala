@@ -447,6 +447,87 @@ object CircuitBreakerProviderSpec extends ZIOSpecDefault {
         }
       }
     ),
+    suite("Error classification")(
+      test("FlagNotFoundError does not count toward circuit breaker threshold") {
+        val underlying = new FailableProvider(Map.empty) {
+          override def getBooleanEvaluation(
+            key: String,
+            defaultValue: java.lang.Boolean,
+            ctx: OFEvaluationContext
+          ): ProviderEvaluation[java.lang.Boolean] = {
+            evaluationCount.incrementAndGet()
+            throw new dev.openfeature.sdk.exceptions.FlagNotFoundError(s"Flag '$key' not found")
+          }
+        }
+        val config = CircuitBreakerConfig(failureThreshold = 2)
+        val cb     = CircuitBreakerProvider(underlying, config)
+        // Trigger many FlagNotFound errors — should NOT trip the circuit
+        (1 to 10).foreach(_ => scala.util.Try(cb.getBooleanEvaluation("missing", false, ctx)))
+        // Circuit should still be closed, delegate still called every time
+        assertTrue(cb.getState == ProviderState.READY) &&
+        assertTrue(underlying.evaluationCount.get() == 10)
+      },
+      test("TypeMismatchError does not count toward circuit breaker threshold") {
+        val underlying = new FailableProvider(Map.empty) {
+          override def getStringEvaluation(
+            key: String,
+            defaultValue: String,
+            ctx: OFEvaluationContext
+          ): ProviderEvaluation[String] = {
+            evaluationCount.incrementAndGet()
+            throw new dev.openfeature.sdk.exceptions.TypeMismatchError("Expected string, got boolean")
+          }
+        }
+        val config = CircuitBreakerConfig(failureThreshold = 2)
+        val cb     = CircuitBreakerProvider(underlying, config)
+        (1 to 10).foreach(_ => scala.util.Try(cb.getStringEvaluation("flag", "", ctx)))
+        assertTrue(cb.getState == ProviderState.READY) &&
+        assertTrue(underlying.evaluationCount.get() == 10)
+      },
+      test("infrastructure errors count toward circuit breaker threshold") {
+        val underlying = new FailableProvider(Map.empty) {
+          override def getBooleanEvaluation(
+            key: String,
+            defaultValue: java.lang.Boolean,
+            ctx: OFEvaluationContext
+          ): ProviderEvaluation[java.lang.Boolean] = {
+            evaluationCount.incrementAndGet()
+            throw new RuntimeException("Connection refused")
+          }
+        }
+        val clock  = new TestClock()
+        val config = CircuitBreakerConfig(failureThreshold = 3, resetTimeout = 1.minute)
+        val cb     = CircuitBreakerProvider(underlying, config, clock)
+        (1 to 3).foreach(_ => scala.util.Try(cb.getBooleanEvaluation("flag", false, ctx)))
+        val countAfterTrip = underlying.evaluationCount.get()
+        // Circuit should be open — delegate not called anymore
+        scala.util.Try(cb.getBooleanEvaluation("flag", false, ctx))
+        assertTrue(cb.getState == ProviderState.ERROR) &&
+        assertTrue(underlying.evaluationCount.get() == countAfterTrip)
+      },
+      test("mixed application and infrastructure errors only count infrastructure errors") {
+        var callCount = 0
+        val underlying = new FailableProvider(Map.empty) {
+          override def getBooleanEvaluation(
+            key: String,
+            defaultValue: java.lang.Boolean,
+            ctx: OFEvaluationContext
+          ): ProviderEvaluation[java.lang.Boolean] = {
+            callCount += 1
+            if (callCount % 2 == 1)
+              throw new dev.openfeature.sdk.exceptions.FlagNotFoundError("not found")
+            else
+              throw new RuntimeException("Connection refused")
+          }
+        }
+        val config = CircuitBreakerConfig(failureThreshold = 3)
+        val cb     = CircuitBreakerProvider(underlying, config)
+        // Alternating: FlagNotFound (skip), RuntimeException (count=1), FlagNotFound (skip),
+        // RuntimeException (count=2), FlagNotFound (skip), RuntimeException (count=3) → opens
+        (1 to 6).foreach(_ => scala.util.Try(cb.getBooleanEvaluation("flag", false, ctx)))
+        assertTrue(cb.getState == ProviderState.ERROR)
+      }
+    ),
     suite("Edge cases")(
       test("default config values are sensible") {
         val config = CircuitBreakerConfig()

@@ -137,12 +137,28 @@ final class CircuitBreakerProvider private (
 
   // --- Provider-specific logic ---
 
+  // Note: checkDelegateState and tryAcquire are separate calls, so there is a
+  // small race window between them under concurrent access. This is an accepted
+  // tradeoff — the consequence is at most one extra call leaking through, which
+  // is acceptable for a best-effort circuit breaker.
   private def protect[A](evaluate: () => ProviderEvaluation[A]): ProviderEvaluation[A] = {
     checkDelegateState()
 
     breaker.tryAcquire match {
-      case GateResult.Allowed  => executeWithTimeout(evaluate)
-      case GateResult.Rejected => throw new GeneralError("Circuit breaker is open")
+      case GateResult.Allowed => executeWithTimeout(evaluate)
+      case GateResult.Rejected =>
+        val detail = breaker.currentState match {
+          case CircuitState.Open(sinceMillis, reason) =>
+            val ago = breaker.clock.millis() - sinceMillis
+            val cause = reason match {
+              case OpenReason.Failures => "consecutive failures"
+              case OpenReason.External => "delegate reported unhealthy state"
+            }
+            s"open for ${ago}ms due to $cause, resets after ${config.resetTimeout.toMillis}ms"
+          case CircuitState.HalfOpen(_, _) => "half-open, probe in progress"
+          case CircuitState.Closed         => "closed"
+        }
+        throw new GeneralError(s"Circuit breaker rejected: $detail")
     }
   }
 
@@ -152,7 +168,8 @@ final class CircuitBreakerProvider private (
         runtime.unsafe
           .run(
             ZIO
-              .attemptBlockingInterrupt(evaluate())
+              .attemptBlocking(evaluate())
+              .disconnect // detach so timeout completes without waiting for the blocking call
               .timeoutFail(new java.util.concurrent.TimeoutException("Evaluation timed out"))(config.evaluationTimeout)
           )
           .getOrThrowFiberFailure()
@@ -162,11 +179,17 @@ final class CircuitBreakerProvider private (
     } catch {
       case e: Throwable if isApplicationError(e) =>
         // Application-level errors (flag not found, type mismatch, etc.) indicate
-        // the provider is reachable — reset failure counter and re-throw.
-        if (breaker.recordSuccess()) safeEmitReady()
+        // the provider is reachable — reset failure counter in closed state, but do
+        // NOT count toward closing the circuit in half-open state (only actual
+        // successful evaluations should close the circuit).
+        if (!breaker.isHalfOpen) {
+          if (breaker.recordSuccess()) safeEmitReady()
+        }
         throw unwrapFiberFailure(e)
       case e: VirtualMachineError => throw e
-      case e: LinkageError        => throw e
+      case e: LinkageError =>
+        breaker.recordFailure()
+        throw e
       case e: Throwable =>
         val didOpen = breaker.recordFailure()
         if (didOpen) safeEmitStale("Circuit breaker opened")
@@ -188,10 +211,17 @@ final class CircuitBreakerProvider private (
 
   private def unwrapFiberFailure(e: Throwable): Throwable = e match {
     case ff: zio.FiberFailure =>
-      ff.cause.failureOption
-        .collect { case t: Throwable => t }
-        .orElse(ff.cause.dieOption)
-        .getOrElse(ff)
+      ff.cause.failureOption match {
+        case Some(t: Throwable) => t
+        case _ =>
+          ff.cause.dieOption match {
+            case Some(t) => t
+            case None =>
+              if (ff.cause.isInterrupted)
+                new java.util.concurrent.TimeoutException("Evaluation was interrupted")
+              else ff
+          }
+      }
     case other => other
   }
 
@@ -215,7 +245,13 @@ final class CircuitBreakerProvider private (
   private def delegateState(): ProviderState = underlying.getState
 
   private def checkDelegateState(): Unit = {
-    val state            = delegateState()
+    val state =
+      try delegateState()
+      catch {
+        case _: Exception =>
+          breaker.trip()
+          return
+      }
     val shouldOpen       = state == ProviderState.ERROR || state == ProviderState.FATAL
     val shouldApplyStale = state == ProviderState.STALE
 

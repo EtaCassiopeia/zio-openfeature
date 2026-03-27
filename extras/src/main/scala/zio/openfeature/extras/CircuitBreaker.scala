@@ -225,6 +225,9 @@ final class CircuitBreaker private[extras] (
 
   /** Whether the circuit is open (rejecting calls). */
   def isOpen: Boolean = stateRef.get().circuit.isInstanceOf[Open]
+
+  /** Whether the circuit is half-open (probing). */
+  def isHalfOpen: Boolean = stateRef.get().circuit.isInstanceOf[HalfOpen]
 }
 
 object CircuitBreaker {

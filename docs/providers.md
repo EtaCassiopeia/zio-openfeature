@@ -367,7 +367,7 @@ The swap is serialized via a semaphore — concurrent `setProvider` calls queue 
 
 **Error handling:**
 
-If the new provider fails to initialize, `setProvider` returns `FeatureFlagError.ProviderInitializationFailed`. At this point the old provider has already been shut down by the Java SDK, so the instance is in a degraded state (`NotReady`). To recover, call `setProvider` again with a working provider:
+If the new provider fails to initialize, `setProvider` returns `FeatureFlagError.ProviderInitializationFailed` and the status transitions to `Error` (not `NotReady`). The old provider has already been shut down by the Java SDK. To recover, call `setProvider` again with a working provider:
 
 ```scala
 val result = ff.setProvider(unreliableProvider).either

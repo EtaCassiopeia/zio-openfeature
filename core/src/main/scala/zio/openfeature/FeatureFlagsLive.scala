@@ -810,20 +810,33 @@ final private[openfeature] class FeatureFlagsLive(
 
   // Provider hot-swap
 
+  // Note: we reuse the existing `client` object because the Java SDK's Client
+  // delegates to the provider registered with the API at evaluation time,
+  // not the provider that was active when the client was created.
   override def setProvider(newProvider: OFFeatureProvider): IO[FeatureFlagError, Unit] =
     swapLock.withPermit {
       for {
+        // Save old state for rollback on failure
+        oldProvider <- providerRef.get
+        oldName     <- providerNameRef.get
         // 1. Transition to NOT_READY — new evaluations fail fast during swap
         _ <- state.statusRef.set(ProviderStatus.NotReady)
-        // 2. Register new provider with Java SDK (shuts down old, initializes new)
+        // 2. Update refs BEFORE registering with Java SDK, so the event bridge
+        //    (which fires PROVIDER_READY during setProviderAndWait) sees consistent metadata
+        newName = Option(newProvider.getMetadata).map(_.getName).getOrElse("unknown")
+        _ <- providerRef.set(newProvider)
+        _ <- providerNameRef.set(newName)
+        // 3. Register new provider with Java SDK (shuts down old, initializes new)
         _ <- (domain match {
           case Some(d) => ZIO.attemptBlocking(api.setProviderAndWait(d, newProvider))
           case None    => ZIO.attemptBlocking(api.setProviderAndWait(newProvider))
         }).mapError(e => FeatureFlagError.ProviderInitializationFailed(e))
-        // 3. Update refs — metadata and provider hooks now reflect the new provider
-        newName = Option(newProvider.getMetadata).map(_.getName).getOrElse("unknown")
-        _ <- providerRef.set(newProvider)
-        _ <- providerNameRef.set(newName)
+          .tapError(_ =>
+            // Rollback refs and set Error status so the instance is in a diagnosable state
+            providerRef.set(oldProvider) *>
+              providerNameRef.set(oldName) *>
+              state.statusRef.set(ProviderStatus.Error)
+          )
         // 4. Mark ready — the Java SDK event bridge will also fire PROVIDER_READY,
         //    but we set it explicitly for immediate visibility
         _ <- state.statusRef.set(ProviderStatus.Ready)

@@ -66,55 +66,58 @@ object ProviderHotSwapSpec extends ZIOSpecDefault {
       ProviderEvaluation.builder[Value]().value(defaultValue).reason("STATIC").build()
   }
 
+  // Use unique domains per test to avoid OpenFeatureAPI singleton pollution
+  private def uniqueDomain: String = s"test-swap-${java.util.UUID.randomUUID()}"
+
+  private def buildWithDomain(provider: SimpleProvider): ZIO[Scope, Throwable, FeatureFlags] = {
+    val domain = uniqueDomain
+    FeatureFlags.fromProviderWithDomain(provider, domain).build.map(_.get[FeatureFlags])
+  }
+
   def spec = suite("Provider Hot-Swap")(
     test("setProvider swaps to a new provider") {
       ZIO.scoped {
         val providerA = new SimpleProvider("ProviderA", Map("flag" -> true))
         val providerB = new SimpleProvider("ProviderB", Map("flag" -> false))
-        FeatureFlags.fromProvider(providerA).build.flatMap { env =>
-          val ff = env.get[FeatureFlags]
-          for {
-            v1 <- ff.boolean("flag", default = false)
-            _  <- ff.setProvider(providerB)
-            v2 <- ff.boolean("flag", default = false)
-          } yield assertTrue(v1 == true) && assertTrue(v2 == false)
-        }
+        for {
+          ff <- buildWithDomain(providerA)
+          v1 <- ff.boolean("flag", default = false)
+          _  <- ff.setProvider(providerB)
+          v2 <- ff.boolean("flag", default = false)
+        } yield assertTrue(v1 == true) && assertTrue(v2 == false)
       }
     },
     test("setProvider updates provider metadata") {
       ZIO.scoped {
         val providerA = new SimpleProvider("ProviderA", Map.empty)
         val providerB = new SimpleProvider("ProviderB", Map.empty)
-        FeatureFlags.fromProvider(providerA).build.flatMap { env =>
-          val ff = env.get[FeatureFlags]
-          for {
-            m1 <- ff.providerMetadata
-            _  <- ff.setProvider(providerB)
-            m2 <- ff.providerMetadata
-          } yield assertTrue(m1.name == "ProviderA") && assertTrue(m2.name == "ProviderB")
-        }
+        for {
+          ff <- buildWithDomain(providerA)
+          m1 <- ff.providerMetadata
+          _  <- ff.setProvider(providerB)
+          m2 <- ff.providerMetadata
+        } yield assertTrue(m1.name == "ProviderA") && assertTrue(m2.name == "ProviderB")
       }
     },
     test("setProvider preserves hooks") {
       ZIO.scoped {
-        var hookCalled = false
-        val hook = new FeatureHook {
-          override def before(
-            ctx: HookContext,
-            hints: HookHints
-          ): UIO[Option[(EvaluationContext, HookHints)]] =
-            ZIO.succeed { hookCalled = true; None }
-        }
         val providerA = new SimpleProvider("ProviderA", Map("flag" -> true))
         val providerB = new SimpleProvider("ProviderB", Map("flag" -> false))
-        FeatureFlags.fromProvider(providerA).build.flatMap { env =>
-          val ff = env.get[FeatureFlags]
-          for {
-            _ <- ff.addHook(hook)
-            _ <- ff.setProvider(providerB)
-            _ <- ff.boolean("flag", default = false)
-          } yield assertTrue(hookCalled)
-        }
+        for {
+          hookCalled <- Ref.make(false)
+          hook = new FeatureHook {
+            override def before(
+              ctx: HookContext,
+              hints: HookHints
+            ): UIO[Option[(EvaluationContext, HookHints)]] =
+              hookCalled.set(true).as(None)
+          }
+          ff     <- buildWithDomain(providerA)
+          _      <- ff.addHook(hook)
+          _      <- ff.setProvider(providerB)
+          _      <- ff.boolean("flag", default = false)
+          called <- hookCalled.get
+        } yield assertTrue(called)
       }
     },
     test("setProvider preserves client context") {
@@ -122,28 +125,24 @@ object ProviderHotSwapSpec extends ZIOSpecDefault {
         val providerA = new SimpleProvider("ProviderA", Map("flag" -> true))
         val providerB = new SimpleProvider("ProviderB", Map("flag" -> false))
         val ctx       = EvaluationContext.builder.targetingKey("user-123").build
-        FeatureFlags.fromProvider(providerA).build.flatMap { env =>
-          val ff = env.get[FeatureFlags]
-          for {
-            _       <- ff.setClientContext(ctx)
-            _       <- ff.setProvider(providerB)
-            readCtx <- ff.clientContext
-          } yield assertTrue(readCtx.targetingKey.contains("user-123"))
-        }
+        for {
+          ff      <- buildWithDomain(providerA)
+          _       <- ff.setClientContext(ctx)
+          _       <- ff.setProvider(providerB)
+          readCtx <- ff.clientContext
+        } yield assertTrue(readCtx.targetingKey.contains("user-123"))
       }
     },
-    test("setProvider transitions status through NotReady") {
+    test("setProvider transitions status to Ready after successful swap") {
       ZIO.scoped {
         val providerA = new SimpleProvider("ProviderA", Map.empty)
         val providerB = new SimpleProvider("ProviderB", Map.empty)
-        FeatureFlags.fromProvider(providerA).build.flatMap { env =>
-          val ff = env.get[FeatureFlags]
-          for {
-            s1 <- ff.providerStatus
-            _  <- ff.setProvider(providerB)
-            s2 <- ff.providerStatus
-          } yield assertTrue(s1 == ProviderStatus.Ready) && assertTrue(s2 == ProviderStatus.Ready)
-        }
+        for {
+          ff <- buildWithDomain(providerA)
+          s1 <- ff.providerStatus
+          _  <- ff.setProvider(providerB)
+          s2 <- ff.providerStatus
+        } yield assertTrue(s1 == ProviderStatus.Ready) && assertTrue(s2 == ProviderStatus.Ready)
       }
     },
     test("setProvider preserves global context") {
@@ -151,14 +150,12 @@ object ProviderHotSwapSpec extends ZIOSpecDefault {
         val providerA = new SimpleProvider("ProviderA", Map("flag" -> true))
         val providerB = new SimpleProvider("ProviderB", Map("flag" -> false))
         val ctx       = EvaluationContext.builder.targetingKey("global-key").build
-        FeatureFlags.fromProvider(providerA).build.flatMap { env =>
-          val ff = env.get[FeatureFlags]
-          for {
-            _       <- ff.setGlobalContext(ctx)
-            _       <- ff.setProvider(providerB)
-            readCtx <- ff.globalContext
-          } yield assertTrue(readCtx.targetingKey.contains("global-key"))
-        }
+        for {
+          ff      <- buildWithDomain(providerA)
+          _       <- ff.setGlobalContext(ctx)
+          _       <- ff.setProvider(providerB)
+          readCtx <- ff.globalContext
+        } yield assertTrue(readCtx.targetingKey.contains("global-key"))
       }
     },
     test("multiple swaps work correctly") {
@@ -166,51 +163,69 @@ object ProviderHotSwapSpec extends ZIOSpecDefault {
         val providerA = new SimpleProvider("A", Map("flag" -> "a"))
         val providerB = new SimpleProvider("B", Map("flag" -> "b"))
         val providerC = new SimpleProvider("C", Map("flag" -> "c"))
-        FeatureFlags.fromProvider(providerA).build.flatMap { env =>
-          val ff = env.get[FeatureFlags]
-          for {
-            v1 <- ff.string("flag", default = "")
-            _  <- ff.setProvider(providerB)
-            v2 <- ff.string("flag", default = "")
-            _  <- ff.setProvider(providerC)
-            v3 <- ff.string("flag", default = "")
-            m  <- ff.providerMetadata
-          } yield assertTrue(v1 == "a") && assertTrue(v2 == "b") && assertTrue(v3 == "c") &&
-            assertTrue(m.name == "C")
-        }
+        for {
+          ff <- buildWithDomain(providerA)
+          v1 <- ff.string("flag", default = "")
+          _  <- ff.setProvider(providerB)
+          v2 <- ff.string("flag", default = "")
+          _  <- ff.setProvider(providerC)
+          v3 <- ff.string("flag", default = "")
+          m  <- ff.providerMetadata
+        } yield assertTrue(v1 == "a") && assertTrue(v2 == "b") && assertTrue(v3 == "c") &&
+          assertTrue(m.name == "C")
       }
     },
     test("all flag types work after swap") {
       ZIO.scoped {
         val providerA = new SimpleProvider("A", Map("b" -> true))
         val providerB = new SimpleProvider("B", Map("b" -> false, "s" -> "hello", "i" -> 42, "d" -> 3.14))
-        FeatureFlags.fromProvider(providerA).build.flatMap { env =>
-          val ff = env.get[FeatureFlags]
-          for {
-            _  <- ff.setProvider(providerB)
-            vb <- ff.boolean("b", default = true)
-            vs <- ff.string("s", default = "")
-            vi <- ff.int("i", default = 0)
-            vd <- ff.double("d", default = 0.0)
-          } yield assertTrue(vb == false) && assertTrue(vs == "hello") &&
-            assertTrue(vi == 42) && assertTrue(vd == 3.14)
-        }
+        for {
+          ff <- buildWithDomain(providerA)
+          _  <- ff.setProvider(providerB)
+          vb <- ff.boolean("b", default = true)
+          vs <- ff.string("s", default = "")
+          vi <- ff.int("i", default = 0)
+          vd <- ff.double("d", default = 0.0)
+        } yield assertTrue(vb == false) && assertTrue(vs == "hello") &&
+          assertTrue(vi == 42) && assertTrue(vd == 3.14)
       }
     },
-    test("setProvider fails gracefully when new provider initialization fails") {
+    test("failed swap sets status to Error") {
       ZIO.scoped {
         val providerA = new SimpleProvider("A", Map("flag" -> true))
         val failingProvider = new SimpleProvider("Failing", Map.empty) {
           override def initialize(ctx: OFEvaluationContext): Unit =
             throw new RuntimeException("Initialization failed")
         }
-        FeatureFlags.fromProvider(providerA).build.flatMap { env =>
-          val ff = env.get[FeatureFlags]
-          for {
-            result <- ff.setProvider(failingProvider).either
-          } yield assertTrue(result.isLeft) &&
-            assertTrue(result.left.toOption.get.isInstanceOf[FeatureFlagError.ProviderInitializationFailed])
+        for {
+          ff     <- buildWithDomain(providerA)
+          result <- ff.setProvider(failingProvider).either
+          status <- ff.providerStatus
+        } yield assertTrue(result.isLeft) &&
+          assertTrue(result.left.toOption.get.isInstanceOf[FeatureFlagError.ProviderInitializationFailed]) &&
+          assertTrue(status == ProviderStatus.Error)
+      }
+    },
+    test("recovery after failed swap") {
+      ZIO.scoped {
+        val providerA = new SimpleProvider("A", Map("flag" -> true))
+        val failingProvider = new SimpleProvider("Failing", Map.empty) {
+          override def initialize(ctx: OFEvaluationContext): Unit =
+            throw new RuntimeException("fail")
         }
+        val providerC = new SimpleProvider("C", Map("flag" -> false))
+        for {
+          ff     <- buildWithDomain(providerA)
+          _      <- ff.setProvider(failingProvider).either
+          status <- ff.providerStatus
+          _      <- ff.setProvider(providerC)
+          v      <- ff.boolean("flag", default = true)
+          s2     <- ff.providerStatus
+          m      <- ff.providerMetadata
+        } yield assertTrue(status == ProviderStatus.Error) &&
+          assertTrue(v == false) &&
+          assertTrue(s2 == ProviderStatus.Ready) &&
+          assertTrue(m.name == "C")
       }
     }
   ) @@ TestAspect.sequential

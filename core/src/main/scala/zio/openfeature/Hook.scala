@@ -342,6 +342,45 @@ object FeatureHook {
         } yield ()
     }
 
+  /** A detailed metrics hook that provides full evaluation context for building rich metric tags.
+    *
+    * Unlike `metrics()` which only passes the flag key, duration, and a success boolean, this hook gives callbacks
+    * access to the full `HookContext` (flag key, type, provider, client metadata) and
+    * `FlagResolution`/`FeatureFlagError`. This makes it easy to integrate with any metrics system that needs structured
+    * tags.
+    *
+    * @param onSuccess
+    *   Called after a successful evaluation with the hook context, resolution details, and duration
+    * @param onError
+    *   Called after a failed evaluation with the hook context, error, and duration
+    */
+  def metricsDetailed(
+    onSuccess: (HookContext, FlagResolution[_], Duration) => UIO[Unit],
+    onError: (HookContext, FeatureFlagError, Duration) => UIO[Unit]
+  ): FeatureHook = new FeatureHook {
+    private val startTimeKey = TypedKey[Long]("metricsDetailed.startTime")
+
+    override def before(ctx: HookContext, hints: HookHints): UIO[Option[(EvaluationContext, HookHints)]] =
+      for {
+        now <- Clock.nanoTime
+        _ = ctx.hookData.set(startTimeKey, now)
+      } yield None
+
+    override def after[A](ctx: HookContext, details: FlagResolution[A], hints: HookHints): UIO[Unit] = {
+      val end      = java.lang.System.nanoTime()
+      val start    = ctx.hookData.get(startTimeKey).getOrElse(end)
+      val duration = Duration.fromNanos(end - start)
+      onSuccess(ctx, details, duration)
+    }
+
+    override def error(ctx: HookContext, err: FeatureFlagError, hints: HookHints): UIO[Unit] = {
+      val end      = java.lang.System.nanoTime()
+      val start    = ctx.hookData.get(startTimeKey).getOrElse(end)
+      val duration = Duration.fromNanos(end - start)
+      onError(ctx, err, duration)
+    }
+  }
+
   def contextValidator(
     requireTargetingKey: Boolean = false,
     requiredAttributes: List[String] = Nil

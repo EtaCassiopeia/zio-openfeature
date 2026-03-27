@@ -239,6 +239,110 @@ object HookSpec extends ZIOSpecDefault {
           assertTrue(captured.get._3 == false)
       }
     ),
+    suite("FeatureHook.metricsDetailed")(
+      test("onSuccess receives full context and resolution") {
+        var capturedCtx: Option[HookContext]       = None
+        var capturedRes: Option[FlagResolution[_]] = None
+        var capturedDur: Option[Duration]          = None
+
+        val hook = FeatureHook.metricsDetailed(
+          onSuccess = (ctx, details, duration) =>
+            ZIO.succeed {
+              capturedCtx = Some(ctx)
+              capturedRes = Some(details)
+              capturedDur = Some(duration)
+            },
+          onError = (_, _, _) => ZIO.unit
+        )
+
+        val ctx = makeHookContext("detailed-test")
+        val resolution = FlagResolution(
+          value = true,
+          variant = Some("treatment"),
+          reason = ResolutionReason.TargetingMatch,
+          metadata = FlagMetadata.empty,
+          flagKey = "detailed-test"
+        )
+
+        for {
+          _ <- hook.before(ctx, HookHints.empty)
+          _ <- hook.after(ctx, resolution, HookHints.empty)
+        } yield assertTrue(capturedCtx.get.flagKey == "detailed-test") &&
+          assertTrue(capturedCtx.get.providerMetadata.name == "TestProvider") &&
+          assertTrue(capturedCtx.get.flagType == FlagValueType.Boolean) &&
+          assertTrue(capturedRes.get.variant.contains("treatment")) &&
+          assertTrue(capturedRes.get.reason == ResolutionReason.TargetingMatch) &&
+          assertTrue(capturedDur.isDefined)
+      },
+      test("onError receives full context and error") {
+        var capturedCtx: Option[HookContext]      = None
+        var capturedErr: Option[FeatureFlagError] = None
+        var capturedDur: Option[Duration]         = None
+
+        val hook = FeatureHook.metricsDetailed(
+          onSuccess = (_, _, _) => ZIO.unit,
+          onError = (ctx, err, duration) =>
+            ZIO.succeed {
+              capturedCtx = Some(ctx)
+              capturedErr = Some(err)
+              capturedDur = Some(duration)
+            }
+        )
+
+        val ctx = makeHookContext("error-detail-test")
+
+        for {
+          _ <- hook.before(ctx, HookHints.empty)
+          _ <- hook.error(ctx, FeatureFlagError.FlagNotFound("missing"), HookHints.empty)
+        } yield assertTrue(capturedCtx.get.flagKey == "error-detail-test") &&
+          assertTrue(capturedErr.get.isInstanceOf[FeatureFlagError.FlagNotFound]) &&
+          assertTrue(capturedDur.isDefined)
+      },
+      test("before returns None to avoid corrupting compose pipeline") {
+        val hook = FeatureHook.metricsDetailed(
+          onSuccess = (_, _, _) => ZIO.unit,
+          onError = (_, _, _) => ZIO.unit
+        )
+        for {
+          result <- hook.before(makeHookContext(), HookHints.empty)
+        } yield assertTrue(result.isEmpty)
+      },
+      test("can build metric tags from context") {
+        var tags: Map[String, String] = Map.empty
+
+        val hook = FeatureHook.metricsDetailed(
+          onSuccess = (ctx, details, _) =>
+            ZIO.succeed {
+              tags = Map(
+                "flag.key"      -> ctx.flagKey,
+                "flag.type"     -> ctx.flagType.name,
+                "flag.provider" -> ctx.providerMetadata.name,
+                "flag.reason"   -> details.reason.toString,
+                "flag.variant"  -> details.variant.getOrElse("none")
+              )
+            },
+          onError = (_, _, _) => ZIO.unit
+        )
+
+        val ctx = makeHookContext("tag-test")
+        val resolution = FlagResolution(
+          value = true,
+          variant = Some("v1"),
+          reason = ResolutionReason.Split,
+          metadata = FlagMetadata.empty,
+          flagKey = "tag-test"
+        )
+
+        for {
+          _ <- hook.before(ctx, HookHints.empty)
+          _ <- hook.after(ctx, resolution, HookHints.empty)
+        } yield assertTrue(tags("flag.key") == "tag-test") &&
+          assertTrue(tags("flag.type") == "Boolean") &&
+          assertTrue(tags("flag.provider") == "TestProvider") &&
+          assertTrue(tags("flag.reason") == "Split") &&
+          assertTrue(tags("flag.variant") == "v1")
+      }
+    ),
     suite("FeatureHook.logging")(
       test("logging hook with before enabled") {
         val hook = FeatureHook.logging(logBefore = true, logAfter = false, logError = false)

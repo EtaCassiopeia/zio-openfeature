@@ -169,6 +169,51 @@ val metricsHook = FeatureHook.metrics { (flagKey, duration, success) =>
 FeatureFlags.addHook(metricsHook)
 ```
 
+### Detailed Metrics Hook
+
+A richer metrics hook that provides full evaluation context for building proper metric tags. Unlike `metrics()` which only gives you the flag key and a boolean, this hook passes the complete `HookContext` and `FlagResolution`/`FeatureFlagError` to your callbacks.
+
+```scala
+val hook = FeatureHook.metricsDetailed(
+  onSuccess = (ctx, details, duration) =>
+    metricsTracker.recordResponseTime("flag.evaluation", duration, Map(
+      "flag.key"      -> ctx.flagKey,
+      "flag.type"     -> ctx.flagType.name,
+      "flag.provider" -> ctx.providerMetadata.name,
+      "flag.reason"   -> details.reason.toString,
+      "flag.variant"  -> details.variant.getOrElse("none")
+    )),
+  onError = (ctx, err, duration) =>
+    metricsTracker.recordResponseTime("flag.evaluation.error", duration, Map(
+      "flag.key"   -> ctx.flagKey,
+      "flag.error" -> err.getClass.getSimpleName
+    ))
+)
+
+FeatureFlags.addHook(hook)
+```
+
+**Available context in callbacks:**
+
+| From `HookContext` | Description |
+|:-------------------|:------------|
+| `ctx.flagKey` | Flag key being evaluated |
+| `ctx.flagType` | Type (Boolean, String, Int, etc.) |
+| `ctx.providerMetadata.name` | Provider name |
+| `ctx.clientMetadata.domain` | Client domain (if set) |
+| `ctx.evaluationContext` | Full evaluation context |
+
+| From `FlagResolution` (success only) | Description |
+|:--------------------------------------|:------------|
+| `details.value` | Evaluated value |
+| `details.reason` | Resolution reason (TargetingMatch, Split, Static, etc.) |
+| `details.variant` | Variant name (if applicable) |
+
+| From `FeatureFlagError` (error only) | Description |
+|:--------------------------------------|:------------|
+| `err.message` | Error message |
+| `err.getClass.getSimpleName` | Error type (FlagNotFound, TypeMismatch, etc.) |
+
 ### Context Validator Hook
 
 Validates evaluation context before evaluation:

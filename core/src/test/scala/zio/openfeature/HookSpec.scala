@@ -241,15 +241,17 @@ object HookSpec extends ZIOSpecDefault {
     ),
     suite("FeatureHook.metricsDetailed")(
       test("onSuccess receives full context and resolution") {
-        var capturedCtx: Option[HookContext]       = None
-        var capturedRes: Option[FlagResolution[_]] = None
-        var capturedDur: Option[Duration]          = None
+        var capturedCtx: Option[HookContext]         = None
+        var capturedVariant: Option[Option[String]]  = None
+        var capturedReason: Option[ResolutionReason] = None
+        var capturedDur: Option[Duration]            = None
 
         val hook = FeatureHook.metricsDetailed(
           onSuccess = (ctx, details, duration) =>
             ZIO.succeed {
               capturedCtx = Some(ctx)
-              capturedRes = Some(details)
+              capturedVariant = Some(details.variant)
+              capturedReason = Some(details.reason)
               capturedDur = Some(duration)
             },
           onError = (_, _, _) => ZIO.unit
@@ -270,8 +272,8 @@ object HookSpec extends ZIOSpecDefault {
         } yield assertTrue(capturedCtx.get.flagKey == "detailed-test") &&
           assertTrue(capturedCtx.get.providerMetadata.name == "TestProvider") &&
           assertTrue(capturedCtx.get.flagType == FlagValueType.Boolean) &&
-          assertTrue(capturedRes.get.variant.contains("treatment")) &&
-          assertTrue(capturedRes.get.reason == ResolutionReason.TargetingMatch) &&
+          assertTrue(capturedVariant.get.contains("treatment")) &&
+          assertTrue(capturedReason.get == ResolutionReason.TargetingMatch) &&
           assertTrue(capturedDur.isDefined)
       },
       test("onError receives full context and error") {

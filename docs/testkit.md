@@ -331,17 +331,6 @@ test("feature logic with overrides") {
 }
 ```
 
-### Choosing the Right Layer
-
-| Layer | Provider starts as | Use when |
-|:------|:-------------------|:---------|
-| `TestFeatureProvider.layer(flags)` | `Ready` | Most tests — flags work immediately |
-| `TestFeatureProvider.scopedLayer(flags)` | `Ready` | Same, but provides its own `Scope` (no `Scope.default >>>` needed) |
-| `TestFeatureProvider.asyncLayer(flags)` | `NotReady` | Testing startup/initialization behavior — you must call `setStatus(ProviderStatus.Ready)` manually |
-| `TestFeatureProvider.scopedAsyncLayer(flags)` | `NotReady` | Same, self-contained |
-
-**Rule of thumb:** Use `layer` unless you specifically need to test how your code handles a provider that isn't ready yet. The async variants exist for testing graceful degradation and startup sequences — they require manual status management.
-
 ### Testing Async Initialization
 
 Use `TestFeatureProvider.asyncLayer` to test how your code handles a provider that isn't ready yet:

@@ -289,6 +289,36 @@ val layer: ZLayer[Scope, Throwable, FeatureFlags] =
   FeatureFlags.fromProvider(provider)
 ```
 
+### fromProvider with evaluation timeout
+
+Create with a global evaluation timeout to prevent hung providers from blocking fibers indefinitely. If a provider evaluation takes longer than the timeout, it fails with `ProviderError` containing a `TimeoutException`.
+
+```scala
+val layer = FeatureFlags.fromProvider(provider, evaluationTimeout = 500.millis)
+```
+
+When the timeout fires, the calling fiber receives the error immediately. The underlying provider thread completes naturally in the background (it is not interrupted, avoiding potential corruption of provider internal state).
+
+**Per-call timeout override:**
+
+You can also set a timeout on individual evaluations via `EvaluationOptions`, which overrides the global default:
+
+```scala
+// This evaluation times out after 100ms, regardless of the global setting
+val result = ff.booleanDetails(
+  "flag",
+  default = false,
+  options = EvaluationOptions.empty.withTimeout(100.millis)
+)
+```
+
+| Setting | Scope | Default |
+|:--------|:------|:--------|
+| `fromProvider(provider, evaluationTimeout)` | All evaluations on this instance | `None` (no timeout) |
+| `EvaluationOptions.empty.withTimeout(duration)` | Single evaluation call | `None` (uses global) |
+
+Per-call timeout takes precedence over global. If neither is set, no timeout is applied (backward compatible).
+
 ### fromProviderWithDomain
 
 Create with a named domain. Each domain gets its own client, useful for segmenting feature flag configuration:

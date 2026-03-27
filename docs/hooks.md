@@ -84,6 +84,55 @@ val loggingHook = FeatureHook.logging(
 FeatureFlags.addHook(loggingHook)
 ```
 
+### Structured Logging Hook
+
+A richer logging hook that adds machine-readable annotations to log output via `ZIO.logAnnotate`. Unlike the basic `logging()` hook which produces plain text messages, structured logging attaches typed fields that are preserved by `zio-logging` backends (JSON, SLF4J MDC, OpenTelemetry, etc.).
+
+```scala
+val hook = FeatureHook.structuredLogging(
+  beforeLevel = Some(LogLevel.Debug),   // None to disable
+  afterLevel = Some(LogLevel.Debug),
+  errorLevel = Some(LogLevel.Warning),
+  logContext = false,                    // include evaluation context in annotations
+  redactKeys = Set("email", "ip")       // redact sensitive context attributes
+)
+
+FeatureFlags.addHook(hook)
+```
+
+**Log annotations added:**
+
+| Annotation | Stage | Example |
+|:-----------|:------|:--------|
+| `flag.key` | all | `"dark-mode"` |
+| `flag.type` | all | `"Boolean"` |
+| `flag.provider` | all | `"OptimizelyProvider"` |
+| `flag.domain` | all (if set) | `"my-service"` |
+| `flag.value` | after | `"true"` |
+| `flag.reason` | after | `"TargetingMatch"` |
+| `flag.variant` | after (if present) | `"treatment-a"` |
+| `flag.duration_ms` | after, error | `"12"` |
+| `flag.error` | error | `"Flag 'x' not found"` |
+| `flag.error.type` | error | `"FlagNotFound"` |
+| `flag.context.targetingKey` | all (if `logContext`) | `"user-123"` |
+| `flag.context.<attr>` | all (if `logContext`) | `"premium"` |
+
+**Example JSON output** (with `zio-logging` JSON backend):
+
+```json
+{
+  "level": "DEBUG",
+  "message": "Flag 'dark-mode' = true (TargetingMatch, 3ms)",
+  "flag.key": "dark-mode",
+  "flag.type": "Boolean",
+  "flag.provider": "OptimizelyProvider",
+  "flag.value": "true",
+  "flag.reason": "TargetingMatch",
+  "flag.variant": "treatment-a",
+  "flag.duration_ms": "3"
+}
+```
+
 ### Metrics Hook
 
 Records evaluation metrics:

@@ -191,6 +191,118 @@ object FeatureHook {
         .unit
   }
 
+  /** A structured logging hook that adds machine-readable annotations to log output.
+    *
+    * Unlike `logging()` which produces plain text messages, this hook uses `ZIO.logAnnotate` to attach structured
+    * fields (flag key, type, provider, reason, variant, duration) that are preserved by `zio-logging` backends (JSON,
+    * SLF4J MDC, etc.). This enables filtering and querying flag evaluations in log aggregation systems.
+    *
+    * @param beforeLevel
+    *   Log level for pre-evaluation messages. `None` disables before logging.
+    * @param afterLevel
+    *   Log level for successful evaluation messages.
+    * @param errorLevel
+    *   Log level for evaluation error messages.
+    * @param logContext
+    *   Whether to include the evaluation context (targeting key + attributes) in log annotations.
+    * @param redactKeys
+    *   Attribute keys to redact from logged context (e.g., `Set("email", "ip")`). Values are replaced with
+    *   `"[REDACTED]"`. Only applies when `logContext` is true.
+    */
+  def structuredLogging(
+    beforeLevel: Option[LogLevel] = Some(LogLevel.Debug),
+    afterLevel: Option[LogLevel] = Some(LogLevel.Debug),
+    errorLevel: Option[LogLevel] = Some(LogLevel.Warning),
+    logContext: Boolean = false,
+    redactKeys: Set[String] = Set.empty
+  ): FeatureHook = new FeatureHook {
+    private val startTimeKey = TypedKey[Long]("structuredLogging.startTime")
+
+    private def annotate(annotations: Set[zio.LogAnnotation])(effect: UIO[Unit]): UIO[Unit] =
+      ZIO.logAnnotate(annotations)(effect)
+
+    private def baseAnnotations(ctx: HookContext): Set[zio.LogAnnotation] =
+      Set(
+        zio.LogAnnotation("flag.key", ctx.flagKey),
+        zio.LogAnnotation("flag.type", ctx.flagType.name),
+        zio.LogAnnotation("flag.provider", ctx.providerMetadata.name)
+      ) ++ ctx.clientMetadata.domain.map(d => zio.LogAnnotation("flag.domain", d)).toSet
+
+    private def contextAnnotations(ctx: HookContext): Set[zio.LogAnnotation] =
+      if (!logContext) Set.empty
+      else {
+        val targeting = ctx.evaluationContext.targetingKey
+          .map(k => zio.LogAnnotation("flag.context.targetingKey", k))
+          .toSet
+        val attrs = ctx.evaluationContext.attributes.map { case (key, value) =>
+          val v = if (redactKeys.contains(key)) "[REDACTED]" else value.toString
+          zio.LogAnnotation(s"flag.context.$key", v)
+        }.toSet
+        targeting ++ attrs
+      }
+
+    private def logAtLevel(level: LogLevel, message: String): UIO[Unit] =
+      level match {
+        case LogLevel.Trace   => ZIO.logTrace(message)
+        case LogLevel.Debug   => ZIO.logDebug(message)
+        case LogLevel.Info    => ZIO.logInfo(message)
+        case LogLevel.Warning => ZIO.logWarning(message)
+        case LogLevel.Error   => ZIO.logError(message)
+        case _                => ZIO.logInfo(message)
+      }
+
+    override def before(ctx: HookContext, hints: HookHints): UIO[Option[(EvaluationContext, HookHints)]] =
+      beforeLevel match {
+        case Some(level) =>
+          for {
+            now <- Clock.nanoTime
+            _ <- annotate(baseAnnotations(ctx) ++ contextAnnotations(ctx))(
+              logAtLevel(level, s"Evaluating flag '${ctx.flagKey}'")
+            )
+          } yield Some((ctx.evaluationContext, hints.add(startTimeKey, now)))
+        case None =>
+          Clock.nanoTime.map(now => Some((ctx.evaluationContext, hints.add(startTimeKey, now))))
+      }
+
+    override def after[A](ctx: HookContext, details: FlagResolution[A], hints: HookHints): UIO[Unit] =
+      afterLevel match {
+        case Some(level) =>
+          for {
+            end <- Clock.nanoTime
+            start    = hints.getOrElse(startTimeKey, end)
+            duration = Duration.fromNanos(end - start)
+            annotations = baseAnnotations(ctx) ++ Set(
+              zio.LogAnnotation("flag.value", String.valueOf(details.value)),
+              zio.LogAnnotation("flag.reason", details.reason.toString),
+              zio.LogAnnotation("flag.duration_ms", duration.toMillis.toString)
+            ) ++ details.variant.map(v => zio.LogAnnotation("flag.variant", v)).toSet
+            _ <- annotate(annotations)(
+              logAtLevel(level, s"Flag '${ctx.flagKey}' = ${details.value} (${details.reason}, ${duration.toMillis}ms)")
+            )
+          } yield ()
+        case None => ZIO.unit
+      }
+
+    override def error(ctx: HookContext, err: FeatureFlagError, hints: HookHints): UIO[Unit] =
+      errorLevel match {
+        case Some(level) =>
+          for {
+            end <- Clock.nanoTime
+            start    = hints.getOrElse(startTimeKey, end)
+            duration = Duration.fromNanos(end - start)
+            annotations = baseAnnotations(ctx) ++ Set(
+              zio.LogAnnotation("flag.error", err.message),
+              zio.LogAnnotation("flag.error.type", err.getClass.getSimpleName),
+              zio.LogAnnotation("flag.duration_ms", duration.toMillis.toString)
+            )
+            _ <- annotate(annotations)(
+              logAtLevel(level, s"Flag '${ctx.flagKey}' evaluation failed: ${err.message}")
+            )
+          } yield ()
+        case None => ZIO.unit
+      }
+  }
+
   def metrics(onEvaluation: (String, Duration, Boolean) => UIO[Unit]): FeatureHook =
     new FeatureHook {
       private val startTimeKey = TypedKey[Long]("metrics.startTime")

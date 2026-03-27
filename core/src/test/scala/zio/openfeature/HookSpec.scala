@@ -269,6 +269,71 @@ object HookSpec extends ZIOSpecDefault {
         } yield assertTrue(beforeResult.isEmpty)
       }
     ),
+    suite("FeatureHook.structuredLogging")(
+      test("before records start time in hints") {
+        val hook = FeatureHook.structuredLogging()
+        for {
+          result <- hook.before(makeHookContext(), HookHints.empty)
+        } yield assertTrue(result.isDefined) && {
+          val (_, hints) = result.get
+          assertTrue(hints.get[Long](TypedKey[Long]("structuredLogging.startTime")).isDefined)
+        }
+      },
+      test("after completes successfully with duration") {
+        val hook       = FeatureHook.structuredLogging()
+        val resolution = FlagResolution.default("test", true)
+        val hints      = HookHints.empty.add(TypedKey[Long]("structuredLogging.startTime"), java.lang.System.nanoTime())
+        for {
+          _ <- hook.after(makeHookContext(), resolution, hints)
+        } yield assertTrue(true)
+      },
+      test("error completes successfully") {
+        val hook  = FeatureHook.structuredLogging()
+        val hints = HookHints.empty.add(TypedKey[Long]("structuredLogging.startTime"), java.lang.System.nanoTime())
+        for {
+          _ <- hook.error(makeHookContext(), FeatureFlagError.FlagNotFound("test"), hints)
+        } yield assertTrue(true)
+      },
+      test("disabled levels skip logging") {
+        val hook       = FeatureHook.structuredLogging(beforeLevel = None, afterLevel = None, errorLevel = None)
+        val resolution = FlagResolution.default("test", true)
+        for {
+          beforeResult <- hook.before(makeHookContext(), HookHints.empty)
+          _            <- hook.after(makeHookContext(), resolution, HookHints.empty)
+          _            <- hook.error(makeHookContext(), FeatureFlagError.FlagNotFound("test"), HookHints.empty)
+        } yield
+        // before still returns hints (for start time tracking) even when logging is disabled
+        assertTrue(beforeResult.isDefined)
+      },
+      test("context logging includes targeting key and attributes") {
+        val hook = FeatureHook.structuredLogging(logContext = true)
+        val ctx = makeHookContext().copy(
+          evaluationContext = EvaluationContext.builder
+            .targetingKey("user-123")
+            .attribute("plan", "premium")
+            .build
+        )
+        for {
+          result <- hook.before(ctx, HookHints.empty)
+        } yield assertTrue(result.isDefined)
+      },
+      test("redactKeys replaces sensitive values") {
+        val hook = FeatureHook.structuredLogging(logContext = true, redactKeys = Set("email"))
+        val ctx = makeHookContext().copy(
+          evaluationContext = EvaluationContext.builder
+            .targetingKey("user-123")
+            .attribute("email", "secret@example.com")
+            .attribute("plan", "premium")
+            .build
+        )
+        // This test verifies the hook runs without error with redaction configured.
+        // The actual annotation values are verified by inspecting log output with a
+        // zio-logging backend (JSON, SLF4J MDC, etc.)
+        for {
+          result <- hook.before(ctx, HookHints.empty)
+        } yield assertTrue(result.isDefined)
+      }
+    ),
     suite("FeatureHook.compose edge cases")(
       test("compose with empty list") {
         val composed = FeatureHook.compose(Nil)

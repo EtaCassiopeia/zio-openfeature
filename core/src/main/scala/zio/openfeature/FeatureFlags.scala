@@ -398,7 +398,8 @@ object FeatureFlags {
     initialHooks: List[FeatureHook],
     statusRef: Option[Ref[ProviderStatus]],
     addShutdownFinalizer: Boolean,
-    apiOverride: Option[OpenFeatureAPI] = None
+    apiOverride: Option[OpenFeatureAPI] = None,
+    evaluationTimeout: Option[Duration] = None
   ): ZIO[Scope, Throwable, FeatureFlagsLive] =
     for {
       api <- ZIO.succeed(apiOverride.getOrElse(OpenFeatureAPI.getInstance()))
@@ -417,7 +418,16 @@ object FeatureFlags {
       _ <- state.hooksRef.set(initialHooks)
       _ <- statusRef.fold(state.statusRef.set(ProviderStatus.Ready))(_ => ZIO.unit)
       _ <- ZIO.when(addShutdownFinalizer)(ZIO.addFinalizer(ZIO.attemptBlocking(api.shutdown()).ignore))
-      ff = new FeatureFlagsLive(client, provider, providerName, domain, version, state, api)
+      ff = new FeatureFlagsLive(
+        client,
+        provider,
+        providerName,
+        domain,
+        version,
+        state,
+        api,
+        evaluationTimeout = evaluationTimeout
+      )
       _ <- ff.startEventBridge
     } yield ff
 
@@ -425,6 +435,25 @@ object FeatureFlags {
   def fromProvider(provider: OFFeatureProvider): ZLayer[Scope, Throwable, FeatureFlags] =
     ZLayer.scoped(
       build(provider, domain = None, version = None, initialHooks = Nil, statusRef = None, addShutdownFinalizer = true)
+    )
+
+  /** Create a FeatureFlags layer with a global evaluation timeout.
+    *
+    * If a provider evaluation takes longer than `evaluationTimeout`, it fails with `ProviderError` containing a
+    * `TimeoutException`. This prevents hung providers from blocking fibers indefinitely. Per-call timeouts set via
+    * `EvaluationOptions.timeout` override this global default.
+    */
+  def fromProvider(provider: OFFeatureProvider, evaluationTimeout: Duration): ZLayer[Scope, Throwable, FeatureFlags] =
+    ZLayer.scoped(
+      build(
+        provider,
+        domain = None,
+        version = None,
+        initialHooks = Nil,
+        statusRef = None,
+        addShutdownFinalizer = true,
+        evaluationTimeout = Some(evaluationTimeout)
+      )
     )
 
   /** Create a FeatureFlags layer with a named domain/client. */
@@ -524,7 +553,8 @@ object FeatureFlags {
     statusRef: Option[Ref[ProviderStatus]],
     addShutdownFinalizer: Boolean,
     apiOverride: Option[OpenFeatureAPI] = None,
-    onReady: Option[java.util.concurrent.CountDownLatch] = None
+    onReady: Option[java.util.concurrent.CountDownLatch] = None,
+    evaluationTimeout: Option[Duration] = None
   ): ZIO[Scope, Throwable, FeatureFlagsLive] =
     for {
       api <- ZIO.succeed(apiOverride.getOrElse(OpenFeatureAPI.getInstance()))
@@ -543,7 +573,7 @@ object FeatureFlags {
       state = statusRef.fold(baseState)(ref => baseState.copy(statusRef = ref))
       _ <- state.hooksRef.set(initialHooks)
       _ <- ZIO.when(addShutdownFinalizer)(ZIO.addFinalizer(ZIO.attemptBlocking(api.shutdown()).ignore))
-      ff = new FeatureFlagsLive(client, provider, providerName, domain, version, state, api, onReady)
+      ff = new FeatureFlagsLive(client, provider, providerName, domain, version, state, api, onReady, evaluationTimeout)
       // Start event bridge — if provider is already ready, replay fires immediately
       _ <- ff.startEventBridge
     } yield ff
@@ -562,6 +592,28 @@ object FeatureFlags {
         initialHooks = Nil,
         statusRef = None,
         addShutdownFinalizer = true
+      )
+    )
+
+  /** Create a FeatureFlags layer with a global evaluation timeout (non-blocking).
+    *
+    * Combines async initialization with evaluation timeout protection. The provider initializes in the background;
+    * evaluations fail with `ProviderNotReady` until ready. Once ready, evaluations that exceed `evaluationTimeout` fail
+    * with `ProviderError` containing a `TimeoutException`.
+    */
+  def fromProviderAsync(
+    provider: OFFeatureProvider,
+    evaluationTimeout: Duration
+  ): ZLayer[Scope, Throwable, FeatureFlags] =
+    ZLayer.scoped(
+      buildAsync(
+        provider,
+        domain = None,
+        version = None,
+        initialHooks = Nil,
+        statusRef = None,
+        addShutdownFinalizer = true,
+        evaluationTimeout = Some(evaluationTimeout)
       )
     )
 

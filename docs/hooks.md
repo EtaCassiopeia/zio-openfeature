@@ -117,6 +117,27 @@ FeatureFlags.addHook(hook)
 | `flag.context.targetingKey` | all (if `logContext`) | `"user-123"` |
 | `flag.context.<attr>` | all (if `logContext`) | `"premium"` |
 
+**Context logging and redaction:**
+
+When `logContext = true`, the hook includes the evaluation context (targeting key + attributes) in log annotations. The `redactKeys` parameter specifies which attribute keys should have their values replaced with `"[REDACTED]"` — the key is still logged so you know the attribute was present, but the value is hidden.
+
+```scala
+val hook = FeatureHook.structuredLogging(
+  logContext = true,
+  redactKeys = Set("email", "ssn")
+)
+
+// With context: targetingKey="user-123", email="john@example.com", plan="premium"
+// Produces annotations:
+//   flag.context.targetingKey = "user-123"     ← not redacted
+//   flag.context.email        = "[REDACTED]"   ← value hidden
+//   flag.context.plan         = "premium"      ← not redacted
+```
+
+When `logContext = false` (default), no context attributes are logged and `redactKeys` has no effect.
+
+Note: `redactKeys` only applies to context attributes, not to the targeting key. The targeting key is always logged as-is when `logContext` is enabled.
+
 **Example JSON output** (with `zio-logging` JSON backend):
 
 ```json

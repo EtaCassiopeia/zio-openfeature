@@ -26,7 +26,8 @@ final private[openfeature] class FeatureFlagsLive(
   version: Option[String],
   state: FeatureFlagsState,
   api: OpenFeatureAPI,
-  onReady: Option[java.util.concurrent.CountDownLatch] = None
+  onReady: Option[java.util.concurrent.CountDownLatch] = None,
+  evaluationTimeout: Option[Duration] = None
 ) extends FeatureFlags {
 
   // Bridge Java SDK provider events to ZIO event system
@@ -193,14 +194,15 @@ final private[openfeature] class FeatureFlagsLive(
   private def evaluateFlag[A: FlagType](
     key: String,
     default: A,
-    context: EvaluationContext
+    context: EvaluationContext,
+    timeout: Option[Duration] = None
   ): IO[FeatureFlagError, FlagResolution[A]] =
     for {
       _       <- checkProviderStatus
       txState <- state.transactionRef.get
       result <- txState match {
-        case Some(ts) => evaluateWithTransaction(key, default, context, ts)
-        case None     => evaluateFromClient(key, default, context)
+        case Some(ts) => evaluateWithTransaction(key, default, context, ts, timeout)
+        case None     => evaluateFromClient(key, default, context, timeout)
       }
     } yield result
 
@@ -208,7 +210,8 @@ final private[openfeature] class FeatureFlagsLive(
     key: String,
     default: A,
     context: EvaluationContext,
-    txState: TransactionState
+    txState: TransactionState,
+    timeout: Option[Duration] = None
   ): IO[FeatureFlagError, FlagResolution[A]] =
     // First check for explicit overrides
     txState.getOverride(key) match {
@@ -240,10 +243,10 @@ final private[openfeature] class FeatureFlagsLive(
                 ZIO.succeed(FlagResolution.cached(key, decoded))
               case Left(_) =>
                 // Type mismatch with cached value - re-evaluate from client
-                evaluateAndCache(key, default, context, txState)
+                evaluateAndCache(key, default, context, txState, timeout)
             }
           case None =>
-            evaluateAndCache(key, default, context, txState)
+            evaluateAndCache(key, default, context, txState, timeout)
         }
     }
 
@@ -251,10 +254,11 @@ final private[openfeature] class FeatureFlagsLive(
     key: String,
     default: A,
     context: EvaluationContext,
-    txState: TransactionState
+    txState: TransactionState,
+    timeout: Option[Duration] = None
   ): IO[FeatureFlagError, FlagResolution[A]] =
     for {
-      resolution <- evaluateFromClient(key, default, context)
+      resolution <- evaluateFromClient(key, default, context, timeout)
       eval       <- zio.openfeature.FlagEvaluation.evaluated(key, resolution)
       _          <- txState.record(eval)
     } yield resolution
@@ -263,50 +267,68 @@ final private[openfeature] class FeatureFlagsLive(
   private def evaluateViaTypeclass[A](
     key: String,
     default: A,
-    ofContext: dev.openfeature.sdk.EvaluationContext
-  )(implicit ev: ClientEvaluator[A]): IO[FeatureFlagError, FlagResolution[A]] =
-    ev.evaluate(client, key, default, ofContext)
+    ofContext: dev.openfeature.sdk.EvaluationContext,
+    timeout: Option[Duration] = None
+  )(implicit ev: ClientEvaluator[A]): IO[FeatureFlagError, FlagResolution[A]] = {
+    val rawEval = ev.evaluate(client, key, default, ofContext)
+    val timedEval = timeout match {
+      case Some(d) =>
+        rawEval.disconnect
+          .timeoutFail(new java.util.concurrent.TimeoutException(s"Evaluation of '$key' timed out after $d"))(d)
+      case None => rawEval
+    }
+    timedEval
       .mapError(e => FeatureFlagError.ProviderError(e))
       .flatMap { details =>
         toFlagResolution(key, details).map(_.copy(value = ev.extractValue(details)))
       }
+  }
 
   private def evaluateFromClient[A: FlagType](
     key: String,
     default: A,
-    context: EvaluationContext
+    context: EvaluationContext,
+    timeout: Option[Duration] = None
   ): IO[FeatureFlagError, FlagResolution[A]] = {
     val flagType  = FlagType[A]
     val ofContext = ContextConverter.toOpenFeature(context)
 
+    def withTimeout[B](effect: Task[B]): Task[B] =
+      timeout match {
+        case Some(d) =>
+          effect.disconnect
+            .timeoutFail(new java.util.concurrent.TimeoutException(s"Evaluation of '$key' timed out after $d"))(d)
+        case None => effect
+      }
+
     val evaluation: IO[FeatureFlagError, FlagResolution[A]] = flagType.typeName match {
       case "Boolean" =>
-        evaluateViaTypeclass(key, default.asInstanceOf[Boolean], ofContext)
+        evaluateViaTypeclass(key, default.asInstanceOf[Boolean], ofContext, timeout)
           .map(_.asInstanceOf[FlagResolution[A]])
 
       case "String" =>
-        evaluateViaTypeclass(key, default.asInstanceOf[String], ofContext)
+        evaluateViaTypeclass(key, default.asInstanceOf[String], ofContext, timeout)
           .map(_.asInstanceOf[FlagResolution[A]])
 
       case "Int" =>
-        evaluateViaTypeclass(key, default.asInstanceOf[Int], ofContext)
+        evaluateViaTypeclass(key, default.asInstanceOf[Int], ofContext, timeout)
           .map(_.asInstanceOf[FlagResolution[A]])
 
       case "Long" =>
-        evaluateViaTypeclass(key, default.asInstanceOf[Long], ofContext)
+        evaluateViaTypeclass(key, default.asInstanceOf[Long], ofContext, timeout)
           .map(_.asInstanceOf[FlagResolution[A]])
 
       case "Float" =>
-        evaluateViaTypeclass(key, default.asInstanceOf[Float], ofContext)
+        evaluateViaTypeclass(key, default.asInstanceOf[Float], ofContext, timeout)
           .map(_.asInstanceOf[FlagResolution[A]])
 
       case "Double" =>
-        evaluateViaTypeclass(key, default.asInstanceOf[Double], ofContext)
+        evaluateViaTypeclass(key, default.asInstanceOf[Double], ofContext, timeout)
           .map(_.asInstanceOf[FlagResolution[A]])
 
       case "Object" =>
-        ZIO
-          .attemptBlocking {
+        withTimeout(
+          ZIO.attemptBlocking {
             val defaultValue = new dev.openfeature.sdk.Value(
               dev.openfeature.sdk.Structure.mapToStructure(
                 default.asInstanceOf[Map[String, Any]].map { case (k, v) => k -> anyToObject(v) }.asJava
@@ -314,7 +336,7 @@ final private[openfeature] class FeatureFlagsLive(
             )
             client.getObjectDetails(key, defaultValue, ofContext)
           }
-          .mapError(e => FeatureFlagError.ProviderError(e))
+        ).mapError(e => FeatureFlagError.ProviderError(e))
           .flatMap { details =>
             val value = valueToMap(details.getValue)
             toFlagMetadata(details.getFlagMetadata).map { metadata =>
@@ -332,11 +354,11 @@ final private[openfeature] class FeatureFlagsLive(
 
       case _ =>
         // Custom type - try to decode from object
-        ZIO
-          .attemptBlocking {
+        withTimeout(
+          ZIO.attemptBlocking {
             client.getObjectDetails(key, new dev.openfeature.sdk.Value(), ofContext)
           }
-          .mapError(e => FeatureFlagError.ProviderError(e))
+        ).mapError(e => FeatureFlagError.ProviderError(e))
           .flatMap { details =>
             valueToAny(details.getValue) match {
               case Some(rawValue) =>
@@ -526,10 +548,20 @@ final private[openfeature] class FeatureFlagsLive(
     default: A,
     ctx: EvaluationContext,
     options: EvaluationOptions
-  ): IO[FeatureFlagError, FlagResolution[A]] =
+  ): IO[FeatureFlagError, FlagResolution[A]] = {
+    // Per-call timeout overrides global; None means no timeout (backward compatible)
+    val timeout = options.timeout.orElse(evaluationTimeout)
     effectiveContext(ctx).flatMap { effectCtx =>
-      runWithHooks(key, default, effectCtx, c => evaluateFlag(key, default, c), options.hooks, options.hookHints)
+      runWithHooks(
+        key,
+        default,
+        effectCtx,
+        c => evaluateFlag(key, default, c, timeout),
+        options.hooks,
+        options.hookHints
+      )
     }
+  }
 
   override def setGlobalContext(ctx: EvaluationContext): UIO[Unit] =
     state.globalContextRef.set(ctx)

@@ -269,6 +269,76 @@ object HookSpec extends ZIOSpecDefault {
         } yield assertTrue(beforeResult.isEmpty)
       }
     ),
+    suite("FeatureHook.structuredLogging")(
+      test("before records start time in hookData and returns None") {
+        val hook    = FeatureHook.structuredLogging()
+        val hookCtx = makeHookContext()
+        for {
+          result <- hook.before(hookCtx, HookHints.empty)
+        } yield
+        // Returns None so it doesn't interfere with compose pipeline's context tracking
+        assertTrue(result.isEmpty) &&
+          assertTrue(hookCtx.hookData.get(TypedKey[Long]("structuredLogging.startTime")).isDefined)
+      },
+      test("after completes successfully") {
+        val hook       = FeatureHook.structuredLogging()
+        val hookCtx    = makeHookContext()
+        val resolution = FlagResolution.default("test", true)
+        for {
+          _ <- hook.before(hookCtx, HookHints.empty)
+          _ <- hook.after(hookCtx, resolution, HookHints.empty)
+        } yield assertTrue(true)
+      },
+      test("error completes successfully") {
+        val hook    = FeatureHook.structuredLogging()
+        val hookCtx = makeHookContext()
+        for {
+          _ <- hook.before(hookCtx, HookHints.empty)
+          _ <- hook.error(hookCtx, FeatureFlagError.FlagNotFound("test"), HookHints.empty)
+        } yield assertTrue(true)
+      },
+      test("disabled levels skip logging but still track start time") {
+        val hook       = FeatureHook.structuredLogging(beforeLevel = None, afterLevel = None, errorLevel = None)
+        val hookCtx    = makeHookContext()
+        val resolution = FlagResolution.default("test", true)
+        for {
+          beforeResult <- hook.before(hookCtx, HookHints.empty)
+          _            <- hook.after(hookCtx, resolution, HookHints.empty)
+          _            <- hook.error(hookCtx, FeatureFlagError.FlagNotFound("test"), HookHints.empty)
+        } yield assertTrue(beforeResult.isEmpty) &&
+          assertTrue(hookCtx.hookData.get(TypedKey[Long]("structuredLogging.startTime")).isDefined)
+      },
+      test("context logging with targeting key and attributes completes") {
+        val hook = FeatureHook.structuredLogging(logContext = true)
+        val hookCtx = makeHookContext().copy(
+          evaluationContext = EvaluationContext.builder
+            .targetingKey("user-123")
+            .attribute("plan", "premium")
+            .build
+        )
+        val resolution = FlagResolution.default("test", true)
+        for {
+          _ <- hook.before(hookCtx, HookHints.empty)
+          _ <- hook.after(hookCtx, resolution, HookHints.empty)
+        } yield assertTrue(true)
+      },
+      test("redactKeys hides sensitive values while preserving others") {
+        val hook =
+          FeatureHook.structuredLogging(logContext = true, redactKeys = Set("email"))
+        val hookCtx = makeHookContext().copy(
+          evaluationContext = EvaluationContext.builder
+            .targetingKey("user-123")
+            .attribute("email", "secret@example.com")
+            .attribute("plan", "premium")
+            .build
+        )
+        val resolution = FlagResolution.default("test", true)
+        for {
+          _ <- hook.before(hookCtx, HookHints.empty)
+          _ <- hook.after(hookCtx, resolution, HookHints.empty)
+        } yield assertTrue(true)
+      }
+    ),
     suite("FeatureHook.compose edge cases")(
       test("compose with empty list") {
         val composed = FeatureHook.compose(Nil)

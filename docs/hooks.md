@@ -84,6 +84,76 @@ val loggingHook = FeatureHook.logging(
 FeatureFlags.addHook(loggingHook)
 ```
 
+### Structured Logging Hook
+
+A richer logging hook that adds machine-readable annotations to log output via `ZIO.logAnnotate`. Unlike the basic `logging()` hook which produces plain text messages, structured logging attaches typed fields that are preserved by `zio-logging` backends (JSON, SLF4J MDC, OpenTelemetry, etc.).
+
+```scala
+val hook = FeatureHook.structuredLogging(
+  beforeLevel = Some(LogLevel.Debug),   // None to disable
+  afterLevel = Some(LogLevel.Debug),
+  errorLevel = Some(LogLevel.Warning),
+  logContext = false,                    // include evaluation context in annotations
+  redactKeys = Set("email", "ip")       // redact sensitive context attributes
+)
+
+FeatureFlags.addHook(hook)
+```
+
+**Log annotations added:**
+
+| Annotation | Stage | Example |
+|:-----------|:------|:--------|
+| `flag.key` | all | `"dark-mode"` |
+| `flag.type` | all | `"Boolean"` |
+| `flag.provider` | all | `"OptimizelyProvider"` |
+| `flag.domain` | all (if set) | `"my-service"` |
+| `flag.value` | after | `"true"` |
+| `flag.reason` | after | `"TargetingMatch"` |
+| `flag.variant` | after (if present) | `"treatment-a"` |
+| `flag.duration_ms` | after, error | `"12"` |
+| `flag.error` | error | `"Flag 'x' not found"` |
+| `flag.error.type` | error | `"FlagNotFound"` |
+| `flag.context.targetingKey` | before, after, error (if `logContext`) | `"user-123"` |
+| `flag.context.<attr>` | before, after, error (if `logContext`) | `"premium"` |
+
+**Context logging and redaction:**
+
+When `logContext = true`, the hook includes the evaluation context (targeting key + attributes) in log annotations. The `redactKeys` parameter specifies which attribute keys should have their values replaced with `"[REDACTED]"` — the key is still logged so you know the attribute was present, but the value is hidden.
+
+```scala
+val hook = FeatureHook.structuredLogging(
+  logContext = true,
+  redactKeys = Set("email", "ssn")
+)
+
+// With context: targetingKey="user-123", email="john@example.com", plan="premium"
+// Produces annotations:
+//   flag.context.targetingKey = "user-123"     ← not redacted
+//   flag.context.email        = "[REDACTED]"   ← value hidden
+//   flag.context.plan         = "premium"      ← not redacted
+```
+
+When `logContext = false` (default), no context attributes are logged and `redactKeys` has no effect.
+
+Note: `redactKeys` only applies to context attributes, not to the targeting key. The targeting key is always logged as-is when `logContext` is enabled.
+
+**Example JSON output** (with `zio-logging` JSON backend):
+
+```json
+{
+  "level": "DEBUG",
+  "message": "Flag 'dark-mode' = true (TargetingMatch, 3ms)",
+  "flag.key": "dark-mode",
+  "flag.type": "Boolean",
+  "flag.provider": "OptimizelyProvider",
+  "flag.value": "true",
+  "flag.reason": "TargetingMatch",
+  "flag.variant": "treatment-a",
+  "flag.duration_ms": "3"
+}
+```
+
 ### Metrics Hook
 
 Records evaluation metrics:

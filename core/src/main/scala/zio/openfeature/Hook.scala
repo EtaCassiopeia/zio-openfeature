@@ -191,6 +191,131 @@ object FeatureHook {
         .unit
   }
 
+  /** A structured logging hook that adds machine-readable annotations to log output.
+    *
+    * Unlike `logging()` which produces plain text messages, this hook uses `ZIO.logAnnotate` to attach structured
+    * fields (flag key, type, provider, reason, variant, duration) that are preserved by `zio-logging` backends (JSON,
+    * SLF4J MDC, etc.). This enables filtering and querying flag evaluations in log aggregation systems.
+    *
+    * @param beforeLevel
+    *   Log level for pre-evaluation messages. `None` disables before logging.
+    * @param afterLevel
+    *   Log level for successful evaluation messages.
+    * @param errorLevel
+    *   Log level for evaluation error messages.
+    * @param logContext
+    *   Whether to include the evaluation context (targeting key + attributes) in log annotations.
+    * @param redactKeys
+    *   Attribute keys to redact from logged context (e.g., `Set("email", "ip")`). Values are replaced with
+    *   `"[REDACTED]"`. Only applies when `logContext` is true.
+    */
+  def structuredLogging(
+    beforeLevel: Option[LogLevel] = Some(LogLevel.Debug),
+    afterLevel: Option[LogLevel] = Some(LogLevel.Debug),
+    errorLevel: Option[LogLevel] = Some(LogLevel.Warning),
+    logContext: Boolean = false,
+    redactKeys: Set[String] = Set.empty
+  ): FeatureHook = new FeatureHook {
+    private val startTimeKey = TypedKey[Long]("structuredLogging.startTime")
+
+    private def annotate(annotations: Set[zio.LogAnnotation])(effect: UIO[Unit]): UIO[Unit] =
+      ZIO.logAnnotate(annotations)(effect)
+
+    private def baseAnnotations(ctx: HookContext): Set[zio.LogAnnotation] =
+      Set(
+        zio.LogAnnotation("flag.key", ctx.flagKey),
+        zio.LogAnnotation("flag.type", ctx.flagType.name),
+        zio.LogAnnotation("flag.provider", ctx.providerMetadata.name)
+      ) ++ ctx.clientMetadata.domain.map(d => zio.LogAnnotation("flag.domain", d)).toSet
+
+    private def contextAnnotations(ctx: HookContext): Set[zio.LogAnnotation] =
+      if (!logContext) Set.empty
+      else {
+        val targeting = ctx.evaluationContext.targetingKey
+          .map(k => zio.LogAnnotation("flag.context.targetingKey", k))
+          .toSet
+        val attrs = ctx.evaluationContext.attributes.map { case (key, value) =>
+          val v = if (redactKeys.contains(key)) "[REDACTED]" else renderAttributeValue(value)
+          zio.LogAnnotation(s"flag.context.$key", v)
+        }.toSet
+        targeting ++ attrs
+      }
+
+    private def renderAttributeValue(attr: AttributeValue): String = attr match {
+      case AttributeValue.BoolValue(v)    => v.toString
+      case AttributeValue.StringValue(v)  => v
+      case AttributeValue.IntValue(v)     => v.toString
+      case AttributeValue.LongValue(v)    => v.toString
+      case AttributeValue.DoubleValue(v)  => v.toString
+      case AttributeValue.InstantValue(v) => v.toString
+      case AttributeValue.ListValue(vs)   => vs.map(renderAttributeValue).mkString("[", ", ", "]")
+      case AttributeValue.StructValue(m) =>
+        m.map { case (k, v) => s"$k=${renderAttributeValue(v)}" }.mkString("{", ", ", "}")
+    }
+
+    private def logAtLevel(level: LogLevel, message: String): UIO[Unit] =
+      level match {
+        case LogLevel.Trace   => ZIO.logTrace(message)
+        case LogLevel.Debug   => ZIO.logDebug(message)
+        case LogLevel.Info    => ZIO.logInfo(message)
+        case LogLevel.Warning => ZIO.logWarning(message)
+        case LogLevel.Error   => ZIO.logError(message)
+        case _                => ZIO.logInfo(message)
+      }
+
+    // Uses HookData (per-hook mutable state) for start time instead of HookHints,
+    // so that `before` can return None and avoid corrupting the compose pipeline's
+    // context-modified tracking.
+    override def before(ctx: HookContext, hints: HookHints): UIO[Option[(EvaluationContext, HookHints)]] =
+      for {
+        now <- Clock.nanoTime
+        _ = ctx.hookData.set(startTimeKey, now)
+        _ <- beforeLevel match {
+          case Some(level) =>
+            annotate(baseAnnotations(ctx) ++ contextAnnotations(ctx))(
+              logAtLevel(level, s"Evaluating flag '${ctx.flagKey}'")
+            )
+          case None => ZIO.unit
+        }
+      } yield None
+
+    private def elapsed(ctx: HookContext): Duration = {
+      val end   = java.lang.System.nanoTime()
+      val start = ctx.hookData.get(startTimeKey).getOrElse(end)
+      Duration.fromNanos(end - start)
+    }
+
+    override def after[A](ctx: HookContext, details: FlagResolution[A], hints: HookHints): UIO[Unit] =
+      afterLevel match {
+        case Some(level) =>
+          val duration = elapsed(ctx)
+          val annotations = baseAnnotations(ctx) ++ contextAnnotations(ctx) ++ Set(
+            zio.LogAnnotation("flag.value", String.valueOf(details.value)),
+            zio.LogAnnotation("flag.reason", details.reason.toString),
+            zio.LogAnnotation("flag.duration_ms", duration.toMillis.toString)
+          ) ++ details.variant.map(v => zio.LogAnnotation("flag.variant", v)).toSet
+          annotate(annotations)(
+            logAtLevel(level, s"Flag '${ctx.flagKey}' = ${details.value} (${details.reason}, ${duration.toMillis}ms)")
+          )
+        case None => ZIO.unit
+      }
+
+    override def error(ctx: HookContext, err: FeatureFlagError, hints: HookHints): UIO[Unit] =
+      errorLevel match {
+        case Some(level) =>
+          val duration = elapsed(ctx)
+          val annotations = baseAnnotations(ctx) ++ contextAnnotations(ctx) ++ Set(
+            zio.LogAnnotation("flag.error", err.message),
+            zio.LogAnnotation("flag.error.type", err.getClass.getSimpleName),
+            zio.LogAnnotation("flag.duration_ms", duration.toMillis.toString)
+          )
+          annotate(annotations)(
+            logAtLevel(level, s"Flag '${ctx.flagKey}' evaluation failed: ${err.message}")
+          )
+        case None => ZIO.unit
+      }
+  }
+
   def metrics(onEvaluation: (String, Duration, Boolean) => UIO[Unit]): FeatureHook =
     new FeatureHook {
       private val startTimeKey = TypedKey[Long]("metrics.startTime")

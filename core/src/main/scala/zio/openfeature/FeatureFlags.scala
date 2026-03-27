@@ -595,6 +595,28 @@ object FeatureFlags {
       )
     )
 
+  /** Create a FeatureFlags layer with a global evaluation timeout (non-blocking).
+    *
+    * Combines async initialization with evaluation timeout protection. The provider initializes in the background;
+    * evaluations fail with `ProviderNotReady` until ready. Once ready, evaluations that exceed `evaluationTimeout` fail
+    * with `ProviderError` containing a `TimeoutException`.
+    */
+  def fromProviderAsync(
+    provider: OFFeatureProvider,
+    evaluationTimeout: Duration
+  ): ZLayer[Scope, Throwable, FeatureFlags] =
+    ZLayer.scoped(
+      buildAsync(
+        provider,
+        domain = None,
+        version = None,
+        initialHooks = Nil,
+        statusRef = None,
+        addShutdownFinalizer = true,
+        evaluationTimeout = Some(evaluationTimeout)
+      )
+    )
+
   /** Create a FeatureFlags layer with a named domain (non-blocking). */
   def fromProviderWithDomainAsync(
     provider: OFFeatureProvider,

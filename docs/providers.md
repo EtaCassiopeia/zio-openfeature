@@ -319,6 +319,29 @@ val result = ff.booleanDetails(
 
 Per-call timeout takes precedence over global. If neither is set, no timeout is applied (backward compatible).
 
+### Runtime provider replacement (hot-swap)
+
+Replace the underlying provider at runtime without recreating the `FeatureFlags` instance. Hooks, context, and event handlers are preserved across the swap.
+
+```scala
+val ff: FeatureFlags = ...
+
+// Start with Optimizely
+ff.setProvider(optimizelyProvider)
+
+// Later, swap to a different provider
+ff.setProvider(launchDarklyProvider)
+```
+
+During the swap:
+1. Status transitions to `NotReady` — new evaluations fail fast with `ProviderNotReady`
+2. The old provider is shut down by the Java SDK
+3. The new provider is initialized (blocks until ready)
+4. Status transitions to `Ready` — evaluations resume with the new provider
+5. Provider metadata reflects the new provider name
+
+The swap is serialized via a semaphore — concurrent `setProvider` calls queue up safely.
+
 ### fromProviderWithDomain
 
 Create with a named domain. Each domain gets its own client, useful for segmenting feature flag configuration:

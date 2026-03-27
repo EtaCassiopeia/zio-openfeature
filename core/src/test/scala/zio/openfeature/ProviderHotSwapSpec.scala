@@ -145,6 +145,73 @@ object ProviderHotSwapSpec extends ZIOSpecDefault {
           } yield assertTrue(s1 == ProviderStatus.Ready) && assertTrue(s2 == ProviderStatus.Ready)
         }
       }
+    },
+    test("setProvider preserves global context") {
+      ZIO.scoped {
+        val providerA = new SimpleProvider("ProviderA", Map("flag" -> true))
+        val providerB = new SimpleProvider("ProviderB", Map("flag" -> false))
+        val ctx       = EvaluationContext.builder.targetingKey("global-key").build
+        FeatureFlags.fromProvider(providerA).build.flatMap { env =>
+          val ff = env.get[FeatureFlags]
+          for {
+            _       <- ff.setGlobalContext(ctx)
+            _       <- ff.setProvider(providerB)
+            readCtx <- ff.globalContext
+          } yield assertTrue(readCtx.targetingKey.contains("global-key"))
+        }
+      }
+    },
+    test("multiple swaps work correctly") {
+      ZIO.scoped {
+        val providerA = new SimpleProvider("A", Map("flag" -> "a"))
+        val providerB = new SimpleProvider("B", Map("flag" -> "b"))
+        val providerC = new SimpleProvider("C", Map("flag" -> "c"))
+        FeatureFlags.fromProvider(providerA).build.flatMap { env =>
+          val ff = env.get[FeatureFlags]
+          for {
+            v1 <- ff.string("flag", default = "")
+            _  <- ff.setProvider(providerB)
+            v2 <- ff.string("flag", default = "")
+            _  <- ff.setProvider(providerC)
+            v3 <- ff.string("flag", default = "")
+            m  <- ff.providerMetadata
+          } yield assertTrue(v1 == "a") && assertTrue(v2 == "b") && assertTrue(v3 == "c") &&
+            assertTrue(m.name == "C")
+        }
+      }
+    },
+    test("all flag types work after swap") {
+      ZIO.scoped {
+        val providerA = new SimpleProvider("A", Map("b" -> true))
+        val providerB = new SimpleProvider("B", Map("b" -> false, "s" -> "hello", "i" -> 42, "d" -> 3.14))
+        FeatureFlags.fromProvider(providerA).build.flatMap { env =>
+          val ff = env.get[FeatureFlags]
+          for {
+            _  <- ff.setProvider(providerB)
+            vb <- ff.boolean("b", default = true)
+            vs <- ff.string("s", default = "")
+            vi <- ff.int("i", default = 0)
+            vd <- ff.double("d", default = 0.0)
+          } yield assertTrue(vb == false) && assertTrue(vs == "hello") &&
+            assertTrue(vi == 42) && assertTrue(vd == 3.14)
+        }
+      }
+    },
+    test("setProvider fails gracefully when new provider initialization fails") {
+      ZIO.scoped {
+        val providerA = new SimpleProvider("A", Map("flag" -> true))
+        val failingProvider = new SimpleProvider("Failing", Map.empty) {
+          override def initialize(ctx: OFEvaluationContext): Unit =
+            throw new RuntimeException("Initialization failed")
+        }
+        FeatureFlags.fromProvider(providerA).build.flatMap { env =>
+          val ff = env.get[FeatureFlags]
+          for {
+            result <- ff.setProvider(failingProvider).either
+          } yield assertTrue(result.isLeft) &&
+            assertTrue(result.left.toOption.get.isInstanceOf[FeatureFlagError.ProviderInitializationFailed])
+        }
+      }
     }
   ) @@ TestAspect.sequential
 }

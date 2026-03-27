@@ -340,7 +340,16 @@ During the swap:
 4. Status transitions to `Ready` — evaluations resume with the new provider
 5. Provider metadata reflects the new provider name
 
+If initialization of the new provider fails, the method returns `FeatureFlagError.ProviderInitializationFailed`. The status may remain `NotReady` — call `setProvider` again with a working provider to recover.
+
 The swap is serialized via a semaphore — concurrent `setProvider` calls queue up safely.
+
+**Service accessor:**
+
+```scala
+// Via ZIO service accessor (when FeatureFlags is in the environment)
+FeatureFlags.setProvider(newProvider)
+```
 
 ### fromProviderWithDomain
 

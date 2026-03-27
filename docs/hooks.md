@@ -114,8 +114,8 @@ FeatureFlags.addHook(hook)
 | `flag.duration_ms` | after, error | `"12"` |
 | `flag.error` | error | `"Flag 'x' not found"` |
 | `flag.error.type` | error | `"FlagNotFound"` |
-| `flag.context.targetingKey` | all (if `logContext`) | `"user-123"` |
-| `flag.context.<attr>` | all (if `logContext`) | `"premium"` |
+| `flag.context.targetingKey` | before, after, error (if `logContext`) | `"user-123"` |
+| `flag.context.<attr>` | before, after, error (if `logContext`) | `"premium"` |
 
 **Context logging and redaction:**
 

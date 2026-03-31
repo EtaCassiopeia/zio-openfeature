@@ -39,10 +39,9 @@ object EvaluationTimeoutSpec extends ZIOSpecDefault {
     test("global timeout causes slow evaluation to fail with ProviderError") {
       for {
         result <- FeatureFlags.boolean("flag", default = false).either
-      } yield assertTrue(result.isLeft) && {
-        val error = result.left.toOption.get
-        assertTrue(error.isInstanceOf[FeatureFlagError.ProviderError])
-      }
+      } yield assertTrue(
+        result.left.toOption.exists(_.isInstanceOf[FeatureFlagError.ProviderError])
+      )
     }.provide(layerWithTimeout(delay = 2.seconds, evaluationTimeout = Some(50.millis))),
     test("evaluation within timeout succeeds") {
       for {
@@ -65,8 +64,7 @@ object EvaluationTimeoutSpec extends ZIOSpecDefault {
           )
           .either
       } yield assertTrue(
-        result.isLeft,
-        result.left.toOption.get.isInstanceOf[FeatureFlagError.ProviderError]
+        result.left.toOption.exists(_.isInstanceOf[FeatureFlagError.ProviderError])
       )
     }.provide(layerWithTimeout(delay = 2.seconds, evaluationTimeout = Some(10.seconds))),
     test("per-call timeout applies when no global timeout is set") {
@@ -80,8 +78,7 @@ object EvaluationTimeoutSpec extends ZIOSpecDefault {
           )
           .either
       } yield assertTrue(
-        result.isLeft,
-        result.left.toOption.get.isInstanceOf[FeatureFlagError.ProviderError]
+        result.left.toOption.exists(_.isInstanceOf[FeatureFlagError.ProviderError])
       )
     }.provide(layerWithTimeout(delay = 2.seconds))
   ) @@ TestAspect.withLiveClock @@ TestAspect.sequential

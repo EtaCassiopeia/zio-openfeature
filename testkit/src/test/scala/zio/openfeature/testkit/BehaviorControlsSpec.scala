@@ -42,8 +42,7 @@ object BehaviorControlsSpec extends ZIOSpecDefault {
           result <- FeatureFlags.boolean("flag", default = false).either
           _      <- tp.clearErrorMode
         } yield assertTrue(
-          result.isLeft,
-          result.left.toOption.get.isInstanceOf[FeatureFlagError.ProviderNotReady]
+          result.left.toOption.exists(_.isInstanceOf[FeatureFlagError.ProviderNotReady])
         )
       },
       test("setFailureProbability(1.0) causes error resolution") {

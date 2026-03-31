@@ -16,6 +16,8 @@ import dev.openfeature.sdk.{
   Value,
   Structure
 }
+import dev.openfeature.sdk.exceptions._
+import zio.test.TestAspect
 import scala.jdk.CollectionConverters._
 import java.util.concurrent.{ConcurrentHashMap, CopyOnWriteArrayList, CountDownLatch}
 import java.util.concurrent.atomic.AtomicReference
@@ -37,6 +39,27 @@ final class TestFeatureProvider private (
   private val initLatch: Option[CountDownLatch],
   private[testkit] val initDone: Option[CountDownLatch]
 ) extends EventProvider {
+
+  import TestFeatureProvider.{BehaviorConfig, ErrorMode}
+
+  private[testkit] val behaviorRef: AtomicReference[BehaviorConfig] = new AtomicReference(BehaviorConfig())
+
+  private def applyBehavior(): Unit = {
+    val config = behaviorRef.get()
+    config.delay.foreach(d => Thread.sleep(d.toMillis))
+    config.errorMode.foreach {
+      case ErrorMode.FlagNotFound     => throw new FlagNotFoundError("Simulated: flag not found")
+      case ErrorMode.ParseError       => throw new ParseError("Simulated: parse error")
+      case ErrorMode.TypeMismatch     => throw new TypeMismatchError("Simulated: type mismatch")
+      case ErrorMode.ProviderNotReady => throw new ProviderNotReadyError("Simulated: provider not ready")
+      case ErrorMode.General          => throw new GeneralError("Simulated: general error")
+    }
+    if (
+      config.failureProbability > 0.0 &&
+      java.util.concurrent.ThreadLocalRandom.current().nextDouble() < config.failureProbability
+    )
+      throw new GeneralError("Simulated: random failure")
+  }
 
   @scala.annotation.nowarn("msg=deprecated")
   override def getMetadata: Metadata = new Metadata {
@@ -67,6 +90,7 @@ final class TestFeatureProvider private (
     defaultValue: java.lang.Boolean,
     context: OFEvaluationContext
   ): ProviderEvaluation[java.lang.Boolean] = {
+    applyBehavior()
     evaluations.add((key, context))
     val value = Option(flags.get(key)).map(_.asInstanceOf[Boolean]).getOrElse(defaultValue.booleanValue())
     ProviderEvaluation
@@ -81,6 +105,7 @@ final class TestFeatureProvider private (
     defaultValue: String,
     context: OFEvaluationContext
   ): ProviderEvaluation[String] = {
+    applyBehavior()
     evaluations.add((key, context))
     val value = Option(flags.get(key)).map(_.toString).getOrElse(defaultValue)
     ProviderEvaluation
@@ -95,6 +120,7 @@ final class TestFeatureProvider private (
     defaultValue: java.lang.Integer,
     context: OFEvaluationContext
   ): ProviderEvaluation[java.lang.Integer] = {
+    applyBehavior()
     evaluations.add((key, context))
     val value = Option(flags.get(key))
       .map {
@@ -116,6 +142,7 @@ final class TestFeatureProvider private (
     defaultValue: java.lang.Double,
     context: OFEvaluationContext
   ): ProviderEvaluation[java.lang.Double] = {
+    applyBehavior()
     evaluations.add((key, context))
     val value = Option(flags.get(key))
       .map {
@@ -138,6 +165,7 @@ final class TestFeatureProvider private (
     defaultValue: Value,
     context: OFEvaluationContext
   ): ProviderEvaluation[Value] = {
+    applyBehavior()
     evaluations.add((key, context))
     val value = Option(flags.get(key))
       .map(anyToValue)
@@ -284,9 +312,82 @@ final class TestFeatureProvider private (
 
   /** Get status as ZIO effect. */
   def status: UIO[ProviderStatus] = statusRef.get
+
+  // Behavior Controls
+
+  /** Add a delay before each evaluation (simulates network latency). */
+  def setDelay(d: Duration): UIO[Unit] =
+    ZIO.succeed(behaviorRef.updateAndGet(_.copy(delay = Some(d)))).unit
+
+  /** Remove the evaluation delay. */
+  def clearDelay: UIO[Unit] =
+    ZIO.succeed(behaviorRef.updateAndGet(_.copy(delay = None))).unit
+
+  /** Make all evaluations fail with the given error mode. */
+  def setErrorMode(mode: ErrorMode): UIO[Unit] =
+    ZIO.succeed(behaviorRef.updateAndGet(_.copy(errorMode = Some(mode)))).unit
+
+  /** Clear the error mode (evaluations succeed normally). */
+  def clearErrorMode: UIO[Unit] =
+    ZIO.succeed(behaviorRef.updateAndGet(_.copy(errorMode = None))).unit
+
+  /** Convenience: make all evaluations fail with a general error. */
+  def setFailing(failing: Boolean): UIO[Unit] =
+    if (failing) setErrorMode(ErrorMode.General) else clearErrorMode
+
+  /** Set the probability (0.0 to 1.0) that each evaluation fails randomly. */
+  def setFailureProbability(p: Double): UIO[Unit] =
+    ZIO.succeed(behaviorRef.updateAndGet(_.copy(failureProbability = p))).unit
+
+  /** Reset all behavior controls to defaults. */
+  def clearBehavior: UIO[Unit] =
+    ZIO.succeed(behaviorRef.set(BehaviorConfig())).unit
 }
 
 object TestFeatureProvider {
+
+  // Behavior Controls — types
+
+  private[testkit] case class BehaviorConfig(
+    delay: Option[Duration] = None,
+    errorMode: Option[ErrorMode] = None,
+    failureProbability: Double = 0.0
+  )
+
+  sealed trait ErrorMode extends Product with Serializable
+  object ErrorMode {
+    case object FlagNotFound     extends ErrorMode
+    case object ParseError       extends ErrorMode
+    case object TypeMismatch     extends ErrorMode
+    case object ProviderNotReady extends ErrorMode
+    case object General          extends ErrorMode
+  }
+
+  // Behavior Controls — TestAspects
+
+  /** Aspect that adds a delay to all evaluations for the duration of the test. */
+  def withDelay(d: Duration): TestAspect[Nothing, TestFeatureProvider, Nothing, Any] =
+    behaviorAspect(_.copy(delay = Some(d)))
+
+  /** Aspect that makes all evaluations fail with a general error. */
+  val withFailures: TestAspect[Nothing, TestFeatureProvider, Nothing, Any] =
+    behaviorAspect(_.copy(errorMode = Some(ErrorMode.General)))
+
+  /** Aspect that makes all evaluations fail with a specific error mode. */
+  def withErrorMode(mode: ErrorMode): TestAspect[Nothing, TestFeatureProvider, Nothing, Any] =
+    behaviorAspect(_.copy(errorMode = Some(mode)))
+
+  /** Aspect that makes evaluations fail randomly with the given probability (0.0 to 1.0). */
+  def withFailureProbability(p: Double): TestAspect[Nothing, TestFeatureProvider, Nothing, Any] =
+    behaviorAspect(_.copy(failureProbability = p))
+
+  private def behaviorAspect(
+    modify: BehaviorConfig => BehaviorConfig
+  ): TestAspect[Nothing, TestFeatureProvider, Nothing, Any] = {
+    val setup   = ZIO.serviceWith[TestFeatureProvider](tp => tp.behaviorRef.updateAndGet(modify(_)))
+    val cleanup = ZIO.serviceWith[TestFeatureProvider](_.behaviorRef.set(BehaviorConfig()))
+    TestAspect.before(setup) >>> TestAspect.after(cleanup)
+  }
 
   /** Create a new TestFeatureProvider with no initial flags. */
   def make: UIO[TestFeatureProvider] =

@@ -336,10 +336,9 @@ ff.setProvider(launchDarklyProvider)
 **Swap lifecycle:**
 
 1. Status transitions to `NotReady` — new evaluations fail fast with `ProviderNotReady`
-2. The Java SDK calls `shutdown()` on the old provider
-3. The Java SDK calls `initialize()` on the new provider (blocks until ready)
-4. Provider and metadata refs are updated
-5. Status transitions to `Ready` — evaluations resume with the new provider
+2. Provider and metadata refs are updated (so the event bridge sees consistent metadata)
+3. The Java SDK calls `shutdown()` on the old provider and `initialize()` on the new provider (blocks until ready)
+4. Status transitions to `Ready` — evaluations resume with the new provider
 
 The swap is serialized via a semaphore — concurrent `setProvider` calls queue up safely.
 

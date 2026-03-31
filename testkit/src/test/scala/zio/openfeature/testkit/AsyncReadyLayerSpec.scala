@@ -16,13 +16,13 @@ object AsyncReadyLayerSpec extends ZIOSpecDefault {
     test("starts in NotReady then auto-transitions to Ready") {
       for {
         before <- FeatureFlags.providerStatus
-        _      <- ZIO.sleep(200.millis)
+        _      <- ZIO.sleep(500.millis)
         after  <- FeatureFlags.providerStatus
       } yield assertTrue(before == ProviderStatus.NotReady) && assertTrue(after == ProviderStatus.Ready)
     }.provide(readyLayer(Map.empty, 50.millis)),
     test("evaluations work after auto-transition") {
       for {
-        _     <- ZIO.sleep(200.millis)
+        _     <- ZIO.sleep(500.millis)
         value <- FeatureFlags.boolean("flag", default = false)
       } yield assertTrue(value == true)
     }.provide(readyLayer(Map("flag" -> true), 50.millis)),

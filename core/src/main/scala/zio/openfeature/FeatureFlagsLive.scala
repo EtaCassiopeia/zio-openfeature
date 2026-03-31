@@ -276,27 +276,6 @@ final private[openfeature] class FeatureFlagsLive(
       _          <- txState.record(eval)
     } yield resolution
 
-  // Evaluate a flag using a ClientEvaluator typeclass instance for type-safe SDK dispatch
-  private def evaluateViaTypeclass[A](
-    key: String,
-    default: A,
-    ofContext: dev.openfeature.sdk.EvaluationContext,
-    timeout: Option[Duration] = None
-  )(implicit ev: ClientEvaluator[A]): IO[FeatureFlagError, FlagResolution[A]] = {
-    val rawEval = ev.evaluate(client, key, default, ofContext)
-    val timedEval = timeout match {
-      case Some(d) =>
-        rawEval.disconnect
-          .timeoutFail(new java.util.concurrent.TimeoutException(s"Evaluation of '$key' timed out after $d"))(d)
-      case None => rawEval
-    }
-    timedEval
-      .mapError(e => FeatureFlagError.ProviderError(e))
-      .flatMap { details =>
-        toFlagResolution(key, details).map(_.copy(value = ev.extractValue(details)))
-      }
-  }
-
   private def evaluateFromClient[A: FlagType](
     key: String,
     default: A,

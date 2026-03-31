@@ -203,14 +203,17 @@ final class CircuitBreaker private[extras] (
     }
   }
 
-  /** Transition to half-open state (e.g., for stale delegate). */
+  /** Transition to half-open state (e.g., for stale delegate). Only transitions from Open — a Closed circuit is already
+    * healthy and should not be demoted.
+    */
   def transitionToHalfOpen(): Unit = {
     var done = false
     while (!done) {
       val current = stateRef.get()
       current.circuit match {
         case _: HalfOpen => done = true
-        case _ =>
+        case Closed      => done = true
+        case _: Open =>
           val next = CircuitBreakerState(HalfOpen(successes = 0, probing = false), current.consecutiveFailures)
           done = stateRef.compareAndSet(current, next)
       }

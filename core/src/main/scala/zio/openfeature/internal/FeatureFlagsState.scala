@@ -22,7 +22,7 @@ object FeatureFlagsState {
       fiberCtxRef    <- FiberRef.make(EvaluationContext.empty)
       transactionRef <- FiberRef.make[Option[TransactionState]](None)
       hooksRef       <- Ref.make(List.empty[FeatureHook])
-      eventHub       <- Hub.unbounded[ProviderEvent]
+      eventHub       <- Hub.dropping[ProviderEvent](256)
       statusRef      <- Ref.make[ProviderStatus](ProviderStatus.NotReady)
       trackRec       <- Ref.make(List.empty[(String, EvaluationContext, Option[TrackingEventDetails])])
     } yield FeatureFlagsState(

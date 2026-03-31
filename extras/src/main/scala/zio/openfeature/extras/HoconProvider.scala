@@ -118,13 +118,19 @@ final class HoconProvider private (
       case ConfigValueType.NULL => new Value()
     }
 
-  /** Reload the config by re-parsing from the original source. */
-  def reload(path: String = "feature-flags"): Task[Unit] = ZIO.attempt {
-    ConfigFactory.invalidateCaches()
-    val root   = ConfigFactory.load()
-    val newCfg = if (root.hasPath(path)) root.getConfig(path) else ConfigFactory.empty()
-    configRef.set(newCfg)
-  }
+  /** Reload the config by re-parsing from the original source. Sets state to ERROR on failure. */
+  def reload(path: String = "feature-flags"): Task[Unit] =
+    ZIO
+      .attempt {
+        ConfigFactory.invalidateCaches()
+        val root = ConfigFactory.load()
+        if (root.hasPath(path)) root.getConfig(path) else ConfigFactory.empty()
+      }
+      .tapBoth(
+        _ => ZIO.succeed(state.set(ProviderState.ERROR)),
+        newCfg => ZIO.succeed { configRef.set(newCfg); state.set(ProviderState.READY) }
+      )
+      .unit
 }
 
 object HoconProvider {

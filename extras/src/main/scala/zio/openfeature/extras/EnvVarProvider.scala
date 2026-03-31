@@ -8,7 +8,6 @@ import dev.openfeature.sdk.{
   ProviderState,
   Value
 }
-import java.util.concurrent.atomic.AtomicReference
 
 /** A feature flag provider that reads values from environment variables.
   *
@@ -28,8 +27,6 @@ final class EnvVarProvider private (
   envLookup: String => Option[String]
 ) extends FeatureProvider {
 
-  private val state = new AtomicReference[ProviderState](ProviderState.READY)
-
   private def envKey(flagKey: String): String = prefix + keyTransform(flagKey)
 
   private def lookup(flagKey: String): Option[String] = envLookup(envKey(flagKey))
@@ -39,7 +36,7 @@ final class EnvVarProvider private (
     override def getName: String = "EnvVarProvider"
   }
 
-  override def getState: ProviderState = state.get()
+  override def getState: ProviderState = ProviderState.READY
 
   override def getBooleanEvaluation(
     key: String,

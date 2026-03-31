@@ -790,8 +790,12 @@ final private[openfeature] class FeatureFlagsLive(
         ZIO.attempt {
           val jCtx   = toJavaHookContext(ctx)
           val jHints = hints.values.map { case (k, v) => k -> v.asInstanceOf[Object] }.asJava
-          val ex     = err.cause.getOrElse(new RuntimeException(err.message))
-          hook.error(jCtx, ex.asInstanceOf[Exception], jHints)
+          val ex: Exception = err.cause match {
+            case Some(e: Exception) => e
+            case Some(t)            => new RuntimeException(t.getMessage, t)
+            case None               => new RuntimeException(err.message)
+          }
+          hook.error(jCtx, ex, jHints)
         }.ignore
 
       override def finallyAfter(

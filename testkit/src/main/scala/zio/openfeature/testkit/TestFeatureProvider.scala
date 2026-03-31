@@ -335,9 +335,9 @@ final class TestFeatureProvider private (
   def setFailing(failing: Boolean): UIO[Unit] =
     if (failing) setErrorMode(ErrorMode.General) else clearErrorMode
 
-  /** Set the probability (0.0 to 1.0) that each evaluation fails randomly. */
+  /** Set the probability (0.0 to 1.0) that each evaluation fails randomly. Values are clamped to [0.0, 1.0]. */
   def setFailureProbability(p: Double): UIO[Unit] =
-    ZIO.succeed(behaviorRef.updateAndGet(_.copy(failureProbability = p))).unit
+    ZIO.succeed(behaviorRef.updateAndGet(_.copy(failureProbability = p.max(0.0).min(1.0)))).unit
 
   /** Reset all behavior controls to defaults. */
   def clearBehavior: UIO[Unit] =

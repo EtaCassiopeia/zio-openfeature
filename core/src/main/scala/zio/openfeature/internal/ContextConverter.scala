@@ -76,7 +76,8 @@ private[openfeature] object ContextConverter {
     else if (value.isString) AttributeValue.StringValue(value.asString())
     else if (value.isNumber) {
       val num = value.asDouble()
-      if (num == num.toLong.toDouble) AttributeValue.IntValue(num.toInt)
+      if (num == num.toLong.toDouble && num >= Int.MinValue && num <= Int.MaxValue) AttributeValue.IntValue(num.toInt)
+      else if (num == num.toLong.toDouble) AttributeValue.LongValue(num.toLong)
       else AttributeValue.DoubleValue(num)
     } else if (value.isList) {
       val list = value.asList().asScala.map(valueToAttribute).toList

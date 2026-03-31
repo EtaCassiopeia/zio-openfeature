@@ -223,6 +223,72 @@ provider.emitEvent(ProviderEvent.ConfigurationChanged(
 
 ---
 
+## Behavior Controls
+
+Simulate real-world failure modes like slow responses, intermittent failures, and specific error types. Useful for testing timeouts, circuit breakers, and fallback logic.
+
+### Imperative API
+
+```scala
+for
+  tp <- ZIO.service[TestFeatureProvider]
+  // Simulate network latency
+  _  <- tp.setDelay(200.millis)
+  // Make all evaluations fail
+  _  <- tp.setFailing(true)
+  // Simulate specific error types
+  _  <- tp.setErrorMode(TestFeatureProvider.ErrorMode.FlagNotFound)
+  // Simulate flaky service (30% failure rate)
+  _  <- tp.setFailureProbability(0.3)
+  // Reset everything
+  _  <- tp.clearBehavior
+yield ()
+```
+
+Available error modes: `FlagNotFound`, `ParseError`, `TypeMismatch`, `ProviderNotReady`, `General`.
+
+Provider exceptions are caught by the Java SDK and returned as default-valued resolutions with error codes. Use `booleanDetails` (or other `*Details` methods) to inspect the error code:
+
+```scala
+tp.setErrorMode(TestFeatureProvider.ErrorMode.FlagNotFound)
+resolution <- FeatureFlags.booleanDetails("flag", default = false)
+// resolution.errorCode == Some(ErrorCode.FlagNotFound)
+// resolution.value == false (the default)
+```
+
+The exception is `ProviderNotReady`, which propagates as a ZIO-level `FeatureFlagError.ProviderNotReady`.
+
+### TestAspect API
+
+For cleaner test setup/teardown, use ZIO test aspects. Behavior is set before the test and cleaned up after:
+
+```scala
+test("handles slow provider") {
+  for
+    result <- FeatureFlags.boolean("flag", false).timeout(100.millis)
+  yield assertTrue(result.isEmpty)
+} @@ TestFeatureProvider.withDelay(500.millis)
+
+test("handles provider failures") {
+  for
+    resolution <- FeatureFlags.booleanDetails("flag", default = false)
+  yield assertTrue(resolution.errorCode.isDefined)
+} @@ TestFeatureProvider.withFailures
+```
+
+Available aspects:
+
+| Aspect | Effect |
+|:-------|:-------|
+| `TestFeatureProvider.withDelay(d)` | Adds delay before each evaluation |
+| `TestFeatureProvider.withFailures` | All evaluations fail with a general error |
+| `TestFeatureProvider.withErrorMode(mode)` | All evaluations fail with a specific error |
+| `TestFeatureProvider.withFailureProbability(p)` | Evaluations fail randomly (0.0 to 1.0) |
+
+Aspects require `TestFeatureProvider` in the environment. Apply `.provide(testLayer)` at the suite level when using aspects on individual tests.
+
+---
+
 ## Testing Patterns
 
 ### Simple Flag Testing

@@ -170,6 +170,32 @@ object FeatureFlagRegistrySpec extends ZIOSpecDefault {
         } yield assertTrue(value == "custom", meta.name == "Custom")
       }
     },
+    test("failed setProvider does not update providers map") {
+      ZIO.scoped {
+        val defaultProvider = new SimpleProvider("Default", Map("flag" -> "default"))
+        val failingProvider = new SimpleProvider("Failing", Map.empty) {
+          override def initialize(ctx: OFEvaluationContext): Unit =
+            throw new RuntimeException("init failed")
+        }
+        val recoveryProvider = new SimpleProvider("Recovery", Map("flag" -> "recovered"))
+        for {
+          registry <- registryLayer(defaultProvider).build.map(_.get[FeatureFlagRegistry])
+          client   <- registry.getClient("domain1")
+          v1       <- client.string("flag", default = "none")
+          result   <- registry.setProvider("domain1", failingProvider).either
+          // After failed swap, client is in Error state (old provider was shut down by Java SDK)
+          status <- client.providerStatus
+          // Recover with a working provider
+          _  <- registry.setProvider("domain1", recoveryProvider)
+          v3 <- client.string("flag", default = "none")
+        } yield assertTrue(
+          v1 == "default",
+          result.is(_.left).isInstanceOf[FeatureFlagError],
+          status == ProviderStatus.Error,
+          v3 == "recovered"
+        )
+      }
+    },
     test("provider metadata reflects the domain provider") {
       ZIO.scoped {
         val defaultProvider = new SimpleProvider("Default", Map.empty)

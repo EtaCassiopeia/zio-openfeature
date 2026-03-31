@@ -36,16 +36,13 @@ object FeatureFlagRegistry {
   def fromProvider(defaultProvider: OFFeatureProvider): ZLayer[Scope, Throwable, FeatureFlagRegistry] =
     ZLayer.scoped {
       for {
-        api   <- ZIO.succeed(OpenFeatureAPIFactory.create())
-        _     <- ZIO.attemptBlocking(api.setProviderAndWait(defaultProvider))
-        scope <- ZIO.service[Scope]
-        registry <- ZIO.succeed(
-          new FeatureFlagRegistryLive(
-            defaultProvider = defaultProvider,
-            api = api,
-            scope = scope
-          )
-        )
+        api        <- ZIO.succeed(OpenFeatureAPIFactory.create())
+        scope      <- ZIO.service[Scope]
+        clients    <- Ref.make(Map.empty[String, FeatureFlags])
+        providers  <- Ref.make(Map.empty[String, OFFeatureProvider])
+        defaultRef <- Ref.make(Option.empty[FeatureFlags])
+        lock       <- Semaphore.make(1)
+        registry = new FeatureFlagRegistryLive(defaultProvider, api, scope, clients, providers, defaultRef, lock)
         _ <- ZIO.addFinalizer(ZIO.attemptBlocking(api.shutdown()).ignore)
       } yield registry
     }
@@ -54,13 +51,12 @@ object FeatureFlagRegistry {
 final private class FeatureFlagRegistryLive(
   defaultProvider: OFFeatureProvider,
   api: OpenFeatureAPI,
-  scope: Scope
+  scope: Scope,
+  clients: Ref[Map[String, FeatureFlags]],
+  providers: Ref[Map[String, OFFeatureProvider]],
+  defaultRef: Ref[Option[FeatureFlags]],
+  lock: Semaphore
 ) extends FeatureFlagRegistry {
-
-  private val clients: Ref[Map[String, FeatureFlags]]        = Unsafe.unsafe(implicit u => Ref.unsafe.make(Map.empty))
-  private val providers: Ref[Map[String, OFFeatureProvider]] = Unsafe.unsafe(implicit u => Ref.unsafe.make(Map.empty))
-  private val defaultRef: Ref[Option[FeatureFlags]]          = Unsafe.unsafe(implicit u => Ref.unsafe.make(None))
-  private val lock: Semaphore                                = Unsafe.unsafe(implicit u => Semaphore.unsafe.make(1))
 
   override def getClient(domain: String): UIO[FeatureFlags] =
     lock.withPermit {
@@ -73,11 +69,17 @@ final private class FeatureFlagRegistryLive(
   override def setProvider(domain: String, provider: OFFeatureProvider): IO[FeatureFlagError, Unit] =
     lock.withPermit {
       for {
-        _        <- providers.update(_ + (domain -> provider))
         existing <- clients.get.map(_.get(domain))
         _ <- existing match {
-          case Some(client) => client.setProvider(provider)
-          case None         => ZIO.unit
+          case Some(client) =>
+            client
+              .setProvider(provider)
+              .tapBoth(
+                _ => ZIO.unit,
+                _ => providers.update(_ + (domain -> provider))
+              )
+          case None =>
+            providers.update(_ + (domain -> provider))
         }
       } yield ()
     }

@@ -4,6 +4,7 @@ import dev.openfeature.sdk.{
   EvaluationContext => OFEvaluationContext,
   EventProvider,
   Metadata,
+  OpenFeatureAPIFactory,
   ProviderEvaluation,
   ProviderState,
   Value
@@ -66,12 +67,23 @@ object ProviderHotSwapSpec extends ZIOSpecDefault {
       ProviderEvaluation.builder[Value]().value(defaultValue).reason("STATIC").build()
   }
 
-  // Use unique domains per test to avoid OpenFeatureAPI singleton pollution
-  private def uniqueDomain: String = s"test-swap-${java.util.UUID.randomUUID()}"
-
   private def buildWithDomain(provider: SimpleProvider): ZIO[Scope, Throwable, FeatureFlags] = {
-    val domain = uniqueDomain
-    FeatureFlags.fromProviderWithDomain(provider, domain).build.map(_.get[FeatureFlags])
+    val api    = OpenFeatureAPIFactory.create()
+    val domain = s"test-swap-${java.util.UUID.randomUUID()}"
+    for {
+      ff <- FeatureFlags.build(
+        provider,
+        domain = Some(domain),
+        version = None,
+        initialHooks = Nil,
+        statusRef = None,
+        addShutdownFinalizer = false,
+        apiOverride = Some(api)
+      )
+      // Wait for the Java SDK's initial PROVIDER_READY event to settle so it doesn't
+      // race with subsequent setProvider calls in tests
+      _ <- ZIO.attemptBlocking(Thread.sleep(50)).ignore
+    } yield ff
   }
 
   def spec = suite("Provider Hot-Swap")(

@@ -426,6 +426,40 @@ object TestFeatureProvider {
       }
     } yield provider
 
+  /** Create a FeatureFlags layer with async initialization that auto-transitions to Ready.
+    *
+    * Like `asyncLayer`, the provider starts in NotReady state. After `initDelay`, it automatically transitions to Ready
+    * without manual `setStatus` calls. Useful for simulating a real async provider (e.g., connecting to a remote
+    * service) without needing to manage the state transition in tests.
+    */
+  def asyncReadyLayer(
+    flags: Map[String, Any] = Map.empty,
+    initDelay: Duration = 100.millis
+  ): ZLayer[Scope, Throwable, TestFeatureProvider with FeatureFlags] =
+    ZLayer
+      .scoped {
+        for {
+          testProvider <- makeNotReady(flags)
+          api    = OpenFeatureAPIFactory.create()
+          domain = s"test-async-ready-${java.util.UUID.randomUUID()}"
+          featureFlags <- FeatureFlags
+            .fromProviderWithDomainAsync(
+              testProvider,
+              domain,
+              testProvider.statusRef,
+              api = Some(api),
+              onReady = testProvider.initDone
+            )
+            .build
+            .map(_.get)
+          _ <- (ZIO.sleep(initDelay) *> testProvider.setStatus(ProviderStatus.Ready)).forkScoped
+        } yield (testProvider, featureFlags)
+      }
+      .flatMap { env =>
+        val (testProvider, featureFlags) = env.get[(TestFeatureProvider, FeatureFlags)]
+        ZLayer.succeed(testProvider) ++ ZLayer.succeed(featureFlags)
+      }
+
   /** Self-contained async test layer that provides its own Scope. */
   val scopedAsyncLayer: ZLayer[Any, Throwable, TestFeatureProvider with FeatureFlags] =
     Scope.default >>> TestFeatureProvider.asyncLayer

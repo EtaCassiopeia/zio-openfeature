@@ -38,6 +38,19 @@ libraryDependencies += "io.github.etacassiopeia" %% "zio-openfeature-testkit" % 
 
 ---
 
+## Choosing a Layer
+
+| Layer | Provider starts as | Use when |
+|:------|:-------------------|:---------|
+| `layer(flags)` | `Ready` | Most tests — flags work immediately |
+| `scopedLayer(flags)` | `Ready` | Same, self-contained scope |
+| `asyncLayer(flags)` | `NotReady` | Testing startup/initialization behavior — requires manual `setStatus` |
+| `asyncReadyLayer(flags, delay)` | `NotReady` → `Ready` | Simulating real async init without manual status management |
+
+**Rule of thumb:** Use `layer` unless you specifically need to test how your code handles a provider that isn't ready yet.
+
+---
+
 ## Basic Usage
 
 ### Creating a Test Layer
@@ -352,6 +365,24 @@ test("service works after provider becomes ready") {
 ```
 
 The `asyncLayer` creates a provider that starts in `NotReady` state. Call `setStatus(ProviderStatus.Ready)` to simulate the provider becoming ready. This is useful for testing graceful degradation and startup behavior.
+
+### Simulating Real Async Init
+
+If you don't need to test the `NotReady` state directly, use `asyncReadyLayer` which auto-transitions to `Ready` after a configurable delay:
+
+```scala
+test("service works with async provider") {
+  for
+    _      <- ZIO.sleep(200.millis) // Wait for auto-init
+    result <- MyService.getFeature
+  yield assertTrue(result == true)
+}.provide(Scope.default >>> TestFeatureProvider.asyncReadyLayer(
+  Map("feature" -> true),
+  initDelay = 100.millis
+))
+```
+
+This simulates a real provider (e.g., Optimizely connecting to its server) without requiring manual `setStatus` calls in every test.
 
 ---
 

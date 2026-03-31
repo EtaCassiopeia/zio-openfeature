@@ -34,7 +34,7 @@ final class TestFeatureProvider private (
   private val flags: ConcurrentHashMap[String, Any],
   private val state: AtomicReference[ProviderState],
   private val evaluations: CopyOnWriteArrayList[(String, OFEvaluationContext)],
-  private val eventsHubRef: Ref[Hub[ProviderEvent]],
+  private val eventsHub: Hub[ProviderEvent],
   private[openfeature] val statusRef: Ref[ProviderStatus],
   private val initLatch: Option[CountDownLatch],
   private[testkit] val initDone: Option[CountDownLatch]
@@ -259,7 +259,7 @@ final class TestFeatureProvider private (
 
   /** Emit a provider event through the Java SDK event system so it reaches FeatureFlagsLive handlers. */
   def emitEvent(event: ProviderEvent): UIO[Unit] =
-    eventsHubRef.get.flatMap(_.publish(event)).unit *>
+    eventsHub.publish(event).unit *>
       ZIO.succeed {
         event match {
           case ProviderEvent.Ready(_, em) =>
@@ -305,7 +305,7 @@ final class TestFeatureProvider private (
 
   /** Get the events hub for streaming. */
   def events: ZStream[Any, Nothing, ProviderEvent] =
-    ZStream.unwrap(eventsHubRef.get.map(ZStream.fromHub(_)))
+    ZStream.fromHub(eventsHub)
 
   /** Provider metadata (ZIO-style). */
   val metadata: ProviderMetadata = ProviderMetadata("TestFeatureProvider", "1.0.0")
@@ -401,14 +401,13 @@ object TestFeatureProvider {
   def make(initialFlags: Map[String, Any]): UIO[TestFeatureProvider] =
     for {
       eventsHub <- Hub.unbounded[ProviderEvent]
-      hubRef    <- Ref.make(eventsHub)
       statusRef <- Ref.make[ProviderStatus](ProviderStatus.Ready)
       provider <- ZIO.succeed {
         val flags = new ConcurrentHashMap[String, Any]()
         initialFlags.foreach { case (k, v) => flags.put(k, v) }
         val state       = new AtomicReference[ProviderState](ProviderState.READY)
         val evaluations = new CopyOnWriteArrayList[(String, OFEvaluationContext)]()
-        new TestFeatureProvider(flags, state, evaluations, hubRef, statusRef, initLatch = None, initDone = None)
+        new TestFeatureProvider(flags, state, evaluations, eventsHub, statusRef, initLatch = None, initDone = None)
       }
     } yield provider
 
@@ -512,7 +511,6 @@ object TestFeatureProvider {
   private[testkit] def makeNotReady(initialFlags: Map[String, Any]): UIO[TestFeatureProvider] =
     for {
       eventsHub <- Hub.unbounded[ProviderEvent]
-      hubRef    <- Ref.make(eventsHub)
       statusRef <- Ref.make[ProviderStatus](ProviderStatus.NotReady)
       provider <- ZIO.succeed {
         val flags = new ConcurrentHashMap[String, Any]()
@@ -523,7 +521,7 @@ object TestFeatureProvider {
           flags,
           state,
           evaluations,
-          hubRef,
+          eventsHub,
           statusRef,
           initLatch = Some(new CountDownLatch(1)),
           initDone = Some(new CountDownLatch(1))

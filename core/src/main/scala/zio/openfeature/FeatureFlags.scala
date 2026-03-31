@@ -159,6 +159,12 @@ trait FeatureFlags {
   def clearHooks: UIO[Unit]
   def hooks: UIO[List[FeatureHook]]
 
+  /** Add an API-level hook that applies to all clients sharing this instance's OpenFeatureAPI. */
+  def addApiHook(hook: dev.openfeature.sdk.Hook[_]): UIO[Unit]
+
+  /** Clear all API-level hooks on this instance's OpenFeatureAPI. */
+  def clearApiHooks: UIO[Unit]
+
   /** Replace the underlying provider at runtime.
     *
     * The old provider is shut down, the new provider is initialized, and the status transitions through `NotReady`
@@ -367,13 +373,11 @@ object FeatureFlags {
 
   // API-level Hooks (per OpenFeature spec 4.4.1)
 
-  /** Add an API-level hook that applies to all clients. */
-  def addApiHook(hook: dev.openfeature.sdk.Hook[_]): UIO[Unit] =
-    ZIO.succeed(OpenFeatureAPI.getInstance().addHooks(hook))
+  def addApiHook(hook: dev.openfeature.sdk.Hook[_]): ZIO[FeatureFlags, Nothing, Unit] =
+    ZIO.serviceWithZIO(_.addApiHook(hook))
 
-  /** Clear all API-level hooks. */
-  def clearApiHooks: UIO[Unit] =
-    ZIO.succeed(OpenFeatureAPI.getInstance().clearHooks())
+  def clearApiHooks: ZIO[FeatureFlags, Nothing, Unit] =
+    ZIO.serviceWithZIO(_.clearApiHooks)
 
   // Tracking API
 

@@ -40,6 +40,41 @@ private[openfeature] trait ClientEvaluator[A] {
 
 private[openfeature] object ClientEvaluator {
 
+  /** Look up the evaluator for a standard type by name and evaluate, returning a type-erased result. Returns None for
+    * non-standard types (Object, custom) which need special handling.
+    */
+  def evaluateStandard(
+    typeName: String,
+    client: OFClient,
+    key: String,
+    default: Any,
+    context: dev.openfeature.sdk.EvaluationContext
+  ): Option[(Task[FlagEvaluationDetails[_]], FlagEvaluationDetails[_] => Any)] =
+    typeName match {
+      case "Boolean" =>
+        Some(
+          (
+            booleanEvaluator.evaluate(client, key, default.asInstanceOf[Boolean], context),
+            booleanEvaluator.extractValue
+          )
+        )
+      case "String" =>
+        Some(
+          (stringEvaluator.evaluate(client, key, default.asInstanceOf[String], context), stringEvaluator.extractValue)
+        )
+      case "Int" =>
+        Some((intEvaluator.evaluate(client, key, default.asInstanceOf[Int], context), intEvaluator.extractValue))
+      case "Long" =>
+        Some((longEvaluator.evaluate(client, key, default.asInstanceOf[Long], context), longEvaluator.extractValue))
+      case "Float" =>
+        Some((floatEvaluator.evaluate(client, key, default.asInstanceOf[Float], context), floatEvaluator.extractValue))
+      case "Double" =>
+        Some(
+          (doubleEvaluator.evaluate(client, key, default.asInstanceOf[Double], context), doubleEvaluator.extractValue)
+        )
+      case _ => None
+    }
+
   implicit val booleanEvaluator: ClientEvaluator[Boolean] = new ClientEvaluator[Boolean] {
     def evaluate(
       client: OFClient,

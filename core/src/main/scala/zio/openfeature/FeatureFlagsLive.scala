@@ -314,88 +314,78 @@ final private[openfeature] class FeatureFlagsLive(
         case None => effect
       }
 
-    val evaluation: IO[FeatureFlagError, FlagResolution[A]] = flagType.typeName match {
-      case "Boolean" =>
-        evaluateViaTypeclass(key, default.asInstanceOf[Boolean], ofContext, timeout)
-          .map(_.asInstanceOf[FlagResolution[A]])
-
-      case "String" =>
-        evaluateViaTypeclass(key, default.asInstanceOf[String], ofContext, timeout)
-          .map(_.asInstanceOf[FlagResolution[A]])
-
-      case "Int" =>
-        evaluateViaTypeclass(key, default.asInstanceOf[Int], ofContext, timeout)
-          .map(_.asInstanceOf[FlagResolution[A]])
-
-      case "Long" =>
-        evaluateViaTypeclass(key, default.asInstanceOf[Long], ofContext, timeout)
-          .map(_.asInstanceOf[FlagResolution[A]])
-
-      case "Float" =>
-        evaluateViaTypeclass(key, default.asInstanceOf[Float], ofContext, timeout)
-          .map(_.asInstanceOf[FlagResolution[A]])
-
-      case "Double" =>
-        evaluateViaTypeclass(key, default.asInstanceOf[Double], ofContext, timeout)
-          .map(_.asInstanceOf[FlagResolution[A]])
-
-      case "Object" =>
-        withTimeout(
-          ZIO.attemptBlocking {
-            val defaultValue = new dev.openfeature.sdk.Value(
-              dev.openfeature.sdk.Structure.mapToStructure(
-                default.asInstanceOf[Map[String, Any]].map { case (k, v) => k -> anyToObject(v) }.asJava
-              )
-            )
-            client.getObjectDetails(key, defaultValue, ofContext)
+    val evaluation: IO[FeatureFlagError, FlagResolution[A]] =
+      ClientEvaluator.evaluateStandard(flagType.typeName, client, key, default, ofContext) match {
+        case Some((rawEval, extractValue)) =>
+          val timedEval = timeout match {
+            case Some(d) =>
+              rawEval.disconnect
+                .timeoutFail(new java.util.concurrent.TimeoutException(s"Evaluation of '$key' timed out after $d"))(d)
+            case None => rawEval
           }
-        ).mapError(e => FeatureFlagError.ProviderError(e))
-          .flatMap { details =>
-            val value = valueToMap(details.getValue)
-            toFlagMetadata(details.getFlagMetadata).map { metadata =>
-              FlagResolution(
-                value = value.asInstanceOf[A],
-                variant = Option(details.getVariant),
-                reason = toResolutionReason(details.getReason),
-                metadata = metadata,
-                flagKey = key,
-                errorCode = Option(details.getErrorCode).map(ErrorCodeConverter.fromJava),
-                errorMessage = Option(details.getErrorMessage)
-              )
+          timedEval
+            .mapError(e => FeatureFlagError.ProviderError(e))
+            .flatMap { details =>
+              toFlagResolution(key, details).map(r => r.copy(value = extractValue(details).asInstanceOf[A]))
             }
-          }
 
-      case _ =>
-        // Custom type - try to decode from object
-        withTimeout(
-          ZIO.attemptBlocking {
-            client.getObjectDetails(key, new dev.openfeature.sdk.Value(), ofContext)
-          }
-        ).mapError(e => FeatureFlagError.ProviderError(e))
-          .flatMap { details =>
-            valueToAny(details.getValue) match {
-              case Some(rawValue) =>
-                flagType.decode(rawValue) match {
-                  case Right(decoded) =>
-                    toFlagMetadata(details.getFlagMetadata).map { metadata =>
-                      FlagResolution(
-                        value = decoded,
-                        variant = Option(details.getVariant),
-                        reason = toResolutionReason(details.getReason),
-                        metadata = metadata,
-                        flagKey = key,
-                        errorCode = Option(details.getErrorCode).map(ErrorCodeConverter.fromJava),
-                        errorMessage = Option(details.getErrorMessage)
-                      )
-                    }
-                  case Left(_) =>
-                    ZIO.fail(FeatureFlagError.TypeMismatch(key, flagType.typeName, "Object"))
-                }
-              case None =>
-                ZIO.fail(FeatureFlagError.TypeMismatch(key, flagType.typeName, "null"))
+        case None if flagType.typeName == "Object" =>
+          withTimeout(
+            ZIO.attemptBlocking {
+              val defaultValue = new dev.openfeature.sdk.Value(
+                dev.openfeature.sdk.Structure.mapToStructure(
+                  default.asInstanceOf[Map[String, Any]].map { case (k, v) => k -> anyToObject(v) }.asJava
+                )
+              )
+              client.getObjectDetails(key, defaultValue, ofContext)
             }
-          }
-    }
+          ).mapError(e => FeatureFlagError.ProviderError(e))
+            .flatMap { details =>
+              val value = valueToMap(details.getValue)
+              toFlagMetadata(details.getFlagMetadata).map { metadata =>
+                FlagResolution(
+                  value = value.asInstanceOf[A],
+                  variant = Option(details.getVariant),
+                  reason = toResolutionReason(details.getReason),
+                  metadata = metadata,
+                  flagKey = key,
+                  errorCode = Option(details.getErrorCode).map(ErrorCodeConverter.fromJava),
+                  errorMessage = Option(details.getErrorMessage)
+                )
+              }
+            }
+
+        case None =>
+          // Custom type - try to decode from object
+          withTimeout(
+            ZIO.attemptBlocking {
+              client.getObjectDetails(key, new dev.openfeature.sdk.Value(), ofContext)
+            }
+          ).mapError(e => FeatureFlagError.ProviderError(e))
+            .flatMap { details =>
+              valueToAny(details.getValue) match {
+                case Some(rawValue) =>
+                  flagType.decode(rawValue) match {
+                    case Right(decoded) =>
+                      toFlagMetadata(details.getFlagMetadata).map { metadata =>
+                        FlagResolution(
+                          value = decoded,
+                          variant = Option(details.getVariant),
+                          reason = toResolutionReason(details.getReason),
+                          metadata = metadata,
+                          flagKey = key,
+                          errorCode = Option(details.getErrorCode).map(ErrorCodeConverter.fromJava),
+                          errorMessage = Option(details.getErrorMessage)
+                        )
+                      }
+                    case Left(_) =>
+                      ZIO.fail(FeatureFlagError.TypeMismatch(key, flagType.typeName, "Object"))
+                  }
+                case None =>
+                  ZIO.fail(FeatureFlagError.TypeMismatch(key, flagType.typeName, "null"))
+              }
+            }
+      }
 
     // Check resolution error codes for provider-level failures (handles TOCTOU race
     // where checkProviderStatus passes but the Java SDK's internal state is stale)
@@ -715,6 +705,12 @@ final private[openfeature] class FeatureFlagsLive(
 
   override def hooks: UIO[List[FeatureHook]] =
     state.hooksRef.get
+
+  override def addApiHook(hook: dev.openfeature.sdk.Hook[_]): UIO[Unit] =
+    ZIO.succeed(api.addHooks(hook))
+
+  override def clearApiHooks: UIO[Unit] =
+    ZIO.succeed(api.clearHooks())
 
   // Provider hooks (spec: provider hooks included in hook pipeline)
 

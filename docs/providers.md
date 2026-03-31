@@ -505,6 +505,47 @@ program.provide(Scope.default >>> FeatureFlags.fromProviderAsync(provider))
 
 ---
 
+## Provider Registry
+
+For applications that need multiple providers across different domains (e.g., billing, auth, analytics), `FeatureFlagRegistry` provides a centralized service that manages domain-scoped providers with automatic fallback to a default.
+
+```scala
+import zio.*
+import zio.openfeature.*
+
+val program = for
+  billing <- FeatureFlagRegistry.getClient("billing")
+  auth    <- FeatureFlagRegistry.getClient("auth")
+  // Domains without an explicit provider fall back to the default
+  other   <- FeatureFlagRegistry.getClient("analytics")
+  flag    <- billing.boolean("new-pricing", default = false)
+yield flag
+
+program.provide(Scope.default >>> FeatureFlagRegistry.fromProvider(defaultProvider))
+```
+
+### Registering domain providers
+
+Register a provider for a specific domain. If a client already exists for the domain, the provider is hot-swapped:
+
+```scala
+for
+  _ <- FeatureFlagRegistry.setProvider("billing", optimizelyProvider)
+  _ <- FeatureFlagRegistry.setProvider("auth", launchDarklyProvider)
+  // Later, hot-swap billing to a different provider
+  _ <- FeatureFlagRegistry.setProvider("billing", newOptimizelyProvider)
+yield ()
+```
+
+### How it works
+
+- **Client caching** — `getClient` returns the same `FeatureFlags` instance for a given domain. State (hooks, context, event handlers) is preserved.
+- **Default fallback** — domains without an explicit provider use the default provider passed to `fromProvider`.
+- **Isolated API** — the registry creates its own `OpenFeatureAPI` instance, avoiding interference with other registries or standalone `FeatureFlags` layers.
+- **Lifecycle** — when the registry's scope closes, all managed providers are shut down.
+
+---
+
 ## Provider Lifecycle
 
 ### Initialization

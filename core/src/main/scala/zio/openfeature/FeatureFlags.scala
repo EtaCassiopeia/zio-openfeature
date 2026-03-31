@@ -402,7 +402,7 @@ object FeatureFlags {
   // Factory Methods
 
   /** Shared initialization logic for all factory methods. */
-  private def build(
+  private[openfeature] def build(
     provider: OFFeatureProvider,
     domain: Option[String],
     version: Option[String],

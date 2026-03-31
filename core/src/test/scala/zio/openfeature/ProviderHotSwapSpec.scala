@@ -67,16 +67,20 @@ object ProviderHotSwapSpec extends ZIOSpecDefault {
       ProviderEvaluation.builder[Value]().value(defaultValue).reason("STATIC").build()
   }
 
-  private def buildWithDomain(provider: SimpleProvider): ZIO[Scope, Throwable, FeatureFlags] =
-    for {
-      statusRef <- Ref.make[ProviderStatus](ProviderStatus.NotReady)
-      api    = OpenFeatureAPIFactory.create()
-      domain = s"test-swap-${java.util.UUID.randomUUID()}"
-      ff <- FeatureFlags
-        .fromProviderWithDomain(provider, domain, statusRef, api = Some(api))
-        .build
-        .map(_.get[FeatureFlags])
-    } yield ff
+  private def buildWithDomain(provider: SimpleProvider): ZIO[Scope, Throwable, FeatureFlags] = {
+    val api    = OpenFeatureAPIFactory.create()
+    val domain = s"test-swap-${java.util.UUID.randomUUID()}"
+    FeatureFlags
+      .build(
+        provider,
+        domain = Some(domain),
+        version = None,
+        initialHooks = Nil,
+        statusRef = None,
+        addShutdownFinalizer = false,
+        apiOverride = Some(api)
+      )
+  }
 
   def spec = suite("Provider Hot-Swap")(
     test("setProvider swaps to a new provider") {

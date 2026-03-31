@@ -319,6 +319,85 @@ val result = ff.booleanDetails(
 
 Per-call timeout takes precedence over global. If neither is set, no timeout is applied (backward compatible).
 
+### Runtime provider replacement (hot-swap)
+
+Replace the underlying provider at runtime without recreating the `FeatureFlags` instance. Hooks, context, and event handlers are preserved across the swap.
+
+```scala
+val ff: FeatureFlags = ...
+
+// Start with Optimizely
+ff.setProvider(optimizelyProvider)
+
+// Later, swap to a different provider
+ff.setProvider(launchDarklyProvider)
+```
+
+**Swap lifecycle:**
+
+1. Status transitions to `NotReady` — new evaluations fail fast with `ProviderNotReady`
+2. Provider and metadata refs are updated (so the event bridge sees consistent metadata)
+3. The Java SDK calls `shutdown()` on the old provider and `initialize()` on the new provider (blocks until ready)
+4. Status transitions to `Ready` — evaluations resume with the new provider
+
+The swap is serialized via a semaphore — concurrent `setProvider` calls queue up safely.
+
+**What is preserved across swaps:**
+
+| Preserved | Details |
+|:----------|:--------|
+| API-level hooks | `state.hooksRef` is not touched |
+| Client-level hooks | Same |
+| Global context | `state.globalContextRef` unchanged |
+| Client context | `state.clientContextRef` unchanged |
+| Event handlers | Registered on the client, which follows provider changes automatically |
+| Event bridge | Handlers read provider name dynamically — metadata reflects the new provider |
+| Tracked events | `state.trackRecorder` unchanged |
+
+**What changes:**
+
+| Changed | Details |
+|:--------|:--------|
+| Provider-level hooks | `getProviderHooks` reads from `providerRef` — automatically uses the new provider's hooks |
+| Provider metadata | `providerMetadata` returns the new provider's name |
+| Evaluations | Served by the new provider |
+
+**In-flight evaluations** during a swap complete against the old provider (the Java SDK does not interrupt running calls). New evaluations that start during the swap fail with `ProviderNotReady`.
+
+**Error handling:**
+
+If the new provider fails to initialize, `setProvider` returns `FeatureFlagError.ProviderInitializationFailed` and the status transitions to `Error` (not `NotReady`). The old provider has already been shut down by the Java SDK. To recover, call `setProvider` again with a working provider:
+
+```scala
+val result = ff.setProvider(unreliableProvider).either
+result match {
+  case Left(_: FeatureFlagError.ProviderInitializationFailed) =>
+    // Old provider is gone, new one failed — recover with a fallback
+    ff.setProvider(envVarFallbackProvider)
+  case Left(other) => ZIO.fail(other)
+  case Right(_)    => ZIO.unit
+}
+```
+
+**Using with CircuitBreakerProvider:**
+
+`setProvider` replaces the entire provider registered with the Java SDK. If you're using `CircuitBreakerProvider`, swap the whole wrapper — don't try to swap just the inner delegate:
+
+```scala
+// Correct: swap the entire CB+delegate stack
+val cb = CircuitBreakerProvider(newOptimizelyProvider, config)
+ff.setProvider(cb)
+
+// Wrong: the old CB's state (failure count, open/closed) is meaningless for a new delegate
+```
+
+**Service accessor:**
+
+```scala
+// Via ZIO service accessor (when FeatureFlags is in the environment)
+FeatureFlags.setProvider(newProvider)
+```
+
 ### fromProviderWithDomain
 
 Create with a named domain. Each domain gets its own client, useful for segmenting feature flag configuration:

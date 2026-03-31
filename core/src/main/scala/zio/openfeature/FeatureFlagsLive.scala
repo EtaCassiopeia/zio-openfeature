@@ -20,19 +20,26 @@ import scala.jdk.CollectionConverters._
 
 final private[openfeature] class FeatureFlagsLive(
   client: OFClient,
-  provider: OFFeatureProvider,
-  providerName: String,
+  providerRef: Ref[OFFeatureProvider],
+  providerNameRef: Ref[String],
   domain: Option[String],
   version: Option[String],
   state: FeatureFlagsState,
   api: OpenFeatureAPI,
+  swapLock: Semaphore,
   onReady: Option[java.util.concurrent.CountDownLatch] = None,
   evaluationTimeout: Option[Duration] = None
 ) extends FeatureFlags {
 
   // Bridge Java SDK provider events to ZIO event system
   private[openfeature] def startEventBridge: ZIO[Scope, Nothing, Unit] = {
-    val metadata = ProviderMetadata(providerName)
+    // Read provider name dynamically so events after a provider swap use the new name
+    def currentMetadata(runtime: Runtime[Any]): ProviderMetadata = {
+      val name = Unsafe.unsafe { implicit u =>
+        runtime.unsafe.run(providerNameRef.get).getOrThrowFiberFailure()
+      }
+      ProviderMetadata(name)
+    }
 
     ZIO.runtime[Any].flatMap { runtime =>
       def extractEventMetadata(details: EventDetails): FlagMetadata =
@@ -48,7 +55,7 @@ final private[openfeature] class FeatureFlagsLive(
           runtime.unsafe
             .run(
               state.statusRef.set(ProviderStatus.Ready) *>
-                state.eventHub.publish(ProviderEvent.Ready(metadata, em))
+                state.eventHub.publish(ProviderEvent.Ready(currentMetadata(runtime), em))
             )
             .getOrThrowFiberFailure()
           onReady.foreach(_.countDown())
@@ -63,7 +70,7 @@ final private[openfeature] class FeatureFlagsLive(
             .run(
               state.statusRef.set(ProviderStatus.Error) *>
                 state.eventHub.publish(
-                  ProviderEvent.Error(error, metadata, errorCode, Option(details.getMessage), em)
+                  ProviderEvent.Error(error, currentMetadata(runtime), errorCode, Option(details.getMessage), em)
                 )
             )
             .getOrThrowFiberFailure()
@@ -76,7 +83,7 @@ final private[openfeature] class FeatureFlagsLive(
           runtime.unsafe
             .run(
               state.statusRef.set(ProviderStatus.Stale) *>
-                state.eventHub.publish(ProviderEvent.Stale(reason, metadata, em))
+                state.eventHub.publish(ProviderEvent.Stale(reason, currentMetadata(runtime), em))
             )
             .getOrThrowFiberFailure()
         }
@@ -89,7 +96,7 @@ final private[openfeature] class FeatureFlagsLive(
           val em = extractEventMetadata(details)
           runtime.unsafe
             .run(
-              state.eventHub.publish(ProviderEvent.ConfigurationChanged(flags, metadata, em))
+              state.eventHub.publish(ProviderEvent.ConfigurationChanged(flags, currentMetadata(runtime), em))
             )
             .getOrThrowFiberFailure()
         }
@@ -138,8 +145,9 @@ final private[openfeature] class FeatureFlagsLive(
     for {
       currentHooks <- state.hooksRef.get
       provHooks    <- getProviderHooks
+      pName        <- providerNameRef.get
       allHooks   = currentHooks ++ extraHooks ++ provHooks
-      metadata   = ProviderMetadata(providerName)
+      metadata   = ProviderMetadata(pName)
       clientMeta = ClientMetadata(domain, version)
       hookCtx = HookContext(
         flagKey = key,
@@ -611,7 +619,7 @@ final private[openfeature] class FeatureFlagsLive(
     state.statusRef.get
 
   override def providerMetadata: UIO[ProviderMetadata] =
-    ZIO.succeed(ProviderMetadata(providerName))
+    providerNameRef.get.map(ProviderMetadata(_))
 
   override def clientMetadata: UIO[ClientMetadata] =
     ZIO.succeed(ClientMetadata(domain, version))
@@ -632,35 +640,38 @@ final private[openfeature] class FeatureFlagsLive(
       fiber  <- events.collect(collect).foreach(handler).forkDaemon
     } yield fiber.interrupt.unit
 
-  override def onProviderReady(handler: ProviderMetadata => UIO[Unit]): UIO[UIO[Unit]] = {
-    val metadata = ProviderMetadata(providerName)
-    subscribeToEvent(
-      _ == ProviderStatus.Ready,
-      metadata,
-      { case ProviderEvent.Ready(m, _) => m },
-      handler
-    )
-  }
+  override def onProviderReady(handler: ProviderMetadata => UIO[Unit]): UIO[UIO[Unit]] =
+    providerNameRef.get.flatMap { pName =>
+      val metadata = ProviderMetadata(pName)
+      subscribeToEvent(
+        _ == ProviderStatus.Ready,
+        metadata,
+        { case ProviderEvent.Ready(m, _) => m },
+        handler
+      )
+    }
 
-  override def onProviderError(handler: (Throwable, ProviderMetadata) => UIO[Unit]): UIO[UIO[Unit]] = {
-    val metadata = ProviderMetadata(providerName)
-    subscribeToEvent(
-      s => s == ProviderStatus.Error || s == ProviderStatus.Fatal,
-      (new RuntimeException("Provider in error state"), metadata),
-      { case ProviderEvent.Error(error, m, _, _, _) => (error, m) },
-      (handler(_, _)).tupled
-    )
-  }
+  override def onProviderError(handler: (Throwable, ProviderMetadata) => UIO[Unit]): UIO[UIO[Unit]] =
+    providerNameRef.get.flatMap { pName =>
+      val metadata = ProviderMetadata(pName)
+      subscribeToEvent(
+        s => s == ProviderStatus.Error || s == ProviderStatus.Fatal,
+        (new RuntimeException("Provider in error state"), metadata),
+        { case ProviderEvent.Error(error, m, _, _, _) => (error, m) },
+        (handler(_, _)).tupled
+      )
+    }
 
-  override def onProviderStale(handler: (String, ProviderMetadata) => UIO[Unit]): UIO[UIO[Unit]] = {
-    val metadata = ProviderMetadata(providerName)
-    subscribeToEvent(
-      _ == ProviderStatus.Stale,
-      ("Provider in stale state", metadata),
-      { case ProviderEvent.Stale(reason, m, _) => (reason, m) },
-      (handler(_, _)).tupled
-    )
-  }
+  override def onProviderStale(handler: (String, ProviderMetadata) => UIO[Unit]): UIO[UIO[Unit]] =
+    providerNameRef.get.flatMap { pName =>
+      val metadata = ProviderMetadata(pName)
+      subscribeToEvent(
+        _ == ProviderStatus.Stale,
+        ("Provider in stale state", metadata),
+        { case ProviderEvent.Stale(reason, m, _) => (reason, m) },
+        (handler(_, _)).tupled
+      )
+    }
 
   override def onConfigurationChanged(handler: (Set[String], ProviderMetadata) => UIO[Unit]): UIO[UIO[Unit]] =
     // Configuration changed doesn't have an "associated state" so no immediate execution needed
@@ -703,13 +714,15 @@ final private[openfeature] class FeatureFlagsLive(
   // Provider hooks (spec: provider hooks included in hook pipeline)
 
   private def getProviderHooks: UIO[List[FeatureHook]] =
-    ZIO
-      .attempt {
-        val javaHooks = provider.getProviderHooks
-        if (javaHooks == null || javaHooks.isEmpty) Nil
-        else javaHooks.asScala.toList.map(wrapJavaHook)
-      }
-      .catchAll(e => ZIO.logWarning(s"Failed to get provider hooks: ${e.getMessage}").as(Nil))
+    providerRef.get.flatMap { p =>
+      ZIO
+        .attempt {
+          val javaHooks = p.getProviderHooks
+          if (javaHooks == null || javaHooks.isEmpty) Nil
+          else javaHooks.asScala.toList.map(wrapJavaHook)
+        }
+        .catchAll(e => ZIO.logWarning(s"Failed to get provider hooks: ${e.getMessage}").as(Nil))
+    }
 
   @scala.annotation.nowarn("msg=deprecated")
   private def toJavaHookContext(ctx: HookContext): JavaHookContext[Any] =
@@ -720,7 +733,7 @@ final private[openfeature] class FeatureFlagsLive(
         def getDomain: String = domain.orNull
       },
       new dev.openfeature.sdk.Metadata {
-        def getName: String = providerName
+        def getName: String = ctx.providerMetadata.name
       },
       ContextConverter.toOpenFeature(ctx.evaluationContext),
       ctx.defaultValue
@@ -794,6 +807,41 @@ final private[openfeature] class FeatureFlagsLive(
         }.ignore
     }
   }
+
+  // Provider hot-swap
+
+  // Note: we reuse the existing `client` object because the Java SDK's Client
+  // delegates to the provider registered with the API at evaluation time,
+  // not the provider that was active when the client was created.
+  override def setProvider(newProvider: OFFeatureProvider): IO[FeatureFlagError, Unit] =
+    swapLock.withPermit {
+      for {
+        // Save old state for rollback on failure
+        oldProvider <- providerRef.get
+        oldName     <- providerNameRef.get
+        // 1. Transition to NOT_READY — new evaluations fail fast during swap
+        _ <- state.statusRef.set(ProviderStatus.NotReady)
+        // 2. Update refs BEFORE registering with Java SDK, so the event bridge
+        //    (which fires PROVIDER_READY during setProviderAndWait) sees consistent metadata
+        newName = Option(newProvider.getMetadata).map(_.getName).getOrElse("unknown")
+        _ <- providerRef.set(newProvider)
+        _ <- providerNameRef.set(newName)
+        // 3. Register new provider with Java SDK (shuts down old, initializes new)
+        _ <- (domain match {
+          case Some(d) => ZIO.attemptBlocking(api.setProviderAndWait(d, newProvider))
+          case None    => ZIO.attemptBlocking(api.setProviderAndWait(newProvider))
+        }).mapError(e => FeatureFlagError.ProviderInitializationFailed(e))
+          .tapError(_ =>
+            // Rollback refs and set Error status so the instance is in a diagnosable state
+            providerRef.set(oldProvider) *>
+              providerNameRef.set(oldName) *>
+              state.statusRef.set(ProviderStatus.Error)
+          )
+        // 4. Mark ready — the Java SDK event bridge will also fire PROVIDER_READY,
+        //    but we set it explicitly for immediate visibility
+        _ <- state.statusRef.set(ProviderStatus.Ready)
+      } yield ()
+    }
 
   // Shutdown API (spec 1.6.1, 1.6.2)
 

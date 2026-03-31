@@ -159,6 +159,14 @@ trait FeatureFlags {
   def clearHooks: UIO[Unit]
   def hooks: UIO[List[FeatureHook]]
 
+  /** Replace the underlying provider at runtime.
+    *
+    * The old provider is shut down, the new provider is initialized, and the status transitions through `NotReady`
+    * during the swap. Hooks, context, and event handlers are preserved. Evaluations that start during the swap fail
+    * with `ProviderNotReady`.
+    */
+  def setProvider(provider: OFFeatureProvider): IO[FeatureFlagError, Unit]
+
   // Shutdown API (spec 1.6.1)
   def shutdown: UIO[Unit]
 
@@ -388,6 +396,9 @@ object FeatureFlags {
   def trackedEvents: ZIO[FeatureFlags, Nothing, List[(String, EvaluationContext, Option[TrackingEventDetails])]] =
     ZIO.serviceWithZIO(_.trackedEvents)
 
+  def setProvider(provider: OFFeatureProvider): ZIO[FeatureFlags, FeatureFlagError, Unit] =
+    ZIO.serviceWithZIO(_.setProvider(provider))
+
   // Factory Methods
 
   /** Shared initialization logic for all factory methods. */
@@ -413,19 +424,23 @@ object FeatureFlags {
         case _                  => ZIO.attempt(api.getClient())
       }
       providerName = Option(provider.getMetadata).map(_.getName).getOrElse("unknown")
-      baseState <- FeatureFlagsState.make
+      providerRef     <- Ref.make(provider)
+      providerNameRef <- Ref.make(providerName)
+      swapLock        <- Semaphore.make(1)
+      baseState       <- FeatureFlagsState.make
       state = statusRef.fold(baseState)(ref => baseState.copy(statusRef = ref))
       _ <- state.hooksRef.set(initialHooks)
       _ <- statusRef.fold(state.statusRef.set(ProviderStatus.Ready))(_ => ZIO.unit)
       _ <- ZIO.when(addShutdownFinalizer)(ZIO.addFinalizer(ZIO.attemptBlocking(api.shutdown()).ignore))
       ff = new FeatureFlagsLive(
         client,
-        provider,
-        providerName,
+        providerRef,
+        providerNameRef,
         domain,
         version,
         state,
         api,
+        swapLock,
         evaluationTimeout = evaluationTimeout
       )
       _ <- ff.startEventBridge
@@ -569,11 +584,25 @@ object FeatureFlags {
         case _                  => ZIO.attempt(api.getClient())
       }
       providerName = Option(provider.getMetadata).map(_.getName).getOrElse("unknown")
-      baseState <- FeatureFlagsState.make
+      providerRef     <- Ref.make(provider)
+      providerNameRef <- Ref.make(providerName)
+      swapLock        <- Semaphore.make(1)
+      baseState       <- FeatureFlagsState.make
       state = statusRef.fold(baseState)(ref => baseState.copy(statusRef = ref))
       _ <- state.hooksRef.set(initialHooks)
       _ <- ZIO.when(addShutdownFinalizer)(ZIO.addFinalizer(ZIO.attemptBlocking(api.shutdown()).ignore))
-      ff = new FeatureFlagsLive(client, provider, providerName, domain, version, state, api, onReady, evaluationTimeout)
+      ff = new FeatureFlagsLive(
+        client,
+        providerRef,
+        providerNameRef,
+        domain,
+        version,
+        state,
+        api,
+        swapLock,
+        onReady,
+        evaluationTimeout
+      )
       // Start event bridge — if provider is already ready, replay fires immediately
       _ <- ff.startEventBridge
     } yield ff

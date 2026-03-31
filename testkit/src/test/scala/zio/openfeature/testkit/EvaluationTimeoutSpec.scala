@@ -64,7 +64,10 @@ object EvaluationTimeoutSpec extends ZIOSpecDefault {
             options = EvaluationOptions.empty.withTimeout(50.millis)
           )
           .either
-      } yield assertTrue(result.isLeft)
+      } yield assertTrue(
+        result.isLeft,
+        result.left.toOption.get.isInstanceOf[FeatureFlagError.ProviderError]
+      )
     }.provide(layerWithTimeout(delay = 2.seconds, evaluationTimeout = Some(10.seconds))),
     test("per-call timeout applies when no global timeout is set") {
       for {
@@ -76,7 +79,10 @@ object EvaluationTimeoutSpec extends ZIOSpecDefault {
             options = EvaluationOptions.empty.withTimeout(50.millis)
           )
           .either
-      } yield assertTrue(result.isLeft)
+      } yield assertTrue(
+        result.isLeft,
+        result.left.toOption.get.isInstanceOf[FeatureFlagError.ProviderError]
+      )
     }.provide(layerWithTimeout(delay = 2.seconds))
   ) @@ TestAspect.withLiveClock @@ TestAspect.sequential
 }

@@ -36,7 +36,7 @@ final private[openfeature] class FeatureFlagsLive(
     // Read provider name dynamically so events after a provider swap use the new name
     def currentMetadata(runtime: Runtime[Any]): ProviderMetadata = {
       val name = Unsafe.unsafe { implicit u =>
-        runtime.unsafe.run(providerNameRef.get).getOrThrowFiberFailure()
+        runtime.unsafe.run(providerNameRef.get).getOrElse(_ => "unknown")
       }
       ProviderMetadata(name)
     }
@@ -57,7 +57,7 @@ final private[openfeature] class FeatureFlagsLive(
               state.statusRef.set(ProviderStatus.Ready) *>
                 state.eventHub.publish(ProviderEvent.Ready(currentMetadata(runtime), em))
             )
-            .getOrThrowFiberFailure()
+            .getOrElse(_ => ())
           onReady.foreach(_.countDown())
         }
 
@@ -73,7 +73,7 @@ final private[openfeature] class FeatureFlagsLive(
                   ProviderEvent.Error(error, currentMetadata(runtime), errorCode, Option(details.getMessage), em)
                 )
             )
-            .getOrThrowFiberFailure()
+            .getOrElse(_ => ())
         }
 
       val staleHandler: java.util.function.Consumer[EventDetails] = details =>
@@ -85,7 +85,7 @@ final private[openfeature] class FeatureFlagsLive(
               state.statusRef.set(ProviderStatus.Stale) *>
                 state.eventHub.publish(ProviderEvent.Stale(reason, currentMetadata(runtime), em))
             )
-            .getOrThrowFiberFailure()
+            .getOrElse(_ => ())
         }
 
       val configHandler: java.util.function.Consumer[EventDetails] = details =>
@@ -98,7 +98,7 @@ final private[openfeature] class FeatureFlagsLive(
             .run(
               state.eventHub.publish(ProviderEvent.ConfigurationChanged(flags, currentMetadata(runtime), em))
             )
-            .getOrThrowFiberFailure()
+            .getOrElse(_ => ())
         }
 
       for {

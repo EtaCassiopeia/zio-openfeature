@@ -114,7 +114,7 @@ final class HoconProvider private (
         new Value(Structure.mapToStructure(javaMap))
       case ConfigValueType.LIST =>
         val list = cv.asInstanceOf[com.typesafe.config.ConfigList]
-        new Value(list.asScala.map(configValueToSdkValue).map(_.asObject()).asJava)
+        new Value(list.asScala.map(configValueToSdkValue).asJava)
       case ConfigValueType.NULL => new Value()
     }
 

@@ -70,8 +70,8 @@ object ProviderHotSwapSpec extends ZIOSpecDefault {
   private def buildWithDomain(provider: SimpleProvider): ZIO[Scope, Throwable, FeatureFlags] = {
     val api    = OpenFeatureAPIFactory.create()
     val domain = s"test-swap-${java.util.UUID.randomUUID()}"
-    FeatureFlags
-      .build(
+    for {
+      ff <- FeatureFlags.build(
         provider,
         domain = Some(domain),
         version = None,
@@ -80,6 +80,10 @@ object ProviderHotSwapSpec extends ZIOSpecDefault {
         addShutdownFinalizer = false,
         apiOverride = Some(api)
       )
+      // Wait for the Java SDK's initial PROVIDER_READY event to settle so it doesn't
+      // race with subsequent setProvider calls in tests
+      _ <- ZIO.attemptBlocking(Thread.sleep(50)).ignore
+    } yield ff
   }
 
   def spec = suite("Provider Hot-Swap")(

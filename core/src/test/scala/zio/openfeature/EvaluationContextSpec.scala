@@ -232,6 +232,26 @@ object EvaluationContextSpec extends ZIOSpecDefault {
         val ofCtx     = zio.openfeature.internal.ContextConverter.toOpenFeature(ctx)
         val roundTrip = zio.openfeature.internal.ContextConverter.fromOpenFeature(ofCtx)
         assertTrue(roundTrip.targetingKey == None)
+      },
+      test("Long value larger than Int.MaxValue survives roundtrip as LongValue") {
+        val big       = Int.MaxValue.toLong + 1L
+        val ctx       = EvaluationContext.empty.withAttribute("big", AttributeValue.LongValue(big))
+        val ofCtx     = zio.openfeature.internal.ContextConverter.toOpenFeature(ctx)
+        val roundTrip = zio.openfeature.internal.ContextConverter.fromOpenFeature(ofCtx)
+        assertTrue(roundTrip.get("big") == Some(AttributeValue.LongValue(big)))
+      },
+      test("Long value smaller than Int.MinValue survives roundtrip as LongValue") {
+        val small     = Int.MinValue.toLong - 1L
+        val ctx       = EvaluationContext.empty.withAttribute("small", AttributeValue.LongValue(small))
+        val ofCtx     = zio.openfeature.internal.ContextConverter.toOpenFeature(ctx)
+        val roundTrip = zio.openfeature.internal.ContextConverter.fromOpenFeature(ofCtx)
+        assertTrue(roundTrip.get("small") == Some(AttributeValue.LongValue(small)))
+      },
+      test("Long value within Int range roundtrips as IntValue") {
+        val ctx       = EvaluationContext.empty.withAttribute("n", AttributeValue.LongValue(42L))
+        val ofCtx     = zio.openfeature.internal.ContextConverter.toOpenFeature(ctx)
+        val roundTrip = zio.openfeature.internal.ContextConverter.fromOpenFeature(ofCtx)
+        assertTrue(roundTrip.get("n") == Some(AttributeValue.IntValue(42)))
       }
     )
   )

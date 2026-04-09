@@ -60,31 +60,28 @@ final private class FeatureFlagRegistryLive(
 
   override def getClient(domain: String): UIO[FeatureFlags] =
     lock.withPermit {
-      clients.get.map(_.get(domain)).flatMap {
-        case Some(c) => ZIO.succeed(c)
+      clients.get.flatMap(_.get(domain) match {
+        case Some(c) => Exit.succeed(c)
         case None    => createDomainClient(domain)
-      }
+      })
     }
 
   override def setProvider(domain: String, provider: OFFeatureProvider): IO[FeatureFlagError, Unit] =
     lock.withPermit {
-      for {
-        existing <- clients.get.map(_.get(domain))
-        _ <- existing match {
-          case Some(client) =>
-            client
-              .setProvider(provider)
-              .tap(_ => providers.update(_ + (domain -> provider)))
-          case None =>
-            providers.update(_ + (domain -> provider))
-        }
-      } yield ()
+      clients.get.flatMap(_.get(domain) match {
+        case Some(client) =>
+          client
+            .setProvider(provider)
+            .tap(_ => providers.update(_ + (domain -> provider)))
+        case None =>
+          providers.update(_ + (domain -> provider))
+      })
     }
 
   override def defaultClient: UIO[FeatureFlags] =
     lock.withPermit {
       defaultRef.get.flatMap {
-        case Some(c) => ZIO.succeed(c)
+        case Some(c) => Exit.succeed(c)
         case None    => createDefaultClient
       }
     }

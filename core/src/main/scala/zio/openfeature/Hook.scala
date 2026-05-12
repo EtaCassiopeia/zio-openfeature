@@ -279,39 +279,41 @@ object FeatureHook {
         }
       } yield None
 
-    private def elapsed(ctx: HookContext): Duration = {
-      val end   = java.lang.System.nanoTime()
-      val start = ctx.hookData.get(startTimeKey).getOrElse(end)
-      Duration.fromNanos(end - start)
-    }
+    private def elapsed(ctx: HookContext): UIO[Duration] =
+      Clock.nanoTime.map { end =>
+        val start = ctx.hookData.get(startTimeKey).getOrElse(end)
+        Duration.fromNanos(end - start)
+      }
 
     override def after[A](ctx: HookContext, details: FlagResolution[A], hints: HookHints): UIO[Unit] =
       afterLevel match {
         case Some(level) =>
-          val duration = elapsed(ctx)
-          val annotations = baseAnnotations(ctx) ++ contextAnnotations(ctx) ++ Set(
-            zio.LogAnnotation("flag.value", String.valueOf(details.value)),
-            zio.LogAnnotation("flag.reason", details.reason.toString),
-            zio.LogAnnotation("flag.duration_ms", duration.toMillis.toString)
-          ) ++ details.variant.map(v => zio.LogAnnotation("flag.variant", v)).toSet
-          annotate(annotations)(
-            logAtLevel(level, s"Flag '${ctx.flagKey}' = ${details.value} (${details.reason}, ${duration.toMillis}ms)")
-          )
+          elapsed(ctx).flatMap { duration =>
+            val annotations = baseAnnotations(ctx) ++ contextAnnotations(ctx) ++ Set(
+              zio.LogAnnotation("flag.value", String.valueOf(details.value)),
+              zio.LogAnnotation("flag.reason", details.reason.toString),
+              zio.LogAnnotation("flag.duration_ms", duration.toMillis.toString)
+            ) ++ details.variant.map(v => zio.LogAnnotation("flag.variant", v)).toSet
+            annotate(annotations)(
+              logAtLevel(level, s"Flag '${ctx.flagKey}' = ${details.value} (${details.reason}, ${duration.toMillis}ms)")
+            )
+          }
         case None => ZIO.unit
       }
 
     override def error(ctx: HookContext, err: FeatureFlagError, hints: HookHints): UIO[Unit] =
       errorLevel match {
         case Some(level) =>
-          val duration = elapsed(ctx)
-          val annotations = baseAnnotations(ctx) ++ contextAnnotations(ctx) ++ Set(
-            zio.LogAnnotation("flag.error", err.message),
-            zio.LogAnnotation("flag.error.type", err.getClass.getSimpleName),
-            zio.LogAnnotation("flag.duration_ms", duration.toMillis.toString)
-          )
-          annotate(annotations)(
-            logAtLevel(level, s"Flag '${ctx.flagKey}' evaluation failed: ${err.message}")
-          )
+          elapsed(ctx).flatMap { duration =>
+            val annotations = baseAnnotations(ctx) ++ contextAnnotations(ctx) ++ Set(
+              zio.LogAnnotation("flag.error", err.message),
+              zio.LogAnnotation("flag.error.type", err.getClass.getSimpleName),
+              zio.LogAnnotation("flag.duration_ms", duration.toMillis.toString)
+            )
+            annotate(annotations)(
+              logAtLevel(level, s"Flag '${ctx.flagKey}' evaluation failed: ${err.message}")
+            )
+          }
         case None => ZIO.unit
       }
   }
@@ -366,19 +368,19 @@ object FeatureHook {
         _ = ctx.hookData.set(startTimeKey, now)
       } yield None
 
-    override def after[A](ctx: HookContext, details: FlagResolution[A], hints: HookHints): UIO[Unit] = {
-      val end      = java.lang.System.nanoTime()
-      val start    = ctx.hookData.get(startTimeKey).getOrElse(end)
-      val duration = Duration.fromNanos(end - start)
-      onSuccess(ctx, details, duration)
-    }
+    override def after[A](ctx: HookContext, details: FlagResolution[A], hints: HookHints): UIO[Unit] =
+      Clock.nanoTime.flatMap { end =>
+        val start    = ctx.hookData.get(startTimeKey).getOrElse(end)
+        val duration = Duration.fromNanos(end - start)
+        onSuccess(ctx, details, duration)
+      }
 
-    override def error(ctx: HookContext, err: FeatureFlagError, hints: HookHints): UIO[Unit] = {
-      val end      = java.lang.System.nanoTime()
-      val start    = ctx.hookData.get(startTimeKey).getOrElse(end)
-      val duration = Duration.fromNanos(end - start)
-      onError(ctx, err, duration)
-    }
+    override def error(ctx: HookContext, err: FeatureFlagError, hints: HookHints): UIO[Unit] =
+      Clock.nanoTime.flatMap { end =>
+        val start    = ctx.hookData.get(startTimeKey).getOrElse(end)
+        val duration = Duration.fromNanos(end - start)
+        onError(ctx, err, duration)
+      }
   }
 
   def contextValidator(

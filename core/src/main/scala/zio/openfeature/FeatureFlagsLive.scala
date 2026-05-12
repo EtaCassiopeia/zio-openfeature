@@ -695,13 +695,16 @@ final private[openfeature] class FeatureFlagsLive(
 
   private def getProviderHooks: UIO[List[FeatureHook]] =
     providerRef.get.flatMap { p =>
-      ZIO
-        .attempt {
-          val javaHooks = p.getProviderHooks
+      try {
+        val javaHooks = p.getProviderHooks
+        val hooks =
           if (javaHooks == null || javaHooks.isEmpty) Nil
           else javaHooks.asScala.toList.map(wrapJavaHook)
-        }
-        .catchAll(e => ZIO.logWarning(s"Failed to get provider hooks: ${e.getMessage}").as(Nil))
+        Exit.succeed(hooks)
+      } catch {
+        case scala.util.control.NonFatal(e) =>
+          ZIO.logWarningCause("Failed to get provider hooks", Cause.fail(e)).as(Nil)
+      }
     }
 
   @scala.annotation.nowarn("msg=deprecated")
@@ -746,8 +749,8 @@ final private[openfeature] class FeatureFlagsLive(
     val hook = javaHook.asInstanceOf[dev.openfeature.sdk.Hook[Any]]
     new FeatureHook {
       override def before(ctx: HookContext, hints: HookHints): UIO[Option[(EvaluationContext, HookHints)]] =
-        ZIO
-          .attempt {
+        ZIO.succeed {
+          try {
             val jCtx   = toJavaHookContext(ctx)
             val jHints = hints.values.map { case (k, v) => k -> v.asInstanceOf[Object] }.asJava
             val result = hook.before(jCtx, jHints)
@@ -755,8 +758,8 @@ final private[openfeature] class FeatureFlagsLive(
               val newCtx = fromJavaEvaluationContext(result.get())
               Some((newCtx, hints))
             } else None
-          }
-          .catchAll(_ => ZIO.none)
+          } catch { case scala.util.control.NonFatal(_) => None }
+        }
 
       override def after[A](ctx: HookContext, details: FlagResolution[A], hints: HookHints): UIO[Unit] =
         ZIO.attempt {

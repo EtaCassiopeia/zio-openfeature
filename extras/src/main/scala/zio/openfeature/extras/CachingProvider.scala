@@ -31,8 +31,10 @@ final case class CachingConfig(
   contextKeys: Option[Set[String]] = None
 )
 
-/** A cache key combining the flag key, evaluation type, and a hash of the evaluation context. */
-final private[extras] case class CacheKey(flagKey: String, flagType: String, contextHash: Int)
+/** A cache key combining the flag key, evaluation type, and a fingerprint of the evaluation context. Uses a string
+  * fingerprint instead of a hash to avoid collisions that could serve wrong flag values to different users.
+  */
+final private[extras] case class CacheKey(flagKey: String, flagType: String, contextFingerprint: String)
 
 /** A decorator provider that wraps any existing provider and adds evaluation caching backed by `zio-cache`.
   *
@@ -72,24 +74,24 @@ final class CachingProvider private (
     underlying.shutdown()
   }
 
-  private def contextHash(ctx: OFEvaluationContext): Int =
-    if (ctx == null) 0
+  // Length-prefix each field so user-supplied strings cannot synthesize separator collisions
+  // (e.g., a value containing "|" or "," produces a different fingerprint than the corresponding split).
+  private def lp(s: String): String = s"${s.length}:$s"
+
+  private def contextFingerprint(ctx: OFEvaluationContext): String =
+    if (ctx == null) "null"
     else {
       val tk = config.contextKeys match {
         case Some(_) => "" // targeting key is often high-cardinality; only include if in contextKeys
         case None    => Option(ctx.getTargetingKey).getOrElse("")
       }
-      val attrs = config.contextKeys match {
-        case Some(keys) =>
-          Option(ctx.asUnmodifiableMap())
-            .map { m =>
-              m.asScala.filter { case (k, _) => keys.contains(k) }.hashCode()
-            }
-            .getOrElse(0)
-        case None =>
-          Option(ctx.asUnmodifiableMap()).map(_.hashCode()).getOrElse(0)
+      val entries: List[(String, AnyRef)] = (config.contextKeys, Option(ctx.asUnmodifiableMap())) match {
+        case (Some(keys), Some(m)) => m.asScala.toList.filter { case (k, _) => keys.contains(k) }.sortBy(_._1)
+        case (None, Some(m))       => m.asScala.toList.sortBy(_._1)
+        case (_, None)             => Nil
       }
-      (tk, attrs).hashCode()
+      val attrs = entries.map { case (k, v) => s"${lp(k)}=${lp(String.valueOf(v))}" }.mkString(",")
+      s"${lp(tk)}|$attrs"
     }
 
   private def withCachedReason[A](eval: ProviderEvaluation[A]): ProviderEvaluation[A] =
@@ -109,24 +111,26 @@ final class CachingProvider private (
     context: OFEvaluationContext,
     evaluate: => ProviderEvaluation[A]
   ): ProviderEvaluation[A] = {
-    val ck = CacheKey(key, flagType, contextHash(context))
-    // Register the evaluation thunk before calling cache.get. On a cache miss,
-    // the Lookup reads this thunk to compute the value. For the same CacheKey,
-    // zio-cache deduplicates — only one Lookup runs regardless of how many
-    // fibers request the same key concurrently.
+    val ck = CacheKey(key, flagType, contextFingerprint(context))
+    // Register the evaluation thunk before calling cache.get. On a cache miss, the Lookup reads this thunk.
+    // zio-cache deduplicates concurrent Lookups for the same key, so only one Lookup runs. The try/finally
+    // ensures the evaluators entry is always removed — on cache hit (Lookup never runs) and on miss alike.
     evaluators.put(ck, () => evaluate.asInstanceOf[ProviderEvaluation[Any]])
-    Unsafe.unsafe { implicit u =>
-      runtime.unsafe
-        .run(
-          cache.contains(ck).flatMap { hit =>
-            cache
-              .get(ck)
-              .map(_.asInstanceOf[ProviderEvaluation[A]])
-              .map(r => if (hit) withCachedReason(r) else r)
-          }
-        )
-        .getOrThrowFiberFailure()
-    }
+    try
+      Unsafe.unsafe { implicit u =>
+        runtime.unsafe
+          .run(
+            cache.contains(ck).flatMap { hit =>
+              cache
+                .get(ck)
+                .map(_.asInstanceOf[ProviderEvaluation[A]])
+                .map(r => if (hit) withCachedReason(r) else r)
+            }
+          )
+          .getOrThrowFiberFailure()
+      }
+    finally
+      evaluators.remove(ck)
   }
 
   override def getBooleanEvaluation(
@@ -183,7 +187,7 @@ object CachingProvider {
         config.ttl,
         Lookup[CacheKey, Any, Throwable, ProviderEvaluation[Any]] { ck =>
           ZIO.attempt {
-            val eval = evaluators.get(ck)
+            val eval = evaluators.remove(ck)
             if (eval == null) throw new IllegalStateException(s"No evaluator registered for $ck")
             eval()
           }

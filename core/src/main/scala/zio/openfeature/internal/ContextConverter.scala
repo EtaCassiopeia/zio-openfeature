@@ -76,8 +76,13 @@ private[openfeature] object ContextConverter {
     else if (value.isString) AttributeValue.StringValue(value.asString())
     else if (value.isNumber) {
       val num = value.asDouble()
-      if (num == num.toLong.toDouble) AttributeValue.IntValue(num.toInt)
-      else AttributeValue.DoubleValue(num)
+      // Long.MaxValue.toDouble rounds up to 2^63 (strictly greater than Long.MaxValue), so .toLong on
+      // out-of-range doubles silently saturates. Strict `<` on the upper bound rejects the saturation point.
+      if (num == num.toLong.toDouble && num >= Long.MinValue.toDouble && num < Long.MaxValue.toDouble) {
+        val asLong = num.toLong
+        if (asLong >= Int.MinValue && asLong <= Int.MaxValue) AttributeValue.IntValue(asLong.toInt)
+        else AttributeValue.LongValue(asLong)
+      } else AttributeValue.DoubleValue(num)
     } else if (value.isList) {
       val list = value.asList().asScala.map(valueToAttribute).toList
       AttributeValue.ListValue(list)

@@ -114,17 +114,27 @@ final class HoconProvider private (
         new Value(Structure.mapToStructure(javaMap))
       case ConfigValueType.LIST =>
         val list = cv.asInstanceOf[com.typesafe.config.ConfigList]
-        new Value(list.asScala.map(configValueToSdkValue).map(_.asObject()).asJava)
+        new Value(list.asScala.map(configValueToSdkValue).asJava)
       case ConfigValueType.NULL => new Value()
     }
 
-  /** Reload the config by re-parsing from the original source. */
-  def reload(path: String = "feature-flags"): Task[Unit] = ZIO.attempt {
-    ConfigFactory.invalidateCaches()
-    val root   = ConfigFactory.load()
-    val newCfg = if (root.hasPath(path)) root.getConfig(path) else ConfigFactory.empty()
-    configRef.set(newCfg)
-  }
+  /** Reload the config by re-parsing from the original source.
+    *
+    * On failure, the existing config is preserved and provider state transitions to `ERROR`. The state remains `ERROR`
+    * until a subsequent `reload` succeeds — callers must re-invoke to recover.
+    */
+  def reload(path: String = "feature-flags"): Task[Unit] =
+    ZIO
+      .attempt {
+        ConfigFactory.invalidateCaches()
+        val root = ConfigFactory.load()
+        if (root.hasPath(path)) root.getConfig(path) else ConfigFactory.empty()
+      }
+      .tapBoth(
+        _ => ZIO.succeed(state.set(ProviderState.ERROR)),
+        newCfg => ZIO.succeed { configRef.set(newCfg); state.set(ProviderState.READY) }
+      )
+      .unit
 }
 
 object HoconProvider {

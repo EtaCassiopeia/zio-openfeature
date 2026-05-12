@@ -178,13 +178,10 @@ final class CircuitBreakerProvider private (
       result
     } catch {
       case e: Throwable if isApplicationError(e) =>
-        // Application-level errors (flag not found, type mismatch, etc.) indicate
-        // the provider is reachable — reset failure counter in closed state, but do
-        // NOT count toward closing the circuit in half-open state (only actual
-        // successful evaluations should close the circuit).
-        if (!breaker.isHalfOpen) {
-          if (breaker.recordSuccess()) safeEmitReady()
-        }
+        // Application-level errors (flag not found, type mismatch, etc.) prove the provider is reachable
+        // but are not real successes. `recordReachable` resets the failure counter in Closed state and
+        // frees the probe slot in Half-Open, without advancing toward closing the circuit on app errors alone.
+        breaker.recordReachable()
         throw unwrapFiberFailure(e)
       case e: VirtualMachineError => throw e
       case e: LinkageError =>

@@ -16,6 +16,8 @@ object HoconProviderSpec extends ZIOSpecDefault {
       timeout = 30
       retries = 3
     }
+    allowed-regions = ["us", "eu", "ap"]
+    primes = [2, 3, 5, 7]
   """)
 
   private val provider = HoconProvider.fromConfig(config)
@@ -56,6 +58,23 @@ object HoconProviderSpec extends ZIOSpecDefault {
       test("returns nested config as object") {
         val result = provider.getObjectEvaluation("settings", new dev.openfeature.sdk.Value(), ctx)
         assertTrue(result.getReason == "STATIC")
+      },
+      test("list of strings unwraps to non-null Value elements") {
+        import scala.jdk.CollectionConverters._
+        val result = provider.getObjectEvaluation("allowed-regions", new dev.openfeature.sdk.Value(), ctx)
+        val list   = result.getValue.asList().asScala.toList
+        assertTrue(result.getReason == "STATIC") &&
+        assertTrue(list.size == 3) &&
+        assertTrue(list.forall(v => v != null && v.asString() != null)) &&
+        assertTrue(list.map(_.asString()) == List("us", "eu", "ap"))
+      },
+      test("list of numbers unwraps to non-null numeric Values") {
+        import scala.jdk.CollectionConverters._
+        val result = provider.getObjectEvaluation("primes", new dev.openfeature.sdk.Value(), ctx)
+        val list   = result.getValue.asList().asScala.toList
+        assertTrue(list.size == 4) &&
+        assertTrue(list.forall(_ != null)) &&
+        assertTrue(list.map(_.asInteger().intValue()) == List(2, 3, 5, 7))
       }
     ),
     suite("metadata")(

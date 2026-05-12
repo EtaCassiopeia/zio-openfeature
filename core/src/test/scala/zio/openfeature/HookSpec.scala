@@ -352,18 +352,14 @@ object HookSpec extends ZIOSpecDefault {
           result <- hook.before(makeHookContext(), HookHints.empty)
         } yield assertTrue(result.isEmpty)
       },
-      test("logging hook after logs info") {
+      test("logging hook after completes without error") {
         val hook       = FeatureHook.logging(logBefore = false, logAfter = true, logError = false)
         val resolution = FlagResolution.default("test", true)
-        for {
-          _ <- hook.after(makeHookContext(), resolution, HookHints.empty)
-        } yield assertTrue(true)
+        hook.after(makeHookContext(), resolution, HookHints.empty).as(assertCompletes)
       },
-      test("logging hook error logs error") {
+      test("logging hook error completes without error") {
         val hook = FeatureHook.logging(logBefore = false, logAfter = false, logError = true)
-        for {
-          _ <- hook.error(makeHookContext(), FeatureFlagError.FlagNotFound("test"), HookHints.empty)
-        } yield assertTrue(true)
+        hook.error(makeHookContext(), FeatureFlagError.FlagNotFound("test"), HookHints.empty).as(assertCompletes)
       },
       test("logging hook all disabled") {
         val hook       = FeatureHook.logging(logBefore = false, logAfter = false, logError = false)
@@ -386,22 +382,22 @@ object HookSpec extends ZIOSpecDefault {
         assertTrue(result.isEmpty) &&
           assertTrue(hookCtx.hookData.get(TypedKey[Long]("structuredLogging.startTime")).isDefined)
       },
-      test("after completes successfully") {
+      test("after completes and reads start time from hookData") {
         val hook       = FeatureHook.structuredLogging()
         val hookCtx    = makeHookContext()
         val resolution = FlagResolution.default("test", true)
         for {
           _ <- hook.before(hookCtx, HookHints.empty)
           _ <- hook.after(hookCtx, resolution, HookHints.empty)
-        } yield assertTrue(true)
+        } yield assertTrue(hookCtx.hookData.get(TypedKey[Long]("structuredLogging.startTime")).isDefined)
       },
-      test("error completes successfully") {
+      test("error completes and reads start time from hookData") {
         val hook    = FeatureHook.structuredLogging()
         val hookCtx = makeHookContext()
         for {
           _ <- hook.before(hookCtx, HookHints.empty)
           _ <- hook.error(hookCtx, FeatureFlagError.FlagNotFound("test"), HookHints.empty)
-        } yield assertTrue(true)
+        } yield assertTrue(hookCtx.hookData.get(TypedKey[Long]("structuredLogging.startTime")).isDefined)
       },
       test("disabled levels skip logging but still track start time") {
         val hook       = FeatureHook.structuredLogging(beforeLevel = None, afterLevel = None, errorLevel = None)
@@ -426,7 +422,7 @@ object HookSpec extends ZIOSpecDefault {
         for {
           _ <- hook.before(hookCtx, HookHints.empty)
           _ <- hook.after(hookCtx, resolution, HookHints.empty)
-        } yield assertTrue(true)
+        } yield assertTrue(hookCtx.hookData.get(TypedKey[Long]("structuredLogging.startTime")).isDefined)
       },
       test("redactKeys hides sensitive values while preserving others") {
         val hook =

@@ -74,10 +74,7 @@ final private class FeatureFlagRegistryLive(
           case Some(client) =>
             client
               .setProvider(provider)
-              .tapBoth(
-                _ => ZIO.unit,
-                _ => providers.update(_ + (domain -> provider))
-              )
+              .tap(_ => providers.update(_ + (domain -> provider)))
           case None =>
             providers.update(_ + (domain -> provider))
         }

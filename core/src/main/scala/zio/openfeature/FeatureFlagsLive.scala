@@ -294,18 +294,18 @@ final private[openfeature] class FeatureFlagsLive(
       }
 
     val evaluation: IO[FeatureFlagError, FlagResolution[A]] =
-      ClientEvaluator.evaluateStandard(flagType.typeName, client, key, default, ofContext) match {
-        case Some((rawEval, extractValue)) =>
+      ClientEvaluator.evaluateStandard[A](flagType.typeName, client, key, default, ofContext) match {
+        case Some(erased) =>
           val timedEval = timeout match {
             case Some(d) =>
-              rawEval.disconnect
+              erased.task.disconnect
                 .timeoutFail(new java.util.concurrent.TimeoutException(s"Evaluation of '$key' timed out after $d"))(d)
-            case None => rawEval
+            case None => erased.task
           }
           timedEval
             .mapError(e => FeatureFlagError.ProviderError(e))
             .flatMap { details =>
-              toFlagResolution(key, details).map(r => r.copy(value = extractValue(details).asInstanceOf[A]))
+              toFlagResolution(key, details).map(r => r.copy(value = erased.extract(details)))
             }
 
         case None if flagType.typeName == "Object" =>

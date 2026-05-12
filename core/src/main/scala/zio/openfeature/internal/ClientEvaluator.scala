@@ -40,40 +40,39 @@ private[openfeature] trait ClientEvaluator[A] {
 
 private[openfeature] object ClientEvaluator {
 
-  /** Look up the evaluator for a standard type by name and evaluate, returning a type-erased result. Returns None for
+  /** A standard-type evaluation produced by [[evaluateStandard]], with the typed extractor pre-applied to the caller's
+    * `A`. The `asInstanceOf[A]` cast lives once here, not at each call site.
+    */
+  final case class Erased[A](
+    task: Task[FlagEvaluationDetails[_]],
+    extract: FlagEvaluationDetails[_] => A
+  )
+
+  /** Look up the evaluator for a standard type by name and produce the type-erased evaluation. Returns None for
     * non-standard types (Object, custom) which need special handling.
     */
-  def evaluateStandard(
+  def evaluateStandard[A](
     typeName: String,
     client: OFClient,
     key: String,
-    default: Any,
+    default: A,
     context: dev.openfeature.sdk.EvaluationContext
-  ): Option[(Task[FlagEvaluationDetails[_]], FlagEvaluationDetails[_] => Any)] =
+  ): Option[Erased[A]] = {
+    def erased[T](ev: ClientEvaluator[T]): Erased[A] =
+      Erased[A](
+        ev.evaluate(client, key, default.asInstanceOf[T], context),
+        details => ev.extractValue(details).asInstanceOf[A]
+      )
     typeName match {
-      case "Boolean" =>
-        Some(
-          (
-            booleanEvaluator.evaluate(client, key, default.asInstanceOf[Boolean], context),
-            booleanEvaluator.extractValue
-          )
-        )
-      case "String" =>
-        Some(
-          (stringEvaluator.evaluate(client, key, default.asInstanceOf[String], context), stringEvaluator.extractValue)
-        )
-      case "Int" =>
-        Some((intEvaluator.evaluate(client, key, default.asInstanceOf[Int], context), intEvaluator.extractValue))
-      case "Long" =>
-        Some((longEvaluator.evaluate(client, key, default.asInstanceOf[Long], context), longEvaluator.extractValue))
-      case "Float" =>
-        Some((floatEvaluator.evaluate(client, key, default.asInstanceOf[Float], context), floatEvaluator.extractValue))
-      case "Double" =>
-        Some(
-          (doubleEvaluator.evaluate(client, key, default.asInstanceOf[Double], context), doubleEvaluator.extractValue)
-        )
-      case _ => None
+      case "Boolean" => Some(erased(booleanEvaluator))
+      case "String"  => Some(erased(stringEvaluator))
+      case "Int"     => Some(erased(intEvaluator))
+      case "Long"    => Some(erased(longEvaluator))
+      case "Float"   => Some(erased(floatEvaluator))
+      case "Double"  => Some(erased(doubleEvaluator))
+      case _         => None
     }
+  }
 
   implicit val booleanEvaluator: ClientEvaluator[Boolean] = new ClientEvaluator[Boolean] {
     def evaluate(

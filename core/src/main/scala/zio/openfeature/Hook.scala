@@ -49,6 +49,13 @@ final class HookData {
   def getOrElse[A](key: TypedKey[A], default: => A): A =
     get(key).getOrElse(default)
 
+  /** Allocation-free lookup: returns the raw `Any` value or `null` if absent. Internal use only — callers must
+    * pattern-match on `null` and cast the non-null branch. Used in hot paths (e.g., hook duration) to avoid `Option`
+    * allocation.
+    */
+  private[openfeature] def getOrNull(key: TypedKey[_]): Any =
+    data.get().getOrElse(key.name, null)
+
   def remove[A](key: TypedKey[A]): Unit = {
     data.updateAndGet(_ - key.name)
     ()
@@ -280,9 +287,9 @@ object FeatureHook {
       } yield None
 
     private def elapsed(ctx: HookContext): UIO[Duration] =
-      Clock.nanoTime.map { end =>
-        val start = ctx.hookData.get(startTimeKey).getOrElse(end)
-        Duration.fromNanos(end - start)
+      ctx.hookData.getOrNull(startTimeKey) match {
+        case null  => Exit.succeed(Duration.Zero)
+        case start => Clock.nanoTime.map(end => Duration.fromNanos(end - start.asInstanceOf[Long]))
       }
 
     override def after[A](ctx: HookContext, details: FlagResolution[A], hints: HookHints): UIO[Unit] =
@@ -369,17 +376,19 @@ object FeatureHook {
       } yield None
 
     override def after[A](ctx: HookContext, details: FlagResolution[A], hints: HookHints): UIO[Unit] =
-      Clock.nanoTime.flatMap { end =>
-        val start    = ctx.hookData.get(startTimeKey).getOrElse(end)
-        val duration = Duration.fromNanos(end - start)
-        onSuccess(ctx, details, duration)
+      ctx.hookData.getOrNull(startTimeKey) match {
+        case null =>
+          onSuccess(ctx, details, Duration.Zero)
+        case start =>
+          Clock.nanoTime.flatMap(end => onSuccess(ctx, details, Duration.fromNanos(end - start.asInstanceOf[Long])))
       }
 
     override def error(ctx: HookContext, err: FeatureFlagError, hints: HookHints): UIO[Unit] =
-      Clock.nanoTime.flatMap { end =>
-        val start    = ctx.hookData.get(startTimeKey).getOrElse(end)
-        val duration = Duration.fromNanos(end - start)
-        onError(ctx, err, duration)
+      ctx.hookData.getOrNull(startTimeKey) match {
+        case null =>
+          onError(ctx, err, Duration.Zero)
+        case start =>
+          Clock.nanoTime.flatMap(end => onError(ctx, err, Duration.fromNanos(end - start.asInstanceOf[Long])))
       }
   }
 

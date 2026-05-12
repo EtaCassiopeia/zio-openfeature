@@ -335,9 +335,13 @@ final class TestFeatureProvider private (
   def setFailing(failing: Boolean): UIO[Unit] =
     if (failing) setErrorMode(ErrorMode.General) else clearErrorMode
 
-  /** Set the probability (0.0 to 1.0) that each evaluation fails randomly. Values are clamped to [0.0, 1.0]. */
-  def setFailureProbability(p: Double): UIO[Unit] =
-    ZIO.succeed(behaviorRef.updateAndGet(_.copy(failureProbability = p.max(0.0).min(1.0)))).unit
+  /** Set the probability (0.0 to 1.0) that each evaluation fails randomly. Values outside the range — including NaN —
+    * are clamped to [0.0, 1.0]; NaN is treated as 0.0 to avoid silently disabling failure injection.
+    */
+  def setFailureProbability(p: Double): UIO[Unit] = {
+    val clamped = if (p.isNaN) 0.0 else p.max(0.0).min(1.0)
+    ZIO.succeed(behaviorRef.updateAndGet(_.copy(failureProbability = clamped))).unit
+  }
 
   /** Reset all behavior controls to defaults. */
   def clearBehavior: UIO[Unit] =

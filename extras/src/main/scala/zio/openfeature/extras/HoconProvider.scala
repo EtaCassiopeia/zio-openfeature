@@ -118,7 +118,11 @@ final class HoconProvider private (
       case ConfigValueType.NULL => new Value()
     }
 
-  /** Reload the config by re-parsing from the original source. Sets state to ERROR on failure. */
+  /** Reload the config by re-parsing from the original source.
+    *
+    * On failure, the existing config is preserved and provider state transitions to `ERROR`. The state remains `ERROR`
+    * until a subsequent `reload` succeeds — callers must re-invoke to recover.
+    */
   def reload(path: String = "feature-flags"): Task[Unit] =
     ZIO
       .attempt {

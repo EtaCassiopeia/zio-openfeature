@@ -22,9 +22,10 @@ object FeatureFlagsState {
       fiberCtxRef    <- FiberRef.make(EvaluationContext.empty)
       transactionRef <- FiberRef.make[Option[TransactionState]](None)
       hooksRef       <- Ref.make(List.empty[FeatureHook])
-      eventHub       <- Hub.dropping[ProviderEvent](256)
-      statusRef      <- Ref.make[ProviderStatus](ProviderStatus.NotReady)
-      trackRec       <- Ref.make(List.empty[(String, EvaluationContext, Option[TrackingEventDetails])])
+      // Bounded; subscribers reconcile via current state on next evaluation, so dropping intermediate events is safe.
+      eventHub  <- Hub.dropping[ProviderEvent](256)
+      statusRef <- Ref.make[ProviderStatus](ProviderStatus.NotReady)
+      trackRec  <- Ref.make(List.empty[(String, EvaluationContext, Option[TrackingEventDetails])])
     } yield FeatureFlagsState(
       globalCtxRef,
       clientCtxRef,

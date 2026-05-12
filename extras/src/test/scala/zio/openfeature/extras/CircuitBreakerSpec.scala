@@ -139,6 +139,44 @@ object CircuitBreakerSpec extends ZIOSpecDefault {
         cb.transitionToHalfOpen()
         assertTrue(cb.tryAcquire == GateResult.Allowed)
       }
+    ),
+    suite("recordReachable")(
+      test("frees probe slot in half-open without closing the circuit") {
+        val clock = new TestClock()
+        val cb    = CircuitBreaker(CircuitBreakerConfig(halfOpenMaxCalls = 3), clock)
+        cb.trip()
+        cb.transitionToHalfOpen()
+        cb.tryAcquire // acquire probe slot
+        cb.recordReachable()
+        // Probe slot freed: next caller can probe; circuit still half-open.
+        assertTrue(cb.tryAcquire == GateResult.Allowed) &&
+        assertTrue(cb.isHalfOpen)
+      },
+      test("repeated reachability does not close the circuit") {
+        val clock = new TestClock()
+        val cb    = CircuitBreaker(CircuitBreakerConfig(halfOpenMaxCalls = 2), clock)
+        cb.trip()
+        cb.transitionToHalfOpen()
+        (1 to 10).foreach { _ =>
+          cb.tryAcquire
+          cb.recordReachable()
+        }
+        assertTrue(cb.isHalfOpen)
+      },
+      test("resets consecutive failures in closed state") {
+        val cb = CircuitBreaker(CircuitBreakerConfig(failureThreshold = 5))
+        cb.recordFailure()
+        cb.recordFailure()
+        cb.recordReachable()
+        assertTrue(cb.stateRef.get().consecutiveFailures == 0)
+      },
+      test("no-op in open state") {
+        val clock = new TestClock()
+        val cb    = CircuitBreaker(CircuitBreakerConfig(failureThreshold = 1, resetTimeout = 1.minute), clock)
+        cb.recordFailure() // trip
+        cb.recordReachable()
+        assertTrue(cb.isOpen)
+      }
     )
   )
 }

@@ -137,6 +137,37 @@ final class CircuitBreaker private[extras] (
     didClose
   }
 
+  /** Record that the delegate is reachable (e.g., it returned an application-level error). Resets `consecutiveFailures`
+    * in Closed state, and in Half-Open clears the `probing` flag so the next caller can probe — but does NOT increment
+    * the success counter, since reachability is not the same as a successful evaluation.
+    */
+  def recordReachable(): Unit = {
+    var done = false
+    while (!done) {
+      val current = stateRef.get()
+      current.circuit match {
+        case Closed =>
+          if (current.consecutiveFailures == 0) {
+            done = true
+          } else {
+            val next = CircuitBreakerState(Closed, consecutiveFailures = 0)
+            done = stateRef.compareAndSet(current, next)
+          }
+
+        case ho: HalfOpen =>
+          if (!ho.probing) {
+            done = true
+          } else {
+            val next = CircuitBreakerState(HalfOpen(ho.successes, probing = false), current.consecutiveFailures)
+            done = stateRef.compareAndSet(current, next)
+          }
+
+        case _: Open =>
+          done = true
+      }
+    }
+  }
+
   /** Record a failed call. Increments consecutive failures and opens the circuit when `failureThreshold` is reached.
     *
     * @return

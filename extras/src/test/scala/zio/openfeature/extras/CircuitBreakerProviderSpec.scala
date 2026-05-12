@@ -549,6 +549,41 @@ object CircuitBreakerProviderSpec extends ZIOSpecDefault {
         assertTrue(cb.getState == ProviderState.ERROR) &&
         assertTrue(underlying.evaluationCount.get() == countAfterTrip)
       },
+      test("application error during half-open frees probe slot without closing circuit") {
+        val callCount = new AtomicInteger(0)
+        val mode      = new AtomicReference[String]("infra")
+        val underlying = new FailableProvider(Map.empty) {
+          override def getBooleanEvaluation(
+            key: String,
+            defaultValue: java.lang.Boolean,
+            ctx: OFEvaluationContext
+          ): ProviderEvaluation[java.lang.Boolean] = {
+            callCount.incrementAndGet()
+            mode.get() match {
+              case "infra" => throw new RuntimeException("infra")
+              case _       => throw new dev.openfeature.sdk.exceptions.FlagNotFoundError(s"Flag '$key' not found")
+            }
+          }
+        }
+        val clock = new TestClock()
+        val config =
+          CircuitBreakerProviderConfig(failureThreshold = 2, resetTimeout = 1.second, halfOpenMaxCalls = 3)
+        val cb = CircuitBreakerProvider(underlying, config, clock)
+        // Trip the circuit with infrastructure failures (count toward threshold).
+        (1 to 2).foreach(_ => scala.util.Try(cb.getBooleanEvaluation("flag", false, ctx)))
+        // Past resetTimeout → next call enters half-open as the probe.
+        clock.advance(2.seconds)
+        // Switch to app errors: each call must reach the delegate (probe slot freed by recordReachable).
+        mode.set("app")
+        val countBefore = callCount.get()
+        (1 to 5).foreach(_ => scala.util.Try(cb.getBooleanEvaluation("missing", false, ctx)))
+        // Without lockup fix, only one call would land; with fix, each call gets through.
+        // Circuit must stay half-open (or closed if halfOpenMaxCalls reached via real successes — but app
+        // errors don't advance the counter, so it stays half-open).
+        // App errors don't advance the half-open success counter, so the breaker stays half-open.
+        assertTrue(callCount.get() - countBefore == 5) &&
+        assertTrue(cb.breaker.isHalfOpen)
+      },
       test("mixed application and infrastructure errors only count infrastructure errors") {
         val callCount = new AtomicInteger(0)
         val underlying = new FailableProvider(Map.empty) {

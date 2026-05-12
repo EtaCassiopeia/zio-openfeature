@@ -36,10 +36,25 @@ final private[openfeature] class FeatureFlagsLive(
     // Read provider name dynamically so events after a provider swap use the new name
     def currentMetadata(runtime: Runtime[Any]): ProviderMetadata = {
       val name = Unsafe.unsafe { implicit u =>
-        runtime.unsafe.run(providerNameRef.get).getOrElse(_ => "unknown")
+        runtime.unsafe
+          .run(
+            providerNameRef.get.catchAllCause(c =>
+              ZIO.logErrorCause("event bridge: providerNameRef.get", c).as("unknown")
+            )
+          )
+          .getOrElse(_ => "unknown")
       }
       ProviderMetadata(name)
     }
+
+    // Run an event-publish effect from a Java SDK thread. Failures are logged via the ZIO logger
+    // rather than thrown, so the Java SDK's event dispatch thread is never killed by a defect.
+    def runHandler(runtime: Runtime[Any], label: String)(effect: UIO[Unit]): Unit =
+      Unsafe.unsafe { implicit u =>
+        runtime.unsafe
+          .run(effect.catchAllCause(c => ZIO.logErrorCause(s"event bridge: $label", c)))
+          .getOrElse(_ => ())
+      }
 
     ZIO.runtime[Any].flatMap { runtime =>
       def extractEventMetadata(details: EventDetails): FlagMetadata =
@@ -49,57 +64,47 @@ final private[openfeature] class FeatureFlagsLive(
           else convertImmutableMetadata(javaMeta)
         } catch { case _: Exception => FlagMetadata.empty }
 
-      val readyHandler: java.util.function.Consumer[EventDetails] = details =>
-        Unsafe.unsafe { implicit u =>
-          val em = extractEventMetadata(details)
-          runtime.unsafe
-            .run(
-              state.statusRef.set(ProviderStatus.Ready) *>
-                state.eventHub.publish(ProviderEvent.Ready(currentMetadata(runtime), em))
-            )
-            .getOrElse(_ => ())
-          onReady.foreach(_.countDown())
-        }
+      val readyHandler: java.util.function.Consumer[EventDetails] = details => {
+        val em = extractEventMetadata(details)
+        runHandler(runtime, "PROVIDER_READY")(
+          state.statusRef.set(ProviderStatus.Ready) *>
+            state.eventHub.publish(ProviderEvent.Ready(currentMetadata(runtime), em)).unit
+        )
+        onReady.foreach(_.countDown())
+      }
 
-      val errorHandler: java.util.function.Consumer[EventDetails] = details =>
-        Unsafe.unsafe { implicit u =>
-          val error     = new RuntimeException(Option(details.getMessage).getOrElse("Provider error"))
-          val errorCode = Option(details.getErrorCode).map(ErrorCodeConverter.fromJava)
-          val em        = extractEventMetadata(details)
-          runtime.unsafe
-            .run(
-              state.statusRef.set(ProviderStatus.Error) *>
-                state.eventHub.publish(
-                  ProviderEvent.Error(error, currentMetadata(runtime), errorCode, Option(details.getMessage), em)
-                )
-            )
-            .getOrElse(_ => ())
-        }
+      val errorHandler: java.util.function.Consumer[EventDetails] = details => {
+        val error     = new RuntimeException(Option(details.getMessage).getOrElse("Provider error"))
+        val errorCode = Option(details.getErrorCode).map(ErrorCodeConverter.fromJava)
+        val em        = extractEventMetadata(details)
+        runHandler(runtime, "PROVIDER_ERROR")(
+          state.statusRef.set(ProviderStatus.Error) *>
+            state.eventHub
+              .publish(ProviderEvent.Error(error, currentMetadata(runtime), errorCode, Option(details.getMessage), em))
+              .unit
+        )
+      }
 
-      val staleHandler: java.util.function.Consumer[EventDetails] = details =>
-        Unsafe.unsafe { implicit u =>
-          val reason = Option(details.getMessage).getOrElse("Provider stale")
-          val em     = extractEventMetadata(details)
-          runtime.unsafe
-            .run(
-              state.statusRef.set(ProviderStatus.Stale) *>
-                state.eventHub.publish(ProviderEvent.Stale(reason, currentMetadata(runtime), em))
-            )
-            .getOrElse(_ => ())
-        }
+      val staleHandler: java.util.function.Consumer[EventDetails] = details => {
+        val reason = Option(details.getMessage).getOrElse("Provider stale")
+        val em     = extractEventMetadata(details)
+        runHandler(runtime, "PROVIDER_STALE")(
+          state.statusRef.set(ProviderStatus.Stale) *>
+            state.eventHub.publish(ProviderEvent.Stale(reason, currentMetadata(runtime), em)).unit
+        )
+      }
 
-      val configHandler: java.util.function.Consumer[EventDetails] = details =>
-        Unsafe.unsafe { implicit u =>
-          val flags = Option(details.getFlagsChanged)
-            .map(_.asScala.toSet)
-            .getOrElse(Set.empty[String])
-          val em = extractEventMetadata(details)
-          runtime.unsafe
-            .run(
-              state.eventHub.publish(ProviderEvent.ConfigurationChanged(flags, currentMetadata(runtime), em))
-            )
-            .getOrElse(_ => ())
-        }
+      val configHandler: java.util.function.Consumer[EventDetails] = details => {
+        val flags = Option(details.getFlagsChanged)
+          .map(_.asScala.toSet)
+          .getOrElse(Set.empty[String])
+        val em = extractEventMetadata(details)
+        runHandler(runtime, "PROVIDER_CONFIGURATION_CHANGED")(
+          state.eventHub
+            .publish(ProviderEvent.ConfigurationChanged(flags, currentMetadata(runtime), em))
+            .unit
+        )
+      }
 
       for {
         _ <- ZIO.succeed {

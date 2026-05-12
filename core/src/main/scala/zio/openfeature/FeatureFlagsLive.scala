@@ -200,7 +200,7 @@ final private[openfeature] class FeatureFlagsLive(
       case ProviderStatus.Fatal    => ZIO.fail(FeatureFlagError.ProviderFatal)
       case ProviderStatus.NotReady => ZIO.fail(FeatureFlagError.ProviderNotReady(ProviderStatus.NotReady))
       case ProviderStatus.Error    => ZIO.fail(FeatureFlagError.ProviderNotReady(ProviderStatus.Error))
-      case _                       => ZIO.unit
+      case _                       => Exit.unit
     }
 
   // Context is already merged by evaluateWithDetails before entering the hook pipeline
@@ -583,7 +583,7 @@ final private[openfeature] class FeatureFlagsLive(
   override def currentEvaluatedFlags: UIO[Map[String, zio.openfeature.FlagEvaluation[_]]] =
     state.transactionRef.get.flatMap {
       case Some(ts) => ts.getEvaluations
-      case None     => ZIO.succeed(Map.empty)
+      case None     => Exit.succeed(Map.empty)
     }
 
   override def events: ZStream[Any, Nothing, ProviderEvent] =

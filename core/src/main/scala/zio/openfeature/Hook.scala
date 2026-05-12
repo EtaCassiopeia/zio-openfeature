@@ -275,7 +275,7 @@ object FeatureHook {
             annotate(baseAnnotations(ctx) ++ contextAnnotations(ctx))(
               logAtLevel(level, s"Evaluating flag '${ctx.flagKey}'")
             )
-          case None => ZIO.unit
+          case None => Exit.unit
         }
       } yield None
 

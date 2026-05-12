@@ -17,5 +17,7 @@ object FlagValueType:
       case "Boolean" => Boolean
       case "String"  => String
       case "Int"     => Int
+      case "Long"    => Int
+      case "Float"   => Double
       case "Double"  => Double
       case _         => Object

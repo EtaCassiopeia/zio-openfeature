@@ -40,6 +40,40 @@ private[openfeature] trait ClientEvaluator[A] {
 
 private[openfeature] object ClientEvaluator {
 
+  /** A standard-type evaluation produced by [[evaluateStandard]], with the typed extractor pre-applied to the caller's
+    * `A`. The `asInstanceOf[A]` cast lives once here, not at each call site.
+    */
+  final case class Erased[A](
+    task: Task[FlagEvaluationDetails[_]],
+    extract: FlagEvaluationDetails[_] => A
+  )
+
+  /** Look up the evaluator for a standard type by name and produce the type-erased evaluation. Returns None for
+    * non-standard types (Object, custom) which need special handling.
+    */
+  def evaluateStandard[A](
+    typeName: String,
+    client: OFClient,
+    key: String,
+    default: A,
+    context: dev.openfeature.sdk.EvaluationContext
+  ): Option[Erased[A]] = {
+    def erased[T](ev: ClientEvaluator[T]): Erased[A] =
+      Erased[A](
+        ev.evaluate(client, key, default.asInstanceOf[T], context),
+        details => ev.extractValue(details).asInstanceOf[A]
+      )
+    typeName match {
+      case "Boolean" => Some(erased(booleanEvaluator))
+      case "String"  => Some(erased(stringEvaluator))
+      case "Int"     => Some(erased(intEvaluator))
+      case "Long"    => Some(erased(longEvaluator))
+      case "Float"   => Some(erased(floatEvaluator))
+      case "Double"  => Some(erased(doubleEvaluator))
+      case _         => None
+    }
+  }
+
   implicit val booleanEvaluator: ClientEvaluator[Boolean] = new ClientEvaluator[Boolean] {
     def evaluate(
       client: OFClient,

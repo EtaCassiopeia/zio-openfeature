@@ -1,0 +1,3 @@
+# Runtime serving directory populated by OptimizelyItStack from src/test/resources/datafiles/.
+# Tests may mutate files here via swapDatafile; keep them out of the working tree.
+/datafiles/

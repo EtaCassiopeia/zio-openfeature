@@ -11,17 +11,36 @@ import zio.openfeature.FeatureFlagError
   * (`com.optimizely.ab:core-api` + `core-httpclient-impl`) rather than the still-unpublished
   * `dev.openfeature.contrib.providers:optimizely` artifact. Callers get the same OpenFeature surface area
   * (`FeatureProvider`) as any other provider — pass the result of [[make]] to `FeatureFlags.fromProviderAsync`
-  * (recommended for Optimizely: datafile fetch is a real HTTP call) or `FeatureFlags.fromProvider`.
+  * (recommended for Optimizely — datafile fetch is a real HTTP call against the CDN) or, if you need a hard guarantee
+  * that the provider is ready before the app starts serving traffic, `FeatureFlags.fromProvider`.
   *
-  * '''Recommended usage:'''
+  * '''Recommended production pattern:''' compose with `CircuitBreakerProvider` from the `extras` module so a degraded
+  * Optimizely CDN doesn't take your app down. The circuit breaker opens after repeated failures and serves cached
+  * decisions (or defaults) while it's open. Sketch:
   * {{{
-  * for {
-  *   provider <- OptimizelyProvider.make(sys.env("OPTIMIZELY_SDK_KEY"))
-  *   _        <- ZIO.serviceWithZIO[FeatureFlags](_.boolean("my-flag", default = false))
-  * } yield ()
-  *   ZLayer.scoped[Any](provider)
-  *     .flatMap(env => FeatureFlags.fromProviderAsync(env.get, initTimeout = 30.seconds))
+  * import zio._
+  * import zio.openfeature._
+  * import zio.openfeature.extras.CircuitBreakerProvider
+  * import zio.openfeature.optimizely.OptimizelyProvider
+  *
+  * val optimizelyLayer: ZLayer[Any, FeatureFlagError, FeatureFlags] =
+  *   ZLayer.scoped {
+  *     for {
+  *       inner   <- OptimizelyProvider.make(sys.env("OPTIMIZELY_SDK_KEY"))
+  *       wrapped <- CircuitBreakerProvider.make(inner, failureThreshold = 5, resetTimeout = 30.seconds)
+  *       flags   <- FeatureFlags.fromProviderAsync(wrapped, initTimeout = 30.seconds).build.map(_.get)
+  *     } yield flags
+  *   }
   * }}}
+  *
+  * '''Failure semantics on bad credentials / unreachable CDN:'''
+  *   - If the Optimizely datafile fetch fails (auth, network, 5xx), the underlying client stays `!isValid` and
+  *     [[OptimizelyFeatureProvider.initialize]] throws after its `initWait` elapses. The outer
+  *     `FeatureFlags.fromProvider*(initTimeout = …)` translates that into either a layer build failure (sync mode) or a
+  *     `ProviderStatus.Fatal` transition (async mode), so an evaluation never silently returns the default value under
+  *     a misconfigured provider.
+  *   - Construction itself (this object's `make`) does NOT make network calls — it only validates inputs and builds the
+  *     Optimizely client object. The actual HTTP fetch happens inside `initialize()`.
   *
   * Construction validates the SDK key (and URL, where applicable) before touching the Optimizely SDK; failures surface
   * as `FeatureFlagError.InvalidConfiguration` at layer build time, not at first evaluation.

@@ -113,13 +113,24 @@ object OptimizelyItStack {
 
   /** Replace (or create) the served datafile for `sdkKey` atomically. Subsequent SDK polls will see the new content on
     * their next poll cycle.
+    *
+    * Note on mtime: nginx serves `Last-Modified` based on the file's mtime, and the Optimizely SDK sends back
+    * `If-Modified-Since` on subsequent polls. HTTP `Last-Modified` is second-precision, so if two writes happen within
+    * the same second nginx returns 304 Not Modified and the SDK never sees the new datafile. We explicitly bump the
+    * destination's mtime to `max(previous-mtime, now) + 2 seconds` so the new mtime is strictly greater than the one
+    * the SDK captured on its last fetch at second-precision — even when consecutive swaps fire back-to-back inside the
+    * test.
     */
   def swapDatafile(sdkKey: String, content: String): Unit = {
     val _    = container
     val dest = runtimeDatafiles.resolve(s"$sdkKey.json")
     val tmp  = runtimeDatafiles.resolve(s".$sdkKey.json.tmp")
+    val previousMtime =
+      if (Files.exists(dest)) Files.getLastModifiedTime(dest).toMillis else 0L
     Files.writeString(tmp, content)
     Files.move(tmp, dest, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
+    val bumpedMillis = math.max(previousMtime, java.lang.System.currentTimeMillis()) + 2_000L
+    Files.setLastModifiedTime(dest, java.nio.file.attribute.FileTime.fromMillis(bumpedMillis))
   }
 
   /** Wipe `./datafiles/` and re-seed it from the committed fixtures under `src/test/resources/datafiles/`. */

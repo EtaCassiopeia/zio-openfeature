@@ -200,6 +200,7 @@ lazy val optimizelyIt = (project in file("optimizely-it"))
     ),
     Test / javaOptions ++= Seq(
       "-Dorg.slf4j.simpleLogger.defaultLogLevel=info",
+      "-Dorg.slf4j.simpleLogger.log.com.optimizely.ab=debug",
       // docker-java (transitive of testcontainers) defaults to Docker API v1.32, which Docker Desktop 29.x
       // rejects (minimum v1.40). Pin to a recent version both Linux and Docker Desktop accept.
       "-Dapi.version=1.43"

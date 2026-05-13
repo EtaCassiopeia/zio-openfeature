@@ -61,6 +61,13 @@ ThisBuild / coverageEnabled          := false
 ThisBuild / coverageMinimumStmtTotal := 80
 ThisBuild / coverageFailOnMinimum    := true
 
+// Binary-compatibility check via sbt-mima. `mimaPreviousArtifacts` is intentionally empty across all modules until
+// the first post-mima tag exists; the first 1.0 release sets a baseline (typically the previous patch version of
+// the same module) and `sbt mimaReportBinaryIssues` then catches accidental breaking changes on every PR.
+// To intentionally break binary compatibility on a major version bump, add a `mimaBinaryIssueFilters` rule scoped
+// to the specific symbol — see https://github.com/lightbend/mima for the filter API.
+ThisBuild / mimaFailOnNoPrevious := false
+
 // Version-specific source directories
 lazy val crossVersionSourceDirs = Seq(
   Compile / unmanagedSourceDirectories ++= {
@@ -86,7 +93,10 @@ lazy val commonSettings = Seq(
   libraryDependencies ++= Seq(
     "dev.zio" %% "zio-test"     % zioVersion % Test,
     "dev.zio" %% "zio-test-sbt" % zioVersion % Test
-  )
+  ),
+  // Empty by default — populated by the first published module per major release line. See ThisBuild
+  // `mimaFailOnNoPrevious := false` above.
+  mimaPreviousArtifacts := Set.empty
 ) ++ crossVersionSourceDirs
 
 lazy val root = (project in file("."))
@@ -169,4 +179,37 @@ lazy val testkit = (project in file("testkit"))
       "dev.zio" %% "zio"      % zioVersion,
       "dev.zio" %% "zio-test" % zioVersion
     )
+  )
+
+// Reference applications. Not published; their value is staying compilable so the README and `examples/README.md`
+// snippets are guaranteed to work against the current public API.
+lazy val examplesCommon = Seq(
+  publish / skip := true,
+  // Examples are illustrative; the strict source-cat warnings that gate the library don't add value here.
+  scalacOptions := scalacOptions.value.filterNot(o => o == "-Xfatal-warnings"),
+  // Don't bother cross-publishing examples; we just need them to compile on the primary Scala version.
+  crossScalaVersions := Seq(scala3Version)
+)
+
+lazy val examplesOfrepInitTimeout = (project in file("examples/ofrep-init-timeout"))
+  .dependsOn(core, ofrep, extras)
+  .settings(examplesCommon)
+  .settings(
+    name := "zio-openfeature-example-ofrep-init-timeout",
+    libraryDependencies ++= Seq(
+      "dev.zio" %% "zio" % zioVersion
+    )
+  )
+
+lazy val examplesTestkitApp = (project in file("examples/testkit-app"))
+  .dependsOn(core, testkit)
+  .settings(examplesCommon)
+  .settings(
+    name := "zio-openfeature-example-testkit-app",
+    libraryDependencies ++= Seq(
+      "dev.zio" %% "zio"           % zioVersion,
+      "dev.zio" %% "zio-test"      % zioVersion % Test,
+      "dev.zio" %% "zio-test-sbt"  % zioVersion % Test
+    ),
+    testFrameworks += new TestFramework("zio.test.sbt.ZTestFramework")
   )

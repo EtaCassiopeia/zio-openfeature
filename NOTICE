@@ -1,0 +1,43 @@
+zio-openfeature
+Copyright 2024-2026 Mohsen Zainalpour
+
+This product is licensed under the Apache License, Version 2.0 (the "License");
+you may not use this product except in compliance with the License. You may obtain
+a copy of the License in the LICENSE file at the root of this distribution, or at:
+
+    https://www.apache.org/licenses/LICENSE-2.0
+
+This product includes software developed by the following projects:
+
+  * OpenFeature Java SDK (https://github.com/open-feature/java-sdk)
+    Copyright OpenFeature Authors
+    Licensed under the Apache License, Version 2.0.
+
+  * OpenFeature Java SDK Contrib — OFREP provider
+    (https://github.com/open-feature/java-sdk-contrib)
+    Copyright OpenFeature Authors
+    Licensed under the Apache License, Version 2.0.
+
+  * Optimizely Java SDK — core-api and core-httpclient-impl
+    (https://github.com/optimizely/java-sdk)
+    Copyright Optimizely Inc.
+    Licensed under the Apache License, Version 2.0.
+
+  * ZIO (https://github.com/zio/zio)
+    Copyright ZIO Authors
+    Licensed under the Apache License, Version 2.0.
+
+  * ZIO Cache (https://github.com/zio/zio-cache)
+    Copyright ZIO Authors
+    Licensed under the Apache License, Version 2.0.
+
+  * Typesafe Config (https://github.com/lightbend/config)
+    Copyright Lightbend Inc.
+    Licensed under the Apache License, Version 2.0.
+
+The following components are used by the test suite only and are not redistributed
+as part of the published artifacts:
+
+  * WireMock (https://github.com/wiremock/wiremock)
+    Copyright WireMock Authors
+    Licensed under the Apache License, Version 2.0.

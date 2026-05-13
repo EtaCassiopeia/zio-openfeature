@@ -7,25 +7,79 @@ on:
     branches: [main]
 
 jobs:
-  build:
+  # Format check runs once; format errors are platform-independent so there's no value in re-running per matrix cell.
+  format:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - name: Set up JDK 21
         uses: actions/setup-java@v4
         with:
           java-version: '21'
           distribution: 'temurin'
-
+          cache: sbt
       - name: Setup sbt
         uses: sbt/setup-sbt@v1
-
       - name: Check formatting
         run: sbt scalafmtCheckAll
 
-      - name: Compile (Scala 2.13 + 3)
-        run: sbt +compile
+  # Build + test on every supported (JDK, Scala) pair. The library advertises Java 11+ via the OpenFeature Java SDK
+  # but we don't currently support running CI on JDK 11 because Optimizely's core-httpclient-impl requires JDK 17+;
+  # JDK 17 (current LTS) and JDK 21 (next LTS) cover the realistic deployment window. Scala 2.13 + 3.3 matches the
+  # crossScalaVersions declared in build.sbt.
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        java-version: ['17', '21']
+        scala-version: ['2.13.16', '3.3.4']
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up JDK ${{ matrix.java-version }}
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ matrix.java-version }}
+          distribution: 'temurin'
+          cache: sbt
+      - name: Setup sbt
+        uses: sbt/setup-sbt@v1
+      - name: Compile
+        run: sbt "++${{ matrix.scala-version }} compile"
+      - name: Run tests
+        run: sbt "++${{ matrix.scala-version }} test"
 
-      - name: Run tests (Scala 2.13 + 3)
-        run: sbt +test
+  # Binary-compatibility check runs once on the primary JDK. mima checks bytecode, which is JDK-independent given a
+  # single target bytecode level. `mimaPreviousArtifacts` is currently empty (see build.sbt) so this is a no-op until
+  # the first post-mima release tag — the step is wired now so it's already in CI when that tag lands.
+  mima:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: sbt
+      - name: Setup sbt
+        uses: sbt/setup-sbt@v1
+      - name: Check binary compatibility
+        run: sbt +mimaReportBinaryIssues
+
+  # Examples are not published artifacts but must compile so the README snippets and `examples/` reference code stay
+  # honest. Cheap to run; gives early signal when a public API change breaks the documented usage.
+  examples:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: sbt
+      - name: Setup sbt
+        uses: sbt/setup-sbt@v1
+      - name: Compile examples
+        run: sbt "examplesOfrepInitTimeout/compile" "examplesTestkitApp/compile"

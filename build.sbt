@@ -114,16 +114,17 @@ lazy val core = (project in file("core"))
     )
   )
 
-// Extras module - built-in providers (HOCON, env vars, caching wrapper)
+// Extras module - built-in providers (HOCON, env vars, caching wrapper, OFREP)
 lazy val extras = (project in file("extras"))
   .dependsOn(core)
   .settings(
     name := "zio-openfeature-extras",
     commonSettings,
     libraryDependencies ++= Seq(
-      "dev.zio"      %% "zio"       % zioVersion,
-      "dev.zio"      %% "zio-cache" % "0.2.3",
-      "com.typesafe"  % "config"    % "1.4.3"
+      "dev.zio"                            %% "zio"       % zioVersion,
+      "dev.zio"                            %% "zio-cache" % "0.2.3",
+      "com.typesafe"                        % "config"    % "1.4.3",
+      "dev.openfeature.contrib.providers"   % "ofrep"     % "0.0.1"
     )
   )
 

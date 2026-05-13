@@ -23,6 +23,8 @@ The `zio-openfeature-extras` module provides built-in providers for common use c
 libraryDependencies += "io.github.etacassiopeia" %% "zio-openfeature-extras" % "<version>"
 ```
 
+OFREP (HTTP-based remote evaluation) lives in its own module so its HTTP-client transitive deps (Jackson, Guava, etc.) don't get pulled in for users who only need HOCON/env-var providers. See the [OFREP Provider](#ofrep-provider) section below for the dependency snippet.
+
 ---
 
 ## HOCON Provider
@@ -144,6 +146,84 @@ Use `withLookup` to provide a custom env var source:
 val testEnv = Map("FF_MY_FLAG" -> "true")
 val provider = EnvVarProvider.withLookup(testEnv.get)
 ```
+
+---
+
+## OFREP Provider
+
+Evaluates flags via the [OpenFeature Remote Evaluation Protocol](https://github.com/open-feature/protocol) (OFREP) — the standard HTTP protocol for vendor-neutral remote flag evaluation. Use this when your flags are served by an OFREP-compatible backend (flagd, OFREP relays, or any compliant server) and you want a vendor-agnostic client.
+
+`OFREPProvider` is a small Scala-friendly factory over the OpenFeature Java SDK's `dev.openfeature.contrib.providers.ofrep.OfrepProvider`. The Java provider handles HTTP requests, polling, caching, and state transitions; the Scala factory just sugars the construction.
+
+> **Note:** The underlying contrib provider is at version `0.0.1` — the API may evolve as OFREP itself matures. Pin the dependency deliberately.
+
+### Dependency
+
+OFREP lives in its own module so that callers who only want HOCON / env-var providers don't pull in the HTTP-client transitive stack (Jackson, Guava, Commons Validator, SLF4J).
+
+```scala
+libraryDependencies += "io.github.etacassiopeia" %% "zio-openfeature-ofrep" % "<version>"
+```
+
+### Usage
+
+```scala
+import zio.*
+import zio.openfeature.*
+import zio.openfeature.ofrep.OFREPProvider
+
+// Common case: point at an OFREP endpoint
+val layer = FeatureFlags.fromProvider(OFREPProvider("https://flags.example.com"))
+
+// Default endpoint (http://localhost:8016)
+val localLayer = FeatureFlags.fromProvider(OFREPProvider())
+```
+
+For full configuration (auth headers, timeouts, custom executor), use `fromOptions`:
+
+```scala
+import dev.openfeature.contrib.providers.ofrep.OfrepProviderOptions
+import scala.jdk.CollectionConverters._
+import java.time.Duration as JDuration
+
+val options = OfrepProviderOptions.builder()
+  .baseUrl("https://flags.example.com")
+  .requestTimeout(JDuration.ofSeconds(5))
+  .connectTimeout(JDuration.ofSeconds(2))
+  .headers(Map("Authorization" -> "Bearer my-token").asJava)
+  .build()
+
+val layer = FeatureFlags.fromProvider(OFREPProvider.fromOptions(options))
+```
+
+The factories return a `dev.openfeature.contrib.providers.ofrep.OfrepProvider` directly, so you can pass them to any `FeatureFlags.fromProvider*` builder without further wrapping.
+
+### Configuration options
+
+The full set of options is exposed by the Java SDK's `OfrepProviderOptions` builder:
+
+| Option | Default | Description |
+|:-------|:--------|:------------|
+| `baseUrl` | `http://localhost:8016` | OFREP server endpoint |
+| `requestTimeout` | `10s` | Per-request HTTP timeout |
+| `connectTimeout` | `10s` | TCP connect timeout |
+| `headers` | empty | Static headers applied to every request (e.g., bearer token) |
+| `proxySelector` | system default | Custom `java.net.ProxySelector` |
+| `executor` | fixed pool of 5 | Executor for HTTP work |
+
+### Async initialization
+
+Like any other provider, the OFREP provider works with `fromProviderAsync` for non-blocking startup:
+
+```scala
+val layer = FeatureFlags.fromProviderAsync(OFREPProvider("https://flags.example.com"))
+```
+
+Evaluations fail with `ProviderNotReady` until the provider has fetched its initial flag set.
+
+### Transitive dependencies
+
+Adding `zio-openfeature-ofrep` pulls in Jackson (core/databind/jsr310), Guava, Commons Validator, and SLF4J via the contrib provider. This is intentionally isolated from the `extras` module so projects without OFREP keep their dependency footprint small.
 
 ---
 

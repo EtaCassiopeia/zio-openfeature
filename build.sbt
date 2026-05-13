@@ -89,11 +89,8 @@ lazy val commonSettings = Seq(
   )
 ) ++ crossVersionSourceDirs
 
-// Override vulnerable transitive jackson-core (GHSA-72hv-8253-57qq)
-ThisBuild / dependencyOverrides += "com.fasterxml.jackson.core" % "jackson-core" % "2.18.6"
-
 lazy val root = (project in file("."))
-  .aggregate(core, testkit, extras)
+  .aggregate(core, testkit, extras, ofrep)
   .settings(
     name                           := "zio-openfeature",
     publish / skip                 := true,
@@ -125,6 +122,25 @@ lazy val extras = (project in file("extras"))
       "dev.zio"      %% "zio-cache" % "0.2.3",
       "com.typesafe"  % "config"    % "1.4.3"
     )
+  )
+
+// OFREP module - OpenFeature Remote Evaluation Protocol provider.
+// Kept separate from `extras` so callers who only want HOCON/env vars don't pull in the OFREP contrib provider's
+// transitive HTTP-client stack (Jackson, Guava, Commons Validator, SLF4J).
+lazy val ofrep = (project in file("ofrep"))
+  .dependsOn(core)
+  .settings(
+    name := "zio-openfeature-ofrep",
+    commonSettings,
+    libraryDependencies ++= Seq(
+      "dev.zio"                            %% "zio"       % zioVersion,
+      "dev.openfeature.contrib.providers"   % "ofrep"     % "0.0.1",
+      "org.wiremock"                        % "wiremock"  % "3.10.0" % Test
+    ),
+    // GHSA-72hv-8253-57qq (jackson-core <2.18.0) is patched in 2.18+; the OFREP contrib provider pulls 2.21.2, so we
+    // override jackson-core to that version to avoid a split Jackson family (core 2.18 / databind 2.21 → runtime
+    // NoSuchMethodError). Scoped to this module so other modules aren't dragged into Jackson alignment they don't need.
+    dependencyOverrides += "com.fasterxml.jackson.core" % "jackson-core" % "2.21.2"
   )
 
 // Testkit module - testing utilities

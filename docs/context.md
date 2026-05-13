@@ -346,5 +346,17 @@ ZIO OpenFeature contexts are automatically converted to OpenFeature SDK `Evaluat
 2. Converts all attributes to OpenFeature `Value` types
 3. Preserves nested structures and lists
 
-This conversion happens internally - you work only with ZIO OpenFeature's `EvaluationContext` type.
+This conversion happens internally — you work only with ZIO OpenFeature's `EvaluationContext` type.
+
+### Numeric conversion is mediated through `Double`
+
+The OpenFeature Java SDK has only one numeric `Value` type (`Double`), so `IntValue` and `LongValue` are mediated through `Double` on the way out and decoded back to the smallest fitting case on the way in. Practical consequences:
+
+- `BoolValue` and `StringValue` round-trip exactly.
+- `IntValue(n)` round-trips as `IntValue(n)` (always fits in `Double`'s 53-bit mantissa).
+- `LongValue(n)` with `n` in the `Int` range comes back as `IntValue(n)` — same numeric value, different concrete case. `LongValue(n)` outside the `Int` range but in `[Int.MaxValue + 1, 2^53)` round-trips as `LongValue`. `LongValue(Long.MaxValue)` comes back as `DoubleValue` because the conversion would otherwise saturate.
+- `DoubleValue(n)` with a fractional component round-trips as `DoubleValue`. Whole-number doubles in the `Long`/`Int` range come back as `LongValue` / `IntValue`.
+- `DoubleValue(Double.NaN)` survives as a NaN double (verify via `.isNaN`, not `==`).
+
+If you need to preserve the exact numeric case across the boundary, read values via the typed accessors (`asInt`, `asLong`, `asDouble`) rather than pattern-matching on the concrete `AttributeValue` subtype. The property-based round-trip spec (`ValueRoundTripSpec`) pins this contract.
 

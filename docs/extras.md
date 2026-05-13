@@ -228,6 +228,16 @@ val layer = FeatureFlags.fromProviderAsync(OFREPProvider("https://flags.example.
 
 Evaluations fail with `ProviderNotReady` until the provider has fetched its initial flag set.
 
+### Failure surfacing
+
+How a downstream failure shows up depends on where it originates:
+
+- **HTTP `4xx` / `5xx` from the OFREP endpoint**: the contrib provider catches the response and returns a successful `FlagResolution` with `errorCode` populated (typically `General`) and `errorMessage` set. The ZIO `FeatureFlags` layer hands this back to callers as a *successful* effect — operators are expected to alert on `resolution.errorCode.isDefined`.
+- **Network-level failures** (DNS, `ConnectException`, connection reset): the contrib provider's HTTP client throws synchronously, the throw escapes `attemptBlocking`, and `FeatureFlagError.classify` maps it to a typed error — `Unreachable` for the known network exception types, `ProviderError` as the fallback. These arrive in the effect's error channel.
+- **Evaluation timeout** (via `FeatureFlags.fromProvider(provider, evaluationTimeout)`): surfaces as `ProviderError` wrapping a `TimeoutException`.
+
+The `OFREPFailureModeSpec` in this module pins these behaviours so a contrib-provider upgrade doesn't silently shift them. If you build alerting on top of the OFREP integration, alert on both branches: `errorCode` on resolutions AND `Unreachable`/`ProviderError`/timeout in the error channel.
+
 ### Transitive dependencies
 
 Adding `zio-openfeature-ofrep` pulls in Jackson (core/databind/jsr310), Guava, Commons Validator, and SLF4J via the contrib provider. This is intentionally isolated from the `extras` module so projects without OFREP keep their dependency footprint small.

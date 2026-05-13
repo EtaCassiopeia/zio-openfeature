@@ -303,7 +303,7 @@ final private[openfeature] class FeatureFlagsLive(
             case None => erased.task
           }
           timedEval
-            .mapError(e => FeatureFlagError.ProviderError(e))
+            .mapError(e => FeatureFlagError.classify(e))
             .flatMap { details =>
               toFlagResolution(key, details).map(r => r.copy(value = erased.extract(details)))
             }
@@ -318,7 +318,7 @@ final private[openfeature] class FeatureFlagsLive(
               )
               client.getObjectDetails(key, defaultValue, ofContext)
             }
-          ).mapError(e => FeatureFlagError.ProviderError(e))
+          ).mapError(e => FeatureFlagError.classify(e))
             .flatMap { details =>
               val value = valueToMap(details.getValue)
               toFlagMetadata(details.getFlagMetadata).map { metadata =>
@@ -340,7 +340,7 @@ final private[openfeature] class FeatureFlagsLive(
             ZIO.attemptBlocking {
               client.getObjectDetails(key, new dev.openfeature.sdk.Value(), ofContext)
             }
-          ).mapError(e => FeatureFlagError.ProviderError(e))
+          ).mapError(e => FeatureFlagError.classify(e))
             .flatMap { details =>
               valueToAny(details.getValue) match {
                 case Some(rawValue) =>
@@ -850,7 +850,7 @@ final private[openfeature] class FeatureFlagsLive(
             val ofContext = ContextConverter.toOpenFeature(merged)
             client.track(eventName, ofContext)
           }
-          .mapError(e => FeatureFlagError.ProviderError(e))
+          .mapError(e => FeatureFlagError.classify(e))
     }
 
   override def track(eventName: String, context: EvaluationContext): IO[FeatureFlagError, Unit] =
@@ -861,7 +861,7 @@ final private[openfeature] class FeatureFlagsLive(
             val ofContext = ContextConverter.toOpenFeature(merged)
             client.track(eventName, ofContext)
           }
-          .mapError(e => FeatureFlagError.ProviderError(e))
+          .mapError(e => FeatureFlagError.classify(e))
     }
 
   override def track(eventName: String, details: TrackingEventDetails): IO[FeatureFlagError, Unit] =
@@ -873,7 +873,7 @@ final private[openfeature] class FeatureFlagsLive(
             val ofDetails = toOpenFeatureDetails(details)
             client.track(eventName, ofContext, ofDetails)
           }
-          .mapError(e => FeatureFlagError.ProviderError(e))
+          .mapError(e => FeatureFlagError.classify(e))
     }
 
   override def track(
@@ -889,7 +889,7 @@ final private[openfeature] class FeatureFlagsLive(
             val ofDetails = toOpenFeatureDetails(details)
             client.track(eventName, ofContext, ofDetails)
           }
-          .mapError(e => FeatureFlagError.ProviderError(e))
+          .mapError(e => FeatureFlagError.classify(e))
     }
 
   override def trackedEvents: UIO[List[(String, EvaluationContext, Option[TrackingEventDetails])]] =

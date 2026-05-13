@@ -60,6 +60,15 @@ object FeatureFlagErrorSpec extends ZIOSpecDefault {
       test("InvalidConfiguration has correct message") {
         val error = FeatureFlagError.InvalidConfiguration("missing API key")
         assertTrue(error.message == "Invalid provider configuration: missing API key")
+      },
+      test("Unauthorized has correct message") {
+        val error = FeatureFlagError.Unauthorized("invalid SDK key")
+        assertTrue(error.message == "Provider rejected request: invalid SDK key")
+      },
+      test("Unreachable preserves the underlying cause") {
+        val cause = new java.net.UnknownHostException("flags.example.com")
+        val error = FeatureFlagError.Unreachable(cause)
+        assertTrue(error.cause.contains(cause), error.message.contains("flags.example.com"))
       }
     ),
     suite("Transaction errors")(
@@ -84,6 +93,8 @@ object FeatureFlagErrorSpec extends ZIOSpecDefault {
         assertTrue(!FeatureFlagError.isRecoverable(FeatureFlagError.ProviderNotReady(ProviderStatus.NotReady))) &&
         assertTrue(!FeatureFlagError.isRecoverable(FeatureFlagError.ProviderInitializationFailed(new Exception))) &&
         assertTrue(!FeatureFlagError.isRecoverable(FeatureFlagError.ProviderError(new Exception))) &&
+        assertTrue(!FeatureFlagError.isRecoverable(FeatureFlagError.Unauthorized("reason"))) &&
+        assertTrue(!FeatureFlagError.isRecoverable(FeatureFlagError.Unreachable(new Exception))) &&
         assertTrue(!FeatureFlagError.isRecoverable(FeatureFlagError.InvalidConfiguration("reason")))
       },
       test("transaction errors are not recoverable") {
@@ -97,6 +108,8 @@ object FeatureFlagErrorSpec extends ZIOSpecDefault {
         assertTrue(FeatureFlagError.isProviderError(FeatureFlagError.ProviderFatal)) &&
         assertTrue(FeatureFlagError.isProviderError(FeatureFlagError.ProviderInitializationFailed(new Exception))) &&
         assertTrue(FeatureFlagError.isProviderError(FeatureFlagError.ProviderError(new Exception))) &&
+        assertTrue(FeatureFlagError.isProviderError(FeatureFlagError.Unauthorized("reason"))) &&
+        assertTrue(FeatureFlagError.isProviderError(FeatureFlagError.Unreachable(new Exception))) &&
         assertTrue(FeatureFlagError.isProviderError(FeatureFlagError.InvalidConfiguration("reason")))
       },
       test("non-provider errors return false") {
@@ -134,6 +147,8 @@ object FeatureFlagErrorSpec extends ZIOSpecDefault {
           ) == ErrorCode.ProviderNotReady
         ) &&
         assertTrue(FeatureFlagError.toErrorCode(FeatureFlagError.ProviderError(new Exception)) == ErrorCode.General) &&
+        assertTrue(FeatureFlagError.toErrorCode(FeatureFlagError.Unauthorized("k")) == ErrorCode.General) &&
+        assertTrue(FeatureFlagError.toErrorCode(FeatureFlagError.Unreachable(new Exception)) == ErrorCode.General) &&
         assertTrue(FeatureFlagError.toErrorCode(FeatureFlagError.InvalidConfiguration("reason")) == ErrorCode.General)
       },
       test("maps transaction errors correctly") {
@@ -141,6 +156,64 @@ object FeatureFlagErrorSpec extends ZIOSpecDefault {
         assertTrue(
           FeatureFlagError.toErrorCode(FeatureFlagError.OverrideTypeMismatch("k", "A", "B")) == ErrorCode.TypeMismatch
         )
+      }
+    ),
+    suite("classify")(
+      test("UnknownHostException is classified as Unreachable") {
+        val cause = new java.net.UnknownHostException("flags.example.com")
+        val ok = FeatureFlagError.classify(cause) match {
+          case FeatureFlagError.Unreachable(t) => t eq cause
+          case _                               => false
+        }
+        assertTrue(ok)
+      },
+      test("ConnectException is classified as Unreachable") {
+        val cause = new java.net.ConnectException("connection refused")
+        val ok = FeatureFlagError.classify(cause) match {
+          case FeatureFlagError.Unreachable(t) => t eq cause
+          case _                               => false
+        }
+        assertTrue(ok)
+      },
+      test("NoRouteToHostException is classified as Unreachable") {
+        val cause = new java.net.NoRouteToHostException("no route")
+        val ok = FeatureFlagError.classify(cause) match {
+          case _: FeatureFlagError.Unreachable => true
+          case _                               => false
+        }
+        assertTrue(ok)
+      },
+      test("RuntimeException with 401 in message is classified as Unauthorized") {
+        val cause = new RuntimeException("HTTP 401: Unauthorized")
+        val ok = FeatureFlagError.classify(cause) match {
+          case FeatureFlagError.Unauthorized(reason) => reason.contains("401")
+          case _                                     => false
+        }
+        assertTrue(ok)
+      },
+      test("RuntimeException with forbidden in message is classified as Unauthorized") {
+        val cause = new RuntimeException("Forbidden")
+        val ok = FeatureFlagError.classify(cause) match {
+          case _: FeatureFlagError.Unauthorized => true
+          case _                                => false
+        }
+        assertTrue(ok)
+      },
+      test("SocketTimeoutException falls through to ProviderError (timeout != unreachable)") {
+        val cause = new java.net.SocketTimeoutException("read timed out")
+        val ok = FeatureFlagError.classify(cause) match {
+          case FeatureFlagError.ProviderError(t) => t eq cause
+          case _                                 => false
+        }
+        assertTrue(ok)
+      },
+      test("generic RuntimeException falls through to ProviderError") {
+        val cause = new RuntimeException("something broke")
+        val ok = FeatureFlagError.classify(cause) match {
+          case FeatureFlagError.ProviderError(t) => t eq cause
+          case _                                 => false
+        }
+        assertTrue(ok)
       }
     )
   )

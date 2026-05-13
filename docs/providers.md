@@ -450,16 +450,18 @@ val remoteProvider: FeatureProvider = // remote service
 val layer = FeatureFlags.fromMultiProvider(List(localProvider, remoteProvider))
 ```
 
-You can also supply a custom strategy:
+You can also supply a custom strategy. The two built-in strategies are exposed via `MultiProviderStrategy` so you don't need to import the Java SDK's multiprovider package directly:
 
 ```scala
-import dev.openfeature.sdk.multiprovider.FirstSuccessfulStrategy
+import zio.openfeature.MultiProviderStrategy
 
 val layer = FeatureFlags.fromMultiProvider(
   List(primaryProvider, fallbackProvider),
-  new FirstSuccessfulStrategy()
+  MultiProviderStrategy.firstSuccessful
 )
 ```
+
+`MultiProviderStrategy.firstMatch` and `MultiProviderStrategy.firstSuccessful` are the two built-ins. For a custom strategy, implement `MultiProviderStrategy.Strategy` (an alias for the Java SDK's `Strategy` interface) and pass it the same way.
 
 ### Async Variants (Non-Blocking Initialization)
 

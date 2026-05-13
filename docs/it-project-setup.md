@@ -24,6 +24,16 @@ All constants live in `optimizely-it/src/test/scala/zio/openfeature/optimizely/i
 
 Each flag has a rollout with one experiment containing one variation that captures 100% of traffic. No audience targeting; every user lands on the rolled-out variation.
 
+## `it_targeting.json` — audience-targeted decisions
+
+Audience: `Country US`, condition `country == "US"` (custom-attribute exact match).
+
+| Flag | Rule 1 (audience = US) | Rule 2 (default) |
+|---|---|---|
+| `it_audience_flag` | variation `us`, `featureEnabled=true`, `value: "us"` | variation `off`, `featureEnabled=false`, `value: "other"` |
+
+A user with attribute `country=US` matches rule 1 and gets `us`. Any other user falls through to rule 2 and gets `off`. A request with no targeting key short-circuits before reaching Optimizely with `ErrorCode.TARGETING_KEY_MISSING`.
+
 ## `it_variations.json` — variation-key fallback
 
 | Flag | Variation | `featureEnabled` | Variables |

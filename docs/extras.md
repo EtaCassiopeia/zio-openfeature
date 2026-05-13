@@ -172,14 +172,21 @@ import zio.*
 import zio.openfeature.*
 import zio.openfeature.ofrep.OFREPProvider
 
-// Common case: point at an OFREP endpoint
-val layer = FeatureFlags.fromProvider(OFREPProvider("https://flags.example.com"))
-
-// Default endpoint (http://localhost:8016)
-val localLayer = FeatureFlags.fromProvider(OFREPProvider())
+val program = ZIO.scoped {
+  for
+    provider <- OFREPProvider.make("https://flags.example.com")
+                  .mapError(e => new RuntimeException(e.message))
+    env      <- FeatureFlags.fromProviderAsync(provider).build
+    ff        = env.get[FeatureFlags]
+    enabled  <- ff.boolean("new-checkout", default = false)
+                  .mapError(e => new RuntimeException(e.message))
+  yield enabled
+}
 ```
 
-For full configuration (auth headers, timeouts, custom executor), use `fromOptions`:
+`OFREPProvider.make(baseUrl)` parses and validates the URL before constructing — bad input fails layer build with `FeatureFlagError.InvalidConfiguration` rather than surfacing as an opaque `ProviderError(MalformedURLException)` on the first evaluation. The ZLayer convenience `OFREPProvider.layer(baseUrl)` does the same and exposes the result as `ZLayer[Any, FeatureFlagError.InvalidConfiguration, OfrepProvider]`.
+
+For full configuration (auth headers, timeouts, custom executor), use `make(options)`:
 
 ```scala
 import dev.openfeature.contrib.providers.ofrep.OfrepProviderOptions
@@ -193,10 +200,10 @@ val options = OfrepProviderOptions.builder()
   .headers(Map("Authorization" -> "Bearer my-token").asJava)
   .build()
 
-val layer = FeatureFlags.fromProvider(OFREPProvider.fromOptions(options))
+val provider = OFREPProvider.make(options)
 ```
 
-The factories return a `dev.openfeature.contrib.providers.ofrep.OfrepProvider` directly, so you can pass them to any `FeatureFlags.fromProvider*` builder without further wrapping.
+The legacy throwing factories — `OFREPProvider()`, `OFREPProvider(baseUrl)`, `OFREPProvider.fromOptions(options)` — remain available but are deprecated. They accept any string and surface configuration mistakes only at the first evaluation; prefer `make` / `layer` for validated construction.
 
 ### Configuration options
 

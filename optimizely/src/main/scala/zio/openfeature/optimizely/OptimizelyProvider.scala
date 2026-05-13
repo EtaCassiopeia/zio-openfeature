@@ -20,17 +20,21 @@ import zio.openfeature.FeatureFlagError
   * {{{
   * import zio._
   * import zio.openfeature._
-  * import zio.openfeature.extras.CircuitBreakerProvider
+  * import zio.openfeature.extras.{CircuitBreakerProvider, CircuitBreakerProviderConfig}
   * import zio.openfeature.optimizely.OptimizelyProvider
   *
-  * val optimizelyLayer: ZLayer[Any, FeatureFlagError, FeatureFlags] =
-  *   ZLayer.scoped {
-  *     for {
-  *       inner   <- OptimizelyProvider.make(sys.env("OPTIMIZELY_SDK_KEY"))
-  *       wrapped <- CircuitBreakerProvider.make(inner, failureThreshold = 5, resetTimeout = 30.seconds)
-  *       flags   <- FeatureFlags.fromProviderAsync(wrapped, initTimeout = 30.seconds).build.map(_.get)
-  *     } yield flags
-  *   }
+  * val program = ZIO.scoped {
+  *   for {
+  *     inner   <- OptimizelyProvider.make(sys.env("OPTIMIZELY_SDK_KEY"))
+  *     wrapped <- CircuitBreakerProvider.make(
+  *                  inner,
+  *                  CircuitBreakerProviderConfig(failureThreshold = 5, resetTimeout = 30.seconds)
+  *                )
+  *     env     <- FeatureFlags.fromProviderAsync(wrapped, 500.millis).build
+  *     ff       = env.get[FeatureFlags]
+  *     enabled <- ff.boolean("flag", default = false)
+  *   } yield enabled
+  * }
   * }}}
   *
   * '''Failure semantics on bad credentials / unreachable CDN:'''

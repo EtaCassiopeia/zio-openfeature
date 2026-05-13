@@ -154,7 +154,6 @@ object OptimizelyDatafileChurnSpec extends ZIOSpecDefault {
         assert(fired)(isTrue) &&
         assert(received.get())(isGreaterThanEqualTo(1))
       } finally {
-        // Detach the provider from OpenFeatureAPI and shut it down explicitly.
         scala.util.Try(api.shutdown())
         scala.util.Try(provider.shutdown())
         ()

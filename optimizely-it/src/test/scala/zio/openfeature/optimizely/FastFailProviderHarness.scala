@@ -24,14 +24,18 @@ object FastFailProviderHarness {
     blockingTimeout: Duration = Duration.ofMillis(300),
     pollingInterval: Duration = Duration.ofSeconds(3600)
   ): Optimizely = {
+    // Share a NotificationCenter between manager and client so subsequent datafile updates fire on the same
+    // notification chain `Optimizely.addUpdateConfigNotificationHandler` listens on. See #160.
+    val notificationCenter = new com.optimizely.ab.notification.NotificationCenter()
     val mgr = HttpProjectConfigManager
       .builder()
       .withSdkKey(sdkKey)
       .withUrl(datafileUrl)
       .withBlockingTimeout(blockingTimeout.toMillis, TimeUnit.MILLISECONDS)
       .withPollingInterval(pollingInterval.toSeconds, TimeUnit.SECONDS)
+      .withNotificationCenter(notificationCenter)
       .build()
-    Optimizely.builder().withConfigManager(mgr).build()
+    Optimizely.builder().withConfigManager(mgr).withNotificationCenter(notificationCenter).build()
   }
 
   /** Build a provider directly via the package-private constructor with the specified `initWait` and

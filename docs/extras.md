@@ -17,11 +17,13 @@ nav_order: 7
 
 ## Overview
 
-The `zio-openfeature-extras` module provides built-in providers for common use cases — reading flags from local config, environment variables, evaluating flags via OFREP (HTTP), wrapping any provider with evaluation caching, and adding circuit breaker logic for fast failover.
+The `zio-openfeature-extras` module provides built-in providers for common use cases — reading flags from local config, environment variables, wrapping any provider with evaluation caching, and adding circuit breaker logic for fast failover.
 
 ```scala
 libraryDependencies += "io.github.etacassiopeia" %% "zio-openfeature-extras" % "<version>"
 ```
+
+OFREP (HTTP-based remote evaluation) lives in its own module so its HTTP-client transitive deps (Jackson, Guava, etc.) don't get pulled in for users who only need HOCON/env-var providers. See the [OFREP Provider](#ofrep-provider) section below for the dependency snippet.
 
 ---
 
@@ -151,39 +153,50 @@ val provider = EnvVarProvider.withLookup(testEnv.get)
 
 Evaluates flags via the [OpenFeature Remote Evaluation Protocol](https://github.com/open-feature/protocol) (OFREP) — the standard HTTP protocol for vendor-neutral remote flag evaluation. Use this when your flags are served by an OFREP-compatible backend (flagd, OFREP relays, or any compliant server) and you want a vendor-agnostic client.
 
-The wrapper delegates to the OpenFeature Java SDK's `dev.openfeature.contrib.providers.ofrep.OfrepProvider`, which handles HTTP requests, polling, caching, and state transitions. The Scala wrapper exposes factory methods so callers don't have to depend on the contrib package directly.
+`OFREPProvider` is a small Scala-friendly factory over the OpenFeature Java SDK's `dev.openfeature.contrib.providers.ofrep.OfrepProvider`. The Java provider handles HTTP requests, polling, caching, and state transitions; the Scala factory just sugars the construction.
 
 > **Note:** The underlying contrib provider is at version `0.0.1` — the API may evolve as OFREP itself matures. Pin the dependency deliberately.
+
+### Dependency
+
+OFREP lives in its own module so that callers who only want HOCON / env-var providers don't pull in the HTTP-client transitive stack (Jackson, Guava, Commons Validator, SLF4J).
+
+```scala
+libraryDependencies += "io.github.etacassiopeia" %% "zio-openfeature-ofrep" % "<version>"
+```
 
 ### Usage
 
 ```scala
 import zio.*
 import zio.openfeature.*
-import zio.openfeature.extras.*
+import zio.openfeature.ofrep.OFREPProvider
 
-// Common case: point at an OFREP endpoint with default options
+// Common case: point at an OFREP endpoint
 val layer = FeatureFlags.fromProvider(OFREPProvider("https://flags.example.com"))
 
-// Default options (baseUrl = http://localhost:8016)
-val localLayer = FeatureFlags.fromProvider(OFREPProvider.default())
+// Default endpoint (http://localhost:8016)
+val localLayer = FeatureFlags.fromProvider(OFREPProvider())
 ```
 
 For full configuration (auth headers, timeouts, custom executor), use `fromOptions`:
 
 ```scala
 import dev.openfeature.contrib.providers.ofrep.OfrepProviderOptions
+import scala.jdk.CollectionConverters._
 import java.time.Duration as JDuration
 
 val options = OfrepProviderOptions.builder()
   .baseUrl("https://flags.example.com")
   .requestTimeout(JDuration.ofSeconds(5))
   .connectTimeout(JDuration.ofSeconds(2))
-  .headers(java.util.Map.of("Authorization", "Bearer my-token"))
+  .headers(Map("Authorization" -> "Bearer my-token").asJava)
   .build()
 
 val layer = FeatureFlags.fromProvider(OFREPProvider.fromOptions(options))
 ```
+
+The factories return a `dev.openfeature.contrib.providers.ofrep.OfrepProvider` directly, so you can pass them to any `FeatureFlags.fromProvider*` builder without further wrapping.
 
 ### Configuration options
 
@@ -200,7 +213,7 @@ The full set of options is exposed by the Java SDK's `OfrepProviderOptions` buil
 
 ### Async initialization
 
-Like any other provider, `OFREPProvider` works with `fromProviderAsync` for non-blocking startup:
+Like any other provider, the OFREP provider works with `fromProviderAsync` for non-blocking startup:
 
 ```scala
 val layer = FeatureFlags.fromProviderAsync(OFREPProvider("https://flags.example.com"))
@@ -210,7 +223,7 @@ Evaluations fail with `ProviderNotReady` until the provider has fetched its init
 
 ### Transitive dependencies
 
-The OFREP contrib artifact brings in Jackson (core/databind/jsr310), Guava, Commons Validator, and SLF4J. This is the cost of a fully-featured HTTP provider; if you don't use OFREP, none of these are loaded at runtime.
+Adding `zio-openfeature-ofrep` pulls in Jackson (core/databind/jsr310), Guava, Commons Validator, and SLF4J via the contrib provider. This is intentionally isolated from the `extras` module so projects without OFREP keep their dependency footprint small.
 
 ---
 

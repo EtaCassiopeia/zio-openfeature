@@ -31,16 +31,23 @@ program.provide(Scope.default >>> layer)
 
 ### Built-in Providers
 
-The `zio-openfeature-extras` module includes providers for common use cases — no external vendor required:
+This repo ships providers for common use cases — no external vendor required.
+
+The `zio-openfeature-extras` module bundles the lightweight providers:
 
 | Provider | Use case |
 |:---------|:---------|
 | `HoconProvider` | Read flags from `application.conf` (Typesafe Config) |
 | `EnvVarProvider` | Read flags from environment variables |
-| `OFREPProvider` | Evaluate flags via the OpenFeature Remote Evaluation Protocol (HTTP) |
 | `CachingProvider` | Wrap any provider with zio-cache backed evaluation caching |
 
-See [Extras]({{ site.baseurl }}/extras) for details.
+The `zio-openfeature-ofrep` module is shipped separately so its HTTP-client transitive stack (Jackson, Guava) only loads if you actually use OFREP:
+
+| Provider | Use case |
+|:---------|:---------|
+| `OFREPProvider` | Evaluate flags via the OpenFeature Remote Evaluation Protocol (HTTP) |
+
+See [Extras]({{ site.baseurl }}/extras) for details on all of the above.
 
 ---
 

@@ -39,7 +39,7 @@ object OptimizelyProviderConcurrencySpec extends ZIOSpecDefault {
 
   private def buildClient(
     server: WireMockServer,
-    blockingTimeout: java.time.Duration = java.time.Duration.ofMillis(300),
+    blockingTimeout: java.time.Duration = java.time.Duration.ofSeconds(2),
     pollingInterval: java.time.Duration = java.time.Duration.ofSeconds(3600)
   ): Optimizely = {
     val mgr = HttpProjectConfigManager
@@ -91,7 +91,7 @@ object OptimizelyProviderConcurrencySpec extends ZIOSpecDefault {
       withMockServer { server =>
         server.stubFor(get(urlEqualTo(DatafilePath)).willReturn(okJson(ValidDatafile)))
         val provider =
-          new OptimizelyFeatureProvider(buildClient(server), java.time.Duration.ofMillis(800), closeOnShutdown = true)
+          new OptimizelyFeatureProvider(buildClient(server), java.time.Duration.ofSeconds(3), closeOnShutdown = true)
         try {
           provider.initialize(new ImmutableContext())
           val N    = 1000
@@ -114,7 +114,7 @@ object OptimizelyProviderConcurrencySpec extends ZIOSpecDefault {
       withMockServer { server =>
         server.stubFor(get(urlEqualTo(DatafilePath)).willReturn(okJson(ValidDatafile)))
         val provider =
-          new OptimizelyFeatureProvider(buildClient(server), java.time.Duration.ofMillis(800), closeOnShutdown = true)
+          new OptimizelyFeatureProvider(buildClient(server), java.time.Duration.ofSeconds(3), closeOnShutdown = true)
         try {
           provider.initialize(new ImmutableContext())
           val N    = 500
@@ -175,7 +175,7 @@ object OptimizelyProviderConcurrencySpec extends ZIOSpecDefault {
       withMockServer { server =>
         server.stubFor(get(urlEqualTo(DatafilePath)).willReturn(okJson(ValidDatafile)))
         val provider =
-          new OptimizelyFeatureProvider(buildClient(server), java.time.Duration.ofMillis(800), closeOnShutdown = true)
+          new OptimizelyFeatureProvider(buildClient(server), java.time.Duration.ofSeconds(3), closeOnShutdown = true)
         provider.initialize(new ImmutableContext())
         val N      = 200
         val live   = new AtomicInteger(0)

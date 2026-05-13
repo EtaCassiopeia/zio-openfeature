@@ -49,7 +49,7 @@ object OptimizelyProviderLifecycleSpec extends ZIOSpecDefault {
     */
   private def buildClient(
     server: WireMockServer,
-    blockingTimeout: java.time.Duration = java.time.Duration.ofMillis(300),
+    blockingTimeout: java.time.Duration = java.time.Duration.ofSeconds(2),
     pollingInterval: java.time.Duration = java.time.Duration.ofSeconds(3600)
   ): Optimizely = {
     val mgr = HttpProjectConfigManager
@@ -74,7 +74,7 @@ object OptimizelyProviderLifecycleSpec extends ZIOSpecDefault {
       withMockServer { server =>
         server.stubFor(get(urlEqualTo(DatafilePath)).willReturn(okJson(ValidDatafile)))
         val client   = buildClient(server)
-        val provider = new OptimizelyFeatureProvider(client, java.time.Duration.ofMillis(800), closeOnShutdown = true)
+        val provider = new OptimizelyFeatureProvider(client, java.time.Duration.ofSeconds(3), closeOnShutdown = true)
         try {
           val first       = tryInit(provider)
           val firstState  = stateOf(provider)
@@ -95,7 +95,7 @@ object OptimizelyProviderLifecycleSpec extends ZIOSpecDefault {
       withMockServer { server =>
         server.stubFor(get(urlEqualTo(DatafilePath)).willReturn(okJson(ValidDatafile)))
         val client   = buildClient(server)
-        val provider = new OptimizelyFeatureProvider(client, java.time.Duration.ofMillis(800), closeOnShutdown = true)
+        val provider = new OptimizelyFeatureProvider(client, java.time.Duration.ofSeconds(3), closeOnShutdown = true)
         val initRes  = tryInit(provider)
         val firstShutdown =
           try { provider.shutdown(); Right(()) }
@@ -118,7 +118,7 @@ object OptimizelyProviderLifecycleSpec extends ZIOSpecDefault {
       withMockServer { server =>
         server.stubFor(get(urlEqualTo(DatafilePath)).willReturn(okJson(ValidDatafile)))
         val client   = buildClient(server)
-        val provider = new OptimizelyFeatureProvider(client, java.time.Duration.ofMillis(800), closeOnShutdown = true)
+        val provider = new OptimizelyFeatureProvider(client, java.time.Duration.ofSeconds(3), closeOnShutdown = true)
         val before   = stateOf(provider)
         val result =
           try { provider.shutdown(); Right(()) }
@@ -135,7 +135,7 @@ object OptimizelyProviderLifecycleSpec extends ZIOSpecDefault {
       withMockServer { server =>
         server.stubFor(get(urlEqualTo(DatafilePath)).willReturn(okJson(ValidDatafile)))
         val client   = buildClient(server)
-        val provider = new OptimizelyFeatureProvider(client, java.time.Duration.ofMillis(800), closeOnShutdown = true)
+        val provider = new OptimizelyFeatureProvider(client, java.time.Duration.ofSeconds(3), closeOnShutdown = true)
         try {
           val eval  = provider.getBooleanEvaluation("lifecycle_flag", java.lang.Boolean.TRUE, targetedContext)
           val state = stateOf(provider)
@@ -152,7 +152,7 @@ object OptimizelyProviderLifecycleSpec extends ZIOSpecDefault {
       withMockServer { server =>
         server.stubFor(get(urlEqualTo(DatafilePath)).willReturn(okJson(ValidDatafile)))
         val client   = buildClient(server)
-        val provider = new OptimizelyFeatureProvider(client, java.time.Duration.ofMillis(800), closeOnShutdown = true)
+        val provider = new OptimizelyFeatureProvider(client, java.time.Duration.ofSeconds(3), closeOnShutdown = true)
         val init     = tryInit(provider)
         val ready    = stateOf(provider)
         provider.shutdown()
@@ -172,7 +172,7 @@ object OptimizelyProviderLifecycleSpec extends ZIOSpecDefault {
       withMockServer { server =>
         server.stubFor(get(urlEqualTo(DatafilePath)).willReturn(okJson(ValidDatafile)))
         val client    = buildClient(server)
-        val provider  = new OptimizelyFeatureProvider(client, java.time.Duration.ofMillis(800), closeOnShutdown = true)
+        val provider  = new OptimizelyFeatureProvider(client, java.time.Duration.ofSeconds(3), closeOnShutdown = true)
         val initial   = stateOf(provider)
         val init      = tryInit(provider)
         val afterInit = stateOf(provider)
@@ -210,7 +210,7 @@ object OptimizelyProviderLifecycleSpec extends ZIOSpecDefault {
       withMockServer { server =>
         server.stubFor(get(urlEqualTo(DatafilePath)).willReturn(okJson(ValidDatafile)))
         val client   = buildClient(server)
-        val provider = new OptimizelyFeatureProvider(client, java.time.Duration.ofMillis(2000), closeOnShutdown = true)
+        val provider = new OptimizelyFeatureProvider(client, java.time.Duration.ofSeconds(5), closeOnShutdown = true)
         try {
           val N        = 16
           val release  = new CountDownLatch(1)

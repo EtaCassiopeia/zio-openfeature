@@ -53,125 +53,91 @@ See [Extras]({{ site.baseurl }}/extras) for details on all of the above.
 
 ## Using Optimizely
 
-[Optimizely](https://www.optimizely.com/) is the recommended provider for most users. It provides feature flags, A/B testing, and experimentation capabilities.
+`zio-openfeature-optimizely` is the first-party integration with [Optimizely Feature Experimentation](https://www.optimizely.com/products/feature-experimentation/). It builds on the Optimizely Java SDK directly (`com.optimizely.ab:core-api` + `core-httpclient-impl`) — the upstream OpenFeature contrib provider isn't published to Maven Central, so this library ships its own integration.
+
+For init-timeout tuning, self-hosted Optimizely Agent, `CircuitBreakerProvider` composition, testing patterns, and operational alerting guidance, see the dedicated [Optimizely guide]({{ site.baseurl }}/optimizely). The quick start below covers the 80% case.
 
 ### Installation
 
 ```scala
 libraryDependencies ++= Seq(
-  "io.github.etacassiopeia" %% "zio-openfeature-core" % "<version>",
-  "dev.openfeature.contrib.providers" % "optimizely" % "0.1.0"
+  "io.github.etacassiopeia" %% "zio-openfeature-core"       % "<version>",
+  "io.github.etacassiopeia" %% "zio-openfeature-optimizely" % "<version>"
 )
 ```
 
 ### Getting Your SDK Key
 
-1. Log in to [Optimizely](https://app.optimizely.com)
-2. Navigate to **Settings** → **Environments**
-3. Copy the **SDK Key** for your environment (Development, Staging, or Production)
+1. Log in to [Optimizely](https://app.optimizely.com).
+2. Navigate to **Settings** → **Environments**.
+3. Copy the **SDK Key** for your environment (Development, Staging, or Production).
 
 ### Basic Setup
 
 ```scala
 import zio.*
 import zio.openfeature.*
-import dev.openfeature.contrib.providers.optimizely.OptimizelyProvider
-import dev.openfeature.contrib.providers.optimizely.OptimizelyProviderConfig
+import zio.openfeature.optimizely.OptimizelyProvider
 
 object MyApp extends ZIOAppDefault:
 
-  val config = OptimizelyProviderConfig.builder()
-    .sdkKey("YOUR_SDK_KEY")
-    .build()
-
-  val provider = new OptimizelyProvider(config)
-
-  val program = for
-    enabled <- FeatureFlags.boolean("new-checkout-flow", default = false)
-    _       <- ZIO.when(enabled)(Console.printLine("New checkout enabled!"))
-  yield ()
-
-  def run = program.provide(
-    Scope.default >>> FeatureFlags.fromProvider(provider)
-  )
+  def run = ZIO.scoped {
+    for
+      sdkKey   <- ZIO.attempt(sys.env("OPTIMIZELY_SDK_KEY"))
+      provider <- OptimizelyProvider.make(sdkKey).mapError(e => new RuntimeException(e.message))
+      env      <- FeatureFlags.fromProviderAsync(provider).build
+      ff        = env.get[FeatureFlags]
+      enabled  <- ff.boolean("new-checkout-flow", default = false)
+                    .mapError(e => new RuntimeException(e.message))
+      _        <- ZIO.when(enabled)(Console.printLine("New checkout enabled!"))
+    yield ()
+  }
 ```
+
+`OptimizelyProvider.make(sdkKey)` validates the key shape (non-empty, allowed characters, not a known placeholder) and returns `FeatureFlagError.InvalidConfiguration` on bad input. The async layer uses the library's default 30-second `initTimeout`; override via `FeatureFlags.fromProviderAsync(provider, evaluationTimeout = 500.millis, initTimeout = 5.seconds)`.
 
 ### User Targeting
 
 The `targetingKey` in the evaluation context maps to the Optimizely user ID:
 
 ```scala
-// Create context with user ID
 val userContext = EvaluationContext("user-12345")
   .withAttribute("email", "user@example.com")
   .withAttribute("plan", "premium")
   .withAttribute("country", "US")
 
-// Evaluate with user context
-val result = FeatureFlags.boolean("premium-feature", false, userContext)
+val result = ff.boolean("premium-feature", default = false, userContext)
 ```
 
 ### Feature Variables
 
-Optimizely supports feature variables. By default, the OpenFeature provider searches for a variable named `"value"`:
+By default, typed evaluations (String / Int / Double) look up an Optimizely variable named `"value"`:
 
 ```scala
-// Optimizely feature with a "value" variable
-val discount = FeatureFlags.double("discount-rate", 0.0, userContext)
+val discount = ff.double("discount-rate", default = 0.0, userContext)
 ```
 
-To use a different variable name, add the `variableKey` attribute to the context:
+Override the variable name per-evaluation via the `openfeature.variableKey` context attribute:
 
 ```scala
-val ctx = userContext.withAttribute("variableKey", "custom_variable_name")
-val value = FeatureFlags.string("feature-key", "default", ctx)
+val ctx   = userContext.withAttribute("openfeature.variableKey", AttributeValue.StringValue("custom_var"))
+val value = ff.string("feature-key", default = "default", ctx)
 ```
 
-### Complete Example
+Boolean evaluations always return Optimizely's `decision.getEnabled` regardless of `variableKey`. Object evaluations return the full `getVariables.toMap` as a `Value` structure.
+
+### Self-hosted Optimizely Agent
+
+When you run [Optimizely Agent](https://docs.developers.optimizely.com/feature-experimentation/docs/agent) inside your network, pass the agent's URL:
 
 ```scala
-import zio.*
-import zio.openfeature.*
-import dev.openfeature.contrib.providers.optimizely.OptimizelyProvider
-import dev.openfeature.contrib.providers.optimizely.OptimizelyProviderConfig
-
-object FeatureFlagApp extends ZIOAppDefault:
-
-  val sdkKey = sys.env.getOrElse("OPTIMIZELY_SDK_KEY", "YOUR_SDK_KEY")
-
-  val config = OptimizelyProviderConfig.builder()
-    .sdkKey(sdkKey)
-    .build()
-
-  val provider = new OptimizelyProvider(config)
-
-  def handleUserRequest(userId: String, plan: String) = for
-    ctx = EvaluationContext(userId).withAttribute("plan", plan)
-
-    // Check if new checkout is enabled for this user
-    newCheckout <- FeatureFlags.boolean("new-checkout-flow", false, ctx)
-
-    // Get the button variation
-    buttonColor <- FeatureFlags.string("checkout-button", "blue", ctx)
-
-    // Get max cart items
-    maxItems <- FeatureFlags.int("max-cart-items", 10, ctx)
-
-    _ <- Console.printLine(s"User $userId (plan: $plan):")
-    _ <- Console.printLine(s"  - New checkout: $newCheckout")
-    _ <- Console.printLine(s"  - Button color: $buttonColor")
-    _ <- Console.printLine(s"  - Max items: $maxItems")
-  yield ()
-
-  val program = for
-    _ <- handleUserRequest("user-001", "free")
-    _ <- handleUserRequest("user-002", "premium")
-  yield ()
-
-  def run = program.provide(
-    Scope.default >>> FeatureFlags.fromProvider(provider)
-  )
+val provider = OptimizelyProvider.make(
+  sdkKey      = sys.env("OPTIMIZELY_SDK_KEY"),
+  datafileUrl = "https://flags.internal.example.com/datafile.json"
+)
 ```
+
+Both inputs are validated (URL parseable, scheme `http`/`https`, non-empty host) before the Optimizely client is built. See the [Optimizely guide]({{ site.baseurl }}/optimizely#4-self-hosted-optimizely-agent) for the full picture.
 
 ---
 
@@ -181,7 +147,7 @@ The OpenFeature ecosystem includes providers for many feature flag services:
 
 | Provider | Dependency | Description |
 |:---------|:-----------|:------------|
-| [Optimizely](https://www.optimizely.com/) | `"dev.openfeature.contrib.providers" % "optimizely" % "0.1.0"` | Feature flags and A/B testing |
+| [Optimizely](https://www.optimizely.com/) | `"io.github.etacassiopeia" %% "zio-openfeature-optimizely" % "<version>"` | First-party integration on the Optimizely Java SDK — see [Optimizely guide]({{ site.baseurl }}/optimizely) |
 | [flagd](https://flagd.dev/) | `"dev.openfeature.contrib.providers" % "flagd" % "0.8.9"` | Open-source flag evaluation engine |
 | [LaunchDarkly](https://launchdarkly.com/) | `"dev.openfeature.contrib.providers" % "launchdarkly" % "1.1.0"` | Enterprise feature management |
 | [Flagsmith](https://flagsmith.com/) | `"dev.openfeature.contrib.providers" % "flagsmith" % "0.1.0"` | Open-source feature flags |

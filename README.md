@@ -39,6 +39,12 @@ libraryDependencies += "io.github.etacassiopeia" %% "zio-openfeature-core" % "<v
 // Built-in providers: HOCON, env vars, caching wrapper (optional)
 libraryDependencies += "io.github.etacassiopeia" %% "zio-openfeature-extras" % "<version>"
 
+// OFREP — OpenFeature Remote Evaluation Protocol provider (HTTP)
+libraryDependencies += "io.github.etacassiopeia" %% "zio-openfeature-ofrep" % "<version>"
+
+// Optimizely Feature Experimentation — direct integration on top of the Optimizely Java SDK
+libraryDependencies += "io.github.etacassiopeia" %% "zio-openfeature-optimizely" % "<version>"
+
 // For testing
 libraryDependencies += "io.github.etacassiopeia" %% "zio-openfeature-testkit" % "<version>" % Test
 ```
@@ -83,11 +89,35 @@ object ProductionApp extends ZIOAppDefault:
   )
 ```
 
+### Using Optimizely Feature Experimentation
+
+`zio-openfeature-optimizely` is the first-party integration with [Optimizely](https://www.optimizely.com/products/feature-experimentation/). It validates the SDK key before constructing, uses the default 30 s `initTimeout`, and composes cleanly with `CircuitBreakerProvider` from `zio-openfeature-extras` for production resilience. See the [Optimizely guide]({{ site.baseurl }}/optimizely) for the full story (init timeout tuning, self-hosted Agent, what to alert on).
+
+```scala
+import zio.*
+import zio.openfeature.*
+import zio.openfeature.optimizely.OptimizelyProvider
+
+object MyApp extends ZIOAppDefault:
+
+  def run = ZIO.scoped {
+    for
+      sdkKey   <- ZIO.attempt(sys.env("OPTIMIZELY_SDK_KEY"))
+      provider <- OptimizelyProvider.make(sdkKey).mapError(e => new RuntimeException(e.message))
+      env      <- FeatureFlags.fromProviderAsync(provider).build
+      ff        = env.get[FeatureFlags]
+      enabled  <- ff.boolean("new-checkout", default = false).mapError(e => new RuntimeException(e.message))
+      _        <- ZIO.logInfo(s"new-checkout = $enabled")
+    yield ()
+  }
+```
+
 ### Popular Providers
 
 | Provider | Dependency |
 |----------|------------|
-| [Optimizely](https://www.optimizely.com/) | `"dev.openfeature.contrib.providers" % "optimizely" % "x.y.z"` |
+| [Optimizely](https://www.optimizely.com/) | `"io.github.etacassiopeia" %% "zio-openfeature-optimizely" % "<version>"` (this library) |
+| [OFREP](https://github.com/open-feature/protocol) | `"io.github.etacassiopeia" %% "zio-openfeature-ofrep" % "<version>"` (this library) |
 | [flagd](https://flagd.dev/) | `"dev.openfeature.contrib.providers" % "flagd" % "x.y.z"` |
 | [LaunchDarkly](https://launchdarkly.com/) | `"dev.openfeature.contrib.providers" % "launchdarkly" % "x.y.z"` |
 | [Flagsmith](https://flagsmith.com/) | `"dev.openfeature.contrib.providers" % "flagsmith" % "x.y.z"` |

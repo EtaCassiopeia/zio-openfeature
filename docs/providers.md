@@ -471,9 +471,29 @@ val layer = FeatureFlags.fromMultiProvider(
 
 `MultiProviderStrategy.firstMatch` and `MultiProviderStrategy.firstSuccessful` are the two built-ins. For a custom strategy, implement the `MultiProviderStrategy.Strategy` interface (an alias for the Java SDK's `Strategy`) and pass an instance the same way.
 
+### Initialization Timeout
+
+Every `fromProvider` and `fromProviderAsync` factory bounds initialization at **30 seconds by default**. The bound applies to both modes:
+
+- **Sync (`fromProvider`)**: if `setProviderAndWait` takes longer than `initTimeout`, the layer build fails with a `TimeoutException`. After init returns, the library verifies the provider's actual state — anything other than `READY` / `STALE` fails the build with an `IllegalStateException`, so a wrong SDK key or unreachable endpoint surfaces at startup instead of returning default values on every evaluation.
+- **Async (`fromProviderAsync`)**: a watchdog fiber forked into the layer's `Scope` sleeps `initTimeout`, then atomically transitions `ProviderStatus` from `NotReady` / `Error` to `Fatal`. Callers polling `providerStatus` stop waiting.
+
+Override via the explicit-`initTimeout` overload:
+
+```scala
+// Lower for tests / quick-start CLIs that should fail fast on a missing flag service
+FeatureFlags.fromProvider(provider, evaluationTimeout = 500.millis, initTimeout = 5.seconds)
+
+// Raise for cold-start datafile fetches on slow networks
+FeatureFlags.fromProviderAsync(provider, evaluationTimeout = 500.millis, initTimeout = 90.seconds)
+
+// Effectively disable (not recommended in production)
+FeatureFlags.fromProvider(provider, evaluationTimeout = 500.millis, initTimeout = 365.days)
+```
+
 ### Async Variants (Non-Blocking Initialization)
 
-Every factory method has an async counterpart that uses the Java SDK's non-blocking `setProvider` instead of `setProviderAndWait`. The provider initializes in the background; evaluations fail with `ProviderNotReady` until the provider is ready.
+Every factory method has an async counterpart that uses the Java SDK's non-blocking `setProvider` instead of `setProviderAndWait`. The provider initializes in the background; evaluations fail with `ProviderNotReady` until the provider is ready. The init-timeout watchdog described above still applies — after the configured `initTimeout` elapses, status transitions to `Fatal` so callers stop polling for ready.
 
 This is useful for microservices that need fast startup and can tolerate returning default flag values during the brief initialization window.
 
@@ -560,10 +580,10 @@ yield ()
 
 ### Initialization
 
-When you create a `FeatureFlags` layer, the provider is automatically initialized using `setProviderAndWait`. This ensures the provider is ready before any flag evaluations:
+When you create a `FeatureFlags` layer, the provider is automatically initialized using `setProviderAndWait`. This ensures the provider is ready before any flag evaluations. The initialization is bounded by `initTimeout` (default 30 seconds) and the provider's actual state is verified after the SDK call returns — see [Initialization Timeout](#initialization-timeout) above for details.
 
 ```scala
-// Provider is initialized when layer is provided (blocking)
+// Provider is initialized when layer is provided (blocking, bounded by initTimeout)
 program.provide(Scope.default >>> FeatureFlags.fromProvider(provider))
 
 // Or use the async variant for non-blocking initialization

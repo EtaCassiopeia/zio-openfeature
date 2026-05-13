@@ -175,7 +175,7 @@ lazy val optimizely = (project in file("optimizely"))
 // covered by the in-process WireMock spec in the `optimizely` module. Intentionally NOT aggregated into the root
 // project so `sbt test` (and CI) stay fast and Docker-free; run explicitly with `sbt optimizelyIt/test`.
 lazy val optimizelyIt = (project in file("optimizely-it"))
-  .dependsOn(optimizely, core)
+  .dependsOn(optimizely, core, extras)
   .settings(
     name := "zio-openfeature-optimizely-it",
     commonSettings,

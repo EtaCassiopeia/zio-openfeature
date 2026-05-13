@@ -73,6 +73,15 @@ final class OptimizelyFeatureProvider private[optimizely] (
       initLatch.countDown()
       emitProviderConfigurationChanged(ProviderEventDetails.builder().build())
     }
+    // Optimizely's NotificationManager returns a non-positive id when registration fails (e.g. a duplicate handler
+    // is already present). Without the handler we'd silently never count down the latch via the datafile-update
+    // path and would always wait the full `initWait` window. Fail fast instead.
+    if (handlerId <= 0) {
+      stateRef.set(ProviderState.ERROR)
+      throw new RuntimeException(
+        s"Optimizely datafile update handler registration failed (returned id=$handlerId); cannot drive init"
+      )
+    }
     notificationHandle.set(handlerId)
 
     if (optimizely.isValid) initLatch.countDown()
@@ -129,14 +138,21 @@ final class OptimizelyFeatureProvider private[optimizely] (
     decide(key, ctx) match {
       case Right(d) =>
         val variableKey = OptimizelyFeatureProvider.variableKey(ctx)
-        val v = Try(d.getVariables.getValue(variableKey, classOf[String])).toOption
-          .orElse(Option(d.getVariationKey))
-          .getOrElse(defaultValue)
+        val variable    = readVariable[String](d, variableKey, classOf[String])
+        // Fallback order: typed variable → variation key (still a meaningful Optimizely-driven answer) → OF default.
+        val (value, usedDefault) = variable match {
+          case Some(v) => (v, false)
+          case None =>
+            Option(d.getVariationKey) match {
+              case Some(vk) => (vk, false)
+              case None     => (defaultValue, true)
+            }
+        }
         ProviderEvaluation
           .builder[String]()
-          .value(v)
+          .value(value)
           .variant(d.getVariationKey)
-          .reason(deriveReason(d))
+          .reason(if (usedDefault) Reason.DEFAULT.name() else deriveReason(d))
           .flagMetadata(metadataFrom(d))
           .build()
       case Left(err) => failingEvaluation(defaultValue, err)
@@ -147,38 +163,48 @@ final class OptimizelyFeatureProvider private[optimizely] (
     defaultValue: java.lang.Integer,
     ctx: OFEvaluationContext
   ): ProviderEvaluation[java.lang.Integer] =
-    decide(key, ctx) match {
-      case Right(d) =>
-        val variableKey = OptimizelyFeatureProvider.variableKey(ctx)
-        val v = Try(d.getVariables.getValue(variableKey, classOf[java.lang.Integer])).toOption.getOrElse(defaultValue)
-        ProviderEvaluation
-          .builder[java.lang.Integer]()
-          .value(v)
-          .variant(d.getVariationKey)
-          .reason(deriveReason(d))
-          .flagMetadata(metadataFrom(d))
-          .build()
-      case Left(err) => failingEvaluation(defaultValue, err)
-    }
+    typedEvaluation[java.lang.Integer](key, defaultValue, ctx, classOf[java.lang.Integer])
 
   override def getDoubleEvaluation(
     key: String,
     defaultValue: java.lang.Double,
     ctx: OFEvaluationContext
   ): ProviderEvaluation[java.lang.Double] =
+    typedEvaluation[java.lang.Double](key, defaultValue, ctx, classOf[java.lang.Double])
+
+  /** Shared scaffold for Integer/Double evaluations: extract the named variable, fall back to the OF default with a
+    * `DEFAULT` reason if the variable is missing. The Optimizely SDK throws `JsonParseException` from `getValue` when
+    * the key is absent, so we wrap in `Try` and treat any failure as a missing variable.
+    */
+  private def typedEvaluation[A](
+    key: String,
+    defaultValue: A,
+    ctx: OFEvaluationContext,
+    clazz: Class[A]
+  ): ProviderEvaluation[A] =
     decide(key, ctx) match {
       case Right(d) =>
         val variableKey = OptimizelyFeatureProvider.variableKey(ctx)
-        val v = Try(d.getVariables.getValue(variableKey, classOf[java.lang.Double])).toOption.getOrElse(defaultValue)
+        val variable    = readVariable[A](d, variableKey, clazz)
+        val (value, usedDefault) = variable match {
+          case Some(v) => (v, false)
+          case None    => (defaultValue, true)
+        }
         ProviderEvaluation
-          .builder[java.lang.Double]()
-          .value(v)
+          .builder[A]()
+          .value(value)
           .variant(d.getVariationKey)
-          .reason(deriveReason(d))
+          .reason(if (usedDefault) Reason.DEFAULT.name() else deriveReason(d))
           .flagMetadata(metadataFrom(d))
           .build()
       case Left(err) => failingEvaluation(defaultValue, err)
     }
+
+  /** Reads the named variable as type `A`, swallowing the JSON-parse failures Optimizely throws when the key is absent.
+    * `clazz` tells the Optimizely SDK which Java type to extract.
+    */
+  private def readVariable[A](d: OptimizelyDecision, name: String, clazz: Class[A]): Option[A] =
+    Try(d.getVariables.getValue(name, clazz)).toOption.flatMap(Option(_))
 
   override def getObjectEvaluation(
     key: String,
@@ -208,12 +234,24 @@ final class OptimizelyFeatureProvider private[optimizely] (
       Try(optimizely.createUserContext(transformed.userId, transformed.attributes).decide(key)).toEither.left
         .map(t => Option(t.getMessage).getOrElse(t.getClass.getSimpleName))
         .flatMap { decision =>
-          val errs = Option(decision.getReasons).map(_.asScala.toList).getOrElse(Nil)
-          if (Option(decision.getVariationKey).isEmpty && errs.exists(_.toLowerCase.contains("not found")))
-            Left("FLAG_NOT_FOUND")
+          if (isFlagNotFound(decision)) Left("FLAG_NOT_FOUND")
           else Right(decision)
         }
   }
+
+  /** Identify a "flag not found" outcome from Optimizely's decision reasons. The Java SDK emits messages like `No flag
+    * was found for key "..."` (via `DecisionMessage.FLAG_KEY_INVALID`); we match on a stable substring and the
+    * `FLAG_KEY_INVALID` symbol so a future formatting tweak doesn't silently re-break this path.
+    */
+  private def isFlagNotFound(d: OptimizelyDecision): Boolean =
+    if (Option(d.getVariationKey).isDefined) false
+    else {
+      val errs = Option(d.getReasons).map(_.asScala.toList).getOrElse(Nil)
+      errs.exists { reason =>
+        val lower = reason.toLowerCase
+        lower.contains("no flag was found") || lower.contains("flag_key_invalid")
+      }
+    }
 
   private def deriveReason(d: OptimizelyDecision): String = {
     val errs = Option(d.getReasons).map(_.asScala.toList).getOrElse(Nil)

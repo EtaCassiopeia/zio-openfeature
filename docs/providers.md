@@ -37,6 +37,7 @@ The `zio-openfeature-extras` module includes providers for common use cases — 
 |:---------|:---------|
 | `HoconProvider` | Read flags from `application.conf` (Typesafe Config) |
 | `EnvVarProvider` | Read flags from environment variables |
+| `OFREPProvider` | Evaluate flags via the OpenFeature Remote Evaluation Protocol (HTTP) |
 | `CachingProvider` | Wrap any provider with zio-cache backed evaluation caching |
 
 See [Extras]({{ site.baseurl }}/extras) for details.

@@ -226,10 +226,18 @@ final class OptimizelyFeatureProvider private[optimizely] (
     }
 
   // Common decision pipeline. Returns Left with an error reason string when no decision is possible.
+  //
+  // Check order:
+  //   1. Provider state — if not READY (never initialized, failed init, post-shutdown) we surface PROVIDER_NOT_READY
+  //      without touching the underlying SDK. Calling `optimizely.isValid` post-shutdown would re-enter the polling
+  //      HTTP client, which is closed by then, and throw — bug observed by OptimizelyProviderLifecycleSpec.
+  //   2. Targeting key — caller-supplied context error; only meaningful once the provider is actually usable.
+  //   3. `optimizely.isValid` — defence-in-depth in case state says READY but the SDK silently went invalid.
   private def decide(key: String, ctx: OFEvaluationContext): Either[String, OptimizelyDecision] = {
     val transformed = ContextTransformer.transform(ctx)
-    if (transformed.userId.isEmpty) Left("TARGETING_KEY_MISSING")
-    else if (!optimizely.isValid) Left("PROVIDER_NOT_READY")
+    if (stateRef.get() != ProviderState.READY) Left("PROVIDER_NOT_READY")
+    else if (transformed.userId.isEmpty) Left("TARGETING_KEY_MISSING")
+    else if (!Try(optimizely.isValid).getOrElse(false)) Left("PROVIDER_NOT_READY")
     else
       Try(optimizely.createUserContext(transformed.userId, transformed.attributes).decide(key)).toEither.left
         .map(t => Option(t.getMessage).getOrElse(t.getClass.getSimpleName))

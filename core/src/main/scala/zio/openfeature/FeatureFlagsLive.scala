@@ -31,6 +31,21 @@ final private[openfeature] class FeatureFlagsLive(
   evaluationTimeout: Option[Duration] = None
 ) extends FeatureFlags {
 
+  // Records when a `setProvider` swap last failed. Used by the async PROVIDER_READY bridge to decide whether an
+  // incoming Ready event is a real recovery signal or a stale event left over from a previous attach that's racing
+  // against the explicit Error transition set by the failed swap. See `setProvider` and `readyHandler` below.
+  //
+  // Initialised to `0L` (epoch). `currentTimeMillis() - 0L` will always be far beyond `FailedSwapGuardMillis`, so the
+  // guard never trips before the first failed swap. (Using `Long.MinValue` instead would overflow the subtraction and
+  // wrap negative, causing the guard to trip incorrectly and block legitimate Error → Ready recoveries.)
+  private val recentSwapFailureAt = new java.util.concurrent.atomic.AtomicLong(0L)
+
+  // How long after a failed swap an async PROVIDER_READY event should be ignored as a likely stale signal. Real
+  // recovery scenarios (provider was in Error for an extended period and genuinely transitions back to Ready)
+  // happen on a much longer timescale than this; the race window we're closing is the SDK's emitter executor
+  // dispatching a queued event that pre-dates our explicit Error.
+  private val FailedSwapGuardMillis: Long = 500L
+
   // Bridge Java SDK provider events to ZIO event system
   private[openfeature] def startEventBridge: ZIO[Scope, Nothing, Unit] = {
     // Read provider name dynamically so events after a provider swap use the new name
@@ -67,7 +82,19 @@ final private[openfeature] class FeatureFlagsLive(
       val readyHandler: java.util.function.Consumer[EventDetails] = details => {
         val em = extractEventMetadata(details)
         runHandler(runtime, "PROVIDER_READY")(
-          state.statusRef.set(ProviderStatus.Ready) *>
+          // Transition statusRef only from states where PROVIDER_READY is meaningful. The `Error => Ready` arrow is
+          // valid per the OpenFeature spec (recovery from a recoverable error) but is guarded by
+          // `FailedSwapGuardMillis`: if the most recent statusRef write was a failed-swap Error within that window,
+          // a Ready event arriving now is almost certainly a stale signal queued on the SDK's emitter executor before
+          // the swap, not a genuine recovery. Real recoveries happen on timescales much longer than the guard.
+          state.statusRef.update {
+            case ProviderStatus.NotReady => ProviderStatus.Ready
+            case ProviderStatus.Stale    => ProviderStatus.Ready
+            case ProviderStatus.Error =>
+              val sinceFailure = java.lang.System.currentTimeMillis() - recentSwapFailureAt.get()
+              if (sinceFailure >= FailedSwapGuardMillis) ProviderStatus.Ready else ProviderStatus.Error
+            case other => other
+          } *>
             state.eventHub.publish(ProviderEvent.Ready(currentMetadata(runtime), em)).unit
         )
         onReady.foreach(_.countDown())
@@ -816,8 +843,11 @@ final private[openfeature] class FeatureFlagsLive(
           case None    => ZIO.attemptBlocking(api.setProviderAndWait(newProvider))
         }).mapError(e => FeatureFlagError.ProviderInitializationFailed(e))
           .tapError(_ =>
-            // Rollback refs and set Error status so the instance is in a diagnosable state
-            providerRef.set(oldProvider) *>
+            // Rollback refs and set Error status so the instance is in a diagnosable state. Stamp
+            // `recentSwapFailureAt` BEFORE the statusRef write so the async PROVIDER_READY handler sees a fresh
+            // failure timestamp and skips overwriting Error within the guard window.
+            ZIO.succeed(recentSwapFailureAt.set(java.lang.System.currentTimeMillis())) *>
+              providerRef.set(oldProvider) *>
               providerNameRef.set(oldName) *>
               state.statusRef.set(ProviderStatus.Error)
           )

@@ -170,6 +170,66 @@ lazy val optimizely = (project in file("optimizely"))
     )
   )
 
+// Local-only Optimizely integration suite. Drives the real Optimizely Java SDK against a docker-compose stack
+// (nginx + Toxiproxy) for real-decision, targeting, transport-fault, and datafile-churn scenarios that can't be
+// covered by the in-process WireMock spec in the `optimizely` module. Intentionally NOT aggregated into the root
+// project so `sbt test` (and CI) stay fast and Docker-free; run explicitly with `sbt optimizelyIt/test`.
+lazy val optimizelyIt = (project in file("optimizely-it"))
+  .dependsOn(optimizely, core)
+  .settings(
+    name := "zio-openfeature-optimizely-it",
+    commonSettings,
+    publish / skip        := true,
+    crossScalaVersions    := Seq(scala3Version),
+    Test / fork           := true,
+    coverageEnabled       := false,
+    coverageFailOnMinimum := false,
+    libraryDependencies ++= Seq(
+      "dev.zio"             %% "zio"                       % zioVersion,
+      "com.dimafeng"        %% "testcontainers-scala-core" % "0.43.0" % Test,
+      "eu.rekawek.toxiproxy" % "toxiproxy-java"            % "2.1.7"  % Test,
+      // SLF4J binding so testcontainers' Docker-discovery + container-lifecycle logs surface in the test output.
+      // Without it, testcontainers fails silently when it can't reach the Docker daemon.
+      "org.slf4j"            % "slf4j-simple"              % "2.0.13" % Test
+    ),
+    // testcontainers-scala 0.43.0 pulls testcontainers-java 1.20.2, which bundles a docker-java client that
+    // negotiates Docker API v1.32 — Docker Desktop 29.x rejects anything below v1.40 with a 400. Force the
+    // transitive testcontainers-java to a 1.21.x that uses a newer docker-java.
+    dependencyOverrides ++= Seq(
+      "org.testcontainers" % "testcontainers" % "1.21.3" % Test
+    ),
+    Test / javaOptions ++= Seq(
+      "-Dorg.slf4j.simpleLogger.defaultLogLevel=info",
+      // docker-java (transitive of testcontainers) defaults to Docker API v1.32, which Docker Desktop 29.x
+      // rejects (minimum v1.40). Pin to a recent version both Linux and Docker Desktop accept.
+      "-Dapi.version=1.43"
+    ),
+    // Pin DOCKER_HOST for the forked test JVM. On macOS with Docker Desktop, the symlinked sockets at
+    // /var/run/docker.sock and ~/.docker/run/docker.sock return a stubbed /info response with a redirect label to
+    // testcontainers' docker-java client (probably User-Agent-based filtering); the raw Docker API on Desktop is
+    // exposed at ~/Library/Containers/com.docker.docker/Data/docker.raw.sock and behaves identically to a Linux
+    // /var/run/docker.sock. Prefer raw.sock when present, fall back to the user's DOCKER_HOST, then to the symlinked
+    // socket.
+    Test / envVars := {
+      val existing = sys.env
+      val explicit = existing.get("DOCKER_HOST")
+      val derived = {
+        val home    = sys.props.getOrElse("user.home", "")
+        val rawSock = new java.io.File(s"$home/Library/Containers/com.docker.docker/Data/docker.raw.sock")
+        val runSock = new java.io.File(s"$home/.docker/run/docker.sock")
+        if (rawSock.exists()) Some(s"unix://${rawSock.getAbsolutePath}")
+        else if (runSock.exists()) Some(s"unix://${runSock.getAbsolutePath}")
+        else None
+      }
+      // Ryuk (testcontainers' cleanup sidecar) won't launch on Docker Desktop's docker.raw.sock — the daemon
+      // disallows the privileged container Ryuk asks for. Disable it; the JVM shutdown hook on the
+      // DockerComposeContainer handles teardown for this suite.
+      existing ++
+        explicit.orElse(derived).map("DOCKER_HOST" -> _).toMap +
+        ("TESTCONTAINERS_RYUK_DISABLED" -> "true")
+    }
+  )
+
 // Testkit module - testing utilities
 lazy val testkit = (project in file("testkit"))
   .dependsOn(core)

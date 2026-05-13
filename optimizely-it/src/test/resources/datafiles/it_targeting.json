@@ -1,0 +1,103 @@
+{
+  "version": "4",
+  "accountId": "1",
+  "projectId": "1200",
+  "revision": "1",
+  "anonymizeIP": false,
+  "botFiltering": false,
+  "sendFlagDecisions": true,
+  "experiments": [],
+  "featureFlags": [
+    {
+      "id": "1200",
+      "key": "it_audience_flag",
+      "rolloutId": "2200",
+      "experimentIds": [],
+      "variables": [
+        {
+          "id": "5200",
+          "key": "value",
+          "type": "string",
+          "defaultValue": "other"
+        }
+      ]
+    }
+  ],
+  "rollouts": [
+    {
+      "id": "2200",
+      "experiments": [
+        {
+          "id": "3200",
+          "key": "rollout-2200-us",
+          "status": "Running",
+          "layerId": "2200",
+          "audienceIds": ["9001"],
+          "forcedVariations": {},
+          "trafficAllocation": [
+            { "entityId": "4200", "endOfRange": 10000 }
+          ],
+          "variations": [
+            {
+              "id": "4200",
+              "key": "us",
+              "featureEnabled": true,
+              "variables": [
+                { "id": "5200", "value": "us" }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "3201",
+          "key": "rollout-2200-default",
+          "status": "Running",
+          "layerId": "2200",
+          "audienceIds": [],
+          "forcedVariations": {},
+          "trafficAllocation": [
+            { "entityId": "4201", "endOfRange": 10000 }
+          ],
+          "variations": [
+            {
+              "id": "4201",
+              "key": "off",
+              "featureEnabled": false,
+              "variables": [
+                { "id": "5200", "value": "other" }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "audiences": [],
+  "typedAudiences": [
+    {
+      "id": "9001",
+      "name": "Country US",
+      "conditions": [
+        "and",
+        [
+          "or",
+          [
+            "or",
+            {
+              "name": "country",
+              "type": "custom_attribute",
+              "match": "exact",
+              "value": "US"
+            }
+          ]
+        ]
+      ]
+    }
+  ],
+  "groups": [],
+  "attributes": [
+    { "id": "100", "key": "country" }
+  ],
+  "variables": [],
+  "events": []
+}

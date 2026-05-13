@@ -1,0 +1,32 @@
+# Local integration-test stack for the Optimizely provider.
+#
+#   datafile-server (nginx)  serves committed Optimizely-shaped datafiles at /datafiles/<sdkKey>.json
+#   toxiproxy                fronts datafile-server so tests can inject network faults
+#
+# The mount target ./datafiles is populated at test JVM startup by OptimizelyItStack, which copies
+# the committed fixtures under src/test/resources/datafiles/. The runtime directory is gitignored
+# so swap-based tests can mutate it without dirtying the working tree.
+#
+# Manual usage outside sbt:
+#   cp -R src/test/resources/datafiles/. datafiles/
+#   docker-compose up
+
+services:
+  datafile-server:
+    image: nginx:1.27-alpine
+    read_only: true
+    tmpfs:
+      - /var/cache/nginx
+      - /var/run
+    volumes:
+      - ./datafiles:/usr/share/nginx/html/datafiles:ro
+    ports:
+      - "127.0.0.1::80"
+
+  toxiproxy:
+    image: ghcr.io/shopify/toxiproxy:2.9.0
+    depends_on:
+      - datafile-server
+    ports:
+      - "127.0.0.1::8474"
+      - "127.0.0.1::8666"

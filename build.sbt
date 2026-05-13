@@ -138,8 +138,9 @@ lazy val ofrep = (project in file("ofrep"))
     name := "zio-openfeature-ofrep",
     commonSettings,
     libraryDependencies ++= Seq(
-      "dev.zio"                            %% "zio"   % zioVersion,
-      "dev.openfeature.contrib.providers"   % "ofrep" % "0.0.1"
+      "dev.zio"                            %% "zio"       % zioVersion,
+      "dev.openfeature.contrib.providers"   % "ofrep"     % "0.0.1",
+      "org.wiremock"                        % "wiremock"  % "3.10.0" % Test
     )
   )
 

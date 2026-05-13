@@ -24,9 +24,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   SDK directly (`com.optimizely.ab:core-api` + `core-httpclient-impl`), since the upstream contrib provider isn't
   published to Maven Central yet. Includes `OptimizelyProvider.make(sdkKey)` for the CDN path,
   `make(sdkKey, datafileUrl)` for self-hosted Optimizely Agent, and `fromOptimizelyClient` as an escape hatch.
-- WireMock-backed failure-mode integration suite for OFREP (`OFREPFailureModeSpec`) covering 4xx, 5xx, connection
-  reset, evaluation timeout, and pre/post server-stop transitions. A parallel suite for the Optimizely module
-  (`OptimizelyProviderIntegrationSpec`) lands in a follow-up PR.
+- WireMock-backed failure-mode integration suites:
+  - **OFREP** (`OFREPFailureModeSpec`) — 4xx, 5xx, connection reset, evaluation timeout, pre/post server-stop transition.
+  - **Optimizely** (`OptimizelyProviderIntegrationSpec`) — happy path, 403/404/500 datafile fetch failures, slow
+    response past `initWait`, connection reset, and datafile revision change (`PROVIDER_CONFIGURATION_CHANGED` fires
+    on second poll).
 - `ProviderInitFailureSpec` covering sync `initialize()` throws, async ERROR-event handling, recovery, and the
   documented Java-SDK-catches-provider-throws boundary.
 - `ValueRoundTripSpec` — property-based coverage of `AttributeValue` / `EvaluationContext` round-tripping through the

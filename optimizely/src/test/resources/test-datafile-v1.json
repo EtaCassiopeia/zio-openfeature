@@ -1,0 +1,18 @@
+{
+  "version": "4",
+  "accountId": "1",
+  "projectId": "1",
+  "revision": "1",
+  "anonymizeIP": false,
+  "botFiltering": false,
+  "sendFlagDecisions": true,
+  "experiments": [],
+  "featureFlags": [],
+  "rollouts": [],
+  "audiences": [],
+  "typedAudiences": [],
+  "groups": [],
+  "attributes": [],
+  "variables": [],
+  "events": []
+}

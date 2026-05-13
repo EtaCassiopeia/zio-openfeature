@@ -165,7 +165,8 @@ lazy val optimizely = (project in file("optimizely"))
     libraryDependencies ++= Seq(
       "dev.zio"          %% "zio"                  % zioVersion,
       "com.optimizely.ab" % "core-api"             % "4.2.2",
-      "com.optimizely.ab" % "core-httpclient-impl" % "4.2.2"
+      "com.optimizely.ab" % "core-httpclient-impl" % "4.2.2",
+      "org.wiremock"      % "wiremock"             % "3.10.0" % Test
     )
   )
 

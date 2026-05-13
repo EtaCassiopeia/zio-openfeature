@@ -3,7 +3,9 @@ package zio.openfeature.ofrep
 import com.github.tomakehurst.wiremock.WireMockServer
 import com.github.tomakehurst.wiremock.client.WireMock._
 import com.github.tomakehurst.wiremock.core.WireMockConfiguration
+import dev.openfeature.contrib.providers.ofrep.OfrepProvider
 import dev.openfeature.sdk.{ErrorCode, ImmutableContext, MutableContext, Value}
+import zio._
 import zio.test._
 
 /** End-to-end tests against a WireMock-backed OFREP server. Verifies that the OFREP contrib provider's wire calls match
@@ -27,6 +29,15 @@ object OFREPProviderIntegrationSpec extends ZIOSpecDefault {
   private def baseUrl(server: WireMockServer): String =
     s"http://localhost:${server.port()}"
 
+  /** Unsafe-run `OFREPProvider.make` so the existing test bodies can stay synchronous. The URLs are always
+    * `http://localhost:<dynamic port>`, so validation never actually fails — but exercising the validated factory keeps
+    * the spec aligned with the recommended API.
+    */
+  private def makeProvider(url: String): OfrepProvider =
+    Unsafe.unsafe { implicit u =>
+      Runtime.default.unsafe.run(OFREPProvider.make(url)).getOrThrowFiberFailure()
+    }
+
   def spec = suite("OFREP integration (WireMock)")(
     test("getBooleanEvaluation returns the server's value") {
       withMockServer { server =>
@@ -36,7 +47,7 @@ object OFREPProviderIntegrationSpec extends ZIOSpecDefault {
               okJson("""{"key":"bool-flag","value":true,"variant":"on","reason":"TARGETING_MATCH"}""")
             )
         )
-        val provider = OFREPProvider(baseUrl(server))
+        val provider = makeProvider(baseUrl(server))
         try {
           val result = provider.getBooleanEvaluation("bool-flag", java.lang.Boolean.FALSE, emptyContext)
           assertTrue(result.getValue == java.lang.Boolean.TRUE) &&
@@ -50,7 +61,7 @@ object OFREPProviderIntegrationSpec extends ZIOSpecDefault {
           post(urlEqualTo("/ofrep/v1/evaluate/flags/greeting"))
             .willReturn(okJson("""{"key":"greeting","value":"hello","reason":"STATIC"}"""))
         )
-        val provider = OFREPProvider(baseUrl(server))
+        val provider = makeProvider(baseUrl(server))
         try {
           val result = provider.getStringEvaluation("greeting", "default", emptyContext)
           assertTrue(result.getValue == "hello")
@@ -63,7 +74,7 @@ object OFREPProviderIntegrationSpec extends ZIOSpecDefault {
           post(urlEqualTo("/ofrep/v1/evaluate/flags/max-items"))
             .willReturn(okJson("""{"key":"max-items","value":42,"reason":"STATIC"}"""))
         )
-        val provider = OFREPProvider(baseUrl(server))
+        val provider = makeProvider(baseUrl(server))
         try {
           val result = provider.getIntegerEvaluation("max-items", Integer.valueOf(0), emptyContext)
           assertTrue(result.getValue == Integer.valueOf(42))
@@ -76,7 +87,7 @@ object OFREPProviderIntegrationSpec extends ZIOSpecDefault {
           post(urlEqualTo("/ofrep/v1/evaluate/flags/rate"))
             .willReturn(okJson("""{"key":"rate","value":2.5,"reason":"STATIC"}"""))
         )
-        val provider = OFREPProvider(baseUrl(server))
+        val provider = makeProvider(baseUrl(server))
         try {
           val result = provider.getDoubleEvaluation("rate", java.lang.Double.valueOf(0.0), emptyContext)
           assertTrue(result.getValue == java.lang.Double.valueOf(2.5))
@@ -91,7 +102,7 @@ object OFREPProviderIntegrationSpec extends ZIOSpecDefault {
               okJson("""{"key":"config","value":{"timeout":30,"retries":3},"reason":"STATIC"}""")
             )
         )
-        val provider = OFREPProvider(baseUrl(server))
+        val provider = makeProvider(baseUrl(server))
         try {
           val result = provider.getObjectEvaluation("config", new Value(), emptyContext)
           assertTrue(result.getValue != null) &&
@@ -110,7 +121,7 @@ object OFREPProviderIntegrationSpec extends ZIOSpecDefault {
                 .withBody("""{"errorCode":"FLAG_NOT_FOUND","errorDetails":"Flag not found"}""")
             )
         )
-        val provider = OFREPProvider(baseUrl(server))
+        val provider = makeProvider(baseUrl(server))
         try {
           val result = provider.getBooleanEvaluation("missing-flag", java.lang.Boolean.FALSE, emptyContext)
           assertTrue(result.getValue == java.lang.Boolean.FALSE) &&
@@ -129,7 +140,7 @@ object OFREPProviderIntegrationSpec extends ZIOSpecDefault {
                 .withBody("""{"errorCode":"GENERAL","errorDetails":"unauthorized"}""")
             )
         )
-        val provider = OFREPProvider(baseUrl(server))
+        val provider = makeProvider(baseUrl(server))
         try {
           val result = provider.getBooleanEvaluation("protected-flag", java.lang.Boolean.FALSE, emptyContext)
           assertTrue(result.getValue == java.lang.Boolean.FALSE) &&
@@ -146,7 +157,7 @@ object OFREPProviderIntegrationSpec extends ZIOSpecDefault {
             .withRequestBody(matchingJsonPath("$.context.plan", equalTo("premium")))
             .willReturn(okJson("""{"key":"personalised","value":true,"reason":"TARGETING_MATCH"}"""))
         )
-        val provider = OFREPProvider(baseUrl(server))
+        val provider = makeProvider(baseUrl(server))
         try {
           val ctx = new MutableContext("user-42")
           ctx.add("plan", "premium")

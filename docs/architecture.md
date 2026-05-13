@@ -261,11 +261,18 @@ The library uses `FeatureFlagError` for typed error handling:
 | `FlagNotFound` | Flag key doesn't exist in provider |
 | `TypeMismatch` | Value type doesn't match expected type |
 | `ProviderNotReady` | Provider not initialized |
+| `ProviderInitializationFailed` | Sync init returned a non-`READY` state, or `setProviderAndWait` exceeded `initTimeout` |
+| `ProviderFatal` | Provider hit an irrecoverable state (e.g. async init never produced a datafile within `initTimeout`) |
+| `Unauthorized` | Provider rejected the request (HTTP 401 / 403 or analogous SDK signal — typically a wrong SDK key) |
+| `Unreachable` | Provider could not be reached at the network layer (DNS, connection refused, no route) |
 | `TargetingKeyMissing` | Required targeting key not provided |
 | `InvalidContext` | Evaluation context is invalid |
-| `ProviderError` | Underlying provider exception |
+| `InvalidConfiguration` | Provider construction was rejected (e.g. malformed `baseUrl`, placeholder SDK key) |
+| `ProviderError` | Fallback wrapping an unclassified underlying provider exception |
 | `NestedTransactionNotAllowed` | Attempted nested transaction |
 | `OverrideTypeMismatch` | Transaction override type mismatch |
+
+`Unauthorized`, `Unreachable`, and the `ProviderError` fallback are produced by a shared classifier (`FeatureFlagError.classify`) wherever the library wraps a `Throwable` from the underlying provider. Operators can alert on `Unauthorized` (a misconfigured key) distinctly from `Unreachable` (a network outage) and the generic `ProviderError` (everything else, with the original `Throwable` preserved on `.cause`).
 
 ### Error Recovery
 
@@ -275,7 +282,12 @@ FeatureFlags.boolean("feature", false)
     case FeatureFlagError.FlagNotFound(_) =>
       ZIO.succeed(false)  // Use default
     case _: FeatureFlagError.ProviderNotReady =>
-      ZIO.succeed(false)  // Fail safe
+      ZIO.succeed(false)  // Fail safe — provider not yet ready
+    case _: FeatureFlagError.Unreachable =>
+      ZIO.succeed(false)  // Network blip — serve default rather than fail
+    case _: FeatureFlagError.Unauthorized =>
+      // Misconfigured SDK key — fail loud so operators investigate, don't paper over
+      ZIO.logError("Provider auth failed — check SDK key rotation") *> ZIO.succeed(false)
   }
 ```
 

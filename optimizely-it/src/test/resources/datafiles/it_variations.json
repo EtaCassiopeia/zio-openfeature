@@ -1,0 +1,51 @@
+{
+  "version": "4",
+  "accountId": "1",
+  "projectId": "1100",
+  "revision": "1",
+  "anonymizeIP": false,
+  "botFiltering": false,
+  "sendFlagDecisions": true,
+  "experiments": [],
+  "featureFlags": [
+    {
+      "id": "1101",
+      "key": "it_variation_flag",
+      "rolloutId": "2101",
+      "experimentIds": [],
+      "variables": []
+    }
+  ],
+  "rollouts": [
+    {
+      "id": "2101",
+      "experiments": [
+        {
+          "id": "3101",
+          "key": "rollout-2101",
+          "status": "Running",
+          "layerId": "2101",
+          "audienceIds": [],
+          "forcedVariations": {},
+          "trafficAllocation": [
+            { "entityId": "4101", "endOfRange": 10000 }
+          ],
+          "variations": [
+            {
+              "id": "4101",
+              "key": "treatment_a",
+              "featureEnabled": true,
+              "variables": []
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "audiences": [],
+  "typedAudiences": [],
+  "groups": [],
+  "attributes": [],
+  "variables": [],
+  "events": []
+}

@@ -1,0 +1,1 @@
+{ "version": "4", "accountId": "1", "projectId": "1000", "revision": "3", "anonymizeIP": false, "botFiltering": false, "sendFlagDecisions": true, "experiments": [], "featureFlags": [ { "id": "1001", "key": "it_bool_flag", "rolloutI

@@ -219,16 +219,105 @@ ff.onConfigurationChanged { (flagsChanged, meta) =>
 
 The library doesn't pass through the *list* of changed flags from Optimizely (the underlying notification doesn't expose them in this version of the SDK) — the `flagsChanged` set will be empty. Use the event as a trigger; check the actual flag values via fresh evaluations.
 
-### Detecting a stuck `Fatal` status
+### Detecting `Fatal` status from a healthcheck
 
-`Fatal` is intentionally non-recoverable: it's the library's way of saying "stop polling, this isn't coming back without operator intervention." A typical pattern in long-running services:
+After `initTimeout` elapses with the provider still un-ready, the async watchdog flips status to `Fatal`. This is recoverable (a later `PROVIDER_READY` event transitions `Fatal → Ready`), but during the gap every evaluation fails — so don't route traffic to the pod. The standard pattern:
 
 ```scala
-val healthCheck =
+val readinessCheck: URIO[FeatureFlags, Boolean] =
   ZIO.serviceWithZIO[FeatureFlags](_.providerStatus).map {
     case ProviderStatus.Ready | ProviderStatus.Stale => true
     case _                                            => false
   }
 ```
 
-Wire `healthCheck` into your liveness or readiness endpoint. If `Fatal` is observed, surface it as a hard failure — the process should restart (or page operators) rather than serve traffic with frozen flag values.
+Wire `readinessCheck` into your readiness endpoint. Kubernetes / ECS / Nomad won't direct traffic to the pod until `Ready`. The cold-start window — and any post-`Fatal` recovery window — becomes invisible to users. Without this, your app advertises healthy while every flag silently returns its OF default.
+
+---
+
+## 8. Choosing a topology
+
+The patterns below differ in **when defaults are served** and **whether the app refuses to start on a misconfiguration**. See [Providers → Choosing a strategy]({{ site.baseurl }}/providers#choosing-a-strategy--sync-vs-async-with-vs-without-fallback) for the full decision matrix; the Optimizely-specific guidance is below.
+
+### Pattern A — Optimizely-only with the async watchdog (default)
+
+Highest availability after boot, but during the cold-start window every flag returns its OF default until Optimizely's first datafile arrives. Use this when:
+
+- Most of your flags are non-correctness-bearing (UI variations, feature gates, experiments).
+- You wire `providerStatus` into your readiness check (so the cold-start defaults don't reach users).
+- You can tolerate a 30-second window where new pods are not-routed.
+
+```scala
+ZIO.scoped {
+  for
+    provider <- OptimizelyProvider.make(sys.env("OPTIMIZELY_SDK_KEY"))
+    env      <- FeatureFlags.fromProviderAsync(provider, evaluationTimeout = 500.millis).build
+    // initTimeout uses the library default (30 s); override via the 3-arg overload
+  yield env.get[FeatureFlags]
+}
+```
+
+### Pattern B — Optimizely-only with fail-fast boot
+
+Boot blocks until Optimizely is `READY` or `initTimeout` elapses; on failure the layer build throws and the orchestrator restarts the pod. Use this when:
+
+- Some of your flags gate correctness (financial logic, fraud checks, billing rules).
+- "All flags default" is unsafe even for a few seconds.
+- You'd rather fail loud at boot than serve traffic in a degraded state.
+
+```scala
+ZIO.scoped {
+  for
+    provider <- OptimizelyProvider.make(sys.env("OPTIMIZELY_SDK_KEY"))
+    env      <- FeatureFlags.fromProvider(
+                  provider,
+                  evaluationTimeout = 500.millis,
+                  initTimeout       = 15.seconds   // tight — fail fast on misconfig
+                ).build
+  yield env.get[FeatureFlags]
+}
+```
+
+If Optimizely doesn't reach `READY` in 15 s, the layer build fails with `TimeoutException` or `IllegalStateException`. Your pod doesn't go live; the orchestrator restarts it. There's no half-initialised state and no window of all-defaults.
+
+### Pattern C — Optimizely + `EnvVarProvider` for critical flags only
+
+Hybrid: Optimizely serves the bulk of flags; a small `EnvVarProvider` is the second provider in a `MultiProvider`, holding only the flags whose default-value matters under outage. Use this when:
+
+- A small subset of flags is correctness-bearing; the rest is fine to default during an outage.
+- You want the highest availability (multi-provider is always `Ready` via EnvVar) without sacrificing safety on the critical few.
+
+```scala
+import zio.openfeature.extras.EnvVarProvider
+import dev.openfeature.sdk.multiprovider.FirstSuccessfulStrategy
+
+val critical = Map(
+  "FF_MAINTENANCE_MODE"    -> "false",
+  "FF_FRAUD_CHECK_ENABLED" -> "true"
+)
+
+ZIO.scoped {
+  for
+    optimizely <- OptimizelyProvider.make(sys.env("OPTIMIZELY_SDK_KEY"))
+    envProvider = EnvVarProvider.withLookup(critical.get)
+    env        <- FeatureFlags.fromMultiProviderAsync(
+                    List(optimizely, envProvider),
+                    new FirstSuccessfulStrategy()
+                  ).build
+  yield env.get[FeatureFlags]
+}
+```
+
+`FirstSuccessfulStrategy` tries Optimizely first; if it fails or is unready, falls through to `EnvVarProvider`. Because `EnvVarProvider` is instantly `Ready`, the `MultiProvider`'s aggregate state is `Ready` immediately and the 30-second watchdog never fires — meaning Optimizely-specific failures are no longer visible at the `FeatureFlags` layer. If you want to alert on Optimizely-side problems anyway, poll the underlying client's `isValid` from a side healthcheck or hook into `onProviderError`.
+
+### Picking between A, B, and C
+
+| Question | Pattern A (Optimizely, async) | Pattern B (Optimizely, sync) | Pattern C (Optimizely + EnvVar) |
+|---|---|---|---|
+| Can the app start while Optimizely is down? | yes, but readiness blocks until `Ready` | no — boot fails | yes, always |
+| What happens during a 60-second Optimizely outage at runtime? | flags return OF defaults until recovery | n/a (app refuses to start) | flags served from EnvVar where defined; OF defaults otherwise |
+| Operational visibility on Optimizely failures | high — `providerStatus` reports `Fatal` | very high — boot fails loudly | low — `MultiProvider` masks it; needs separate monitoring |
+| Right for correctness-critical workloads | only if you wire readiness | **yes — preferred** | yes for the EnvVar-covered flags only |
+| Right for experiments / UI gates / dashboards | **yes — preferred** | overkill | overkill |
+
+If in doubt: start with B for any service handling money or user-trust decisions; start with A for everything else; pull in C only when a specific outage exposed a flag whose default was wrong.

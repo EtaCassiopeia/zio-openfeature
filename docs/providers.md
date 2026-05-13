@@ -501,6 +501,66 @@ program.provide(Scope.default >>> FeatureFlags.fromProviderAsync(provider))
 
 ---
 
+## Choosing a strategy — sync vs async, with vs without fallback
+
+Provider construction has two orthogonal dimensions: **how long the layer build blocks** (sync vs async) and **what serves requests when the remote provider is sick** (single provider vs multi-provider fallback). The right combination depends on whether your application can tolerate flag defaults during an outage.
+
+### Decision matrix
+
+| | Single remote provider, no fallback | Remote + `EnvVarProvider` fallback (multi-provider) |
+|---|---|---|
+| **Sync (`fromProvider`)** | App refuses to boot if remote is sick. Operator gets a clear error; orchestrator restarts the pod. Best for correctness-critical workloads (financial, billing) where serving defaults is dangerous. | App refuses to boot only if every provider in the list fails. With `EnvVarProvider` as the last entry, it always boots — but Optimizely failures are then *invisible* unless you also monitor `providerStatus`. Rarely the right pick. |
+| **Async (`fromProviderAsync`)** | App boots immediately. Status starts `NotReady`; transitions to `Ready` if the remote initialises, or `Fatal` after the `initTimeout` watchdog if it doesn't. Every flag evaluation during the gap returns its OF default. Wire `providerStatus` into your readiness check so the pod isn't routed traffic until ready. | App boots immediately and is *always* `Ready` — `FirstSuccessfulStrategy` + an always-ready local provider means the watchdog never fires. Highest availability, but remote failures are silent at the `FeatureFlags` layer. Good for dashboards, feature gates, A/B traffic; risky for correctness-bearing flags. |
+
+### How the `initTimeout` watchdog interacts with each cell
+
+The 30-second default applies to both `fromProvider` and `fromProviderAsync`. Its effect differs:
+
+- **Sync**: bounds the *blocking* call. If `setProviderAndWait` (the underlying Java SDK call) doesn't return within `initTimeout`, the layer build fails with a `TimeoutException`. After it returns successfully, the library reads the provider's `getState()` — anything other than `READY`/`STALE` fails the build with `IllegalStateException`. Translation: in sync mode, `initTimeout` is a hard ceiling on cold-start latency and the layer never lands in a half-initialised state.
+- **Async**: a daemon fiber forked into the layer's `Scope` sleeps `initTimeout` then atomically transitions `NotReady`/`Error` → `Fatal`. The transition isn't terminal — if `PROVIDER_READY` fires later (e.g. network came back), status flips `Fatal → Ready` and evaluations resume. Translation: in async mode, `initTimeout` is the **bounded uncertainty window** at boot; after it elapses you have a reliable signal you can act on.
+
+### The "all defaults" gap
+
+In every async configuration without a same-process fallback, there is a window between layer construction and `Ready` during which every flag evaluation fails with `ProviderNotReady` and your application's `.catchAll`/`.catchSome` returns the OF default value. The window is bounded above by `initTimeout` (after which `Fatal` makes the failure explicit), but it's still a real window. Two ways to handle it:
+
+1. **Gate traffic on readiness.** Expose `ff.providerStatus` to your liveness/readiness endpoint:
+
+   ```scala
+   val readinessCheck: URIO[FeatureFlags, Boolean] =
+     ZIO.serviceWithZIO[FeatureFlags](_.providerStatus).map {
+       case ProviderStatus.Ready | ProviderStatus.Stale => true
+       case _                                            => false
+     }
+   ```
+
+   Kubernetes / ECS / your orchestrator won't route traffic to the pod until this returns `true`. The cold-start window becomes invisible to users.
+
+2. **Keep an `EnvVarProvider` for the flags whose default-value *correctness matters*.** Most apps have a small set of "kill-switch" flags (maintenance mode, fraud-check enabled) where serving an OF default is unsafe. Put those in env vars; let the remote provider serve everything else.
+
+   ```scala
+   val critical = Map("FF_MAINTENANCE_MODE" -> "false", "FF_FRAUD_CHECK_ENABLED" -> "true")
+   val envProvider = EnvVarProvider.withLookup(critical.get)
+   val providers   = List(optimizelyProvider, envProvider)
+   FeatureFlags.fromMultiProviderAsync(providers, FirstSuccessfulStrategy())
+   ```
+
+   The cost of a `MultiProvider` lookup is microseconds; the benefit is that your critical flags have a deterministic value even when the remote is down.
+
+### Recovery semantics under `Fatal`
+
+`Fatal` is a "stop waiting, take operator action" signal — not a tombstone. If the watchdog fires it at t = 30 s but Optimizely's poller succeeds at t = 90 s, the event bridge fires `PROVIDER_READY` and status transitions `Fatal → Ready`. Long-running pods recover naturally; you don't need to restart them to resume normal evaluation.
+
+Healthchecks that gate on `Ready`/`Stale` will see the pod un-route during the `Fatal` window and re-route after recovery, which is usually what you want.
+
+### Tuning `initTimeout`
+
+- Production cold start from a healthy network typically completes in seconds, not tens of seconds. **Lower the timeout** (10–15 s) when you want a tight feedback loop on misconfigurations.
+- CI / local dev / staging across flaky networks may need the default 30 s or more.
+- For sync mode, set `initTimeout` to your acceptable boot delay. Boot fails if exceeded — that's the point.
+- For async mode, set it to "how long am I willing to wait before declaring an outage." Independent of boot delay since boot is non-blocking.
+
+---
+
 ## Provider Registry
 
 For applications that need multiple providers across different domains (e.g., billing, auth, analytics), `FeatureFlagRegistry` provides a centralized service that manages domain-scoped providers with automatic fallback to a default.

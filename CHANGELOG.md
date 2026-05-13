@@ -45,6 +45,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   production patterns (init timeout + circuit breaker composition; testing app code against `TestFeatureProvider`).
 - Top-level `NOTICE` file with attributions for OpenFeature SDK, OFREP contrib, Optimizely SDK, ZIO, ZIO Cache,
   Typesafe Config, and WireMock.
+- `docs/providers.md`: new "Choosing a strategy — sync vs async, with vs without fallback" section with a decision
+  matrix, watchdog semantics under each cell, the cold-start "all defaults" gap, recovery semantics under `Fatal`,
+  and `initTimeout` tuning guidance.
+- `docs/optimizely.md` §7: expanded healthcheck guidance for readiness gating. New §8 "Choosing a topology" with
+  three named patterns (Optimizely-only async with watchdog, Optimizely-only sync with fail-fast boot, Optimizely
+  + `EnvVarProvider` hybrid for critical flags) and a decision table indexed by workload type.
 
 ### Changed
 

@@ -438,7 +438,7 @@ val layer = FeatureFlags.fromProviderWithHooks(provider, hooks)
 
 ### fromMultiProvider
 
-Create from multiple providers using the SDK's MultiProvider support. The first provider that returns without error is used:
+Create from multiple providers using the SDK's MultiProvider support. By default this uses the first-match strategy — the first provider whose result is not a default value is returned (a provider error from any source aborts the chain):
 
 ```scala
 import dev.openfeature.sdk.FeatureProvider
@@ -461,7 +461,7 @@ val layer = FeatureFlags.fromMultiProvider(
 )
 ```
 
-`MultiProviderStrategy.firstMatch` and `MultiProviderStrategy.firstSuccessful` are the two built-ins. For a custom strategy, implement `MultiProviderStrategy.Strategy` (an alias for the Java SDK's `Strategy` interface) and pass it the same way.
+`MultiProviderStrategy.firstMatch` and `MultiProviderStrategy.firstSuccessful` are the two built-ins. For a custom strategy, implement the `MultiProviderStrategy.Strategy` interface (an alias for the Java SDK's `Strategy`) and pass an instance the same way.
 
 ### Async Variants (Non-Blocking Initialization)
 

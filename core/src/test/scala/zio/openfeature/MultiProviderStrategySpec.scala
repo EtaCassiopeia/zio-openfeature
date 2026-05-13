@@ -12,9 +12,14 @@ object MultiProviderStrategySpec extends ZIOSpecDefault {
     test("firstSuccessful alias resolves to FirstSuccessfulStrategy") {
       assertTrue(MultiProviderStrategy.firstSuccessful.isInstanceOf[FirstSuccessfulStrategy])
     },
-    test("Strategy type alias matches the Java SDK Strategy type") {
-      val s: MultiProviderStrategy.Strategy = MultiProviderStrategy.firstMatch
-      assertTrue(s.isInstanceOf[dev.openfeature.sdk.multiprovider.Strategy])
+    test("Strategy type alias is assignable to the Java SDK Strategy type (compile-time check)") {
+      // If the type alias were wrong, this assignment would not compile.
+      val _: dev.openfeature.sdk.multiprovider.Strategy = MultiProviderStrategy.firstMatch
+      assertCompletes
+    },
+    test("firstMatch and firstSuccessful return fresh instances on each call") {
+      assertTrue(MultiProviderStrategy.firstMatch ne MultiProviderStrategy.firstMatch) &&
+      assertTrue(MultiProviderStrategy.firstSuccessful ne MultiProviderStrategy.firstSuccessful)
     }
   )
 }

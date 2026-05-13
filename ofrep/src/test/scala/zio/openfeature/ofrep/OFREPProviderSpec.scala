@@ -1,20 +1,29 @@
 package zio.openfeature.ofrep
 
+import dev.openfeature.contrib.providers.ofrep.OfrepProvider
 import dev.openfeature.contrib.providers.ofrep.OfrepProviderOptions
+import dev.openfeature.sdk.ProviderState
 import zio._
 import zio.openfeature.FeatureFlags
 import zio.test._
 import java.time.Duration
 
-@scala.annotation.nowarn("msg=deprecated")
 object OFREPProviderSpec extends ZIOSpecDefault {
 
+  // The contrib provider 0.0.1 still exposes `getState` (deprecated) rather than the newer `getStatus`. Scope the
+  // suppression here so any other deprecation that appears in this spec stays visible.
+  private def stateOf(p: OfrepProvider): ProviderState = {
+    @scala.annotation.nowarn("msg=deprecated")
+    val s = p.getState
+    s
+  }
+
   def spec = suite("OFREPProvider factories")(
-    test("apply() with default arg returns an OfrepProvider with ofrep metadata") {
+    test("apply() returns an OfrepProvider with ofrep metadata") {
       val provider = OFREPProvider()
       try
         assertTrue(provider.getMetadata.getName.toLowerCase.contains("ofrep")) &&
-          assertTrue(provider.getState != null)
+          assertTrue(stateOf(provider) != null)
       finally provider.shutdown()
     },
     test("apply(baseUrl) returns a configured OfrepProvider") {

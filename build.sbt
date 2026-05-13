@@ -89,11 +89,6 @@ lazy val commonSettings = Seq(
   )
 ) ++ crossVersionSourceDirs
 
-// Align Jackson with what `ofrep` brings in. GHSA-72hv-8253-57qq (jackson-core <2.18.0) is patched in 2.18+; the OFREP
-// contrib provider pulls 2.21.2, so we override to that version to avoid a split Jackson family (core 2.18 / databind
-// 2.21 leads to NoSuchMethodError at runtime).
-ThisBuild / dependencyOverrides += "com.fasterxml.jackson.core" % "jackson-core" % "2.21.2"
-
 lazy val root = (project in file("."))
   .aggregate(core, testkit, extras, ofrep)
   .settings(
@@ -141,7 +136,11 @@ lazy val ofrep = (project in file("ofrep"))
       "dev.zio"                            %% "zio"       % zioVersion,
       "dev.openfeature.contrib.providers"   % "ofrep"     % "0.0.1",
       "org.wiremock"                        % "wiremock"  % "3.10.0" % Test
-    )
+    ),
+    // GHSA-72hv-8253-57qq (jackson-core <2.18.0) is patched in 2.18+; the OFREP contrib provider pulls 2.21.2, so we
+    // override jackson-core to that version to avoid a split Jackson family (core 2.18 / databind 2.21 → runtime
+    // NoSuchMethodError). Scoped to this module so other modules aren't dragged into Jackson alignment they don't need.
+    dependencyOverrides += "com.fasterxml.jackson.core" % "jackson-core" % "2.21.2"
   )
 
 // Testkit module - testing utilities

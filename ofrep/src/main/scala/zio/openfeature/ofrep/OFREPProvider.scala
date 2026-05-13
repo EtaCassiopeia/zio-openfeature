@@ -10,7 +10,8 @@ import dev.openfeature.contrib.providers.ofrep.{OfrepProvider, OfrepProviderOpti
   * plain `OfrepProvider` (a `FeatureProvider`) that you pass to `FeatureFlags.fromProvider` or
   * `FeatureFlags.fromProviderAsync` like any other provider.
   *
-  * Note: the underlying contrib provider artifact is at version 0.0.1 — the API may evolve as OFREP itself matures.
+  * '''Experimental:''' the underlying contrib provider artifact is at version 0.0.1. The OFREP protocol itself is
+  * pre-1.0; both the wire format and this Scala facade may evolve in breaking ways. Pin the dependency deliberately.
   *
   * @see
   *   https://github.com/open-feature/protocol for the OFREP spec
@@ -19,10 +20,15 @@ import dev.openfeature.contrib.providers.ofrep.{OfrepProvider, OfrepProviderOpti
   */
 object OFREPProvider {
 
-  /** Create an OFREP provider with the contrib provider's default options (defaults to `http://localhost:8016`) or
-    * pointed at a specific endpoint.
+  /** Create an OFREP provider with the contrib provider's built-in default options (baseUrl defaults to whatever the
+    * contrib library declares — currently `http://localhost:8016`). Delegating to the contrib zero-arg constructor
+    * means we don't have to mirror its default URL here.
     */
-  def apply(baseUrl: String = "http://localhost:8016"): OfrepProvider =
+  def apply(): OfrepProvider =
+    OfrepProvider.constructProvider()
+
+  /** Create an OFREP provider pointed at a specific endpoint, otherwise using contrib defaults. */
+  def apply(baseUrl: String): OfrepProvider =
     OfrepProvider.constructProvider(OfrepProviderOptions.builder().baseUrl(baseUrl).build())
 
   /** Create an OFREP provider with a fully configured [[OfrepProviderOptions]] (auth headers, timeouts, executor,

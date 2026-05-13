@@ -446,7 +446,7 @@ val layer = FeatureFlags.fromProviderWithHooks(provider, hooks)
 
 ### fromMultiProvider
 
-Create from multiple providers using the SDK's MultiProvider support. The first provider that returns without error is used:
+Create from multiple providers using the SDK's MultiProvider support. By default this uses the first-match strategy — the first provider whose result is not a default value is returned (a provider error from any source aborts the chain):
 
 ```scala
 import dev.openfeature.sdk.FeatureProvider
@@ -458,16 +458,18 @@ val remoteProvider: FeatureProvider = // remote service
 val layer = FeatureFlags.fromMultiProvider(List(localProvider, remoteProvider))
 ```
 
-You can also supply a custom strategy:
+You can also supply a custom strategy. The two built-in strategies are exposed via `MultiProviderStrategy` so you don't need to import the Java SDK's multiprovider package directly:
 
 ```scala
-import dev.openfeature.sdk.multiprovider.FirstSuccessfulStrategy
+import zio.openfeature.MultiProviderStrategy
 
 val layer = FeatureFlags.fromMultiProvider(
   List(primaryProvider, fallbackProvider),
-  new FirstSuccessfulStrategy()
+  MultiProviderStrategy.firstSuccessful
 )
 ```
+
+`MultiProviderStrategy.firstMatch` and `MultiProviderStrategy.firstSuccessful` are the two built-ins. For a custom strategy, implement the `MultiProviderStrategy.Strategy` interface (an alias for the Java SDK's `Strategy`) and pass an instance the same way.
 
 ### Async Variants (Non-Blocking Initialization)
 

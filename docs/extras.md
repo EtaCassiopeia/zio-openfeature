@@ -149,7 +149,7 @@ val provider = EnvVarProvider.withLookup(testEnv.get)
 
 ## Circuit Breaker Provider
 
-A decorator that wraps any provider with circuit breaker logic for fast failover. When the delegate provider fails repeatedly or becomes unhealthy, the circuit opens and evaluations fail immediately (< 1ms) — enabling instant fallback when composed with `MultiProvider` and `FirstSuccessfulStrategy`.
+A decorator that wraps any provider with circuit breaker logic for fast failover. When the delegate provider fails repeatedly or becomes unhealthy, the circuit opens and evaluations fail immediately (< 1ms) — enabling instant fallback when composed with `MultiProvider` and `MultiProviderStrategy.firstSuccessful`.
 
 ### When to use
 
@@ -176,7 +176,6 @@ The circuit breaker has three states:
 import zio.*
 import zio.openfeature.*
 import zio.openfeature.extras.*
-import dev.openfeature.sdk.multiprovider.FirstSuccessfulStrategy
 
 // Wrap the primary provider with circuit breaker
 val resilientProvider = CircuitBreakerProvider(
@@ -193,7 +192,7 @@ val resilientProvider = CircuitBreakerProvider(
 // Compose with fallback using MultiProvider
 val layer = FeatureFlags.fromMultiProvider(
   List(resilientProvider, EnvVarProvider()),
-  new FirstSuccessfulStrategy()
+  MultiProviderStrategy.firstSuccessful
 )
 ```
 
@@ -206,7 +205,7 @@ for
            ))
   layer = FeatureFlags.fromMultiProvider(
             List(cb, EnvVarProvider()),
-            new FirstSuccessfulStrategy()
+            MultiProviderStrategy.firstSuccessful
           )
 yield layer
 ```
@@ -235,7 +234,7 @@ Controls how the circuit breaker reacts when the delegate provider is in `STALE`
 
 | Approach | During outage | Failover latency |
 |:---------|:--------------|:-----------------|
-| `MultiProvider` + `FirstSuccessfulStrategy` alone | Tries primary every time, waits for failure | Up to minutes |
+| `MultiProvider` + `firstSuccessful` alone | Tries primary every time, waits for failure | Up to minutes |
 | Add timeout only (e.g., 50ms) | Still tries primary every time | 50ms per call |
 | **Circuit breaker** | Skips primary entirely when open | **< 1ms** |
 

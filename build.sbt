@@ -90,7 +90,7 @@ lazy val commonSettings = Seq(
 ) ++ crossVersionSourceDirs
 
 lazy val root = (project in file("."))
-  .aggregate(core, testkit, extras, ofrep)
+  .aggregate(core, testkit, extras, ofrep, optimizely)
   .settings(
     name                           := "zio-openfeature",
     publish / skip                 := true,
@@ -141,6 +141,22 @@ lazy val ofrep = (project in file("ofrep"))
     // override jackson-core to that version to avoid a split Jackson family (core 2.18 / databind 2.21 → runtime
     // NoSuchMethodError). Scoped to this module so other modules aren't dragged into Jackson alignment they don't need.
     dependencyOverrides += "com.fasterxml.jackson.core" % "jackson-core" % "2.21.2"
+  )
+
+// Optimizely module - direct OpenFeature provider on top of the Optimizely Java SDK.
+// The unofficial `dev.openfeature.contrib.providers:optimizely` artifact is not published to Maven Central
+// at the time of this writing, so this module integrates with Optimizely directly via `com.optimizely.ab:core-api`
+// (decision engine) and `core-httpclient-impl` (datafile poller for the Optimizely CDN / self-hosted Agent).
+lazy val optimizely = (project in file("optimizely"))
+  .dependsOn(core)
+  .settings(
+    name := "zio-openfeature-optimizely",
+    commonSettings,
+    libraryDependencies ++= Seq(
+      "dev.zio"          %% "zio"                  % zioVersion,
+      "com.optimizely.ab" % "core-api"             % "4.2.2",
+      "com.optimizely.ab" % "core-httpclient-impl" % "4.2.2"
+    )
   )
 
 // Testkit module - testing utilities

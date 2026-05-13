@@ -1,0 +1,164 @@
+package zio.openfeature.optimizely
+
+import com.optimizely.ab.Optimizely
+import com.optimizely.ab.config.HttpProjectConfigManager
+import zio._
+import zio.openfeature.FeatureFlagError
+
+/** Scala-friendly factories for an Optimizely-backed OpenFeature provider.
+  *
+  * The library integrates with Optimizely Feature Experimentation directly via the Optimizely Java SDK
+  * (`com.optimizely.ab:core-api` + `core-httpclient-impl`) rather than the still-unpublished
+  * `dev.openfeature.contrib.providers:optimizely` artifact. Callers get the same OpenFeature surface area
+  * (`FeatureProvider`) as any other provider — pass the result of [[make]] to `FeatureFlags.fromProviderAsync`
+  * (recommended for Optimizely: datafile fetch is a real HTTP call) or `FeatureFlags.fromProvider`.
+  *
+  * '''Recommended usage:'''
+  * {{{
+  * for {
+  *   provider <- OptimizelyProvider.make(sys.env("OPTIMIZELY_SDK_KEY"))
+  *   _        <- ZIO.serviceWithZIO[FeatureFlags](_.boolean("my-flag", default = false))
+  * } yield ()
+  *   ZLayer.scoped[Any](provider)
+  *     .flatMap(env => FeatureFlags.fromProviderAsync(env.get, initTimeout = 30.seconds))
+  * }}}
+  *
+  * Construction validates the SDK key (and URL, where applicable) before touching the Optimizely SDK; failures surface
+  * as `FeatureFlagError.InvalidConfiguration` at layer build time, not at first evaluation.
+  */
+object OptimizelyProvider {
+
+  /** Default time the underlying `OptimizelyFeatureProvider.initialize()` will wait for the first datafile load before
+    * declaring the provider failed. The outer `FeatureFlags` factories layer their own `initTimeout` on top; this inner
+    * bound is a defence-in-depth so a misconfigured client doesn't hang the build pool indefinitely.
+    */
+  val DefaultInitWait: java.time.Duration = java.time.Duration.ofSeconds(30)
+
+  /** Validate an SDK key and construct a provider that fetches its datafile from the Optimizely CDN.
+    *
+    * Validation rules:
+    *   - non-null and non-empty after trim
+    *   - no whitespace inside the key
+    *   - matches `[A-Za-z0-9_-]+`
+    *   - not an obvious placeholder (e.g. `YOUR_SDK_KEY`)
+    */
+  def make(sdkKey: String): IO[FeatureFlagError.InvalidConfiguration, OptimizelyFeatureProvider] =
+    make(sdkKey, datafileUrl = None, initWait = DefaultInitWait)
+
+  /** Validate an SDK key + custom datafile URL and construct a provider. Use this when running an Optimizely Agent
+    * inside your network rather than fetching from the public CDN. Both the SDK key and URL are validated.
+    */
+  def make(sdkKey: String, datafileUrl: String): IO[FeatureFlagError.InvalidConfiguration, OptimizelyFeatureProvider] =
+    make(sdkKey, datafileUrl = Some(datafileUrl), initWait = DefaultInitWait)
+
+  /** Full-control overload exposing the internal `initWait`. Most callers should prefer one of the simpler overloads
+    * plus the outer `FeatureFlags.fromProvider*` `initTimeout`.
+    */
+  def make(
+    sdkKey: String,
+    datafileUrl: Option[String],
+    initWait: java.time.Duration
+  ): IO[FeatureFlagError.InvalidConfiguration, OptimizelyFeatureProvider] =
+    for {
+      validKey <- validateSdkKey(sdkKey)
+      validUrl <- datafileUrl match {
+        case Some(u) => validateDatafileUrl(u).map(Some(_))
+        case None    => ZIO.succeed(None: Option[String])
+      }
+      client <- ZIO
+        .attempt(buildClient(validKey, validUrl))
+        .mapError(t => FeatureFlagError.InvalidConfiguration(s"Optimizely client build failed: ${t.getMessage}"))
+    } yield new OptimizelyFeatureProvider(client, initWait, closeOnShutdown = true)
+
+  /** Escape hatch for callers who already manage an `Optimizely` client lifecycle (e.g. they want their own polling
+    * interval, event handler, or user profile service). The returned provider does NOT close the client on shutdown;
+    * the caller stays in charge.
+    */
+  def fromOptimizelyClient(client: Optimizely): UIO[OptimizelyFeatureProvider] =
+    ZIO.succeed(new OptimizelyFeatureProvider(client, DefaultInitWait, closeOnShutdown = false))
+
+  /** ZLayer convenience that wraps [[make(String)]] for the common CDN-only case. */
+  def layer(sdkKey: String): ZLayer[Any, FeatureFlagError.InvalidConfiguration, OptimizelyFeatureProvider] =
+    ZLayer.fromZIO(make(sdkKey))
+
+  /** ZLayer convenience that wraps [[make(String, String)]]. */
+  def layer(
+    sdkKey: String,
+    datafileUrl: String
+  ): ZLayer[Any, FeatureFlagError.InvalidConfiguration, OptimizelyFeatureProvider] =
+    ZLayer.fromZIO(make(sdkKey, datafileUrl))
+
+  // Construction
+
+  private def buildClient(sdkKey: String, datafileUrl: Option[String]): Optimizely = {
+    val configBuilder = HttpProjectConfigManager.builder().withSdkKey(sdkKey)
+    datafileUrl.foreach(configBuilder.withUrl)
+    val configManager = configBuilder.build()
+    Optimizely.builder().withConfigManager(configManager).build()
+  }
+
+  // Validation
+
+  private val SdkKeyPattern: java.util.regex.Pattern = java.util.regex.Pattern.compile("^[A-Za-z0-9_-]+$")
+
+  // Optimizely SDK keys are short (~10–20 chars in practice); we bound the range generously so test/staging keys with
+  // custom formats are still accepted.
+  private val MinSdkKeyLen = 6
+  private val MaxSdkKeyLen = 128
+
+  private val Placeholders: Set[String] = Set(
+    "your_sdk_key",
+    "your-sdk-key",
+    "yoursdkkey",
+    "<sdk-key>",
+    "<sdkkey>",
+    "sdk_key",
+    "sdkkey",
+    "changeme",
+    "placeholder"
+  )
+
+  private def validateSdkKey(raw: String): IO[FeatureFlagError.InvalidConfiguration, String] = {
+    def fail(reason: String) = ZIO.fail(FeatureFlagError.InvalidConfiguration(reason))
+    if (raw == null) fail("Optimizely sdkKey is null")
+    else {
+      val trimmed = raw.trim
+      val lower   = trimmed.toLowerCase
+      if (trimmed.isEmpty) fail("Optimizely sdkKey is empty")
+      else if (trimmed != raw) fail(s"Optimizely sdkKey has surrounding whitespace: '$raw'")
+      else if (raw.exists(_.isWhitespace)) fail(s"Optimizely sdkKey contains whitespace: '$raw'")
+      else if (trimmed.length < MinSdkKeyLen)
+        fail(s"Optimizely sdkKey too short (${trimmed.length} < $MinSdkKeyLen)")
+      else if (trimmed.length > MaxSdkKeyLen)
+        fail(s"Optimizely sdkKey too long (${trimmed.length} > $MaxSdkKeyLen)")
+      else if (!SdkKeyPattern.matcher(trimmed).matches())
+        fail(s"Optimizely sdkKey contains disallowed characters: '$raw' (expected [A-Za-z0-9_-])")
+      else if (Placeholders.contains(lower))
+        fail(s"Optimizely sdkKey looks like a placeholder: '$raw'")
+      else ZIO.succeed(trimmed)
+    }
+  }
+
+  private val AllowedDatafileSchemes = Set("http", "https")
+
+  private def validateDatafileUrl(raw: String): IO[FeatureFlagError.InvalidConfiguration, String] = {
+    def fail(reason: String) = ZIO.fail(FeatureFlagError.InvalidConfiguration(reason))
+    if (raw == null) fail("Optimizely datafileUrl is null")
+    else {
+      val trimmed = raw.trim
+      if (trimmed.isEmpty) fail("Optimizely datafileUrl is empty")
+      else
+        ZIO
+          .attempt(java.net.URI.create(trimmed))
+          .mapError(t => FeatureFlagError.InvalidConfiguration(s"malformed datafileUrl '$trimmed': ${t.getMessage}"))
+          .flatMap { uri =>
+            val scheme = Option(uri.getScheme).map(_.toLowerCase).getOrElse("")
+            val host   = Option(uri.getHost).getOrElse("")
+            if (!AllowedDatafileSchemes.contains(scheme))
+              fail(s"unsupported scheme '$scheme' in datafileUrl '$trimmed' (expected http or https)")
+            else if (host.isEmpty) fail(s"datafileUrl '$trimmed' has no host")
+            else ZIO.succeed(trimmed)
+          }
+    }
+  }
+}

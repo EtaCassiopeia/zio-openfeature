@@ -114,10 +114,17 @@ object OptimizelyProvider {
   // Construction
 
   private def buildClient(sdkKey: String, datafileUrl: Option[String]): Optimizely = {
-    val configBuilder = HttpProjectConfigManager.builder().withSdkKey(sdkKey)
+    // Share a single NotificationCenter between the polling config manager and the Optimizely client. Without this,
+    // the manager fires UpdateConfigNotification on its own private NotificationCenter and handlers registered via
+    // `Optimizely.addUpdateConfigNotificationHandler` (the public API our provider uses) never see subsequent datafile
+    // updates — observed empirically. The initial load still wakes the init latch because we also poll
+    // `optimizely.isValid` directly, but the OpenFeature `PROVIDER_CONFIGURATION_CHANGED` event would never fire on
+    // any datafile revision after the first one.
+    val notificationCenter = new com.optimizely.ab.notification.NotificationCenter()
+    val configBuilder = HttpProjectConfigManager.builder().withSdkKey(sdkKey).withNotificationCenter(notificationCenter)
     datafileUrl.foreach(configBuilder.withUrl)
     val configManager = configBuilder.build()
-    Optimizely.builder().withConfigManager(configManager).build()
+    Optimizely.builder().withConfigManager(configManager).withNotificationCenter(notificationCenter).build()
   }
 
   // Validation

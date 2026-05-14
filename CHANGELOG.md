@@ -7,8 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] — 2026-05-13
+
 ### Added
 
+- **Lifecycle and concurrency test coverage for `OptimizelyFeatureProvider`.** `OptimizelyProviderLifecycleSpec` covers
+  double-initialize, double-shutdown, shutdown-before-initialize, evaluations before init / after shutdown, the full
+  NOT_READY → READY → NOT_READY transition, NOT_READY → ERROR on failed init, and concurrent `initialize` from N
+  threads converging on READY. `OptimizelyProviderConcurrencySpec` stress-tests 1000 parallel boolean evaluations and
+  500 mixed-type evaluations racing init and shutdown — surfacing torn reads, NPEs, or deadlocks if present. (#158)
 - **Provider initialization hardening.** All `FeatureFlags.fromProvider*` factories accept a new `initTimeout` (default
   30 s). Sync init blocks no longer than that bound; async init transitions `ProviderStatus` to `Fatal` if the provider
   hasn't become ready in time. The sync path also verifies the provider's `getState()` after `setProviderAndWait`
@@ -64,6 +71,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   validated `make` / `layer` factories. The throwing factories remain for backwards compatibility but will be removed
   in a later major release.
 
+### Fixed
+
+- **Optimizely `PROVIDER_CONFIGURATION_CHANGED` events now reach OpenFeature `Client` listeners on every datafile
+  update, not just the initial load.** `HttpProjectConfigManager` and the `Optimizely` client each construct their own
+  `NotificationCenter` by default; without sharing, the manager fires `UpdateConfigNotification` on its private centre
+  while handlers registered through `Optimizely.addUpdateConfigNotificationHandler` (the API our provider's
+  `initialize` uses) live on the client's centre. `OptimizelyProvider.buildClient` now allocates one
+  `NotificationCenter` and passes it to both builders. Initial loads worked already because
+  `OptimizelyFeatureProvider.initialize` polls `optimizely.isValid` directly to count down its init latch, so the bug
+  only manifested as silent event drops on revision changes after init. Two regression tests added (structural —
+  `clientCtr eq mgrCtr`; behavioural — WireMock revision-bump + `Client.onProviderConfigurationChanged`). (#161)
+- **`OptimizelyFeatureProvider.decide()` no longer throws from a closed HTTP client after `shutdown()`.** Surfaced
+  while writing the new lifecycle spec: `optimizely.isValid()` post-shutdown re-enters the polling HTTP client (closed
+  by then) and Apache HttpClient throws an `IOException`. `decide` now checks the provider's own `stateRef` first
+  (short-circuits with `PROVIDER_NOT_READY` for NOT_READY / ERROR states without touching the SDK) and wraps the
+  defensive `isValid` probe in `Try`. Check order also changed: provider state precedes targeting-key validation,
+  since a non-ready provider makes the caller's context irrelevant. (#158)
+- **`FeatureFlagsLive.setProvider` reliably leaves status at `Error` after a failed swap.** A race in the async
+  `PROVIDER_READY` bridge could overwrite the explicit `Error` transition: a stale Ready event still pending on the
+  OpenFeature SDK's emitter executor (cached thread pool, no ordering guarantee) would fire after `tapError` set
+  `Error` and reset it to `Ready`. `setProvider` now stamps a `recentSwapFailureAt` timestamp before writing
+  `statusRef.set(Error)`, and `readyHandler` switches from unconditional `set(Ready)` to a state-aware `update`:
+  `NotReady`/`Stale` → `Ready` always, `Error` → `Ready` only if more than 500 ms have elapsed since the last failed
+  swap. Eliminates the intermittent `FeatureFlagRegistrySpec.failed setProvider does not update providers map`
+  failure observed in CI; 30/30 consecutive local runs after the fix. (#162)
+
 ## [0.8.0] — earlier
 
 Prior versions tracked release-by-release in [GitHub Releases](https://github.com/EtaCassiopeia/zio-openfeature/releases).
@@ -90,5 +123,6 @@ promotes `[Unreleased]` to the new version section when a release tag is cut.
 
 Internal refactors that don't change behaviour or surface area don't need a CHANGELOG entry. When in doubt: write one.
 
-[Unreleased]: https://github.com/EtaCassiopeia/zio-openfeature/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/EtaCassiopeia/zio-openfeature/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/EtaCassiopeia/zio-openfeature/releases/tag/v0.9.0
 [0.8.0]: https://github.com/EtaCassiopeia/zio-openfeature/releases/tag/v0.8.0

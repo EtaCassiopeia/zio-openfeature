@@ -269,7 +269,7 @@ object FeatureHook {
     override def before(ctx: HookContext, hints: HookHints): UIO[Option[(EvaluationContext, HookHints)]] =
       for {
         now <- Clock.nanoTime
-        _ = ctx.hookData.set(startTimeKey, now)
+        _   <- ZIO.succeed(ctx.hookData.set(startTimeKey, now))
         _ <- beforeLevel match {
           case Some(level) =>
             annotate(baseAnnotations(ctx) ++ contextAnnotations(ctx))(
@@ -365,7 +365,7 @@ object FeatureHook {
     override def before(ctx: HookContext, hints: HookHints): UIO[Option[(EvaluationContext, HookHints)]] =
       for {
         now <- Clock.nanoTime
-        _ = ctx.hookData.set(startTimeKey, now)
+        _   <- ZIO.succeed(ctx.hookData.set(startTimeKey, now))
       } yield None
 
     override def after[A](ctx: HookContext, details: FlagResolution[A], hints: HookHints): UIO[Unit] =
@@ -388,17 +388,17 @@ object FeatureHook {
     requiredAttributes: List[String] = Nil
   ): FeatureHook = new FeatureHook {
     override def before(ctx: HookContext, hints: HookHints): UIO[Option[(EvaluationContext, HookHints)]] = {
-      val warnings = List.newBuilder[String]
+      val keyWarning = Option
+        .when(requireTargetingKey && ctx.evaluationContext.targetingKey.isEmpty)(
+          s"Missing targeting key for flag '${ctx.flagKey}'"
+        )
+        .toList
 
-      if (requireTargetingKey && ctx.evaluationContext.targetingKey.isEmpty)
-        warnings += s"Missing targeting key for flag '${ctx.flagKey}'"
+      val attrWarnings = requiredAttributes
+        .filterNot(ctx.evaluationContext.attributes.contains)
+        .map(attr => s"Missing required attribute '$attr' for flag '${ctx.flagKey}'")
 
-      for (attr <- requiredAttributes)
-        if (!ctx.evaluationContext.attributes.contains(attr))
-          warnings += s"Missing required attribute '$attr' for flag '${ctx.flagKey}'"
-
-      val warningList = warnings.result()
-      ZIO.foreachDiscard(warningList)(msg => ZIO.logWarning(msg)).as(None)
+      ZIO.foreachDiscard(keyWarning ++ attrWarnings)(ZIO.logWarning(_)).as(None)
     }
   }
 }

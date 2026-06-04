@@ -160,6 +160,12 @@ trait FeatureFlags {
   def clearHooks: UIO[Unit]
   def hooks: UIO[List[FeatureHook]]
 
+  /** Register a ZIO API-level hook (spec §4.4.1 level 1). Runs before client-level hooks on every evaluation. */
+  def addZioApiHook(hook: FeatureHook): UIO[Unit]
+  def addZioApiHooks(hooks: List[FeatureHook]): UIO[Unit]
+  def clearZioApiHooks: UIO[Unit]
+  def zioApiHooks: UIO[List[FeatureHook]]
+
   /** Add an API-level hook that applies to all clients sharing this instance's OpenFeatureAPI. */
   def addApiHook(hook: dev.openfeature.sdk.Hook[_]): UIO[Unit]
 
@@ -371,6 +377,18 @@ object FeatureFlags {
 
   def hooks: ZIO[FeatureFlags, Nothing, List[FeatureHook]] =
     ZIO.serviceWithZIO(_.hooks)
+
+  def addZioApiHook(hook: FeatureHook): ZIO[FeatureFlags, Nothing, Unit] =
+    ZIO.serviceWithZIO(_.addZioApiHook(hook))
+
+  def addZioApiHooks(hooks: List[FeatureHook]): ZIO[FeatureFlags, Nothing, Unit] =
+    ZIO.serviceWithZIO(_.addZioApiHooks(hooks))
+
+  def clearZioApiHooks: ZIO[FeatureFlags, Nothing, Unit] =
+    ZIO.serviceWithZIO(_.clearZioApiHooks)
+
+  def zioApiHooks: ZIO[FeatureFlags, Nothing, List[FeatureHook]] =
+    ZIO.serviceWithZIO(_.zioApiHooks)
 
   // API-level Hooks (per OpenFeature spec 4.4.1)
 

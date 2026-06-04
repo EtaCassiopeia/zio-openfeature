@@ -17,6 +17,9 @@ trait FeatureFlagRegistry {
 
   /** Get or create the default (no-domain) client. */
   def defaultClient: UIO[FeatureFlags]
+
+  /** Register a ZIO API-level hook on all existing and future domain clients. */
+  def addZioApiHook(hook: FeatureHook): UIO[Unit]
 }
 
 object FeatureFlagRegistry {
@@ -33,16 +36,29 @@ object FeatureFlagRegistry {
   def defaultClient: ZIO[FeatureFlagRegistry, Nothing, FeatureFlags] =
     ZIO.serviceWithZIO(_.defaultClient)
 
+  def addZioApiHook(hook: FeatureHook): ZIO[FeatureFlagRegistry, Nothing, Unit] =
+    ZIO.serviceWithZIO(_.addZioApiHook(hook))
+
   def fromProvider(defaultProvider: OFFeatureProvider): ZLayer[Scope, Throwable, FeatureFlagRegistry] =
     ZLayer.scoped {
       for {
-        api        <- ZIO.succeed(OpenFeatureAPIFactory.create())
-        scope      <- ZIO.service[Scope]
-        clients    <- Ref.make(Map.empty[String, FeatureFlags])
-        providers  <- Ref.make(Map.empty[String, OFFeatureProvider])
-        defaultRef <- Ref.make(Option.empty[FeatureFlags])
-        lock       <- Semaphore.make(1)
-        registry = new FeatureFlagRegistryLive(defaultProvider, api, scope, clients, providers, defaultRef, lock)
+        api            <- ZIO.succeed(OpenFeatureAPIFactory.create())
+        scope          <- ZIO.service[Scope]
+        clients        <- Ref.make(Map.empty[String, FeatureFlags])
+        providers      <- Ref.make(Map.empty[String, OFFeatureProvider])
+        defaultRef     <- Ref.make(Option.empty[FeatureFlags])
+        lock           <- Semaphore.make(1)
+        zioApiHooksRef <- Ref.make(List.empty[FeatureHook])
+        registry = new FeatureFlagRegistryLive(
+          defaultProvider,
+          api,
+          scope,
+          clients,
+          providers,
+          defaultRef,
+          lock,
+          zioApiHooksRef
+        )
         _ <- ZIO.addFinalizer(ZIO.attemptBlocking(api.shutdown()).ignore)
       } yield registry
     }
@@ -55,7 +71,8 @@ final private class FeatureFlagRegistryLive(
   clients: Ref[Map[String, FeatureFlags]],
   providers: Ref[Map[String, OFFeatureProvider]],
   defaultRef: Ref[Option[FeatureFlags]],
-  lock: Semaphore
+  lock: Semaphore,
+  zioApiHooksRef: Ref[List[FeatureHook]]
 ) extends FeatureFlagRegistry {
 
   override def getClient(domain: String): UIO[FeatureFlags] =
@@ -86,6 +103,16 @@ final private class FeatureFlagRegistryLive(
       }
     }
 
+  override def addZioApiHook(hook: FeatureHook): UIO[Unit] =
+    lock.withPermit {
+      for {
+        _               <- zioApiHooksRef.update(_ :+ hook)
+        existingClients <- clients.get.map(_.values.toList)
+        defaultC        <- defaultRef.get
+        _               <- ZIO.foreachDiscard(existingClients ++ defaultC.toList)(_.addZioApiHook(hook))
+      } yield ()
+    }
+
   private def createDomainClient(domain: String): UIO[FeatureFlags] =
     for {
       pm <- providers.get
@@ -103,7 +130,9 @@ final private class FeatureFlagRegistryLive(
           )
         )
         .orDie
-      _ <- clients.update(_ + (domain -> client))
+      apiHooks <- zioApiHooksRef.get
+      _        <- client.addZioApiHooks(apiHooks)
+      _        <- clients.update(_ + (domain -> client))
     } yield client
 
   private def createDefaultClient: UIO[FeatureFlags] =
@@ -121,6 +150,8 @@ final private class FeatureFlagRegistryLive(
           )
         )
         .orDie
-      _ <- defaultRef.set(Some(client))
+      apiHooks <- zioApiHooksRef.get
+      _        <- client.addZioApiHooks(apiHooks)
+      _        <- defaultRef.set(Some(client))
     } yield client
 }

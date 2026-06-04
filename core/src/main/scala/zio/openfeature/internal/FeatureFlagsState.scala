@@ -8,6 +8,7 @@ final case class FeatureFlagsState(
   clientContextRef: Ref[EvaluationContext],
   fiberContextRef: FiberRef[EvaluationContext],
   transactionRef: FiberRef[Option[TransactionState]],
+  zioApiHooksRef: Ref[List[FeatureHook]],
   hooksRef: Ref[List[FeatureHook]],
   eventHub: Hub[ProviderEvent],
   statusRef: Ref[ProviderStatus],
@@ -21,6 +22,7 @@ object FeatureFlagsState {
       clientCtxRef   <- Ref.make(EvaluationContext.empty)
       fiberCtxRef    <- FiberRef.make(EvaluationContext.empty)
       transactionRef <- FiberRef.make[Option[TransactionState]](None)
+      zioApiHooksRef <- Ref.make(List.empty[FeatureHook])
       hooksRef       <- Ref.make(List.empty[FeatureHook])
       // Bounded; subscribers reconcile via current state on next evaluation, so dropping intermediate events is safe.
       eventHub  <- Hub.dropping[ProviderEvent](256)
@@ -31,6 +33,7 @@ object FeatureFlagsState {
       clientCtxRef,
       fiberCtxRef,
       transactionRef,
+      zioApiHooksRef,
       hooksRef,
       eventHub,
       statusRef,

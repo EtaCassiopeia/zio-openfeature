@@ -179,10 +179,11 @@ final private[openfeature] class FeatureFlagsLive(
     initialHints: HookHints = HookHints.empty
   ): IO[FeatureFlagError, FlagResolution[A]] =
     for {
+      apiHooks     <- state.zioApiHooksRef.get
       currentHooks <- state.hooksRef.get
-      provHooks    <- getProviderHooks
       pName        <- providerNameRef.get
-      allHooks   = currentHooks ++ extraHooks ++ provHooks
+      // Order per spec §4.4.1: API -> Client -> Invocation. Provider hooks run inside the Java SDK call.
+      allHooks   = apiHooks ++ currentHooks ++ extraHooks
       metadata   = ProviderMetadata(pName)
       clientMeta = ClientMetadata(domain, version)
       hookCtx = HookContext(
@@ -715,6 +716,18 @@ final private[openfeature] class FeatureFlagsLive(
 
   override def hooks: UIO[List[FeatureHook]] =
     state.hooksRef.get
+
+  override def addZioApiHook(hook: FeatureHook): UIO[Unit] =
+    state.zioApiHooksRef.update(_ :+ hook)
+
+  override def addZioApiHooks(hooks: List[FeatureHook]): UIO[Unit] =
+    state.zioApiHooksRef.update(_ ++ hooks)
+
+  override def clearZioApiHooks: UIO[Unit] =
+    state.zioApiHooksRef.set(List.empty)
+
+  override def zioApiHooks: UIO[List[FeatureHook]] =
+    state.zioApiHooksRef.get
 
   override def addApiHook(hook: dev.openfeature.sdk.Hook[_]): UIO[Unit] =
     ZIO.succeed(api.addHooks(hook))

@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.1] — 2026-06-04
+
+### Fixed
+
+- **Provider hooks no longer execute twice per evaluation.** The ZIO hook pipeline was including provider hooks from
+  `getProviderHooks()` in `allHooks`, while the Java SDK's `client.getXxxDetails()` call already runs them internally.
+  Removed the duplication — provider hooks now fire exactly once per evaluation as the spec requires. (#167)
+
+### Added
+
+- **ZIO API-level hook registration.** `FeatureFlags` now exposes `addZioApiHook`, `addZioApiHooks`,
+  `clearZioApiHooks`, and `zioApiHooks` for registering `FeatureHook` instances at the API level (spec §4.4.1 level 1).
+  API hooks run before client-level hooks on every evaluation (`API → Client → Invocation`). `FeatureFlagRegistry`
+  propagates API hooks to all existing and future domain clients via `addZioApiHook`. (#166)
+
+### Changed
+
+- **FP idiom improvements.** Side effects on `HookData` inside ZIO for-comprehensions now use `_ <- ZIO.succeed(...)`
+  instead of `_ = ...` to keep mutations explicit in the effect graph. `contextValidator` replaced a mutable
+  `List.newBuilder` with functional composition. `CircuitBreakerProvider.checkDelegateState` no longer uses a `return`
+  statement — restructured to `Try(...).toOption match { ... }`.
+
 ## [0.9.0] — 2026-05-13
 
 ### Added

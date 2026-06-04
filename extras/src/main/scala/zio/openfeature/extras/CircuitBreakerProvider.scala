@@ -241,29 +241,18 @@ final class CircuitBreakerProvider private (
   @scala.annotation.nowarn("msg=deprecated")
   private def delegateState(): ProviderState = underlying.getState
 
-  private def checkDelegateState(): Unit = {
-    val state =
-      try delegateState()
-      catch {
-        case _: Exception =>
-          breaker.trip()
-          return
-      }
-    val shouldOpen       = state == ProviderState.ERROR || state == ProviderState.FATAL
-    val shouldApplyStale = state == ProviderState.STALE
-
-    if (shouldOpen) {
-      breaker.trip()
-    } else if (shouldApplyStale) {
-      config.stalePolicy match {
-        case StalePolicy.Open     => breaker.trip()
-        case StalePolicy.HalfOpen => breaker.transitionToHalfOpen()
-        case StalePolicy.Ignore   => ()
-      }
-    } else if (state == ProviderState.READY) {
-      breaker.reset()
+  private def checkDelegateState(): Unit =
+    scala.util.Try(delegateState()).toOption match {
+      case None => breaker.trip()
+      case Some(state) =>
+        if (state == ProviderState.ERROR || state == ProviderState.FATAL) breaker.trip()
+        else if (state == ProviderState.STALE) config.stalePolicy match {
+          case StalePolicy.Open     => breaker.trip()
+          case StalePolicy.HalfOpen => breaker.transitionToHalfOpen()
+          case StalePolicy.Ignore   => ()
+        }
+        else if (state == ProviderState.READY) breaker.reset()
     }
-  }
 
   // --- Event emission ---
 
@@ -300,6 +289,9 @@ object CircuitBreakerProvider {
   ): CircuitBreakerProvider =
     apply(underlying, config, java.time.Clock.systemUTC())
 
+  // Uses Runtime.default intentionally — this constructor exists for test helpers and Java-side
+  // construction where a ZIO runtime is not available. Production code should use `make`, which
+  // captures the application runtime via ZIO.runtime[Any] and avoids spawning an extra thread pool.
   private[extras] def apply(
     underlying: EventProvider,
     config: CircuitBreakerProviderConfig,

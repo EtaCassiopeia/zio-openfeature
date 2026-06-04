@@ -65,6 +65,14 @@ object HookSpec extends ZIOSpecDefault {
         val fvt = FlagValueType.fromFlagType[Double]
         assertTrue(fvt == FlagValueType.Double)
       },
+      test("fromFlagType returns Int for Long") {
+        val fvt = FlagValueType.fromFlagType[Long]
+        assertTrue(fvt == FlagValueType.Int)
+      },
+      test("fromFlagType returns Double for Float") {
+        val fvt = FlagValueType.fromFlagType[Float]
+        assertTrue(fvt == FlagValueType.Double)
+      },
       test("fromFlagType returns Object for Map") {
         val fvt = FlagValueType.fromFlagType[Map[String, Any]]
         assertTrue(fvt == FlagValueType.Object)

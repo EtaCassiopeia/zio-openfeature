@@ -5,18 +5,20 @@ import zio.stream._
 import zio.openfeature.internal.{ClientEvaluator, ContextConverter, ErrorCodeConverter, FeatureFlagsState}
 import dev.openfeature.sdk.{
   Client => OFClient,
-  FeatureProvider => OFFeatureProvider,
-  FlagEvaluationDetails,
-  Reason => OFReason,
   ErrorCode => OFErrorCode,
-  OpenFeatureAPI,
-  MutableTrackingEventDetails,
-  ProviderEvent => JavaProviderEvent,
-  EventDetails,
+  FeatureProvider => OFFeatureProvider,
   FlagValueType => JavaFlagValueType,
-  HookContext => JavaHookContext
+  HookContext => JavaHookContext,
+  ProviderEvent => JavaProviderEvent,
+  Reason => OFReason,
+  EventDetails,
+  FlagEvaluationDetails,
+  MutableTrackingEventDetails,
+  OpenFeatureAPI
 }
+
 import scala.jdk.CollectionConverters._
+import scala.util.control.NonFatal
 
 final private[openfeature] class FeatureFlagsLive(
   client: OFClient,
@@ -77,7 +79,9 @@ final private[openfeature] class FeatureFlagsLive(
           val javaMeta = details.getEventMetadata
           if (javaMeta == null || javaMeta.isEmpty) FlagMetadata.empty
           else convertImmutableMetadata(javaMeta)
-        } catch { case _: Exception => FlagMetadata.empty }
+        } catch {
+          case _: Exception => FlagMetadata.empty
+        }
 
       val readyHandler: java.util.function.Consumer[EventDetails] = details => {
         val em = extractEventMetadata(details)
@@ -227,7 +231,7 @@ final private[openfeature] class FeatureFlagsLive(
       case ProviderStatus.Fatal    => ZIO.fail(FeatureFlagError.ProviderFatal)
       case ProviderStatus.NotReady => ZIO.fail(FeatureFlagError.ProviderNotReady(ProviderStatus.NotReady))
       case ProviderStatus.Error    => ZIO.fail(FeatureFlagError.ProviderNotReady(ProviderStatus.Error))
-      case _                       => ZIO.unit
+      case _                       => Exit.unit
     }
 
   // Context is already merged by evaluateWithDetails before entering the hook pipeline
@@ -610,7 +614,7 @@ final private[openfeature] class FeatureFlagsLive(
   override def currentEvaluatedFlags: UIO[Map[String, zio.openfeature.FlagEvaluation[_]]] =
     state.transactionRef.get.flatMap {
       case Some(ts) => ts.getEvaluations
-      case None     => ZIO.succeed(Map.empty)
+      case None     => Exit.succeed(Map.empty)
     }
 
   override def events: ZStream[Any, Nothing, ProviderEvent] =
@@ -722,13 +726,16 @@ final private[openfeature] class FeatureFlagsLive(
 
   private def getProviderHooks: UIO[List[FeatureHook]] =
     providerRef.get.flatMap { p =>
-      ZIO
-        .attempt {
-          val javaHooks = p.getProviderHooks
+      try {
+        val javaHooks = p.getProviderHooks
+        val res =
           if (javaHooks == null || javaHooks.isEmpty) Nil
           else javaHooks.asScala.toList.map(wrapJavaHook)
-        }
-        .catchAll(e => ZIO.logWarning(s"Failed to get provider hooks: ${e.getMessage}").as(Nil))
+        Exit.succeed(res)
+      } catch {
+        case NonFatal(e) =>
+          ZIO.logWarningCause(s"Failed to get provider hooks", Cause.fail(e)).as(Nil)
+      }
     }
 
   @scala.annotation.nowarn("msg=deprecated")
@@ -773,8 +780,8 @@ final private[openfeature] class FeatureFlagsLive(
     val hook = javaHook.asInstanceOf[dev.openfeature.sdk.Hook[Any]]
     new FeatureHook {
       override def before(ctx: HookContext, hints: HookHints): UIO[Option[(EvaluationContext, HookHints)]] =
-        ZIO
-          .attempt {
+        ZIO.succeed {
+          try {
             val jCtx   = toJavaHookContext(ctx)
             val jHints = hints.values.map { case (k, v) => k -> v.asInstanceOf[Object] }.asJava
             val result = hook.before(jCtx, jHints)
@@ -782,8 +789,8 @@ final private[openfeature] class FeatureFlagsLive(
               val newCtx = fromJavaEvaluationContext(result.get())
               Some((newCtx, hints))
             } else None
-          }
-          .catchAll(_ => ZIO.none)
+          } catch { case NonFatal(_) => None }
+        }
 
       override def after[A](ctx: HookContext, details: FlagResolution[A], hints: HookHints): UIO[Unit] =
         ZIO.attempt {
@@ -860,15 +867,13 @@ final private[openfeature] class FeatureFlagsLive(
   // Shutdown API (spec 1.6.1, 1.6.2)
 
   override def shutdown: UIO[Unit] =
-    ZIO.collectAllParDiscard(
-      List(
-        state.statusRef.set(ProviderStatus.NotReady),
-        state.hooksRef.set(List.empty),
-        state.globalContextRef.set(EvaluationContext.empty),
-        state.clientContextRef.set(EvaluationContext.empty),
-        state.trackRecorder.set(List.empty)
-      )
-    ) *> state.eventHub.shutdown *> ZIO.attemptBlocking(api.shutdown()).ignore
+    state.statusRef.set(ProviderStatus.NotReady) *>
+      state.hooksRef.set(List.empty) *>
+      state.globalContextRef.set(EvaluationContext.empty) *>
+      state.clientContextRef.set(EvaluationContext.empty) *>
+      state.trackRecorder.set(List.empty) *>
+      state.eventHub.shutdown *>
+      ZIO.attemptBlocking(api.shutdown()).ignore
 
   // Tracking API
 

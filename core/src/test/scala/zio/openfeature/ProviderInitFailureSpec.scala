@@ -147,11 +147,19 @@ object ProviderInitFailureSpec extends ZIOSpecDefault {
             apiOverride = Some(api),
             initTimeout = 60.seconds
           )
-          _ <- ZIO.attempt { provider.release(); provider.fireReady() }
-          // Wait until the event bridge has propagated READY.
-          _      <- statusRef.get.repeatUntil(_ == ProviderStatus.Ready).timeout(2.seconds)
-          _      <- ZIO.attempt(provider.fireError("synthetic provider error"))
-          _      <- statusRef.get.repeatUntil(_ == ProviderStatus.Error).timeout(2.seconds)
+          // release() unblocks initialize(); the Java SDK fires exactly one PROVIDER_READY when it returns.
+          // We must NOT also call provider.fireReady() here because that adds a second PROVIDER_READY
+          // which can arrive in the event queue *after* PROVIDER_ERROR, flipping statusRef back to Ready.
+          _ <- ZIO.attempt(provider.release())
+          _ <- statusRef.get
+            .repeatUntil(_ == ProviderStatus.Ready)
+            .timeout(5.seconds)
+            .someOrFail(new Exception("timed out waiting for PROVIDER_READY to propagate"))
+          _ <- ZIO.attempt(provider.fireError("synthetic provider error"))
+          _ <- statusRef.get
+            .repeatUntil(_ == ProviderStatus.Error)
+            .timeout(5.seconds)
+            .someOrFail(new Exception("timed out waiting for PROVIDER_ERROR to propagate"))
           result <- ff.booleanDetails("any-flag", default = false).either
         } yield assertTrue(
           result match {
@@ -177,12 +185,21 @@ object ProviderInitFailureSpec extends ZIOSpecDefault {
             apiOverride = Some(api),
             initTimeout = 60.seconds
           )
-          _ <- ZIO.attempt { provider.release(); provider.fireReady() }
-          _ <- statusRef.get.repeatUntil(_ == ProviderStatus.Ready).timeout(2.seconds)
+          _ <- ZIO.attempt(provider.release())
+          _ <- statusRef.get
+            .repeatUntil(_ == ProviderStatus.Ready)
+            .timeout(5.seconds)
+            .someOrFail(new Exception("timed out waiting for PROVIDER_READY to propagate"))
           _ <- ZIO.attempt(provider.fireError("transient blip"))
-          _ <- statusRef.get.repeatUntil(_ == ProviderStatus.Error).timeout(2.seconds)
+          _ <- statusRef.get
+            .repeatUntil(_ == ProviderStatus.Error)
+            .timeout(5.seconds)
+            .someOrFail(new Exception("timed out waiting for PROVIDER_ERROR to propagate"))
           _ <- ZIO.attempt(provider.fireReady())
-          _ <- statusRef.get.repeatUntil(_ == ProviderStatus.Ready).timeout(2.seconds)
+          _ <- statusRef.get
+            .repeatUntil(_ == ProviderStatus.Ready)
+            .timeout(5.seconds)
+            .someOrFail(new Exception("timed out waiting for recovery PROVIDER_READY to propagate"))
           // The evaluation default is what our stubbed provider returns when status is READY.
           result <- ff.booleanDetails("any-flag", default = false).either
         } yield assertTrue(result.isRight)

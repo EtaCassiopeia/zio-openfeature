@@ -108,16 +108,19 @@ begin
       \* Non-deterministically succeed or fail the swap
       either
         \* Success path: setProviderAndWait returned ok (line 876)
-        tick();
-        status := "Ready";
-        swapLocked := FALSE;
+        SwapSuccess:
+          tick();
+          status := "Ready";
+          swapLocked := FALSE;
       or
         \* Failure path: stamp recentSwapFailureAt BEFORE writing Error (line 869)
-        tick();
-        recentSwapFailureAt := now;
-        tick();
-        status := "Error";
-        swapLocked := FALSE;
+        SwapFailA:
+          tick();
+          recentSwapFailureAt := now;
+        SwapFailB:
+          tick();
+          status := "Error";
+          swapLocked := FALSE;
       end either;
     end while;
 end process;
@@ -207,11 +210,199 @@ begin
       evalInProgress := TRUE;
       \* Evaluation proceeds -- a concurrent Swapper may now change status
       EvalComplete:
-        evalInProgress := FALSE;
+        evalInProgress  := FALSE;
+        evalPassedCheck := FALSE;
     end if;
 end process;
 
 end algorithm; *)
+\* BEGIN TRANSLATION (chksum(pcal) = "628d1e59" /\ chksum(tla) = "5c21066b")
+VARIABLES pc, status, swapLocked, recentSwapFailureAt, now, pendingEvents, 
+          watchdogFired, evalInProgress, evalPassedCheck
+
+(* define statement *)
+CanEvaluate == status \in {"Ready", "Stale"}
+
+
+StatusValid == status \in {"NotReady", "Ready", "Error", "Stale", "Fatal", "ShuttingDown"}
+
+
+FatalIsTerminal == (status = "Fatal") => [](status = "Fatal")
+
+
+
+ShuttingDownUnreachable == status /= "ShuttingDown"
+
+
+
+
+
+EvalPassedOnCanEvaluate == evalPassedCheck => CanEvaluate \/ evalInProgress
+
+
+
+EventuallyNotStuck ==
+  (status = "NotReady") ~> (status /= "NotReady")
+
+
+WatchdogFires == watchdogFired => <>(status = "Fatal")
+
+VARIABLES swapStep, eventCount
+
+vars == << pc, status, swapLocked, recentSwapFailureAt, now, pendingEvents, 
+           watchdogFired, evalInProgress, evalPassedCheck, swapStep, 
+           eventCount >>
+
+ProcSet == {"Swapper"} \cup {"Shutdown"} \cup {"EventBridge"} \cup {"Watchdog"} \cup {"Evaluator"}
+
+Init == (* Global variables *)
+        /\ status = "NotReady"
+        /\ swapLocked = FALSE
+        /\ recentSwapFailureAt = 0
+        /\ now = 0
+        /\ pendingEvents = <<>>
+        /\ watchdogFired = FALSE
+        /\ evalInProgress = FALSE
+        /\ evalPassedCheck = FALSE
+        (* Process Swapper *)
+        /\ swapStep = "idle"
+        (* Process EventBridge *)
+        /\ eventCount = 0
+        /\ pc = [self \in ProcSet |-> CASE self = "Swapper" -> "SwapLoop"
+                                        [] self = "Shutdown" -> "ShutdownStep"
+                                        [] self = "EventBridge" -> "BridgeLoop"
+                                        [] self = "Watchdog" -> "WatchdogSleep"
+                                        [] self = "Evaluator" -> "EvalCheck"]
+
+SwapLoop == /\ pc["Swapper"] = "SwapLoop"
+            /\ ~swapLocked
+            /\ swapLocked' = TRUE
+            /\ now' = now + 1
+            /\ status' = "NotReady"
+            /\ \/ /\ pc' = [pc EXCEPT !["Swapper"] = "SwapSuccess"]
+               \/ /\ pc' = [pc EXCEPT !["Swapper"] = "SwapFailA"]
+            /\ UNCHANGED << recentSwapFailureAt, pendingEvents, watchdogFired, 
+                            evalInProgress, evalPassedCheck, swapStep, 
+                            eventCount >>
+
+SwapSuccess == /\ pc["Swapper"] = "SwapSuccess"
+               /\ now' = now + 1
+               /\ status' = "Ready"
+               /\ swapLocked' = FALSE
+               /\ pc' = [pc EXCEPT !["Swapper"] = "SwapLoop"]
+               /\ UNCHANGED << recentSwapFailureAt, pendingEvents, 
+                               watchdogFired, evalInProgress, evalPassedCheck, 
+                               swapStep, eventCount >>
+
+SwapFailA == /\ pc["Swapper"] = "SwapFailA"
+             /\ now' = now + 1
+             /\ recentSwapFailureAt' = now'
+             /\ pc' = [pc EXCEPT !["Swapper"] = "SwapFailB"]
+             /\ UNCHANGED << status, swapLocked, pendingEvents, watchdogFired, 
+                             evalInProgress, evalPassedCheck, swapStep, 
+                             eventCount >>
+
+SwapFailB == /\ pc["Swapper"] = "SwapFailB"
+             /\ now' = now + 1
+             /\ status' = "Error"
+             /\ swapLocked' = FALSE
+             /\ pc' = [pc EXCEPT !["Swapper"] = "SwapLoop"]
+             /\ UNCHANGED << recentSwapFailureAt, pendingEvents, watchdogFired, 
+                             evalInProgress, evalPassedCheck, swapStep, 
+                             eventCount >>
+
+Swapper == SwapLoop \/ SwapSuccess \/ SwapFailA \/ SwapFailB
+
+ShutdownStep == /\ pc["Shutdown"] = "ShutdownStep"
+                /\ status /= "ShuttingDown"
+                /\ \/ /\ status' = "NotReady"
+                   \/ /\ TRUE
+                      /\ UNCHANGED status
+                /\ pc' = [pc EXCEPT !["Shutdown"] = "Done"]
+                /\ UNCHANGED << swapLocked, recentSwapFailureAt, now, 
+                                pendingEvents, watchdogFired, evalInProgress, 
+                                evalPassedCheck, swapStep, eventCount >>
+
+Shutdown == ShutdownStep
+
+BridgeLoop == /\ pc["EventBridge"] = "BridgeLoop"
+              /\ IF eventCount < N_BRIDGE_EVENTS
+                    THEN /\ now' = now + 1
+                         /\ eventCount' = eventCount + 1
+                         /\ \/ /\ IF status = "NotReady"
+                                     THEN /\ status' = "Ready"
+                                     ELSE /\ IF status = "Stale"
+                                                THEN /\ status' = "Ready"
+                                                ELSE /\ IF status = "Error"
+                                                           THEN /\ IF (now' - recentSwapFailureAt) >= GUARD_STEPS
+                                                                      THEN /\ status' = "Ready"
+                                                                      ELSE /\ TRUE
+                                                                           /\ UNCHANGED status
+                                                           ELSE /\ TRUE
+                                                                /\ UNCHANGED status
+                            \/ /\ status' = "Error"
+                            \/ /\ status' = "Stale"
+                            \/ /\ TRUE
+                               /\ UNCHANGED status
+                         /\ pc' = [pc EXCEPT !["EventBridge"] = "BridgeLoop"]
+                    ELSE /\ pc' = [pc EXCEPT !["EventBridge"] = "Done"]
+                         /\ UNCHANGED << status, now, eventCount >>
+              /\ UNCHANGED << swapLocked, recentSwapFailureAt, pendingEvents, 
+                              watchdogFired, evalInProgress, evalPassedCheck, 
+                              swapStep >>
+
+EventBridge == BridgeLoop
+
+WatchdogSleep == /\ pc["Watchdog"] = "WatchdogSleep"
+                 /\ now >= INIT_TIMEOUT
+                 /\ pc' = [pc EXCEPT !["Watchdog"] = "WatchdogFire"]
+                 /\ UNCHANGED << status, swapLocked, recentSwapFailureAt, now, 
+                                 pendingEvents, watchdogFired, evalInProgress, 
+                                 evalPassedCheck, swapStep, eventCount >>
+
+WatchdogFire == /\ pc["Watchdog"] = "WatchdogFire"
+                /\ now' = now + 1
+                /\ watchdogFired' = TRUE
+                /\ IF status = "NotReady" \/ status = "Error"
+                      THEN /\ status' = "Fatal"
+                      ELSE /\ TRUE
+                           /\ UNCHANGED status
+                /\ pc' = [pc EXCEPT !["Watchdog"] = "Done"]
+                /\ UNCHANGED << swapLocked, recentSwapFailureAt, pendingEvents, 
+                                evalInProgress, evalPassedCheck, swapStep, 
+                                eventCount >>
+
+Watchdog == WatchdogSleep \/ WatchdogFire
+
+EvalCheck == /\ pc["Evaluator"] = "EvalCheck"
+             /\ IF CanEvaluate
+                   THEN /\ evalPassedCheck' = TRUE
+                        /\ evalInProgress' = TRUE
+                        /\ pc' = [pc EXCEPT !["Evaluator"] = "EvalComplete"]
+                   ELSE /\ pc' = [pc EXCEPT !["Evaluator"] = "Done"]
+                        /\ UNCHANGED << evalInProgress, evalPassedCheck >>
+             /\ UNCHANGED << status, swapLocked, recentSwapFailureAt, now, 
+                             pendingEvents, watchdogFired, swapStep, 
+                             eventCount >>
+
+EvalComplete == /\ pc["Evaluator"] = "EvalComplete"
+                /\ evalInProgress' = FALSE
+                /\ evalPassedCheck' = FALSE
+                /\ pc' = [pc EXCEPT !["Evaluator"] = "Done"]
+                /\ UNCHANGED << status, swapLocked, recentSwapFailureAt, now, 
+                                pendingEvents, watchdogFired, swapStep, 
+                                eventCount >>
+
+Evaluator == EvalCheck \/ EvalComplete
+
+Next == Swapper \/ Shutdown \/ EventBridge \/ Watchdog \/ Evaluator
+
+Spec == Init /\ [][Next]_vars
+
+\* END TRANSLATION
+
+\* ── State space constraint (referenced from .cfg) ─────────────────
+ClockBound == now <= INIT_TIMEOUT + N_BRIDGE_EVENTS + 5
 
 \* ────────────────────────────────────────────────────────────────────
 \* PROPERTIES TO CHECK IN TLC

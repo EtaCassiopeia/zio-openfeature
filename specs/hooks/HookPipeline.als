@@ -145,8 +145,17 @@ pred structuralConstraints {
   // Every execution belongs to an applicable hook
   all x: Execution | x.hook in applicableHooks[x.eval]
 
-  // Each (eval, hook) pair appears at most once per stage
-  all e: Evaluation, h: Hook, s: Stage |
+  // The code runs before and finallyAfter for EVERY applicable hook
+  // (simplification: partial-before on hook throw is not modelled here).
+  // This is the completeness constraint that makes the ordering assertions
+  // meaningful — without it, missing executions make them vacuously true.
+  all e: Evaluation, h: applicableHooks[e] |
+    one { x: Execution | x.eval = e and x.hook = h and x.stage = Before }
+  all e: Evaluation, h: applicableHooks[e] |
+    one { x: Execution | x.eval = e and x.hook = h and x.stage = FinallyStage }
+
+  // Each (eval, hook) pair appears at most once per the remaining stages
+  all e: Evaluation, h: Hook, s: Stage - (Before + FinallyStage) |
     lone { x: Execution | x.eval = e and x.hook = h and x.stage = s }
 
   // Integers are non-negative
@@ -243,11 +252,12 @@ assert ApiClientInvocationOrder {
 // Add these as separate Run/Check entries in the Alloy Analyzer, or
 // invoke them from the command-line runner.
 
-check ReverseSymmetry          for 4 but 3 Int
-check FinallyTotality          for 4 but 3 Int
-check ProviderHookExactlyOnce  for 4 but 3 Int
-check HookDataIdentityKey      for 4 but 3 Int
-check ApiClientInvocationOrder for 4 but 3 Int
+// 6 Int gives signed range -32..31; max globalRegPos = 2*10+3 = 23, fits safely.
+check ReverseSymmetry          for 4 but 6 Int
+check FinallyTotality          for 4 but 6 Int
+check ProviderHookExactlyOnce  for 4 but 6 Int
+check HookDataIdentityKey      for 4 but 6 Int
+check ApiClientInvocationOrder for 4 but 6 Int
 
 // Show a valid instance (sanity check)
 run showInstance {
@@ -257,5 +267,5 @@ run showInstance {
   some h: Hook | h.tier = ClientTier
   some h: Hook | h.tier = ProviderTier
   #Evaluation >= 1
-} for 4 but 3 Int
+} for 4 but 6 Int
 

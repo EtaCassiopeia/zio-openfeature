@@ -5,6 +5,127 @@ difficult to verify by inspection or testing alone. Each is encoded below
 as a machine-checkable spec. Counterexamples from these models have already
 helped diagnose past bugs (see individual spec files for details).
 
+---
+
+## Quick start
+
+### TLA+ / TLC (Provider Lifecycle)
+
+```sh
+# Download the CLI jar once
+curl -sL https://github.com/tlaplus/tlaplus/releases/latest/download/tla2tools.jar \
+  -o tla2tools.jar
+
+# Run the model checker
+java -jar tla2tools.jar -workers 4 \
+  specs/lifecycle/ProviderLifecycle.tla \
+  -config specs/lifecycle/ProviderLifecycle.cfg
+```
+
+Or open `ProviderLifecycle.tla` in the [TLA+ Toolbox IDE](https://lamport.azurewebsites.net/tla/toolbox.html)
+and load `ProviderLifecycle.cfg` as the model configuration for a visual run.
+
+### P (CircuitBreaker) — requires .NET SDK
+
+```sh
+dotnet tool install --global P
+
+p compile specs/circuitbreaker/CircuitBreaker.p
+p check -tc TestCircuitBreaker -i 10000
+```
+
+### Alloy 6 (Hook Pipeline)
+
+```sh
+# Download the Alloy jar once
+curl -sL https://github.com/AlloyTools/org.alloytools.alloy/releases/latest/download/org.alloytools.alloy.dist.jar \
+  -o alloy6.jar
+
+# Run all assertions headless
+java -cp alloy6.jar edu.mit.csail.sdg.alloy4whole.ExampleUsingTheCompiler \
+  specs/hooks/HookPipeline.als
+
+# Or open the GUI to visualise instances and counterexamples as graphs
+java -jar alloy6.jar specs/hooks/HookPipeline.als
+```
+
+---
+
+## Verification workflow
+
+The specs are most valuable as a **pre-merge gate** on PRs that touch the
+modelled state machines. The loop is:
+
+1. **Edit `FeatureFlagsLive.scala`, `CircuitBreaker.scala`, or `Hook.scala`**
+2. **Update the corresponding spec** to reflect the new behaviour
+3. **Run the checker** — if a property fails, you get an exact counterexample
+   trace that shows the step-by-step interleaving that breaks the invariant
+4. **Fix the code** (or the property if the invariant was wrong), re-run until clean
+5. **Merge** — the CI workflow in `specs/README.md § CI integration` automates
+   TLA+ and Alloy checks for PRs that touch relevant source files
+
+The specs are **not** a replacement for the ZIO test suite — they catch a
+different class of bug. Tests verify specific scenarios; model checkers
+exhaustively explore every possible interleaving within the declared bounds.
+A race that would take weeks of load testing to surface shows up as a two-line
+counterexample trace in TLC.
+
+---
+
+## Reading counterexamples
+
+### TLC (TLA+)
+
+A violated invariant prints a numbered state sequence:
+
+```
+Error: Invariant StatusValid is violated.
+The behavior up to this point is:
+State 1: <Initial predicate>
+  /\ status = "NotReady"
+  /\ swapLocked = FALSE
+  ...
+State 4: <Swapper line 112>
+  /\ status = "ShuttingDown"   ← unexpected value
+  ...
+```
+
+Each state shows all variables. Work backwards from the violating state to
+find which actor wrote the bad value and under what condition.
+
+### P
+
+A safety violation prints an event trace:
+
+```
+<ErrorLog> Assertion Failed:
+  Invariant violated: more than one probe in-flight in HalfOpen state
+<Trace>
+  1. CircuitBreakerMachine(1): receives eTryAcquire from Caller(1) → sends eAllowed
+  2. CircuitBreakerMachine(1): receives eTryAcquire from Caller(2) → sends eAllowed
+     *** hoProbing was already true — CAS race ***
+```
+
+Re-run with `-v` for verbose event dumps. The `-i` flag controls how many
+random interleavings to explore; increase to `100000` for higher coverage.
+
+### Alloy
+
+A failed assertion opens the Counterexample Visualizer showing a relational
+instance that violates the assertion. In headless mode it prints:
+
+```
+Executing "check ReverseSymmetry for 4 but 3 Int"
+   Counterexample found. Assertion is not valid.
+   ...
+```
+
+Open the GUI (`java -jar alloy6.jar`) and click **Show** to browse the
+violating instance as a graph — hooks, tiers, and execution indices are shown
+as nodes and edges.
+
+---
+
 ## Resource list
 
 - [TLA+ Home](https://lamport.azurewebsites.net/tla/tla.html) · [Tutorial](https://lamport.azurewebsites.net/tla/tutorial/home.html) · [Video course](https://lamport.azurewebsites.net/video/videos.html) · [Advanced](https://lamport.azurewebsites.net/tla/advanced.html)

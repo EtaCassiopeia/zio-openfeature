@@ -59,6 +59,7 @@ object MyApp extends ZIOAppDefault:
 | [Transactions]({{ site.baseurl }}/transactions) | Flag overrides and tracking |
 | [Testkit]({{ site.baseurl }}/testkit) | Testing utilities |
 | [Spec Compliance]({{ site.baseurl }}/spec-compliance) | OpenFeature specification compliance |
+| [Formal Methods]({{ site.baseurl }}/formal-methods) | Machine-checked specs for concurrency-sensitive subsystems |
 
 ## Modules
 

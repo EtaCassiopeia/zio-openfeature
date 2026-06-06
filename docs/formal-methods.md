@@ -173,6 +173,78 @@ Open the GUI and click **Show** to browse the violating instance.
 
 ---
 
+## Why three different tools?
+
+Each spec was written in a different language because each problem has a
+different *shape*, and different tools are built for different shapes.
+
+### TLA+ — exhaustive state enumeration
+
+TLA+ models a system as a set of variables and transitions. TLC, the model
+checker, does **breadth-first search** over the reachable state space: it
+literally enumerates every possible state the system can be in and checks that
+no invariant is violated in any of them.
+
+This is the right tool for the provider lifecycle because the bug there
+(`f4e9345`) was a *specific state sequence* — `NotReady → Error → Ready`
+caused by a late-arriving `PROVIDER_READY` event after a failed swap. TLC
+finds it by exploring all orderings of all transitions, not by running random
+interleavings.
+
+**Tradeoff:** the state space must be bounded (the `.cfg` sets
+`N_BRIDGE_EVENTS = 2`, `INIT_TIMEOUT = 5`). Outside those bounds TLC can't
+finish.
+
+### P — concurrent event-driven programs
+
+P is designed for **message-passing machines** — state machines that
+communicate by sending events to each other. The checker runs a **randomised
+scheduler** that explores many interleavings and fires any `assert` in the
+`SpecMonitor` machine on every observed state.
+
+This fits the circuit breaker because the code is structured exactly as
+concurrent callers sending operations to a shared resource. P's model maps
+directly to that structure: `Caller` machines send `eTryAcquire`,
+`eRecordFailure`, etc. to the `CircuitBreakerMachine`, and the `SpecMonitor`
+watches every state snapshot.
+
+**Tradeoff:** P does *bounded random exploration* (`-i 10000` interleavings),
+not exhaustive search. It finds concurrency bugs quickly but cannot prove
+absence of bugs the way TLC can.
+
+### Alloy — structural/relational properties
+
+Alloy doesn't model time or concurrency at all. It reasons about **relations
+between sets** — it asks "does there exist *any* configuration of hooks,
+tiers, and execution indices that satisfies the structural constraints but
+violates this assertion?" The checker does bounded exhaustive search over all
+possible relational instances up to a given size (`for 4`).
+
+This fits the hook pipeline because the correctness properties there are
+*structural*, not temporal — "after always runs in reverse before order",
+"every hook gets exactly one `finallyAfter`." These are statements about the
+shape of an execution trace, not about race conditions or timing. Alloy
+expresses and checks them as concise relational constraints.
+
+**Tradeoff:** Alloy can only check *finite bounded instances*, not infinite
+executions. For structural ordering properties that's usually sufficient.
+
+### Tool selection summary
+
+| Tool | Technique | Best for |
+|------|-----------|----------|
+| TLA+ / TLC | Exhaustive state enumeration (BFS) | State machines with bounded state space; safety and liveness over concurrent transitions |
+| P | Randomised concurrent scheduling | Message-passing systems with many concurrent actors; assertion-based monitors |
+| Alloy | Bounded relational model checking | Structural invariants over data shapes; ordering, symmetry, uniqueness properties |
+
+The tools are not interchangeable. You *could* model the hook pipeline in
+TLA+, but you'd end up writing something far more verbose than a four-line
+Alloy assertion. You *could* model the circuit breaker in TLA+, but P's
+event-machine syntax maps directly to the code structure, making the spec
+easier to read and maintain alongside the implementation.
+
+---
+
 ## Further reading
 
 - [TLA+ Home & video course](https://lamport.azurewebsites.net/tla/tla.html)

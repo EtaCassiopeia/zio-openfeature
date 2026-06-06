@@ -24,3 +24,12 @@ coverage-report/
 *.log
 *.swp
 *~
+
+# Formal spec tool artifacts
+PGenerated/
+PCheckerOutput/
+HookPipeline/
+states/
+specs/lifecycle/*.old
+specs/lifecycle/*_TTrace_*.tla
+specs/lifecycle/*_TTrace_*.bin

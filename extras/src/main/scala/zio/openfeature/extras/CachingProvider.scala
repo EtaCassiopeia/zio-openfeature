@@ -2,15 +2,19 @@ package zio.openfeature.extras
 
 import dev.openfeature.sdk.{
   EvaluationContext => OFEvaluationContext,
+  ProviderEvent => JavaProviderEvent,
   EventProvider,
+  EventProviderBridge,
   Metadata,
   ProviderEvaluation,
+  ProviderEventDetails,
   ProviderState,
   Value
 }
 import zio._
 import zio.cache.{Cache, Lookup}
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicBoolean
 import scala.jdk.CollectionConverters._
 
 /** Configuration for the caching provider.
@@ -44,8 +48,12 @@ final private[extras] case class CacheKey(flagKey: String, flagType: String, con
   *   - TTL-based expiration
   *   - LRU eviction when max capacity is reached
   *
-  * Cached evaluations return `CACHED` as the resolution reason. Call `invalidateAll` when receiving
-  * `ConfigurationChanged` events from the underlying provider.
+  * Cached evaluations return `CACHED` as the resolution reason.
+  *
+  * Events emitted by the wrapped provider are forwarded through this wrapper (so `FeatureFlags.events` subscribers
+  * still see them), and a `PROVIDER_CONFIGURATION_CHANGED` emission automatically invalidates the cache. The wrapper
+  * takes ownership of the delegate's event channel on `initialize`; do not register the same delegate instance directly
+  * with an `OpenFeatureAPI` while it is wrapped.
   */
 final class CachingProvider private (
   val underlying: EventProvider,
@@ -63,10 +71,29 @@ final class CachingProvider private (
   @scala.annotation.nowarn("msg=deprecated")
   override def getState: ProviderState = underlying.getState
 
-  override def initialize(context: OFEvaluationContext): Unit =
+  private val delegateAttached = new AtomicBoolean(false)
+
+  // Forward delegate emissions upward (the delegate is never registered with an API, so without this its
+  // events go nowhere) and invalidate the cache on configuration changes so stale values aren't served
+  // for the remainder of the TTL.
+  private def onDelegateEvent(event: JavaProviderEvent, details: ProviderEventDetails): Unit = {
+    if (event == JavaProviderEvent.PROVIDER_CONFIGURATION_CHANGED)
+      Unsafe.unsafe { implicit u =>
+        runtime.unsafe.run(cache.invalidateAll).getOrThrowFiberFailure()
+      }
+    emit(event, details)
+    ()
+  }
+
+  override def initialize(context: OFEvaluationContext): Unit = {
+    if (delegateAttached.compareAndSet(false, true))
+      EventProviderBridge.attach(underlying, onDelegateEvent)
     underlying.initialize(context)
+  }
 
   override def shutdown(): Unit = {
+    if (delegateAttached.compareAndSet(true, false))
+      scala.util.Try(EventProviderBridge.detach(underlying))
     Unsafe.unsafe { implicit u =>
       runtime.unsafe.run(cache.invalidateAll).getOrThrowFiberFailure()
     }

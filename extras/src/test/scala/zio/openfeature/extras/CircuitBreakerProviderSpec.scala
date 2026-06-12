@@ -344,6 +344,71 @@ object CircuitBreakerProviderSpec extends ZIOSpecDefault {
         assertTrue(result.getValue == true)
       }
     ),
+    suite("Delegate event propagation (#176)")(
+      test("delegate PROVIDER_ERROR event trips the circuit without an evaluation failure") {
+        // Asserts on the breaker directly: evaluating would re-poll the delegate's (READY) state,
+        // which legitimately resets an externally-opened circuit.
+        class EmittingProvider extends FailableProvider(Map("flag" -> true)) {
+          def fireError(): Unit = {
+            emitProviderError(dev.openfeature.sdk.ProviderEventDetails.builder().message("boom").build())
+            ()
+          }
+        }
+        val underlying = new EmittingProvider
+        val cb         = CircuitBreakerProvider(underlying)
+        for {
+          _ <- ZIO.attemptBlocking(cb.initialize(ctx))
+          _ <- ZIO.succeed(underlying.fireError())
+          // Emission is async; poll until the breaker opens
+          _ <- ZIO
+            .succeed(cb.breaker.isOpen)
+            .repeatUntil(identity)
+            .timeoutFail(new RuntimeException("circuit never opened from delegate event"))(10.seconds)
+        } yield assertTrue(cb.breaker.isOpen, underlying.evaluationCount.get() == 0)
+      },
+      test("delegate PROVIDER_READY event closes an externally-opened circuit") {
+        class EmittingProvider extends FailableProvider(Map("flag" -> true)) {
+          def fireError(): Unit = { emitProviderError(dev.openfeature.sdk.ProviderEventDetails.builder().build()); () }
+          def fireReady(): Unit = { emitProviderReady(dev.openfeature.sdk.ProviderEventDetails.builder().build()); () }
+        }
+        val underlying = new EmittingProvider
+        val cb         = CircuitBreakerProvider(underlying)
+        for {
+          _ <- ZIO.attemptBlocking(cb.initialize(ctx))
+          _ <- ZIO.succeed(underlying.fireError())
+          _ <- ZIO
+            .succeed(cb.breaker.isOpen)
+            .repeatUntil(identity)
+            .timeoutFail(new RuntimeException("circuit never opened"))(10.seconds)
+          _ <- ZIO.succeed(underlying.fireReady())
+          _ <- ZIO
+            .succeed(cb.breaker.isClosed)
+            .repeatUntil(identity)
+            .timeoutFail(new RuntimeException("circuit never closed after recovery event"))(10.seconds)
+          result <- ZIO.attemptBlocking(cb.getBooleanEvaluation("flag", false, ctx))
+        } yield assertTrue(result.getValue == true)
+      },
+      test("delegate events are re-emitted through the wrapper") {
+        class EmittingProvider extends FailableProvider(Map("flag" -> true)) {
+          def fireConfigChanged(): Unit = {
+            emitProviderConfigurationChanged(dev.openfeature.sdk.ProviderEventDetails.builder().build())
+            ()
+          }
+        }
+        val underlying = new EmittingProvider
+        val cb         = CircuitBreakerProvider(underlying)
+        val seen       = new java.util.concurrent.ConcurrentLinkedQueue[dev.openfeature.sdk.ProviderEvent]()
+        for {
+          _ <- ZIO.succeed(dev.openfeature.sdk.EventProviderBridge.attach(cb, (e, _) => { seen.add(e); () }))
+          _ <- ZIO.attemptBlocking(cb.initialize(ctx))
+          _ <- ZIO.succeed(underlying.fireConfigChanged())
+          _ <- ZIO
+            .succeed(seen.contains(dev.openfeature.sdk.ProviderEvent.PROVIDER_CONFIGURATION_CHANGED))
+            .repeatUntil(identity)
+            .timeoutFail(new RuntimeException("delegate event was not re-emitted"))(10.seconds)
+        } yield assertTrue(seen.contains(dev.openfeature.sdk.ProviderEvent.PROVIDER_CONFIGURATION_CHANGED))
+      }
+    ) @@ TestAspect.withLiveClock,
     suite("Lifecycle")(
       test("metadata includes underlying provider name") {
         val underlying = new FailableProvider()

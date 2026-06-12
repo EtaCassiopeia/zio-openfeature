@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Optimizely provider no longer polls (or blocks) before `initialize()`** (#208). `OptimizelyProvider.make` used
+  to start the SDK's background datafile poller at construction and block up to the SDK's 10s `getConfig` timeout —
+  against an unreachable CDN or a bad key (403), a provider that was merely constructed (e.g. in a test) left a
+  retry loop polling forever and stalled construction. Construction now performs no network activity; polling starts
+  inside `initialize()` and stops at `shutdown()`.
+
+### Added
+
+- **Scope-managed Optimizely construction** (#208). `OptimizelyProvider.scoped(...)` and the (now scope-owning)
+  `layer(...)` shut the provider down — stopping datafile polling and the SDK's HTTP client, with a bounded
+  finalizer — when the surrounding scope closes, even if the provider never reached a `FeatureFlags` layer or its
+  initialization failed.
+- **`OptimizelyProviderConfig`** (#208) with `pollingInterval` and `blockingTimeout` knobs (SDK defaults: 5 minutes
+  / 10 seconds), so tests and operators no longer need to hand-roll `HttpProjectConfigManager` construction to tune
+  polling.
+
 ## [0.9.1] — 2026-06-04
 
 ### Fixed

@@ -31,7 +31,11 @@ import scala.util.Try
   *     Subsequent fires emit OpenFeature `PROVIDER_CONFIGURATION_CHANGED` events.
   *   - If the datafile never arrives within `initWait`, `initialize()` throws — propagated by the OpenFeature SDK as a
   *     failed init.
-  *   - `shutdown()` removes the notification handler and closes the underlying client.
+  *   - `shutdown()` removes the notification handler and closes the underlying client (which stops datafile polling and
+  *     the HTTP client for factory-built providers).
+  *   - Factory-built providers (via `OptimizelyProvider.make`/`scoped`/`layer`) perform no network activity and run no
+  *     background polling until `initialize()` — a provider that is constructed but never registered does not fetch,
+  *     retry, or log against an unreachable CDN.
   *
   * '''Decision mapping:'''
   *   - Boolean: returns `decision.getEnabled`.
@@ -46,7 +50,11 @@ import scala.util.Try
 final class OptimizelyFeatureProvider private[optimizely] (
   optimizely: Optimizely,
   initWait: java.time.Duration,
-  closeOnShutdown: Boolean
+  closeOnShutdown: Boolean,
+  // Present for factory-built providers: datafile polling is deliberately NOT running at construction
+  // (see OptimizelyProvider.buildClient); initialize() starts it, and shutdown() stops it via
+  // Optimizely.close(). Caller-managed clients (fromOptimizelyClient) own their polling lifecycle.
+  configManager: Option[com.optimizely.ab.config.HttpProjectConfigManager] = None
 ) extends EventProvider {
 
   // Public construction is via the OptimizelyProvider factory in this package — the constructor is private to keep
@@ -83,6 +91,10 @@ final class OptimizelyFeatureProvider private[optimizely] (
       )
     }
     notificationHandle.set(handlerId)
+
+    // Start datafile polling only now that the update handler is registered, so the first
+    // datafile-load notification cannot be missed. Construction performs no network activity.
+    configManager.foreach(_.start())
 
     if (optimizely.isValid) initLatch.countDown()
 

@@ -68,7 +68,7 @@ object MyApp extends ZIOAppDefault:
 
 What this does on startup:
 
-1. `OptimizelyProvider.make(sdkKey)` validates the key shape (non-empty, allowed characters, not a placeholder) and constructs an `Optimizely` client wired to the public CDN at `https://cdn.optimizely.com/datafiles/<sdkKey>.json`.
+1. `OptimizelyProvider.make(sdkKey)` validates the key shape (non-empty, allowed characters, not a placeholder) and constructs an `Optimizely` client wired to the public CDN at `https://cdn.optimizely.com/datafiles/<sdkKey>.json`. Construction performs no network activity and starts no background polling — the datafile poller runs only between `initialize()` and `shutdown()`. A provider you build owns a polling executor and an HTTP client, so pair `make` with something that shuts it down (a `FeatureFlags` layer does), or use `OptimizelyProvider.scoped` / `OptimizelyProvider.layer`, which release it when the surrounding scope closes. `OptimizelyProviderConfig` exposes `pollingInterval` and `blockingTimeout` when the SDK defaults (5 min / 10 s) don't fit.
 2. `FeatureFlags.fromProviderAsync(provider)` starts the provider in the background, watches for the first datafile load, and uses the default **30 s `initTimeout`** as an upper bound. If the datafile never arrives, `providerStatus` transitions to `Fatal` — your evaluations stop hanging.
 3. On every subsequent datafile revision (typically every 30 s for the SDK's default polling interval), the provider emits `ProviderEvent.ConfigurationChanged` — call `FeatureFlags.onConfigurationChanged(handler)` if you want to react.
 

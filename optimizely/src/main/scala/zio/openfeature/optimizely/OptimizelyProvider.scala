@@ -4,6 +4,7 @@ import com.optimizely.ab.Optimizely
 import com.optimizely.ab.config.HttpProjectConfigManager
 import zio._
 import zio.openfeature.FeatureFlagError
+import java.util.concurrent.TimeUnit
 
 /** Scala-friendly factories for an Optimizely-backed OpenFeature provider.
   *
@@ -49,6 +50,28 @@ import zio.openfeature.FeatureFlagError
   * Construction validates the SDK key (and URL, where applicable) before touching the Optimizely SDK; failures surface
   * as `FeatureFlagError.InvalidConfiguration` at layer build time, not at first evaluation.
   */
+/** Configuration for a factory-built Optimizely provider.
+  *
+  * @param sdkKey
+  *   Optimizely SDK key (validated — see [[OptimizelyProvider.make]])
+  * @param datafileUrl
+  *   Optional self-hosted datafile URL (Optimizely Agent); `None` uses the public CDN
+  * @param initWait
+  *   How long `initialize()` waits for the first datafile load before failing
+  * @param pollingInterval
+  *   Datafile poll interval; `None` uses the SDK default (5 minutes). Tests that need fast revision pickup (or
+  *   effectively none) can tune this instead of hand-rolling client construction.
+  * @param blockingTimeout
+  *   Upper bound on the SDK's internal blocking `getConfig()` waits; `None` uses the SDK default (10 seconds)
+  */
+final case class OptimizelyProviderConfig(
+  sdkKey: String,
+  datafileUrl: Option[String] = None,
+  initWait: java.time.Duration = OptimizelyProvider.DefaultInitWait,
+  pollingInterval: Option[java.time.Duration] = None,
+  blockingTimeout: Option[java.time.Duration] = None
+)
+
 object OptimizelyProvider {
 
   /** Default time the underlying `OptimizelyFeatureProvider.initialize()` will wait for the first datafile load before
@@ -82,16 +105,57 @@ object OptimizelyProvider {
     datafileUrl: Option[String],
     initWait: java.time.Duration
   ): IO[FeatureFlagError.InvalidConfiguration, OptimizelyFeatureProvider] =
+    make(OptimizelyProviderConfig(sdkKey, datafileUrl, initWait))
+
+  /** Validate the configuration and construct a provider.
+    *
+    * Construction performs no network activity and starts no background polling: the datafile poller is created paused
+    * and only starts inside `initialize()`. The returned provider owns a polling executor and an HTTP client — the
+    * caller is responsible for `shutdown()` (registering it with a `FeatureFlags` layer counts: the layer's finalizer
+    * shuts the provider down). Prefer [[scoped]] or [[layer]] to make that ownership explicit.
+    */
+  def make(config: OptimizelyProviderConfig): IO[FeatureFlagError.InvalidConfiguration, OptimizelyFeatureProvider] =
     for {
-      validKey <- validateSdkKey(sdkKey)
-      validUrl <- datafileUrl match {
+      validKey <- validateSdkKey(config.sdkKey)
+      validUrl <- config.datafileUrl match {
         case Some(u) => validateDatafileUrl(u).map(Some(_))
         case None    => ZIO.succeed(None: Option[String])
       }
-      client <- ZIO
-        .attempt(buildClient(validKey, validUrl))
+      _ <- validatePositive("pollingInterval", config.pollingInterval)
+      _ <- validatePositive("blockingTimeout", config.blockingTimeout)
+      pair <- ZIO
+        .attempt(buildClient(validKey, validUrl, config.pollingInterval, config.blockingTimeout))
         .mapError(t => FeatureFlagError.InvalidConfiguration(s"Optimizely client build failed: ${t.getMessage}"))
-    } yield new OptimizelyFeatureProvider(client, initWait, closeOnShutdown = true)
+    } yield new OptimizelyFeatureProvider(
+      pair._1,
+      config.initWait,
+      closeOnShutdown = true,
+      configManager = Some(pair._2)
+    )
+
+  /** [[make]] with scope-managed shutdown: when the surrounding `Scope` closes, the provider is shut down (bounded),
+    * stopping datafile polling and closing the SDK's HTTP client — even if the provider was never registered with a
+    * `FeatureFlags` layer or its initialization failed. This is the recommended construction for tests and for any
+    * composition where the provider might not reach a layer that owns its lifecycle.
+    */
+  def scoped(
+    config: OptimizelyProviderConfig
+  ): ZIO[Scope, FeatureFlagError.InvalidConfiguration, OptimizelyFeatureProvider] =
+    ZIO.acquireRelease(make(config))(releaseProvider)
+
+  /** [[scoped]] for the common CDN-only case. */
+  def scoped(sdkKey: String): ZIO[Scope, FeatureFlagError.InvalidConfiguration, OptimizelyFeatureProvider] =
+    scoped(OptimizelyProviderConfig(sdkKey))
+
+  /** Upper bound on provider teardown. `shutdown()` is `shutdownNow`-based and normally returns in milliseconds; the
+    * bound exists so a pathological close (e.g. an HTTP client wedged mid-request) cannot hang scope teardown — the
+    * SDK's polling and evictor threads are daemon, so the JVM can still exit either way.
+    */
+  private val ShutdownTimeout: zio.Duration = 10.seconds
+
+  private def releaseProvider(provider: OptimizelyFeatureProvider): UIO[Unit] =
+    // `.disconnect` because finalizers run uninterruptibly and the timeout must still fire.
+    ZIO.attemptBlocking(provider.shutdown()).disconnect.timeout(ShutdownTimeout).ignore
 
   /** Escape hatch for callers who already manage an `Optimizely` client lifecycle (e.g. they want their own polling
     * interval, event handler, or user profile service). The returned provider does NOT close the client on shutdown;
@@ -100,20 +164,33 @@ object OptimizelyProvider {
   def fromOptimizelyClient(client: Optimizely): UIO[OptimizelyFeatureProvider] =
     ZIO.succeed(new OptimizelyFeatureProvider(client, DefaultInitWait, closeOnShutdown = false))
 
-  /** ZLayer convenience that wraps [[make(String)]] for the common CDN-only case. */
+  /** ZLayer for the common CDN-only case. The layer owns the provider lifecycle: its finalizer shuts the provider down
+    * (stopping datafile polling and the HTTP client) when the layer is released.
+    */
   def layer(sdkKey: String): ZLayer[Any, FeatureFlagError.InvalidConfiguration, OptimizelyFeatureProvider] =
-    ZLayer.fromZIO(make(sdkKey))
+    layer(OptimizelyProviderConfig(sdkKey))
 
-  /** ZLayer convenience that wraps [[make(String, String)]]. */
+  /** ZLayer for a self-hosted datafile URL. Owns the provider lifecycle — see [[layer(String)]]. */
   def layer(
     sdkKey: String,
     datafileUrl: String
   ): ZLayer[Any, FeatureFlagError.InvalidConfiguration, OptimizelyFeatureProvider] =
-    ZLayer.fromZIO(make(sdkKey, datafileUrl))
+    layer(OptimizelyProviderConfig(sdkKey, datafileUrl = Some(datafileUrl)))
+
+  /** ZLayer from a full [[OptimizelyProviderConfig]]. Owns the provider lifecycle — see [[layer(String)]]. */
+  def layer(
+    config: OptimizelyProviderConfig
+  ): ZLayer[Any, FeatureFlagError.InvalidConfiguration, OptimizelyFeatureProvider] =
+    ZLayer.scoped(scoped(config))
 
   // Construction
 
-  private def buildClient(sdkKey: String, datafileUrl: Option[String]): Optimizely = {
+  private def buildClient(
+    sdkKey: String,
+    datafileUrl: Option[String],
+    pollingInterval: Option[java.time.Duration],
+    blockingTimeout: Option[java.time.Duration]
+  ): (Optimizely, HttpProjectConfigManager) = {
     // Share a single NotificationCenter between the polling config manager and the Optimizely client. Without this,
     // the manager fires UpdateConfigNotification on its own private NotificationCenter and handlers registered via
     // `Optimizely.addUpdateConfigNotificationHandler` (the public API our provider uses) never see subsequent datafile
@@ -123,8 +200,23 @@ object OptimizelyProvider {
     val notificationCenter = new com.optimizely.ab.notification.NotificationCenter()
     val configBuilder = HttpProjectConfigManager.builder().withSdkKey(sdkKey).withNotificationCenter(notificationCenter)
     datafileUrl.foreach(configBuilder.withUrl)
-    val configManager = configBuilder.build()
-    Optimizely.builder().withConfigManager(configManager).withNotificationCenter(notificationCenter).build()
+    pollingInterval.foreach(d =>
+      configBuilder.withPollingInterval(java.lang.Long.valueOf(d.toMillis), TimeUnit.MILLISECONDS)
+    )
+    blockingTimeout.foreach(d =>
+      configBuilder.withBlockingTimeout(java.lang.Long.valueOf(d.toMillis), TimeUnit.MILLISECONDS)
+    )
+    // `build()` (no-arg) would start polling AND block up to the SDK's blocking timeout (default 10s) waiting for
+    // the first datafile — with an unreachable CDN, construction stalls and then a background poller retries
+    // forever. `build(true)` skips the blocking wait but still calls `start()`, so we `stop()` immediately:
+    // construction performs no network activity, and `initialize()` starts polling once the update handler is in
+    // place. The first scheduled fetch may be submitted in the instant before `stop()` cancels it
+    // (`cancel(mayInterrupt = true)` on a daemon thread) — at most one aborted request, no lingering activity.
+    val configManager = configBuilder.build(true)
+    configManager.stop()
+    val optimizely =
+      Optimizely.builder().withConfigManager(configManager).withNotificationCenter(notificationCenter).build()
+    (optimizely, configManager)
   }
 
   // Validation
@@ -168,6 +260,16 @@ object OptimizelyProvider {
       else ZIO.succeed(trimmed)
     }
   }
+
+  private def validatePositive(
+    name: String,
+    value: Option[java.time.Duration]
+  ): IO[FeatureFlagError.InvalidConfiguration, Unit] =
+    ZIO.foreachDiscard(value.toList) { d =>
+      ZIO
+        .fail(FeatureFlagError.InvalidConfiguration(s"Optimizely $name must be positive: $d"))
+        .when(d.isNegative || d.isZero)
+    }
 
   private val AllowedDatafileSchemes = Set("http", "https")
 

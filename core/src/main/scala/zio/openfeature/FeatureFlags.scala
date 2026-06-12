@@ -181,6 +181,15 @@ trait FeatureFlags {
   def setProvider(provider: OFFeatureProvider): IO[FeatureFlagError, Unit]
 
   // Shutdown API (spec 1.6.1)
+
+  /** Shut down this instance (spec 1.6.1, 1.6.2).
+    *
+    * The status transitions to `ShuttingDown` for the duration of the teardown (evaluations started in that window fail
+    * with `ProviderNotReady(ShuttingDown)`) and ends at `NotReady`. Client-level and ZIO API-level hooks, the global
+    * and client contexts, and the tracked-events recorder are cleared; the event hub is shut down and the underlying
+    * OpenFeature API (and with it the provider) is shut down. Fiber-local context and any in-flight transaction state
+    * are fiber-scoped and unaffected.
+    */
   def shutdown: UIO[Unit]
 
   // Tracking API

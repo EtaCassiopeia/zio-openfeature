@@ -452,7 +452,8 @@ object FeatureFlags {
     addShutdownFinalizer: Boolean,
     apiOverride: Option[OpenFeatureAPI] = None,
     evaluationTimeout: Option[Duration] = None,
-    initTimeout: Duration = DefaultInitTimeout
+    initTimeout: Duration = DefaultInitTimeout,
+    onReady: Option[java.util.concurrent.CountDownLatch] = None
   ): ZIO[Scope, Throwable, FeatureFlagsLive] =
     for {
       api <- ZIO.succeed(apiOverride.getOrElse(OpenFeatureAPI.getInstance()))
@@ -490,7 +491,8 @@ object FeatureFlags {
         state,
         api,
         swapLock,
-        evaluationTimeout = evaluationTimeout
+        onReady,
+        evaluationTimeout
       )
       _ <- ff.startEventBridge
     } yield ff
@@ -587,7 +589,8 @@ object FeatureFlags {
     provider: OFFeatureProvider,
     domain: String,
     statusRef: Ref[ProviderStatus],
-    api: Option[OpenFeatureAPI] = None
+    api: Option[OpenFeatureAPI] = None,
+    onReady: Option[java.util.concurrent.CountDownLatch] = None
   ): ZLayer[Scope, Throwable, FeatureFlags] =
     ZLayer.scoped(
       build(
@@ -597,7 +600,8 @@ object FeatureFlags {
         initialHooks = Nil,
         statusRef = Some(statusRef),
         addShutdownFinalizer = false,
-        apiOverride = api
+        apiOverride = api,
+        onReady = onReady
       )
     )
 

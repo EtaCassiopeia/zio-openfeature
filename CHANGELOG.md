@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Nested `Instant` attributes survive the SDK round-trip.** Instants inside lists and structs were converted to
+  strings on the way into the Java SDK and came back as `StringValue`, silently breaking date-based targeting on
+  nested attributes. The Long → Double 2^53 precision limit is now documented on `AttributeValue.LongValue`. (#184)
 - **Hook stages observe the context modified by before hooks.** The `after`, `error`, and `finallyAfter` stages
   previously received the pre-`before` evaluation context, so hooks logging or tagging by context saw different
   attributes than the evaluation actually used (spec §4.3.5–4.3.8). (#178)

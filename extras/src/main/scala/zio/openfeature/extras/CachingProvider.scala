@@ -10,7 +10,6 @@ import dev.openfeature.sdk.{
 }
 import zio._
 import zio.cache.{Cache, Lookup}
-import java.util.concurrent.ConcurrentHashMap
 import scala.jdk.CollectionConverters._
 
 /** Configuration for the caching provider.
@@ -33,8 +32,26 @@ final case class CachingConfig(
 
 /** A cache key combining the flag key, evaluation type, and a fingerprint of the evaluation context. Uses a string
   * fingerprint instead of a hash to avoid collisions that could serve wrong flag values to different users.
+  *
+  * The key also carries the evaluation thunk for cache misses. zio-cache's `Lookup` is fixed at construction, so the
+  * only race-free way to hand it the delegate call for *this* evaluation is through the key itself. The thunk is
+  * deliberately excluded from `equals`/`hashCode` — logical identity is (flagKey, flagType, contextFingerprint), and
+  * concurrent callers with the same logical key deduplicate onto whichever thunk triggers the lookup.
   */
-final private[extras] case class CacheKey(flagKey: String, flagType: String, contextFingerprint: String)
+final private[extras] class CacheKey(
+  val flagKey: String,
+  val flagType: String,
+  val contextFingerprint: String,
+  val evaluate: () => ProviderEvaluation[Any]
+) {
+  override def equals(other: Any): Boolean = other match {
+    case that: CacheKey =>
+      flagKey == that.flagKey && flagType == that.flagType && contextFingerprint == that.contextFingerprint
+    case _ => false
+  }
+  override def hashCode: Int    = (flagKey, flagType, contextFingerprint).hashCode()
+  override def toString: String = s"CacheKey($flagKey, $flagType, $contextFingerprint)"
+}
 
 /** A decorator provider that wraps any existing provider and adds evaluation caching backed by `zio-cache`.
   *
@@ -46,12 +63,15 @@ final private[extras] case class CacheKey(flagKey: String, flagType: String, con
   *
   * Cached evaluations return `CACHED` as the resolution reason. Call `invalidateAll` when receiving
   * `ConfigurationChanged` events from the underlying provider.
+  *
+  * Failures are never served from cache: a delegate exception (and any evaluation that resolves with an error code)
+  * invalidates its entry, so the next evaluation retries the delegate instead of replaying a transient error for the
+  * remainder of the TTL.
   */
 final class CachingProvider private (
   val underlying: EventProvider,
   val config: CachingConfig,
   private val cache: Cache[CacheKey, Throwable, ProviderEvaluation[Any]],
-  private val evaluators: ConcurrentHashMap[CacheKey, () => ProviderEvaluation[Any]],
   private val runtime: Runtime[Any]
 ) extends EventProvider {
 
@@ -70,7 +90,6 @@ final class CachingProvider private (
     Unsafe.unsafe { implicit u =>
       runtime.unsafe.run(cache.invalidateAll).getOrThrowFiberFailure()
     }
-    evaluators.clear()
     underlying.shutdown()
   }
 
@@ -111,26 +130,26 @@ final class CachingProvider private (
     context: OFEvaluationContext,
     evaluate: => ProviderEvaluation[A]
   ): ProviderEvaluation[A] = {
-    val ck = CacheKey(key, flagType, contextFingerprint(context))
-    // Register the evaluation thunk before calling cache.get. On a cache miss, the Lookup reads this thunk.
-    // zio-cache deduplicates concurrent Lookups for the same key, so only one Lookup runs. The try/finally
-    // ensures the evaluators entry is always removed — on cache hit (Lookup never runs) and on miss alike.
-    evaluators.put(ck, () => evaluate.asInstanceOf[ProviderEvaluation[Any]])
-    try
-      Unsafe.unsafe { implicit u =>
-        runtime.unsafe
-          .run(
-            cache.contains(ck).flatMap { hit =>
-              cache
-                .get(ck)
-                .map(_.asInstanceOf[ProviderEvaluation[A]])
-                .map(r => if (hit) withCachedReason(r) else r)
-            }
-          )
-          .getOrThrowFiberFailure()
-      }
-    finally
-      evaluators.remove(ck)
+    val ck =
+      new CacheKey(key, flagType, contextFingerprint(context), () => evaluate.asInstanceOf[ProviderEvaluation[Any]])
+    Unsafe.unsafe { implicit u =>
+      runtime.unsafe
+        .run(
+          cache.contains(ck).flatMap { hit =>
+            cache
+              .get(ck)
+              // zio-cache stores the completed lookup Exit, failures included. Without this invalidation a
+              // single transient delegate exception would be replayed for the rest of the TTL.
+              .onError(_ => cache.invalidate(ck))
+              // Error *results* (errorCode set, no exception) are returned to this caller but not kept either:
+              // serving an error from cache would delay recovery by up to the TTL.
+              .tap(r => ZIO.when(r.getErrorCode != null)(cache.invalidate(ck)))
+              .map(_.asInstanceOf[ProviderEvaluation[A]])
+              .map(r => if (hit) withCachedReason(r) else r)
+          }
+        )
+        .getOrThrowFiberFailure()
+    }
   }
 
   override def getBooleanEvaluation(
@@ -181,19 +200,14 @@ object CachingProvider {
   def make(underlying: EventProvider, config: CachingConfig = CachingConfig()): UIO[CachingProvider] =
     for {
       rt <- ZIO.runtime[Any]
-      evaluators = new ConcurrentHashMap[CacheKey, () => ProviderEvaluation[Any]]()
       cache <- Cache.make(
         config.maxEntries,
         config.ttl,
-        Lookup[CacheKey, Any, Throwable, ProviderEvaluation[Any]] { ck =>
-          ZIO.attempt {
-            val eval = evaluators.remove(ck)
-            if (eval == null) throw new IllegalStateException(s"No evaluator registered for $ck")
-            eval()
-          }
-        }
+        // The key carries the delegate call for this evaluation; zio-cache deduplicates concurrent
+        // lookups for the same logical key, so the delegate runs once per miss.
+        Lookup[CacheKey, Any, Throwable, ProviderEvaluation[Any]](ck => ZIO.attemptBlocking(ck.evaluate()))
       )
-    } yield new CachingProvider(underlying, config, cache, evaluators, rt)
+    } yield new CachingProvider(underlying, config, cache, rt)
 
   /** Create a CachingProvider (convenience, requires ZIO runtime). */
   def apply(underlying: EventProvider, config: CachingConfig = CachingConfig()): CachingProvider = {

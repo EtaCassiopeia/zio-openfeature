@@ -130,31 +130,31 @@ object AttributeValueSpec extends ZIOSpecDefault {
         assertTrue(AttributeValue.ListValue(Nil).asStruct == None)
       }
     ),
-    suite("isNull check")(
-      test("empty string is null") {
-        assertTrue(AttributeValue.StringValue("").isNull == true)
+    suite("isEmptyValue check")(
+      test("empty string is empty") {
+        assertTrue(AttributeValue.StringValue("").isEmptyValue == true)
       },
-      test("non-empty string is not null") {
-        assertTrue(AttributeValue.StringValue("test").isNull == false)
+      test("non-empty string is not empty") {
+        assertTrue(AttributeValue.StringValue("test").isEmptyValue == false)
       },
-      test("empty list is null") {
-        assertTrue(AttributeValue.ListValue(Nil).isNull == true)
+      test("empty list is empty") {
+        assertTrue(AttributeValue.ListValue(Nil).isEmptyValue == true)
       },
-      test("non-empty list is not null") {
-        assertTrue(AttributeValue.ListValue(List(AttributeValue.IntValue(1))).isNull == false)
+      test("non-empty list is not empty") {
+        assertTrue(AttributeValue.ListValue(List(AttributeValue.IntValue(1))).isEmptyValue == false)
       },
-      test("empty struct is null") {
-        assertTrue(AttributeValue.StructValue(Map.empty).isNull == true)
+      test("empty struct is empty") {
+        assertTrue(AttributeValue.StructValue(Map.empty).isEmptyValue == true)
       },
-      test("non-empty struct is not null") {
-        assertTrue(AttributeValue.StructValue(Map("a" -> AttributeValue.IntValue(1))).isNull == false)
+      test("non-empty struct is not empty") {
+        assertTrue(AttributeValue.StructValue(Map("a" -> AttributeValue.IntValue(1))).isEmptyValue == false)
       },
-      test("other types are not null") {
-        assertTrue(AttributeValue.BoolValue(false).isNull == false) &&
-        assertTrue(AttributeValue.IntValue(0).isNull == false) &&
-        assertTrue(AttributeValue.LongValue(0L).isNull == false) &&
-        assertTrue(AttributeValue.DoubleValue(0.0).isNull == false) &&
-        assertTrue(AttributeValue.InstantValue(Instant.EPOCH).isNull == false)
+      test("other types are not empty") {
+        assertTrue(AttributeValue.BoolValue(false).isEmptyValue == false) &&
+        assertTrue(AttributeValue.IntValue(0).isEmptyValue == false) &&
+        assertTrue(AttributeValue.LongValue(0L).isEmptyValue == false) &&
+        assertTrue(AttributeValue.DoubleValue(0.0).isEmptyValue == false) &&
+        assertTrue(AttributeValue.InstantValue(Instant.EPOCH).isEmptyValue == false)
       }
     ),
     suite("implicit conversions")(

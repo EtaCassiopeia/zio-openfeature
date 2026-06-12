@@ -46,12 +46,16 @@ sealed trait AttributeValue extends Product with Serializable {
     case _                             => None
   }
 
-  def isNull: Boolean = this match {
+  /** True when the value is an "empty" container: empty string, empty list, or empty struct. */
+  def isEmptyValue: Boolean = this match {
     case AttributeValue.StringValue("")             => true
     case AttributeValue.ListValue(Nil)              => true
     case AttributeValue.StructValue(m) if m.isEmpty => true
     case _                                          => false
   }
+
+  @deprecated("isNull tests emptiness, not null-ness; use isEmptyValue", "0.9.2")
+  def isNull: Boolean = isEmptyValue
 }
 
 object AttributeValue {

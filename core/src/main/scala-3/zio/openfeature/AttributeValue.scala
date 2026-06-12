@@ -47,11 +47,15 @@ enum AttributeValue:
     case StructValue(v) => Some(v)
     case _              => None
 
-  def isNull: Boolean = this match
+  /** True when the value is an "empty" container: empty string, empty list, or empty struct. */
+  def isEmptyValue: Boolean = this match
     case StringValue("")             => true
     case ListValue(Nil)              => true
     case StructValue(m) if m.isEmpty => true
     case _                           => false
+
+  @deprecated("isNull tests emptiness, not null-ness; use isEmptyValue", "0.9.2")
+  def isNull: Boolean = isEmptyValue
 
 object AttributeValue:
   def bool(value: Boolean): AttributeValue                      = BoolValue(value)

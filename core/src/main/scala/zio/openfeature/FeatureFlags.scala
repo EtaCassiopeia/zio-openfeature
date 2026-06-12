@@ -188,6 +188,12 @@ trait FeatureFlags {
   def track(eventName: String, context: EvaluationContext): IO[FeatureFlagError, Unit]
   def track(eventName: String, details: TrackingEventDetails): IO[FeatureFlagError, Unit]
   def track(eventName: String, context: EvaluationContext, details: TrackingEventDetails): IO[FeatureFlagError, Unit]
+
+  /** The most recent tracking events recorded by this instance, oldest first.
+    *
+    * The recorder is a bounded test/debug affordance: only the last 1000 events are retained; older events are dropped.
+    * It is not a delivery guarantee mechanism — providers receive every `track` call regardless.
+    */
   def trackedEvents: UIO[List[(String, EvaluationContext, Option[TrackingEventDetails])]]
 }
 

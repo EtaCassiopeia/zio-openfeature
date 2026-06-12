@@ -887,64 +887,61 @@ final private[openfeature] class FeatureFlagsLive(
       state.hooksRef.set(List.empty) *>
       state.globalContextRef.set(EvaluationContext.empty) *>
       state.clientContextRef.set(EvaluationContext.empty) *>
-      state.trackRecorder.set(List.empty) *>
+      state.trackRecorder.set(Chunk.empty) *>
       state.eventHub.shutdown *>
       ZIO.attemptBlocking(api.shutdown()).ignore
 
   // Tracking API
 
   override def track(eventName: String): IO[FeatureFlagError, Unit] =
-    effectiveContext(EvaluationContext.empty).flatMap { merged =>
-      state.trackRecorder.update(_ :+ (eventName, merged, None)) *>
-        ZIO
-          .attemptBlocking {
-            val ofContext = ContextConverter.toOpenFeature(merged)
-            client.track(eventName, ofContext)
-          }
-          .mapError(e => FeatureFlagError.classify(e))
-    }
+    trackImpl(eventName, EvaluationContext.empty, None)
 
   override def track(eventName: String, context: EvaluationContext): IO[FeatureFlagError, Unit] =
-    effectiveContext(context).flatMap { merged =>
-      state.trackRecorder.update(_ :+ (eventName, merged, None)) *>
-        ZIO
-          .attemptBlocking {
-            val ofContext = ContextConverter.toOpenFeature(merged)
-            client.track(eventName, ofContext)
-          }
-          .mapError(e => FeatureFlagError.classify(e))
-    }
+    trackImpl(eventName, context, None)
 
   override def track(eventName: String, details: TrackingEventDetails): IO[FeatureFlagError, Unit] =
-    effectiveContext(EvaluationContext.empty).flatMap { merged =>
-      state.trackRecorder.update(_ :+ (eventName, merged, Some(details))) *>
-        ZIO
-          .attemptBlocking {
-            val ofContext = ContextConverter.toOpenFeature(merged)
-            val ofDetails = toOpenFeatureDetails(details)
-            client.track(eventName, ofContext, ofDetails)
-          }
-          .mapError(e => FeatureFlagError.classify(e))
-    }
+    trackImpl(eventName, EvaluationContext.empty, Some(details))
 
   override def track(
     eventName: String,
     context: EvaluationContext,
     details: TrackingEventDetails
   ): IO[FeatureFlagError, Unit] =
+    trackImpl(eventName, context, Some(details))
+
+  private def trackImpl(
+    eventName: String,
+    context: EvaluationContext,
+    details: Option[TrackingEventDetails]
+  ): IO[FeatureFlagError, Unit] =
     effectiveContext(context).flatMap { merged =>
-      state.trackRecorder.update(_ :+ (eventName, merged, Some(details))) *>
+      recordTrack(eventName, merged, details) *>
         ZIO
           .attemptBlocking {
             val ofContext = ContextConverter.toOpenFeature(merged)
-            val ofDetails = toOpenFeatureDetails(details)
-            client.track(eventName, ofContext, ofDetails)
+            details match {
+              case Some(d) => client.track(eventName, ofContext, toOpenFeatureDetails(d))
+              case None    => client.track(eventName, ofContext)
+            }
           }
           .mapError(e => FeatureFlagError.classify(e))
     }
 
+  // The recorder is bounded: when full, the oldest entries are dropped so long-running apps that
+  // call `track` per request don't accumulate events (and their merged contexts) without limit.
+  private def recordTrack(
+    eventName: String,
+    merged: EvaluationContext,
+    details: Option[TrackingEventDetails]
+  ): UIO[Unit] =
+    state.trackRecorder.update { rec =>
+      val appended = rec :+ ((eventName, merged, details))
+      val overflow = appended.length - FeatureFlagsState.MaxTrackedEvents
+      if (overflow > 0) appended.drop(overflow) else appended
+    }
+
   override def trackedEvents: UIO[List[(String, EvaluationContext, Option[TrackingEventDetails])]] =
-    state.trackRecorder.get
+    state.trackRecorder.get.map(_.toList)
 
   private def toOpenFeatureDetails(details: TrackingEventDetails): MutableTrackingEventDetails = {
     val result = details.value match {

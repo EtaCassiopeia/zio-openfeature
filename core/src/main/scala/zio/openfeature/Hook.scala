@@ -101,6 +101,20 @@ object HookHints {
     HookHints(entries.toMap)
 }
 
+/** A ZIO-level evaluation hook (spec §4).
+  *
+  * '''Error semantics''': every stage returns `UIO` — hooks are infallible by construction and cannot abort an
+  * evaluation. This is an intentional deviation from spec §4.4.6 (which aborts evaluation when a before/after hook
+  * errors): a misbehaving observer (logging, metrics, audit) should never take flag evaluation down with it. Handle
+  * failures inside the hook (`.catchAll`, `.ignoreLogged`, retries) — anything a stage must not crash on has to be
+  * dealt with there, because there is no error channel for the pipeline to react to. Defects (`die`) in a hook will
+  * still propagate and fail the evaluation fiber, so wrap genuinely untrusted code in `ZIO.attempt(...).ignoreLogged`
+  * or similar.
+  *
+  * Provider-level hooks are not modeled here: they run inside the Java SDK evaluation call, per the OpenFeature
+  * architecture (see #167). Java `dev.openfeature.sdk.Hook` instances can be registered at the Java API level via
+  * `FeatureFlags.addApiHook` and likewise run inside the SDK.
+  */
 trait FeatureHook {
 
   /** The set of flag value types this hook supports. Hooks are only invoked for evaluations whose flag type is in this

@@ -211,18 +211,21 @@ final private[openfeature] class FeatureFlagsLive(
     for {
       beforeResult <- composedHook.before(hookCtx, initialHints)
       (effectiveCtx, hints) = beforeResult match {
-        case Some((hookCtx, h)) => (hookCtx, h)
-        case None               => (context, initialHints)
+        case Some((modifiedCtx, h)) => (modifiedCtx, h)
+        case None                   => (context, initialHints)
       }
+      // Per spec §4.3.5-4.3.8, after/error/finally stages must observe the evaluation
+      // context as modified by the before hooks, not the original one.
+      stageCtx = hookCtx.copy(evaluationContext = effectiveCtx)
       resultRef <- Ref.make[Option[FlagResolution[_]]](None)
       result <- evaluate(effectiveCtx)
         .tap(res => resultRef.set(Some(res)))
         .tapBoth(
-          err => composedHook.error(hookCtx, err, hints),
-          res => composedHook.after(hookCtx, res, hints)
+          err => composedHook.error(stageCtx, err, hints),
+          res => composedHook.after(stageCtx, res, hints)
         )
         .ensuring(
-          resultRef.get.flatMap(details => composedHook.finallyAfter(hookCtx, details, hints)).ignore
+          resultRef.get.flatMap(details => composedHook.finallyAfter(stageCtx, details, hints)).ignore
         )
     } yield result
   }

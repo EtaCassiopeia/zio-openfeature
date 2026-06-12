@@ -235,7 +235,9 @@ final private[openfeature] class FeatureFlagsLive(
       case ProviderStatus.Fatal    => ZIO.fail(FeatureFlagError.ProviderFatal)
       case ProviderStatus.NotReady => ZIO.fail(FeatureFlagError.ProviderNotReady(ProviderStatus.NotReady))
       case ProviderStatus.Error    => ZIO.fail(FeatureFlagError.ProviderNotReady(ProviderStatus.Error))
-      case _                       => Exit.unit
+      case ProviderStatus.ShuttingDown =>
+        ZIO.fail(FeatureFlagError.ProviderNotReady(ProviderStatus.ShuttingDown))
+      case _ => Exit.unit
     }
 
   // Context is already merged by evaluateWithDetails before entering the hook pipeline
@@ -883,13 +885,17 @@ final private[openfeature] class FeatureFlagsLive(
   // Shutdown API (spec 1.6.1, 1.6.2)
 
   override def shutdown: UIO[Unit] =
-    state.statusRef.set(ProviderStatus.NotReady) *>
+    // ShuttingDown rejects evaluations for the duration of the teardown (checkProviderStatus);
+    // the terminal state after teardown is NotReady.
+    state.statusRef.set(ProviderStatus.ShuttingDown) *>
       state.hooksRef.set(List.empty) *>
+      state.zioApiHooksRef.set(List.empty) *>
       state.globalContextRef.set(EvaluationContext.empty) *>
       state.clientContextRef.set(EvaluationContext.empty) *>
       state.trackRecorder.set(Chunk.empty) *>
       state.eventHub.shutdown *>
-      ZIO.attemptBlocking(api.shutdown()).ignore
+      ZIO.attemptBlocking(api.shutdown()).ignore *>
+      state.statusRef.set(ProviderStatus.NotReady)
 
   // Tracking API
 

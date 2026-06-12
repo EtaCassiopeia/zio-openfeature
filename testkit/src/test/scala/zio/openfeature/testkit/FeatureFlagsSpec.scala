@@ -646,6 +646,33 @@ object FeatureFlagsSpec extends ZIOSpecDefault {
           after  <- FeatureFlags.clientContext
         } yield assertTrue(before.targetingKey.contains("client-user")) &&
           assertTrue(after.isEmpty)
+      }.provide(testLayer()),
+      test("shutdown clears ZIO API-level hooks") {
+        val hook = FeatureHook.noop
+        for {
+          _      <- FeatureFlags.addZioApiHook(hook)
+          before <- FeatureFlags.zioApiHooks
+          _      <- FeatureFlags.shutdown
+          after  <- FeatureFlags.zioApiHooks
+        } yield assertTrue(before.length == 1) &&
+          assertTrue(after.isEmpty)
+      }.provide(testLayer()),
+      test("shutdown ends in NotReady and evaluations fail afterwards") {
+        for {
+          _      <- FeatureFlags.shutdown
+          status <- FeatureFlags.providerStatus
+          result <- FeatureFlags.boolean("flag", default = false).exit
+        } yield assertTrue(status == ProviderStatus.NotReady) &&
+          assertTrue(result.isFailure)
+      }.provide(testLayer()),
+      test("evaluations are rejected while status is ShuttingDown") {
+        for {
+          testProvider <- ZIO.service[TestFeatureProvider]
+          _            <- testProvider.setStatus(ProviderStatus.ShuttingDown)
+          result       <- FeatureFlags.boolean("flag", default = false).exit
+        } yield assert(result)(
+          Assertion.fails(Assertion.equalTo(FeatureFlagError.ProviderNotReady(ProviderStatus.ShuttingDown)))
+        )
       }.provide(testLayer())
     ),
     suite("Provider Fatal Guard")(

@@ -592,6 +592,19 @@ object FeatureFlagsSpec extends ZIOSpecDefault {
           assertTrue(events(2)._3.exists(_.value.contains(1.0))) &&
           assertTrue(events(3)._3.exists(_.value.contains(2.0)))
       }.provide(testLayer()),
+      test("trackedEvents recorder is bounded and drops oldest events") {
+        val max   = zio.openfeature.internal.FeatureFlagsState.MaxTrackedEvents
+        val total = max + 10
+        for {
+          _      <- ZIO.foreachDiscard(1 to total)(i => FeatureFlags.track(s"event-$i"))
+          events <- FeatureFlags.trackedEvents
+        } yield assertTrue(
+          events.size == max,
+          // The 10 oldest events were dropped; the window starts at event-11.
+          events.headOption.map(_._1).contains(s"event-${total - max + 1}"),
+          events.lastOption.map(_._1).contains(s"event-$total")
+        )
+      }.provide(testLayer()),
       test("TrackingEventDetails builder methods work") {
         val details = TrackingEventDetails.empty
           .withValue(50.0)

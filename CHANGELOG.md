@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **`trackedEvents` is bounded to the last 1000 events** (oldest dropped). The recorder previously grew without
+  limit, leaking memory in long-running apps that call `track` per request; it is a test/debug affordance —
+  providers still receive every `track` call. (#174)
+
 ### Fixed
 
 - **Nested `Instant` attributes survive the SDK round-trip.** Instants inside lists and structs were converted to

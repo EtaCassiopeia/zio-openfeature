@@ -146,6 +146,32 @@ object ValueRoundTripSpec extends ZIOSpecDefault {
         }
       }
     },
+    test("top-level InstantValue round-trips as InstantValue") {
+      check(Gen.instant(java.time.Instant.EPOCH, java.time.Instant.parse("2100-01-01T00:00:00Z"))) { i =>
+        roundTrip(AttributeValue.InstantValue(i)) match {
+          case AttributeValue.InstantValue(v) => assertTrue(v == i)
+          case other                          => assertTrue(false: Boolean) ?? s"expected InstantValue($i), got $other"
+        }
+      }
+    },
+    test("InstantValue nested in a struct round-trips as InstantValue (regression: was stringified)") {
+      check(Gen.instant(java.time.Instant.EPOCH, java.time.Instant.parse("2100-01-01T00:00:00Z"))) { i =>
+        roundTrip(AttributeValue.StructValue(Map("when" -> AttributeValue.InstantValue(i)))) match {
+          case AttributeValue.StructValue(fields) =>
+            assertTrue(fields("when").asInstant.contains(i)) ?? s"got ${fields("when")}"
+          case other => assertTrue(false: Boolean) ?? s"expected StructValue, got $other"
+        }
+      }
+    },
+    test("InstantValue nested in a list round-trips as InstantValue (regression: was stringified)") {
+      check(Gen.instant(java.time.Instant.EPOCH, java.time.Instant.parse("2100-01-01T00:00:00Z"))) { i =>
+        roundTrip(AttributeValue.ListValue(List(AttributeValue.InstantValue(i)))) match {
+          case AttributeValue.ListValue(items) =>
+            assertTrue(items.headOption.flatMap(_.asInstant).contains(i)) ?? s"got $items"
+          case other => assertTrue(false: Boolean) ?? s"expected ListValue, got $other"
+        }
+      }
+    },
     test("EvaluationContext with targetingKey + mixed attributes round-trips") {
       val ctxGen: Gen[Any, EvaluationContext] = for {
         tk <- Gen.option(nonEmptyString)

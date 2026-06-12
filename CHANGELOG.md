@@ -15,6 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`HoconProvider` reports spec-correct error codes.** A config value of the wrong type now surfaces as
+  `TYPE_MISMATCH` and an unparseable value as `PARSE_ERROR`, instead of a GENERAL error wrapping a
+  `ConfigException`. (#188)
 - **`shutdown` clears ZIO API-level hooks and rejects in-flight evaluations.** API-level hooks (added via
   `addZioApiHook`) previously survived shutdown, and the `ShuttingDown` status was unreachable; shutdown now
   transitions through `ShuttingDown` (evaluations fail with `ProviderNotReady(ShuttingDown)`) and ends at

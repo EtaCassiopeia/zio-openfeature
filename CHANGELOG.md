@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Hook stages observe the context modified by before hooks.** The `after`, `error`, and `finallyAfter` stages
+  previously received the pre-`before` evaluation context, so hooks logging or tagging by context saw different
+  attributes than the evaluation actually used (spec §4.3.5–4.3.8). (#178)
+
 ## [0.9.1] — 2026-06-04
 
 ### Fixed

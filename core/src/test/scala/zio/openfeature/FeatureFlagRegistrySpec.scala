@@ -196,6 +196,72 @@ object FeatureFlagRegistrySpec extends ZIOSpecDefault {
         )
       }
     },
+    test("getClient for one domain is not blocked by a slow provider init in another (#182)") {
+      ZIO.scoped {
+        val slowStarted     = new java.util.concurrent.CountDownLatch(1)
+        val slowGate        = new java.util.concurrent.CountDownLatch(1)
+        val defaultProvider = new SimpleProvider("Default", Map("flag" -> "fast"))
+        val slowProvider = new SimpleProvider("Slow", Map("flag" -> "slow")) {
+          override def initialize(ctx: OFEvaluationContext): Unit = {
+            slowStarted.countDown()
+            slowGate.await() // hold the build until the fast domain has been served
+          }
+        }
+        for {
+          registry  <- registryLayer(defaultProvider).build.map(_.get[FeatureFlagRegistry])
+          _         <- registry.setProvider("slow", slowProvider)
+          slowFiber <- registry.getClient("slow").fork
+          // Ensure the slow build is actually in flight before asking for the fast domain
+          _    <- ZIO.attemptBlocking(slowStarted.await()).orDie
+          fast <- registry.getClient("fast") // must complete while "slow" is still initializing
+          v    <- fast.string("flag", default = "none")
+          _    <- ZIO.succeed(slowGate.countDown())
+          slow <- slowFiber.join
+          v2   <- slow.string("flag", default = "none")
+        } yield assertTrue(v == "fast", v2 == "slow")
+      }
+    },
+    test("concurrent getClient calls for the same domain build the client exactly once (#182)") {
+      ZIO.scoped {
+        val initCount = new java.util.concurrent.atomic.AtomicInteger(0)
+        val provider = new SimpleProvider("Counting", Map("flag" -> true)) {
+          override def initialize(ctx: OFEvaluationContext): Unit = {
+            initCount.incrementAndGet()
+            Thread.sleep(50) // widen the race window
+          }
+        }
+        for {
+          registry <- registryLayer(provider).build.map(_.get[FeatureFlagRegistry])
+          clientsR <- ZIO.collectAllPar((1 to 8).map(_ => registry.getClient("same")))
+        } yield assertTrue(
+          initCount.get() == 1,
+          clientsR.distinct.size == 1
+        )
+      }
+    },
+    test("failed init surfaces as a typed error and a later getClient can retry (#182)") {
+      ZIO.scoped {
+        val defaultProvider = new SimpleProvider("Default", Map("flag" -> "default"))
+        val failingProvider = new SimpleProvider("Failing", Map.empty) {
+          override def initialize(ctx: OFEvaluationContext): Unit =
+            throw new RuntimeException("boom")
+        }
+        val goodProvider = new SimpleProvider("Good", Map("flag" -> "good"))
+        for {
+          registry <- registryLayer(defaultProvider).build.map(_.get[FeatureFlagRegistry])
+          _        <- registry.setProvider("retryable", failingProvider)
+          first    <- registry.getClient("retryable").either
+          // The failed build is not memoized: register a working provider and retry
+          _      <- registry.setProvider("retryable", goodProvider)
+          client <- registry.getClient("retryable")
+          v      <- client.string("flag", default = "none")
+        } yield assertTrue(
+          first.isLeft,
+          first.left.exists(_.isInstanceOf[FeatureFlagError.ProviderInitializationFailed]),
+          v == "good"
+        )
+      }
+    },
     test("provider metadata reflects the domain provider") {
       ZIO.scoped {
         val defaultProvider = new SimpleProvider("Default", Map.empty)

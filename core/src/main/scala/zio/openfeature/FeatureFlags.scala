@@ -134,9 +134,16 @@ trait FeatureFlags {
   def clientMetadata: UIO[ClientMetadata]
 
   // Event Handlers - return a cancellation effect
+  //
+  // Delivery semantics: the event subscription is established before the registration effect returns, so no event
+  // published afterwards is lost. Handlers with an "associated state" (ready/error/stale) also run immediately when
+  // the provider is already in that state (spec 5.3.3); an event arriving during registration may therefore invoke
+  // the handler twice — delivery is at-least-once and handlers should be idempotent.
+
   /** Register a handler for provider ready events. Returns a cancellation effect.
     *
-    * Per OpenFeature spec 5.2.1 and 5.2.7, handlers can be registered and removed.
+    * Per OpenFeature spec 5.2.1 and 5.2.7, handlers can be registered and removed. Delivery is at-least-once — see the
+    * note on event handlers above.
     */
   def onProviderReady(handler: ProviderMetadata => UIO[Unit]): UIO[UIO[Unit]]
 
@@ -181,6 +188,15 @@ trait FeatureFlags {
   def setProvider(provider: OFFeatureProvider): IO[FeatureFlagError, Unit]
 
   // Shutdown API (spec 1.6.1)
+
+  /** Shut down this instance (spec 1.6.1, 1.6.2).
+    *
+    * The status transitions to `ShuttingDown` for the duration of the teardown (evaluations started in that window fail
+    * with `ProviderNotReady(ShuttingDown)`) and ends at `NotReady`. Client-level and ZIO API-level hooks, the global
+    * and client contexts, and the tracked-events recorder are cleared; the event hub is shut down and the underlying
+    * OpenFeature API (and with it the provider) is shut down. Fiber-local context and any in-flight transaction state
+    * are fiber-scoped and unaffected.
+    */
   def shutdown: UIO[Unit]
 
   // Tracking API
@@ -188,6 +204,12 @@ trait FeatureFlags {
   def track(eventName: String, context: EvaluationContext): IO[FeatureFlagError, Unit]
   def track(eventName: String, details: TrackingEventDetails): IO[FeatureFlagError, Unit]
   def track(eventName: String, context: EvaluationContext, details: TrackingEventDetails): IO[FeatureFlagError, Unit]
+
+  /** The most recent tracking events recorded by this instance, oldest first.
+    *
+    * The recorder is a bounded test/debug affordance: only the last 1000 events are retained; older events are dropped.
+    * It is not a delivery guarantee mechanism — providers receive every `track` call regardless.
+    */
   def trackedEvents: UIO[List[(String, EvaluationContext, Option[TrackingEventDetails])]]
 }
 
@@ -457,16 +479,23 @@ object FeatureFlags {
   ): ZIO[Scope, Throwable, FeatureFlagsLive] =
     for {
       api <- ZIO.succeed(apiOverride.getOrElse(OpenFeatureAPI.getInstance()))
+      // Register the API shutdown finalizer BEFORE initiating provider registration. If init times out,
+      // the provider reports a bad state, or getClient fails, the scope close still tears down whatever
+      // the (possibly still-running, disconnected) setProviderAndWait managed to register.
+      _ <- ZIO.when(addShutdownFinalizer)(ZIO.addFinalizer(ZIO.attemptBlocking(api.shutdown()).ignore))
       setAndWait = domain match {
         case Some(d) => ZIO.attemptBlocking(api.setProviderAndWait(d, provider))
         case None    => ZIO.attemptBlocking(api.setProviderAndWait(provider))
       }
       // Bound the blocking init. `.disconnect` ensures the timeout returns promptly even though
       // `attemptBlocking` runs on the blocking pool; the underlying call may still run to completion
-      // in the background and is handled by the Java SDK / addShutdownFinalizer path.
-      _ <- setAndWait.disconnect
-        .timeoutFail(new TimeoutException(s"Provider initialization exceeded $initTimeout"))(initTimeout)
-      verified <- verifyInitState(provider)
+      // in the background. On any init failure the provider itself is shut down (best-effort) so it
+      // doesn't keep threads/connections alive — this also covers the domain/registry paths where no
+      // API finalizer is registered.
+      verified <- (setAndWait.disconnect
+        .timeoutFail(new TimeoutException(s"Provider initialization exceeded $initTimeout"))(initTimeout) *>
+        verifyInitState(provider))
+        .tapError(_ => ZIO.attemptBlocking(provider.shutdown()).ignore)
       client <- (domain, version) match {
         case (Some(d), Some(v)) => ZIO.attempt(api.getClient(d, v))
         case (Some(d), None)    => ZIO.attempt(api.getClient(d))
@@ -481,7 +510,6 @@ object FeatureFlags {
       _ <- state.hooksRef.set(initialHooks)
       // Only seed status when the caller didn't hand us a shared ref (testkit shares one).
       _ <- statusRef.fold(state.statusRef.set(verified))(_ => ZIO.unit)
-      _ <- ZIO.when(addShutdownFinalizer)(ZIO.addFinalizer(ZIO.attemptBlocking(api.shutdown()).ignore))
       ff = new FeatureFlagsLive(
         client,
         providerRef,
@@ -659,6 +687,9 @@ object FeatureFlags {
   ): ZIO[Scope, Throwable, FeatureFlagsLive] =
     for {
       api <- ZIO.succeed(apiOverride.getOrElse(OpenFeatureAPI.getInstance()))
+      // Register the API shutdown finalizer BEFORE the provider, so a failure later in the build
+      // (e.g. getClient) still tears down the registered provider when the scope closes.
+      _ <- ZIO.when(addShutdownFinalizer)(ZIO.addFinalizer(ZIO.attemptBlocking(api.shutdown()).ignore))
       // Register provider FIRST so the client binds to it (not the NoOp default)
       _ <- domain match {
         case Some(d) => ZIO.succeed(api.setProvider(d, provider))
@@ -676,7 +707,6 @@ object FeatureFlags {
       baseState       <- FeatureFlagsState.make
       state = statusRef.fold(baseState)(ref => baseState.copy(statusRef = ref))
       _ <- state.hooksRef.set(initialHooks)
-      _ <- ZIO.when(addShutdownFinalizer)(ZIO.addFinalizer(ZIO.attemptBlocking(api.shutdown()).ignore))
       ff = new FeatureFlagsLive(
         client,
         providerRef,

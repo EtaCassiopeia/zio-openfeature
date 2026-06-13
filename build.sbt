@@ -100,7 +100,9 @@ lazy val commonSettings = Seq(
 ) ++ crossVersionSourceDirs
 
 lazy val root = (project in file("."))
-  .aggregate(core, testkit, extras, ofrep, optimizely, conformance)
+  // `conformance` is intentionally NOT aggregated: it is Scala 3 only, so aggregating it would make `++2.13.16 test`
+  // try (and fail) to compile it. CI runs it explicitly on Scala 3 (see ci.yml), the same way `examples` are handled.
+  .aggregate(core, testkit, extras, ofrep, optimizely)
   .settings(
     name                           := "zio-openfeature",
     publish / skip                 := true,

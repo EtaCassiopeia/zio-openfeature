@@ -302,8 +302,14 @@ object CircuitBreakerProviderSpec extends ZIOSpecDefault {
       test("closes when delegate recovers to READY") {
         val underlying = new FailableProvider(Map("flag" -> true))
         val clock      = new TestClock()
-        val config     = CircuitBreakerProviderConfig(failureThreshold = 2, resetTimeout = 1.minute)
-        val cb         = CircuitBreakerProvider(underlying, config, clock)
+        // stateCheckInterval = Zero: this test needs the delegate state observed on every call
+        val config =
+          CircuitBreakerProviderConfig(
+            failureThreshold = 2,
+            resetTimeout = 1.minute,
+            stateCheckInterval = Duration.Zero
+          )
+        val cb = CircuitBreakerProvider(underlying, config, clock)
         // Trip via state
         underlying.setState(ProviderState.ERROR)
         val tryResult       = scala.util.Try(cb.getBooleanEvaluation("flag", false, ctx))
@@ -342,8 +348,108 @@ object CircuitBreakerProviderSpec extends ZIOSpecDefault {
         // First call allowed as probe
         val result = cb.getBooleanEvaluation("flag", false, ctx)
         assertTrue(result.getValue == true)
+      },
+      test("delegate getState polling is bounded by stateCheckInterval, not evaluation count") {
+        val stateChecks = new java.util.concurrent.atomic.AtomicInteger(0)
+        val underlying = new FailableProvider(Map("flag" -> true)) {
+          override def getState: ProviderState = {
+            stateChecks.incrementAndGet()
+            super.getState
+          }
+        }
+        val clock  = new TestClock()
+        val config = CircuitBreakerProviderConfig(stateCheckInterval = 1.second)
+        val cb     = CircuitBreakerProvider(underlying, config, clock)
+        // 10 evaluations inside one interval: only the first polls the delegate state
+        (1 to 10).foreach(_ => cb.getBooleanEvaluation("flag", false, ctx))
+        val checksWithinInterval = stateChecks.get()
+        // Advancing past the interval re-enables exactly one more poll
+        clock.advance(2.seconds)
+        (1 to 10).foreach(_ => cb.getBooleanEvaluation("flag", false, ctx))
+        val checksAfterAdvance = stateChecks.get()
+        assertTrue(checksWithinInterval == 1) &&
+        assertTrue(checksAfterAdvance == 2) &&
+        assertTrue(underlying.evaluationCount.get() == 20)
+      },
+      test("stateCheckInterval Zero polls delegate state on every evaluation") {
+        val stateChecks = new java.util.concurrent.atomic.AtomicInteger(0)
+        val underlying = new FailableProvider(Map("flag" -> true)) {
+          override def getState: ProviderState = {
+            stateChecks.incrementAndGet()
+            super.getState
+          }
+        }
+        val config = CircuitBreakerProviderConfig(stateCheckInterval = Duration.Zero)
+        val cb     = CircuitBreakerProvider(underlying, config)
+        (1 to 5).foreach(_ => cb.getBooleanEvaluation("flag", false, ctx))
+        assertTrue(stateChecks.get() == 5)
       }
     ),
+    suite("Delegate event propagation (#176)")(
+      test("delegate PROVIDER_ERROR event trips the circuit without an evaluation failure") {
+        // Asserts on the breaker directly: evaluating would re-poll the delegate's (READY) state,
+        // which legitimately resets an externally-opened circuit.
+        class EmittingProvider extends FailableProvider(Map("flag" -> true)) {
+          def fireError(): Unit = {
+            emitProviderError(dev.openfeature.sdk.ProviderEventDetails.builder().message("boom").build())
+            ()
+          }
+        }
+        val underlying = new EmittingProvider
+        val cb         = CircuitBreakerProvider(underlying)
+        for {
+          _ <- ZIO.attemptBlocking(cb.initialize(ctx))
+          _ <- ZIO.succeed(underlying.fireError())
+          // Emission is async; poll until the breaker opens
+          _ <- ZIO
+            .succeed(cb.breaker.isOpen)
+            .repeatUntil(identity)
+            .timeoutFail(new RuntimeException("circuit never opened from delegate event"))(10.seconds)
+        } yield assertTrue(cb.breaker.isOpen, underlying.evaluationCount.get() == 0)
+      },
+      test("delegate PROVIDER_READY event closes an externally-opened circuit") {
+        class EmittingProvider extends FailableProvider(Map("flag" -> true)) {
+          def fireError(): Unit = { emitProviderError(dev.openfeature.sdk.ProviderEventDetails.builder().build()); () }
+          def fireReady(): Unit = { emitProviderReady(dev.openfeature.sdk.ProviderEventDetails.builder().build()); () }
+        }
+        val underlying = new EmittingProvider
+        val cb         = CircuitBreakerProvider(underlying)
+        for {
+          _ <- ZIO.attemptBlocking(cb.initialize(ctx))
+          _ <- ZIO.succeed(underlying.fireError())
+          _ <- ZIO
+            .succeed(cb.breaker.isOpen)
+            .repeatUntil(identity)
+            .timeoutFail(new RuntimeException("circuit never opened"))(10.seconds)
+          _ <- ZIO.succeed(underlying.fireReady())
+          _ <- ZIO
+            .succeed(cb.breaker.isClosed)
+            .repeatUntil(identity)
+            .timeoutFail(new RuntimeException("circuit never closed after recovery event"))(10.seconds)
+          result <- ZIO.attemptBlocking(cb.getBooleanEvaluation("flag", false, ctx))
+        } yield assertTrue(result.getValue == true)
+      },
+      test("delegate events are re-emitted through the wrapper") {
+        class EmittingProvider extends FailableProvider(Map("flag" -> true)) {
+          def fireConfigChanged(): Unit = {
+            emitProviderConfigurationChanged(dev.openfeature.sdk.ProviderEventDetails.builder().build())
+            ()
+          }
+        }
+        val underlying = new EmittingProvider
+        val cb         = CircuitBreakerProvider(underlying)
+        val seen       = new java.util.concurrent.ConcurrentLinkedQueue[dev.openfeature.sdk.ProviderEvent]()
+        for {
+          _ <- ZIO.succeed(dev.openfeature.sdk.EventProviderBridge.attach(cb, (e, _) => { seen.add(e); () }))
+          _ <- ZIO.attemptBlocking(cb.initialize(ctx))
+          _ <- ZIO.succeed(underlying.fireConfigChanged())
+          _ <- ZIO
+            .succeed(seen.contains(dev.openfeature.sdk.ProviderEvent.PROVIDER_CONFIGURATION_CHANGED))
+            .repeatUntil(identity)
+            .timeoutFail(new RuntimeException("delegate event was not re-emitted"))(10.seconds)
+        } yield assertTrue(seen.contains(dev.openfeature.sdk.ProviderEvent.PROVIDER_CONFIGURATION_CHANGED))
+      }
+    ) @@ TestAspect.withLiveClock,
     suite("Lifecycle")(
       test("metadata includes underlying provider name") {
         val underlying = new FailableProvider()

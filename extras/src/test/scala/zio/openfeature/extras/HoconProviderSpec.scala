@@ -77,6 +77,41 @@ object HoconProviderSpec extends ZIOSpecDefault {
         assertTrue(list.map(_.asInteger().intValue()) == List(2, 3, 5, 7))
       }
     ),
+    suite("error codes (spec 7.3.6)")(
+      test("wrong-typed value evaluated as boolean throws TypeMismatchError") {
+        val result = ZIO.attempt(provider.getBooleanEvaluation("welcome-message", false, ctx)).exit
+        result.map { exit =>
+          assertTrue(exit.isFailure) &&
+          assertTrue(exit.causeOption.flatMap(_.failureOption).exists {
+            case e: dev.openfeature.sdk.exceptions.OpenFeatureError =>
+              e.getErrorCode == dev.openfeature.sdk.ErrorCode.TYPE_MISMATCH
+            case _ => false
+          })
+        }
+      },
+      test("wrong-typed value evaluated as int throws TypeMismatchError") {
+        val result = ZIO.attempt(provider.getIntegerEvaluation("new-checkout", 0, ctx)).exit
+        result.map { exit =>
+          assertTrue(exit.isFailure) &&
+          assertTrue(exit.causeOption.flatMap(_.failureOption).exists {
+            case e: dev.openfeature.sdk.exceptions.OpenFeatureError =>
+              e.getErrorCode == dev.openfeature.sdk.ErrorCode.TYPE_MISMATCH
+            case _ => false
+          })
+        }
+      },
+      test("wrong-typed value evaluated as double throws TypeMismatchError") {
+        val result = ZIO.attempt(provider.getDoubleEvaluation("welcome-message", 0.0, ctx)).exit
+        result.map { exit =>
+          assertTrue(exit.isFailure) &&
+          assertTrue(exit.causeOption.flatMap(_.failureOption).exists {
+            case e: dev.openfeature.sdk.exceptions.OpenFeatureError =>
+              e.getErrorCode == dev.openfeature.sdk.ErrorCode.TYPE_MISMATCH
+            case _ => false
+          })
+        }
+      }
+    ),
     suite("metadata")(
       test("provider name is HoconProvider") {
         assertTrue(provider.getMetadata.getName == "HoconProvider")

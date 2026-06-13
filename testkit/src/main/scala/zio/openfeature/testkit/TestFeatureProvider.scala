@@ -219,24 +219,24 @@ final class TestFeatureProvider private (
 
   /** Set the provider status. For async test layers, setting Ready releases the init latch and waits for the Java SDK's
     * background `initialize()` thread to complete, ensuring the provider is fully ready before returning.
+    *
+    * The wait runs on the blocking pool with a bounded timeout: an unbounded `await` on a runtime thread could starve
+    * the ZIO runtime (and hang the whole suite) if the SDK never delivers PROVIDER_READY. On timeout this dies with a
+    * descriptive error instead — a fast, diagnosable failure.
     */
   def setStatus(status: ProviderStatus): UIO[Unit] =
-    statusRef.set(status) *> ZIO.succeed {
-      status match {
-        case ProviderStatus.Ready =>
+    statusRef.set(status) *> (status match {
+      case ProviderStatus.Ready =>
+        ZIO.succeed {
           state.set(ProviderState.READY)
           initLatch.foreach(_.countDown())
-          // Wait for the event bridge to receive PROVIDER_READY from the Java SDK.
-          // This confirms the SDK has fully processed the initialization and the
-          // provider is registered as ready — no sleep needed.
-          initDone.foreach(_.await())
-        case ProviderStatus.NotReady     => state.set(ProviderState.NOT_READY)
-        case ProviderStatus.Error        => state.set(ProviderState.ERROR)
-        case ProviderStatus.Stale        => state.set(ProviderState.STALE)
-        case ProviderStatus.Fatal        => state.set(ProviderState.FATAL)
-        case ProviderStatus.ShuttingDown => state.set(ProviderState.NOT_READY)
-      }
-    }
+        } *> TestFeatureProvider.awaitLatch(initDone, "PROVIDER_READY after setStatus(Ready)")
+      case ProviderStatus.NotReady     => ZIO.succeed(state.set(ProviderState.NOT_READY))
+      case ProviderStatus.Error        => ZIO.succeed(state.set(ProviderState.ERROR))
+      case ProviderStatus.Stale        => ZIO.succeed(state.set(ProviderState.STALE))
+      case ProviderStatus.Fatal        => ZIO.succeed(state.set(ProviderState.FATAL))
+      case ProviderStatus.ShuttingDown => ZIO.succeed(state.set(ProviderState.NOT_READY))
+    })
 
   /** Get the current status. */
   def getStatus: UIO[ProviderStatus] =
@@ -350,6 +350,23 @@ final class TestFeatureProvider private (
 
 object TestFeatureProvider {
 
+  /** Upper bound on waits for Java SDK event delivery. Generous — the SDK dispatch is normally milliseconds — but
+    * bounded so a missing event fails the test quickly and descriptively instead of hanging the suite.
+    */
+  private val SdkEventTimeout: Duration = 30.seconds
+
+  /** Await a CountDownLatch on the blocking pool with a bounded timeout; dies descriptively on expiry. */
+  private def awaitLatch(latch: Option[CountDownLatch], what: String): UIO[Unit] =
+    ZIO.foreachDiscard(latch) { l =>
+      ZIO.attemptBlocking {
+        if (!l.await(SdkEventTimeout.toMillis, java.util.concurrent.TimeUnit.MILLISECONDS))
+          throw new IllegalStateException(
+            s"TestFeatureProvider timed out after $SdkEventTimeout waiting for $what; " +
+              "the Java SDK never delivered the event"
+          )
+      }.orDie
+    }
+
   // Behavior Controls — types
 
   private[testkit] case class BehaviorConfig(
@@ -424,24 +441,52 @@ object TestFeatureProvider {
     ZLayer
       .scoped {
         for {
-          testProvider <- make(flags)
+          testProvider <- makeReadyWithInitDone(flags)
           api    = OpenFeatureAPIFactory.create()
           domain = s"test-${java.util.UUID.randomUUID()}"
           featureFlags <- FeatureFlags
-            .fromProviderWithDomain(testProvider, domain, testProvider.statusRef, api = Some(api))
+            .fromProviderWithDomain(
+              testProvider,
+              domain,
+              testProvider.statusRef,
+              api = Some(api),
+              onReady = testProvider.initDone
+            )
             .build
             .map(_.get)
-          // The Java SDK dispatches an initial PROVIDER_READY event asynchronously when
-          // handlers are registered on an already-ready provider. Wait briefly for this
-          // event to settle so that subsequent setStatus() calls in tests are not overwritten.
-          // Use the live clock to avoid blocking on ZIO's TestClock.
-          _ <- ZIO.attemptBlocking(Thread.sleep(50)).ignore
+          // The Java SDK dispatches an initial PROVIDER_READY event asynchronously when handlers are
+          // registered on an already-ready provider. The event bridge counts down `initDone` when that
+          // replay arrives — a deterministic handshake (formerly a fixed 50ms sleep) ensuring subsequent
+          // setStatus() calls in tests are not overwritten by the late replay.
+          _ <- awaitLatch(testProvider.initDone, "initial PROVIDER_READY replay during layer construction")
         } yield (testProvider, featureFlags)
       }
       .flatMap { env =>
         val (testProvider, featureFlags) = env.get[(TestFeatureProvider, FeatureFlags)]
         ZLayer.succeed(testProvider) ++ ZLayer.succeed(featureFlags)
       }
+
+  /** Like [[make]], but in Ready state with an `initDone` latch wired for the sync layer's PROVIDER_READY handshake. */
+  private def makeReadyWithInitDone(initialFlags: Map[String, Any]): UIO[TestFeatureProvider] =
+    for {
+      eventsHub <- Hub.unbounded[ProviderEvent]
+      statusRef <- Ref.make[ProviderStatus](ProviderStatus.Ready)
+      provider <- ZIO.succeed {
+        val flags = new ConcurrentHashMap[String, Any]()
+        initialFlags.foreach { case (k, v) => flags.put(k, v) }
+        val state       = new AtomicReference[ProviderState](ProviderState.READY)
+        val evaluations = new CopyOnWriteArrayList[(String, OFEvaluationContext)]()
+        new TestFeatureProvider(
+          flags,
+          state,
+          evaluations,
+          eventsHub,
+          statusRef,
+          initLatch = None,
+          initDone = Some(new CountDownLatch(1))
+        )
+      }
+    } yield provider
 
   /** Create just the TestFeatureProvider layer (without FeatureFlags). */
   def providerLayer: ULayer[TestFeatureProvider] =

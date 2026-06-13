@@ -14,7 +14,7 @@ import dev.openfeature.sdk.{
   Structure,
   Value
 }
-import java.util.concurrent.atomic.{AtomicBoolean, AtomicInteger, AtomicReference}
+import java.util.concurrent.atomic.{AtomicInteger, AtomicReference}
 import java.util.concurrent.{CountDownLatch, TimeUnit}
 import scala.jdk.CollectionConverters._
 import scala.util.Try
@@ -52,10 +52,13 @@ final class OptimizelyFeatureProvider private[optimizely] (
   // Public construction is via the OptimizelyProvider factory in this package — the constructor is private to keep
   // lifecycle invariants (single initialize, registered handler) intact.
 
+  import OptimizelyFeatureProvider.Lifecycle
+
   private val stateRef           = new AtomicReference[ProviderState](ProviderState.NOT_READY)
-  private val initialized        = new AtomicBoolean(false)
+  private val lifecycle          = new AtomicReference[Lifecycle](Lifecycle.Fresh)
   private val notificationHandle = new AtomicInteger(-1)
-  private val initLatch          = new CountDownLatch(1)
+  // Replaced on re-initialization (caller-managed clients only); each init cycle gets a single-use latch.
+  private val initLatchRef = new AtomicReference(new CountDownLatch(1))
 
   @scala.annotation.nowarn("msg=deprecated")
   override def getMetadata: Metadata = new Metadata {
@@ -66,7 +69,27 @@ final class OptimizelyFeatureProvider private[optimizely] (
   override def getState: ProviderState = stateRef.get()
 
   override def initialize(ctx: OFEvaluationContext): Unit = {
-    if (!initialized.compareAndSet(false, true)) return
+    // Lifecycle transitions: Fresh -> Initialized (first init), Initialized -> no-op (idempotent),
+    // ShutDown -> Initialized only for caller-managed clients (closeOnShutdown = false). A provider whose
+    // client was closed on shutdown cannot be revived — fail loudly instead of silently never becoming
+    // READY (the Java SDK treats a non-throwing initialize as success, so a silent no-op here would leave
+    // every subsequent evaluation failing with PROVIDER_NOT_READY far from the cause).
+    val transitioned =
+      lifecycle.compareAndSet(Lifecycle.Fresh, Lifecycle.Initialized) || {
+        if (lifecycle.get() == Lifecycle.ShutDown) {
+          if (closeOnShutdown)
+            throw new IllegalStateException(
+              "OptimizelyFeatureProvider was shut down and its Optimizely client closed; create a new instance via OptimizelyProvider.make"
+            )
+          else if (lifecycle.compareAndSet(Lifecycle.ShutDown, Lifecycle.Initialized)) {
+            initLatchRef.set(new CountDownLatch(1)) // fresh single-use latch for this init cycle
+            true
+          } else false
+        } else false
+      }
+    if (!transitioned) return
+
+    val initLatch = initLatchRef.get()
 
     val handlerId = optimizely.addUpdateConfigNotificationHandler { _ =>
       // The latch is single-use; subsequent updates are CONFIGURATION_CHANGED only.
@@ -103,6 +126,7 @@ final class OptimizelyFeatureProvider private[optimizely] (
   }
 
   override def shutdown(): Unit = {
+    lifecycle.set(Lifecycle.ShutDown)
     val handle = notificationHandle.getAndSet(-1)
     if (handle > 0) {
       // Removing the handler is best-effort; if the notification center is already shut down we ignore.
@@ -294,6 +318,17 @@ final class OptimizelyFeatureProvider private[optimizely] (
 
 object OptimizelyFeatureProvider {
   val Name: String = "Optimizely"
+
+  /** Provider lifecycle: `Fresh -> Initialized -> ShutDown`, plus `ShutDown -> Initialized` for caller-managed clients.
+    * Tracked explicitly (instead of a boolean) so initialize-after-shutdown can fail loudly when the underlying client
+    * was closed.
+    */
+  sealed private[optimizely] trait Lifecycle
+  private[optimizely] object Lifecycle {
+    case object Fresh       extends Lifecycle
+    case object Initialized extends Lifecycle
+    case object ShutDown    extends Lifecycle
+  }
 
   /** Context attribute key callers can set to override which Optimizely variable is read for typed evaluations. */
   val VariableKeyAttribute: String = "openfeature.variableKey"

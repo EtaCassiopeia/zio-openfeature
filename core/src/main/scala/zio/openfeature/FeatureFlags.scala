@@ -471,16 +471,23 @@ object FeatureFlags {
   ): ZIO[Scope, Throwable, FeatureFlagsLive] =
     for {
       api <- ZIO.succeed(apiOverride.getOrElse(OpenFeatureAPI.getInstance()))
+      // Register the API shutdown finalizer BEFORE initiating provider registration. If init times out,
+      // the provider reports a bad state, or getClient fails, the scope close still tears down whatever
+      // the (possibly still-running, disconnected) setProviderAndWait managed to register.
+      _ <- ZIO.when(addShutdownFinalizer)(ZIO.addFinalizer(ZIO.attemptBlocking(api.shutdown()).ignore))
       setAndWait = domain match {
         case Some(d) => ZIO.attemptBlocking(api.setProviderAndWait(d, provider))
         case None    => ZIO.attemptBlocking(api.setProviderAndWait(provider))
       }
       // Bound the blocking init. `.disconnect` ensures the timeout returns promptly even though
       // `attemptBlocking` runs on the blocking pool; the underlying call may still run to completion
-      // in the background and is handled by the Java SDK / addShutdownFinalizer path.
-      _ <- setAndWait.disconnect
-        .timeoutFail(new TimeoutException(s"Provider initialization exceeded $initTimeout"))(initTimeout)
-      verified <- verifyInitState(provider)
+      // in the background. On any init failure the provider itself is shut down (best-effort) so it
+      // doesn't keep threads/connections alive — this also covers the domain/registry paths where no
+      // API finalizer is registered.
+      verified <- (setAndWait.disconnect
+        .timeoutFail(new TimeoutException(s"Provider initialization exceeded $initTimeout"))(initTimeout) *>
+        verifyInitState(provider))
+        .tapError(_ => ZIO.attemptBlocking(provider.shutdown()).ignore)
       client <- (domain, version) match {
         case (Some(d), Some(v)) => ZIO.attempt(api.getClient(d, v))
         case (Some(d), None)    => ZIO.attempt(api.getClient(d))
@@ -495,7 +502,6 @@ object FeatureFlags {
       _ <- state.hooksRef.set(initialHooks)
       // Only seed status when the caller didn't hand us a shared ref (testkit shares one).
       _ <- statusRef.fold(state.statusRef.set(verified))(_ => ZIO.unit)
-      _ <- ZIO.when(addShutdownFinalizer)(ZIO.addFinalizer(ZIO.attemptBlocking(api.shutdown()).ignore))
       ff = new FeatureFlagsLive(
         client,
         providerRef,
@@ -670,6 +676,9 @@ object FeatureFlags {
   ): ZIO[Scope, Throwable, FeatureFlagsLive] =
     for {
       api <- ZIO.succeed(apiOverride.getOrElse(OpenFeatureAPI.getInstance()))
+      // Register the API shutdown finalizer BEFORE the provider, so a failure later in the build
+      // (e.g. getClient) still tears down the registered provider when the scope closes.
+      _ <- ZIO.when(addShutdownFinalizer)(ZIO.addFinalizer(ZIO.attemptBlocking(api.shutdown()).ignore))
       // Register provider FIRST so the client binds to it (not the NoOp default)
       _ <- domain match {
         case Some(d) => ZIO.succeed(api.setProvider(d, provider))
@@ -687,7 +696,6 @@ object FeatureFlags {
       baseState       <- FeatureFlagsState.make
       state = statusRef.fold(baseState)(ref => baseState.copy(statusRef = ref))
       _ <- state.hooksRef.set(initialHooks)
-      _ <- ZIO.when(addShutdownFinalizer)(ZIO.addFinalizer(ZIO.attemptBlocking(api.shutdown()).ignore))
       ff = new FeatureFlagsLive(
         client,
         providerRef,

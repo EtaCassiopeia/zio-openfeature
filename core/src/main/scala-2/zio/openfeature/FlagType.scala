@@ -13,13 +13,18 @@ object FlagType {
   def apply[A](implicit ft: FlagType[A]): FlagType[A] = ft
   def typeName[A](implicit ft: FlagType[A]): String   = ft.typeName
 
+  // A Double is an exact Long when it is integral and inside [Long.MinValue, Long.MaxValue). The strict
+  // upper bound rejects Long.MaxValue.toDouble, which rounds up to 2^63 and would saturate on .toLong.
+  private def isExactLong(d: Double): Boolean =
+    d == d.toLong.toDouble && d >= Long.MinValue.toDouble && d < Long.MaxValue.toDouble
+
   implicit val booleanFlagType: FlagType[Boolean] = new FlagType[Boolean] {
     def typeName: String      = "Boolean"
     def defaultValue: Boolean = false
     def decode(value: Any): Either[String, Boolean] = value match {
       case b: Boolean => Right(b)
       case s: String  => s.toBooleanOption.toRight(s"Cannot parse '$s' as Boolean")
-      case n: Number  => Right(n.intValue() != 0)
+      case null       => Left("Cannot convert null to Boolean")
       case _          => Left(s"Cannot convert ${value.getClass.getSimpleName} to Boolean")
     }
   }
@@ -29,8 +34,8 @@ object FlagType {
     def defaultValue: String = ""
     def decode(value: Any): Either[String, String] = value match {
       case s: String => Right(s)
-      case null      => Right("")
-      case other     => Right(other.toString)
+      case null      => Left("Cannot convert null to String")
+      case other     => Left(s"Cannot convert ${other.getClass.getSimpleName} to String")
     }
   }
 
@@ -38,10 +43,13 @@ object FlagType {
     def typeName: String  = "Int"
     def defaultValue: Int = 0
     def decode(value: Any): Either[String, Int] = value match {
-      case i: Int    => Right(i)
-      case l: Long   => Right(l.toInt)
-      case d: Double => Right(d.toInt)
-      case n: Number => Right(n.intValue())
+      case i: Int                  => Right(i)
+      case l: Long if l.isValidInt => Right(l.toInt)
+      case l: Long                 => Left(s"Long value $l is out of Int range")
+      case d: Double               => if (d.isValidInt) Right(d.toInt) else Left(s"Double value $d is not a valid Int")
+      case n: Number =>
+        val d = n.doubleValue()
+        if (d.isValidInt) Right(d.toInt) else Left(s"Numeric value $n is not a valid Int")
       case s: String => s.toIntOption.toRight(s"Cannot parse '$s' as Int")
       case _         => Left(s"Cannot convert ${value.getClass.getSimpleName} to Int")
     }
@@ -53,8 +61,10 @@ object FlagType {
     def decode(value: Any): Either[String, Long] = value match {
       case l: Long   => Right(l)
       case i: Int    => Right(i.toLong)
-      case d: Double => Right(d.toLong)
-      case n: Number => Right(n.longValue())
+      case d: Double => if (isExactLong(d)) Right(d.toLong) else Left(s"Double value $d is not a valid Long")
+      case n: Number =>
+        val d = n.doubleValue()
+        if (isExactLong(d)) Right(d.toLong) else Left(s"Numeric value $n is not a valid Long")
       case s: String => s.toLongOption.toRight(s"Cannot parse '$s' as Long")
       case _         => Left(s"Cannot convert ${value.getClass.getSimpleName} to Long")
     }
@@ -78,11 +88,14 @@ object FlagType {
     def typeName: String    = "Float"
     def defaultValue: Float = 0.0f
     def decode(value: Any): Either[String, Float] = value match {
-      case f: Float  => Right(f)
-      case d: Double => Right(d.toFloat)
+      case f: Float => Right(f)
+      case d: Double =>
+        // Rounding to Float precision is inherent and expected; only reject magnitude overflow,
+        // which would silently turn a finite value into +/-Infinity.
+        if (d.isNaN || d.isInfinity || math.abs(d) <= java.lang.Float.MAX_VALUE.toDouble) Right(d.toFloat)
+        else Left(s"Double value $d is out of Float range")
       case i: Int    => Right(i.toFloat)
       case l: Long   => Right(l.toFloat)
-      case n: Number => Right(n.floatValue())
       case s: String => s.toFloatOption.toRight(s"Cannot parse '$s' as Float")
       case _         => Left(s"Cannot convert ${value.getClass.getSimpleName} to Float")
     }

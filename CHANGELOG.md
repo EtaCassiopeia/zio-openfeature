@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`FlagType` decoders no longer coerce silently** (#187). Lossy and surprising conversions now fail with `Left`
+  (surfacing as `TypeMismatch` / `OverrideTypeMismatch` instead of a wrong-but-plausible value):
+  - `Int`/`Long`: fractional doubles are rejected (previously truncated, e.g. `42.9 → 42`); out-of-range longs are
+    rejected (previously wrapped).
+  - `Boolean`: numbers are rejected (previously C-style `n != 0`).
+  - `String`: only strings decode (previously any value via `toString`, and `null` as `""`).
+  - `Float`: doubles outside Float range are rejected (previously overflowed to `±Infinity`); precision rounding
+    within range is still accepted.
+  String parsing of numerics/booleans (e.g. `"42"`, `"true"`) is unchanged.
 - **`trackedEvents` is bounded to the last 1000 events** (oldest dropped). The recorder previously grew without
   limit, leaking memory in long-running apps that call `track` per request; it is a test/debug affordance —
   providers still receive every `track` call. (#174)

@@ -223,18 +223,21 @@ final private[openfeature] class FeatureFlagsLive(
     for {
       beforeResult <- composedHook.before(hookCtx, initialHints)
       (effectiveCtx, hints) = beforeResult match {
-        case Some((hookCtx, h)) => (hookCtx, h)
-        case None               => (context, initialHints)
+        case Some((modifiedCtx, h)) => (modifiedCtx, h)
+        case None                   => (context, initialHints)
       }
+      // Per spec §4.3.5-4.3.8, after/error/finally stages must observe the evaluation
+      // context as modified by the before hooks, not the original one.
+      stageCtx = hookCtx.copy(evaluationContext = effectiveCtx)
       resultRef <- Ref.make[Option[FlagResolution[_]]](None)
       result <- evaluate(effectiveCtx)
         .tap(res => resultRef.set(Some(res)))
         .tapBoth(
-          err => composedHook.error(hookCtx, err, hints),
-          res => composedHook.after(hookCtx, res, hints)
+          err => composedHook.error(stageCtx, err, hints),
+          res => composedHook.after(stageCtx, res, hints)
         )
         .ensuring(
-          resultRef.get.flatMap(details => composedHook.finallyAfter(hookCtx, details, hints)).ignore
+          resultRef.get.flatMap(details => composedHook.finallyAfter(stageCtx, details, hints)).ignore
         )
     } yield result
   }
@@ -244,7 +247,9 @@ final private[openfeature] class FeatureFlagsLive(
       case ProviderStatus.Fatal    => ZIO.fail(FeatureFlagError.ProviderFatal)
       case ProviderStatus.NotReady => ZIO.fail(FeatureFlagError.ProviderNotReady(ProviderStatus.NotReady))
       case ProviderStatus.Error    => ZIO.fail(FeatureFlagError.ProviderNotReady(ProviderStatus.Error))
-      case _                       => Exit.unit
+      case ProviderStatus.ShuttingDown =>
+        ZIO.fail(FeatureFlagError.ProviderNotReady(ProviderStatus.ShuttingDown))
+      case _ => Exit.unit
     }
 
   // Context is already merged by evaluateWithDetails before entering the hook pipeline
@@ -644,7 +649,26 @@ final private[openfeature] class FeatureFlagsLive(
 
   // Event Handlers - return cancellation effects per OpenFeature spec 5.2.7
 
+  /** Fork a daemon fiber consuming hub events, guaranteeing the hub subscription is established before this method
+    * returns. Without the handshake, events published between handler registration and the forked stream's first pull
+    * would be silently lost. The returned effect cancels the subscription.
+    */
+  private def consumeEvents(consume: ZStream[Any, Nothing, ProviderEvent] => UIO[Unit]): UIO[UIO[Unit]] =
+    for {
+      subscribed <- Promise.make[Nothing, Unit]
+      fiber <- ZIO.scoped {
+        state.eventHub.subscribe.flatMap { queue =>
+          subscribed.succeed(()) *> consume(ZStream.fromQueue(queue))
+        }
+      }.forkDaemon
+      _ <- subscribed.await
+    } yield fiber.interrupt.unit
+
   /** Per OpenFeature spec 5.3.3, handlers attached after the provider reaches an associated state MUST run immediately.
+    *
+    * The subscription is established first, then the current status is checked: no event can fall between the two. The
+    * cost is at-least-once delivery — an event arriving in that window may invoke the handler via both the immediate
+    * check and the stream.
     */
   private def subscribeToEvent[A](
     immediateCondition: ProviderStatus => Boolean,
@@ -653,10 +677,10 @@ final private[openfeature] class FeatureFlagsLive(
     handler: A => UIO[Unit]
   ): UIO[UIO[Unit]] =
     for {
+      cancel <- consumeEvents(_.collect(collect).foreach(handler))
       status <- providerStatus
       _      <- ZIO.when(immediateCondition(status))(handler(immediatePayload))
-      fiber  <- events.collect(collect).foreach(handler).forkDaemon
-    } yield fiber.interrupt.unit
+    } yield cancel
 
   override def onProviderReady(handler: ProviderMetadata => UIO[Unit]): UIO[UIO[Unit]] =
     providerNameRef.get.flatMap { pName =>
@@ -693,11 +717,10 @@ final private[openfeature] class FeatureFlagsLive(
 
   override def onConfigurationChanged(handler: (Set[String], ProviderMetadata) => UIO[Unit]): UIO[UIO[Unit]] =
     // Configuration changed doesn't have an "associated state" so no immediate execution needed
-    events
-      .collect { case ProviderEvent.ConfigurationChanged(flags, m, _) => (flags, m) }
-      .foreach { case (flags, m) => handler(flags, m) }
-      .forkDaemon
-      .map(fiber => fiber.interrupt.unit)
+    consumeEvents(
+      _.collect { case ProviderEvent.ConfigurationChanged(flags, m, _) => (flags, m) }
+        .foreach { case (flags, m) => handler(flags, m) }
+    )
 
   override def on(eventType: ProviderEventType, handler: ProviderEvent => UIO[Unit]): UIO[UIO[Unit]] =
     eventType match {
@@ -710,11 +733,7 @@ final private[openfeature] class FeatureFlagsLive(
       case ProviderEventType.ConfigurationChanged =>
         onConfigurationChanged((flags, m) => handler(ProviderEvent.ConfigurationChanged(flags, m)))
       case ProviderEventType.Reconnecting =>
-        events
-          .filter(_.eventType == ProviderEventType.Reconnecting)
-          .foreach(handler)
-          .forkDaemon
-          .map(fiber => fiber.interrupt.unit)
+        consumeEvents(_.filter(_.eventType == ProviderEventType.Reconnecting).foreach(handler))
     }
 
   override def addHook(hook: FeatureHook): UIO[Unit] =
@@ -897,68 +916,69 @@ final private[openfeature] class FeatureFlagsLive(
   // Shutdown API (spec 1.6.1, 1.6.2)
 
   override def shutdown: UIO[Unit] =
-    state.statusRef.set(ProviderStatus.NotReady) *>
+    // ShuttingDown rejects evaluations for the duration of the teardown (checkProviderStatus);
+    // the terminal state after teardown is NotReady.
+    state.statusRef.set(ProviderStatus.ShuttingDown) *>
       state.hooksRef.set(List.empty) *>
+      state.zioApiHooksRef.set(List.empty) *>
       state.globalContextRef.set(EvaluationContext.empty) *>
       state.clientContextRef.set(EvaluationContext.empty) *>
-      state.trackRecorder.set(List.empty) *>
+      state.trackRecorder.set(Chunk.empty) *>
       state.eventHub.shutdown *>
-      ZIO.attemptBlocking(api.shutdown()).ignore
+      ZIO.attemptBlocking(api.shutdown()).ignore *>
+      state.statusRef.set(ProviderStatus.NotReady)
 
   // Tracking API
 
   override def track(eventName: String): IO[FeatureFlagError, Unit] =
-    effectiveContext(EvaluationContext.empty).flatMap { merged =>
-      state.trackRecorder.update(_ :+ (eventName, merged, None)) *>
-        ZIO
-          .attemptBlocking {
-            val ofContext = ContextConverter.toOpenFeature(merged)
-            client.track(eventName, ofContext)
-          }
-          .mapError(e => FeatureFlagError.classify(e))
-    }
+    trackImpl(eventName, EvaluationContext.empty, None)
 
   override def track(eventName: String, context: EvaluationContext): IO[FeatureFlagError, Unit] =
-    effectiveContext(context).flatMap { merged =>
-      state.trackRecorder.update(_ :+ (eventName, merged, None)) *>
-        ZIO
-          .attemptBlocking {
-            val ofContext = ContextConverter.toOpenFeature(merged)
-            client.track(eventName, ofContext)
-          }
-          .mapError(e => FeatureFlagError.classify(e))
-    }
+    trackImpl(eventName, context, None)
 
   override def track(eventName: String, details: TrackingEventDetails): IO[FeatureFlagError, Unit] =
-    effectiveContext(EvaluationContext.empty).flatMap { merged =>
-      state.trackRecorder.update(_ :+ (eventName, merged, Some(details))) *>
-        ZIO
-          .attemptBlocking {
-            val ofContext = ContextConverter.toOpenFeature(merged)
-            val ofDetails = toOpenFeatureDetails(details)
-            client.track(eventName, ofContext, ofDetails)
-          }
-          .mapError(e => FeatureFlagError.classify(e))
-    }
+    trackImpl(eventName, EvaluationContext.empty, Some(details))
 
   override def track(
     eventName: String,
     context: EvaluationContext,
     details: TrackingEventDetails
   ): IO[FeatureFlagError, Unit] =
+    trackImpl(eventName, context, Some(details))
+
+  private def trackImpl(
+    eventName: String,
+    context: EvaluationContext,
+    details: Option[TrackingEventDetails]
+  ): IO[FeatureFlagError, Unit] =
     effectiveContext(context).flatMap { merged =>
-      state.trackRecorder.update(_ :+ (eventName, merged, Some(details))) *>
+      recordTrack(eventName, merged, details) *>
         ZIO
           .attemptBlocking {
             val ofContext = ContextConverter.toOpenFeature(merged)
-            val ofDetails = toOpenFeatureDetails(details)
-            client.track(eventName, ofContext, ofDetails)
+            details match {
+              case Some(d) => client.track(eventName, ofContext, toOpenFeatureDetails(d))
+              case None    => client.track(eventName, ofContext)
+            }
           }
           .mapError(e => FeatureFlagError.classify(e))
     }
 
+  // The recorder is bounded: when full, the oldest entries are dropped so long-running apps that
+  // call `track` per request don't accumulate events (and their merged contexts) without limit.
+  private def recordTrack(
+    eventName: String,
+    merged: EvaluationContext,
+    details: Option[TrackingEventDetails]
+  ): UIO[Unit] =
+    state.trackRecorder.update { rec =>
+      val appended = rec :+ ((eventName, merged, details))
+      val overflow = appended.length - FeatureFlagsState.MaxTrackedEvents
+      if (overflow > 0) appended.drop(overflow) else appended
+    }
+
   override def trackedEvents: UIO[List[(String, EvaluationContext, Option[TrackingEventDetails])]] =
-    state.trackRecorder.get
+    state.trackRecorder.get.map(_.toList)
 
   private def toOpenFeatureDetails(details: TrackingEventDetails): MutableTrackingEventDetails = {
     val result = details.value match {

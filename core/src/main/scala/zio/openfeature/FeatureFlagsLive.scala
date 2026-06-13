@@ -5,12 +5,8 @@ import zio.stream._
 import zio.openfeature.internal.{ClientEvaluator, ContextConverter, ErrorCodeConverter, FeatureFlagsState}
 import dev.openfeature.sdk.{
   Client => OFClient,
-  ErrorCode => OFErrorCode,
   FeatureProvider => OFFeatureProvider,
-  FlagValueType => JavaFlagValueType,
-  HookContext => JavaHookContext,
   ProviderEvent => JavaProviderEvent,
-  Reason => OFReason,
   EventDetails,
   FlagEvaluationDetails,
   MutableTrackingEventDetails,
@@ -18,7 +14,6 @@ import dev.openfeature.sdk.{
 }
 
 import scala.jdk.CollectionConverters._
-import scala.util.control.NonFatal
 
 final private[openfeature] class FeatureFlagsLive(
   client: OFClient,
@@ -765,110 +760,6 @@ final private[openfeature] class FeatureFlagsLive(
 
   override def clearApiHooks: UIO[Unit] =
     ZIO.succeed(api.clearHooks())
-
-  // Provider hooks (spec: provider hooks included in hook pipeline)
-
-  private def getProviderHooks: UIO[List[FeatureHook]] =
-    providerRef.get.flatMap { p =>
-      try {
-        val javaHooks = p.getProviderHooks
-        val res =
-          if (javaHooks == null || javaHooks.isEmpty) Nil
-          else javaHooks.asScala.toList.map(wrapJavaHook)
-        Exit.succeed(res)
-      } catch {
-        case NonFatal(e) =>
-          ZIO.logWarningCause(s"Failed to get provider hooks", Cause.fail(e)).as(Nil)
-      }
-    }
-
-  @scala.annotation.nowarn("msg=deprecated")
-  private def toJavaHookContext(ctx: HookContext): JavaHookContext[Any] =
-    JavaHookContext.from[Any](
-      ctx.flagKey,
-      toJavaFlagValueType(ctx.flagType),
-      new dev.openfeature.sdk.ClientMetadata {
-        def getDomain: String = domain.orNull
-      },
-      new dev.openfeature.sdk.Metadata {
-        def getName: String = ctx.providerMetadata.name
-      },
-      ContextConverter.toOpenFeature(ctx.evaluationContext),
-      ctx.defaultValue
-    )
-
-  private def toJavaFlagValueType(fvt: FlagValueType): JavaFlagValueType = fvt match {
-    case FlagValueType.Boolean => JavaFlagValueType.BOOLEAN
-    case FlagValueType.String  => JavaFlagValueType.STRING
-    case FlagValueType.Int     => JavaFlagValueType.INTEGER
-    case FlagValueType.Double  => JavaFlagValueType.DOUBLE
-    case FlagValueType.Object  => JavaFlagValueType.OBJECT
-  }
-
-  private def toJavaFlagEvalDetails[A](res: FlagResolution[A]): FlagEvaluationDetails[Any] = {
-    val details = new FlagEvaluationDetails[Any]()
-    details.setFlagKey(res.flagKey)
-    details.setValue(res.value)
-    res.variant.foreach(details.setVariant)
-    details.setReason(res.reason.toString)
-    res.errorCode.foreach(ec => details.setErrorCode(ErrorCodeConverter.toJava(ec)))
-    res.errorMessage.foreach(details.setErrorMessage)
-    details
-  }
-
-  private def fromJavaEvaluationContext(ctx: dev.openfeature.sdk.EvaluationContext): EvaluationContext =
-    if (ctx == null) EvaluationContext.empty
-    else ContextConverter.fromOpenFeature(ctx)
-
-  private def wrapJavaHook(javaHook: dev.openfeature.sdk.Hook[_]): FeatureHook = {
-    val hook = javaHook.asInstanceOf[dev.openfeature.sdk.Hook[Any]]
-    new FeatureHook {
-      override def before(ctx: HookContext, hints: HookHints): UIO[Option[(EvaluationContext, HookHints)]] =
-        ZIO.succeed {
-          try {
-            val jCtx   = toJavaHookContext(ctx)
-            val jHints = hints.values.map { case (k, v) => k -> v.asInstanceOf[Object] }.asJava
-            val result = hook.before(jCtx, jHints)
-            if (result != null && result.isPresent) {
-              val newCtx = fromJavaEvaluationContext(result.get())
-              Some((newCtx, hints))
-            } else None
-          } catch { case NonFatal(_) => None }
-        }
-
-      override def after[A](ctx: HookContext, details: FlagResolution[A], hints: HookHints): UIO[Unit] =
-        ZIO.attempt {
-          val jCtx     = toJavaHookContext(ctx)
-          val jDetails = toJavaFlagEvalDetails(details)
-          val jHints   = hints.values.map { case (k, v) => k -> v.asInstanceOf[Object] }.asJava
-          hook.after(jCtx, jDetails, jHints)
-        }.ignore
-
-      override def error(ctx: HookContext, err: FeatureFlagError, hints: HookHints): UIO[Unit] =
-        ZIO.attempt {
-          val jCtx   = toJavaHookContext(ctx)
-          val jHints = hints.values.map { case (k, v) => k -> v.asInstanceOf[Object] }.asJava
-          val ex: Exception = err.cause match {
-            case Some(e: Exception) => e
-            case Some(t)            => new RuntimeException(t.getMessage, t)
-            case None               => new RuntimeException(err.message)
-          }
-          hook.error(jCtx, ex, jHints)
-        }.ignore
-
-      override def finallyAfter(
-        ctx: HookContext,
-        details: Option[FlagResolution[_]],
-        hints: HookHints
-      ): UIO[Unit] =
-        ZIO.attempt {
-          val jCtx     = toJavaHookContext(ctx)
-          val jHints   = hints.values.map { case (k, v) => k -> v.asInstanceOf[Object] }.asJava
-          val jDetails = details.map(toJavaFlagEvalDetails(_)).getOrElse(new FlagEvaluationDetails[Any]())
-          hook.finallyAfter(jCtx, jDetails, jHints)
-        }.ignore
-    }
-  }
 
   // Provider hot-swap
 

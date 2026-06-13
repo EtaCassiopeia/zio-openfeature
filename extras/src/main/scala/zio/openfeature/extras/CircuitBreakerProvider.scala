@@ -35,13 +35,19 @@ object StalePolicy {
   *   Number of successful probes in half-open state required to close the circuit
   * @param stalePolicy
   *   How to react when the delegate provider is in STALE state
+  * @param stateCheckInterval
+  *   Minimum time between polls of the delegate's `getState()` on the evaluation path. The state-driven trip mechanism
+  *   only needs periodic freshness; polling on every evaluation puts delegate-defined work (locks, computed state) on
+  *   the hot path. `Duration.Zero` checks on every evaluation. Failure-count tripping is unaffected and reacts to every
+  *   evaluation outcome immediately.
   */
 final case class CircuitBreakerProviderConfig(
   failureThreshold: Int = 5,
   resetTimeout: Duration = 30.seconds,
   evaluationTimeout: Duration = 500.millis,
   halfOpenMaxCalls: Int = 1,
-  stalePolicy: StalePolicy = StalePolicy.Open
+  stalePolicy: StalePolicy = StalePolicy.Open,
+  stateCheckInterval: Duration = 1.second
 ) {
   private[extras] def toCircuitBreakerConfig: CircuitBreakerConfig =
     CircuitBreakerConfig(
@@ -276,7 +282,25 @@ final class CircuitBreakerProvider private (
   @scala.annotation.nowarn("msg=deprecated")
   private def delegateState(): ProviderState = underlying.getState
 
-  private def checkDelegateState(): Unit =
+  // Sentinel meaning "never checked" so the very first evaluation (and initialize) always polls,
+  // regardless of where the configured clock starts.
+  private val NeverChecked     = Long.MinValue
+  private val lastStateCheckAt = new java.util.concurrent.atomic.AtomicLong(NeverChecked)
+
+  // Rate-limit delegate state polling on the evaluation hot path. Whichever caller wins the CAS
+  // performs the poll; losers skip it — the next winner after the interval re-polls.
+  private def checkDelegateState(): Unit = {
+    val interval = config.stateCheckInterval.toMillis
+    if (interval <= 0L) doCheckDelegateState()
+    else {
+      val last = lastStateCheckAt.get()
+      val now  = breaker.clock.millis()
+      if ((last == NeverChecked || now - last >= interval) && lastStateCheckAt.compareAndSet(last, now))
+        doCheckDelegateState()
+    }
+  }
+
+  private def doCheckDelegateState(): Unit =
     scala.util.Try(delegateState()).toOption match {
       case None => breaker.trip()
       case Some(state) =>

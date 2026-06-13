@@ -6,6 +6,14 @@ enum AttributeValue:
   case BoolValue(value: Boolean)
   case StringValue(value: String)
   case IntValue(value: Int)
+
+  /** A 64-bit integer attribute.
+    *
+    * The OpenFeature Java SDK normalises every numeric to `Double`, so longs cross the SDK boundary through a `Double`
+    * mediation: values with magnitude up to 2^53 round-trip exactly, larger values silently lose precision at the
+    * provider boundary. If exact identity matters beyond 2^53 (e.g. snowflake IDs), pass the value as a `StringValue`
+    * instead.
+    */
   case LongValue(value: Long)
   case DoubleValue(value: Double)
   case InstantValue(value: Instant)

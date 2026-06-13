@@ -21,7 +21,7 @@ import java.util.concurrent.atomic.AtomicReference
 object ProviderInitHardeningSpec extends ZIOSpecDefault {
 
   /** A provider whose `initialize()` blocks until its latch is released. Used to simulate a hanging sync init. */
-  final private class BlockingInitProvider(latch: CountDownLatch) extends EventProvider {
+  private class BlockingInitProvider(latch: CountDownLatch) extends EventProvider {
     private val st = new AtomicReference[ProviderState](ProviderState.NOT_READY)
 
     override def getMetadata: Metadata   = new Metadata { def getName: String = "BlockingInitProvider" }
@@ -51,7 +51,7 @@ object ProviderInitHardeningSpec extends ZIOSpecDefault {
   /** A provider that returns successfully from `initialize()` but reports ERROR. The library should refuse to mark such
     * a provider Ready and instead fail layer construction.
     */
-  final private class InitToErrorProvider extends EventProvider {
+  private class InitToErrorProvider extends EventProvider {
     private val st                       = new AtomicReference[ProviderState](ProviderState.NOT_READY)
     override def getMetadata: Metadata   = new Metadata { def getName: String = "InitToErrorProvider" }
     override def getState: ProviderState = st.get()
@@ -125,6 +125,66 @@ object ProviderInitHardeningSpec extends ZIOSpecDefault {
           t.isInstanceOf[IllegalStateException] && Option(t.getMessage).exists(_.contains("ERROR"))
         )
       )
+    } @@ withLiveClock,
+    test("[#180] provider is shut down when sync init times out") {
+      val latch        = new CountDownLatch(1)
+      val shutdownSeen = new java.util.concurrent.atomic.AtomicInteger(0)
+      val provider = new BlockingInitProvider(latch) {
+        override def shutdown(): Unit = {
+          shutdownSeen.incrementAndGet()
+          super.shutdown()
+        }
+      }
+      val api = OpenFeatureAPIFactory.create()
+      val build = ZIO.scoped {
+        FeatureFlags
+          .build(
+            provider,
+            domain = Some(uniqueDomain("sync-timeout-cleanup")),
+            version = None,
+            initialHooks = Nil,
+            statusRef = None,
+            addShutdownFinalizer = false,
+            apiOverride = Some(api),
+            initTimeout = 200.millis
+          )
+          .unit
+      }
+      for {
+        result <- build.either
+      } yield assertTrue(
+        result.isLeft,
+        // The failure path shuts the provider down even though no API finalizer was registered.
+        // (BlockingInitProvider.shutdown also releases the latch, so the background init thread exits.)
+        shutdownSeen.get() >= 1
+      )
+    } @@ withLiveClock,
+    test("[#180] provider is shut down when it reports ERROR after init") {
+      val shutdownSeen = new java.util.concurrent.atomic.AtomicInteger(0)
+      val provider = new InitToErrorProvider {
+        override def shutdown(): Unit = {
+          shutdownSeen.incrementAndGet()
+          super.shutdown()
+        }
+      }
+      val api = OpenFeatureAPIFactory.create()
+      val build = ZIO.scoped {
+        FeatureFlags
+          .build(
+            provider,
+            domain = Some(uniqueDomain("sync-err-cleanup")),
+            version = None,
+            initialHooks = Nil,
+            statusRef = None,
+            addShutdownFinalizer = false,
+            apiOverride = Some(api),
+            initTimeout = 5.seconds
+          )
+          .unit
+      }
+      for {
+        result <- build.either
+      } yield assertTrue(result.isLeft, shutdownSeen.get() >= 1)
     } @@ withLiveClock,
     test("[A1 async] watchdog transitions provider to Fatal after initTimeout when init hangs") {
       // initialize() blocks forever — Java SDK never fires PROVIDER_READY, so the only way out

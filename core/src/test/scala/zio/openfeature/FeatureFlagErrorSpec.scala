@@ -159,6 +159,19 @@ object FeatureFlagErrorSpec extends ZIOSpecDefault {
       }
     ),
     suite("classify")(
+      test("401/403 only classify as Unauthorized as standalone tokens") {
+        val auth401 = FeatureFlagError.classify(new RuntimeException("HTTP 401 from provider"))
+        val auth403 = FeatureFlagError.classify(new RuntimeException("server replied 403"))
+        // Digits embedded in larger numbers must NOT classify as auth failures
+        val port    = FeatureFlagError.classify(new RuntimeException("connect to host on port 4013 failed"))
+        val payload = FeatureFlagError.classify(new RuntimeException("response size 14034 exceeded limit"))
+        assertTrue(
+          auth401.isInstanceOf[FeatureFlagError.Unauthorized],
+          auth403.isInstanceOf[FeatureFlagError.Unauthorized],
+          port.isInstanceOf[FeatureFlagError.ProviderError],
+          payload.isInstanceOf[FeatureFlagError.ProviderError]
+        )
+      },
       test("UnknownHostException is classified as Unreachable") {
         val cause = new java.net.UnknownHostException("flags.example.com")
         val ok = FeatureFlagError.classify(cause) match {

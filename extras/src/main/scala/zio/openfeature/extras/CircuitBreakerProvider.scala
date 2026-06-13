@@ -2,9 +2,12 @@ package zio.openfeature.extras
 
 import dev.openfeature.sdk.{
   EvaluationContext => OFEvaluationContext,
+  ProviderEvent => JavaProviderEvent,
   EventProvider,
+  EventProviderBridge,
   Metadata,
   ProviderEvaluation,
+  ProviderEventDetails,
   ProviderState,
   Value
 }
@@ -32,13 +35,19 @@ object StalePolicy {
   *   Number of successful probes in half-open state required to close the circuit
   * @param stalePolicy
   *   How to react when the delegate provider is in STALE state
+  * @param stateCheckInterval
+  *   Minimum time between polls of the delegate's `getState()` on the evaluation path. The state-driven trip mechanism
+  *   only needs periodic freshness; polling on every evaluation puts delegate-defined work (locks, computed state) on
+  *   the hot path. `Duration.Zero` checks on every evaluation. Failure-count tripping is unaffected and reacts to every
+  *   evaluation outcome immediately.
   */
 final case class CircuitBreakerProviderConfig(
   failureThreshold: Int = 5,
   resetTimeout: Duration = 30.seconds,
   evaluationTimeout: Duration = 500.millis,
   halfOpenMaxCalls: Int = 1,
-  stalePolicy: StalePolicy = StalePolicy.Open
+  stalePolicy: StalePolicy = StalePolicy.Open,
+  stateCheckInterval: Duration = 1.second
 ) {
   private[extras] def toCircuitBreakerConfig: CircuitBreakerConfig =
     CircuitBreakerConfig(
@@ -54,10 +63,15 @@ final case class CircuitBreakerProviderConfig(
   * fail immediately (< 1ms) without calling the delegate. This enables fast failover when composed with `MultiProvider`
   * and `FirstSuccessfulStrategy`.
   *
-  * State transitions happen via two mechanisms:
+  * State transitions happen via three mechanisms:
   *   - '''Failure-count''': after `failureThreshold` consecutive evaluation failures, the circuit opens.
-  *   - '''State-driven''': before each evaluation, the delegate's `getState()` is checked. If `ERROR` or `FATAL`, the
-  *     circuit opens immediately without waiting for failures.
+  *   - '''State-driven''': before an evaluation (rate-limited by `stateCheckInterval`), the delegate's `getState()` is
+  *     checked. If `ERROR` or `FATAL`, the circuit opens immediately without waiting for failures.
+  *   - '''Event-driven''': events emitted by the delegate feed the breaker directly — `PROVIDER_ERROR` trips it,
+  *     `PROVIDER_READY` resets an externally-opened circuit, `PROVIDER_STALE` applies `stalePolicy`. Delegate events
+  *     are also re-emitted through this wrapper so downstream subscribers still see them. The wrapper takes ownership
+  *     of the delegate's event channel on `initialize`; do not register the same delegate instance directly with an
+  *     `OpenFeatureAPI` while it is wrapped.
   *
   * In open state, after `resetTimeout` elapses, the circuit transitions to half-open and allows a single probe
   * evaluation through. On success the circuit closes; on failure it re-opens.
@@ -88,8 +102,31 @@ final class CircuitBreakerProvider private (
     case _: CircuitState.HalfOpen => ProviderState.STALE
   }
 
+  private val delegateAttached = new java.util.concurrent.atomic.AtomicBoolean(false)
+
+  // Forward delegate emissions upward (the delegate is never registered with an API, so without this its
+  // events go nowhere) and feed them into the breaker so an unhealthy delegate is detected as soon as it
+  // says so, not only via polling or evaluation failures.
+  private def onDelegateEvent(event: JavaProviderEvent, details: ProviderEventDetails): Unit = {
+    event match {
+      case JavaProviderEvent.PROVIDER_ERROR => breaker.trip()
+      case JavaProviderEvent.PROVIDER_READY => breaker.reset()
+      case JavaProviderEvent.PROVIDER_STALE =>
+        config.stalePolicy match {
+          case StalePolicy.Open     => breaker.trip()
+          case StalePolicy.HalfOpen => breaker.transitionToHalfOpen()
+          case StalePolicy.Ignore   => ()
+        }
+      case _ => ()
+    }
+    emit(event, details)
+    ()
+  }
+
   override def initialize(context: OFEvaluationContext): Unit =
     try {
+      if (delegateAttached.compareAndSet(false, true))
+        EventProviderBridge.attach(underlying, onDelegateEvent)
       underlying.initialize(context)
       checkDelegateState()
     } catch {
@@ -98,7 +135,11 @@ final class CircuitBreakerProvider private (
         throw e
     }
 
-  override def shutdown(): Unit = underlying.shutdown()
+  override def shutdown(): Unit = {
+    if (delegateAttached.compareAndSet(true, false))
+      scala.util.Try(EventProviderBridge.detach(underlying))
+    underlying.shutdown()
+  }
 
   override def getBooleanEvaluation(
     key: String,
@@ -241,7 +282,25 @@ final class CircuitBreakerProvider private (
   @scala.annotation.nowarn("msg=deprecated")
   private def delegateState(): ProviderState = underlying.getState
 
-  private def checkDelegateState(): Unit =
+  // Sentinel meaning "never checked" so the very first evaluation (and initialize) always polls,
+  // regardless of where the configured clock starts.
+  private val NeverChecked     = Long.MinValue
+  private val lastStateCheckAt = new java.util.concurrent.atomic.AtomicLong(NeverChecked)
+
+  // Rate-limit delegate state polling on the evaluation hot path. Whichever caller wins the CAS
+  // performs the poll; losers skip it — the next winner after the interval re-polls.
+  private def checkDelegateState(): Unit = {
+    val interval = config.stateCheckInterval.toMillis
+    if (interval <= 0L) doCheckDelegateState()
+    else {
+      val last = lastStateCheckAt.get()
+      val now  = breaker.clock.millis()
+      if ((last == NeverChecked || now - last >= interval) && lastStateCheckAt.compareAndSet(last, now))
+        doCheckDelegateState()
+    }
+  }
+
+  private def doCheckDelegateState(): Unit =
     scala.util.Try(delegateState()).toOption match {
       case None => breaker.trip()
       case Some(state) =>

@@ -139,14 +139,17 @@ object FeatureFlagError {
   // so we fall back to scanning the exception message for the canonical "401"/"403" tokens. This is permissive — if a
   // provider message happens to contain those substrings for another reason it will be misclassified, but the cost is
   // low (caller still sees the original Throwable on Unauthorized.cause-equivalent flows when needed).
+  // Word-boundary match so "401"/"403" only hit as standalone tokens — a port 4013, a byte count, or a
+  // flag key containing the digits must not classify as an auth failure.
+  private val AuthStatusToken = java.util.regex.Pattern.compile("\\b(401|403)\\b")
+
   private def isHttpAuthFailure(t: Throwable, msg: String): Boolean = {
     val cls    = t.getClass.getName
     val msgLow = msg.toLowerCase
     cls.endsWith("HttpResponseException") ||
     cls.endsWith("UnauthorizedException") ||
     cls.endsWith("ForbiddenException") ||
-    msgLow.contains("401") ||
-    msgLow.contains("403") ||
+    AuthStatusToken.matcher(msgLow).find() ||
     msgLow.contains("unauthorized") ||
     msgLow.contains("forbidden")
   }

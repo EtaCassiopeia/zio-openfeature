@@ -23,13 +23,10 @@ object FlagTypeSpec extends ZIOSpecDefault {
         val result = FlagType[Boolean].decode("false")
         assertTrue(result == Right(false))
       },
-      test("decodes non-zero number as true") {
-        val result = FlagType[Boolean].decode(java.lang.Integer.valueOf(1))
-        assertTrue(result == Right(true))
-      },
-      test("decodes zero as false") {
-        val result = FlagType[Boolean].decode(java.lang.Integer.valueOf(0))
-        assertTrue(result == Right(false))
+      test("rejects numbers (no C-style truthiness)") {
+        val one  = FlagType[Boolean].decode(java.lang.Integer.valueOf(1))
+        val zero = FlagType[Boolean].decode(java.lang.Integer.valueOf(0))
+        assertTrue(one.isLeft, zero.isLeft)
       },
       test("has correct typeName") {
         assertTrue(FlagType[Boolean].typeName == "Boolean")
@@ -43,13 +40,13 @@ object FlagTypeSpec extends ZIOSpecDefault {
         val result = FlagType[String].decode("hello")
         assertTrue(result == Right("hello"))
       },
-      test("decodes null as empty string") {
+      test("rejects null") {
         val result = FlagType[String].decode(null)
-        assertTrue(result == Right(""))
+        assertTrue(result.isLeft)
       },
-      test("decodes other types via toString") {
+      test("rejects non-string types (no silent toString)") {
         val result = FlagType[String].decode(java.lang.Integer.valueOf(42))
-        assertTrue(result == Right("42"))
+        assertTrue(result.isLeft)
       },
       test("has correct typeName") {
         assertTrue(FlagType[String].typeName == "String")
@@ -64,9 +61,17 @@ object FlagTypeSpec extends ZIOSpecDefault {
         val result = FlagType[Int].decode(42L)
         assertTrue(result == Right(42))
       },
-      test("decodes double to int") {
-        val result = FlagType[Int].decode(42.9)
+      test("decodes whole double to int") {
+        val result = FlagType[Int].decode(42.0)
         assertTrue(result == Right(42))
+      },
+      test("rejects fractional double (no silent truncation)") {
+        val result = FlagType[Int].decode(42.9)
+        assertTrue(result.isLeft)
+      },
+      test("rejects out-of-range long") {
+        val result = FlagType[Int].decode(Int.MaxValue.toLong + 1L)
+        assertTrue(result.isLeft)
       },
       test("decodes Java Integer") {
         val result = FlagType[Int].decode(java.lang.Integer.valueOf(42))
@@ -223,9 +228,13 @@ object FlagTypeSpec extends ZIOSpecDefault {
       }
     ),
     suite("Long decode edge cases")(
-      test("decodes double to long") {
-        val result = FlagType[Long].decode(42.9)
+      test("decodes whole double to long") {
+        val result = FlagType[Long].decode(42.0)
         assertTrue(result == Right(42L))
+      },
+      test("rejects fractional double (no silent truncation)") {
+        val result = FlagType[Long].decode(42.9)
+        assertTrue(result.isLeft)
       },
       test("decodes Java Number") {
         val result = FlagType[Long].decode(java.lang.Long.valueOf(123L))

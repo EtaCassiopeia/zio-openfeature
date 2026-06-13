@@ -6,6 +6,14 @@ enum AttributeValue:
   case BoolValue(value: Boolean)
   case StringValue(value: String)
   case IntValue(value: Int)
+
+  /** A 64-bit integer attribute.
+    *
+    * The OpenFeature Java SDK normalises every numeric to `Double`, so longs cross the SDK boundary through a `Double`
+    * mediation: values with magnitude up to 2^53 round-trip exactly, larger values silently lose precision at the
+    * provider boundary. If exact identity matters beyond 2^53 (e.g. snowflake IDs), pass the value as a `StringValue`
+    * instead.
+    */
   case LongValue(value: Long)
   case DoubleValue(value: Double)
   case InstantValue(value: Instant)
@@ -47,11 +55,15 @@ enum AttributeValue:
     case StructValue(v) => Some(v)
     case _              => None
 
-  def isNull: Boolean = this match
+  /** True when the value is an "empty" container: empty string, empty list, or empty struct. */
+  def isEmptyValue: Boolean = this match
     case StringValue("")             => true
     case ListValue(Nil)              => true
     case StructValue(m) if m.isEmpty => true
     case _                           => false
+
+  @deprecated("isNull tests emptiness, not null-ness; use isEmptyValue", "0.9.2")
+  def isNull: Boolean = isEmptyValue
 
 object AttributeValue:
   def bool(value: Boolean): AttributeValue                      = BoolValue(value)

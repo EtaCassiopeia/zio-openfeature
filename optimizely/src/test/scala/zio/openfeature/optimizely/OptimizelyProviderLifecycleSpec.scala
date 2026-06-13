@@ -114,6 +114,46 @@ object OptimizelyProviderLifecycleSpec extends ZIOSpecDefault {
         )
       }
     },
+    test("initialize after shutdown fails loudly when the client was closed (#185)") {
+      withMockServer { server =>
+        server.stubFor(get(urlEqualTo(DatafilePath)).willReturn(okJson(ValidDatafile)))
+        val client   = buildClient(server)
+        val provider = new OptimizelyFeatureProvider(client, java.time.Duration.ofSeconds(3), closeOnShutdown = true)
+        val first    = tryInit(provider)
+        provider.shutdown()
+        val second = tryInit(provider)
+        assertTrue(
+          first.isRight,
+          // No silent no-op: re-registering a closed provider must surface immediately, not as
+          // PROVIDER_NOT_READY on every later evaluation.
+          second.isLeft,
+          second.left.exists(_.isInstanceOf[IllegalStateException]),
+          stateOf(provider) == ProviderState.NOT_READY
+        )
+      }
+    },
+    test("initialize after shutdown re-initializes when the client is caller-managed (#185)") {
+      withMockServer { server =>
+        server.stubFor(get(urlEqualTo(DatafilePath)).willReturn(okJson(ValidDatafile)))
+        val client   = buildClient(server)
+        val provider = new OptimizelyFeatureProvider(client, java.time.Duration.ofSeconds(3), closeOnShutdown = false)
+        val first    = tryInit(provider)
+        val stateAfterFirst = stateOf(provider)
+        provider.shutdown()
+        val stateAfterShutdown = stateOf(provider)
+        val second             = tryInit(provider)
+        val stateAfterSecond   = stateOf(provider)
+        try
+          assertTrue(
+            first.isRight,
+            stateAfterFirst == ProviderState.READY,
+            stateAfterShutdown == ProviderState.NOT_READY,
+            second.isRight,
+            stateAfterSecond == ProviderState.READY
+          )
+        finally client.close()
+      }
+    },
     test("shutdown before initialize — no exception, state stays NOT_READY") {
       withMockServer { server =>
         server.stubFor(get(urlEqualTo(DatafilePath)).willReturn(okJson(ValidDatafile)))

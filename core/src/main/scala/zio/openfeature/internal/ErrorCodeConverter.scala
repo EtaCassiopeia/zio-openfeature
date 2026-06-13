@@ -14,7 +14,9 @@ private[openfeature] object ErrorCodeConverter {
       case OFErrorCode.TYPE_MISMATCH         => ErrorCode.TypeMismatch
       case OFErrorCode.TARGETING_KEY_MISSING => ErrorCode.TargetingKeyMissing
       case OFErrorCode.INVALID_CONTEXT       => ErrorCode.InvalidContext
-      case OFErrorCode.GENERAL               => ErrorCode.General
+      // GENERAL plus future-proofing: a Java SDK upgrade may add enum values at runtime; mapping
+      // anything unrecognized to General beats a MatchError deep inside the evaluation path.
+      case _ => ErrorCode.General
     }
 
   def toJava(errorCode: ErrorCode): OFErrorCode =

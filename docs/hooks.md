@@ -250,6 +250,14 @@ val customHook = new FeatureHook:
     ZIO.unit
 ```
 
+### Error semantics
+
+Every `FeatureHook` stage returns `UIO`, so hooks are **infallible by construction and cannot abort an evaluation**. This is an intentional deviation from spec §4.4.6: a misbehaving observer (logging, metrics, validation) must never take flag evaluation down. The consequences:
+
+- Handle expected failures **inside** the hook (e.g. `.catchAll`/`.ignore` on effects that can fail) — there is no typed error channel to surface them.
+- Defects (unexpected `Throwable`s) still propagate as defects, so wrap untrusted third-party code (e.g. with `.catchAllDefect`) if it must not interfere with evaluation.
+- For hooks that should run **inside the Java SDK** (and participate in the SDK's own hook error model), register them with `addApiHook` instead of `addHook`.
+
 ### Hook Context
 
 The `HookContext` provides information about the current evaluation:

@@ -16,6 +16,7 @@ jobs:
   # Format check runs once; format errors are platform-independent so there's no value in re-running per matrix cell.
   format:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6
       - name: Set up JDK 21
@@ -35,6 +36,10 @@ jobs:
   # crossScalaVersions declared in build.sbt.
   build-matrix:
     runs-on: ubuntu-latest
+    # A test deadlock (e.g. a provider whose background poller is never reaped) would otherwise run to GitHub's
+    # 6-hour default, leaving the run dangling `in_progress` and blocking the `build` gate. Tests complete in ~2-3
+    # minutes; 20 turns a hang into a fast, diagnosable failure. See #212.
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -60,6 +65,7 @@ jobs:
   # the first post-mima release tag — the step is wired now so it's already in CI when that tag lands.
   mima:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6
       - name: Set up JDK 21
@@ -77,6 +83,7 @@ jobs:
   # honest. Cheap to run; gives early signal when a public API change breaks the documented usage.
   examples:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6
       - name: Set up JDK 21
@@ -95,6 +102,7 @@ jobs:
   # one status per CI run that succeeds iff every upstream job succeeded — extend the `needs` list when adding jobs.
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     needs: [format, build-matrix, mima, examples]
     if: always()
     steps:

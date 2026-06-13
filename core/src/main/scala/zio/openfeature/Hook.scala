@@ -111,6 +111,11 @@ object HookHints {
   * still propagate and fail the evaluation fiber, so wrap genuinely untrusted code in `ZIO.attempt(...).ignoreLogged`
   * or similar.
   *
+  * '''Error stage and error-code resolutions''' (spec §4.4.6): the `error` stage runs both when an evaluation fails
+  * through the typed error channel (`ProviderNotReady`/`ProviderFatal`) and when it returns a `FlagResolution` carrying
+  * an error code (`FLAG_NOT_FOUND`, `TYPE_MISMATCH`, ...). In the latter case `after` also runs, because the resolution
+  * (the default value) was still returned. `finallyAfter` always runs last.
+  *
   * Provider-level hooks are not modeled here: they run inside the Java SDK evaluation call, per the OpenFeature
   * architecture (see #167). Java `dev.openfeature.sdk.Hook` instances can be registered at the Java API level via
   * `FeatureFlags.addApiHook` and likewise run inside the SDK.

@@ -323,6 +323,79 @@ object CachingProviderSpec extends ZIOSpecDefault {
           assertTrue(underlying.evaluationCount.get() == 1)
       }
     ),
+    suite("Failure handling (#175)")(
+      test("a delegate exception is not served from cache — next evaluation retries the delegate") {
+        val failFirst = new java.util.concurrent.atomic.AtomicBoolean(true)
+        val underlying = new CountingProvider(Map("flag" -> true)) {
+          override def getBooleanEvaluation(
+            key: String,
+            defaultValue: java.lang.Boolean,
+            c: OFEvaluationContext
+          ): ProviderEvaluation[java.lang.Boolean] = {
+            if (failFirst.getAndSet(false)) {
+              evaluationCount.incrementAndGet()
+              throw new RuntimeException("transient outage")
+            }
+            super.getBooleanEvaluation(key, defaultValue, c)
+          }
+        }
+        for {
+          cached <- CachingProvider.make(underlying, CachingConfig(ttl = 1.minute))
+          first  <- ZIO.attemptBlocking(cached.getBooleanEvaluation("flag", false, ctx)).exit
+          second <- ZIO.attemptBlocking(cached.getBooleanEvaluation("flag", false, ctx))
+        } yield assertTrue(
+          first.isFailure,
+          second.getValue == true,
+          underlying.evaluationCount.get() == 2
+        )
+      },
+      test("an evaluation that resolves with an error code is returned but not cached") {
+        val errorFirst = new java.util.concurrent.atomic.AtomicBoolean(true)
+        val underlying = new CountingProvider(Map("flag" -> true)) {
+          override def getBooleanEvaluation(
+            key: String,
+            defaultValue: java.lang.Boolean,
+            c: OFEvaluationContext
+          ): ProviderEvaluation[java.lang.Boolean] =
+            if (errorFirst.getAndSet(false)) {
+              evaluationCount.incrementAndGet()
+              ProviderEvaluation
+                .builder[java.lang.Boolean]()
+                .value(defaultValue)
+                .reason("ERROR")
+                .errorCode(dev.openfeature.sdk.ErrorCode.GENERAL)
+                .errorMessage("upstream hiccup")
+                .build()
+            } else super.getBooleanEvaluation(key, defaultValue, c)
+        }
+        for {
+          cached <- CachingProvider.make(underlying, CachingConfig(ttl = 1.minute))
+          first  <- ZIO.attemptBlocking(cached.getBooleanEvaluation("flag", false, ctx))
+          second <- ZIO.attemptBlocking(cached.getBooleanEvaluation("flag", false, ctx))
+          third  <- ZIO.attemptBlocking(cached.getBooleanEvaluation("flag", false, ctx))
+        } yield assertTrue(
+          first.getErrorCode != null,
+          second.getValue == true,
+          second.getErrorCode == null,
+          third.getReason == "CACHED",
+          underlying.evaluationCount.get() == 2
+        )
+      },
+      test("high-contention same-key evaluations never fail with a registration race") {
+        // The previous implementation handed the lookup its thunk via a shared mutable map; under contention a
+        // caller's cleanup could remove another caller's thunk, surfacing IllegalStateException and caching it.
+        for {
+          underlying <- ZIO.succeed(new CountingProvider(Map("flag" -> true), delay = Some(5.millis)))
+          cached     <- CachingProvider.make(underlying, CachingConfig(ttl = 50.millis))
+          // Many waves of concurrent calls across TTL expirations to repeatedly exercise the miss path
+          results <- ZIO.foreach(1 to 5) { _ =>
+            ZIO.collectAllPar(
+              (1 to 30).map(_ => ZIO.attemptBlocking(cached.getBooleanEvaluation("flag", false, ctx)).exit)
+            ) <* ZIO.sleep(60.millis)
+          }
+        } yield assertTrue(results.flatten.forall(_.isSuccess))
+      }
+    ),
     suite("Lifecycle")(
       test("metadata includes underlying provider name") {
         val underlying = new CountingProvider(Map.empty)

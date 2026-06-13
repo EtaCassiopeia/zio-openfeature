@@ -400,6 +400,7 @@ yield layer
 - **Subsequent evaluations**: Returns cached result with `CACHED` reason
 - **Different contexts**: Cached separately (cache key includes context hash)
 - **TTL expiry**: Re-evaluates from the underlying provider after TTL
+- **Failures are never cached**: an evaluation that throws or resolves with an error code is returned to the caller but not stored, so the next call retries the delegate (a transient error never poisons the entry for the full TTL)
 
 ### High-cardinality contexts
 

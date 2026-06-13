@@ -323,6 +323,50 @@ object CachingProviderSpec extends ZIOSpecDefault {
           assertTrue(underlying.evaluationCount.get() == 1)
       }
     ),
+    suite("Delegate event propagation (#176)")(
+      test("delegate CONFIGURATION_CHANGED invalidates the cache") {
+        class EmittingProvider extends CountingProvider(Map("flag" -> true)) {
+          def fireConfigChanged(): Unit = {
+            emitProviderConfigurationChanged(dev.openfeature.sdk.ProviderEventDetails.builder().build())
+            ()
+          }
+        }
+        for {
+          underlying <- ZIO.succeed(new EmittingProvider)
+          cached     <- CachingProvider.make(underlying, CachingConfig(ttl = 10.minutes))
+          _          <- ZIO.attemptBlocking(cached.initialize(ctx))
+          _          <- ZIO.attemptBlocking(cached.getBooleanEvaluation("flag", false, ctx))
+          r2         <- ZIO.attemptBlocking(cached.getBooleanEvaluation("flag", false, ctx))
+          _          <- ZIO.succeed(underlying.fireConfigChanged())
+          // The emission runs on the delegate's emitter executor; poll until the cache misses again
+          _ <- ZIO
+            .attemptBlocking(cached.getBooleanEvaluation("flag", false, ctx))
+            .repeatUntil(_.getReason != "CACHED")
+            .timeoutFail(new RuntimeException("cache was never invalidated"))(10.seconds)
+        } yield assertTrue(r2.getReason == "CACHED", underlying.evaluationCount.get() >= 2)
+      },
+      test("delegate events are re-emitted through the wrapper") {
+        class EmittingProvider extends CountingProvider(Map("flag" -> true)) {
+          def fireStale(): Unit = {
+            emitProviderStale(dev.openfeature.sdk.ProviderEventDetails.builder().message("stale!").build())
+            ()
+          }
+        }
+        val seen = new java.util.concurrent.ConcurrentLinkedQueue[dev.openfeature.sdk.ProviderEvent]()
+        for {
+          underlying <- ZIO.succeed(new EmittingProvider)
+          cached     <- CachingProvider.make(underlying)
+          // Stand in for the SDK: attach to the wrapper the way OpenFeatureAPI would on registration
+          _ <- ZIO.succeed(dev.openfeature.sdk.EventProviderBridge.attach(cached, (e, _) => { seen.add(e); () }))
+          _ <- ZIO.attemptBlocking(cached.initialize(ctx))
+          _ <- ZIO.succeed(underlying.fireStale())
+          _ <- ZIO
+            .succeed(seen.contains(dev.openfeature.sdk.ProviderEvent.PROVIDER_STALE))
+            .repeatUntil(identity)
+            .timeoutFail(new RuntimeException("delegate event was not re-emitted"))(10.seconds)
+        } yield assertTrue(seen.contains(dev.openfeature.sdk.ProviderEvent.PROVIDER_STALE))
+      }
+    ),
     suite("Failure handling (#175)")(
       test("a delegate exception is not served from cache — next evaluation retries the delegate") {
         val failFirst = new java.util.concurrent.atomic.AtomicBoolean(true)

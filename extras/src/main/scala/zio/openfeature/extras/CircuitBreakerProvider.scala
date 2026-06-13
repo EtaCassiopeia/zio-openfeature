@@ -2,9 +2,12 @@ package zio.openfeature.extras
 
 import dev.openfeature.sdk.{
   EvaluationContext => OFEvaluationContext,
+  ProviderEvent => JavaProviderEvent,
   EventProvider,
+  EventProviderBridge,
   Metadata,
   ProviderEvaluation,
+  ProviderEventDetails,
   ProviderState,
   Value
 }
@@ -60,10 +63,15 @@ final case class CircuitBreakerProviderConfig(
   * fail immediately (< 1ms) without calling the delegate. This enables fast failover when composed with `MultiProvider`
   * and `FirstSuccessfulStrategy`.
   *
-  * State transitions happen via two mechanisms:
+  * State transitions happen via three mechanisms:
   *   - '''Failure-count''': after `failureThreshold` consecutive evaluation failures, the circuit opens.
-  *   - '''State-driven''': before each evaluation, the delegate's `getState()` is checked. If `ERROR` or `FATAL`, the
-  *     circuit opens immediately without waiting for failures.
+  *   - '''State-driven''': before an evaluation (rate-limited by `stateCheckInterval`), the delegate's `getState()` is
+  *     checked. If `ERROR` or `FATAL`, the circuit opens immediately without waiting for failures.
+  *   - '''Event-driven''': events emitted by the delegate feed the breaker directly — `PROVIDER_ERROR` trips it,
+  *     `PROVIDER_READY` resets an externally-opened circuit, `PROVIDER_STALE` applies `stalePolicy`. Delegate events
+  *     are also re-emitted through this wrapper so downstream subscribers still see them. The wrapper takes ownership
+  *     of the delegate's event channel on `initialize`; do not register the same delegate instance directly with an
+  *     `OpenFeatureAPI` while it is wrapped.
   *
   * In open state, after `resetTimeout` elapses, the circuit transitions to half-open and allows a single probe
   * evaluation through. On success the circuit closes; on failure it re-opens.
@@ -94,8 +102,31 @@ final class CircuitBreakerProvider private (
     case _: CircuitState.HalfOpen => ProviderState.STALE
   }
 
+  private val delegateAttached = new java.util.concurrent.atomic.AtomicBoolean(false)
+
+  // Forward delegate emissions upward (the delegate is never registered with an API, so without this its
+  // events go nowhere) and feed them into the breaker so an unhealthy delegate is detected as soon as it
+  // says so, not only via polling or evaluation failures.
+  private def onDelegateEvent(event: JavaProviderEvent, details: ProviderEventDetails): Unit = {
+    event match {
+      case JavaProviderEvent.PROVIDER_ERROR => breaker.trip()
+      case JavaProviderEvent.PROVIDER_READY => breaker.reset()
+      case JavaProviderEvent.PROVIDER_STALE =>
+        config.stalePolicy match {
+          case StalePolicy.Open     => breaker.trip()
+          case StalePolicy.HalfOpen => breaker.transitionToHalfOpen()
+          case StalePolicy.Ignore   => ()
+        }
+      case _ => ()
+    }
+    emit(event, details)
+    ()
+  }
+
   override def initialize(context: OFEvaluationContext): Unit =
     try {
+      if (delegateAttached.compareAndSet(false, true))
+        EventProviderBridge.attach(underlying, onDelegateEvent)
       underlying.initialize(context)
       checkDelegateState()
     } catch {
@@ -104,7 +135,11 @@ final class CircuitBreakerProvider private (
         throw e
     }
 
-  override def shutdown(): Unit = underlying.shutdown()
+  override def shutdown(): Unit = {
+    if (delegateAttached.compareAndSet(true, false))
+      scala.util.Try(EventProviderBridge.detach(underlying))
+    underlying.shutdown()
+  }
 
   override def getBooleanEvaluation(
     key: String,

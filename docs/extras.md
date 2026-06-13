@@ -262,10 +262,11 @@ The circuit breaker has three states:
 | **Open** | Evaluations fail immediately without calling the delegate (< 1ms). After `resetTimeout`, transitions to Half-Open. |
 | **Half-Open** | A single probe evaluation is allowed through. On success → Closed. On failure → Open. |
 
-### Two tripping mechanisms
+### Three tripping mechanisms
 
 1. **Failure-count**: After `failureThreshold` consecutive evaluation failures (including timeouts), the circuit opens.
 2. **State-driven**: The delegate's state is polled at most once per `stateCheckInterval` (default `1.second`) rather than on every call, keeping the hot path cheap. If the observed state is `ERROR` or `FATAL`, the circuit opens immediately — no failed evaluations needed. When the delegate recovers to `READY`, the circuit closes automatically. Set `stateCheckInterval` to `Duration.Zero` to poll the delegate state on every evaluation.
+3. **Event-driven**: The wrapper takes ownership of the delegate's event channel, so delegate events trip the breaker as soon as they are emitted — a `PROVIDER_ERROR` opens the circuit, a `PROVIDER_READY` resets an externally-opened circuit, and a `PROVIDER_STALE` applies the configured `stalePolicy`. This detects an unhealthy delegate without waiting for the next state poll or a failed evaluation.
 
 ### Usage
 
@@ -423,7 +424,9 @@ val cached = CachingProvider(remoteProvider, CachingConfig(
 
 ### Invalidation
 
-Invalidate the cache when receiving `ConfigurationChanged` events:
+The wrapper takes ownership of the delegate's event channel, so a `PROVIDER_CONFIGURATION_CHANGED` emitted by the wrapped provider **invalidates the whole cache automatically** — and the event is re-emitted through the wrapper, so `FeatureFlags.events` subscribers still see it. (A delegate supports exactly one attachment, so don't register the same wrapped instance directly with an `OpenFeatureAPI`.)
+
+You can still invalidate manually for changes the delegate doesn't signal:
 
 ```scala
 for

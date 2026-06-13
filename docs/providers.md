@@ -596,6 +596,8 @@ yield ()
 ### How it works
 
 - **Client caching** — `getClient` returns the same `FeatureFlags` instance for a given domain. State (hooks, context, event handlers) is preserved.
+- **Per-domain, non-blocking init** — each domain's client is built once, outside the registry lock; a slow or failing provider in one domain never blocks `getClient` for another. Concurrent callers for the same domain share a single initialization.
+- **Typed errors** — `getClient`, `defaultClient`, and `setProvider` return `IO[FeatureFlagError, _]`; a provider that fails to initialize surfaces `FeatureFlagError.ProviderInitializationFailed` (rather than dying), and a later call retries the build.
 - **Default fallback** — domains without an explicit provider use the default provider passed to `fromProvider`.
 - **Isolated API** — the registry creates its own `OpenFeatureAPI` instance, avoiding interference with other registries or standalone `FeatureFlags` layers.
 - **Lifecycle** — when the registry's scope closes, all managed providers are shut down.
@@ -707,6 +709,8 @@ FeatureFlags.onProviderReady { metadata =>
   ZIO.logInfo("Provider ready!")  // Runs right away if already ready
 }
 ```
+
+Delivery is **at-least-once**: the hub subscription is established before registration returns, so an event published immediately after you register is never lost. As a consequence, an event that arrives during registration may invoke the handler twice (once via the live subscription and once via the spec-5.3.3 immediate-state check). Make handlers idempotent if duplicate invocation would be a problem.
 
 ### Event Stream
 

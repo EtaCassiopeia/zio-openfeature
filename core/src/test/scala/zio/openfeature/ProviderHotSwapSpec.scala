@@ -218,6 +218,35 @@ object ProviderHotSwapSpec extends ZIOSpecDefault {
           assertTrue(status == ProviderStatus.Error)
       }
     },
+    test("stale PROVIDER_READY from the old provider does not mark status Ready mid-swap (#181)") {
+      // The old provider emits READY while the new provider's initialize() is still blocked. Without the
+      // swap-in-progress guard, the event bridge would flip NotReady => Ready while the swap is in flight.
+      ZIO.scoped {
+        val initGate = new java.util.concurrent.CountDownLatch(1)
+        class EmittingProvider extends SimpleProvider("A", Map("flag" -> true)) {
+          def fireReady(): Unit =
+            emitProviderReady(dev.openfeature.sdk.ProviderEventDetails.builder().build())
+        }
+        val providerA = new EmittingProvider
+        val providerB = new SimpleProvider("B", Map("flag" -> false)) {
+          override def initialize(ctx: OFEvaluationContext): Unit = initGate.await()
+          override def shutdown(): Unit                           = initGate.countDown()
+        }
+        for {
+          ff        <- buildWithDomain(providerA)
+          swapFiber <- ff.setProvider(providerB).fork
+          // Wait until the swap has flipped status to NotReady (swap started, B's init blocked)
+          _ <- ff.providerStatus.repeatUntil(_ == ProviderStatus.NotReady)
+          // Old provider's emitter delivers a stale READY mid-swap
+          _      <- ZIO.attemptBlocking(providerA.fireReady()).orDie
+          _      <- ZIO.attemptBlocking(Thread.sleep(300)).orDie // allow the SDK's async event dispatch to run
+          during <- ff.providerStatus
+          _      <- ZIO.succeed(initGate.countDown())
+          _      <- swapFiber.join
+          after  <- ff.providerStatus
+        } yield assertTrue(during == ProviderStatus.NotReady, after == ProviderStatus.Ready)
+      }
+    },
     test("recovery after failed swap") {
       ZIO.scoped {
         val providerA = new SimpleProvider("A", Map("flag" -> true))

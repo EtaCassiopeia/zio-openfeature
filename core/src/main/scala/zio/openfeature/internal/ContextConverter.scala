@@ -45,7 +45,7 @@ private[openfeature] object ContextConverter {
     case AttributeValue.IntValue(i)      => new Value(i)
     case AttributeValue.LongValue(l)     => new Value(l.toDouble)
     case AttributeValue.DoubleValue(d)   => new Value(d)
-    case AttributeValue.InstantValue(dt) => new Value(dt.toString)
+    case AttributeValue.InstantValue(dt) => new Value(dt)
     case AttributeValue.ListValue(list) =>
       val javaList = list.map(attributeToValue).asJava
       new Value(javaList)

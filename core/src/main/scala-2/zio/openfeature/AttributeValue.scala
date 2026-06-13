@@ -58,6 +58,14 @@ object AttributeValue {
   final case class BoolValue(value: Boolean)                       extends AttributeValue
   final case class StringValue(value: String)                      extends AttributeValue
   final case class IntValue(value: Int)                            extends AttributeValue
+
+  /** A 64-bit integer attribute.
+    *
+    * The OpenFeature Java SDK normalises every numeric to `Double`, so longs cross the SDK boundary through a `Double`
+    * mediation: values with magnitude up to 2^53 round-trip exactly, larger values silently lose precision at the
+    * provider boundary. If exact identity matters beyond 2^53 (e.g. snowflake IDs), pass the value as a `StringValue`
+    * instead.
+    */
   final case class LongValue(value: Long)                          extends AttributeValue
   final case class DoubleValue(value: Double)                      extends AttributeValue
   final case class InstantValue(value: Instant)                    extends AttributeValue

@@ -592,6 +592,19 @@ object FeatureFlagsSpec extends ZIOSpecDefault {
           assertTrue(events(2)._3.exists(_.value.contains(1.0))) &&
           assertTrue(events(3)._3.exists(_.value.contains(2.0)))
       }.provide(testLayer()),
+      test("trackedEvents recorder is bounded and drops oldest events") {
+        val max   = zio.openfeature.internal.FeatureFlagsState.MaxTrackedEvents
+        val total = max + 10
+        for {
+          _      <- ZIO.foreachDiscard(1 to total)(i => FeatureFlags.track(s"event-$i"))
+          events <- FeatureFlags.trackedEvents
+        } yield assertTrue(
+          events.size == max,
+          // The 10 oldest events were dropped; the window starts at event-11.
+          events.headOption.map(_._1).contains(s"event-${total - max + 1}"),
+          events.lastOption.map(_._1).contains(s"event-$total")
+        )
+      }.provide(testLayer()),
       test("TrackingEventDetails builder methods work") {
         val details = TrackingEventDetails.empty
           .withValue(50.0)
@@ -633,6 +646,33 @@ object FeatureFlagsSpec extends ZIOSpecDefault {
           after  <- FeatureFlags.clientContext
         } yield assertTrue(before.targetingKey.contains("client-user")) &&
           assertTrue(after.isEmpty)
+      }.provide(testLayer()),
+      test("shutdown clears ZIO API-level hooks") {
+        val hook = FeatureHook.noop
+        for {
+          _      <- FeatureFlags.addZioApiHook(hook)
+          before <- FeatureFlags.zioApiHooks
+          _      <- FeatureFlags.shutdown
+          after  <- FeatureFlags.zioApiHooks
+        } yield assertTrue(before.length == 1) &&
+          assertTrue(after.isEmpty)
+      }.provide(testLayer()),
+      test("shutdown ends in NotReady and evaluations fail afterwards") {
+        for {
+          _      <- FeatureFlags.shutdown
+          status <- FeatureFlags.providerStatus
+          result <- FeatureFlags.boolean("flag", default = false).exit
+        } yield assertTrue(status == ProviderStatus.NotReady) &&
+          assertTrue(result.isFailure)
+      }.provide(testLayer()),
+      test("evaluations are rejected while status is ShuttingDown") {
+        for {
+          testProvider <- ZIO.service[TestFeatureProvider]
+          _            <- testProvider.setStatus(ProviderStatus.ShuttingDown)
+          result       <- FeatureFlags.boolean("flag", default = false).exit
+        } yield assert(result)(
+          Assertion.fails(Assertion.equalTo(FeatureFlagError.ProviderNotReady(ProviderStatus.ShuttingDown)))
+        )
       }.provide(testLayer())
     ),
     suite("Provider Fatal Guard")(

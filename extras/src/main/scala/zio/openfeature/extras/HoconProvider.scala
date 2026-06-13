@@ -1,6 +1,6 @@
 package zio.openfeature.extras
 
-import com.typesafe.config.{Config, ConfigFactory, ConfigValueType}
+import com.typesafe.config.{Config, ConfigException, ConfigFactory, ConfigValueType}
 import dev.openfeature.sdk.{
   EvaluationContext => OFEvaluationContext,
   FeatureProvider,
@@ -10,6 +10,7 @@ import dev.openfeature.sdk.{
   Structure,
   Value
 }
+import dev.openfeature.sdk.exceptions.{ParseError, TypeMismatchError}
 import zio._
 import java.util.concurrent.atomic.AtomicReference
 import scala.jdk.CollectionConverters._
@@ -37,6 +38,15 @@ final class HoconProvider private (
 
   override def getState: ProviderState = state.get()
 
+  // Translate Typesafe Config's typed-read failures into the OpenFeature error model so callers see
+  // TYPE_MISMATCH / PARSE_ERROR instead of a GENERAL error wrapping a ConfigException (spec 7.3.6).
+  private def typedRead[A](key: String, read: => A): A =
+    try read
+    catch {
+      case e: ConfigException.WrongType => throw new TypeMismatchError(s"Flag '$key': ${e.getMessage}")
+      case e: ConfigException.BadValue  => throw new ParseError(s"Flag '$key': ${e.getMessage}")
+    }
+
   override def getBooleanEvaluation(
     key: String,
     defaultValue: java.lang.Boolean,
@@ -45,7 +55,7 @@ final class HoconProvider private (
     if (config.hasPath(key))
       ProviderEvaluation
         .builder[java.lang.Boolean]()
-        .value(config.getBoolean(key))
+        .value(typedRead(key, config.getBoolean(key)))
         .reason("STATIC")
         .build()
     else
@@ -57,7 +67,7 @@ final class HoconProvider private (
     context: OFEvaluationContext
   ): ProviderEvaluation[String] =
     if (config.hasPath(key))
-      ProviderEvaluation.builder[String]().value(config.getString(key)).reason("STATIC").build()
+      ProviderEvaluation.builder[String]().value(typedRead(key, config.getString(key))).reason("STATIC").build()
     else
       ProviderEvaluation.builder[String]().value(defaultValue).reason("DEFAULT").build()
 
@@ -67,7 +77,7 @@ final class HoconProvider private (
     context: OFEvaluationContext
   ): ProviderEvaluation[java.lang.Integer] =
     if (config.hasPath(key))
-      ProviderEvaluation.builder[java.lang.Integer]().value(config.getInt(key)).reason("STATIC").build()
+      ProviderEvaluation.builder[java.lang.Integer]().value(typedRead(key, config.getInt(key))).reason("STATIC").build()
     else
       ProviderEvaluation.builder[java.lang.Integer]().value(defaultValue).reason("DEFAULT").build()
 
@@ -77,7 +87,11 @@ final class HoconProvider private (
     context: OFEvaluationContext
   ): ProviderEvaluation[java.lang.Double] =
     if (config.hasPath(key))
-      ProviderEvaluation.builder[java.lang.Double]().value(config.getDouble(key)).reason("STATIC").build()
+      ProviderEvaluation
+        .builder[java.lang.Double]()
+        .value(typedRead(key, config.getDouble(key)))
+        .reason("STATIC")
+        .build()
     else
       ProviderEvaluation.builder[java.lang.Double]().value(defaultValue).reason("DEFAULT").build()
 
@@ -87,7 +101,7 @@ final class HoconProvider private (
     context: OFEvaluationContext
   ): ProviderEvaluation[Value] =
     if (config.hasPath(key)) {
-      val value = configValueToSdkValue(config.getValue(key))
+      val value = typedRead(key, configValueToSdkValue(config.getValue(key)))
       ProviderEvaluation.builder[Value]().value(value).reason("STATIC").build()
     } else
       ProviderEvaluation.builder[Value]().value(defaultValue).reason("DEFAULT").build()

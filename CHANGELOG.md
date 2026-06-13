@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **`trackedEvents` is bounded to the last 1000 events** (oldest dropped). The recorder previously grew without
+  limit, leaking memory in long-running apps that call `track` per request; it is a test/debug affordance —
+  providers still receive every `track` call. (#174)
+
+### Fixed
+
+- **`HoconProvider` reports spec-correct error codes.** A config value of the wrong type now surfaces as
+  `TYPE_MISMATCH` and an unparseable value as `PARSE_ERROR`, instead of a GENERAL error wrapping a
+  `ConfigException`. (#188)
+- **`shutdown` clears ZIO API-level hooks and rejects in-flight evaluations.** API-level hooks (added via
+  `addZioApiHook`) previously survived shutdown, and the `ShuttingDown` status was unreachable; shutdown now
+  transitions through `ShuttingDown` (evaluations fail with `ProviderNotReady(ShuttingDown)`) and ends at
+  `NotReady`. (#183)
+- **Nested `Instant` attributes survive the SDK round-trip.** Instants inside lists and structs were converted to
+  strings on the way into the Java SDK and came back as `StringValue`, silently breaking date-based targeting on
+  nested attributes. The Long → Double 2^53 precision limit is now documented on `AttributeValue.LongValue`. (#184)
+- **Hook stages observe the context modified by before hooks.** The `after`, `error`, and `finallyAfter` stages
+  previously received the pre-`before` evaluation context, so hooks logging or tagging by context saw different
+  attributes than the evaluation actually used (spec §4.3.5–4.3.8). (#178)
+
 ## [0.9.1] — 2026-06-04
 
 ### Fixed

@@ -708,6 +708,8 @@ FeatureFlags.onProviderReady { metadata =>
 }
 ```
 
+Delivery is **at-least-once**: the hub subscription is established before registration returns, so an event published immediately after you register is never lost. As a consequence, an event that arrives during registration may invoke the handler twice (once via the live subscription and once via the spec-5.3.3 immediate-state check). Make handlers idempotent if duplicate invocation would be a problem.
+
 ### Event Stream
 
 For reactive event processing, use the ZStream:

@@ -134,9 +134,16 @@ trait FeatureFlags {
   def clientMetadata: UIO[ClientMetadata]
 
   // Event Handlers - return a cancellation effect
+  //
+  // Delivery semantics: the event subscription is established before the registration effect returns, so no event
+  // published afterwards is lost. Handlers with an "associated state" (ready/error/stale) also run immediately when
+  // the provider is already in that state (spec 5.3.3); an event arriving during registration may therefore invoke
+  // the handler twice — delivery is at-least-once and handlers should be idempotent.
+
   /** Register a handler for provider ready events. Returns a cancellation effect.
     *
-    * Per OpenFeature spec 5.2.1 and 5.2.7, handlers can be registered and removed.
+    * Per OpenFeature spec 5.2.1 and 5.2.7, handlers can be registered and removed. Delivery is at-least-once — see the
+    * note on event handlers above.
     */
   def onProviderReady(handler: ProviderMetadata => UIO[Unit]): UIO[UIO[Unit]]
 

@@ -637,7 +637,26 @@ final private[openfeature] class FeatureFlagsLive(
 
   // Event Handlers - return cancellation effects per OpenFeature spec 5.2.7
 
+  /** Fork a daemon fiber consuming hub events, guaranteeing the hub subscription is established before this method
+    * returns. Without the handshake, events published between handler registration and the forked stream's first pull
+    * would be silently lost. The returned effect cancels the subscription.
+    */
+  private def consumeEvents(consume: ZStream[Any, Nothing, ProviderEvent] => UIO[Unit]): UIO[UIO[Unit]] =
+    for {
+      subscribed <- Promise.make[Nothing, Unit]
+      fiber <- ZIO.scoped {
+        state.eventHub.subscribe.flatMap { queue =>
+          subscribed.succeed(()) *> consume(ZStream.fromQueue(queue))
+        }
+      }.forkDaemon
+      _ <- subscribed.await
+    } yield fiber.interrupt.unit
+
   /** Per OpenFeature spec 5.3.3, handlers attached after the provider reaches an associated state MUST run immediately.
+    *
+    * The subscription is established first, then the current status is checked: no event can fall between the two. The
+    * cost is at-least-once delivery — an event arriving in that window may invoke the handler via both the immediate
+    * check and the stream.
     */
   private def subscribeToEvent[A](
     immediateCondition: ProviderStatus => Boolean,
@@ -646,10 +665,10 @@ final private[openfeature] class FeatureFlagsLive(
     handler: A => UIO[Unit]
   ): UIO[UIO[Unit]] =
     for {
+      cancel <- consumeEvents(_.collect(collect).foreach(handler))
       status <- providerStatus
       _      <- ZIO.when(immediateCondition(status))(handler(immediatePayload))
-      fiber  <- events.collect(collect).foreach(handler).forkDaemon
-    } yield fiber.interrupt.unit
+    } yield cancel
 
   override def onProviderReady(handler: ProviderMetadata => UIO[Unit]): UIO[UIO[Unit]] =
     providerNameRef.get.flatMap { pName =>
@@ -686,11 +705,10 @@ final private[openfeature] class FeatureFlagsLive(
 
   override def onConfigurationChanged(handler: (Set[String], ProviderMetadata) => UIO[Unit]): UIO[UIO[Unit]] =
     // Configuration changed doesn't have an "associated state" so no immediate execution needed
-    events
-      .collect { case ProviderEvent.ConfigurationChanged(flags, m, _) => (flags, m) }
-      .foreach { case (flags, m) => handler(flags, m) }
-      .forkDaemon
-      .map(fiber => fiber.interrupt.unit)
+    consumeEvents(
+      _.collect { case ProviderEvent.ConfigurationChanged(flags, m, _) => (flags, m) }
+        .foreach { case (flags, m) => handler(flags, m) }
+    )
 
   override def on(eventType: ProviderEventType, handler: ProviderEvent => UIO[Unit]): UIO[UIO[Unit]] =
     eventType match {
@@ -703,11 +721,7 @@ final private[openfeature] class FeatureFlagsLive(
       case ProviderEventType.ConfigurationChanged =>
         onConfigurationChanged((flags, m) => handler(ProviderEvent.ConfigurationChanged(flags, m)))
       case ProviderEventType.Reconnecting =>
-        events
-          .filter(_.eventType == ProviderEventType.Reconnecting)
-          .foreach(handler)
-          .forkDaemon
-          .map(fiber => fiber.interrupt.unit)
+        consumeEvents(_.filter(_.eventType == ProviderEventType.Reconnecting).foreach(handler))
     }
 
   override def addHook(hook: FeatureHook): UIO[Unit] =

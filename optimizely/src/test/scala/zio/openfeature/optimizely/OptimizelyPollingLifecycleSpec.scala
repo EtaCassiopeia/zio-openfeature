@@ -56,14 +56,17 @@ object OptimizelyPollingLifecycleSpec extends ZIOSpecDefault {
             java.time.Duration.ofSeconds(1)
           )
           tookMs = (java.lang.System.nanoTime() - start) / 1000000L
-          // Give any (buggy) background poller a chance to fire before asserting silence
+          // Give any (buggy) background poller a chance to fire before asserting near-silence
           _        <- sleepBlocking(500.millis)
           requests <- ZIO.succeed(requestCount(server))
           _        <- ZIO.succeed(provider.shutdown())
         } yield assertTrue(
           // The old construction path blocked up to the SDK's 10s getConfig timeout
           tookMs < 5000L,
-          requests == 0
+          // `buildClient` uses `build(true)` then `stop()`; the SDK's first scheduled fetch may be submitted in the
+          // instant before `stop()` cancels it, so the contract is "at most one aborted request" — not zero. Asserting
+          // `== 0` raced that window and flaked across both Scala versions (see #211).
+          requests <= 1
         )
       }
     },

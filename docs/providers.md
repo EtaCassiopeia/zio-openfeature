@@ -596,6 +596,8 @@ yield ()
 ### How it works
 
 - **Client caching** — `getClient` returns the same `FeatureFlags` instance for a given domain. State (hooks, context, event handlers) is preserved.
+- **Per-domain, non-blocking init** — each domain's client is built once, outside the registry lock; a slow or failing provider in one domain never blocks `getClient` for another. Concurrent callers for the same domain share a single initialization.
+- **Typed errors** — `getClient`, `defaultClient`, and `setProvider` return `IO[FeatureFlagError, _]`; a provider that fails to initialize surfaces `FeatureFlagError.ProviderInitializationFailed` (rather than dying), and a later call retries the build.
 - **Default fallback** — domains without an explicit provider use the default provider passed to `fromProvider`.
 - **Isolated API** — the registry creates its own `OpenFeatureAPI` instance, avoiding interference with other registries or standalone `FeatureFlags` layers.
 - **Lifecycle** — when the registry's scope closes, all managed providers are shut down.

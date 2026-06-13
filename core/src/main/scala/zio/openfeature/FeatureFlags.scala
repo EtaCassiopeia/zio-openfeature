@@ -119,6 +119,12 @@ trait FeatureFlags {
 
   def withContext[R, E, A](ctx: EvaluationContext)(zio: ZIO[R, E, A]): ZIO[R, E, A]
 
+  /** Run `zio` inside a flag transaction with optional overrides and per-call evaluation caching.
+    *
+    * Error channel: on Scala 3, `Compat.OrError[E, FeatureFlagError]` is the union `E | FeatureFlagError`. Scala 2.13
+    * has no union types, so there it erases to `Any` — when handling transaction errors on 2.13, match on
+    * `FeatureFlagError` cases (e.g. `NestedTransactionNotAllowed`) and your own `E` explicitly.
+    */
   def transaction[R, E, A](
     overrides: Map[String, Any] = Map.empty,
     context: EvaluationContext = EvaluationContext.empty,
@@ -502,10 +508,10 @@ object FeatureFlags {
         case _                  => ZIO.attempt(api.getClient())
       }
       providerName = Option(provider.getMetadata).map(_.getName).getOrElse("unknown")
-      providerRef     <- Ref.make(provider)
-      providerNameRef <- Ref.make(providerName)
-      swapLock        <- Semaphore.make(1)
-      baseState       <- FeatureFlagsState.make
+      providerRef <- Ref.make(provider)
+      providerNameRef = new java.util.concurrent.atomic.AtomicReference(providerName)
+      swapLock  <- Semaphore.make(1)
+      baseState <- FeatureFlagsState.make
       state = statusRef.fold(baseState)(ref => baseState.copy(statusRef = ref))
       _ <- state.hooksRef.set(initialHooks)
       // Only seed status when the caller didn't hand us a shared ref (testkit shares one).
@@ -701,10 +707,10 @@ object FeatureFlags {
         case _                  => ZIO.attempt(api.getClient())
       }
       providerName = Option(provider.getMetadata).map(_.getName).getOrElse("unknown")
-      providerRef     <- Ref.make(provider)
-      providerNameRef <- Ref.make(providerName)
-      swapLock        <- Semaphore.make(1)
-      baseState       <- FeatureFlagsState.make
+      providerRef <- Ref.make(provider)
+      providerNameRef = new java.util.concurrent.atomic.AtomicReference(providerName)
+      swapLock  <- Semaphore.make(1)
+      baseState <- FeatureFlagsState.make
       state = statusRef.fold(baseState)(ref => baseState.copy(statusRef = ref))
       _ <- state.hooksRef.set(initialHooks)
       ff = new FeatureFlagsLive(

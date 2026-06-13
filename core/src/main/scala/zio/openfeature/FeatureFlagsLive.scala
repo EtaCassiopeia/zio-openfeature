@@ -223,7 +223,15 @@ final private[openfeature] class FeatureFlagsLive(
       result <- evaluate(effectiveCtx)
         .tapBoth(
           err => composedHook.error(stageCtx, err, hints),
-          res => composedHook.after(stageCtx, res, hints)
+          // A resolution can be returned and still represent an error (FLAG_NOT_FOUND, TYPE_MISMATCH, ...): the Java
+          // SDK surfaces those as a default value plus an error code rather than a thrown error. Per spec §4.4.6 the
+          // `error` stage must observe such evaluations, so we run `after` (the resolution was returned) and, when it
+          // carries an error code, also `error`.
+          res =>
+            composedHook.after(stageCtx, res, hints) *>
+              ZIO.foreachDiscard(res.errorCode)(code =>
+                composedHook.error(stageCtx, errorFromResolution(res.flagKey, code, res.errorMessage), hints)
+              )
         )
         .onExit { exit =>
           val details: Option[FlagResolution[_]] = exit.foldExit(_ => None, res => Some(res))
@@ -231,6 +239,23 @@ final private[openfeature] class FeatureFlagsLive(
         }
     } yield result
   }
+
+  /** Reconstruct a typed error from a resolution that carries an error code, so the `error` hook stage can observe a
+    * provider-reported failure (FLAG_NOT_FOUND, TYPE_MISMATCH, ...) that was returned as a default value rather than
+    * thrown. `ProviderNotReady`/`ProviderFatal` codes never reach here — they fail the effect upstream.
+    */
+  private def errorFromResolution(key: String, code: ErrorCode, message: Option[String]): FeatureFlagError =
+    code match {
+      case ErrorCode.FlagNotFound => FeatureFlagError.FlagNotFound(key)
+      case ErrorCode.TypeMismatch => FeatureFlagError.TypeMismatch(key, "unknown", message.getOrElse("unknown"))
+      case ErrorCode.ParseError =>
+        FeatureFlagError.ParseError(key, new RuntimeException(message.getOrElse("parse error")))
+      case ErrorCode.TargetingKeyMissing => FeatureFlagError.TargetingKeyMissing(key)
+      case ErrorCode.InvalidContext      => FeatureFlagError.InvalidContext(message.getOrElse("invalid context"))
+      case ErrorCode.ProviderNotReady    => FeatureFlagError.ProviderNotReady(ProviderStatus.NotReady)
+      case ErrorCode.ProviderFatal       => FeatureFlagError.ProviderFatal
+      case ErrorCode.General => FeatureFlagError.ProviderError(new RuntimeException(message.getOrElse("general error")))
+    }
 
   private def checkProviderStatus: IO[FeatureFlagError, Unit] =
     providerStatus.flatMap {

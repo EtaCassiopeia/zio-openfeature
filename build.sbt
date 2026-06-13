@@ -100,6 +100,8 @@ lazy val commonSettings = Seq(
 ) ++ crossVersionSourceDirs
 
 lazy val root = (project in file("."))
+  // `conformance` is intentionally NOT aggregated: it is Scala 3 only, so aggregating it would make `++2.13.16 test`
+  // try (and fail) to compile it. CI runs it explicitly on Scala 3 (see ci.yml), the same way `examples` are handled.
   .aggregate(core, testkit, extras, ofrep, optimizely)
   .settings(
     name                           := "zio-openfeature",
@@ -179,6 +181,25 @@ lazy val testkit = (project in file("testkit"))
     libraryDependencies ++= Seq(
       "dev.zio" %% "zio"      % zioVersion,
       "dev.zio" %% "zio-test" % zioVersion
+    )
+  )
+
+// Conformance module - runs the OpenFeature specification's canonical gherkin feature files verbatim (via Cucumber on
+// JUnit) against the ZIO `FeatureFlags` API. Not published; Scala 3 only. Kept as a separate module so the Cucumber /
+// JUnit test stack stays out of the published `testkit` artifact's dependency surface. The `.feature` files are
+// vendored under src/test/resources (pinned to an upstream spec commit) so the build is hermetic.
+lazy val conformance = (project in file("conformance"))
+  .dependsOn(core, testkit)
+  .settings(
+    name               := "zio-openfeature-conformance",
+    publish / skip     := true,
+    crossScalaVersions := Seq(scala3Version),
+    libraryDependencies ++= Seq(
+      "dev.openfeature" % "sdk"             % openFeatureSdkVersion % Test,
+      "io.cucumber"    %% "cucumber-scala"  % "8.39.1"              % Test,
+      "io.cucumber"     % "cucumber-junit"  % "7.34.3"              % Test,
+      "junit"           % "junit"           % "4.13.2"              % Test,
+      "com.github.sbt"  % "junit-interface" % "0.13.3"              % Test
     )
   )
 

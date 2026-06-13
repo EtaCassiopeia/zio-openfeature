@@ -265,7 +265,7 @@ The circuit breaker has three states:
 ### Two tripping mechanisms
 
 1. **Failure-count**: After `failureThreshold` consecutive evaluation failures (including timeouts), the circuit opens.
-2. **State-driven**: Before each evaluation, the delegate's state is checked. If `ERROR` or `FATAL`, the circuit opens immediately — no failed evaluations needed. When the delegate recovers to `READY`, the circuit closes automatically.
+2. **State-driven**: The delegate's state is polled at most once per `stateCheckInterval` (default `1.second`) rather than on every call, keeping the hot path cheap. If the observed state is `ERROR` or `FATAL`, the circuit opens immediately — no failed evaluations needed. When the delegate recovers to `READY`, the circuit closes automatically. Set `stateCheckInterval` to `Duration.Zero` to poll the delegate state on every evaluation.
 
 ### Usage
 
@@ -316,6 +316,7 @@ yield layer
 | `evaluationTimeout` | `500.millis` | Max duration for a single delegate evaluation |
 | `halfOpenMaxCalls` | `1` | Successful probes required to close the circuit |
 | `stalePolicy` | `StalePolicy.Open` | Behavior when delegate reports `STALE` state |
+| `stateCheckInterval` | `1.second` | Minimum interval between delegate state polls (`Duration.Zero` polls on every call) |
 
 ### Stale policy
 

@@ -302,8 +302,14 @@ object CircuitBreakerProviderSpec extends ZIOSpecDefault {
       test("closes when delegate recovers to READY") {
         val underlying = new FailableProvider(Map("flag" -> true))
         val clock      = new TestClock()
-        val config     = CircuitBreakerProviderConfig(failureThreshold = 2, resetTimeout = 1.minute)
-        val cb         = CircuitBreakerProvider(underlying, config, clock)
+        // stateCheckInterval = Zero: this test needs the delegate state observed on every call
+        val config =
+          CircuitBreakerProviderConfig(
+            failureThreshold = 2,
+            resetTimeout = 1.minute,
+            stateCheckInterval = Duration.Zero
+          )
+        val cb = CircuitBreakerProvider(underlying, config, clock)
         // Trip via state
         underlying.setState(ProviderState.ERROR)
         val tryResult       = scala.util.Try(cb.getBooleanEvaluation("flag", false, ctx))
@@ -342,6 +348,41 @@ object CircuitBreakerProviderSpec extends ZIOSpecDefault {
         // First call allowed as probe
         val result = cb.getBooleanEvaluation("flag", false, ctx)
         assertTrue(result.getValue == true)
+      },
+      test("delegate getState polling is bounded by stateCheckInterval, not evaluation count") {
+        val stateChecks = new java.util.concurrent.atomic.AtomicInteger(0)
+        val underlying = new FailableProvider(Map("flag" -> true)) {
+          override def getState: ProviderState = {
+            stateChecks.incrementAndGet()
+            super.getState
+          }
+        }
+        val clock  = new TestClock()
+        val config = CircuitBreakerProviderConfig(stateCheckInterval = 1.second)
+        val cb     = CircuitBreakerProvider(underlying, config, clock)
+        // 10 evaluations inside one interval: only the first polls the delegate state
+        (1 to 10).foreach(_ => cb.getBooleanEvaluation("flag", false, ctx))
+        val checksWithinInterval = stateChecks.get()
+        // Advancing past the interval re-enables exactly one more poll
+        clock.advance(2.seconds)
+        (1 to 10).foreach(_ => cb.getBooleanEvaluation("flag", false, ctx))
+        val checksAfterAdvance = stateChecks.get()
+        assertTrue(checksWithinInterval == 1) &&
+        assertTrue(checksAfterAdvance == 2) &&
+        assertTrue(underlying.evaluationCount.get() == 20)
+      },
+      test("stateCheckInterval Zero polls delegate state on every evaluation") {
+        val stateChecks = new java.util.concurrent.atomic.AtomicInteger(0)
+        val underlying = new FailableProvider(Map("flag" -> true)) {
+          override def getState: ProviderState = {
+            stateChecks.incrementAndGet()
+            super.getState
+          }
+        }
+        val config = CircuitBreakerProviderConfig(stateCheckInterval = Duration.Zero)
+        val cb     = CircuitBreakerProvider(underlying, config)
+        (1 to 5).foreach(_ => cb.getBooleanEvaluation("flag", false, ctx))
+        assertTrue(stateChecks.get() == 5)
       }
     ),
     suite("Lifecycle")(

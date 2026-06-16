@@ -28,6 +28,9 @@ final case class World(
   // hooks
   hookStages: Option[Ref[Chunk[String]]] = None,
   hookDetails: Option[Ref[Option[FlagResolution[Any]]]] = None,
+  // per-invocation hooks supplied via EvaluationOptions (spec 1.5.1)
+  evalOptions: Option[EvaluationOptions] = None,
+  optionHookLog: Option[Ref[Chunk[String]]] = None,
   // context merging
   apiCtx: EvaluationContext = EvaluationContext.empty,
   clientCtx: EvaluationContext = EvaluationContext.empty,

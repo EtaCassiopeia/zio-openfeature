@@ -26,7 +26,15 @@ object HookRow { given Schema[HookRow] = DeriveSchema.gen[HookRow] }
   reporters = Array("pretty"),
   parallelism = 1,
   scenarioParallelism = 1,
-  excludeTags = Array("deprecated", "reason-codes-cached", "async", "immutability", "evaluation-options"),
+  // The remaining excluded tags are out of scope for a ZIO SDK + in-memory testkit, not coverage gaps:
+  //   - async:               tautological — every evaluation already returns a non-blocking ZIO effect; there is no
+  //                          separate async API surface to assert against.
+  //   - immutability:        compile-time guaranteed — context/details are immutable case classes, so there is no
+  //                          mutation API to exercise; the language enforces what the scenario asserts.
+  //   - reason-codes-cached: the in-memory testkit provider cannot emit a CACHED reason (it derives the reason from
+  //                          key presence only), so the scenario can't be satisfied without a contrived provider.
+  //   - deprecated:          superseded scenarios retained in the feature file for history, not meant to run.
+  excludeTags = Array("deprecated", "reason-codes-cached", "async", "immutability"),
   logLevel = "warning"
 )
 object ConformanceSpec extends ZIOSteps[Any, World] {
@@ -117,16 +125,20 @@ object ConformanceSpec extends ZIOSteps[Any, World] {
   private def bridge[A](key: String, e: FeatureFlagError, default: A): FlagResolution[A] =
     FlagResolution(default, None, ResolutionReason.Error, FlagMetadata.empty, key, Some(FeatureFlagError.toErrorCode(e)), Some(e.message))
 
-  private def evalByType(ff: FeatureFlags, w: World): ZIO[Any, Nothing, FlagResolution[Any]] = {
+  private def evalByType(
+    ff: FeatureFlags,
+    w: World,
+    options: EvaluationOptions = EvaluationOptions.empty
+  ): ZIO[Any, Nothing, FlagResolution[Any]] = {
     def br[A](io: IO[FeatureFlagError, FlagResolution[A]], default: A): ZIO[Any, Nothing, FlagResolution[Any]] =
       io.catchAll(e => ZIO.succeed(bridge(w.flagKey, e, default))).map(_.asInstanceOf[FlagResolution[Any]])
     w.flagType match {
-      case "boolean" => br(ff.booleanDetails(w.flagKey, w.defaultRaw.toBoolean, w.ctx), w.defaultRaw.toBoolean)
-      case "string"  => br(ff.stringDetails(w.flagKey, w.defaultRaw, w.ctx), w.defaultRaw)
-      case "integer" => br(ff.intDetails(w.flagKey, w.defaultRaw.toInt, w.ctx), w.defaultRaw.toInt)
-      case "float"   => br(ff.doubleDetails(w.flagKey, w.defaultRaw.toDouble, w.ctx), w.defaultRaw.toDouble)
+      case "boolean" => br(ff.booleanDetails(w.flagKey, w.defaultRaw.toBoolean, w.ctx, options), w.defaultRaw.toBoolean)
+      case "string"  => br(ff.stringDetails(w.flagKey, w.defaultRaw, w.ctx, options), w.defaultRaw)
+      case "integer" => br(ff.intDetails(w.flagKey, w.defaultRaw.toInt, w.ctx, options), w.defaultRaw.toInt)
+      case "float"   => br(ff.doubleDetails(w.flagKey, w.defaultRaw.toDouble, w.ctx, options), w.defaultRaw.toDouble)
       case "object" =>
-        val d = JsonLite.parseObject(unescape(w.defaultRaw)); br(ff.objDetails(w.flagKey, d, w.ctx), d)
+        val d = JsonLite.parseObject(unescape(w.defaultRaw)); br(ff.objDetails(w.flagKey, d, w.ctx, options), d)
       case other => ZIO.die(new IllegalArgumentException(s"unknown flag type: $other"))
     }
   }
@@ -295,6 +307,69 @@ object ConformanceSpec extends ZIOSteps[Any, World] {
           _ <- assertTrue(stagesOk && detailOk, s"hook stages=$stages details=$details rows=$rows")
         } yield ()
       }
+  }
+
+  // Evaluation options (spec 1.5.1) --------------------------------------------------------------
+
+  // Per-invocation hook that tags each stage with its name, so we can assert both execution and ordering.
+  private def orderedHook(name: String, log: Ref[Chunk[String]]): OFFeatureHook =
+    new OFFeatureHook {
+      override def before(c: HookContext, h: HookHints): UIO[Option[(EvaluationContext, HookHints)]] =
+        log.update(_ :+ s"$name:before").as(None)
+      override def after[A](c: HookContext, d: FlagResolution[A], h: HookHints): UIO[Unit] =
+        log.update(_ :+ s"$name:after").unit
+      override def error(c: HookContext, e: FeatureFlagError, h: HookHints): UIO[Unit] =
+        log.update(_ :+ s"$name:error").unit
+      override def finallyAfter(c: HookContext, d: Option[FlagResolution[_]], h: HookHints): UIO[Unit] =
+        log.update(_ :+ s"$name:finally").unit
+    }
+
+  Given("evaluation options containing specific hooks") {
+    for {
+      log <- Ref.make(Chunk.empty[String])
+      opts = EvaluationOptions(orderedHook("first", log), orderedHook("second", log))
+      _ <- ScenarioContext.update(_.copy(evalOptions = Some(opts), optionHookLog = Some(log)))
+    } yield ()
+  }
+
+  When("the flag was evaluated with details using the evaluation options") {
+    for {
+      w   <- ScenarioContext.get
+      res <- evalByType(w.flags.get, w, w.evalOptions.getOrElse(EvaluationOptions.empty))
+      _ <- ScenarioContext.update(
+        _.copy(
+          resultValue = res.value,
+          resultReason = reasonName(res.reason),
+          resultErrorCode = res.errorCode.map(errorCodeName),
+          resultVariant = res.variant,
+          resultMetadata = res.metadata,
+          resultFlagKey = res.flagKey
+        )
+      )
+    } yield ()
+  }
+
+  Then("the specified hooks should execute during evaluation") {
+    ScenarioContext.get.flatMap(w =>
+      w.optionHookLog.get.get.flatMap { log =>
+        val allRan = Set("first", "second").forall(n =>
+          log.contains(s"$n:before") && log.contains(s"$n:after") && log.contains(s"$n:finally")
+        )
+        assertTrue(allRan, s"option hooks did not all execute: $log")
+      }
+    )
+  }
+
+  Then("the hook order should be maintained") {
+    ScenarioContext.get.flatMap(w =>
+      w.optionHookLog.get.get.flatMap { log =>
+        // Spec 4.4.2: before hooks run in registration order; after/finally in reverse.
+        val beforeOk  = log.indexOf("first:before") < log.indexOf("second:before")
+        val afterOk   = log.indexOf("second:after") < log.indexOf("first:after")
+        val finallyOk = log.indexOf("second:finally") < log.indexOf("first:finally")
+        assertTrue(beforeOk && afterOk && finallyOk, s"hook order not maintained: $log")
+      }
+    )
   }
 
   // Context merging ------------------------------------------------------------------------------

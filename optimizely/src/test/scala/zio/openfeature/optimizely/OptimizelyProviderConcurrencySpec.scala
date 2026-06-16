@@ -81,7 +81,10 @@ object OptimizelyProviderConcurrencySpec extends ZIOSpecDefault {
       countdown.await(30, TimeUnit.SECONDS)
       results.toIndexedSeq
     } finally {
+      // Reap worker threads deterministically: `shutdownNow` interrupts, then join so no evaluation thread outlives
+      // the test and races provider/WireMock teardown. `Executors.newFixedThreadPool` threads are non-daemon.
       pool.shutdownNow()
+      pool.awaitTermination(5, TimeUnit.SECONDS)
       ()
     }
   }
@@ -176,41 +179,48 @@ object OptimizelyProviderConcurrencySpec extends ZIOSpecDefault {
         server.stubFor(get(urlEqualTo(DatafilePath)).willReturn(okJson(ValidDatafile)))
         val provider =
           new OptimizelyFeatureProvider(buildClient(server), java.time.Duration.ofSeconds(3), closeOnShutdown = true)
-        provider.initialize(new ImmutableContext())
-        val N      = 200
-        val live   = new AtomicInteger(0)
-        val ctxs   = (0 until N).map(i => new ImmutableContext(s"shutdown-racer-$i"))
-        val pool   = Executors.newFixedThreadPool(32)
-        val gate   = new CountDownLatch(1)
-        val done   = new CountDownLatch(N)
-        val errors = new AtomicInteger(0)
-        (0 until N).foreach { i =>
-          pool.submit(new Runnable {
-            override def run(): Unit = {
-              gate.await()
-              try {
-                val e = provider.getBooleanEvaluation(Flag, java.lang.Boolean.FALSE, ctxs(i))
-                if (e.getErrorCode == null && e.getValue == java.lang.Boolean.TRUE) {
-                  val _ = live.incrementAndGet()
-                }
-              } catch { case _: Throwable => val _ = errors.incrementAndGet() }
-              done.countDown()
-            }
-          })
-          ()
+        val pool = Executors.newFixedThreadPool(32)
+        try {
+          provider.initialize(new ImmutableContext())
+          val N      = 200
+          val live   = new AtomicInteger(0)
+          val ctxs   = (0 until N).map(i => new ImmutableContext(s"shutdown-racer-$i"))
+          val gate   = new CountDownLatch(1)
+          val done   = new CountDownLatch(N)
+          val errors = new AtomicInteger(0)
+          (0 until N).foreach { i =>
+            pool.submit(new Runnable {
+              override def run(): Unit = {
+                gate.await()
+                try {
+                  val e = provider.getBooleanEvaluation(Flag, java.lang.Boolean.FALSE, ctxs(i))
+                  if (e.getErrorCode == null && e.getValue == java.lang.Boolean.TRUE) {
+                    val _ = live.incrementAndGet()
+                  }
+                } catch { case _: Throwable => val _ = errors.incrementAndGet() }
+                done.countDown()
+              }
+            })
+            ()
+          }
+          // Fire the racers and call shutdown shortly after — some evaluations land before, some after.
+          gate.countDown()
+          Thread.sleep(5)
+          provider.shutdown()
+          val finished   = done.await(15, TimeUnit.SECONDS)
+          val stateAfter = stateOf(provider)
+          assertTrue(
+            finished,
+            errors.get() == 0,
+            stateAfter == ProviderState.NOT_READY
+          )
+        } finally {
+          // Join our worker threads and ensure the client is closed (idempotent) before WireMock stops, so no
+          // evaluation or HTTP retry thread races the server teardown — even if an assertion above threw.
+          pool.shutdownNow()
+          pool.awaitTermination(5, TimeUnit.SECONDS)
+          provider.shutdown()
         }
-        // Fire the racers and call shutdown shortly after — some evaluations land before, some after.
-        gate.countDown()
-        Thread.sleep(5)
-        provider.shutdown()
-        val finished = done.await(15, TimeUnit.SECONDS)
-        pool.shutdownNow()
-        val stateAfter = stateOf(provider)
-        assertTrue(
-          finished,
-          errors.get() == 0,
-          stateAfter == ProviderState.NOT_READY
-        )
       }
     }
   ) @@ TestAspect.sequential @@ TestAspect.timeout(60.seconds) @@ TestAspect.withLiveClock

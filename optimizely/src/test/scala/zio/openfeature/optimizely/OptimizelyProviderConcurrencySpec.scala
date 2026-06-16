@@ -37,19 +37,26 @@ object OptimizelyProviderConcurrencySpec extends ZIOSpecDefault {
   private def datafileUrl(server: WireMockServer): String =
     s"http://localhost:${server.port()}$DatafilePath"
 
+  // Build the client the same way `OptimizelyProvider.buildClient` does: `build(true)` skips the blocking initial
+  // fetch and does NOT leave a running poller — `mgr.stop()` ensures construction performs no network activity. The
+  // poller is owned by the provider (started by `initialize()`, stopped by `shutdown()` via `Optimizely.close()`), so
+  // it can never become an orphaned "retries forever" thread. The old no-arg `.build()` started a live poller at
+  // construction; when WireMock stopped, its Apache HttpClient retried against the dead socket on a thread that
+  // outlived every test and kept the (even forked) JVM from exiting — hanging `sbt test` until CI's timeout.
   private def buildClient(
     server: WireMockServer,
     blockingTimeout: java.time.Duration = java.time.Duration.ofSeconds(2),
     pollingInterval: java.time.Duration = java.time.Duration.ofSeconds(3600)
-  ): Optimizely = {
+  ): (Optimizely, HttpProjectConfigManager) = {
     val mgr = HttpProjectConfigManager
       .builder()
       .withSdkKey("concurrency-key")
       .withUrl(datafileUrl(server))
       .withBlockingTimeout(blockingTimeout.toMillis, TimeUnit.MILLISECONDS)
       .withPollingInterval(pollingInterval.toSeconds, TimeUnit.SECONDS)
-      .build()
-    Optimizely.builder().withConfigManager(mgr).build()
+      .build(true)
+    mgr.stop()
+    (Optimizely.builder().withConfigManager(mgr).build(), mgr)
   }
 
   @scala.annotation.nowarn("msg=deprecated")
@@ -93,8 +100,14 @@ object OptimizelyProviderConcurrencySpec extends ZIOSpecDefault {
     test("N concurrent boolean evaluations after init return consistent results without exceptions") {
       withMockServer { server =>
         server.stubFor(get(urlEqualTo(DatafilePath)).willReturn(okJson(ValidDatafile)))
+        val (client, mgr) = buildClient(server)
         val provider =
-          new OptimizelyFeatureProvider(buildClient(server), java.time.Duration.ofSeconds(3), closeOnShutdown = true)
+          new OptimizelyFeatureProvider(
+            client,
+            java.time.Duration.ofSeconds(3),
+            closeOnShutdown = true,
+            configManager = Some(mgr)
+          )
         try {
           provider.initialize(new ImmutableContext())
           val N    = 1000
@@ -116,8 +129,14 @@ object OptimizelyProviderConcurrencySpec extends ZIOSpecDefault {
     test("N concurrent mixed-type evaluations don't trip over each other") {
       withMockServer { server =>
         server.stubFor(get(urlEqualTo(DatafilePath)).willReturn(okJson(ValidDatafile)))
+        val (client, mgr) = buildClient(server)
         val provider =
-          new OptimizelyFeatureProvider(buildClient(server), java.time.Duration.ofSeconds(3), closeOnShutdown = true)
+          new OptimizelyFeatureProvider(
+            client,
+            java.time.Duration.ofSeconds(3),
+            closeOnShutdown = true,
+            configManager = Some(mgr)
+          )
         try {
           provider.initialize(new ImmutableContext())
           val N    = 500
@@ -145,8 +164,14 @@ object OptimizelyProviderConcurrencySpec extends ZIOSpecDefault {
           get(urlEqualTo(DatafilePath))
             .willReturn(okJson(ValidDatafile).withFixedDelay(200))
         )
+        val (client, mgr) = buildClient(server)
         val provider =
-          new OptimizelyFeatureProvider(buildClient(server), java.time.Duration.ofSeconds(2), closeOnShutdown = true)
+          new OptimizelyFeatureProvider(
+            client,
+            java.time.Duration.ofSeconds(2),
+            closeOnShutdown = true,
+            configManager = Some(mgr)
+          )
         try {
           val N           = 200
           val initStarted = new CountDownLatch(1)
@@ -177,8 +202,14 @@ object OptimizelyProviderConcurrencySpec extends ZIOSpecDefault {
     test("evaluations racing shutdown never throw — they surface PROVIDER_NOT_READY") {
       withMockServer { server =>
         server.stubFor(get(urlEqualTo(DatafilePath)).willReturn(okJson(ValidDatafile)))
+        val (client, mgr) = buildClient(server)
         val provider =
-          new OptimizelyFeatureProvider(buildClient(server), java.time.Duration.ofSeconds(3), closeOnShutdown = true)
+          new OptimizelyFeatureProvider(
+            client,
+            java.time.Duration.ofSeconds(3),
+            closeOnShutdown = true,
+            configManager = Some(mgr)
+          )
         val pool = Executors.newFixedThreadPool(32)
         try {
           provider.initialize(new ImmutableContext())

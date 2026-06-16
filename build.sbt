@@ -169,14 +169,7 @@ lazy val optimizely = (project in file("optimizely"))
       "com.optimizely.ab" % "core-api"             % "4.2.2",
       "com.optimizely.ab" % "core-httpclient-impl" % "4.2.2",
       "org.wiremock"      % "wiremock"             % "3.10.0" % Test
-    ),
-    // Optimizely's datafile poller uses Apache HttpClient with non-daemon threads. A shutdown/teardown race in the
-    // WireMock concurrency suite can leave a retry thread alive after all tests have passed; in-process that
-    // non-daemon thread keeps the test JVM from exiting and hangs `sbt test` until CI's 20-min timeout (#212). The
-    // ZIO `TestAspect.timeout` on the suite can't help — the fibers have already completed; it's the JVM that won't
-    // die. Forking the test JVM makes sbt terminate it after the run regardless of leaked threads, turning a
-    // potential hang into a clean exit.
-    Test / fork := true
+    )
   )
 
 // Testkit module - testing utilities

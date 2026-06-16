@@ -15,20 +15,20 @@ Feature: Flag Evaluations - Complete OpenFeature Specification Coverage
         When the flag was evaluated with details
         Then the resolved details value should be "<resolved_value>"
         @booleans
-        Examples:
+        Examples: Boolean evaluations
             | key          | type    | default | resolved_value |
             | boolean-flag | Boolean | false   | true           |
         @strings
-        Examples:
+        Examples: String evaluations
             | key         | type   | default | resolved_value |
             | string-flag | String | bye     | hi             |
         @numbers
-        Examples:
+        Examples: Number evaluations
             | key          | type    | default | resolved_value |
             | integer-flag | Integer | 1       | 10             |
             | float-flag   | Float   | 0.1     | 0.5            |
         @objects
-        Examples:
+        Examples: Object evaluations
             | key         | type   | default | resolved_value                                                                     |
             | object-flag | Object | {}      | {\"showImages\": true,\"title\": \"Check out these pics!\",\"imagesPerPage\": 100} |
 
@@ -42,23 +42,23 @@ Feature: Flag Evaluations - Complete OpenFeature Specification Coverage
         And the reason should be "STATIC"
 
         @booleans
-        Examples:
+        Examples: Boolean evaluations
             | key               | type    | default | resolved_value |
             | boolean-zero-flag | Boolean | true    | false          |
 
         @strings
-        Examples:
+        Examples: String evaluations
             | key              | type   | default | resolved_value |
             | string-zero-flag | String | hi      |                |
 
         @numbers
-        Examples:
+        Examples: Number evaluations
             | key               | type    | default | resolved_value |
             | integer-zero-flag | Integer | 1       | 0              |
             | float-zero-flag   | Float   | 0.1     | 0.0            |
 
         @objects
-        Examples:
+        Examples: Object evaluations
             | key              | type   | default | resolved_value                                                                     |
             | object-zero-flag | Object | {\"a\": 1} | {}                                                                                 |
 
@@ -73,23 +73,23 @@ Feature: Flag Evaluations - Complete OpenFeature Specification Coverage
         And the reason should be "TARGETING_MATCH"
 
         @booleans
-        Examples:
+        Examples: Boolean evaluations
             | key                        | type    | default | resolved_value |
             | boolean-targeted-zero-flag | Boolean | true    | false          |
 
         @strings
-        Examples:
+        Examples: String evaluations
             | key                       | type   | default | resolved_value |
             | string-targeted-zero-flag | String | hi      |                |
 
         @numbers
-        Examples:
+        Examples: Number evaluations
             | key                        | type    | default | resolved_value |
             | integer-targeted-zero-flag | Integer | 1       | 0              |
             | float-targeted-zero-flag   | Float   | 0.1     | 0.0            |
 
         @objects
-        Examples:
+        Examples: Object evaluations
             | key                       | type   | default    | resolved_value |
             | object-targeted-zero-flag | Object | {\"a\": 1} | {}             |
 
@@ -104,23 +104,23 @@ Feature: Flag Evaluations - Complete OpenFeature Specification Coverage
         And the reason should be "DEFAULT"
 
         @booleans
-        Examples:
+        Examples: Boolean evaluations
             | key                        | type    | default | resolved_value |
             | boolean-targeted-zero-flag | Boolean | true    | false          |
 
         @strings
-        Examples:
+        Examples: String evaluations
             | key                       | type   | default | resolved_value |
             | string-targeted-zero-flag | String | hi      |                |
 
         @numbers
-        Examples:
+        Examples: Number evaluations
             | key                        | type    | default | resolved_value |
             | integer-targeted-zero-flag | Integer | 1       | 0              |
             | float-targeted-zero-flag   | Float   | 0.1     | 0.0            |
 
         @objects
-        Examples:
+        Examples: Object evaluations
             | key                       | type   | default    | resolved_value |
             | object-targeted-zero-flag | Object | {\"a\": 1} | {}             |
 
@@ -136,23 +136,23 @@ Feature: Flag Evaluations - Complete OpenFeature Specification Coverage
         And the error-code should be "FLAG_NOT_FOUND"
 
         @booleans
-        Examples:
+        Examples: Boolean evaluations
             | type    | default |
             | Boolean | false   |
 
         @strings
-        Examples:
+        Examples: String evaluations
             | type   | default |
             | String | bye     |
 
         @numbers
-        Examples:
+        Examples: Number evaluations
             | type    | default |
             | Integer | 1       |
             | Float   | 0.1     |
 
         @objects
-        Examples:
+        Examples: Object evaluations
             | type   | default    |
             | Object | {\"a\": 1} |
 
@@ -169,23 +169,23 @@ Feature: Flag Evaluations - Complete OpenFeature Specification Coverage
         And the error-code should be "TYPE_MISMATCH"
 
         @booleans
-        Examples:
+        Examples: Boolean evaluations
             | key          | type    | default |
             | string-flag  | Boolean | false   |
 
         @strings
-        Examples:
+        Examples: String evaluations
             | key          | type   | default |
             | boolean-flag | String | bye     |
 
         @numbers
-        Examples:
+        Examples: Number evaluations
             | key          | type    | default |
             | boolean-flag | Integer | 1       |
             | boolean-flag | Float   | 0.1     |
 
         @objects
-        Examples:
+        Examples: Object evaluations
             | key          | type   | default    |
             | boolean-flag | Object | {\"a\": 1} |
 
@@ -202,23 +202,23 @@ Feature: Flag Evaluations - Complete OpenFeature Specification Coverage
         And the error-code should be "PROVIDER_NOT_READY"
 
         @booleans
-        Examples:
+        Examples: Boolean evaluations
             | key          | type    | default |
             | boolean-flag | Boolean | false   |
 
         @strings
-        Examples:
+        Examples: String evaluations
             | key         | type   | default |
             | string-flag | String | bye     |
 
         @numbers
-        Examples:
+        Examples: Number evaluations
             | key          | type    | default |
             | integer-flag | Integer | 1       |
             | float-flag   | Float   | 0.1     |
 
         @objects
-        Examples:
+        Examples: Object evaluations
             | key         | type   | default    |
             | object-flag | Object | {\"a\": 1} |
 
@@ -235,23 +235,23 @@ Feature: Flag Evaluations - Complete OpenFeature Specification Coverage
         And the error-code should be "PROVIDER_FATAL"
 
         @booleans
-        Examples:
+        Examples: Boolean evaluations
             | key          | type    | default |
             | boolean-flag | Boolean | false   |
 
         @strings
-        Examples:
+        Examples: String evaluations
             | key         | type   | default |
             | string-flag | String | bye     |
 
         @numbers
-        Examples:
+        Examples: Number evaluations
             | key          | type    | default |
             | integer-flag | Integer | 1       |
             | float-flag   | Float   | 0.1     |
 
         @objects
-        Examples:
+        Examples: Object evaluations
             | key         | type   | default    |
             | object-flag | Object | {\"a\": 1} |
 
@@ -266,23 +266,23 @@ Feature: Flag Evaluations - Complete OpenFeature Specification Coverage
         And the variant should be "<expected_variant>"
         And the reason should be "STATIC"
         @booleans
-        Examples:
+        Examples: Boolean evaluations
             | key          | type    | default | resolved_value | expected_variant |
             | boolean-flag | Boolean | false   | true           | on               |
 
         @strings
-        Examples:
+        Examples: String evaluations
             | key         | type   | default | resolved_value | expected_variant |
             | string-flag | String | bye     | hi             | greeting         |
 
         @numbers
-        Examples:
+        Examples: Number evaluations
             | key          | type    | default | resolved_value | expected_variant |
             | integer-flag | Integer | 1       | 10             | ten              |
             | float-flag   | Float   | 0.1     | 0.5            | half             |
 
         @objects
-        Examples:
+        Examples: Object evaluations
             | key         | type   | default | resolved_value                        | expected_variant |
             | object-flag | Object | {}      | {\"showImages\": true,\"title\": \"Check out these pics!\",\"imagesPerPage\": 100} | template         |
 
@@ -311,23 +311,23 @@ Feature: Flag Evaluations - Complete OpenFeature Specification Coverage
         And the reason should be "DEFAULT"
 
         @booleans
-        Examples:
+        Examples: Boolean evaluations
             | key                        | type    | value | default |
             | boolean-targeted-zero-flag | Boolean | false | true    |
 
         @strings
-        Examples:
+        Examples: String evaluations
             | key                       | type   | value | default |
             | string-targeted-zero-flag | String |       | str     |
 
         @numbers
-        Examples:
+        Examples: Number evaluations
             | key                        | type    | value | default |
             | integer-targeted-zero-flag | Integer | 0     | 1       |
             | float-targeted-zero-flag   | Float   | 0.0   | 1.0     |
 
         @objects
-        Examples:
+        Examples: Object evaluations
             | key                       | type   | value | default    |
             | object-targeted-zero-flag | Object | {}    | {\"a\": 1} |
 
@@ -343,23 +343,23 @@ Feature: Flag Evaluations - Complete OpenFeature Specification Coverage
         And the reason should be "DEFAULT"
 
         @booleans
-        Examples:
+        Examples: Boolean evaluations
             | key                        | type    | value | default |
             | boolean-targeted-zero-flag | Boolean | false | true    |
 
         @strings
-        Examples:
+        Examples: String evaluations
             | key                       | type   | value | default |
             | string-targeted-zero-flag | String |       | str     |
 
         @numbers
-        Examples:
+        Examples: Number evaluations
             | key                        | type    | value | default |
             | integer-targeted-zero-flag | Integer | 0     | 1       |
             | float-targeted-zero-flag   | Float   | 0.0   | 1.0     |
 
         @objects
-        Examples:
+        Examples: Object evaluations
             | key                       | type   | value | default    |
             | object-targeted-zero-flag | Object | {}    | {\"a\": 1} |
 
@@ -395,24 +395,24 @@ Feature: Flag Evaluations - Complete OpenFeature Specification Coverage
         Then the variant should be "<expected_variant>"
 
         @booleans
-        Examples:
+        Examples: Boolean evaluations
             | key          | type    | default | expected_variant |
             | boolean-flag | Boolean | false   | on               |
 
         @strings
-        Examples:
+        Examples: String evaluations
             | key         | type   | default | expected_variant |
             | string-flag | String | bye     | greeting         |
 
         @numbers
-        Examples:
+        Examples: Number evaluations
             | key          | type    | default | expected_variant |
             | integer-flag | Integer | 1       | ten              |
 
             | float-flag   | Float   | 0.1     | half             |
 
         @objects
-        Examples:
+        Examples: Object evaluations
             | key         | type   | default | expected_variant |
             | object-flag | Object | {}      | template         |
 
@@ -441,23 +441,23 @@ Feature: Flag Evaluations - Complete OpenFeature Specification Coverage
         And the reason should be "DISABLED"
 
         @booleans
-        Examples:
+        Examples: Boolean evaluations
             | key                   | type    | default |
             | boolean-disabled-flag | Boolean | false   |
 
         @strings
-        Examples:
+        Examples: String evaluations
             | key                  | type   | default |
             | string-disabled-flag | String | bye     |
 
         @numbers
-        Examples:
+        Examples: Number evaluations
             | key                   | type    | default |
             | integer-disabled-flag | Integer | 1       |
             | float-disabled-flag   | Float   | 0.1     |
 
         @objects
-        Examples:
+        Examples: Object evaluations
             | key                  | type   | default    |
             | object-disabled-flag | Object | {\"a\": 1} |
 
@@ -508,23 +508,23 @@ Feature: Flag Evaluations - Complete OpenFeature Specification Coverage
         And the resolved details value should be "<resolved_value>"
 
         @booleans
-        Examples:
+        Examples: Boolean evaluations
             | key          | type    | default | resolved_value |
             | boolean-flag | Boolean | false   | true           |
 
         @strings
-        Examples:
+        Examples: String evaluations
             | key         | type   | default | resolved_value |
             | string-flag | String | bye     | hi             |
 
         @numbers
-        Examples:
+        Examples: Number evaluations
             | key          | type    | default | resolved_value |
             | integer-flag | Integer | 1       | 10             |
             | float-flag   | Float   | 0.1     | 0.5            |
 
         @objects
-        Examples:
+        Examples: Object evaluations
             | key         | type   | default | resolved_value                                                                     |
             | object-flag | Object | {}      | {\"showImages\": true,\"title\": \"Check out these pics!\",\"imagesPerPage\": 100} |
 #

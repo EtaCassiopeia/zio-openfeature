@@ -1,64 +1,58 @@
-# Experimental: OpenFeature conformance via zio-bdd
+# Experimental: OpenFeature conformance via zio-bdd (RC1)
 
-This module is a **dog-food experiment**: the same OpenFeature gherkin conformance suite that
-`conformance/` runs via Cucumber, re-implemented against [`zio-bdd`](https://github.com/EtaCassiopeia/zio-bdd)
-(0.1.0) — a ZIO-native BDD framework. **Not intended to merge** unless zio-bdd matures enough for
-real use. Not aggregated by root; Scala 3 only.
+Dog-food of [`zio-bdd`](https://github.com/EtaCassiopeia/zio-bdd): the same OpenFeature gherkin
+conformance suite that `conformance/` runs via Cucumber, re-implemented against zio-bdd (a ZIO-native
+BDD framework). **Not intended to merge** unless zio-bdd ships as a stable release. Not aggregated by
+root; Scala 3 only.
 
-Run: `sbt conformanceZioBdd/test`
+Run: `sbt conformanceZioBdd/test` → **110 passed, 9 ignored, 0 failed**.
 
-## What works (and reads nicely)
+## Status vs the 0.1.0 attempt
 
-The zio-bdd model is a good fit where it works:
+The earlier attempt (zio-bdd 0.1.0) could only run a hand-trimmed subset — the parser rejected named
+`Examples:` blocks, hyphenated tags, and tagged `Examples`. **zio-bdd 1.0.0-RC1 rewrote the parser**,
+so the suite now runs the **verbatim** upstream feature files (`evaluation_v2`, `contextMerging`,
+`hooks`, `metadata`) — same as the Cucumber suite. The 9 ignored scenarios are the same out-of-scope
+ones the Java SDK harness excludes (`@async`, `@immutability`, `@evaluation-options`,
+`@reason-codes-cached`), here skipped via `excludeTags`.
 
-- **Native ZIO step bodies** — no `Unsafe.run` bridge (the Cucumber version needs one). Steps return
-  `RIO[R with State[S], Unit]` and run on zio-bdd's own runtime.
-- **`ScenarioContext`** (FiberRef-isolated per scenario) holds typed state. It can hold opaque
-  references (the live `FeatureFlags`, recorder `Ref`s) since it only needs a `Default`, not a Schema.
-- **`table[T]`** maps a gherkin data table to `List[T]` via a zio-schema record — clean for the
-  metadata/hook tables.
-- Provider setup, Scenario Outline + Examples, and the `@Suite` annotation all work.
+## RC1 best practices used
 
-Currently green: `metadata.feature` (5 scenarios) and the first two scenarios of `hooks.feature`
-(including the `FLAG_NOT_FOUND` → error-hook case, which exercises the §4.4.6 alignment).
+- **Native ZIO step bodies** — no `Unsafe.run` bridge (Cucumber needs one).
+- **Typed `ScenarioContext`** (FiberRef-isolated) with `Default.from(World())` for the state default.
+- **Per-scenario `Scope`** — providers are built into a `Scope.Closeable` held in state and released
+  by an `afterScenario` hook. No global/leaked scope.
+- **`table[T]`** for the metadata/hook data tables (zio-schema records).
+- **Typed extractors** (`string`) chained with `/`; `excludeTags` for the out-of-scope scenarios;
+  `featureDirs` (not the deprecated `featureDir`).
 
-## What's blocked (zio-bdd gaps found — see filed issues)
+## Dependency note — requires a local zio-bdd build
 
-The `.feature` files here are **modified** from the verbatim upstream copies in `conformance/`
-(Examples names stripped, hooks reduced to 2 scenarios) to work around parser gaps. The originals
-that don't parse are kept under `blocked/` as repro evidence.
+This module depends on `io.github.etacassiopeia %% zio-bdd % "1.0.0-RC1-local"`, a `publishLocal`
+build of zio-bdd that includes a **tag-filtering fix** (see below). The published `1.0.0-RC1` has a
+parser bug where a scenario's tags are swallowed by the previous scenario's `Examples` lookahead,
+which silently breaks `includeTags`/`excludeTags`. To build:
 
-Gaps surfaced during this migration (filed against zio-bdd):
+```sh
+cd /path/to/zio-bdd
+sbt 'set ThisBuild / version := "1.0.0-RC1-local"' gherkin/publishLocal core/publishLocal
+```
 
-1. **Gherkin parser — named `Examples:` blocks** (`Examples: Boolean evaluations`) are rejected
-   (`expected "|"`). Standard Gherkin allows an Examples description.
-2. **Gherkin parser — tags with `-`/`.`** (`@spec-1.3.1.1`, `@error-handling`) stop tokenizing at the
-   hyphen. Blocks all of `evaluation_v2.feature`.
-3. **Gherkin parser — tags on `Examples:` blocks** (`@transaction` above an Examples table) →
-   `expected end-of-input`. Blocks `contextMerging.feature`.
-4. **Gherkin parser — 3+ scenarios each ending in a data table** → `expected end-of-input` at the
-   third table. Blocks the full `hooks.feature` (2 scenarios parse, 3 don't).
-5. **`table[T]` requires a header row** and there's no raw-`DataTable` access in a step signature, so
-   the headerless "levels of increasing precedence" table can't be consumed.
-6. **Minor** — the `@Suite` default `reporters = {"console"}` warns `Unknown reporter 'console'`; and
-   the README's `ScenarioContext.get.map(_ => assertTrue(...))` discards the assertion effect (should
-   be `flatMap`, else assertions never run).
+Once that fix is released, bump the coordinate to the published version.
 
-Filed against zio-bdd: parser gaps
-[#36](https://github.com/EtaCassiopeia/zio-bdd/issues/36) (named Examples),
-[#37](https://github.com/EtaCassiopeia/zio-bdd/issues/37) (hyphen/dot tags),
-[#38](https://github.com/EtaCassiopeia/zio-bdd/issues/38) (Examples-block tags),
-[#39](https://github.com/EtaCassiopeia/zio-bdd/issues/39) (3+ table scenarios);
-[#40](https://github.com/EtaCassiopeia/zio-bdd/issues/40) (headerless tables);
-[#41](https://github.com/EtaCassiopeia/zio-bdd/issues/41) (reporter default + docs).
+## Bug found and fixed during this migration
+
+[zio-bdd#77](https://github.com/EtaCassiopeia/zio-bdd/pull/77) — `parseScenario` consumed the *next*
+scenario's tag line while looking for an `Examples` block and discarded it when none followed,
+stripping that scenario's tags and breaking tag-based filtering. Fixed with a cursor lookahead/restore
++ regression test. Discovered because `excludeTags` did nothing here until the parser was corrected.
 
 ## Comparison with the Cucumber suite
 
-| Aspect | Cucumber (`conformance/`) | zio-bdd (this module) |
+| Aspect | Cucumber (`conformance/`) | zio-bdd RC1 (this module) |
 |---|---|---|
-| Effect model | `Unsafe.run` bridge in every step | native ZIO |
+| Effect model | `Unsafe.run` bridge per step | native ZIO |
 | Per-scenario state | mutable `var`s in glue class | typed `ScenarioContext` (FiberRef) |
-| Feature-file fidelity | verbatim, all 4 files, 110 scenarios | modified; 2 files, 7 scenarios (parser gaps) |
-| Maturity | production | experimental (0.1.0) |
-
-The ergonomics are promising; the blocker is the gherkin parser's coverage of standard syntax.
+| Resource cleanup | per-scenario via Cucumber `@After` | `afterScenario` + scenario `Scope` |
+| Feature-file fidelity | verbatim, 110 + 9 excluded | verbatim, 110 + 9 excluded |
+| Maturity | production | release candidate (needs #77) |

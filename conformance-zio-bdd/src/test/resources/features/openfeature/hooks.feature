@@ -1,6 +1,7 @@
 @hooks
 Feature: Evaluation details through hooks
 
+# This test suite contains scenarios to test the functionality of hooks.
 
   Background:
     Given a stable provider
@@ -18,6 +19,7 @@ Feature: Evaluation details through hooks
       | string    | reason     | STATIC       |
       | string    | error_code | null         |
 
+  # errors
   Scenario: Flag not found
     Given a client with added hook
     And a string-flag with key "missing-flag" and a fallback value "uh-oh"
@@ -32,3 +34,16 @@ Feature: Evaluation details through hooks
       | string    | reason     | ERROR          |
       | string    | error_code | FLAG_NOT_FOUND |
 
+  Scenario: Type error
+    Given a client with added hook
+    And a boolean-flag with key "wrong-flag" and a fallback value "false"
+    When the flag was evaluated with details
+    Then the "before" hook should have been executed
+    And the "error" hook should have been executed
+    And the "finally" hooks should be called with evaluation details
+      | data_type | key        | value         |
+      | string    | flag_key   | wrong-flag    |
+      | boolean   | value      | false         |
+      | string    | variant    | null          |
+      | string    | reason     | ERROR         |
+      | string    | error_code | TYPE_MISMATCH |

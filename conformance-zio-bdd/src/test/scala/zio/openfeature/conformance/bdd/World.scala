@@ -10,6 +10,7 @@ import dev.openfeature.sdk.{EvaluationContext => OFEvaluationContext}
   * references (the live `FeatureFlags`, recorder `Ref`s) that have no schema — it only needs a [[Default]] instance.
   */
 final case class World(
+  scope: Option[Scope.Closeable] = None,
   flags: Option[FeatureFlags] = None,
   testProvider: Option[TestFeatureProvider] = None,
   // evaluation inputs
@@ -38,5 +39,6 @@ final case class World(
 )
 
 object World {
-  given Default[World] = new Default[World] { def default: World = World() }
+  // RC1: provide the default explicitly (the state holds non-schema references, so Schema-derived Default won't work).
+  given Default[World] = Default.from(World())
 }

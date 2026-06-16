@@ -22,9 +22,10 @@ object HookRow { given Schema[HookRow] = DeriveSchema.gen[HookRow] }
   * suite in `conformance/` but with native ZIO step bodies — no `Unsafe.run` bridge.
   */
 @Suite(
-  featureDir = "conformance-zio-bdd/src/test/resources/features/openfeature",
+  featureDirs = Array("conformance-zio-bdd/src/test/resources/features/openfeature"),
   reporters = Array("pretty"),
   parallelism = 1,
+  scenarioParallelism = 1,
   excludeTags = Array("deprecated", "reason-codes-cached", "async", "immutability", "evaluation-options"),
   logLevel = "warning"
 )
@@ -32,22 +33,27 @@ object ConformanceSpec extends ZIOSteps[Any, World] {
 
   // Provider setup -------------------------------------------------------------------------------
 
-  private def buildInMemory: ZIO[Any, Throwable, FeatureFlags] =
+  // Providers are scoped resources, built into a per-scenario `Scope.Closeable` stored in the scenario state and
+  // released by the `afterScenario` hook below — no global/leaked scope.
+  private def buildInMemory(sc: Scope.Closeable): ZIO[Any, Throwable, FeatureFlags] =
     for {
       statusRef <- Ref.make[ProviderStatus](ProviderStatus.Ready)
       api    = OpenFeatureAPIFactory.create()
       domain = s"bdd-${java.util.UUID.randomUUID()}"
-      env <- Scope.global.extend(
+      env <- sc.extend[Any](
         FeatureFlags
           .fromProviderWithDomain(new InMemoryProvider(Fixtures.inMemoryFlags), domain, statusRef, api = Some(api))
           .build
       )
     } yield env.get[FeatureFlags]
 
-  private def buildTestProvider: ZIO[Any, Throwable, (TestFeatureProvider, FeatureFlags)] =
-    Scope.global
-      .extend(TestFeatureProvider.layer(Fixtures.testProviderSeed).build)
+  private def buildTestProvider(sc: Scope.Closeable): ZIO[Any, Throwable, (TestFeatureProvider, FeatureFlags)] =
+    sc.extend[Any](TestFeatureProvider.layer(Fixtures.testProviderSeed).build)
       .map(env => (env.get[TestFeatureProvider], env.get[FeatureFlags]))
+
+  afterScenario {
+    ScenarioContext.get.flatMap(w => ZIO.foreachDiscard(w.scope)(_.close(Exit.unit)))
+  }
 
   private def statusOf(word: String): ProviderStatus = word match {
     case "not ready" => ProviderStatus.NotReady
@@ -60,20 +66,28 @@ object ConformanceSpec extends ZIOSteps[Any, World] {
   // A "stable" provider needs real variants/reasons → InMemoryProvider; any non-ready status is simulated by the
   // testkit provider whose status we then flip.
   Given("a " / string / " provider") { (status: String) =>
-    if (status == "stable")
-      buildInMemory.flatMap(ff => ScenarioContext.update(_.copy(flags = Some(ff), testProvider = None)))
-    else
-      for {
-        tpff <- buildTestProvider
-        _    <- tpff._1.setStatus(statusOf(status))
-        _    <- ScenarioContext.update(_.copy(flags = Some(tpff._2), testProvider = Some(tpff._1)))
-      } yield ()
+    for {
+      sc <- Scope.make
+      _ <-
+        if (status == "stable")
+          buildInMemory(sc).flatMap(ff =>
+            ScenarioContext.update(_.copy(scope = Some(sc), flags = Some(ff), testProvider = None))
+          )
+        else
+          for {
+            tpff <- buildTestProvider(sc)
+            _    <- tpff._1.setStatus(statusOf(status))
+            _    <- ScenarioContext.update(_.copy(scope = Some(sc), flags = Some(tpff._2), testProvider = Some(tpff._1)))
+          } yield ()
+    } yield ()
   }
 
   Given("a stable provider with retrievable context is registered") {
-    buildTestProvider.flatMap(tpff =>
-      ScenarioContext.update(_.copy(flags = Some(tpff._2), testProvider = Some(tpff._1)))
-    )
+    for {
+      sc   <- Scope.make
+      tpff <- buildTestProvider(sc)
+      _    <- ScenarioContext.update(_.copy(scope = Some(sc), flags = Some(tpff._2), testProvider = Some(tpff._1)))
+    } yield ()
   }
 
   // Flag + context -------------------------------------------------------------------------------

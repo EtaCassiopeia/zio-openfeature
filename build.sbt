@@ -220,7 +220,7 @@ lazy val conformanceZioBdd = (project in file("conformance-zio-bdd"))
     crossScalaVersions := Seq(scala3Version),
     libraryDependencies ++= Seq(
       "dev.openfeature"         % "sdk"                    % openFeatureSdkVersion % Test,
-      "io.github.etacassiopeia" %% "zio-bdd"               % "0.1.0"               % Test,
+      "io.github.etacassiopeia" %% "zio-bdd"               % "1.0.0-RC1-local"     % Test,
       "dev.zio"                 %% "zio-schema"            % "1.6.6"               % Test,
       "dev.zio"                 %% "zio-schema-derivation" % "1.6.6"               % Test
     ),

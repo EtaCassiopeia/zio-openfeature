@@ -19,7 +19,7 @@ Feature: Metadata
     When the flag was evaluated with details
     Then the resolved metadata is empty
 
-    Examples:
+    Examples: Flags
       | key          | flag_type | default_value |
       | boolean-flag | Boolean   | true          |
       | integer-flag | Integer   | 23            |

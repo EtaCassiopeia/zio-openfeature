@@ -52,12 +52,14 @@ object OptimizelyProviderIntegrationSpec extends ZIOSpecDefault {
   private def datafileUrl(server: WireMockServer): String =
     s"http://localhost:${server.port()}$DatafilePath"
 
-  /** Build an Optimizely client pointed at WireMock with aggressive timeouts so failure-mode tests fail fast. */
+  /** Build an Optimizely client pointed at WireMock with aggressive timeouts so failure-mode tests fail fast. The
+    * fail-fast HTTP client never retries, so when WireMock is stopped at teardown an in-flight poll fails immediately
+    * instead of looping on a non-daemon thread and hanging the test JVM (see `TestHttpClient`).
+    */
   private def buildClient(
     server: WireMockServer,
     blockingTimeout: java.time.Duration = java.time.Duration.ofMillis(800),
-    pollingInterval: java.time.Duration = java.time.Duration.ofSeconds(3600),
-    keepPolling: Boolean = false
+    pollingInterval: java.time.Duration = java.time.Duration.ofSeconds(3600)
   ): Optimizely = {
     val configManager = HttpProjectConfigManager
       .builder()
@@ -65,11 +67,8 @@ object OptimizelyProviderIntegrationSpec extends ZIOSpecDefault {
       .withUrl(datafileUrl(server))
       .withBlockingTimeout(blockingTimeout.toMillis, TimeUnit.MILLISECONDS)
       .withPollingInterval(pollingInterval.toSeconds, TimeUnit.SECONDS)
+      .withOptimizelyHttpClient(TestHttpClient.failFast())
       .build()
-    // The blocking build() has already attempted the initial datafile fetch. Unless a test specifically exercises
-    // ongoing polling, halt the poller now so it cannot keep retrying against a stopped WireMock server and leave a
-    // non-daemon Apache HttpClient thread that prevents the test JVM from exiting (hanging CI until its timeout).
-    if (!keepPolling) configManager.stop()
     Optimizely.builder().withConfigManager(configManager).build()
   }
 
@@ -144,14 +143,14 @@ object OptimizelyProviderIntegrationSpec extends ZIOSpecDefault {
           get(urlEqualTo(DatafilePath))
             .willReturn(okJson(ValidDatafileV1).withFixedDelay(5000))
         )
-        val client = buildClient(server, blockingTimeout = java.time.Duration.ofMillis(200), keepPolling = true)
+        val client = buildClient(server, blockingTimeout = java.time.Duration.ofMillis(200))
         withProvider(client, initWait = java.time.Duration.ofMillis(300)) { provider =>
           val outcome = tryInit(provider)
           val state   = stateOf(provider)
           assertTrue(outcome.isLeft, state != ProviderState.READY)
         }
       }
-    } @@ TestAspect.ifEnvNotSet("CI"),
+    },
     test("connection reset by peer -> initialize throws") {
       withMockServer { server =>
         server.stubFor(get(urlEqualTo(DatafilePath)).willReturn(aResponse().withFault(Fault.CONNECTION_RESET_BY_PEER)))
@@ -177,7 +176,7 @@ object OptimizelyProviderIntegrationSpec extends ZIOSpecDefault {
             .whenScenarioStateIs("v2-served")
             .willReturn(okJson(ValidDatafileV2))
         )
-        val client = buildClient(server, pollingInterval = java.time.Duration.ofSeconds(1), keepPolling = true)
+        val client = buildClient(server, pollingInterval = java.time.Duration.ofSeconds(1))
         withProvider(client) { provider =>
           val outcome = tryInit(provider)
           // Poll for a second request triggered by the SDK's background poller. We bound the wait so a real
@@ -196,6 +195,6 @@ object OptimizelyProviderIntegrationSpec extends ZIOSpecDefault {
           )
         }
       }
-    } @@ TestAspect.ifEnvNotSet("CI")
+    }
   ) @@ TestAspect.sequential @@ TestAspect.timeout(45.seconds) @@ TestAspect.withLiveClock
 }

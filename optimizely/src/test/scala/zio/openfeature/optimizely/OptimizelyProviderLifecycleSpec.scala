@@ -58,11 +58,10 @@ object OptimizelyProviderLifecycleSpec extends ZIOSpecDefault {
       .withUrl(datafileUrl(server))
       .withBlockingTimeout(blockingTimeout.toMillis, TimeUnit.MILLISECONDS)
       .withPollingInterval(pollingInterval.toSeconds, TimeUnit.SECONDS)
+      // Fail-fast HTTP: when WireMock stops at teardown, an in-flight poll fails immediately instead of retrying
+      // forever on a non-daemon thread and hanging the test JVM (see TestHttpClient).
+      .withOptimizelyHttpClient(TestHttpClient.failFast())
       .build()
-    // The blocking build() has already attempted the initial datafile fetch; these lifecycle tests never need ongoing
-    // polling, so halt the poller now — otherwise it keeps retrying against a stopped WireMock and leaves a non-daemon
-    // Apache HttpClient thread that prevents the test JVM from exiting (hanging CI until its timeout).
-    mgr.stop()
     Optimizely.builder().withConfigManager(mgr).build()
   }
 

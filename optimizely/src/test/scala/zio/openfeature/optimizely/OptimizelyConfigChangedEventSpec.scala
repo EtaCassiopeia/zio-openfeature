@@ -104,6 +104,8 @@ object OptimizelyConfigChangedEventSpec extends ZIOSpecDefault {
           .withBlockingTimeout(2000L, TimeUnit.MILLISECONDS)
           .withPollingInterval(1L, TimeUnit.SECONDS)
           .withNotificationCenter(sharedCenter)
+          // Fail-fast HTTP so the 1s poller can't retry against the stopped WireMock and hang the JVM (TestHttpClient).
+          .withOptimizelyHttpClient(TestHttpClient.failFast())
           .build()
         val optimizely =
           Optimizely.builder().withConfigManager(configManager).withNotificationCenter(sharedCenter).build()
@@ -133,6 +135,6 @@ object OptimizelyConfigChangedEventSpec extends ZIOSpecDefault {
           ()
         }
       }
-    } @@ TestAspect.ifEnvNotSet("CI")
+    }
   ) @@ TestAspect.sequential @@ TestAspect.timeout(60.seconds) @@ TestAspect.withLiveClock
 }

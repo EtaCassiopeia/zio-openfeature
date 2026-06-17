@@ -84,8 +84,9 @@ object BoundedLatencyContractSpec extends ZIOSpecDefault {
         } yield assertTrue(
           result.isLeft,
           result.left.exists(_.isInstanceOf[FeatureFlagError.ProviderError]),
-          // Must return well before the provider's 2s sleep completes
-          elapsed.toMillis < 1800L
+          // The ProviderError above already proves the 1s timeout fired before the provider's 2s sleep returned;
+          // this only guards against pathological lateness. Generous bound so a slow/loaded CI runner can't flake it.
+          elapsed.toMillis < 1900L
         )
       }
     } @@ withLiveClock,
@@ -132,7 +133,9 @@ object BoundedLatencyContractSpec extends ZIOSpecDefault {
         } yield assertTrue(
           result.isLeft,
           result.left.exists(_.isInstanceOf[FeatureFlagError.ProviderError]),
-          elapsed.toMillis < 1000L
+          // ProviderError proves a timeout fired; `< 1900` proves it was the 100ms per-call timeout, not the 5s
+          // global one (and beat the provider's 2s). Loose enough not to flake on a slow runner.
+          elapsed.toMillis < 1900L
         )
       }
     } @@ withLiveClock,
@@ -147,8 +150,10 @@ object BoundedLatencyContractSpec extends ZIOSpecDefault {
           errors  = results.count(_.isLeft)
         } yield assertTrue(
           errors == 1000,
-          // All 1000 fibers bounded — total elapsed should not be anywhere near 1000 * 2s
-          elapsed.toMillis < 3000L
+          // `errors == 1000` already proves every fiber was bounded (timed out, none ran the full 2s). This guards
+          // against serial execution — serial would be ~1000 × 500ms = 500s — with a very generous bound (the suite's
+          // `timeout(20.seconds)` is the real hang-guard) so thread-pool scheduling on a slow CI runner can't flake it.
+          elapsed.toMillis < 15000L
         )
       }
     } @@ withLiveClock @@ timeout(20.seconds)

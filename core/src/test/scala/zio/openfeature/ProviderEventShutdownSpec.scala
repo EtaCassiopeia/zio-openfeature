@@ -85,9 +85,9 @@ object ProviderEventShutdownSpec extends ZIOSpecDefault {
           cancels <- ZIO.foreach(1 to 10) { _ =>
             ff.onProviderReady(_ => counter.update(_ + 1))
           }
-          // Give time for immediate replay to fire
-          _     <- ZIO.sleep(100.millis)
-          count <- counter.get
+          // Poll until all 10 immediate ready-replays have fired, rather than sleeping a fixed window — robust to
+          // async event-dispatch latency on a slow runner (bounded by the suite's 10s timeout below).
+          count <- counter.get.repeatUntil(_ >= 10)
           // Cancel all subscriptions
           _ <- ZIO.foreachDiscard(cancels)(identity)
         } yield assertTrue(count >= 10)

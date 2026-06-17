@@ -59,6 +59,10 @@ object OptimizelyProviderLifecycleSpec extends ZIOSpecDefault {
       .withBlockingTimeout(blockingTimeout.toMillis, TimeUnit.MILLISECONDS)
       .withPollingInterval(pollingInterval.toSeconds, TimeUnit.SECONDS)
       .build()
+    // The blocking build() has already attempted the initial datafile fetch; these lifecycle tests never need ongoing
+    // polling, so halt the poller now — otherwise it keeps retrying against a stopped WireMock and leaves a non-daemon
+    // Apache HttpClient thread that prevents the test JVM from exiting (hanging CI until its timeout).
+    mgr.stop()
     Optimizely.builder().withConfigManager(mgr).build()
   }
 

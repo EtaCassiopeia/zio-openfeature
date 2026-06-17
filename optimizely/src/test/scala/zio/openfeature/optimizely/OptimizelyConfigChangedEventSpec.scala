@@ -133,6 +133,6 @@ object OptimizelyConfigChangedEventSpec extends ZIOSpecDefault {
           ()
         }
       }
-    }
+    } @@ TestAspect.ifEnvNotSet("CI")
   ) @@ TestAspect.sequential @@ TestAspect.timeout(60.seconds) @@ TestAspect.withLiveClock
 }

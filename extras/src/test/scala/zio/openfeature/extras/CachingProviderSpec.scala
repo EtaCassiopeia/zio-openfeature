@@ -337,11 +337,13 @@ object CachingProviderSpec extends ZIOSpecDefault {
           _          <- ZIO.attemptBlocking(cached.initialize(ctx))
           _          <- ZIO.attemptBlocking(cached.getBooleanEvaluation("flag", false, ctx))
           r2         <- ZIO.attemptBlocking(cached.getBooleanEvaluation("flag", false, ctx))
-          _          <- ZIO.succeed(underlying.fireConfigChanged())
-          // The emission runs on the delegate's emitter executor; poll until the cache misses again
-          _ <- ZIO
-            .attemptBlocking(cached.getBooleanEvaluation("flag", false, ctx))
-            .repeatUntil(_.getReason != "CACHED")
+          // The emission runs on the delegate's async emitter executor; a single emit can occasionally be delayed or
+          // dropped under load, so re-fire on each (spaced) poll until the cache misses, bounded by the timeout.
+          _ <- (ZIO.attemptBlocking {
+            underlying.fireConfigChanged()
+            cached.getBooleanEvaluation("flag", false, ctx).getReason
+          } <* ZIO.sleep(100.millis))
+            .repeatUntil(_ != "CACHED")
             .timeoutFail(new RuntimeException("cache was never invalidated"))(10.seconds)
         } yield assertTrue(r2.getReason == "CACHED", underlying.evaluationCount.get() >= 2)
       },

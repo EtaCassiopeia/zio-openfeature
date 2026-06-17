@@ -40,8 +40,8 @@ object OFREPProviderSpec extends ZIOSpecDefault {
         finally provider.shutdown()
       },
       test("fromOptions accepts a fully-built OfrepProviderOptions") {
-        val opts = OfrepProviderOptions
-          .builder()
+        val opts = OFREPProvider
+          .daemonOptionsBuilder()
           .baseUrl("http://localhost:9999")
           .requestTimeout(Duration.ofSeconds(5))
           .connectTimeout(Duration.ofSeconds(5))
@@ -117,7 +117,10 @@ object OFREPProviderSpec extends ZIOSpecDefault {
     ),
     suite("make(OfrepProviderOptions)")(
       test("rejects options with bad scheme") {
-        val opts = OfrepProviderOptions.builder().baseUrl("ftp://flags.example.com").build()
+        // Use daemonOptionsBuilder() instead of OfrepProviderOptions.builder(): `make` validates and rejects the
+        // ftp scheme BEFORE constructing a provider, so shutdown() never runs. The contrib default builder would
+        // orphan a non-daemon 5-thread pool here and hang `sbt +test` (issue #229).
+        val opts = OFREPProvider.daemonOptionsBuilder().baseUrl("ftp://flags.example.com").build()
         for {
           result <- OFREPProvider.make(opts).either
         } yield assertTrue(
@@ -126,8 +129,8 @@ object OFREPProviderSpec extends ZIOSpecDefault {
         )
       },
       test("accepts options with a valid baseUrl") {
-        val opts = OfrepProviderOptions
-          .builder()
+        val opts = OFREPProvider
+          .daemonOptionsBuilder()
           .baseUrl("http://localhost:9999")
           .requestTimeout(Duration.ofSeconds(5))
           .build()

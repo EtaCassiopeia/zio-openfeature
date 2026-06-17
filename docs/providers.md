@@ -288,10 +288,12 @@ val result = ff.booleanDetails(
 
 | Setting | Scope | Default |
 |:--------|:------|:--------|
-| `fromProvider(provider, evaluationTimeout)` | All evaluations on this instance | `None` (no timeout) |
+| `fromProvider(provider, evaluationTimeout)` | All evaluations on this instance | `Some(1.second)` — `FeatureFlags.DefaultEvaluationTimeout` |
 | `EvaluationOptions.empty.withTimeout(duration)` | Single evaluation call | `None` (uses global) |
 
-Per-call timeout takes precedence over global. If neither is set, no timeout is applied (backward compatible).
+Per-call timeout takes precedence over global. As of 1.0.0 the global default is **1 second** (previously `None`), so
+a hung provider can no longer block a fiber indefinitely out of the box. Pass `evaluationTimeout = Some(largerDuration)`
+to raise the bound, or `evaluationTimeout = None` to disable it entirely.
 
 ### Runtime provider replacement (hot-swap)
 

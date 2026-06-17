@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0] — 2026-06-17
+
+First stable release. **Upgrading from 0.9.x:** two behavior changes may require action —
+**`FlagType` decoders no longer coerce silently** (strict type decoding, #187) and a **1-second default
+per-evaluation timeout** (bounds hung providers; opt out with `evaluationTimeout = None`). Details in the
+entries below.
+
 ### Added
 
 - **Scope-managed Optimizely construction** (#208). `OptimizelyProvider.scoped(...)` and the (now scope-owning)
@@ -204,6 +211,8 @@ promotes `[Unreleased]` to the new version section when a release tag is cut.
 
 Internal refactors that don't change behaviour or surface area don't need a CHANGELOG entry. When in doubt: write one.
 
-[Unreleased]: https://github.com/EtaCassiopeia/zio-openfeature/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/EtaCassiopeia/zio-openfeature/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/EtaCassiopeia/zio-openfeature/compare/v0.9.1...v1.0.0
+[0.9.1]: https://github.com/EtaCassiopeia/zio-openfeature/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/EtaCassiopeia/zio-openfeature/releases/tag/v0.9.0
 [0.8.0]: https://github.com/EtaCassiopeia/zio-openfeature/releases/tag/v0.8.0

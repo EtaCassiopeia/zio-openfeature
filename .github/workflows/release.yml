@@ -15,6 +15,9 @@ env:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    # Bound the job so a hung test (e.g. a provider whose background poller is never reaped) can't dangle for GitHub's
+    # 6-hour default before someone notices a stuck release. Tests + ci-release normally complete well inside this.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v6
         with:
@@ -30,8 +33,16 @@ jobs:
       - name: Setup sbt
         uses: sbt/setup-sbt@v1
 
-      - name: Run tests (Scala 2.13 + 3)
-        run: sbt +test
+      # Run each Scala version in its own sbt invocation (a fresh JVM) rather than a single `+test`. `+test` runs both
+      # cross versions in one long-lived JVM; if any test leaves a non-daemon thread, it accumulates across versions and
+      # the JVM never exits — the exact hang that build-matrix (which runs `++<version> test` per cell, in its own JVM)
+      # never hits. This mirrors that proven-reliable per-version isolation. The released commit is already gated by the
+      # full build-matrix on `main`, so this is a pre-publish backstop, not the primary gate.
+      - name: Run tests (Scala 2.13)
+        run: sbt "++2.13.16 test"
+
+      - name: Run tests (Scala 3)
+        run: sbt "++3.3.4 test"
 
       - name: Publish to Maven Central
         run: sbt ci-release

@@ -203,9 +203,6 @@ lazy val conformance = (project in file("conformance"))
     )
   )
 
-// The same OpenFeature gherkin suite run via `zio-bdd` (a ZIO-native BDD framework, now a stable 1.0.0 release)
-// instead of Cucumber. Not published, not aggregated, Scala 3 only; gated in CI alongside the Cucumber conformance
-// suite.
 lazy val conformanceZioBdd = (project in file("conformance-zio-bdd"))
   .dependsOn(core, testkit)
   .settings(

@@ -51,9 +51,12 @@ object OptimizelyPollingLifecycleSpec extends ZIOSpecDefault {
         for {
           start <- ZIO.succeed(java.lang.System.nanoTime())
           provider <- OptimizelyProvider.make(
-            "polling-key-1",
-            Some(datafileUrl(server)),
-            java.time.Duration.ofSeconds(1)
+            OptimizelyProviderConfig(
+              sdkKey = "polling-key-1",
+              datafileUrl = Some(datafileUrl(server)),
+              initWait = java.time.Duration.ofSeconds(1)
+            ),
+            Some(TestHttpClient.failFast())
           )
           tookMs = (java.lang.System.nanoTime() - start) / 1000000L
           // Give any (buggy) background poller a chance to fire before asserting near-silence
@@ -80,7 +83,7 @@ object OptimizelyPollingLifecycleSpec extends ZIOSpecDefault {
           pollingInterval = Some(java.time.Duration.ofMillis(200))
         )
         for {
-          provider   <- OptimizelyProvider.make(config)
+          provider   <- OptimizelyProvider.make(config, Some(TestHttpClient.failFast()))
           beforeInit <- ZIO.succeed(requestCount(server))
           initResult <- ZIO.succeed(tryInit(provider))
           // pollingInterval is honored: several polls land within the window
@@ -110,7 +113,7 @@ object OptimizelyPollingLifecycleSpec extends ZIOSpecDefault {
         for {
           initResult <- ZIO.scoped {
             for {
-              provider <- OptimizelyProvider.scoped(config)
+              provider <- OptimizelyProvider.scoped(config, Some(TestHttpClient.failFast()))
               result   <- ZIO.succeed(tryInit(provider))
             } yield result
           }
@@ -136,7 +139,7 @@ object OptimizelyPollingLifecycleSpec extends ZIOSpecDefault {
         )
         for {
           _ <- ZIO.scoped {
-            OptimizelyProvider.layer(config).build.flatMap { env =>
+            OptimizelyProvider.layer(config, Some(TestHttpClient.failFast())).build.flatMap { env =>
               val provider = env.get[OptimizelyFeatureProvider]
               ZIO.succeed(tryInit(provider)) *> sleepBlocking(500.millis)
             }
@@ -152,7 +155,7 @@ object OptimizelyPollingLifecycleSpec extends ZIOSpecDefault {
         sdkKey = "polling-key-5",
         pollingInterval = Some(java.time.Duration.ZERO)
       )
-      OptimizelyProvider.make(config).exit.map { exit =>
+      OptimizelyProvider.make(config, Some(TestHttpClient.failFast())).exit.map { exit =>
         assertTrue(exit.isFailure)
       }
     }

@@ -54,6 +54,8 @@ object OptimizelyProviderConcurrencySpec extends ZIOSpecDefault {
       .withUrl(datafileUrl(server))
       .withBlockingTimeout(blockingTimeout.toMillis, TimeUnit.MILLISECONDS)
       .withPollingInterval(pollingInterval.toSeconds, TimeUnit.SECONDS)
+      // Fail-fast HTTP so an in-flight poll can't retry against a stopped WireMock on a non-daemon thread (TestHttpClient).
+      .withOptimizelyHttpClient(TestHttpClient.failFast())
       .build(true)
     mgr.stop()
     (Optimizely.builder().withConfigManager(mgr).build(), mgr)

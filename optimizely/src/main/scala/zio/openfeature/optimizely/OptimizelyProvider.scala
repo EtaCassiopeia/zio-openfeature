@@ -115,6 +115,13 @@ object OptimizelyProvider {
     * shuts the provider down). Prefer [[scoped]] or [[layer]] to make that ownership explicit.
     */
   def make(config: OptimizelyProviderConfig): IO[FeatureFlagError.InvalidConfiguration, OptimizelyFeatureProvider] =
+    make(config, httpClient = None)
+
+  /** Test seam: [[make]] with an injected HTTP client (see `TestHttpClient` in the test sources). */
+  private[optimizely] def make(
+    config: OptimizelyProviderConfig,
+    httpClient: Option[com.optimizely.ab.OptimizelyHttpClient]
+  ): IO[FeatureFlagError.InvalidConfiguration, OptimizelyFeatureProvider] =
     for {
       validKey <- validateSdkKey(config.sdkKey)
       validUrl <- config.datafileUrl match {
@@ -124,7 +131,7 @@ object OptimizelyProvider {
       _ <- validatePositive("pollingInterval", config.pollingInterval)
       _ <- validatePositive("blockingTimeout", config.blockingTimeout)
       pair <- ZIO
-        .attempt(buildClient(validKey, validUrl, config.pollingInterval, config.blockingTimeout))
+        .attempt(buildClient(validKey, validUrl, config.pollingInterval, config.blockingTimeout, httpClient))
         .mapError(t => FeatureFlagError.InvalidConfiguration(s"Optimizely client build failed: ${t.getMessage}"))
     } yield new OptimizelyFeatureProvider(
       pair._1,
@@ -141,7 +148,14 @@ object OptimizelyProvider {
   def scoped(
     config: OptimizelyProviderConfig
   ): ZIO[Scope, FeatureFlagError.InvalidConfiguration, OptimizelyFeatureProvider] =
-    ZIO.acquireRelease(make(config))(releaseProvider)
+    scoped(config, httpClient = None)
+
+  /** Test seam: [[scoped]] with an injected HTTP client (see `TestHttpClient` in the test sources). */
+  private[optimizely] def scoped(
+    config: OptimizelyProviderConfig,
+    httpClient: Option[com.optimizely.ab.OptimizelyHttpClient]
+  ): ZIO[Scope, FeatureFlagError.InvalidConfiguration, OptimizelyFeatureProvider] =
+    ZIO.acquireRelease(make(config, httpClient))(releaseProvider)
 
   /** [[scoped]] for the common CDN-only case. */
   def scoped(sdkKey: String): ZIO[Scope, FeatureFlagError.InvalidConfiguration, OptimizelyFeatureProvider] =
@@ -181,7 +195,14 @@ object OptimizelyProvider {
   def layer(
     config: OptimizelyProviderConfig
   ): ZLayer[Any, FeatureFlagError.InvalidConfiguration, OptimizelyFeatureProvider] =
-    ZLayer.scoped(scoped(config))
+    layer(config, httpClient = None)
+
+  /** Test seam: [[layer]] with an injected HTTP client (see `TestHttpClient` in the test sources). */
+  private[optimizely] def layer(
+    config: OptimizelyProviderConfig,
+    httpClient: Option[com.optimizely.ab.OptimizelyHttpClient]
+  ): ZLayer[Any, FeatureFlagError.InvalidConfiguration, OptimizelyFeatureProvider] =
+    ZLayer.scoped(scoped(config, httpClient))
 
   // Construction
 
@@ -189,7 +210,10 @@ object OptimizelyProvider {
     sdkKey: String,
     datafileUrl: Option[String],
     pollingInterval: Option[java.time.Duration],
-    blockingTimeout: Option[java.time.Duration]
+    blockingTimeout: Option[java.time.Duration],
+    // Test seam (see the `private[optimizely]` overloads below): inject a custom HTTP client. Production callers
+    // never set this, so the SDK builds its default client.
+    httpClient: Option[com.optimizely.ab.OptimizelyHttpClient]
   ): (Optimizely, HttpProjectConfigManager) = {
     // Share a single NotificationCenter between the polling config manager and the Optimizely client. Without this,
     // the manager fires UpdateConfigNotification on its own private NotificationCenter and handlers registered via
@@ -206,6 +230,7 @@ object OptimizelyProvider {
     blockingTimeout.foreach(d =>
       configBuilder.withBlockingTimeout(java.lang.Long.valueOf(d.toMillis), TimeUnit.MILLISECONDS)
     )
+    httpClient.foreach(configBuilder.withOptimizelyHttpClient)
     // `build()` (no-arg) would start polling AND block up to the SDK's blocking timeout (default 10s) waiting for
     // the first datafile — with an unreachable CDN, construction stalls and then a background poller retries
     // forever. `build(true)` skips the blocking wait but still calls `start()`, so we `stop()` immediately:

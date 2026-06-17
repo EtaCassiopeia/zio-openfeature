@@ -203,8 +203,9 @@ lazy val conformance = (project in file("conformance"))
     )
   )
 
-// Experimental: the same OpenFeature gherkin suite run via `zio-bdd` (a ZIO-native BDD framework) instead of Cucumber,
-// to dog-food zio-bdd. Not published, not aggregated, Scala 3 only. Not intended to merge unless zio-bdd matures.
+// The same OpenFeature gherkin suite run via `zio-bdd` (a ZIO-native BDD framework) instead of Cucumber, to dog-food
+// zio-bdd (now a stable 1.0.0 release). Not published, not aggregated, Scala 3 only; gated in CI alongside the
+// Cucumber conformance suite.
 lazy val conformanceZioBdd = (project in file("conformance-zio-bdd"))
   .dependsOn(core, testkit)
   .settings(
@@ -213,7 +214,7 @@ lazy val conformanceZioBdd = (project in file("conformance-zio-bdd"))
     crossScalaVersions := Seq(scala3Version),
     libraryDependencies ++= Seq(
       "dev.openfeature"         % "sdk"                    % openFeatureSdkVersion % Test,
-      "io.github.etacassiopeia" %% "zio-bdd"               % "1.0.0-RC2"           % Test,
+      "io.github.etacassiopeia" %% "zio-bdd"               % "1.0.0"               % Test,
       "dev.zio"                 %% "zio-schema"            % "1.6.6"               % Test,
       "dev.zio"                 %% "zio-schema-derivation" % "1.6.6"               % Test
     ),

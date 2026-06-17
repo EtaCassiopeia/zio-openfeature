@@ -4,6 +4,9 @@ import dev.openfeature.contrib.providers.ofrep.{OfrepProvider, OfrepProviderOpti
 import zio._
 import zio.openfeature.FeatureFlagError
 
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.{Executors, ExecutorService, ThreadFactory}
+
 /** Scala-friendly factories for the OpenFeature Java SDK's OFREP contrib provider
   * ([[dev.openfeature.contrib.providers.ofrep.OfrepProvider]]).
   *
@@ -26,6 +29,33 @@ import zio.openfeature.FeatureFlagError
   */
 object OFREPProvider {
 
+  // The ofrep contrib 0.0.1 Executor default (`OfrepProviderOptions.$default$executor()` = `Executors
+  // .newFixedThreadPool(5)`) uses the JDK default ThreadFactory, which produces NON-daemon threads (named
+  // `pool-N-thread-K`). Non-daemon threads block JVM exit, and `OfrepProviderOptions.builder().build()` spawns that
+  // pool eagerly — so any path that builds options but never constructs/shuts down a provider (e.g. a validation
+  // rejection) orphans the pool and can hang `sbt +test`. We always supply our own daemon executor so the contrib
+  // default is never instantiated by code that goes through this wrapper. See issue #229.
+  private val counter = new AtomicInteger(0)
+  private val daemonThreadFactory: ThreadFactory = (r: Runnable) => {
+    val t = new Thread(r, s"zio-openfeature-ofrep-${counter.incrementAndGet()}")
+    t.setDaemon(true)
+    t
+  }
+  private def newDaemonExecutor(): ExecutorService =
+    Executors.newCachedThreadPool(daemonThreadFactory)
+
+  /** A fresh `OfrepProviderOptions.Builder` pre-configured with a daemon `ExecutorService`.
+    *
+    * Use this instead of `OfrepProviderOptions.builder()` when configuring options (custom timeouts, proxy, auth
+    * headers, etc.) outside the standard [[make]] / [[layer]] factories. The contrib provider 0.0.1 default executor is
+    * `Executors.newFixedThreadPool(5)` with the JDK default `ThreadFactory` (non-daemon threads), which blocks JVM exit
+    * if the pool is never shut down. This helper wires in a daemon-thread pool up front so that can't happen. Pass the
+    * resulting `OfrepProviderOptions` to
+    * [[make(options:dev\.openfeature\.contrib\.providers\.ofrep\.OfrepProviderOptions)*]].
+    */
+  def daemonOptionsBuilder(): OfrepProviderOptions.Builder =
+    OfrepProviderOptions.builder().executor(newDaemonExecutor())
+
   /** Validate a base URL and construct an OFREP provider. The validation rules are:
     *   - non-empty after trim
     *   - parses as a `java.net.URI`
@@ -39,13 +69,18 @@ object OFREPProvider {
     validateBaseUrl(baseUrl).flatMap { validated =>
       ZIO
         .attempt(
-          OfrepProvider.constructProvider(OfrepProviderOptions.builder().baseUrl(validated).build())
+          OfrepProvider.constructProvider(daemonOptionsBuilder().baseUrl(validated).build())
         )
         .mapError(t => FeatureFlagError.InvalidConfiguration(s"OFREP provider construction failed: ${t.getMessage}"))
     }
 
   /** Validate a fully-configured [[OfrepProviderOptions]] (auth headers, timeouts, executor, etc.) and construct the
     * provider. Validates the options' `baseUrl` and rejects obvious misconfiguration up front.
+    *
+    * If you build the options yourself, prefer [[daemonOptionsBuilder]] over `OfrepProviderOptions.builder()` so the
+    * contrib provider's default non-daemon 5-thread pool is never instantiated — a pool whose owning provider is never
+    * shut down (including this method's own validation-rejection path) blocks JVM exit. This method must not mutate
+    * caller-supplied options, so the executor choice is the caller's responsibility.
     */
   def make(options: OfrepProviderOptions): IO[FeatureFlagError.InvalidConfiguration, OfrepProvider] =
     for {
@@ -82,7 +117,7 @@ object OFREPProvider {
     */
   @deprecated("Use OFREPProvider.make(...) or OFREPProvider.layer(...) for validated construction", "0.2.0")
   def apply(): OfrepProvider =
-    OfrepProvider.constructProvider()
+    OfrepProvider.constructProvider(daemonOptionsBuilder().build())
 
   /** Create an OFREP provider pointed at a specific endpoint, otherwise using contrib defaults.
     *
@@ -91,7 +126,7 @@ object OFREPProvider {
     */
   @deprecated("Use OFREPProvider.make(baseUrl) or OFREPProvider.layer(baseUrl) for validated construction", "0.2.0")
   def apply(baseUrl: String): OfrepProvider =
-    OfrepProvider.constructProvider(OfrepProviderOptions.builder().baseUrl(baseUrl).build())
+    OfrepProvider.constructProvider(daemonOptionsBuilder().baseUrl(baseUrl).build())
 
   /** Create an OFREP provider with a fully configured [[OfrepProviderOptions]].
     *

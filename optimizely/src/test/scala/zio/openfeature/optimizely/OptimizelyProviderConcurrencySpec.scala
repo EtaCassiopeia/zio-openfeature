@@ -64,9 +64,18 @@ object OptimizelyProviderConcurrencySpec extends ZIOSpecDefault {
   @scala.annotation.nowarn("msg=deprecated")
   private def stateOf(p: OptimizelyFeatureProvider): ProviderState = p.getState
 
+  // Daemon thread factory: `Executors.newFixedThreadPool(n)` uses the default factory, which creates NON-daemon
+  // threads. If `awaitTermination` ever times out (a worker wedged in a blocking provider/HTTP call), those threads
+  // would keep the test JVM from exiting. Daemon threads can't block JVM exit, so a slow-to-reap pool is harmless.
+  private val daemonFactory: java.util.concurrent.ThreadFactory = (r: Runnable) => {
+    val t = new Thread(r)
+    t.setDaemon(true)
+    t
+  }
+
   /** Spawn `n` worker threads, release them simultaneously via a latch, and collect outcomes. */
   private def race[A](n: Int)(work: Int => A): IndexedSeq[Either[Throwable, A]] = {
-    val pool      = Executors.newFixedThreadPool(math.min(n, 64))
+    val pool      = Executors.newFixedThreadPool(math.min(n, 64), daemonFactory)
     val release   = new CountDownLatch(1)
     val started   = new CountDownLatch(n)
     val results   = new Array[Either[Throwable, A]](n)
@@ -91,7 +100,7 @@ object OptimizelyProviderConcurrencySpec extends ZIOSpecDefault {
       results.toIndexedSeq
     } finally {
       // Reap worker threads deterministically: `shutdownNow` interrupts, then join so no evaluation thread outlives
-      // the test and races provider/WireMock teardown. `Executors.newFixedThreadPool` threads are non-daemon.
+      // the test and races provider/WireMock teardown. The pool also uses a daemon factory as a backstop.
       pool.shutdownNow()
       pool.awaitTermination(5, TimeUnit.SECONDS)
       ()
@@ -212,7 +221,7 @@ object OptimizelyProviderConcurrencySpec extends ZIOSpecDefault {
             closeOnShutdown = true,
             configManager = Some(mgr)
           )
-        val pool = Executors.newFixedThreadPool(32)
+        val pool = Executors.newFixedThreadPool(32, daemonFactory)
         try {
           provider.initialize(new ImmutableContext())
           val N      = 200

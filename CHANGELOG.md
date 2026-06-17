@@ -31,8 +31,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`trackedEvents` is bounded to the last 1000 events** (oldest dropped). The recorder previously grew without
   limit, leaking memory in long-running apps that call `track` per request; it is a test/debug affordance —
   providers still receive every `track` call. (#174)
+- **Default per-evaluation timeout is now 1 second** (release hardening). `evaluationTimeout` defaults to
+  `Some(1.second)` across the factory methods (`fromProvider`, `fromProviderAsync`, `fromMultiProvider*`, …);
+  previously it was `None`, so a hung provider could block the calling fiber indefinitely. Worst-case evaluation
+  latency is now bounded out of the box. Raise it with an explicit `evaluationTimeout = Some(largerDuration)`, or
+  suppress it with `None`; a per-call `EvaluationOptions.empty.withTimeout(d)` still takes precedence. New public
+  constant: `FeatureFlags.DefaultEvaluationTimeout`. **Migration:** providers that make synchronous per-evaluation
+  network calls on slow links may now surface `FeatureFlagError.ProviderError`; pass `evaluationTimeout = None` to
+  restore unbounded behavior.
 
 ### Fixed
+
+- **Async-init watchdog now shuts down stalled providers** (release hardening). When `initTimeout` fires and a
+  provider still hasn't become `READY`, the watchdog transitions status to `Fatal` *and* calls `provider.shutdown()`,
+  so a stalled provider's background threads (datafile pollers, HTTP clients) are terminated instead of outliving the
+  layer. The shutdown is gated on the transition, so a provider that became ready before the timeout is left untouched.
 
 - **Optimizely provider no longer polls (or blocks) before `initialize()`** (#208). `OptimizelyProvider.make` used
   to start the SDK's background datafile poller at construction and block up to the SDK's 10s `getConfig` timeout —

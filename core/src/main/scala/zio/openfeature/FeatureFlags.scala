@@ -457,6 +457,13 @@ object FeatureFlags {
     */
   private[openfeature] val DefaultInitTimeout: Duration = 30.seconds
 
+  /** Default per-evaluation timeout. Any provider call that takes longer is interrupted and the effect fails with
+    * `FeatureFlagError.ProviderError` wrapping a `TimeoutException`. Per-call overrides via `EvaluationOptions.timeout`
+    * take precedence over this global default. Pass `evaluationTimeout = Some(veryLargeDuration)` to a factory method
+    * to raise the bound; use `EvaluationOptions.empty.withTimeout(...)` at individual call sites for finer control.
+    */
+  val DefaultEvaluationTimeout: Duration = 1.second
+
   /** Verify the provider reached a usable state after sync initialization. Anything outside `READY` / `STALE` causes
     * the layer build to fail so misconfiguration surfaces at startup, not at first evaluation. Returns the ZIO-level
     * `ProviderStatus` that should be reflected for a usable state.
@@ -479,7 +486,7 @@ object FeatureFlags {
     statusRef: Option[Ref[ProviderStatus]],
     addShutdownFinalizer: Boolean,
     apiOverride: Option[OpenFeatureAPI] = None,
-    evaluationTimeout: Option[Duration] = None,
+    evaluationTimeout: Option[Duration] = Some(DefaultEvaluationTimeout),
     initTimeout: Duration = DefaultInitTimeout,
     onReady: Option[java.util.concurrent.CountDownLatch] = None
   ): ZIO[Scope, Throwable, FeatureFlagsLive] =
@@ -688,7 +695,7 @@ object FeatureFlags {
     addShutdownFinalizer: Boolean,
     apiOverride: Option[OpenFeatureAPI] = None,
     onReady: Option[java.util.concurrent.CountDownLatch] = None,
-    evaluationTimeout: Option[Duration] = None,
+    evaluationTimeout: Option[Duration] = Some(DefaultEvaluationTimeout),
     initTimeout: Duration = DefaultInitTimeout
   ): ZIO[Scope, Throwable, FeatureFlagsLive] =
     for {
@@ -727,13 +734,17 @@ object FeatureFlags {
       )
       // Start event bridge — if provider is already ready, replay fires immediately
       _ <- ff.startEventBridge
-      // Init watchdog: after initTimeout, if the provider hasn't moved past NotReady/Error,
-      // transition to Fatal so callers polling providerStatus stop waiting. The fiber is forked
-      // into the layer's Scope so it's interrupted when the layer is released.
-      _ <- (ZIO.sleep(initTimeout) *> state.statusRef.update {
-        case ProviderStatus.NotReady | ProviderStatus.Error => ProviderStatus.Fatal
-        case other                                          => other
-      }).forkScoped
+      // Init watchdog: after initTimeout, if the provider still hasn't moved past NotReady/Error, atomically
+      // transition it to Fatal AND shut it down so its background threads (datafile pollers, HTTP clients) don't
+      // outlive the useful lifetime of this layer. The shutdown is gated on the transition actually happening, so a
+      // provider that became ready/stale before the timeout is left running untouched. The fiber is forked into the
+      // layer's Scope, so it is also interrupted when the layer is released.
+      _ <- (ZIO.sleep(initTimeout) *> state.statusRef
+        .modify {
+          case ProviderStatus.NotReady | ProviderStatus.Error => (true, ProviderStatus.Fatal)
+          case other                                          => (false, other)
+        }
+        .flatMap(transitioned => ZIO.when(transitioned)(ZIO.attemptBlocking(provider.shutdown()).ignore))).forkScoped
     } yield ff
 
   /** Create a FeatureFlags layer from any OpenFeature provider (non-blocking).

@@ -27,7 +27,7 @@ final private[openfeature] class FeatureFlagsLive(
   api: OpenFeatureAPI,
   swapLock: Semaphore,
   onReady: Option[java.util.concurrent.CountDownLatch] = None,
-  evaluationTimeout: Option[Duration] = None
+  evaluationTimeout: Option[Duration] = Some(FeatureFlags.DefaultEvaluationTimeout)
 ) extends FeatureFlags {
 
   // Sentinel for "no swap has failed yet". Checked before computing the nanoTime difference so the

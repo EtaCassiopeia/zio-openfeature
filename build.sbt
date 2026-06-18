@@ -90,6 +90,12 @@ lazy val crossVersionSourceDirs = Seq(
 
 lazy val commonSettings = Seq(
   testFrameworks += new TestFramework("zio.test.sbt.ZTestFramework"),
+  // Run tests in a forked JVM. A forked test run is a child process that sbt force-terminates when the `test` task
+  // completes, so a leaked non-daemon thread (a poller, a WireMock/Jetty pool, anything) can't block exit the way it
+  // can in-process. This is the categorical fix for #217 and #229: both issues are repeated instances of "some
+  // non-daemon thread outlived the test run and hung the JVM," and chasing each individual leak source (already done
+  // across several merged PRs) only closes the specific case found, not the class of bug.
+  Test / fork := true,
   libraryDependencies ++= Seq(
     "dev.zio" %% "zio-test"     % zioVersion % Test,
     "dev.zio" %% "zio-test-sbt" % zioVersion % Test

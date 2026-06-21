@@ -84,6 +84,7 @@ Feature: Optimizely flag matrix — behaviour under different datafile configura
   # underlying datafile — and provider instance — differs each time.
   # ---------------------------------------------------------------------------
 
-  @flags(datafile=kill-switch-off) @flags(datafile=audience-premium)
+  @flags(datafile=kill-switch-off)
+  @flags(datafile=audience-premium)
   Scenario: Stacking two separate @flags tags runs the scenario twice, once per tag
     Then the recommendation service returns kind "alpha"

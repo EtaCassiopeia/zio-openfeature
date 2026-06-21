@@ -36,12 +36,16 @@ import zio.openfeature.optimizely.matrix.{RecommendationResult, RecommendationSe
 )
 object FlagMatrixSpec extends ZIOSteps[FeatureFlags, World] {
 
-  /** Build a per-scenario FeatureFlags layer from the "datafile" flag value.
-    * Called once per @flags(datafile=X) expansion — each run gets an isolated provider.
+  /** Build a per-scenario FeatureFlags layer from the tag's flag values.
+    *
+    * Called once per `@flags(...)` tag occurrence on a scenario — not once per key inside a tag.
+    * A single `@flags(datafile=X, plan=Y)` tag therefore produces one call with both keys in
+    * `flags`, while two separate `@flags(datafile=X) @flags(datafile=Y)` tags on the same scenario
+    * produce two independent calls (one per tag), each running the scenario body once.
     */
   override def flagLayer(meta: ScenarioMetadata, flags: Map[String, String]): ZLayer[Any, Throwable, FeatureFlags] = {
     val datafile = flags.getOrElse("datafile", "empty")
-    MatrixHarness.layerForDatafile(datafile)
+    MatrixHarness.layerForDatafile(datafile, plan = flags.get("plan"))
   }
 
   // ── Assertions ──────────────────────────────────────────────────────────
@@ -70,6 +74,18 @@ object FlagMatrixSpec extends ZIOSteps[FeatureFlags, World] {
       result = world.lastResult.getOrElse(RecommendationResult("__none__", -1))
       _     <- assertTrue(result.rateLimit == expected, s"rateLimit ${result.rateLimit} != $expected")
     } yield ()
+  }
+
+  // ── Tag-driven context (no plan in step text — sourced from @flags(plan=...)) ────────────
+
+  When("a recommendation is requested") {
+    ZIO.serviceWithZIO[FeatureFlags] { ff =>
+      val svc = new RecommendationService(ff)
+      for {
+        result <- svc.recommendWithContext(EvaluationContext("test-user"))
+        _      <- ScenarioContext.update(_.copy(lastResult = Some(result)))
+      } yield ()
+    }
   }
 
   // ── User-context step (audience-gated scenarios) ─────────────────────────

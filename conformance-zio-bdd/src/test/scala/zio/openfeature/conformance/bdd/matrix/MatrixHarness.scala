@@ -34,8 +34,15 @@ object MatrixHarness {
     scala.io.Source.fromInputStream(is).mkString
   }
 
-  /** A scoped ZLayer that owns one WireMock server + one Optimizely provider for the named datafile. */
-  def layerForDatafile(name: String): ZLayer[Any, Throwable, FeatureFlags] =
+  /** A scoped ZLayer that owns one WireMock server + one Optimizely provider for the named datafile.
+    *
+    * `plan`, when present, is seeded as a global-context attribute (via `setGlobalContext`) before the
+    * layer is handed to the scenario. The OpenFeature spec merges global context into every invocation
+    * automatically (API -> Transaction -> Client -> Invocation), so a single `@flags(datafile=X, plan=Y)`
+    * tag can combine a provider swap with a context override in one `flagLayer` call — no separate
+    * "with plan" step text required.
+    */
+  def layerForDatafile(name: String, plan: Option[String] = None): ZLayer[Any, Throwable, FeatureFlags] =
     ZLayer.scoped {
       for {
         server <- ZIO.acquireRelease(
@@ -56,6 +63,8 @@ object MatrixHarness {
                    )
         provider <- OptimizelyProvider.scoped(config).mapError(e => RuntimeException(e.message))
         env      <- FeatureFlags.fromProvider(provider).build
-      } yield env.get[FeatureFlags]
+        ff        = env.get[FeatureFlags]
+        _        <- ZIO.foreachDiscard(plan)(p => ff.setGlobalContext(EvaluationContext.empty.withAttribute("plan", AttributeValue.StringValue(p))))
+      } yield ff
     }
 }

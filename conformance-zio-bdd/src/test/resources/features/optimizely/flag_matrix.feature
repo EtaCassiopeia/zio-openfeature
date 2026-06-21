@@ -54,3 +54,36 @@ Feature: Optimizely flag matrix — behaviour under different datafile configura
     When user "user-alice" with plan "premium" requests a recommendation
     Then the recommendation kind is "degraded"
     And the rate limit is 0
+
+  # ---------------------------------------------------------------------------
+  # Combining multiple keys in a single @flags(...) tag
+  #
+  # A single tag with comma-separated key=value pairs expands to ONE flagLayer
+  # call carrying both keys in one Map — one run, both overrides applied
+  # together. Here "plan" is seeded as global context (MatrixHarness ->
+  # setGlobalContext) instead of being passed as step text, so there is no
+  # "with plan" wording in this scenario at all — it's entirely tag-driven.
+  # ---------------------------------------------------------------------------
+
+  @flags(datafile=audience-premium, plan=premium)
+  Scenario: Datafile and plan overrides combined in a single @flags tag
+    When a recommendation is requested
+    Then the recommendation kind is "alpha"
+    And the rate limit is 100
+
+  # ---------------------------------------------------------------------------
+  # Stacking multiple separate @flags(...) tags on one scenario
+  #
+  # Two distinct tag occurrences — not two keys in one tag — expand into two
+  # independent runs, each calling flagLayer once with only that tag's own
+  # Map. Each run gets its own isolated WireMock server + Optimizely provider
+  # (per MatrixHarness), so this is two full scenario executions, not one
+  # execution choosing between two configs. kill-switch-off and
+  # audience-premium happen to agree on "alpha" under the default (no-plan)
+  # context, so the same assertion holds for both runs even though the
+  # underlying datafile — and provider instance — differs each time.
+  # ---------------------------------------------------------------------------
+
+  @flags(datafile=kill-switch-off) @flags(datafile=audience-premium)
+  Scenario: Stacking two separate @flags tags runs the scenario twice, once per tag
+    Then the recommendation service returns kind "alpha"

@@ -41,10 +41,18 @@ final private[openfeature] class FeatureFlagsLive(
   // explicit Error transition set by the failed swap. See `setProvider` and `readyHandler` below.
   private val recentSwapFailureAtNanos = new java.util.concurrent.atomic.AtomicLong(NoSwapFailure)
 
-  // How long after a failed swap an async PROVIDER_READY event should be ignored as a likely stale signal. Real
-  // recovery scenarios (provider was in Error for an extended period and genuinely transitions back to Ready)
-  // happen on a much longer timescale than this; the race window we're closing is the SDK's emitter executor
-  // dispatching a queued event that pre-dates our explicit Error.
+  // Mirror of `recentSwapFailureAtNanos` for the opposite case: records when a `setProvider` swap last
+  // *succeeded*. Used by the async PROVIDER_ERROR bridge to recognize a stale Error event queued by a
+  // previous, now-replaced provider (e.g. one whose `initialize()` failed) that gets dispatched on the
+  // SDK's emitter executor *after* a subsequent swap has already taken over and moved the instance to
+  // Ready. Without this guard such a stale event clobbers the new provider's Ready status. See
+  // `setProvider` and `errorHandler` below.
+  private val recentSwapSuccessAtNanos = new java.util.concurrent.atomic.AtomicLong(NoSwapFailure)
+
+  // How long after a failed/successful swap an async PROVIDER_READY/PROVIDER_ERROR event should be ignored
+  // as a likely stale signal. Real recovery/failure scenarios (provider genuinely transitions on its own,
+  // well after the swap completed) happen on a much longer timescale than this; the race window we're
+  // closing is the SDK's emitter executor dispatching a queued event that pre-dates our explicit transition.
   private val FailedSwapGuardNanos: Long = 500L * 1000000L
 
   // True while `setProvider` holds the swap lock and is re-registering the provider. The PROVIDER_READY bridge must
@@ -107,7 +115,19 @@ final private[openfeature] class FeatureFlagsLive(
         val errorCode = Option(details.getErrorCode).map(ErrorCodeConverter.fromJava)
         val em        = extractEventMetadata(details)
         runHandler(runtime, "PROVIDER_ERROR")(
-          state.statusRef.set(ProviderStatus.Error) *>
+          // Don't let a stale Error event clobber a newer provider's status: suppress the statusRef
+          // transition while a swap is in flight (the swap's own `tapError` already sets Error
+          // synchronously for *its* failure) or within `FailedSwapGuardNanos` of a swap that just
+          // succeeded (the event almost certainly predates that success). The event is still published
+          // either way so observers relying on the event stream see it.
+          ZIO
+            .succeed {
+              val stamp = recentSwapSuccessAtNanos.get()
+              val withinGuard =
+                stamp != NoSwapFailure && (java.lang.System.nanoTime() - stamp) < FailedSwapGuardNanos
+              !swapInProgress.get() && !withinGuard
+            }
+            .flatMap(shouldTransition => state.statusRef.set(ProviderStatus.Error).when(shouldTransition)) *>
             state.eventHub
               .publish(ProviderEvent.Error(error, currentMetadata(), errorCode, Option(details.getMessage), em))
               .unit
@@ -810,7 +830,10 @@ final private[openfeature] class FeatureFlagsLive(
               state.statusRef.set(ProviderStatus.Error)
           )
         // 4. Mark ready — the Java SDK event bridge will also fire PROVIDER_READY,
-        //    but we set it explicitly for immediate visibility
+        //    but we set it explicitly for immediate visibility. Stamp `recentSwapSuccessAtNanos`
+        //    first so a stale PROVIDER_ERROR from the just-replaced provider (see `errorHandler`)
+        //    can't race in and immediately overwrite the Ready we're about to set.
+        _ <- ZIO.succeed(recentSwapSuccessAtNanos.set(java.lang.System.nanoTime()))
         _ <- state.statusRef.set(ProviderStatus.Ready)
       } yield ()
       // The guard must drop on every exit (success, failure, interruption) or the bridge would

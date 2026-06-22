@@ -197,7 +197,9 @@ val provider = Unsafe.unsafe { implicit u =>
 When you want to verify application behavior (not just provider wiring) across several rollout configurations — kill-switch on/off, a string variant changing, an audience rule gating a variable — the library's own test suites give two worked examples of doing that without hand-rolling stub-swap logic:
 
 - **`RecommendationServiceSpec`** (`optimizely/src/test/scala/.../matrix/`) is plain `zio-test`. Each `test(...)` block spins up its own `WireMockServer` stubbing the Optimizely CDN endpoint with a named datafile fixture (`optimizely/src/test/resources/datafiles/*.json`), builds a real `OptimizelyProvider` against it, and asserts on a toy `RecommendationService` reading multiple flags.
-- **`FlagMatrixSpec`** (`conformance-zio-bdd/src/test/scala/.../matrix/`) does the same thing as a `zio-bdd` Gherkin suite. Scenarios are tagged with `@flags(datafile=<name>)`, and `flagLayer` (a zio-bdd hook called once per `@flags(...)` tag occurrence) maps that tag to a datafile via `MatrixHarness.layerForDatafile`:
+- **`FlagMatrixSpec`** (`conformance-zio-bdd/src/test/scala/.../matrix/`) does the same thing as a `zio-bdd` Gherkin suite, tagging scenarios with `@flags(datafile=<name>)`. See [Testkit → Behavior-Matrix Testing with zio-bdd]({{ site.baseurl }}/testkit) for how the `@flags(...)` tag / `flagLayer` mechanism works in general — this section covers only what's Optimizely-specific.
+
+The Optimizely-specific piece is `MatrixHarness.layerForDatafile`, the `flagLayer` implementation used by `FlagMatrixSpec`:
 
 ```scala
 override def flagLayer(meta: ScenarioMetadata, flags: Map[String, String]): ZLayer[Any, Throwable, FeatureFlags] = {
@@ -206,7 +208,7 @@ override def flagLayer(meta: ScenarioMetadata, flags: Map[String, String]): ZLay
 }
 ```
 
-`MatrixHarness.layerForDatafile` builds a fresh `WireMockServer` + `OptimizelyProvider` per call, scoped so both are torn down when the scenario ends — no stub-swap between scenarios, no polling wait, and `scenarioParallelism > 1` is safe since nothing is shared. Each `@flags(...)` tag is its own isolated run:
+It builds a fresh `WireMockServer` + `OptimizelyProvider` per call, scoped so both are torn down when the scenario ends — no stub-swap between scenarios, no polling wait, and `scenarioParallelism > 1` is safe since nothing is shared:
 
 ```gherkin
 @flags(datafile=kill-switch-off)
@@ -220,7 +222,7 @@ Scenario: Datafile and plan overrides combined in a single @flags tag
   And the rate limit is 100
 ```
 
-A single tag with comma-separated keys (`@flags(datafile=X, plan=Y)`) expands to **one** run with both overrides applied together — `plan` is seeded via `FeatureFlags.setGlobalContext` before the scenario starts, relying on the spec's automatic global-context merge rather than a "with plan" step. Stacking two separate tags on one scenario (`@flags(datafile=X)` / `@flags(datafile=Y)` on consecutive lines) instead produces **two** independent runs, each with its own isolated provider — see `flag_matrix.feature` for the full set of scenarios this pattern covers.
+`plan` is seeded via `FeatureFlags.setGlobalContext` before the scenario starts, relying on the spec's automatic global-context merge rather than a "with plan" step. See `flag_matrix.feature` for the full set of scenarios this pattern covers.
 
 ---
 

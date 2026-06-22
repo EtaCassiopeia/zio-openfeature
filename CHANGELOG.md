@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Bump `dev.openfeature:sdk` to 1.21.0** (#239). Per-provider error detail in multi-provider strategies and
+  isolated `OpenFeatureAPI` instance support now flow from the upstream fix with no further wrapper changes (our
+  event hub and `apiOverride` plumbing already isolated us from the bugs this release fixes). The SDK's
+  package-private `EventProvider.attach` gained a required `AutoCloseableReentrantReadWriteLock` parameter — updated
+  `EventProviderBridge` (used by `CachingProvider`/`CircuitBreakerProvider` to forward delegate events) to supply a
+  private lock instance; the lock is only used to serialize `emit` against a real `OpenFeatureAPI`'s state, which our
+  unregistered delegates never touch.
+
 ## [1.0.0] — 2026-06-17
 
 First stable release. **Upgrading from 0.9.x:** two behavior changes may require action —

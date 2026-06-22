@@ -150,7 +150,7 @@ The breaker counts *infrastructure* errors (timeouts, connection failures, `Gene
 
 ## 6. Testing your app
 
-Two patterns, both supported:
+Three patterns, all supported:
 
 ### Unit-testing application code without touching Optimizely
 
@@ -191,6 +191,38 @@ val provider = Unsafe.unsafe { implicit u =>
   Runtime.default.unsafe.run(OptimizelyProvider.fromOptimizelyClient(opt)).getOrThrow()
 }
 ```
+
+### Running the same SUT against a matrix of datafiles
+
+When you want to verify application behavior (not just provider wiring) across several rollout configurations — kill-switch on/off, a string variant changing, an audience rule gating a variable — the library's own test suites give two worked examples of doing that without hand-rolling stub-swap logic:
+
+- **`RecommendationServiceSpec`** (`optimizely/src/test/scala/.../matrix/`) is plain `zio-test`. Each `test(...)` block spins up its own `WireMockServer` stubbing the Optimizely CDN endpoint with a named datafile fixture (`optimizely/src/test/resources/datafiles/*.json`), builds a real `OptimizelyProvider` against it, and asserts on a toy `RecommendationService` reading multiple flags.
+- **`FlagMatrixSpec`** (`conformance-zio-bdd/src/test/scala/.../matrix/`) does the same thing as a `zio-bdd` Gherkin suite, tagging scenarios with `@flags(datafile=<name>)`. See [Testkit → Behavior-Matrix Testing with zio-bdd]({{ site.baseurl }}/testkit) for how the `@flags(...)` tag / `flagLayer` mechanism works in general — this section covers only what's Optimizely-specific.
+
+The Optimizely-specific piece is `MatrixHarness.layerForDatafile`, the `flagLayer` implementation used by `FlagMatrixSpec`:
+
+```scala
+override def flagLayer(meta: ScenarioMetadata, flags: Map[String, String]): ZLayer[Any, Throwable, FeatureFlags] = {
+  val datafile = flags.getOrElse("datafile", "empty")
+  MatrixHarness.layerForDatafile(datafile, plan = flags.get("plan"))
+}
+```
+
+It builds a fresh `WireMockServer` + `OptimizelyProvider` per call, scoped so both are torn down when the scenario ends — no stub-swap between scenarios, no polling wait, and `scenarioParallelism > 1` is safe since nothing is shared:
+
+```gherkin
+@flags(datafile=kill-switch-off)
+Scenario: Kill-switch is off and variant is alpha — full recommendation
+  Then the recommendation service returns kind "alpha"
+
+@flags(datafile=audience-premium, plan=premium)
+Scenario: Datafile and plan overrides combined in a single @flags tag
+  When a recommendation is requested
+  Then the recommendation kind is "alpha"
+  And the rate limit is 100
+```
+
+`plan` is seeded via `FeatureFlags.setGlobalContext` before the scenario starts, relying on the spec's automatic global-context merge rather than a "with plan" step. See `flag_matrix.feature` for the full set of scenarios this pattern covers.
 
 ---
 

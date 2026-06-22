@@ -490,6 +490,52 @@ test("tracks evaluations") {
 
 ---
 
+## Behavior-Matrix Testing with zio-bdd
+
+This pattern works with any `FeatureFlags` layer — `TestFeatureProvider`, `OptimizelyProvider`, OFREP, or your own provider. It's a feature of the [`zio-bdd`](https://github.com/EtaCassiopeia/zio-bdd) test framework's layer-injection hooks, not something specific to this testkit module, so it's documented here rather than on a provider-specific page.
+
+### The layer-injection hook tiers
+
+A `zio-bdd` suite (`object MySpec extends ZIOSteps[R, S]`) builds its environment through four overridable hooks, each one tier more specific than the last. Override exactly one — the others delegate down to it by default:
+
+| Hook | Called | Default |
+|:-----|:-------|:--------|
+| `applicationLayer` | Once per test run | — |
+| `featureLayer(meta)` | Once per `.feature` file | delegates to `applicationLayer` |
+| `scenarioLayer(meta)` | Once per scenario | delegates to `featureLayer` |
+| `flagLayer(meta, flags)` | Once per `@flags(...)` tag occurrence on a scenario | delegates to `scenarioLayer` |
+
+```scala
+override def scenarioLayer(meta: ScenarioMetadata): ZLayer[Any, Throwable, R] =
+  if (meta.tags.contains("use-mock")) mockHttpLayer else realHttpLayer
+```
+
+### `@flags(...)` tags
+
+`flagLayer` is the hook to override when a scenario needs different flag values per run. Tag a scenario with `@flags(key=value, ...)`, and the framework parses the tag into a `Map[String, String]` before calling `flagLayer(meta, flags)`:
+
+```scala
+override def flagLayer(meta: ScenarioMetadata, flags: Map[String, String]): ZLayer[Any, Throwable, FeatureFlags] =
+  environment >>> FlagConfig.layer(flags)
+```
+
+Two things to know about how tags expand into runs:
+
+- **One tag, multiple keys → one run.** `@flags(datafile=X, plan=Y)` parses to a single `Map("datafile" -> "X", "plan" -> "Y")` and calls `flagLayer` once, with both keys present together.
+- **Multiple tags → multiple runs.** Two separate tag occurrences on the same scenario — written on consecutive lines:
+  ```gherkin
+  @flags(datafile=X)
+  @flags(datafile=Y)
+  Scenario: ...
+  ```
+  expand into two independent runs, each calling `flagLayer` once with only that tag's own map (not merged) — the scenario body executes twice, against two separately-built environments.
+
+A blank line between or around `@flags(...)` tags is fine. A blank line inside the free-text description directly under `Feature:` is not — it silently drops the whole feature instead of raising a parse error; see [zio-bdd#87](https://github.com/EtaCassiopeia/zio-bdd/issues/87).
+
+See [Optimizely → Testing your app]({{ site.baseurl }}/optimizely) for a worked example applying this to a real provider, with datafile fixtures driving the `@flags(datafile=...)` values.
+
+---
+
 ## Best Practices
 
 ### 1. Use Descriptive Flag Names

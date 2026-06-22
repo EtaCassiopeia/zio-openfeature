@@ -1,4 +1,5 @@
 package zio.openfeature
+import zio.openfeature.internal.ProviderEvaluations
 
 import dev.openfeature.sdk.{
   EvaluationContext => OFEvaluationContext,
@@ -36,23 +37,23 @@ object BoundedLatencyContractSpec extends ZIOSpecDefault {
       c: OFEvaluationContext
     ): ProviderEvaluation[java.lang.Boolean] = {
       Thread.sleep(delayMillis)
-      ProviderEvaluation.builder[java.lang.Boolean]().value(true).reason("STATIC").build()
+      ProviderEvaluations.of[java.lang.Boolean](true, "STATIC")
     }
     override def getStringEvaluation(k: String, d: String, c: OFEvaluationContext) = {
       Thread.sleep(delayMillis)
-      ProviderEvaluation.builder[String]().value(d).reason("DEFAULT").build()
+      ProviderEvaluations.of[String](d, "DEFAULT")
     }
     override def getIntegerEvaluation(k: String, d: java.lang.Integer, c: OFEvaluationContext) = {
       Thread.sleep(delayMillis)
-      ProviderEvaluation.builder[java.lang.Integer]().value(d).reason("DEFAULT").build()
+      ProviderEvaluations.of[java.lang.Integer](d, "DEFAULT")
     }
     override def getDoubleEvaluation(k: String, d: java.lang.Double, c: OFEvaluationContext) = {
       Thread.sleep(delayMillis)
-      ProviderEvaluation.builder[java.lang.Double]().value(d).reason("DEFAULT").build()
+      ProviderEvaluations.of[java.lang.Double](d, "DEFAULT")
     }
     override def getObjectEvaluation(k: String, d: Value, c: OFEvaluationContext) = {
       Thread.sleep(delayMillis)
-      ProviderEvaluation.builder[Value]().value(d).reason("DEFAULT").build()
+      ProviderEvaluations.of[Value](d, "DEFAULT")
     }
   }
 

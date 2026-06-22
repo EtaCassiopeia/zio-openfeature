@@ -8,6 +8,7 @@ import dev.openfeature.sdk.{
   ProviderState,
   Value
 }
+import zio.openfeature.internal.ProviderEvaluations
 
 /** A feature flag provider that reads values from environment variables.
   *
@@ -50,9 +51,9 @@ final class EnvVarProvider private (
           case "false" | "0" | "no" | "off" => false
           case _                            => defaultValue.booleanValue()
         }
-        ProviderEvaluation.builder[java.lang.Boolean]().value(parsed).reason("STATIC").build()
+        ProviderEvaluations.of(java.lang.Boolean.valueOf(parsed), "STATIC")
       case None =>
-        ProviderEvaluation.builder[java.lang.Boolean]().value(defaultValue).reason("DEFAULT").build()
+        ProviderEvaluations.of(defaultValue, "DEFAULT")
     }
 
   override def getStringEvaluation(
@@ -62,9 +63,9 @@ final class EnvVarProvider private (
   ): ProviderEvaluation[String] =
     lookup(key) match {
       case Some(v) =>
-        ProviderEvaluation.builder[String]().value(v).reason("STATIC").build()
+        ProviderEvaluations.of(v, "STATIC")
       case None =>
-        ProviderEvaluation.builder[String]().value(defaultValue).reason("DEFAULT").build()
+        ProviderEvaluations.of(defaultValue, "DEFAULT")
     }
 
   override def getIntegerEvaluation(
@@ -74,9 +75,9 @@ final class EnvVarProvider private (
   ): ProviderEvaluation[java.lang.Integer] =
     lookup(key).flatMap(v => scala.util.Try(v.toInt).toOption) match {
       case Some(v) =>
-        ProviderEvaluation.builder[java.lang.Integer]().value(v).reason("STATIC").build()
+        ProviderEvaluations.of(java.lang.Integer.valueOf(v), "STATIC")
       case None =>
-        ProviderEvaluation.builder[java.lang.Integer]().value(defaultValue).reason("DEFAULT").build()
+        ProviderEvaluations.of(defaultValue, "DEFAULT")
     }
 
   override def getDoubleEvaluation(
@@ -86,9 +87,9 @@ final class EnvVarProvider private (
   ): ProviderEvaluation[java.lang.Double] =
     lookup(key).flatMap(v => scala.util.Try(v.toDouble).toOption) match {
       case Some(v) =>
-        ProviderEvaluation.builder[java.lang.Double]().value(v).reason("STATIC").build()
+        ProviderEvaluations.of(java.lang.Double.valueOf(v), "STATIC")
       case None =>
-        ProviderEvaluation.builder[java.lang.Double]().value(defaultValue).reason("DEFAULT").build()
+        ProviderEvaluations.of(defaultValue, "DEFAULT")
     }
 
   override def getObjectEvaluation(
@@ -98,9 +99,9 @@ final class EnvVarProvider private (
   ): ProviderEvaluation[Value] =
     lookup(key) match {
       case Some(v) =>
-        ProviderEvaluation.builder[Value]().value(new Value(v)).reason("STATIC").build()
+        ProviderEvaluations.of(new Value(v), "STATIC")
       case None =>
-        ProviderEvaluation.builder[Value]().value(defaultValue).reason("DEFAULT").build()
+        ProviderEvaluations.of(defaultValue, "DEFAULT")
     }
 }
 

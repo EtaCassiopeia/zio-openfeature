@@ -1,4 +1,5 @@
 package zio.openfeature
+import zio.openfeature.internal.ProviderEvaluations
 
 import zio._
 import zio.test._
@@ -37,15 +38,15 @@ object ProviderInitHardeningSpec extends ZIOSpecDefault {
     }
 
     override def getBooleanEvaluation(k: String, d: java.lang.Boolean, c: OFEvaluationContext) =
-      ProviderEvaluation.builder[java.lang.Boolean]().value(d).reason("DEFAULT").build()
+      ProviderEvaluations.of[java.lang.Boolean](d, "DEFAULT")
     override def getStringEvaluation(k: String, d: String, c: OFEvaluationContext) =
-      ProviderEvaluation.builder[String]().value(d).reason("DEFAULT").build()
+      ProviderEvaluations.of[String](d, "DEFAULT")
     override def getIntegerEvaluation(k: String, d: java.lang.Integer, c: OFEvaluationContext) =
-      ProviderEvaluation.builder[java.lang.Integer]().value(d).reason("DEFAULT").build()
+      ProviderEvaluations.of[java.lang.Integer](d, "DEFAULT")
     override def getDoubleEvaluation(k: String, d: java.lang.Double, c: OFEvaluationContext) =
-      ProviderEvaluation.builder[java.lang.Double]().value(d).reason("DEFAULT").build()
+      ProviderEvaluations.of[java.lang.Double](d, "DEFAULT")
     override def getObjectEvaluation(k: String, d: Value, c: OFEvaluationContext) =
-      ProviderEvaluation.builder[Value]().value(d).reason("DEFAULT").build()
+      ProviderEvaluations.of[Value](d, "DEFAULT")
   }
 
   /** A provider that returns successfully from `initialize()` but reports ERROR. The library should refuse to mark such
@@ -59,15 +60,15 @@ object ProviderInitHardeningSpec extends ZIOSpecDefault {
     override def shutdown(): Unit                           = st.set(ProviderState.NOT_READY)
 
     override def getBooleanEvaluation(k: String, d: java.lang.Boolean, c: OFEvaluationContext) =
-      ProviderEvaluation.builder[java.lang.Boolean]().value(d).reason("DEFAULT").build()
+      ProviderEvaluations.of[java.lang.Boolean](d, "DEFAULT")
     override def getStringEvaluation(k: String, d: String, c: OFEvaluationContext) =
-      ProviderEvaluation.builder[String]().value(d).reason("DEFAULT").build()
+      ProviderEvaluations.of[String](d, "DEFAULT")
     override def getIntegerEvaluation(k: String, d: java.lang.Integer, c: OFEvaluationContext) =
-      ProviderEvaluation.builder[java.lang.Integer]().value(d).reason("DEFAULT").build()
+      ProviderEvaluations.of[java.lang.Integer](d, "DEFAULT")
     override def getDoubleEvaluation(k: String, d: java.lang.Double, c: OFEvaluationContext) =
-      ProviderEvaluation.builder[java.lang.Double]().value(d).reason("DEFAULT").build()
+      ProviderEvaluations.of[java.lang.Double](d, "DEFAULT")
     override def getObjectEvaluation(k: String, d: Value, c: OFEvaluationContext) =
-      ProviderEvaluation.builder[Value]().value(d).reason("DEFAULT").build()
+      ProviderEvaluations.of[Value](d, "DEFAULT")
   }
 
   // Each sync test uses a unique domain so OpenFeatureAPI clients don't share state across cases.

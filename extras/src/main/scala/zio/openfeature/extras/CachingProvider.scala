@@ -140,16 +140,18 @@ final class CachingProvider private (
       s"${lp(tk)}|$attrs"
     }
 
-  private def withCachedReason[A](eval: ProviderEvaluation[A]): ProviderEvaluation[A] =
-    ProviderEvaluation
-      .builder[A]()
-      .value(eval.getValue)
-      .variant(eval.getVariant)
-      .reason("CACHED")
-      .errorCode(eval.getErrorCode)
-      .errorMessage(eval.getErrorMessage)
-      .flagMetadata(eval.getFlagMetadata)
-      .build()
+  private def withCachedReason[A](eval: ProviderEvaluation[A]): ProviderEvaluation[A] = {
+    // Builder calls are split across statements (not chained) because the SDK's SuperBuilder-style
+    // self-type confuses Scala 2.13's existential resolution past the second fluent call.
+    val builder = ProviderEvaluation.builder[A]()
+    builder.value(eval.getValue)
+    builder.variant(eval.getVariant)
+    builder.reason("CACHED")
+    builder.errorCode(eval.getErrorCode)
+    builder.errorMessage(eval.getErrorMessage)
+    builder.flagMetadata(eval.getFlagMetadata)
+    builder.build().asInstanceOf[ProviderEvaluation[A]]
+  }
 
   private def cached[A](
     key: String,

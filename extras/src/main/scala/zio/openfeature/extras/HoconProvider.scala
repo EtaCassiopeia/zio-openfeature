@@ -11,6 +11,7 @@ import dev.openfeature.sdk.{
   Value
 }
 import dev.openfeature.sdk.exceptions.{ParseError, TypeMismatchError}
+import zio.openfeature.internal.ProviderEvaluations
 import zio._
 import java.util.concurrent.atomic.AtomicReference
 import scala.jdk.CollectionConverters._
@@ -53,13 +54,9 @@ final class HoconProvider private (
     context: OFEvaluationContext
   ): ProviderEvaluation[java.lang.Boolean] =
     if (config.hasPath(key))
-      ProviderEvaluation
-        .builder[java.lang.Boolean]()
-        .value(typedRead(key, config.getBoolean(key)))
-        .reason("STATIC")
-        .build()
+      ProviderEvaluations.of(java.lang.Boolean.valueOf(typedRead(key, config.getBoolean(key))), "STATIC")
     else
-      ProviderEvaluation.builder[java.lang.Boolean]().value(defaultValue).reason("DEFAULT").build()
+      ProviderEvaluations.of(defaultValue, "DEFAULT")
 
   override def getStringEvaluation(
     key: String,
@@ -67,9 +64,9 @@ final class HoconProvider private (
     context: OFEvaluationContext
   ): ProviderEvaluation[String] =
     if (config.hasPath(key))
-      ProviderEvaluation.builder[String]().value(typedRead(key, config.getString(key))).reason("STATIC").build()
+      ProviderEvaluations.of(typedRead(key, config.getString(key)), "STATIC")
     else
-      ProviderEvaluation.builder[String]().value(defaultValue).reason("DEFAULT").build()
+      ProviderEvaluations.of(defaultValue, "DEFAULT")
 
   override def getIntegerEvaluation(
     key: String,
@@ -77,9 +74,9 @@ final class HoconProvider private (
     context: OFEvaluationContext
   ): ProviderEvaluation[java.lang.Integer] =
     if (config.hasPath(key))
-      ProviderEvaluation.builder[java.lang.Integer]().value(typedRead(key, config.getInt(key))).reason("STATIC").build()
+      ProviderEvaluations.of(java.lang.Integer.valueOf(typedRead(key, config.getInt(key))), "STATIC")
     else
-      ProviderEvaluation.builder[java.lang.Integer]().value(defaultValue).reason("DEFAULT").build()
+      ProviderEvaluations.of(defaultValue, "DEFAULT")
 
   override def getDoubleEvaluation(
     key: String,
@@ -87,13 +84,9 @@ final class HoconProvider private (
     context: OFEvaluationContext
   ): ProviderEvaluation[java.lang.Double] =
     if (config.hasPath(key))
-      ProviderEvaluation
-        .builder[java.lang.Double]()
-        .value(typedRead(key, config.getDouble(key)))
-        .reason("STATIC")
-        .build()
+      ProviderEvaluations.of(java.lang.Double.valueOf(typedRead(key, config.getDouble(key))), "STATIC")
     else
-      ProviderEvaluation.builder[java.lang.Double]().value(defaultValue).reason("DEFAULT").build()
+      ProviderEvaluations.of(defaultValue, "DEFAULT")
 
   override def getObjectEvaluation(
     key: String,
@@ -102,9 +95,9 @@ final class HoconProvider private (
   ): ProviderEvaluation[Value] =
     if (config.hasPath(key)) {
       val value = typedRead(key, configValueToSdkValue(config.getValue(key)))
-      ProviderEvaluation.builder[Value]().value(value).reason("STATIC").build()
+      ProviderEvaluations.of(value, "STATIC")
     } else
-      ProviderEvaluation.builder[Value]().value(defaultValue).reason("DEFAULT").build()
+      ProviderEvaluations.of(defaultValue, "DEFAULT")
 
   private def configValueToSdkValue(cv: com.typesafe.config.ConfigValue): Value =
     cv.valueType() match {

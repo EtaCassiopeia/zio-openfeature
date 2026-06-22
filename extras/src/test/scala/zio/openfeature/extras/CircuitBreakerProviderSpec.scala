@@ -1,4 +1,5 @@
 package zio.openfeature.extras
+import zio.openfeature.internal.ProviderEvaluations
 
 import dev.openfeature.sdk.{
   EvaluationContext => OFEvaluationContext,
@@ -49,7 +50,7 @@ object CircuitBreakerProviderSpec extends ZIOSpecDefault {
       evaluationCount.incrementAndGet()
       maybeFailOrDelay()
       val v = flags.get(key).map(_.asInstanceOf[Boolean]).getOrElse(defaultValue.booleanValue())
-      ProviderEvaluation.builder[java.lang.Boolean]().value(v).reason("STATIC").build()
+      ProviderEvaluations.of[java.lang.Boolean](v, "STATIC")
     }
 
     override def getStringEvaluation(
@@ -60,7 +61,7 @@ object CircuitBreakerProviderSpec extends ZIOSpecDefault {
       evaluationCount.incrementAndGet()
       maybeFailOrDelay()
       val v = flags.get(key).map(_.toString).getOrElse(defaultValue)
-      ProviderEvaluation.builder[String]().value(v).reason("STATIC").build()
+      ProviderEvaluations.of[String](v, "STATIC")
     }
 
     override def getIntegerEvaluation(
@@ -71,7 +72,7 @@ object CircuitBreakerProviderSpec extends ZIOSpecDefault {
       evaluationCount.incrementAndGet()
       maybeFailOrDelay()
       val v = flags.get(key).map(_.asInstanceOf[Int]).getOrElse(defaultValue.intValue())
-      ProviderEvaluation.builder[java.lang.Integer]().value(v).reason("STATIC").build()
+      ProviderEvaluations.of[java.lang.Integer](v, "STATIC")
     }
 
     override def getDoubleEvaluation(
@@ -82,7 +83,7 @@ object CircuitBreakerProviderSpec extends ZIOSpecDefault {
       evaluationCount.incrementAndGet()
       maybeFailOrDelay()
       val v = flags.get(key).map(_.asInstanceOf[Double]).getOrElse(defaultValue.doubleValue())
-      ProviderEvaluation.builder[java.lang.Double]().value(v).reason("STATIC").build()
+      ProviderEvaluations.of[java.lang.Double](v, "STATIC")
     }
 
     override def getObjectEvaluation(
@@ -93,7 +94,7 @@ object CircuitBreakerProviderSpec extends ZIOSpecDefault {
       evaluationCount.incrementAndGet()
       maybeFailOrDelay()
       val v = flags.get(key).map(a => new Value(a.toString)).getOrElse(defaultValue)
-      ProviderEvaluation.builder[Value]().value(v).reason("STATIC").build()
+      ProviderEvaluations.of[Value](v, "STATIC")
     }
   }
 

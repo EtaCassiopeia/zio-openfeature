@@ -158,13 +158,14 @@ final class OptimizelyFeatureProvider private[optimizely] (
   ): ProviderEvaluation[java.lang.Boolean] =
     decide(key, ctx) match {
       case Right(d) =>
-        ProviderEvaluation
-          .builder[java.lang.Boolean]()
-          .value(java.lang.Boolean.valueOf(d.getEnabled))
-          .variant(d.getVariationKey)
-          .reason(deriveReason(d))
-          .flagMetadata(metadataFrom(d))
-          .build()
+        // Builder calls are split across statements (not chained) because the SDK's SuperBuilder-style
+        // self-type confuses Scala 2.13's existential resolution past the second fluent call.
+        val builder = ProviderEvaluation.builder[java.lang.Boolean]()
+        builder.value(java.lang.Boolean.valueOf(d.getEnabled))
+        builder.variant(d.getVariationKey)
+        builder.reason(deriveReason(d))
+        builder.flagMetadata(metadataFrom(d))
+        builder.build().asInstanceOf[ProviderEvaluation[java.lang.Boolean]]
       case Left(err) => failingEvaluation(defaultValue, err)
     }
 
@@ -186,13 +187,12 @@ final class OptimizelyFeatureProvider private[optimizely] (
               case None     => (defaultValue, true)
             }
         }
-        ProviderEvaluation
-          .builder[String]()
-          .value(value)
-          .variant(d.getVariationKey)
-          .reason(if (usedDefault) Reason.DEFAULT.name() else deriveReason(d))
-          .flagMetadata(metadataFrom(d))
-          .build()
+        val builder = ProviderEvaluation.builder[String]()
+        builder.value(value)
+        builder.variant(d.getVariationKey)
+        builder.reason(if (usedDefault) Reason.DEFAULT.name() else deriveReason(d))
+        builder.flagMetadata(metadataFrom(d))
+        builder.build().asInstanceOf[ProviderEvaluation[String]]
       case Left(err) => failingEvaluation(defaultValue, err)
     }
 
@@ -228,13 +228,12 @@ final class OptimizelyFeatureProvider private[optimizely] (
           case Some(v) => (v, false)
           case None    => (defaultValue, true)
         }
-        ProviderEvaluation
-          .builder[A]()
-          .value(value)
-          .variant(d.getVariationKey)
-          .reason(if (usedDefault) Reason.DEFAULT.name() else deriveReason(d))
-          .flagMetadata(metadataFrom(d))
-          .build()
+        val builder = ProviderEvaluation.builder[A]()
+        builder.value(value)
+        builder.variant(d.getVariationKey)
+        builder.reason(if (usedDefault) Reason.DEFAULT.name() else deriveReason(d))
+        builder.flagMetadata(metadataFrom(d))
+        builder.build().asInstanceOf[ProviderEvaluation[A]]
       case Left(err) => failingEvaluation(defaultValue, err)
     }
 
@@ -251,15 +250,14 @@ final class OptimizelyFeatureProvider private[optimizely] (
   ): ProviderEvaluation[Value] =
     decide(key, ctx) match {
       case Right(d) =>
-        val map   = Option(d.getVariables).map(_.toMap).getOrElse(java.util.Collections.emptyMap[String, Object]())
-        val value = new Value(Structure.mapToStructure(map))
-        ProviderEvaluation
-          .builder[Value]()
-          .value(value)
-          .variant(d.getVariationKey)
-          .reason(deriveReason(d))
-          .flagMetadata(metadataFrom(d))
-          .build()
+        val map     = Option(d.getVariables).map(_.toMap).getOrElse(java.util.Collections.emptyMap[String, Object]())
+        val value   = new Value(Structure.mapToStructure(map))
+        val builder = ProviderEvaluation.builder[Value]()
+        builder.value(value)
+        builder.variant(d.getVariationKey)
+        builder.reason(deriveReason(d))
+        builder.flagMetadata(metadataFrom(d))
+        builder.build().asInstanceOf[ProviderEvaluation[Value]]
       case Left(err) => failingEvaluation(defaultValue, err)
     }
 
@@ -320,13 +318,12 @@ final class OptimizelyFeatureProvider private[optimizely] (
       case "FLAG_NOT_FOUND"        => dev.openfeature.sdk.ErrorCode.FLAG_NOT_FOUND
       case _                       => dev.openfeature.sdk.ErrorCode.GENERAL
     }
-    ProviderEvaluation
-      .builder[A]()
-      .value(defaultValue)
-      .reason(Reason.ERROR.name())
-      .errorCode(mapped)
-      .errorMessage(errorCode)
-      .build()
+    val builder = ProviderEvaluation.builder[A]()
+    builder.value(defaultValue)
+    builder.reason(Reason.ERROR.name())
+    builder.errorCode(mapped)
+    builder.errorMessage(errorCode)
+    builder.build().asInstanceOf[ProviderEvaluation[A]]
   }
 }
 

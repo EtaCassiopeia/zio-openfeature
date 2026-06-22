@@ -10,6 +10,7 @@ import dev.openfeature.sdk.{
   ProviderState,
   Value
 }
+import zio.openfeature.internal.ProviderEvaluations
 import zio._
 import zio.test._
 import java.util.concurrent.atomic.AtomicInteger
@@ -42,7 +43,7 @@ object CachingProviderSpec extends ZIOSpecDefault {
       evaluationCount.incrementAndGet()
       maybeDelay()
       val v = flags.get(key).map(_.asInstanceOf[Boolean]).getOrElse(defaultValue.booleanValue())
-      ProviderEvaluation.builder[java.lang.Boolean]().value(v).reason("TARGETING_MATCH").build()
+      ProviderEvaluations.of[java.lang.Boolean](v, "TARGETING_MATCH")
     }
 
     override def getStringEvaluation(
@@ -53,7 +54,7 @@ object CachingProviderSpec extends ZIOSpecDefault {
       evaluationCount.incrementAndGet()
       maybeDelay()
       val v = flags.get(key).map(_.toString).getOrElse(defaultValue)
-      ProviderEvaluation.builder[String]().value(v).reason("TARGETING_MATCH").build()
+      ProviderEvaluations.of[String](v, "TARGETING_MATCH")
     }
 
     override def getIntegerEvaluation(
@@ -64,7 +65,7 @@ object CachingProviderSpec extends ZIOSpecDefault {
       evaluationCount.incrementAndGet()
       maybeDelay()
       val v = flags.get(key).map(_.asInstanceOf[Int]).getOrElse(defaultValue.intValue())
-      ProviderEvaluation.builder[java.lang.Integer]().value(v).reason("TARGETING_MATCH").build()
+      ProviderEvaluations.of[java.lang.Integer](v, "TARGETING_MATCH")
     }
 
     override def getDoubleEvaluation(
@@ -75,7 +76,7 @@ object CachingProviderSpec extends ZIOSpecDefault {
       evaluationCount.incrementAndGet()
       maybeDelay()
       val v = flags.get(key).map(_.asInstanceOf[Double]).getOrElse(defaultValue.doubleValue())
-      ProviderEvaluation.builder[java.lang.Double]().value(v).reason("TARGETING_MATCH").build()
+      ProviderEvaluations.of[java.lang.Double](v, "TARGETING_MATCH")
     }
 
     override def getObjectEvaluation(
@@ -85,14 +86,13 @@ object CachingProviderSpec extends ZIOSpecDefault {
     ): ProviderEvaluation[Value] = {
       evaluationCount.incrementAndGet()
       maybeDelay()
-      val v = flags.get(key).map(a => new Value(a.toString)).getOrElse(defaultValue)
-      ProviderEvaluation
-        .builder[Value]()
-        .value(v)
-        .variant("obj-variant")
-        .reason("TARGETING_MATCH")
-        .flagMetadata(ImmutableMetadata.builder().addString("source", "test").build())
-        .build()
+      val v       = flags.get(key).map(a => new Value(a.toString)).getOrElse(defaultValue)
+      val builder = ProviderEvaluation.builder[Value]()
+      builder.value(v)
+      builder.variant("obj-variant")
+      builder.reason("TARGETING_MATCH")
+      builder.flagMetadata(ImmutableMetadata.builder().addString("source", "test").build())
+      builder.build().asInstanceOf[ProviderEvaluation[Value]]
     }
   }
 
@@ -405,13 +405,12 @@ object CachingProviderSpec extends ZIOSpecDefault {
           ): ProviderEvaluation[java.lang.Boolean] =
             if (errorFirst.getAndSet(false)) {
               evaluationCount.incrementAndGet()
-              ProviderEvaluation
-                .builder[java.lang.Boolean]()
-                .value(defaultValue)
-                .reason("ERROR")
-                .errorCode(dev.openfeature.sdk.ErrorCode.GENERAL)
-                .errorMessage("upstream hiccup")
-                .build()
+              val builder = ProviderEvaluation.builder[java.lang.Boolean]()
+              builder.value(defaultValue)
+              builder.reason("ERROR")
+              builder.errorCode(dev.openfeature.sdk.ErrorCode.GENERAL)
+              builder.errorMessage("upstream hiccup")
+              builder.build().asInstanceOf[ProviderEvaluation[java.lang.Boolean]]
             } else super.getBooleanEvaluation(key, defaultValue, c)
         }
         for {

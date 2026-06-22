@@ -211,6 +211,10 @@ lazy val conformance = (project in file("conformance"))
 
 lazy val conformanceZioBdd = (project in file("conformance-zio-bdd"))
   .dependsOn(core, testkit)
+  // "test->test" on optimizely additionally pulls its test classpath (not just main), so the
+  // Optimizely flag-matrix suite below can reuse `RecommendationService`/`RecommendationResult`
+  // from optimizely's own test sources instead of duplicating that toy SUT here.
+  .dependsOn(optimizely % "test->test;compile->compile")
   .settings(
     name               := "zio-openfeature-conformance-zio-bdd",
     publish / skip     := true,
@@ -219,7 +223,8 @@ lazy val conformanceZioBdd = (project in file("conformance-zio-bdd"))
       "dev.openfeature"         % "sdk"                    % openFeatureSdkVersion % Test,
       "io.github.etacassiopeia" %% "zio-bdd"               % "1.0.0"               % Test,
       "dev.zio"                 %% "zio-schema"            % "1.6.6"               % Test,
-      "dev.zio"                 %% "zio-schema-derivation" % "1.6.6"               % Test
+      "dev.zio"                 %% "zio-schema-derivation" % "1.6.6"               % Test,
+      "org.wiremock"             % "wiremock"              % "3.10.0"              % Test
     ),
     Test / testFrameworks += new TestFramework("zio.bdd.ZIOBDDFramework")
   )

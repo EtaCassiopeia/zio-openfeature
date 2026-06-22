@@ -36,6 +36,16 @@ object MatrixHarness {
 
   /** A scoped ZLayer that owns one WireMock server + one Optimizely provider for the named datafile.
     *
+    * Bound to a freshly-generated domain (`FeatureFlags.fromProviderWithDomain`) rather than the plain
+    * `fromProvider` factory. `fromProvider` registers its provider as the *unnamed default* client on
+    * the process-wide `OpenFeatureAPI` singleton — concurrent calls from different scenarios would race
+    * to overwrite that single default slot, and since the OpenFeature SDK looks up the active provider
+    * dynamically on every evaluation (not a frozen reference), one scenario's in-flight evaluations could
+    * start hitting another scenario's datafile mid-run. A named domain gets its own slot on that same
+    * singleton, so concurrently-running scenarios (`scenarioParallelism > 1`) can never collide — this is
+    * the same isolation technique `ConformanceSpec` uses, expressed with the public API so it also works
+    * outside this package.
+    *
     * `plan`, when present, is seeded as a global-context attribute (via `setGlobalContext`) before the
     * layer is handed to the scenario. The OpenFeature spec merges global context into every invocation
     * automatically (API -> Transaction -> Client -> Invocation), so a single `@flags(datafile=X, plan=Y)`
@@ -62,7 +72,8 @@ object MatrixHarness {
                      blockingTimeout = Some(java.time.Duration.ofSeconds(2))
                    )
         provider <- OptimizelyProvider.scoped(config).mapError(e => RuntimeException(e.message))
-        env      <- FeatureFlags.fromProvider(provider).build
+        domain    = s"flag-matrix-${java.util.UUID.randomUUID()}"
+        env      <- FeatureFlags.fromProviderWithDomain(provider, domain).build
         ff        = env.get[FeatureFlags]
         _        <- ZIO.foreachDiscard(plan)(p => ff.setGlobalContext(EvaluationContext.empty.withAttribute("plan", AttributeValue.StringValue(p))))
       } yield ff

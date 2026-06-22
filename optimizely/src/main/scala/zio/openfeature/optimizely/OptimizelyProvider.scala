@@ -231,14 +231,22 @@ object OptimizelyProvider {
       configBuilder.withBlockingTimeout(java.lang.Long.valueOf(d.toMillis), TimeUnit.MILLISECONDS)
     )
     httpClient.foreach(configBuilder.withOptimizelyHttpClient)
-    // `build()` (no-arg) would start polling AND block up to the SDK's blocking timeout (default 10s) waiting for
-    // the first datafile — with an unreachable CDN, construction stalls and then a background poller retries
-    // forever. `build(true)` skips the blocking wait but still calls `start()`, so we `stop()` immediately:
-    // construction performs no network activity, and `initialize()` starts polling once the update handler is in
-    // place. The first scheduled fetch may be submitted in the instant before `stop()` cancels it
-    // (`cancel(mayInterrupt = true)` on a daemon thread) — at most one aborted request, no lingering activity.
+    // `build()` (no-arg) would block construction up to the SDK's blocking timeout (default 10s) waiting for the
+    // first datafile — with an unreachable CDN, construction stalls. `build(true)` skips that blocking wait, but
+    // `HttpProjectConfigManager.Builder.build(boolean)` calls `start()` unconditionally either way (there's no
+    // public SDK API to construct without auto-starting), so the manager's first poll is already scheduled by the
+    // time this returns.
+    //
+    // We deliberately do NOT call `configManager.stop()` here to "undo" that: cancelling the scheduled fetch uses
+    // `cancel(mayInterrupt = true)`, and interrupting a thread blocked mid-socket-I/O on JDK 13+'s NioSocketImpl
+    // force-closes the channel — which can corrupt the shared `OptimizelyHttpClient`'s connection pool for the
+    // manager's entire remaining lifetime if the cancel lands while that first fetch is actually in flight (more
+    // likely the farther the datafile host is, e.g. behind a proxy). Letting the construction-time fetch run to
+    // completion is safe: `initialize()` registers the update-notification handler before calling
+    // `configManager.start()` itself, and `start()` is idempotent (a no-op if already started), so the first fetch
+    // either completes before `initialize()` runs — caught by `initialize()`'s `optimizely.isValid` fallback check
+    // — or is still in flight and finishes normally afterward. See #237.
     val configManager = configBuilder.build(true)
-    configManager.stop()
     val optimizely =
       Optimizely.builder().withConfigManager(configManager).withNotificationCenter(notificationCenter).build()
     (optimizely, configManager)

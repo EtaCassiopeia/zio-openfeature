@@ -224,7 +224,10 @@ lazy val conformanceZioBdd = (project in file("conformance-zio-bdd"))
       "io.github.etacassiopeia" %% "zio-bdd"               % "1.0.0"               % Test,
       "dev.zio"                 %% "zio-schema"            % "1.6.6"               % Test,
       "dev.zio"                 %% "zio-schema-derivation" % "1.6.6"               % Test,
-      "org.wiremock"             % "wiremock"              % "3.10.0"              % Test
+      "org.wiremock"             % "wiremock"              % "3.10.0"              % Test,
+      // Generic Docker container support, used to run mitmproxy as a forward proxy in front of
+      // WireMock for the proxy-based flag-matrix example (see ProxyFlagMatrixSpec).
+      "org.testcontainers"       % "testcontainers"        % "1.21.4"              % Test
     ),
     Test / testFrameworks += new TestFramework("zio.bdd.ZIOBDDFramework")
   )

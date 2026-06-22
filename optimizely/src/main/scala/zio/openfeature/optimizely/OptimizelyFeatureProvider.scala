@@ -115,8 +115,10 @@ final class OptimizelyFeatureProvider private[optimizely] (
     }
     notificationHandle.set(handlerId)
 
-    // Start datafile polling only now that the update handler is registered, so the first
-    // datafile-load notification cannot be missed. Construction performs no network activity.
+    // The handler is registered before this call so a notification firing from here on can't be missed. The SDK
+    // may already have a fetch in flight or completed from construction time (see OptimizelyProvider#buildClient),
+    // in which case this `start()` is just a no-op (idempotent) — the `optimizely.isValid` check right below is
+    // what catches that already-completed case.
     configManager.foreach(_.start())
 
     if (optimizely.isValid) initLatch.countDown()

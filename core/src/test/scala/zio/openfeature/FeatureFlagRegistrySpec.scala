@@ -1,4 +1,5 @@
 package zio.openfeature
+import zio.openfeature.internal.ProviderEvaluations
 
 import dev.openfeature.sdk.{
   EvaluationContext => OFEvaluationContext,
@@ -28,7 +29,7 @@ object FeatureFlagRegistrySpec extends ZIOSpecDefault {
       ctx: OFEvaluationContext
     ): ProviderEvaluation[java.lang.Boolean] = {
       val v = flags.get(key).map(_.asInstanceOf[Boolean]).getOrElse(defaultValue.booleanValue())
-      ProviderEvaluation.builder[java.lang.Boolean]().value(v).reason("STATIC").build()
+      ProviderEvaluations.of[java.lang.Boolean](v, "STATIC")
     }
 
     override def getStringEvaluation(
@@ -37,7 +38,7 @@ object FeatureFlagRegistrySpec extends ZIOSpecDefault {
       ctx: OFEvaluationContext
     ): ProviderEvaluation[String] = {
       val v = flags.get(key).map(_.toString).getOrElse(defaultValue)
-      ProviderEvaluation.builder[String]().value(v).reason("STATIC").build()
+      ProviderEvaluations.of[String](v, "STATIC")
     }
 
     override def getIntegerEvaluation(
@@ -46,7 +47,7 @@ object FeatureFlagRegistrySpec extends ZIOSpecDefault {
       ctx: OFEvaluationContext
     ): ProviderEvaluation[java.lang.Integer] = {
       val v = flags.get(key).map(_.asInstanceOf[Int]).getOrElse(defaultValue.intValue())
-      ProviderEvaluation.builder[java.lang.Integer]().value(v).reason("STATIC").build()
+      ProviderEvaluations.of[java.lang.Integer](v, "STATIC")
     }
 
     override def getDoubleEvaluation(
@@ -55,7 +56,7 @@ object FeatureFlagRegistrySpec extends ZIOSpecDefault {
       ctx: OFEvaluationContext
     ): ProviderEvaluation[java.lang.Double] = {
       val v = flags.get(key).map(_.asInstanceOf[Double]).getOrElse(defaultValue.doubleValue())
-      ProviderEvaluation.builder[java.lang.Double]().value(v).reason("STATIC").build()
+      ProviderEvaluations.of[java.lang.Double](v, "STATIC")
     }
 
     override def getObjectEvaluation(
@@ -63,7 +64,7 @@ object FeatureFlagRegistrySpec extends ZIOSpecDefault {
       defaultValue: Value,
       ctx: OFEvaluationContext
     ): ProviderEvaluation[Value] =
-      ProviderEvaluation.builder[Value]().value(defaultValue).reason("STATIC").build()
+      ProviderEvaluations.of[Value](defaultValue, "STATIC")
   }
 
   private def registryLayer(defaultProvider: SimpleProvider): ZLayer[Scope, Throwable, FeatureFlagRegistry] =

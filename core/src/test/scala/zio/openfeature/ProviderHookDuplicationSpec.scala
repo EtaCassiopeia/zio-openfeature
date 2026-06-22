@@ -1,4 +1,5 @@
 package zio.openfeature
+import zio.openfeature.internal.ProviderEvaluations
 
 import dev.openfeature.sdk.{
   EvaluationContext => OFEvaluationContext,
@@ -41,35 +42,35 @@ object ProviderHookDuplicationSpec extends ZIOSpecDefault {
       defaultValue: java.lang.Boolean,
       ctx: OFEvaluationContext
     ): ProviderEvaluation[java.lang.Boolean] =
-      ProviderEvaluation.builder[java.lang.Boolean]().value(value).reason("STATIC").build()
+      ProviderEvaluations.of[java.lang.Boolean](value, "STATIC")
 
     override def getStringEvaluation(
       key: String,
       defaultValue: String,
       ctx: OFEvaluationContext
     ): ProviderEvaluation[String] =
-      ProviderEvaluation.builder[String]().value(defaultValue).reason("STATIC").build()
+      ProviderEvaluations.of[String](defaultValue, "STATIC")
 
     override def getIntegerEvaluation(
       key: String,
       defaultValue: java.lang.Integer,
       ctx: OFEvaluationContext
     ): ProviderEvaluation[java.lang.Integer] =
-      ProviderEvaluation.builder[java.lang.Integer]().value(defaultValue).reason("STATIC").build()
+      ProviderEvaluations.of[java.lang.Integer](defaultValue, "STATIC")
 
     override def getDoubleEvaluation(
       key: String,
       defaultValue: java.lang.Double,
       ctx: OFEvaluationContext
     ): ProviderEvaluation[java.lang.Double] =
-      ProviderEvaluation.builder[java.lang.Double]().value(defaultValue).reason("STATIC").build()
+      ProviderEvaluations.of[java.lang.Double](defaultValue, "STATIC")
 
     override def getObjectEvaluation(
       key: String,
       defaultValue: dev.openfeature.sdk.Value,
       ctx: OFEvaluationContext
     ): ProviderEvaluation[dev.openfeature.sdk.Value] =
-      ProviderEvaluation.builder[dev.openfeature.sdk.Value]().value(defaultValue).reason("STATIC").build()
+      ProviderEvaluations.of[dev.openfeature.sdk.Value](defaultValue, "STATIC")
   }
 
   def spec = suite("Provider hook duplication")(

@@ -1,4 +1,5 @@
 package zio.openfeature
+import zio.openfeature.internal.ProviderEvaluations
 
 import dev.openfeature.sdk.{
   EvaluationContext => OFEvaluationContext,
@@ -29,15 +30,15 @@ object ProviderHotSwapStressSpec extends ZIOSpecDefault {
     override def shutdown(): Unit                           = ()
 
     override def getBooleanEvaluation(k: String, d: java.lang.Boolean, c: OFEvaluationContext) =
-      ProviderEvaluation.builder[java.lang.Boolean]().value(value).reason("STATIC").build()
+      ProviderEvaluations.of[java.lang.Boolean](value, "STATIC")
     override def getStringEvaluation(k: String, d: String, c: OFEvaluationContext) =
-      ProviderEvaluation.builder[String]().value(d).reason("DEFAULT").build()
+      ProviderEvaluations.of[String](d, "DEFAULT")
     override def getIntegerEvaluation(k: String, d: java.lang.Integer, c: OFEvaluationContext) =
-      ProviderEvaluation.builder[java.lang.Integer]().value(d).reason("DEFAULT").build()
+      ProviderEvaluations.of[java.lang.Integer](d, "DEFAULT")
     override def getDoubleEvaluation(k: String, d: java.lang.Double, c: OFEvaluationContext) =
-      ProviderEvaluation.builder[java.lang.Double]().value(d).reason("DEFAULT").build()
+      ProviderEvaluations.of[java.lang.Double](d, "DEFAULT")
     override def getObjectEvaluation(k: String, d: Value, c: OFEvaluationContext) =
-      ProviderEvaluation.builder[Value]().value(d).reason("DEFAULT").build()
+      ProviderEvaluations.of[Value](d, "DEFAULT")
   }
 
   // Provider whose initialize() throws so setProvider → fails → rollback is triggered.
@@ -49,15 +50,15 @@ object ProviderHotSwapStressSpec extends ZIOSpecDefault {
     override def shutdown(): Unit                           = ()
 
     override def getBooleanEvaluation(k: String, d: java.lang.Boolean, c: OFEvaluationContext) =
-      ProviderEvaluation.builder[java.lang.Boolean]().value(d).reason("DEFAULT").build()
+      ProviderEvaluations.of[java.lang.Boolean](d, "DEFAULT")
     override def getStringEvaluation(k: String, d: String, c: OFEvaluationContext) =
-      ProviderEvaluation.builder[String]().value(d).reason("DEFAULT").build()
+      ProviderEvaluations.of[String](d, "DEFAULT")
     override def getIntegerEvaluation(k: String, d: java.lang.Integer, c: OFEvaluationContext) =
-      ProviderEvaluation.builder[java.lang.Integer]().value(d).reason("DEFAULT").build()
+      ProviderEvaluations.of[java.lang.Integer](d, "DEFAULT")
     override def getDoubleEvaluation(k: String, d: java.lang.Double, c: OFEvaluationContext) =
-      ProviderEvaluation.builder[java.lang.Double]().value(d).reason("DEFAULT").build()
+      ProviderEvaluations.of[java.lang.Double](d, "DEFAULT")
     override def getObjectEvaluation(k: String, d: Value, c: OFEvaluationContext) =
-      ProviderEvaluation.builder[Value]().value(d).reason("DEFAULT").build()
+      ProviderEvaluations.of[Value](d, "DEFAULT")
   }
 
   private val FiberCount    = 200

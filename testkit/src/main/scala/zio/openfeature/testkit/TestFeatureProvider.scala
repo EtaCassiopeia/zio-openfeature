@@ -3,7 +3,7 @@ package zio.openfeature.testkit
 import zio._
 import zio.stream._
 import zio.openfeature._
-import zio.openfeature.internal.ErrorCodeConverter
+import zio.openfeature.internal.{ErrorCodeConverter, ProviderEvaluations}
 import dev.openfeature.sdk.{
   EvaluationContext => OFEvaluationContext,
   EventProvider,
@@ -93,11 +93,10 @@ final class TestFeatureProvider private (
     applyBehavior()
     evaluations.add((key, context))
     val value = Option(flags.get(key)).map(_.asInstanceOf[Boolean]).getOrElse(defaultValue.booleanValue())
-    ProviderEvaluation
-      .builder[java.lang.Boolean]()
-      .value(value)
-      .reason(if (flags.containsKey(key)) "TARGETING_MATCH" else "DEFAULT")
-      .build()
+    ProviderEvaluations.of(
+      java.lang.Boolean.valueOf(value),
+      if (flags.containsKey(key)) "TARGETING_MATCH" else "DEFAULT"
+    )
   }
 
   override def getStringEvaluation(
@@ -108,11 +107,7 @@ final class TestFeatureProvider private (
     applyBehavior()
     evaluations.add((key, context))
     val value = Option(flags.get(key)).map(_.toString).getOrElse(defaultValue)
-    ProviderEvaluation
-      .builder[String]()
-      .value(value)
-      .reason(if (flags.containsKey(key)) "TARGETING_MATCH" else "DEFAULT")
-      .build()
+    ProviderEvaluations.of(value, if (flags.containsKey(key)) "TARGETING_MATCH" else "DEFAULT")
   }
 
   override def getIntegerEvaluation(
@@ -130,11 +125,10 @@ final class TestFeatureProvider private (
         case other     => other.toString.toInt
       }
       .getOrElse(defaultValue.intValue())
-    ProviderEvaluation
-      .builder[java.lang.Integer]()
-      .value(value)
-      .reason(if (flags.containsKey(key)) "TARGETING_MATCH" else "DEFAULT")
-      .build()
+    ProviderEvaluations.of(
+      java.lang.Integer.valueOf(value),
+      if (flags.containsKey(key)) "TARGETING_MATCH" else "DEFAULT"
+    )
   }
 
   override def getDoubleEvaluation(
@@ -153,11 +147,10 @@ final class TestFeatureProvider private (
         case other     => other.toString.toDouble
       }
       .getOrElse(defaultValue.doubleValue())
-    ProviderEvaluation
-      .builder[java.lang.Double]()
-      .value(value)
-      .reason(if (flags.containsKey(key)) "TARGETING_MATCH" else "DEFAULT")
-      .build()
+    ProviderEvaluations.of(
+      java.lang.Double.valueOf(value),
+      if (flags.containsKey(key)) "TARGETING_MATCH" else "DEFAULT"
+    )
   }
 
   override def getObjectEvaluation(
@@ -170,11 +163,7 @@ final class TestFeatureProvider private (
     val value = Option(flags.get(key))
       .map(anyToValue)
       .getOrElse(defaultValue)
-    ProviderEvaluation
-      .builder[Value]()
-      .value(value)
-      .reason(if (flags.containsKey(key)) "TARGETING_MATCH" else "DEFAULT")
-      .build()
+    ProviderEvaluations.of(value, if (flags.containsKey(key)) "TARGETING_MATCH" else "DEFAULT")
   }
 
   private def anyToValue(any: Any): Value = any match {

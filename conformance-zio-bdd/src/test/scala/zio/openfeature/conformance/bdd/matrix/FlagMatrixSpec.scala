@@ -31,7 +31,7 @@ import zio.openfeature.optimizely.matrix.{RecommendationResult, RecommendationSe
   featureDirs         = Array("conformance-zio-bdd/src/test/resources/features/optimizely"),
   reporters           = Array("pretty"),
   parallelism         = 1,
-  scenarioParallelism = 1,
+  scenarioParallelism = 8,
   logLevel            = "warning"
 )
 object FlagMatrixSpec extends ZIOSteps[FeatureFlags, World] {

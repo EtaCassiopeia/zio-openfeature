@@ -103,6 +103,18 @@ object ProviderInitFailureSpec extends ZIOSpecDefault {
     override def shutdown(): Unit = st.set(ProviderState.NOT_READY)
   }
 
+  /** Case 8a: provider whose `getMetadata` throws synchronously — exercises the `providerName <- ZIO.attempt(...)`
+    * guard in `buildAsync` directly (the registry test relies on `runBuild`'s backstop, so it can't isolate this).
+    */
+  final private class ThrowingMetadataProvider extends EvaluationStubs {
+    @scala.annotation.nowarn("msg=deprecated")
+    override def getMetadata: Metadata = throw new RuntimeException("metadata boom")
+    @scala.annotation.nowarn("msg=deprecated")
+    override def getState: ProviderState                    = ProviderState.READY
+    override def initialize(ctx: OFEvaluationContext): Unit = ()
+    override def shutdown(): Unit                           = ()
+  }
+
   private def uniqueDomain(label: String): String = s"init-failure-$label-${java.util.UUID.randomUUID()}"
 
   def spec = suite("ProviderInitFailureSpec")(
@@ -130,6 +142,61 @@ object ProviderInitFailureSpec extends ZIOSpecDefault {
         result.isLeft,
         // The Java SDK may wrap the original Throwable; check the message threads through.
         result.left.exists(t => Option(t.getMessage).exists(_.contains("synthetic init failure")))
+      )
+    } @@ withLiveClock,
+    test("[B2 / case 8a] buildAsync: a throwing getMetadata surfaces a typed failure, not a defect (#242)") {
+      val provider = new ThrowingMetadataProvider
+      val api      = OpenFeatureAPIFactory.create()
+      val build = ZIO.scoped {
+        FeatureFlags
+          .buildAsync(
+            provider,
+            domain = Some(uniqueDomain("throwing-metadata")),
+            version = None,
+            initialHooks = Nil,
+            statusRef = None,
+            addShutdownFinalizer = false,
+            apiOverride = Some(api),
+            initTimeout = 5.seconds
+          )
+          .unit
+      }
+      for {
+        exit <- build.exit
+      } yield assertTrue(
+        exit.isFailure,
+        // Typed Throwable in the failure channel, NOT a defect — before the fix this was a `Die`.
+        exit match {
+          case Exit.Failure(cause) => cause.failureOption.isDefined && cause.dieOption.isEmpty
+          case _                   => false
+        }
+      )
+    } @@ withLiveClock,
+    test("[B2 / case 8b] buildAsync: a null provider surfaces a typed failure from setProvider, not a defect (#242)") {
+      val nullProvider: dev.openfeature.sdk.FeatureProvider = null
+      val api                                               = OpenFeatureAPIFactory.create()
+      val build = ZIO.scoped {
+        FeatureFlags
+          .buildAsync(
+            nullProvider,
+            domain = Some(uniqueDomain("null-provider")),
+            version = None,
+            initialHooks = Nil,
+            statusRef = None,
+            addShutdownFinalizer = false,
+            apiOverride = Some(api),
+            initTimeout = 5.seconds
+          )
+          .unit
+      }
+      for {
+        exit <- build.exit
+      } yield assertTrue(
+        exit.isFailure,
+        exit match {
+          case Exit.Failure(cause) => cause.failureOption.isDefined && cause.dieOption.isEmpty
+          case _                   => false
+        }
       )
     } @@ withLiveClock,
     test("[B2 / case 5] async provider fires PROVIDER_ERROR after init -> evaluations fail with ProviderNotReady") {

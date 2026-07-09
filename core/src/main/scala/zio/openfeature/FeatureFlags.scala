@@ -703,18 +703,28 @@ object FeatureFlags {
       // Register the API shutdown finalizer BEFORE the provider, so a failure later in the build
       // (e.g. getClient) still tears down the registered provider when the scope closes.
       _ <- ZIO.when(addShutdownFinalizer)(ZIO.addFinalizer(ZIO.attemptBlocking(api.shutdown()).ignore))
-      // Register provider FIRST so the client binds to it (not the NoOp default)
+      // Register provider FIRST so the client binds to it (not the NoOp default). Use `ZIO.attempt` (not
+      // `ZIO.succeed`) so a synchronous throw from registration — a null provider, or a provider whose
+      // `getMetadata` throws while the SDK reads its name — surfaces in the typed Throwable channel instead of
+      // becoming a defect. As a defect it would escape `buildClient`'s `mapError` and the registry's build
+      // fiber would die with its promise never settled, hanging every `getClient` for that domain forever.
+      // `ZIO.attempt` (not `attemptBlocking`): `setProvider` is the non-blocking registration call — it submits
+      // `initialize()` to the SDK's background executor and returns after cheap bookkeeping, so there is no
+      // blocking I/O to move off the compute pool. (The sync `build` path uses `attemptBlocking` because
+      // `setProviderAndWait` genuinely blocks the thread for the whole initialization.)
       _ <- domain match {
-        case Some(d) => ZIO.succeed(api.setProvider(d, provider))
-        case None    => ZIO.succeed(api.setProvider(provider))
+        case Some(d) => ZIO.attempt(api.setProvider(d, provider))
+        case None    => ZIO.attempt(api.setProvider(provider))
       }
       client <- (domain, version) match {
         case (Some(d), Some(v)) => ZIO.attempt(api.getClient(d, v))
         case (Some(d), None)    => ZIO.attempt(api.getClient(d))
         case _                  => ZIO.attempt(api.getClient())
       }
-      providerName = Option(provider.getMetadata).map(_.getName).getOrElse("unknown")
-      providerRef <- Ref.make(provider)
+      // `ZIO.attempt` for the same reason as the registration above: a throwing `getMetadata` here must be a
+      // typed failure, not a defect that strands the registry build fiber (see the `setProvider` note).
+      providerName <- ZIO.attempt(Option(provider.getMetadata).map(_.getName).getOrElse("unknown"))
+      providerRef  <- Ref.make(provider)
       providerNameRef = new java.util.concurrent.atomic.AtomicReference(providerName)
       swapLock  <- Semaphore.make(1)
       baseState <- FeatureFlagsState.make

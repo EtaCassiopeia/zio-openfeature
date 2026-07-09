@@ -199,9 +199,17 @@ trait FeatureFlags {
     *
     * The status transitions to `ShuttingDown` for the duration of the teardown (evaluations started in that window fail
     * with `ProviderNotReady(ShuttingDown)`) and ends at `NotReady`. Client-level and ZIO API-level hooks, the global
-    * and client contexts, and the tracked-events recorder are cleared; the event hub is shut down and the underlying
-    * OpenFeature API (and with it the provider) is shut down. Fiber-local context and any in-flight transaction state
-    * are fiber-scoped and unaffected.
+    * and client contexts, and the tracked-events recorder are cleared, and the event hub is shut down.
+    *
+    * Provider/API teardown depends on ownership. An instance created by a sole-owner factory (e.g. `fromProvider` /
+    * `fromProviderAsync`) shuts down the underlying OpenFeature API, and with it its provider. An instance that shares
+    * its API with siblings — a client obtained from `FeatureFlagRegistry`, or any domain-scoped client — leaves the
+    * shared API and its provider untouched (both belong to whatever owns the API, which tears every provider down once
+    * when its own scope closes), releasing only this instance's own state; such clients should be retired via whatever
+    * owns the API's lifecycle (e.g. the registry). Note that a domain-scoped client created directly on the
+    * process-global API (e.g. `fromProviderWithDomain`) has no such owner: neither `shutdown` nor scope close reclaims
+    * its provider, so for a resource-heavy provider prefer a sole-owner factory (or the registry), or shut the global
+    * API down yourself. Fiber-local context and any in-flight transaction state are fiber-scoped and unaffected.
     */
   def shutdown: UIO[Unit]
 
@@ -531,6 +539,9 @@ object FeatureFlags {
         version,
         state,
         api,
+        // Owns the api iff we also register the api-shutdown scope finalizer — keeps explicit `shutdown` and
+        // scope-close teardown consistent, so a shared-api (registry/domain) client never shuts the whole api.
+        ownsApi = addShutdownFinalizer,
         swapLock,
         onReady,
         evaluationTimeout
@@ -738,6 +749,9 @@ object FeatureFlags {
         version,
         state,
         api,
+        // Owns the api iff we also register the api-shutdown scope finalizer — keeps explicit `shutdown` and
+        // scope-close teardown consistent, so a shared-api (registry/domain) client never shuts the whole api.
+        ownsApi = addShutdownFinalizer,
         swapLock,
         onReady,
         evaluationTimeout

@@ -31,6 +31,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `getClient(domain)` caller blocked forever. Registration is now wrapped in `ZIO.attempt` (surfacing throws as typed
   `ProviderInitializationFailed`), and `runBuild` settles and evicts the entry on any failure cause (typed or defect),
   restoring the documented "a failed initialization is not cached — a subsequent call retries" contract.
+- **`FeatureFlags.shutdown` no longer tears down sibling clients that share an `OpenFeatureAPI`** (#243). `shutdown`
+  called `api.shutdown()` unconditionally, so shutting down one client shut down every other client on the same API —
+  including, for the `FeatureFlagRegistry` (whose domain clients share one API) and the global-singleton factories,
+  clients the caller never touched. `shutdown` now only shuts the API when the instance solely owns it; a shared-API
+  (registry/domain) client leaves the shared API and its provider untouched — both are owned by whatever owns the API
+  (e.g. the registry, which tears every provider down once on its own scope close) — and releases only its own state.
 
 ## [1.0.0] — unreleased
 

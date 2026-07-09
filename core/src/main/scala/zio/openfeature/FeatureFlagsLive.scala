@@ -25,6 +25,10 @@ final private[openfeature] class FeatureFlagsLive(
   version: Option[String],
   state: FeatureFlagsState,
   api: OpenFeatureAPI,
+  // True when this instance solely owns `api` (the sole-owner factories that also register the api-shutdown scope
+  // finalizer). When false — a registry/domain client sharing an api (and possibly a provider) with sibling clients —
+  // `shutdown` must NOT touch the shared api or provider; both belong to whatever owns the api's lifecycle.
+  ownsApi: Boolean,
   swapLock: Semaphore,
   onReady: Option[java.util.concurrent.CountDownLatch] = None,
   evaluationTimeout: Option[Duration] = Some(FeatureFlags.DefaultEvaluationTimeout)
@@ -853,7 +857,15 @@ final private[openfeature] class FeatureFlagsLive(
       state.clientContextRef.set(EvaluationContext.empty) *>
       state.trackRecorder.set(Chunk.empty) *>
       state.eventHub.shutdown *>
-      ZIO.attemptBlocking(api.shutdown()).ignore *>
+      // Only tear down the provider/API when this instance solely owns the API (the sole-owner factories). A
+      // non-owning instance — a registry/domain client that shares its API, and possibly its provider, with sibling
+      // clients — must NOT shut the API or the provider: both belong to whatever owns the API (e.g. the registry,
+      // which shuts every registered provider exactly once when its own scope closes). Shutting the API here would
+      // kill sibling clients (the #243 bug); shutting the provider directly would kill siblings that share it (the
+      // registry falls back to one shared default provider) and double-shut a provider the API still has registered.
+      // A non-owning `shutdown` therefore releases only this instance's own state (status/hooks/contexts/event hub,
+      // torn down above); retire such clients via whatever owns the API (e.g. the registry).
+      ZIO.when(ownsApi)(ZIO.attemptBlocking(api.shutdown()).ignore) *>
       state.statusRef.set(ProviderStatus.NotReady)
 
   // Tracking API

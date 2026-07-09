@@ -17,30 +17,16 @@ import zio.bdd.mock.rift.embedded.EmbeddedRift
 object RiftEngine {
 
   val mockControl: MockControl =
-    try
-      Unsafe.unsafe { implicit unsafe =>
-        Runtime.default.unsafe
-          .run(
-            for {
-              scope <- Scope.make
-              mc <- (Provisioning.live >>> EmbeddedRift.layer).build
-                      .provideEnvironment(ZEnvironment[Scope](scope))
-                      .map(_.get[MockControl])
-            } yield mc
-          )
-          .getOrThrowFiberFailure()
-      }
-    catch {
-      // The zio-bdd runner reports a failed static init only as "Could not initialize class",
-      // swallowing the real cause. Surface it (native-load / FFM issues show up here) — TEMP #278.
-      case t: Throwable =>
-        java.lang.System.err.println(s"[RiftEngine] embedded engine init FAILED: ${t.getClass.getName}: ${t.getMessage}")
-        t.printStackTrace()
-        var c = t.getCause
-        while (c != null) {
-          java.lang.System.err.println(s"[RiftEngine] caused by: ${c.getClass.getName}: ${c.getMessage}")
-          c = c.getCause
-        }
-        throw t
+    Unsafe.unsafe { implicit unsafe =>
+      Runtime.default.unsafe
+        .run(
+          for {
+            scope <- Scope.make
+            mc <- (Provisioning.live >>> EmbeddedRift.layer).build
+                    .provideEnvironment(ZEnvironment[Scope](scope))
+                    .map(_.get[MockControl])
+          } yield mc
+        )
+        .getOrThrowFiberFailure()
     }
 }

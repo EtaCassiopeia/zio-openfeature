@@ -22,6 +22,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reference instead of chaining off the return value) and used it at the ~90 call sites across `core`, `extras`,
   `optimizely`, and `testkit` that build a `ProviderEvaluation`.
 
+### Fixed
+
+- **`FeatureFlagRegistry.getClient` no longer hangs when provider registration throws** (#242). `FeatureFlags.buildAsync`
+  wrapped the synchronous Java SDK registration calls (`api.setProvider`, `provider.getMetadata`) in `ZIO.succeed`, so a
+  throw became a ZIO *defect* rather than a typed error. Combined with `runBuild` handling only typed failures, such a
+  defect left the registry's per-domain `Promise` never completed and never evicted — every current and future
+  `getClient(domain)` caller blocked forever. Registration is now wrapped in `ZIO.attempt` (surfacing throws as typed
+  `ProviderInitializationFailed`), and `runBuild` settles and evicts the entry on any failure cause (typed or defect),
+  restoring the documented "a failed initialization is not cached — a subsequent call retries" contract.
+
 ## [1.0.0] — unreleased
 
 > **Not yet published.** The latest artifact on Maven Central is `1.0.0-RC2`; the `v1.0.0` tag has not been

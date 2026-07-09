@@ -172,8 +172,22 @@ final private class FeatureFlagRegistryLive(
     remove: UIO[Unit]
   ): UIO[Unit] =
     buildClient
-      .foldZIO(
-        err => lock.withPermit(remove *> promise.fail(err)).unit,
+      // `foldCauseZIO`, not `foldZIO`: a *defect* (a throwing SDK call that escaped the typed channel) is not a
+      // typed failure, so `foldZIO` would let it kill this fiber with the promise never settled and the entry never
+      // removed — every current and future `getClient` for this domain would then block on `promise.await` forever.
+      // Handling the full cause guarantees the promise is always completed and the entry evicted so callers retry.
+      .foldCauseZIO(
+        cause =>
+          cause.failureOrCause match {
+            // Typed failure (e.g. ProviderInitializationFailed): settle and evict so callers retry.
+            case Left(err) => lock.withPermit(remove *> promise.fail(err)).unit
+            // Interruption only (registry scope closing mid-build): unblock awaiters; teardown handles eviction.
+            case Right(c) if c.isInterruptedOnly => promise.interrupt.unit
+            // Defect: convert to a typed error, settle, and evict — never leave the promise uncompleted.
+            case Right(c) =>
+              val defect = c.dieOption.getOrElse(new RuntimeException(c.prettyPrint))
+              lock.withPermit(remove *> promise.fail(FeatureFlagError.ProviderInitializationFailed(defect))).unit
+          },
         client =>
           lock.withPermit {
             zioApiHooksRef.get.flatMap(client.addZioApiHooks) *> promise.succeed(client)

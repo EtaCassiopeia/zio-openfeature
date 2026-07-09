@@ -274,6 +274,46 @@ object FeatureFlagRegistrySpec extends ZIOSpecDefault {
           meta     <- client.providerMetadata
         } yield assertTrue(meta.name == "Billing")
       }
+    },
+    test("getClient does not hang when registration throws synchronously; failure is typed and retryable (#242)") {
+      ZIO.scoped {
+        val defaultProvider = new SimpleProvider("Default", Map("flag" -> "default"))
+        // Throws synchronously when the registry reads its metadata / registers it with the SDK — the
+        // buildAsync defect path (getMetadata / api.setProvider), NOT an async initialize() failure.
+        val throwingProvider = new SimpleProvider("Throwing", Map.empty) {
+          @scala.annotation.nowarn("msg=deprecated")
+          override def getMetadata: Metadata =
+            throw new RuntimeException("metadata boom")
+        }
+        val goodProvider = new SimpleProvider("Good", Map("flag" -> "good"))
+        for {
+          registry <- registryLayer(defaultProvider).build.map(_.get[FeatureFlagRegistry])
+          // Live clock so the regression guard (a hang) is bounded in real time; the registry's own
+          // readiness poll uses blocking sleeps, so the default frozen TestClock would never fire timeout.
+          result <- Live.live(
+            (for {
+              _      <- registry.setProvider("bad", throwingProvider)
+              first  <- registry.getClient("bad").exit
+              _      <- registry.setProvider("bad", goodProvider)
+              client <- registry.getClient("bad")
+              v      <- client.string("flag", default = "none")
+            } yield (first, v)).timeout(15.seconds)
+          )
+        } yield result match {
+          case Some((first, v)) =>
+            assertTrue(
+              first.isFailure,
+              first match {
+                case Exit.Failure(cause) =>
+                  cause.failureOption.exists(_.isInstanceOf[FeatureFlagError.ProviderInitializationFailed])
+                case _ => false
+              },
+              v == "good"
+            )
+          case None =>
+            assertTrue(false) // timed out → getClient hung (regression)
+        }
+      }
     }
   )
 }

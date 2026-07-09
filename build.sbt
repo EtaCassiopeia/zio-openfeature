@@ -247,6 +247,10 @@ lazy val conformanceZioBdd = (project in file("conformance-zio-bdd"))
     // in 21), so this module's tests require JDK 21 and these flags. CI runs conformance on JDK 21;
     // run local tests (and the pre-push gate) on JDK 21 too.
     Test / javaOptions ++= Seq("--enable-preview", "--enable-native-access=ALL-UNNAMED"),
+    // Run the suites sequentially. They share one in-process Rift engine (RiftEngine); letting sbt
+    // run the suite classes concurrently races them to initialise that native engine, which on a CI
+    // runner surfaces as an immediate "Interrupted" (intra-suite scenario parallelism is unaffected).
+    Test / parallelExecution := false,
     Test / testFrameworks += new TestFramework("zio.bdd.ZIOBDDFramework")
   )
 

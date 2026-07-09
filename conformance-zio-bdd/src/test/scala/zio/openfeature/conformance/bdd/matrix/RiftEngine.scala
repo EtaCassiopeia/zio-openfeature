@@ -34,11 +34,11 @@ object RiftEngine {
       // The zio-bdd runner reports a failed static init only as "Could not initialize class",
       // swallowing the real cause. Surface it (native-load / FFM issues show up here) — TEMP #278.
       case t: Throwable =>
-        System.err.println(s"[RiftEngine] embedded engine init FAILED: ${t.getClass.getName}: ${t.getMessage}")
+        java.lang.System.err.println(s"[RiftEngine] embedded engine init FAILED: ${t.getClass.getName}: ${t.getMessage}")
         t.printStackTrace()
         var c = t.getCause
         while (c != null) {
-          System.err.println(s"[RiftEngine] caused by: ${c.getClass.getName}: ${c.getMessage}")
+          java.lang.System.err.println(s"[RiftEngine] caused by: ${c.getClass.getName}: ${c.getMessage}")
           c = c.getCause
         }
         throw t

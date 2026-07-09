@@ -210,6 +210,27 @@ lazy val conformance = (project in file("conformance"))
     )
   )
 
+// Bounded, memoized Docker-availability probe used to gate the Docker-only proxy suite (#278).
+// `lazy` so it runs at most once and only when the test filter first consults it (test time) — not
+// on every sbt load, which would add the timeout to unrelated tasks whenever the daemon is stopped.
+// `docker info` can hang when the socket exists but no daemon answers, so cap it with a watchdog.
+lazy val dockerIsAvailable: Boolean = {
+  import scala.sys.process._
+  try {
+    val proc     = Process(Seq("docker", "info")).run(ProcessLogger(_ => (), _ => ()))
+    val watchdog = new Thread(() => {
+      try Thread.sleep(10000)
+      catch { case _: InterruptedException => () }
+      if (proc.isAlive()) proc.destroy()
+    })
+    watchdog.setDaemon(true)
+    watchdog.start()
+    val ok = proc.exitValue() == 0
+    watchdog.interrupt()
+    ok
+  } catch { case _: Throwable => false }
+}
+
 lazy val conformanceZioBdd = (project in file("conformance-zio-bdd"))
   .dependsOn(core, testkit)
   // "test->test" on optimizely additionally pulls its test classpath (not just main), so the
@@ -230,6 +251,23 @@ lazy val conformanceZioBdd = (project in file("conformance-zio-bdd"))
       // WireMock for the proxy-based flag-matrix example (see ProxyFlagMatrixSpec).
       "org.testcontainers"       % "testcontainers"        % "1.21.4"              % Test
     ),
+    // Run tests in a forked JVM, like every module that uses `commonSettings`. This module doesn't
+    // (it deliberately uses only the zio-bdd framework, not zio-test), so it was missing the fork —
+    // and its Optimizely/WireMock/testcontainers suites leak non-daemon threads that, in-process,
+    // hang the sbt JVM after the tests pass (#278). Forking lets sbt force-terminate the test JVM on
+    // completion, the same categorical fix for #217/#229 that `commonSettings` documents.
+    Test / fork := true,
+    // The zio-bdd `@Suite(featureDirs = ...)` paths are relative to the repo root (they carry the
+    // `conformance-zio-bdd/` prefix). A forked test JVM otherwise defaults its working directory to
+    // this module's baseDirectory, so the feature files wouldn't resolve and every suite would run
+    // zero scenarios — pin the fork's working directory back to the build root.
+    Test / baseDirectory := (LocalRootProject / baseDirectory).value,
+    // `ProxyFlagMatrixSpec` drives a mitmproxy container via Testcontainers, so it can only run
+    // where Docker is available. Exclude it when Docker isn't (many dev machines, the pre-push gate)
+    // so `test` stays green instead of blocking on / failing over a missing daemon; with Docker
+    // present (CI, dev machines that have it) it runs normally. The probe runs at test time only —
+    // the filter function is what forces `dockerIsAvailable` (#278).
+    Test / testOptions += Tests.Filter(name => !name.endsWith("ProxyFlagMatrixSpec") || dockerIsAvailable),
     Test / testFrameworks += new TestFramework("zio.bdd.ZIOBDDFramework")
   )
 

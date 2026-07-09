@@ -61,11 +61,12 @@ ThisBuild / coverageEnabled          := false
 ThisBuild / coverageMinimumStmtTotal := 80
 ThisBuild / coverageFailOnMinimum    := true
 
-// Binary-compatibility check via sbt-mima. `mimaPreviousArtifacts` is intentionally empty across all modules until
-// the first post-mima tag exists; the first 1.0 release sets a baseline (typically the previous patch version of
-// the same module) and `sbt mimaReportBinaryIssues` then catches accidental breaking changes on every PR.
-// To intentionally break binary compatibility on a major version bump, add a `mimaBinaryIssueFilters` rule scoped
-// to the specific symbol — see https://github.com/lightbend/mima for the filter API.
+// Binary-compatibility check via sbt-mima. `mimaPreviousArtifacts` is intentionally empty across all modules while
+// the project is pre-1.0: the `1.0.0-RCx` line is still making deliberate breaking changes, so baselining against an
+// RC would fail CI on intended breakage rather than catching accidental breakage. The baseline is set as part of
+// cutting `v1.0.0` — see `RELEASING.md` step "enable MiMa". After that, `sbt mimaReportBinaryIssues` catches
+// accidental breaking changes on every PR, and an intentional break is whitelisted with a `mimaBinaryIssueFilters`
+// rule scoped to the specific symbol — see https://github.com/lightbend/mima for the filter API.
 ThisBuild / mimaFailOnNoPrevious := false
 
 // Version-specific source directories
@@ -100,8 +101,8 @@ lazy val commonSettings = Seq(
     "dev.zio" %% "zio-test"     % zioVersion % Test,
     "dev.zio" %% "zio-test-sbt" % zioVersion % Test
   ),
-  // Empty by default — populated by the first published module per major release line. See ThisBuild
-  // `mimaFailOnNoPrevious := false` above.
+  // Empty while pre-1.0 (see the ThisBuild `mimaFailOnNoPrevious := false` note above). When cutting `v1.0.0`,
+  // set this to `Set(organization.value %% moduleName.value % "<last-release>")` per `RELEASING.md`.
   mimaPreviousArtifacts := Set.empty
 ) ++ crossVersionSourceDirs
 

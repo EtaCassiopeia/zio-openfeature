@@ -22,9 +22,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reference instead of chaining off the return value) and used it at the ~90 call sites across `core`, `extras`,
   `optimizely`, and `testkit` that build a `ProviderEvaluation`.
 
-## [1.0.0] — 2026-06-17
+## [1.0.0] — unreleased
 
-First stable release. **Upgrading from 0.9.x:** two behavior changes may require action —
+> **Not yet published.** The latest artifact on Maven Central is `1.0.0-RC2`; the `v1.0.0` tag has not been
+> cut. The changes below shipped in the `1.0.0-RC1`/`1.0.0-RC2` pre-releases and are staged for the first
+> stable release. This heading is dated when `v1.0.0` is tagged (see [`RELEASING.md`](RELEASING.md)).
+
+Planned first stable release. **Upgrading from 0.9.x:** two behavior changes may require action —
 **`FlagType` decoders no longer coerce silently** (strict type decoding, #187) and a **1-second default
 per-evaluation timeout** (bounds hung providers; opt out with `evaluationTimeout = None`). Details in the
 entries below.

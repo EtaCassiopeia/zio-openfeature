@@ -74,7 +74,14 @@ final private[extras] class CacheKey(
   *
   * Failures are never served from cache: a delegate exception (and any evaluation that resolves with an error code)
   * invalidates its entry, so the next evaluation retries the delegate instead of replaying a transient error for the
-  * remainder of the TTL.
+  * remainder of the TTL. `DEFAULT`-reason results are likewise not retained — a `DEFAULT` resolution echoes the
+  * caller's own default value, which the cache key does not capture, so caching it would serve one call site's default
+  * to another.
+  *
+  * Caveat: because concurrent lookups deduplicate by cache key (which excludes the default value), N simultaneous
+  * callers evaluating the same absent flag with DIFFERENT defaults all await the single in-flight evaluation and so
+  * share whichever default won the race. The non-retention above eliminates the sequential leak (across the TTL); the
+  * concurrent-window sharing is inherent to dedup and cannot be prevented without keying on the default.
   */
 final class CachingProvider private (
   val underlying: EventProvider,
@@ -140,6 +147,9 @@ final class CachingProvider private (
       s"${lp(tk)}|$attrs"
     }
 
+  // The OpenFeature `DEFAULT` reason string, compared against `ProviderEvaluation.getReason` (a raw String).
+  private val DefaultReason: String = dev.openfeature.sdk.Reason.DEFAULT.toString
+
   private def withCachedReason[A](eval: ProviderEvaluation[A]): ProviderEvaluation[A] = {
     // Builder calls are split across statements (not chained) because the SDK's SuperBuilder-style
     // self-type confuses Scala 2.13's existential resolution past the second fluent call.
@@ -159,23 +169,32 @@ final class CachingProvider private (
     context: OFEvaluationContext,
     evaluate: => ProviderEvaluation[A]
   ): ProviderEvaluation[A] = {
-    val ck =
-      new CacheKey(key, flagType, contextFingerprint(context), () => evaluate.asInstanceOf[ProviderEvaluation[Any]])
+    // `ran` is flipped inside the lookup thunk, which zio-cache invokes ONLY on a miss (a hit returns the stored value
+    // without calling it). Reading it after `get` tells us hit-vs-miss atomically — no separate `cache.contains` that
+    // could disagree with `get` if the entry expires between the two, and one cache operation per evaluation instead of
+    // two (#259).
+    val ran = new AtomicBoolean(false)
+    val ck = new CacheKey(
+      key,
+      flagType,
+      contextFingerprint(context),
+      () => { ran.set(true); evaluate.asInstanceOf[ProviderEvaluation[Any]] }
+    )
     Unsafe.unsafe { implicit u =>
       runtime.unsafe
         .run(
-          cache.contains(ck).flatMap { hit =>
-            cache
-              .get(ck)
-              // zio-cache stores the completed lookup Exit, failures included. Without this invalidation a
-              // single transient delegate exception would be replayed for the rest of the TTL.
-              .onError(_ => cache.invalidate(ck))
-              // Error *results* (errorCode set, no exception) are returned to this caller but not kept either:
-              // serving an error from cache would delay recovery by up to the TTL.
-              .tap(r => ZIO.when(r.getErrorCode != null)(cache.invalidate(ck)))
-              .map(_.asInstanceOf[ProviderEvaluation[A]])
-              .map(r => if (hit) withCachedReason(r) else r)
-          }
+          cache
+            .get(ck)
+            // zio-cache stores the completed lookup Exit, failures included. Without this invalidation a
+            // single transient delegate exception would be replayed for the rest of the TTL.
+            .onError(_ => cache.invalidate(ck))
+            // Don't retain error results (errorCode set) OR DEFAULT-reason results: a DEFAULT resolution means the flag
+            // was absent and the delegate echoed THIS caller's default value, which the cache key does not include —
+            // keeping it would serve one call site's default to another (under a CACHED label) for the whole TTL. Both
+            // are still returned to this caller, but re-evaluated next time (#259).
+            .tap(r => ZIO.when(r.getErrorCode != null || r.getReason == DefaultReason)(cache.invalidate(ck)))
+            .map(_.asInstanceOf[ProviderEvaluation[A]])
+            .map(r => if (ran.get()) r else withCachedReason(r))
         ) match {
         // Rethrow the original error as an `OpenFeatureError` (an `Exception`) rather than letting
         // `getOrThrowFiberFailure` raise a `zio.FiberFailure` (a `Throwable`) that would escape the SDK's

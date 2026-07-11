@@ -125,6 +125,45 @@ object CachingProviderSpec extends ZIOSpecDefault {
       throw error
   }
 
+  /** A provider that always echoes the caller's default value with reason DEFAULT (as EnvVar/Hocon do for an absent
+    * flag), counting evaluations. Used to prove DEFAULT-reason results are not cached across differing defaults (#259).
+    */
+  private class DefaultingProvider extends EventProvider {
+    val evaluationCount = new AtomicInteger(0)
+    @scala.annotation.nowarn("msg=deprecated")
+    override def getMetadata: Metadata   = new Metadata { override def getName: String = "DefaultingProvider" }
+    override def getState: ProviderState = ProviderState.READY
+    override def initialize(ctx: OFEvaluationContext): Unit = ()
+    override def shutdown(): Unit                           = ()
+    override def getBooleanEvaluation(
+      k: String,
+      d: java.lang.Boolean,
+      c: OFEvaluationContext
+    ): ProviderEvaluation[java.lang.Boolean] = {
+      evaluationCount.incrementAndGet(); ProviderEvaluations.of[java.lang.Boolean](d, "DEFAULT")
+    }
+    override def getStringEvaluation(k: String, d: String, c: OFEvaluationContext): ProviderEvaluation[String] = {
+      evaluationCount.incrementAndGet(); ProviderEvaluations.of[String](d, "DEFAULT")
+    }
+    override def getIntegerEvaluation(
+      k: String,
+      d: java.lang.Integer,
+      c: OFEvaluationContext
+    ): ProviderEvaluation[java.lang.Integer] = {
+      evaluationCount.incrementAndGet(); ProviderEvaluations.of[java.lang.Integer](d, "DEFAULT")
+    }
+    override def getDoubleEvaluation(
+      k: String,
+      d: java.lang.Double,
+      c: OFEvaluationContext
+    ): ProviderEvaluation[java.lang.Double] = {
+      evaluationCount.incrementAndGet(); ProviderEvaluations.of[java.lang.Double](d, "DEFAULT")
+    }
+    override def getObjectEvaluation(k: String, d: Value, c: OFEvaluationContext): ProviderEvaluation[Value] = {
+      evaluationCount.incrementAndGet(); ProviderEvaluations.of[Value](d, "DEFAULT")
+    }
+  }
+
   private val ctx = new ImmutableContext()
 
   def spec = suite("CachingProvider")(
@@ -501,6 +540,34 @@ object CachingProviderSpec extends ZIOSpecDefault {
             cached.getBooleanEvaluation("flag", false, ctx)
           }
         } yield assertTrue(underlying.evaluationCount.get() == 1)
+      }
+    ),
+    suite("cache correctness (#259)")(
+      test("a DEFAULT-reason result is not cached, so differing call-site defaults do not leak") {
+        val underlying = new DefaultingProvider
+        val cached     = CachingProvider(underlying)
+        val a          = cached.getBooleanEvaluation("absent", false, ctx) // call site A: default false
+        val b          = cached.getBooleanEvaluation("absent", true, ctx)  // call site B: default true
+        assertTrue(
+          !a.getValue,
+          b.getValue, // B gets its OWN default, not A's cached `false`
+          a.getReason == "DEFAULT",
+          b.getReason == "DEFAULT",             // not CACHED — DEFAULT results are not retained
+          underlying.evaluationCount.get() == 2 // both call sites reach the delegate
+        )
+      },
+      test("after TTL expiry a re-evaluation is a fresh miss, not mislabeled CACHED") {
+        val underlying = new CountingProvider(Map("flag" -> true))
+        val cached     = CachingProvider(underlying, CachingConfig(ttl = 100.millis))
+        for {
+          r1 <- ZIO.succeed(cached.getBooleanEvaluation("flag", false, ctx)) // miss
+          _  <- ZIO.sleep(250.millis)                                        // let the TTL lapse (live clock)
+          r2 <- ZIO.succeed(cached.getBooleanEvaluation("flag", false, ctx)) // expired → fresh miss
+        } yield assertTrue(
+          r1.getReason == "TARGETING_MATCH",
+          r2.getReason == "TARGETING_MATCH", // the racy contains→get gap would have mislabeled this CACHED
+          underlying.evaluationCount.get() == 2
+        )
       }
     ),
     suite("error surfacing (#258)")(

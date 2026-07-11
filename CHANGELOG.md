@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`CachingProvider` cache-correctness fixes** (#259). Two related defects: (1) a `DEFAULT`-reason evaluation (flag
+  absent, delegate echoes the caller's default) was cached under a key that excludes the default value, so a second call
+  site passing a different default received the first caller's value — labeled `CACHED` — for the whole TTL.
+  `DEFAULT`-reason results are now invalidated after each lookup (like error results), so every call site gets its own
+  default. (2) Hit detection used `cache.contains` followed by `cache.get`, which is not atomic — an entry expiring
+  between the two calls made a fresh delegate evaluation report `CACHED` — and cost two cache operations per evaluation.
+  Detection now uses a flag set inside the lookup thunk (which zio-cache runs only on a miss): one cache operation, and
+  a re-evaluation after expiry is correctly reported with the delegate's reason instead of `CACHED`.
+
 - **`CachingProvider` no longer throws `FiberFailure` into application code** (#258). Its synchronous cache lookup used
   `getOrThrowFiberFailure()`, so a delegate failure surfaced as a `zio.FiberFailure` — which extends `Throwable`, not
   `Exception`, and therefore sailed past the Java SDK's `catch (Exception)` around evaluation and was thrown into the

@@ -4,6 +4,7 @@ import net.nmoncho.sbt.dependencycheck.settings._
 val scala213Version       = "2.13.16"
 val scala3Version         = "3.3.4"
 val zioVersion            = "2.1.14"
+val zioBddVersion         = "1.4.2"
 val openFeatureSdkVersion = "1.21.0"
 
 // OpenFeature Specification Compatibility
@@ -222,14 +223,34 @@ lazy val conformanceZioBdd = (project in file("conformance-zio-bdd"))
     crossScalaVersions := Seq(scala3Version),
     libraryDependencies ++= Seq(
       "dev.openfeature"         % "sdk"                    % openFeatureSdkVersion % Test,
-      "io.github.etacassiopeia" %% "zio-bdd"               % "1.0.0"               % Test,
+      "io.github.etacassiopeia" %% "zio-bdd"               % zioBddVersion         % Test,
+      // Rift's in-process HTTP mock engine (native, no Docker) replaces the WireMock + mitmproxy
+      // container the matrix suites used to fake the Optimizely CDN. `-natives` bundles the engine
+      // binaries; `-jdk21` is the JDK21 FFM binding (CI runs conformance on JDK 21).
+      "io.github.etacassiopeia" %% "zio-bdd-rift-embedded-jdk21"   % zioBddVersion % Test,
+      "io.github.etacassiopeia"  % "zio-bdd-rift-embedded-natives" % zioBddVersion % Test,
       "dev.zio"                 %% "zio-schema"            % "1.6.6"               % Test,
-      "dev.zio"                 %% "zio-schema-derivation" % "1.6.6"               % Test,
-      "org.wiremock"             % "wiremock"              % "3.10.0"              % Test,
-      // Generic Docker container support, used to run mitmproxy as a forward proxy in front of
-      // WireMock for the proxy-based flag-matrix example (see ProxyFlagMatrixSpec).
-      "org.testcontainers"       % "testcontainers"        % "1.21.4"              % Test
+      "dev.zio"                 %% "zio-schema-derivation" % "1.6.6"               % Test
     ),
+    // Run tests in a forked JVM, like every module that uses `commonSettings`. This module doesn't
+    // (it deliberately uses only the zio-bdd framework, not zio-test), so it was missing the fork —
+    // and its Optimizely suites leaked non-daemon threads that, in-process, hung the sbt JVM after
+    // the tests pass (#278). Forking lets sbt force-terminate the test JVM on completion, the same
+    // categorical fix for #217/#229 that `commonSettings` documents.
+    Test / fork := true,
+    // The zio-bdd `@Suite(featureDirs = ...)` paths are relative to the repo root (they carry the
+    // `conformance-zio-bdd/` prefix). A forked test JVM otherwise defaults its working directory to
+    // this module's baseDirectory, so the feature files wouldn't resolve and every suite would run
+    // zero scenarios — pin the fork's working directory back to the build root.
+    Test / baseDirectory := (LocalRootProject / baseDirectory).value,
+    // Rift's embedded native engine uses the JDK 21 Foreign Function & Memory API (a preview feature
+    // in 21), so this module's tests require JDK 21 and these flags. CI runs conformance on JDK 21;
+    // run local tests (and the pre-push gate) on JDK 21 too.
+    Test / javaOptions ++= Seq("--enable-preview", "--enable-native-access=ALL-UNNAMED"),
+    // Run the suites sequentially. They share one in-process Rift engine (RiftEngine); letting sbt
+    // run the suite classes concurrently races them to initialise that native engine, which on a CI
+    // runner surfaces as an immediate "Interrupted" (intra-suite scenario parallelism is unaffected).
+    Test / parallelExecution := false,
     Test / testFrameworks += new TestFramework("zio.bdd.ZIOBDDFramework")
   )
 

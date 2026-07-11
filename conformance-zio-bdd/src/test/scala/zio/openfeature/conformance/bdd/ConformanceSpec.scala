@@ -174,6 +174,7 @@ object ConformanceSpec extends ZIOSteps[Any, World] {
     case ResolutionReason.Unknown        => "UNKNOWN"
     case ResolutionReason.Stale          => "STALE"
     case ResolutionReason.Error          => "ERROR"
+    case ResolutionReason.Other(v)       => v
   }
 
   private def errorCodeName(c: ErrorCode): String = c match {

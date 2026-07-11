@@ -10,6 +10,9 @@ enum ResolutionReason:
   case Unknown
   case Stale
   case Error
+  // Provider-specific reason passed through verbatim (spec 1.4.7 — reasons are provider-extensible strings). `Unknown`
+  // is reserved for a genuinely absent (null) reason.
+  case Other(value: String)
 
 enum MetadataValue:
   case BooleanValue(value: Boolean)

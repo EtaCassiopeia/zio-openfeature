@@ -51,6 +51,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Provider-specific resolution reasons are preserved instead of collapsed to `Unknown`** (#248). Per spec §1.4.7
+  reasons are provider-extensible strings, but any unrecognized reason was mapped to `ResolutionReason.Unknown`,
+  discarding the provider's actual disposition (Optimizely/flagd emit custom reasons). Added
+  `ResolutionReason.Other(value)` and route non-null unrecognized reasons to it verbatim; `Unknown` now means only a
+  genuinely absent (null) reason. Note: `ResolutionReason` gained a case, so exhaustive matches on it must handle
+  `Other`.
+
 - **Hook pipeline stage routing now matches the spec** (#246). Two violations in `runHookPipeline`: (1) a returned
   resolution carrying an error code (`FLAG_NOT_FOUND`, `TYPE_MISMATCH`, ...) ran *both* the `after` and `error` stages —
   per spec §4.3.6/§4.4.6 an error-code resolution is abnormal execution, so it now runs `error` only (`after` runs only

@@ -11,6 +11,9 @@ object ResolutionReason {
   case object Unknown        extends ResolutionReason
   case object Stale          extends ResolutionReason
   case object Error          extends ResolutionReason
+  // Provider-specific reason passed through verbatim (spec 1.4.7 — reasons are provider-extensible strings). `Unknown`
+  // is reserved for a genuinely absent (null) reason.
+  final case class Other(value: String) extends ResolutionReason
 }
 
 sealed trait MetadataValue extends Product with Serializable {

@@ -503,20 +503,24 @@ final private[openfeature] class FeatureFlagsLive(
     }
 
   private def toResolutionReason(reason: String): ResolutionReason =
-    Option(reason)
-      .map(_.toUpperCase)
-      .map {
-        case "STATIC"          => ResolutionReason.Static
-        case "DEFAULT"         => ResolutionReason.Default
-        case "TARGETING_MATCH" => ResolutionReason.TargetingMatch
-        case "SPLIT"           => ResolutionReason.Split
-        case "CACHED"          => ResolutionReason.Cached
-        case "DISABLED"        => ResolutionReason.Disabled
-        case "STALE"           => ResolutionReason.Stale
-        case "ERROR"           => ResolutionReason.Error
-        case _                 => ResolutionReason.Unknown
-      }
-      .getOrElse(ResolutionReason.Unknown)
+    Option(reason) match {
+      // `Unknown` is reserved for a genuinely absent reason. A non-null but unrecognized reason is a provider-specific
+      // one and must be passed through verbatim (spec 1.4.7), not collapsed — otherwise Optimizely/flagd custom reasons
+      // are lost to hooks, analytics, and debugging.
+      case None => ResolutionReason.Unknown
+      case Some(r) =>
+        r.toUpperCase match {
+          case "STATIC"          => ResolutionReason.Static
+          case "DEFAULT"         => ResolutionReason.Default
+          case "TARGETING_MATCH" => ResolutionReason.TargetingMatch
+          case "SPLIT"           => ResolutionReason.Split
+          case "CACHED"          => ResolutionReason.Cached
+          case "DISABLED"        => ResolutionReason.Disabled
+          case "STALE"           => ResolutionReason.Stale
+          case "ERROR"           => ResolutionReason.Error
+          case _                 => ResolutionReason.Other(r)
+        }
+    }
 
   private def convertImmutableMetadata(javaMeta: dev.openfeature.sdk.ImmutableMetadata): FlagMetadata = {
     val javaMap = javaMeta.asUnmodifiableMap()

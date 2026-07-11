@@ -43,6 +43,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Hook pipeline stage routing now matches the spec** (#246). Two violations in `runHookPipeline`: (1) a returned
+  resolution carrying an error code (`FLAG_NOT_FOUND`, `TYPE_MISMATCH`, ...) ran *both* the `after` and `error` stages —
+  per spec §4.3.6/§4.4.6 an error-code resolution is abnormal execution, so it now runs `error` only (`after` runs only
+  for a clean resolution). This fixes the built-in metrics hook double-counting a single `FLAG_NOT_FOUND` as both a
+  success and a failure. (2) A defect in a `before` hook skipped the `error` and `finallyAfter` stages entirely
+  (violating §4.3.8/§4.4.7 and the "finally runs on every exit" contract); the whole pipeline is now wrapped so a
+  before-hook defect still runs `error` and `finallyAfter` before propagating.
+
 - **Evaluations no longer hard-fail while the provider status is `Error`** (#245). Per the OpenFeature spec, only
   `NOT_READY` (§1.7.6) and `FATAL` (§1.7.7) fail-fast; `checkProviderStatus` was also failing every evaluation with
   `ProviderNotReady(Error)` whenever a single transient `PROVIDER_ERROR` (e.g. one failed datafile poll) arrived,

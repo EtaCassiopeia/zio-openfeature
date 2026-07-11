@@ -8,6 +8,7 @@ import dev.openfeature.sdk.{
   ProviderState,
   Value
 }
+import dev.openfeature.sdk.exceptions.ParseError
 import zio.openfeature.internal.ProviderEvaluations
 
 /** A feature flag provider that reads values from environment variables.
@@ -46,12 +47,13 @@ final class EnvVarProvider private (
   ): ProviderEvaluation[java.lang.Boolean] =
     lookup(key) match {
       case Some(v) =>
-        val parsed = v.toLowerCase match {
-          case "true" | "1" | "yes" | "on"  => true
-          case "false" | "0" | "no" | "off" => false
-          case _                            => defaultValue.booleanValue()
+        v.toLowerCase match {
+          case "true" | "1" | "yes" | "on"  => ProviderEvaluations.of(java.lang.Boolean.TRUE, "STATIC")
+          case "false" | "0" | "no" | "off" => ProviderEvaluations.of(java.lang.Boolean.FALSE, "STATIC")
+          // Set-but-unparsable: surface a spec PARSE_ERROR rather than silently returning the default (worse, the old
+          // code labeled that fallback STATIC, claiming it came from the environment). See #262.
+          case _ => throw new ParseError(s"Env var ${envKey(key)}='$v' is not a valid boolean for flag '$key'")
         }
-        ProviderEvaluations.of(java.lang.Boolean.valueOf(parsed), "STATIC")
       case None =>
         ProviderEvaluations.of(defaultValue, "DEFAULT")
     }
@@ -73,9 +75,13 @@ final class EnvVarProvider private (
     defaultValue: java.lang.Integer,
     context: OFEvaluationContext
   ): ProviderEvaluation[java.lang.Integer] =
-    lookup(key).flatMap(v => scala.util.Try(v.toInt).toOption) match {
+    lookup(key) match {
       case Some(v) =>
-        ProviderEvaluations.of(java.lang.Integer.valueOf(v), "STATIC")
+        scala.util.Try(v.toInt) match {
+          case scala.util.Success(n) => ProviderEvaluations.of(java.lang.Integer.valueOf(n), "STATIC")
+          case scala.util.Failure(_) =>
+            throw new ParseError(s"Env var ${envKey(key)}='$v' is not a valid int for flag '$key'")
+        }
       case None =>
         ProviderEvaluations.of(defaultValue, "DEFAULT")
     }
@@ -85,9 +91,13 @@ final class EnvVarProvider private (
     defaultValue: java.lang.Double,
     context: OFEvaluationContext
   ): ProviderEvaluation[java.lang.Double] =
-    lookup(key).flatMap(v => scala.util.Try(v.toDouble).toOption) match {
+    lookup(key) match {
       case Some(v) =>
-        ProviderEvaluations.of(java.lang.Double.valueOf(v), "STATIC")
+        scala.util.Try(v.toDouble) match {
+          case scala.util.Success(n) => ProviderEvaluations.of(java.lang.Double.valueOf(n), "STATIC")
+          case scala.util.Failure(_) =>
+            throw new ParseError(s"Env var ${envKey(key)}='$v' is not a valid double for flag '$key'")
+        }
       case None =>
         ProviderEvaluations.of(defaultValue, "DEFAULT")
     }

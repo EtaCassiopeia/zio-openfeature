@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Optimizely provider staleness watchdog** (#267). After a successful init, datafile-poll failures never surfaced at
+  the OpenFeature level — the provider served an aging datafile indefinitely with no operator signal. The provider now
+  observes datafile fetches (via an HTTP-client wrapper that records the last successful fetch — distinguishing "polling
+  succeeding but datafile unchanged" from "polling failing", which a naive last-change heuristic cannot) and runs a
+  background watchdog: if fetches stop succeeding for longer than `staleAfter` it emits `PROVIDER_STALE` (and keeps
+  serving the last-known datafile, per OpenFeature STALE semantics), recovering to `PROVIDER_READY` on the next
+  successful fetch. Configurable via `OptimizelyProviderConfig.staleAfter` (default `3 × pollingInterval`; disabled when
+  polling is off). The watchdog thread is a daemon and is cancelled on shutdown.
+
 ### Fixed
 
 - **Optimizely `ContextTransformer` produces attribute types the audience evaluator can actually match** (#266).

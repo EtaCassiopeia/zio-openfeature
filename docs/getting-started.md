@@ -136,6 +136,29 @@ details.map { resolution =>
 }
 ```
 
+### Total Evaluation (never fails)
+
+The methods above surface evaluation errors in a typed error channel. When you would rather always get a value —
+falling back to the default on any error, per the OpenFeature spec's "total" evaluation (§1.4.10) — use the
+`*OrDefault` variants. They return `UIO`, so there is no error to handle:
+
+```scala
+val enabled: ZIO[FeatureFlags, Nothing, Boolean] =
+  FeatureFlags.booleanOrDefault("feature-toggle", default = false)
+```
+
+`resolveOrDefault` is the total form of `booleanDetails`/`valueDetails`: it never fails, but the returned
+`FlagResolution` still tells you *why* the default was served — `reason` is `Error` and `errorCode`/`errorMessage`
+are populated when a fallback occurred.
+
+```scala
+FeatureFlags.resolveOrDefault[Boolean]("feature-toggle", default = false).map { resolution =>
+  if (resolution.errorCode.isDefined) println(s"Served default: ${resolution.errorMessage}")
+}
+```
+
+Both typed errors and unexpected defects are absorbed into the default; only fiber interruption still propagates.
+
 ## Using Evaluation Context
 
 Pass user and environment information for targeted flag evaluation:

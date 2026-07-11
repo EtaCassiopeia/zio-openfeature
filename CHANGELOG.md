@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`CachingProvider` and `CircuitBreakerProvider` now forward the delegate's provider hooks and tracking** (#261).
+  Neither wrapper overrode `getProviderHooks` or `track`, so both inherited the Java SDK's no-op defaults: wrapping a
+  provider that ships provider hooks (telemetry/validation) silently dropped them, and `client.track(...)` was silently
+  discarded. Both wrappers now delegate `getProviderHooks` and `track` to the underlying provider (in
+  `CircuitBreakerProvider`, `track` passes through without consulting the circuit, since it is fire-and-forget).
+
 - **`HoconProvider.reload` now refreshes the original construction source** (#260). `reload` previously ignored how the
   provider was built — it always called `ConfigFactory.load()` against the classpath and read the `feature-flags`
   default path, so `HoconProvider("my-flags").reload()` silently swapped the flag set to the (usually empty)

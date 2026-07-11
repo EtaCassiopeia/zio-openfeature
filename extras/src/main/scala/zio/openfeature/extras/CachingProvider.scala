@@ -9,6 +9,7 @@ import dev.openfeature.sdk.{
   ProviderEvaluation,
   ProviderEventDetails,
   ProviderState,
+  TrackingEventDetails,
   Value
 }
 import zio._
@@ -97,6 +98,13 @@ final class CachingProvider private (
 
   @scala.annotation.nowarn("msg=deprecated")
   override def getState: ProviderState = underlying.getState
+
+  // Forward the delegate's provider hooks and tracking so wrapping a provider in caching doesn't silently drop its
+  // telemetry/validation hooks or discard `track` events (spec: a decorator must not swallow these). See #261.
+  override def getProviderHooks = underlying.getProviderHooks
+
+  override def track(eventName: String, context: OFEvaluationContext, details: TrackingEventDetails): Unit =
+    underlying.track(eventName, context, details)
 
   private val delegateAttached = new AtomicBoolean(false)
 

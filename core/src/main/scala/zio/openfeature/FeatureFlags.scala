@@ -122,14 +122,27 @@ trait FeatureFlags {
   /** Run `zio` inside a flag transaction with optional overrides and per-call evaluation caching.
     *
     * Error channel: on Scala 3, `Compat.OrError[E, FeatureFlagError]` is the union `E | FeatureFlagError`. Scala 2.13
-    * has no union types, so there it erases to `Any` — when handling transaction errors on 2.13, match on
-    * `FeatureFlagError` cases (e.g. `NestedTransactionNotAllowed`) and your own `E` explicitly.
+    * has no union types, so there it erases to `Any`, which disables typed recovery. For a typed error channel on both
+    * versions, use [[transactionEither]], whose `Either[E, FeatureFlagError]` this method is built on.
     */
   def transaction[R, E, A](
     overrides: Map[String, Any] = Map.empty,
     context: EvaluationContext = EvaluationContext.empty,
     cacheEvaluations: Boolean = true
   )(zio: ZIO[R, E, A]): ZIO[R, Compat.OrError[E, FeatureFlagError], TransactionResult[A]]
+
+  /** Like [[transaction]], but with a uniform, cross-version typed error channel: `Either[E, FeatureFlagError]` on both
+    * Scala 2.13 and 3. `Left(e)` carries the caller's own error from `zio`; `Right(ffe)` carries a
+    * transaction-machinery error (e.g. `NestedTransactionNotAllowed`). Prefer this on Scala 2.13, where
+    * [[transaction]]'s error channel erases to `Any` (no union types) and disables typed recovery. On both versions
+    * this is the source-tagged form `transaction` is built on, so the two never disagree about which side an error came
+    * from.
+    */
+  def transactionEither[R, E, A](
+    overrides: Map[String, Any] = Map.empty,
+    context: EvaluationContext = EvaluationContext.empty,
+    cacheEvaluations: Boolean = true
+  )(zio: ZIO[R, E, A]): ZIO[R, Either[E, FeatureFlagError], TransactionResult[A]]
 
   def inTransaction: UIO[Boolean]
   def currentEvaluatedFlags: UIO[Map[String, FlagEvaluation[_]]]
@@ -364,6 +377,13 @@ object FeatureFlags {
     cacheEvaluations: Boolean = true
   )(zio: ZIO[R, E, A]): ZIO[R with FeatureFlags, Compat.OrError[E, FeatureFlagError], TransactionResult[A]] =
     ZIO.serviceWithZIO[FeatureFlags](_.transaction(overrides, context, cacheEvaluations)(zio))
+
+  def transactionEither[R, E, A](
+    overrides: Map[String, Any] = Map.empty,
+    context: EvaluationContext = EvaluationContext.empty,
+    cacheEvaluations: Boolean = true
+  )(zio: ZIO[R, E, A]): ZIO[R with FeatureFlags, Either[E, FeatureFlagError], TransactionResult[A]] =
+    ZIO.serviceWithZIO[FeatureFlags](_.transactionEither(overrides, context, cacheEvaluations)(zio))
 
   def inTransaction: ZIO[FeatureFlags, Nothing, Boolean] =
     ZIO.serviceWithZIO(_.inTransaction)

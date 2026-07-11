@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`FeatureFlags.transactionEither`** — a typed, cross-version transaction error channel (#255). On Scala 2.13,
+  `transaction`'s error channel is `Compat.OrError[E, FeatureFlagError]`, which erases to `Any` (2.13 has no union
+  types), disabling all typed recovery — `catchAll` yields an untyped value, `mapError`/`orElse` composition breaks, and
+  a for-comprehension infers `Any` for the whole chain. `transactionEither` returns
+  `ZIO[R, Either[E, FeatureFlagError], TransactionResult[A]]` identically on Scala 2.13 and 3: `Left(e)` carries the
+  caller's own error from `zio`, `Right(ffe)` carries a transaction-machinery error (e.g. `NestedTransactionNotAllowed`).
+  Errors are tagged at their source, which is the only place the two can be told apart — once merged into a single
+  channel an `E` that equals `FeatureFlagError` is indistinguishable from a machinery error. `transaction` is now defined
+  in terms of `transactionEither` (merging the tag back into `OrError`), so its behavior and error channel are unchanged.
+
 - **Non-blocking provider initialization** (#241). Three additions so provider construction never sits on the
   application boot path:
   - **`FeatureFlags.fromAcquireAsync`** — a fallback-first async factory (`URLayer[Scope, FeatureFlags]`). It takes the

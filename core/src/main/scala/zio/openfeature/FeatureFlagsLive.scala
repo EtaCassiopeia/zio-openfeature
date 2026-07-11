@@ -707,13 +707,25 @@ final private[openfeature] class FeatureFlagsLive(
     context: EvaluationContext,
     cacheEvaluations: Boolean
   )(zio: ZIO[R, E, A]): ZIO[R, Compat.OrError[E, FeatureFlagError], TransactionResult[A]] =
+    // Built on the source-tagged form so the two never disagree; `Compat.merge` drops the tag back into `OrError`
+    // (the raw `E | FeatureFlagError` union on Scala 3, `Any` on 2.13) — preserving the legacy error channel exactly.
+    transactionEither(overrides, context, cacheEvaluations)(zio).mapError(Compat.merge)
+
+  override def transactionEither[R, E, A](
+    overrides: Map[String, Any],
+    context: EvaluationContext,
+    cacheEvaluations: Boolean
+  )(zio: ZIO[R, E, A]): ZIO[R, Either[E, FeatureFlagError], TransactionResult[A]] =
+    // Errors are tagged at their source: `Left` is the caller's own `E` from `zio`, `Right` is a transaction-machinery
+    // error. This is the only place the two can be told apart — once merged into a single channel (as `transaction`
+    // does) an `E` that happens to equal `FeatureFlagError` is indistinguishable from a machinery error.
     for {
       current <- state.transactionRef.get
       _ <- ZIO.when(current.isDefined)(
-        ZIO.fail(FeatureFlagError.NestedTransactionNotAllowed)
+        ZIO.fail(Right(FeatureFlagError.NestedTransactionNotAllowed): Either[E, FeatureFlagError])
       )
       txState  <- TransactionState.make(overrides, context, cacheEvaluations)
-      result   <- state.transactionRef.locally(Some(txState))(zio)
+      result   <- state.transactionRef.locally(Some(txState))(zio).mapError(Left(_): Either[E, FeatureFlagError])
       txResult <- txState.toResult(result)
     } yield txResult
 

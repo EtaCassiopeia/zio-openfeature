@@ -3,6 +3,20 @@ package zio.openfeature.extras
 import zio._
 import java.util.concurrent.atomic.AtomicReference
 
+/** A monotonic time source for the circuit breaker's elapsed-time decisions.
+  *
+  * Uses `System.nanoTime()` rather than a wall clock so an NTP step or manual clock adjustment cannot corrupt open /
+  * half-open timing. Injectable so tests can drive transitions deterministically.
+  */
+trait Ticker {
+  def nanos(): Long
+}
+object Ticker {
+  val system: Ticker = new Ticker {
+    def nanos(): Long = java.lang.System.nanoTime()
+  }
+}
+
 /** Configuration for the circuit breaker state machine.
   *
   * @param failureThreshold
@@ -11,11 +25,15 @@ import java.util.concurrent.atomic.AtomicReference
   *   How long the circuit stays open before transitioning to half-open
   * @param halfOpenMaxCalls
   *   Number of successful probes in half-open state required to close the circuit
+  * @param probeTimeout
+  *   How long a single half-open probe may hold the probe slot before another caller may steal it. Guards against a
+  *   probe that dies without recording an outcome pinning the circuit half-open forever.
   */
 final case class CircuitBreakerConfig(
   failureThreshold: Int = 5,
   resetTimeout: Duration = 30.seconds,
-  halfOpenMaxCalls: Int = 1
+  halfOpenMaxCalls: Int = 1,
+  probeTimeout: Duration = 1.second
 )
 
 /** Why the circuit was opened — determines whether external recovery applies. */
@@ -27,9 +45,10 @@ private[extras] object OpenReason {
 
 sealed private[extras] trait CircuitState extends Product with Serializable
 private[extras] object CircuitState {
-  case object Closed                                           extends CircuitState
-  final case class Open(sinceMillis: Long, reason: OpenReason) extends CircuitState
-  final case class HalfOpen(successes: Int, probing: Boolean)  extends CircuitState
+  case object Closed                                          extends CircuitState
+  final case class Open(sinceNanos: Long, reason: OpenReason) extends CircuitState
+  // probeStartNanos records when the in-flight probe acquired the slot; it only matters when probing == true.
+  final case class HalfOpen(successes: Int, probing: Boolean, probeStartNanos: Long) extends CircuitState
 }
 
 final private[extras] case class CircuitBreakerState(
@@ -63,7 +82,7 @@ private[extras] object GateResult {
 final class CircuitBreaker private[extras] (
   val config: CircuitBreakerConfig,
   private[extras] val stateRef: AtomicReference[CircuitBreakerState],
-  private[extras] val clock: java.time.Clock
+  private[extras] val ticker: Ticker
 ) {
 
   import CircuitState._
@@ -79,9 +98,13 @@ final class CircuitBreaker private[extras] (
       case Closed => GateResult.Allowed
 
       case open: Open =>
-        val elapsed = clock.millis() - open.sinceMillis
-        if (elapsed >= config.resetTimeout.toMillis) {
-          val halfOpen = CircuitBreakerState(HalfOpen(successes = 0, probing = true), state.consecutiveFailures)
+        val elapsed = ticker.nanos() - open.sinceNanos
+        if (elapsed >= config.resetTimeout.toNanos) {
+          val halfOpen =
+            CircuitBreakerState(
+              HalfOpen(successes = 0, probing = true, probeStartNanos = ticker.nanos()),
+              state.consecutiveFailures
+            )
           if (stateRef.compareAndSet(state, halfOpen)) GateResult.Allowed
           else GateResult.Rejected
         } else {
@@ -90,8 +113,22 @@ final class CircuitBreaker private[extras] (
 
       case ho: HalfOpen =>
         if (!ho.probing) {
-          val probing = CircuitBreakerState(HalfOpen(ho.successes, probing = true), state.consecutiveFailures)
+          val probing =
+            CircuitBreakerState(
+              HalfOpen(ho.successes, probing = true, probeStartNanos = ticker.nanos()),
+              state.consecutiveFailures
+            )
           if (stateRef.compareAndSet(state, probing)) GateResult.Allowed
+          else GateResult.Rejected
+        } else if (ticker.nanos() - ho.probeStartNanos >= config.probeTimeout.toNanos) {
+          // Steal a wedged probe slot: a probe that won the CAS but died without recording an outcome would
+          // otherwise pin the circuit half-open forever. After probeTimeout, let a fresh caller take the slot.
+          val stolen =
+            CircuitBreakerState(
+              HalfOpen(ho.successes, probing = true, probeStartNanos = ticker.nanos()),
+              state.consecutiveFailures
+            )
+          if (stateRef.compareAndSet(state, stolen)) GateResult.Allowed
           else GateResult.Rejected
         } else {
           GateResult.Rejected
@@ -126,7 +163,7 @@ final class CircuitBreaker private[extras] (
             done = stateRef.compareAndSet(current, next)
             if (done) didClose = true
           } else {
-            val next = CircuitBreakerState(HalfOpen(newSuccesses, probing = false), 0)
+            val next = CircuitBreakerState(HalfOpen(newSuccesses, probing = false, probeStartNanos = 0L), 0)
             done = stateRef.compareAndSet(current, next)
           }
 
@@ -158,7 +195,11 @@ final class CircuitBreaker private[extras] (
           if (!ho.probing) {
             done = true
           } else {
-            val next = CircuitBreakerState(HalfOpen(ho.successes, probing = false), current.consecutiveFailures)
+            val next =
+              CircuitBreakerState(
+                HalfOpen(ho.successes, probing = false, probeStartNanos = 0L),
+                current.consecutiveFailures
+              )
             done = stateRef.compareAndSet(current, next)
           }
 
@@ -182,7 +223,7 @@ final class CircuitBreaker private[extras] (
       current.circuit match {
         case Closed =>
           if (newFailures >= config.failureThreshold) {
-            val next = CircuitBreakerState(Open(clock.millis(), OpenReason.Failures), newFailures)
+            val next = CircuitBreakerState(Open(ticker.nanos(), OpenReason.Failures), newFailures)
             done = stateRef.compareAndSet(current, next)
             if (done) didOpen = true
           } else {
@@ -191,7 +232,7 @@ final class CircuitBreaker private[extras] (
           }
 
         case _: HalfOpen =>
-          val next = CircuitBreakerState(Open(clock.millis(), OpenReason.Failures), newFailures)
+          val next = CircuitBreakerState(Open(ticker.nanos(), OpenReason.Failures), newFailures)
           done = stateRef.compareAndSet(current, next)
           if (done) didOpen = true
 
@@ -210,7 +251,7 @@ final class CircuitBreaker private[extras] (
       current.circuit match {
         case _: Open => done = true
         case _ =>
-          val next = CircuitBreakerState(Open(clock.millis(), OpenReason.External), current.consecutiveFailures)
+          val next = CircuitBreakerState(Open(ticker.nanos(), OpenReason.External), current.consecutiveFailures)
           done = stateRef.compareAndSet(current, next)
       }
     }
@@ -245,7 +286,11 @@ final class CircuitBreaker private[extras] (
         case _: HalfOpen => done = true
         case Closed      => done = true
         case _: Open =>
-          val next = CircuitBreakerState(HalfOpen(successes = 0, probing = false), current.consecutiveFailures)
+          val next =
+            CircuitBreakerState(
+              HalfOpen(successes = 0, probing = false, probeStartNanos = 0L),
+              current.consecutiveFailures
+            )
           done = stateRef.compareAndSet(current, next)
       }
     }
@@ -269,13 +314,13 @@ object CircuitBreaker {
   def apply(
     config: CircuitBreakerConfig = CircuitBreakerConfig()
   ): CircuitBreaker =
-    apply(config, java.time.Clock.systemUTC())
+    apply(config, Ticker.system)
 
   private[extras] def apply(
     config: CircuitBreakerConfig,
-    clock: java.time.Clock
+    ticker: Ticker
   ): CircuitBreaker = {
     val state = new AtomicReference(CircuitBreakerState(CircuitState.Closed, consecutiveFailures = 0))
-    new CircuitBreaker(config, state, clock)
+    new CircuitBreaker(config, state, ticker)
   }
 }

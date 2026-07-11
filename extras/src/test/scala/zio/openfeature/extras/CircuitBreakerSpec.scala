@@ -6,16 +6,14 @@ import java.util.concurrent.atomic.AtomicReference
 
 object CircuitBreakerSpec extends ZIOSpecDefault {
 
-  private class TestClock extends java.time.Clock {
-    private val currentMillis = new AtomicReference[Long](java.lang.System.currentTimeMillis())
+  /** A controllable monotonic ticker for deterministic time-based tests. */
+  private class TestTicker extends Ticker {
+    private val current = new AtomicReference[Long](0L)
 
     def advance(duration: Duration): Unit =
-      currentMillis.updateAndGet(_ + duration.toMillis)
+      current.updateAndGet(_ + duration.toNanos)
 
-    override def millis(): Long                                    = currentMillis.get()
-    override def getZone: java.time.ZoneId                         = java.time.ZoneId.of("UTC")
-    override def withZone(zone: java.time.ZoneId): java.time.Clock = this
-    override def instant(): java.time.Instant                      = java.time.Instant.ofEpochMilli(millis())
+    override def nanos(): Long = current.get()
   }
 
   def spec = suite("CircuitBreaker")(
@@ -63,28 +61,61 @@ object CircuitBreakerSpec extends ZIOSpecDefault {
     ),
     suite("Open state")(
       test("rejects calls when open") {
-        val clock = new TestClock()
-        val cb    = CircuitBreaker(CircuitBreakerConfig(failureThreshold = 1, resetTimeout = 1.minute), clock)
+        val ticker = new TestTicker()
+        val cb     = CircuitBreaker(CircuitBreakerConfig(failureThreshold = 1, resetTimeout = 1.minute), ticker)
         cb.recordFailure()
         assertTrue(cb.tryAcquire == GateResult.Rejected)
       },
       test("transitions to half-open after resetTimeout") {
-        val clock = new TestClock()
-        val cb    = CircuitBreaker(CircuitBreakerConfig(failureThreshold = 1, resetTimeout = 1.second), clock)
+        val ticker = new TestTicker()
+        val cb     = CircuitBreaker(CircuitBreakerConfig(failureThreshold = 1, resetTimeout = 1.second), ticker)
         cb.recordFailure()
-        clock.advance(2.seconds)
+        ticker.advance(2.seconds)
         assertTrue(cb.tryAcquire == GateResult.Allowed)
+      }
+    ),
+    suite("Monotonic reset timing (#263.1)")(
+      test("stays rejected before resetTimeout, allowed at/after it — elapsed uses the injected ticker") {
+        val ticker = new TestTicker()
+        val cb =
+          CircuitBreaker(CircuitBreakerConfig(failureThreshold = 1, resetTimeout = 30.seconds), ticker)
+        cb.recordFailure() // opens
+        ticker.advance(29.seconds)
+        val beforeTimeout = cb.tryAcquire
+        // Reaching exactly resetTimeout is enough (>= comparison).
+        ticker.advance(1.second)
+        val atTimeout = cb.tryAcquire
+        assertTrue(beforeTimeout == GateResult.Rejected) &&
+        assertTrue(atTimeout == GateResult.Allowed) &&
+        assertTrue(cb.isHalfOpen)
+      },
+      test("elapsed is measured from the injected ticker, never a wall clock") {
+        // A monotonic nanoTime never runs backward, so open-timing derives solely from ticker deltas:
+        // small forward advances keep the circuit open until their sum reaches resetTimeout.
+        val ticker = new TestTicker()
+        val cb =
+          CircuitBreaker(CircuitBreakerConfig(failureThreshold = 1, resetTimeout = 10.seconds), ticker)
+        cb.recordFailure()
+        ticker.advance(3.seconds)
+        val a = cb.tryAcquire
+        ticker.advance(3.seconds)
+        val b = cb.tryAcquire
+        ticker.advance(5.seconds) // total 11s >= 10s
+        val c = cb.tryAcquire
+        assertTrue(a == GateResult.Rejected) &&
+        assertTrue(b == GateResult.Rejected) &&
+        assertTrue(c == GateResult.Allowed)
       }
     ),
     suite("Half-open state")(
       test("closes after halfOpenMaxCalls successes") {
-        val clock = new TestClock()
+        val ticker = new TestTicker()
         val cb = CircuitBreaker(
           CircuitBreakerConfig(failureThreshold = 1, resetTimeout = 1.second, halfOpenMaxCalls = 2),
-          clock
+          ticker
         )
         cb.recordFailure()
-        clock.advance(2.seconds)
+        ticker.advance(2.seconds)
         cb.tryAcquire // transition to half-open, first probe
         cb.recordSuccess()
         cb.tryAcquire // second probe
@@ -93,24 +124,61 @@ object CircuitBreakerSpec extends ZIOSpecDefault {
         assertTrue(cb.isClosed)
       },
       test("re-opens on failed probe") {
-        val clock = new TestClock()
-        val cb    = CircuitBreaker(CircuitBreakerConfig(failureThreshold = 1, resetTimeout = 1.second), clock)
+        val ticker = new TestTicker()
+        val cb     = CircuitBreaker(CircuitBreakerConfig(failureThreshold = 1, resetTimeout = 1.second), ticker)
         cb.recordFailure()
-        clock.advance(2.seconds)
+        ticker.advance(2.seconds)
         cb.tryAcquire // transition to half-open
         val didOpen = cb.recordFailure()
         assertTrue(didOpen) &&
         assertTrue(cb.isOpen)
       },
       test("only one probe at a time") {
-        val clock = new TestClock()
-        val cb    = CircuitBreaker(CircuitBreakerConfig(failureThreshold = 1, resetTimeout = 1.second), clock)
+        val ticker = new TestTicker()
+        val cb     = CircuitBreaker(CircuitBreakerConfig(failureThreshold = 1, resetTimeout = 1.second), ticker)
         cb.recordFailure()
-        clock.advance(2.seconds)
+        ticker.advance(2.seconds)
         val first  = cb.tryAcquire
         val second = cb.tryAcquire
         assertTrue(first == GateResult.Allowed) &&
         assertTrue(second == GateResult.Rejected)
+      }
+    ),
+    suite("Probe-slot steal (#263.3)")(
+      test("a wedged probe slot is stolen after probeTimeout") {
+        val ticker = new TestTicker()
+        val cb = CircuitBreaker(
+          CircuitBreakerConfig(failureThreshold = 1, resetTimeout = 1.second, probeTimeout = 5.seconds),
+          ticker
+        )
+        cb.recordFailure()
+        ticker.advance(2.seconds)
+        // First caller wins the probe slot but never records an outcome (simulating a probe that died).
+        val probe = cb.tryAcquire
+        // Before probeTimeout, no other caller may probe.
+        val blocked = cb.tryAcquire
+        // After probeTimeout elapses, the slot is stolen by the next caller.
+        ticker.advance(5.seconds)
+        val stolen = cb.tryAcquire
+        assertTrue(probe == GateResult.Allowed) &&
+        assertTrue(blocked == GateResult.Rejected) &&
+        assertTrue(stolen == GateResult.Allowed) &&
+        assertTrue(cb.isHalfOpen)
+      },
+      test("stealing resets the probe window, so an immediately-following caller is rejected") {
+        val ticker = new TestTicker()
+        val cb = CircuitBreaker(
+          CircuitBreakerConfig(failureThreshold = 1, resetTimeout = 1.second, probeTimeout = 5.seconds),
+          ticker
+        )
+        cb.recordFailure()
+        ticker.advance(2.seconds)
+        cb.tryAcquire // original probe acquires the slot
+        ticker.advance(5.seconds)
+        val stolen  = cb.tryAcquire // steals the slot, resets probeStartNanos
+        val blocked = cb.tryAcquire // window just reset, so this one is rejected again
+        assertTrue(stolen == GateResult.Allowed) &&
+        assertTrue(blocked == GateResult.Rejected)
       }
     ),
     suite("External trip/reset")(
@@ -127,8 +195,8 @@ object CircuitBreakerSpec extends ZIOSpecDefault {
         assertTrue(cb.isClosed)
       },
       test("reset does not close failure-tripped circuit") {
-        val clock = new TestClock()
-        val cb    = CircuitBreaker(CircuitBreakerConfig(failureThreshold = 1, resetTimeout = 1.minute), clock)
+        val ticker = new TestTicker()
+        val cb     = CircuitBreaker(CircuitBreakerConfig(failureThreshold = 1, resetTimeout = 1.minute), ticker)
         cb.recordFailure() // trip via failures
         cb.reset()         // should NOT close
         assertTrue(cb.isOpen)
@@ -142,8 +210,8 @@ object CircuitBreakerSpec extends ZIOSpecDefault {
     ),
     suite("recordReachable")(
       test("frees probe slot in half-open without closing the circuit") {
-        val clock = new TestClock()
-        val cb    = CircuitBreaker(CircuitBreakerConfig(halfOpenMaxCalls = 3), clock)
+        val ticker = new TestTicker()
+        val cb     = CircuitBreaker(CircuitBreakerConfig(halfOpenMaxCalls = 3), ticker)
         cb.trip()
         cb.transitionToHalfOpen()
         cb.tryAcquire // acquire probe slot
@@ -153,8 +221,8 @@ object CircuitBreakerSpec extends ZIOSpecDefault {
         assertTrue(cb.isHalfOpen)
       },
       test("repeated reachability does not close the circuit") {
-        val clock = new TestClock()
-        val cb    = CircuitBreaker(CircuitBreakerConfig(halfOpenMaxCalls = 2), clock)
+        val ticker = new TestTicker()
+        val cb     = CircuitBreaker(CircuitBreakerConfig(halfOpenMaxCalls = 2), ticker)
         cb.trip()
         cb.transitionToHalfOpen()
         (1 to 10).foreach { _ =>
@@ -171,11 +239,26 @@ object CircuitBreakerSpec extends ZIOSpecDefault {
         assertTrue(cb.stateRef.get().consecutiveFailures == 0)
       },
       test("no-op in open state") {
-        val clock = new TestClock()
-        val cb    = CircuitBreaker(CircuitBreakerConfig(failureThreshold = 1, resetTimeout = 1.minute), clock)
+        val ticker = new TestTicker()
+        val cb     = CircuitBreaker(CircuitBreakerConfig(failureThreshold = 1, resetTimeout = 1.minute), ticker)
         cb.recordFailure() // trip
         cb.recordReachable()
         assertTrue(cb.isOpen)
+      }
+    ),
+    suite("Probe outcome after acquisition (#263.3b)")(
+      test("recordFailure on an acquired probe re-opens the circuit") {
+        // Mirrors the provider's VirtualMachineError catch, which calls breaker.recordFailure() before re-throwing:
+        // a probe that dies after winning the CAS must re-open the circuit rather than wedge it half-open.
+        val ticker = new TestTicker()
+        val cb     = CircuitBreaker(CircuitBreakerConfig(failureThreshold = 1, resetTimeout = 1.second), ticker)
+        cb.recordFailure()
+        ticker.advance(2.seconds)
+        val probe = cb.tryAcquire // enters half-open, acquires the probe slot
+        cb.recordFailure() // probe dies -> re-open
+        assertTrue(probe == GateResult.Allowed) &&
+        assertTrue(cb.isOpen) &&
+        assertTrue(cb.tryAcquire == GateResult.Rejected)
       }
     )
   )

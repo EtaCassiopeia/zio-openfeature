@@ -98,17 +98,14 @@ object CircuitBreakerProviderSpec extends ZIOSpecDefault {
     }
   }
 
-  /** A controllable clock for testing time-based transitions. */
-  private class TestClock extends java.time.Clock {
-    private val currentMillis = new AtomicReference[Long](java.lang.System.currentTimeMillis())
+  /** A controllable monotonic ticker for testing time-based transitions. */
+  private class TestClock extends Ticker {
+    private val currentNanos = new AtomicReference[Long](java.lang.System.nanoTime())
 
     def advance(duration: Duration): Unit =
-      currentMillis.updateAndGet(_ + duration.toMillis)
+      currentNanos.updateAndGet(_ + duration.toNanos)
 
-    override def millis(): Long                                    = currentMillis.get()
-    override def getZone: java.time.ZoneId                         = java.time.ZoneId.of("UTC")
-    override def withZone(zone: java.time.ZoneId): java.time.Clock = this
-    override def instant(): java.time.Instant                      = java.time.Instant.ofEpochMilli(millis())
+    override def nanos(): Long = currentNanos.get()
   }
 
   private val ctx = new ImmutableContext()

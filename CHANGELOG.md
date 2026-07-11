@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **CircuitBreaker robustness: monotonic timing, interruptible timeouts, no half-open probe leak** (#263). Three fixes:
+  (1) elapsed-time decisions (open→half-open reset, delegate-state poll rate-limiting) now use a monotonic `Ticker`
+  (`System.nanoTime`, injectable for tests) instead of a wall clock, so an NTP/clock step can no longer delay recovery
+  or collapse the reset window against a still-down delegate. (2) The per-evaluation timeout now uses
+  `attemptBlockingInterrupt`, so a timed-out delegate call delivers `Thread.interrupt` to the blocking-pool thread
+  instead of leaking one pinned thread per timeout while the system is degraded. (3) A half-open probe slot can no longer
+  wedge the circuit forever: `tryAcquire` steals a probe slot older than `probeTimeout` (default `evaluationTimeout +
+  1s`), and a probe dying with a `VirtualMachineError` now records the failure (re-opening the circuit) before
+  rethrowing. `CircuitBreakerConfig` gains a `probeTimeout` parameter.
+
 - **`EnvVarProvider` surfaces parse failures instead of swallowing them** (#262). A set-but-unparsable environment
   variable was indistinguishable from an unset one: the integer/double paths collapsed a parse failure to the default
   with reason `DEFAULT`, and the boolean path was worse — it returned the default labeled `STATIC`, falsely claiming the

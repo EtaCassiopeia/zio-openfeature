@@ -54,7 +54,10 @@ final case class CircuitBreakerProviderConfig(
     CircuitBreakerConfig(
       failureThreshold = failureThreshold,
       resetTimeout = resetTimeout,
-      halfOpenMaxCalls = halfOpenMaxCalls
+      halfOpenMaxCalls = halfOpenMaxCalls,
+      // A probe should never be considered wedged before the evaluation it runs could itself time out; add a
+      // margin so a legitimately slow probe is not stolen out from under itself.
+      probeTimeout = evaluationTimeout + 1.second
     )
 }
 
@@ -198,15 +201,15 @@ final class CircuitBreakerProvider private (
       case GateResult.Allowed => executeWithTimeout(evaluate)
       case GateResult.Rejected =>
         val detail = breaker.currentState match {
-          case CircuitState.Open(sinceMillis, reason) =>
-            val ago = breaker.clock.millis() - sinceMillis
+          case CircuitState.Open(sinceNanos, reason) =>
+            val ago = (breaker.ticker.nanos() - sinceNanos) / 1000000
             val cause = reason match {
               case OpenReason.Failures => "consecutive failures"
               case OpenReason.External => "delegate reported unhealthy state"
             }
             s"open for ${ago}ms due to $cause, resets after ${config.resetTimeout.toMillis}ms"
-          case CircuitState.HalfOpen(_, _) => "half-open, probe in progress"
-          case CircuitState.Closed         => "closed"
+          case CircuitState.HalfOpen(_, _, _) => "half-open, probe in progress"
+          case CircuitState.Closed            => "closed"
         }
         throw new GeneralError(s"Circuit breaker rejected: $detail")
     }
@@ -218,7 +221,9 @@ final class CircuitBreakerProvider private (
         runtime.unsafe
           .run(
             ZIO
-              .attemptBlocking(evaluate())
+              // attemptBlockingInterrupt (not attemptBlocking) so the timeout delivers Thread.interrupt to the
+              // blocking-pool thread instead of leaking it while the delegate call runs on unbounded.
+              .attemptBlockingInterrupt(evaluate())
               .disconnect // detach so timeout completes without waiting for the blocking call
               .timeoutFail(new java.util.concurrent.TimeoutException("Evaluation timed out"))(config.evaluationTimeout)
           )
@@ -233,7 +238,9 @@ final class CircuitBreakerProvider private (
         // frees the probe slot in Half-Open, without advancing toward closing the circuit on app errors alone.
         breaker.recordReachable()
         throw FiberFailures.unwrap(e)
-      case e: VirtualMachineError => throw e
+      // Record the failure before re-throwing: a probe dying with e.g. OOM after winning the half-open CAS must
+      // re-open the circuit, not leave it wedged "half-open, probe in progress".
+      case e: VirtualMachineError => breaker.recordFailure(); throw e
       case e: LinkageError =>
         breaker.recordFailure()
         throw e
@@ -283,11 +290,11 @@ final class CircuitBreakerProvider private (
   // Rate-limit delegate state polling on the evaluation hot path. Whichever caller wins the CAS
   // performs the poll; losers skip it — the next winner after the interval re-polls.
   private def checkDelegateState(): Unit = {
-    val interval = config.stateCheckInterval.toMillis
+    val interval = config.stateCheckInterval.toNanos
     if (interval <= 0L) doCheckDelegateState()
     else {
       val last = lastStateCheckAt.get()
-      val now  = breaker.clock.millis()
+      val now  = breaker.ticker.nanos()
       if ((last == NeverChecked || now - last >= interval) && lastStateCheckAt.compareAndSet(last, now))
         doCheckDelegateState()
     }
@@ -323,15 +330,15 @@ object CircuitBreakerProvider {
     underlying: EventProvider,
     config: CircuitBreakerProviderConfig = CircuitBreakerProviderConfig()
   ): UIO[CircuitBreakerProvider] =
-    make(underlying, config, java.time.Clock.systemUTC())
+    make(underlying, config, Ticker.system)
 
   private[extras] def make(
     underlying: EventProvider,
     config: CircuitBreakerProviderConfig,
-    clock: java.time.Clock
+    ticker: Ticker
   ): UIO[CircuitBreakerProvider] =
     ZIO.runtime[Any].map { rt =>
-      val breaker = CircuitBreaker(config.toCircuitBreakerConfig, clock)
+      val breaker = CircuitBreaker(config.toCircuitBreakerConfig, ticker)
       new CircuitBreakerProvider(underlying, config, breaker, rt)
     }
 
@@ -339,7 +346,7 @@ object CircuitBreakerProvider {
     underlying: EventProvider,
     config: CircuitBreakerProviderConfig = CircuitBreakerProviderConfig()
   ): CircuitBreakerProvider =
-    apply(underlying, config, java.time.Clock.systemUTC())
+    apply(underlying, config, Ticker.system)
 
   // Uses Runtime.default intentionally — this constructor exists for test helpers and Java-side
   // construction where a ZIO runtime is not available. Production code should use `make`, which
@@ -347,10 +354,10 @@ object CircuitBreakerProvider {
   private[extras] def apply(
     underlying: EventProvider,
     config: CircuitBreakerProviderConfig,
-    clock: java.time.Clock
+    ticker: Ticker
   ): CircuitBreakerProvider = {
     val rt      = Runtime.default
-    val breaker = CircuitBreaker(config.toCircuitBreakerConfig, clock)
+    val breaker = CircuitBreaker(config.toCircuitBreakerConfig, ticker)
     new CircuitBreakerProvider(underlying, config, breaker, rt)
   }
 }

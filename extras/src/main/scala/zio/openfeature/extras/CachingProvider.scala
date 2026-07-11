@@ -176,8 +176,13 @@ final class CachingProvider private (
               .map(_.asInstanceOf[ProviderEvaluation[A]])
               .map(r => if (hit) withCachedReason(r) else r)
           }
-        )
-        .getOrThrowFiberFailure()
+        ) match {
+        // Rethrow the original error as an `OpenFeatureError` (an `Exception`) rather than letting
+        // `getOrThrowFiberFailure` raise a `zio.FiberFailure` (a `Throwable`) that would escape the SDK's
+        // `catch (Exception)` and be thrown into application code (spec: evaluation must never throw). See #258.
+        case Exit.Success(value) => value
+        case Exit.Failure(cause) => throw FiberFailures.toOpenFeatureError(cause)
+      }
     }
   }
 

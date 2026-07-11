@@ -10,6 +10,7 @@ import dev.openfeature.sdk.{
   ProviderState,
   Value
 }
+import dev.openfeature.sdk.exceptions.{FlagNotFoundError, GeneralError, OpenFeatureError}
 import zio.openfeature.internal.ProviderEvaluations
 import zio._
 import zio.test._
@@ -94,6 +95,34 @@ object CachingProviderSpec extends ZIOSpecDefault {
       builder.flagMetadata(ImmutableMetadata.builder().addString("source", "test").build())
       builder.build().asInstanceOf[ProviderEvaluation[Value]]
     }
+  }
+
+  /** A provider whose every evaluation throws the given exception, to test error-surfacing (#258). */
+  private class ThrowingProvider(error: RuntimeException) extends EventProvider {
+    @scala.annotation.nowarn("msg=deprecated")
+    override def getMetadata: Metadata   = new Metadata { override def getName: String = "ThrowingProvider" }
+    override def getState: ProviderState = ProviderState.READY
+    override def initialize(ctx: OFEvaluationContext): Unit = ()
+    override def shutdown(): Unit                           = ()
+    override def getBooleanEvaluation(
+      k: String,
+      d: java.lang.Boolean,
+      c: OFEvaluationContext
+    ): ProviderEvaluation[java.lang.Boolean] = throw error
+    override def getStringEvaluation(k: String, d: String, c: OFEvaluationContext): ProviderEvaluation[String] =
+      throw error
+    override def getIntegerEvaluation(
+      k: String,
+      d: java.lang.Integer,
+      c: OFEvaluationContext
+    ): ProviderEvaluation[java.lang.Integer] = throw error
+    override def getDoubleEvaluation(
+      k: String,
+      d: java.lang.Double,
+      c: OFEvaluationContext
+    ): ProviderEvaluation[java.lang.Double] = throw error
+    override def getObjectEvaluation(k: String, d: Value, c: OFEvaluationContext): ProviderEvaluation[Value] =
+      throw error
   }
 
   private val ctx = new ImmutableContext()
@@ -472,6 +501,28 @@ object CachingProviderSpec extends ZIOSpecDefault {
             cached.getBooleanEvaluation("flag", false, ctx)
           }
         } yield assertTrue(underlying.evaluationCount.get() == 1)
+      }
+    ),
+    suite("error surfacing (#258)")(
+      test("a delegate OpenFeatureError surfaces as-is (an Exception), not a zio.FiberFailure") {
+        val cached = CachingProvider(new ThrowingProvider(new FlagNotFoundError("flag")))
+        for {
+          err <- ZIO.attempt(cached.getBooleanEvaluation("flag", false, ctx)).flip
+        } yield assertTrue(
+          err.isInstanceOf[FlagNotFoundError], // original error preserved so the SDK maps FLAG_NOT_FOUND
+          err.isInstanceOf[Exception],         // caught by the SDK's `catch (Exception)` → default returned, hooks run
+          !err.isInstanceOf[zio.FiberFailure]  // the bug: a FiberFailure (a Throwable) would escape that catch
+        )
+      },
+      test("a non-OpenFeature delegate failure is wrapped in GeneralError, not a zio.FiberFailure") {
+        val cached = CachingProvider(new ThrowingProvider(new RuntimeException("boom")))
+        for {
+          err <- ZIO.attempt(cached.getStringEvaluation("flag", "d", ctx)).flip
+        } yield assertTrue(
+          err.isInstanceOf[GeneralError],
+          err.isInstanceOf[OpenFeatureError],
+          !err.isInstanceOf[zio.FiberFailure]
+        )
       }
     )
   ) @@ TestAspect.withLiveClock

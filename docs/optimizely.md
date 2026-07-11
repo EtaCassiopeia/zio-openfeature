@@ -92,7 +92,7 @@ FeatureFlags.fromProviderAsync(
 )
 ```
 
-When `initTimeout` elapses without the datafile arriving, the layer's watchdog flips `providerStatus` to `Fatal`. Application code that polls `providerStatus` (or registers `onProviderReady` / `onProviderError`) sees this immediately and can fail loud:
+When `initTimeout` elapses without the datafile ever arriving, the layer's watchdog flips `providerStatus` to `Fatal` and shuts the provider down. This `Fatal` is terminal (the provider is stopped, so a late datafile cannot resurrect it — install a new provider via `setProvider` or rebuild the layer to recover). Application code that polls `providerStatus` (or registers `onProviderReady` / `onProviderError`) sees this immediately and can fail loud:
 
 ```scala
 val ready = for

@@ -447,7 +447,7 @@ val layer = FeatureFlags.fromMultiProvider(
 Every `fromProvider` and `fromProviderAsync` factory bounds initialization at **30 seconds by default**. The bound applies to both modes:
 
 - **Sync (`fromProvider`)**: if `setProviderAndWait` takes longer than `initTimeout`, the layer build fails with a `TimeoutException`. After init returns, the library verifies the provider's actual state — anything other than `READY` / `STALE` fails the build with an `IllegalStateException`, so a wrong SDK key or unreachable endpoint surfaces at startup instead of returning default values on every evaluation.
-- **Async (`fromProviderAsync`)**: a watchdog fiber forked into the layer's `Scope` sleeps `initTimeout`, then atomically transitions `ProviderStatus` from `NotReady` / `Error` to `Fatal`. Callers polling `providerStatus` stop waiting.
+- **Async (`fromProviderAsync`)**: a watchdog fiber forked into the layer's `Scope` sleeps `initTimeout`, then escalates to `Fatal` **only if the provider never became usable** — i.e. it is still `NotReady` / `Error` and has never reached `Ready` / `Stale`. A provider that reached `Ready` before the deadline (even if it has since dipped into a transient `Error`) is left running untouched. On escalation the watchdog also shuts the provider down (so its poller/HTTP threads don't outlive the layer) and publishes a `ProviderEvent.Error` carrying `ErrorCode.ProviderFatal`. Callers polling `providerStatus` stop waiting. Because the provider is shut down, this `Fatal` is terminal (see [Recovery semantics under `Fatal`](#recovery-semantics-under-fatal)).
 
 Override via the explicit-`initTimeout` overload:
 
@@ -464,7 +464,7 @@ FeatureFlags.fromProvider(provider, evaluationTimeout = 500.millis, initTimeout 
 
 ### Async Variants (Non-Blocking Initialization)
 
-Every factory method has an async counterpart that uses the Java SDK's non-blocking `setProvider` instead of `setProviderAndWait`. The provider initializes in the background; evaluations fail with `ProviderNotReady` until the provider is ready. The init-timeout watchdog described above still applies — after the configured `initTimeout` elapses, status transitions to `Fatal` so callers stop polling for ready.
+Every factory method has an async counterpart that uses the Java SDK's non-blocking `setProvider` instead of `setProviderAndWait`. The provider initializes in the background; evaluations fail with `ProviderNotReady` until the provider is ready. The init-timeout watchdog described above still applies — after the configured `initTimeout` elapses, a provider that never became usable transitions to `Fatal` (and is shut down) so callers stop polling for ready.
 
 This is useful for microservices that need fast startup and can tolerate returning default flag values during the brief initialization window.
 
@@ -555,7 +555,7 @@ Provider construction has two orthogonal dimensions: **how long the layer build 
 The 30-second default applies to both `fromProvider` and `fromProviderAsync`. Its effect differs:
 
 - **Sync**: bounds the *blocking* call. If `setProviderAndWait` (the underlying Java SDK call) doesn't return within `initTimeout`, the layer build fails with a `TimeoutException`. After it returns successfully, the library reads the provider's `getState()` — anything other than `READY`/`STALE` fails the build with `IllegalStateException`. Translation: in sync mode, `initTimeout` is a hard ceiling on cold-start latency and the layer never lands in a half-initialised state.
-- **Async**: a daemon fiber forked into the layer's `Scope` sleeps `initTimeout` then atomically transitions `NotReady`/`Error` → `Fatal`. The transition isn't terminal — if `PROVIDER_READY` fires later (e.g. network came back), status flips `Fatal → Ready` and evaluations resume. Translation: in async mode, `initTimeout` is the **bounded uncertainty window** at boot; after it elapses you have a reliable signal you can act on.
+- **Async**: a daemon fiber forked into the layer's `Scope` sleeps `initTimeout` then escalates to `Fatal` **only if the provider never became usable** (still `NotReady`/`Error`, never reached `Ready`/`Stale`) — a provider that reached `Ready` and later dipped into a transient `Error` is left running, not Fataled. On escalation it also shuts the provider down. Translation: in async mode, `initTimeout` is the **bounded uncertainty window** at boot; after it elapses you have a reliable, terminal signal you can act on (see [Recovery semantics](#recovery-semantics-under-fatal)).
 
 ### The "all defaults" gap
 
@@ -586,9 +586,11 @@ In every async configuration without a same-process fallback, there is a window 
 
 ### Recovery semantics under `Fatal`
 
-`Fatal` is a "stop waiting, take operator action" signal — not a tombstone. If the watchdog fires it at t = 30 s but Optimizely's poller succeeds at t = 90 s, the event bridge fires `PROVIDER_READY` and status transitions `Fatal → Ready`. Long-running pods recover naturally; you don't need to restart them to resume normal evaluation.
+`Fatal` is a **terminal** "stop waiting, take operator action" signal (OpenFeature spec 1.7.6: `FATAL` is irrecoverable). The watchdog only ever escalates a provider that **never became usable** within `initTimeout`, and it shuts that provider down as it does so — so there is no live poller left to recover, and a later `PROVIDER_READY` from the same provider cannot resurrect it. To resume evaluation after a `Fatal`, install a new provider via `setProvider` (or rebuild the layer); `setProvider` is the only exit from `Fatal`.
 
-Healthchecks that gate on `Ready`/`Stale` will see the pod un-route during the `Fatal` window and re-route after recovery, which is usually what you want.
+The transient case is handled *before* it can reach `Fatal`: a provider that reached `Ready` and later hits a recoverable `PROVIDER_ERROR` stays in `Error` (spec 1.7.6/1.7.7 keeps evaluations flowing to a provider that commonly still serves cached values), and a genuine `PROVIDER_READY` restores it to `Ready`. Only a provider that carries `ErrorCode.PROVIDER_FATAL` (mirroring the Java SDK's own `FATAL` state) goes terminal on its own.
+
+Healthchecks that gate on `Ready`/`Stale` will see the pod un-route once a provider goes `Fatal`; because that state is terminal, treat it as a signal to replace the provider or recycle the pod rather than waiting for self-recovery.
 
 ### Tuning `initTimeout`
 

@@ -2,7 +2,14 @@ package zio.openfeature
 
 import zio._
 import zio.stream._
-import zio.openfeature.internal.{ClientEvaluator, ContextConverter, ErrorCodeConverter, FeatureFlagsState}
+import zio.openfeature.internal.{
+  ClientEvaluator,
+  ContextConverter,
+  ErrorCodeConverter,
+  FeatureFlagsState,
+  ProviderStatusMachine
+}
+import zio.openfeature.internal.ProviderStatusMachine.Signal
 import dev.openfeature.sdk.{
   Client => OFClient,
   FeatureProvider => OFFeatureProvider,
@@ -34,35 +41,119 @@ final private[openfeature] class FeatureFlagsLive(
   evaluationTimeout: Option[Duration] = Some(FeatureFlags.DefaultEvaluationTimeout)
 ) extends FeatureFlags {
 
-  // Sentinel for "no swap has failed yet". Checked before computing the nanoTime difference so the
-  // subtraction can never operate on the sentinel (nanoTime has an arbitrary origin, so unlike wall-clock
-  // time there is no epoch value that is safely "long ago").
-  private val NoSwapFailure = Long.MinValue
-
-  // Records when a `setProvider` swap last failed (System.nanoTime, monotonic — wall-clock adjustments such as NTP
-  // steps must not widen or defeat the guard). Used by the async PROVIDER_READY bridge to decide whether an incoming
-  // Ready event is a real recovery signal or a stale event left over from a previous attach that's racing against the
-  // explicit Error transition set by the failed swap. See `setProvider` and `readyHandler` below.
-  private val recentSwapFailureAtNanos = new java.util.concurrent.atomic.AtomicLong(NoSwapFailure)
-
-  // Mirror of `recentSwapFailureAtNanos` for the opposite case: records when a `setProvider` swap last
-  // *succeeded*. Used by the async PROVIDER_ERROR bridge to recognize a stale Error event queued by a
-  // previous, now-replaced provider (e.g. one whose `initialize()` failed) that gets dispatched on the
-  // SDK's emitter executor *after* a subsequent swap has already taken over and moved the instance to
-  // Ready. Without this guard such a stale event clobbers the new provider's Ready status. See
-  // `setProvider` and `errorHandler` below.
-  private val recentSwapSuccessAtNanos = new java.util.concurrent.atomic.AtomicLong(NoSwapFailure)
-
-  // How long after a failed/successful swap an async PROVIDER_READY/PROVIDER_ERROR event should be ignored
-  // as a likely stale signal. Real recovery/failure scenarios (provider genuinely transitions on its own,
-  // well after the swap completed) happen on a much longer timescale than this; the race window we're
-  // closing is the SDK's emitter executor dispatching a queued event that pre-dates our explicit transition.
-  private val FailedSwapGuardNanos: Long = 500L * 1000000L
-
-  // True while `setProvider` holds the swap lock and is re-registering the provider. The PROVIDER_READY bridge must
-  // not transition NotReady => Ready in that window: a queued Ready event from the OLD provider's emitter would mark
-  // the instance Ready while the swap is still in flight. The successful swap sets Ready explicitly at the end.
+  // True while `setProvider` holds the swap lock and is re-registering the provider. Bridge events must not drive
+  // the status machine during that window: a queued event from the OLD provider would clobber the swap's own
+  // outcome. The successful swap sets Ready explicitly at the end.
   private val swapInProgress = new java.util.concurrent.atomic.AtomicBoolean(false)
+
+  // Set once the provider has ever been usable (Ready/Stale). Gates the init watchdog: a provider that was Ready and
+  // later dipped to a transient Error must never be escalated to Fatal (the core #244 bug).
+  private val everReady = new java.util.concurrent.atomic.AtomicBoolean(false)
+
+  // Set when an explicit `shutdown` has run to completion: the final NotReady is terminal for bridge events; only
+  // setProvider (which installs a new provider) clears it.
+  private val shutdownCompleted = new java.util.concurrent.atomic.AtomicBoolean(false)
+
+  // Set by startEventBridge; invoked by `shutdown` BEFORE teardown (so no emitter thread races it) and by the scope
+  // finalizer (idempotent — removeHandler on an already-removed handler is a no-op in the SDK, so double-invocation
+  // is safe).
+  private val bridgeDeregister =
+    new java.util.concurrent.atomic.AtomicReference[() => Unit](() => ())
+
+  /** The single door to statusRef (#244). Every status write except the sync-build seed and the testkit's shared-ref
+    * control surface goes through here. `SubscriptionRef` is a `Ref.Synchronized`, so `modify` serializes
+    * read-decide-write against every other signal. Returns Some(next) iff a transition happened, so callers can attach
+    * transition-gated side effects (watchdog shutdown, latch release).
+    */
+  private def applySignal(signal: Signal): UIO[Option[ProviderStatus]] =
+    state.statusRef.modify { current =>
+      val ctx = ProviderStatusMachine.Context(everReady.get(), swapInProgress.get(), shutdownCompleted.get())
+      ProviderStatusMachine.transition(current, signal, ctx) match {
+        case Some(next) =>
+          // Update the linearization-point flags INSIDE the serialized modify (SubscriptionRef is a
+          // Ref.Synchronized, so the function runs under exclusive access). The writes are idempotent and depend only
+          // on `signal`/`next`, so there is no read-stale window for a concurrent applySignal — closing the tap-lag
+          // gap where a pending `everReady` write could let the watchdog Fatal an already-Ready provider.
+          if (next == ProviderStatus.Ready || next == ProviderStatus.Stale) everReady.set(true)
+          signal match {
+            case Signal.ShutdownCompleted => shutdownCompleted.set(true)
+            case Signal.SwapStarted       => shutdownCompleted.set(false)
+            case _                        => ()
+          }
+          (Some(next), next)
+        case None => (None, current)
+      }
+    }
+
+  // The SDK stamps every dispatched event with the emitting provider's metadata name — or NULL when the provider has
+  // no metadata/name (verified sdk-1.21.0, OpenFeatureAPI.runHandlersForProvider). An event whose name differs from
+  // the CURRENT provider's is a stale event from a replaced/failed provider still queued on the SDK's emitter
+  // executor: it must not drive the status machine. We drop ONLY when both identities are known and differ. A null
+  // event name (unnamed provider) OR an indeterminate current name fails open — we cannot attribute the event to a
+  // *different* provider, so it must be allowed to drive status. The current name is indeterminate when it is the
+  // "unknown" fallback the factories stamp for metadata-less providers, or for a provider like the SDK's MultiProvider
+  // whose metadata name only materializes inside initialize() (so the async build captured "unknown", while the
+  // provider's own later events carry the real name). Same-named swaps are indistinguishable — see "Known limitation"
+  // in #244.
+  private def fromCurrentProvider(details: EventDetails): Boolean = {
+    val eventName   = details.getProviderName
+    val currentName = providerNameRef.get()
+    eventName == null ||
+    currentName == null ||
+    currentName == FeatureFlags.UnknownProviderName ||
+    eventName == currentName
+  }
+
+  // Truthful payloads: publish under the name the SDK stamped on the event (the actual emitter), falling back to the
+  // current provider only when the event carries none.
+  private def eventProviderMetadata(details: EventDetails): ProviderMetadata = {
+    val name = details.getProviderName
+    ProviderMetadata(if (name == null) providerNameRef.get() else name)
+  }
+
+  private def extractEventMetadata(details: EventDetails): FlagMetadata =
+    try {
+      val javaMeta = details.getEventMetadata
+      if (javaMeta == null || javaMeta.isEmpty) FlagMetadata.empty
+      else convertImmutableMetadata(javaMeta)
+    } catch {
+      case _: Exception => FlagMetadata.empty
+    }
+
+  // Bridge event bodies as pure effects (#244), so tests can drive them directly with a builder-constructed
+  // EventDetails. The Java-side Consumers registered in startEventBridge are thin wrappers that run these via
+  // `runHandler`. Events are ALWAYS published for observers; identity/machine gating applies only to the status
+  // transition and the onReady latch.
+
+  private[openfeature] def onReadyEvent(details: EventDetails): UIO[Unit] = {
+    val em      = extractEventMetadata(details)
+    val current = fromCurrentProvider(details)
+    (if (current) applySignal(Signal.EventReady) else ZIO.none) *>
+      state.eventHub.publish(ProviderEvent.Ready(eventProviderMetadata(details), em)).unit *>
+      ZIO.succeed(if (current) onReady.foreach(_.countDown()))
+  }
+
+  private[openfeature] def onErrorEvent(details: EventDetails): UIO[Unit] = {
+    val error     = new RuntimeException(Option(details.getMessage).getOrElse("Provider error"))
+    val errorCode = Option(details.getErrorCode).map(ErrorCodeConverter.fromJava)
+    val em        = extractEventMetadata(details)
+    val fatal     = errorCode.contains(ErrorCode.ProviderFatal)
+    (if (fromCurrentProvider(details)) applySignal(Signal.EventError(fatal)) else ZIO.none).flatMap { transitioned =>
+      // A Fatal transition must release latch waiters (registry handshake, awaitReady seeds) so they observe Fatal
+      // instead of stalling the full timeout.
+      ZIO.succeed(onReady.foreach(_.countDown())).when(transitioned.contains(ProviderStatus.Fatal))
+    } *>
+      state.eventHub
+        .publish(ProviderEvent.Error(error, eventProviderMetadata(details), errorCode, Option(details.getMessage), em))
+        .unit
+  }
+
+  private[openfeature] def onStaleEvent(details: EventDetails): UIO[Unit] = {
+    val reason = Option(details.getMessage).getOrElse("Provider stale")
+    val em     = extractEventMetadata(details)
+    (if (fromCurrentProvider(details)) applySignal(Signal.EventStale) else ZIO.none) *>
+      state.eventHub.publish(ProviderEvent.Stale(reason, eventProviderMetadata(details), em)).unit
+  }
 
   // Cache the Scala->Java context conversion by object identity. In the common case every per-call context layer
   // (transaction/client/fiber-local/invocation) is empty, so the merged context IS the (unchanged) global context
@@ -85,9 +176,6 @@ final private[openfeature] class FeatureFlagsLive(
 
   // Bridge Java SDK provider events to ZIO event system
   private[openfeature] def startEventBridge: ZIO[Scope, Nothing, Unit] = {
-    // Read provider name dynamically so events after a provider swap use the new name
-    def currentMetadata(): ProviderMetadata = ProviderMetadata(providerNameRef.get())
-
     // Run an event-publish effect from a Java SDK thread. Failures are logged via the ZIO logger
     // rather than thrown, so the Java SDK's event dispatch thread is never killed by a defect.
     def runHandler(runtime: Runtime[Any], label: String)(effect: UIO[Unit]): Unit =
@@ -98,84 +186,39 @@ final private[openfeature] class FeatureFlagsLive(
       }
 
     ZIO.runtime[Any].flatMap { runtime =>
-      def extractEventMetadata(details: EventDetails): FlagMetadata =
-        try {
-          val javaMeta = details.getEventMetadata
-          if (javaMeta == null || javaMeta.isEmpty) FlagMetadata.empty
-          else convertImmutableMetadata(javaMeta)
-        } catch {
-          case _: Exception => FlagMetadata.empty
-        }
+      // `suspendSucceed` defers the handler bodies (metadata extraction, identity check, payload construction) into the
+      // effect so a synchronous throw while building them on the Java emitter thread becomes a defect caught by
+      // `runHandler`'s `catchAllCause`, rather than escaping to kill the SDK's dispatch thread.
+      val readyHandler: java.util.function.Consumer[EventDetails] =
+        details => runHandler(runtime, "PROVIDER_READY")(ZIO.suspendSucceed(onReadyEvent(details)))
 
-      val readyHandler: java.util.function.Consumer[EventDetails] = details => {
-        val em = extractEventMetadata(details)
-        runHandler(runtime, "PROVIDER_READY")(
-          // Transition statusRef only from states where PROVIDER_READY is meaningful.
-          // - `NotReady => Ready` is suppressed while a swap holds the lock (`swapInProgress`): a Ready event arriving
-          //   then belongs to the OLD provider's emitter queue; the successful swap sets Ready explicitly at the end.
-          // - The `Error => Ready` arrow is valid per the OpenFeature spec (recovery from a recoverable error) but is
-          //   guarded by `FailedSwapGuardNanos`: if the most recent statusRef write was a failed-swap Error within that
-          //   window, a Ready event arriving now is almost certainly a stale signal queued on the SDK's emitter
-          //   executor before the swap, not a genuine recovery. Real recoveries happen on much longer timescales.
-          state.statusRef.update {
-            case ProviderStatus.NotReady =>
-              if (swapInProgress.get()) ProviderStatus.NotReady else ProviderStatus.Ready
-            case ProviderStatus.Stale => ProviderStatus.Ready
-            case ProviderStatus.Error =>
-              val stamp = recentSwapFailureAtNanos.get()
-              val withinGuard =
-                stamp != NoSwapFailure && (java.lang.System.nanoTime() - stamp) < FailedSwapGuardNanos
-              if (withinGuard) ProviderStatus.Error else ProviderStatus.Ready
-            case other => other
-          } *>
-            state.eventHub.publish(ProviderEvent.Ready(currentMetadata(), em)).unit
-        )
-        onReady.foreach(_.countDown())
-      }
+      val errorHandler: java.util.function.Consumer[EventDetails] =
+        details => runHandler(runtime, "PROVIDER_ERROR")(ZIO.suspendSucceed(onErrorEvent(details)))
 
-      val errorHandler: java.util.function.Consumer[EventDetails] = details => {
-        val error     = new RuntimeException(Option(details.getMessage).getOrElse("Provider error"))
-        val errorCode = Option(details.getErrorCode).map(ErrorCodeConverter.fromJava)
-        val em        = extractEventMetadata(details)
-        runHandler(runtime, "PROVIDER_ERROR")(
-          // Don't let a stale Error event clobber a newer provider's status: suppress the statusRef
-          // transition while a swap is in flight (the swap's own `tapError` already sets Error
-          // synchronously for *its* failure) or within `FailedSwapGuardNanos` of a swap that just
-          // succeeded (the event almost certainly predates that success). The event is still published
-          // either way so observers relying on the event stream see it.
-          ZIO
-            .succeed {
-              val stamp = recentSwapSuccessAtNanos.get()
-              val withinGuard =
-                stamp != NoSwapFailure && (java.lang.System.nanoTime() - stamp) < FailedSwapGuardNanos
-              !swapInProgress.get() && !withinGuard
-            }
-            .flatMap(shouldTransition => state.statusRef.set(ProviderStatus.Error).when(shouldTransition)) *>
-            state.eventHub
-              .publish(ProviderEvent.Error(error, currentMetadata(), errorCode, Option(details.getMessage), em))
-              .unit
-        )
-      }
+      val staleHandler: java.util.function.Consumer[EventDetails] =
+        details => runHandler(runtime, "PROVIDER_STALE")(ZIO.suspendSucceed(onStaleEvent(details)))
 
-      val staleHandler: java.util.function.Consumer[EventDetails] = details => {
-        val reason = Option(details.getMessage).getOrElse("Provider stale")
-        val em     = extractEventMetadata(details)
-        runHandler(runtime, "PROVIDER_STALE")(
-          state.statusRef.set(ProviderStatus.Stale) *>
-            state.eventHub.publish(ProviderEvent.Stale(reason, currentMetadata(), em)).unit
-        )
-      }
-
-      val configHandler: java.util.function.Consumer[EventDetails] = details => {
-        val flags = Option(details.getFlagsChanged)
-          .map(_.asScala.toSet)
-          .getOrElse(Set.empty[String])
-        val em = extractEventMetadata(details)
+      val configHandler: java.util.function.Consumer[EventDetails] = details =>
         runHandler(runtime, "PROVIDER_CONFIGURATION_CHANGED")(
-          state.eventHub
-            .publish(ProviderEvent.ConfigurationChanged(flags, currentMetadata(), em))
-            .unit
+          ZIO.suspendSucceed {
+            val flags = Option(details.getFlagsChanged)
+              .map(_.asScala.toSet)
+              .getOrElse(Set.empty[String])
+            val em = extractEventMetadata(details)
+            state.eventHub
+              .publish(ProviderEvent.ConfigurationChanged(flags, eventProviderMetadata(details), em))
+              .unit
+          }
         )
+
+      // Deregistration thunk stored on the instance so `shutdown` can remove the handlers BEFORE tearing down the API
+      // (no emitter thread can then race the teardown); the scope finalizer keeps calling it too (idempotent).
+      val deregister: () => Unit = () => {
+        client.removeHandler(JavaProviderEvent.PROVIDER_READY, readyHandler)
+        client.removeHandler(JavaProviderEvent.PROVIDER_ERROR, errorHandler)
+        client.removeHandler(JavaProviderEvent.PROVIDER_STALE, staleHandler)
+        client.removeHandler(JavaProviderEvent.PROVIDER_CONFIGURATION_CHANGED, configHandler)
+        ()
       }
 
       for {
@@ -184,15 +227,10 @@ final private[openfeature] class FeatureFlagsLive(
           client.on(JavaProviderEvent.PROVIDER_ERROR, errorHandler)
           client.on(JavaProviderEvent.PROVIDER_STALE, staleHandler)
           client.on(JavaProviderEvent.PROVIDER_CONFIGURATION_CHANGED, configHandler)
+          bridgeDeregister.set(deregister)
           ()
         }
-        _ <- ZIO.addFinalizer(ZIO.attempt {
-          client.removeHandler(JavaProviderEvent.PROVIDER_READY, readyHandler)
-          client.removeHandler(JavaProviderEvent.PROVIDER_ERROR, errorHandler)
-          client.removeHandler(JavaProviderEvent.PROVIDER_STALE, staleHandler)
-          client.removeHandler(JavaProviderEvent.PROVIDER_CONFIGURATION_CHANGED, configHandler)
-          ()
-        }.ignore)
+        _ <- ZIO.addFinalizer(ZIO.attempt(deregister()).ignore)
       } yield ()
     }
   }
@@ -749,7 +787,36 @@ final private[openfeature] class FeatureFlagsLive(
   // `Error` (spec 1.7.6/1.7.7), but restoring `Ready` keeps `providerStatus` / `awaitReady` accurate for the usable
   // fallback (`Error` is not `canEvaluate`). Package-private — not part of the public API.
   private[openfeature] def forceReady: UIO[Unit] =
-    state.statusRef.set(ProviderStatus.Ready)
+    applySignal(Signal.ForceReady).unit
+
+  /** Async-init watchdog escalation (#244). Only when the machine actually transitions (the provider never became
+    * usable — the `everReady` gate) does it shut the provider down, publish a terminal Error event with code
+    * PROVIDER_FATAL, and release the onReady latch. A provider that was ever Ready is left running.
+    */
+  private[openfeature] def escalateInitTimeout(provider: OFFeatureProvider, initTimeout: Duration): UIO[Unit] =
+    applySignal(Signal.InitTimeout).flatMap {
+      case Some(_) =>
+        val msg = s"Provider initialization exceeded $initTimeout"
+        ZIO.attemptBlocking(provider.shutdown()).ignore *>
+          state.eventHub
+            .publish(
+              ProviderEvent.Error(
+                new java.util.concurrent.TimeoutException(msg),
+                ProviderMetadata(providerNameRef.get()),
+                Some(ErrorCode.ProviderFatal),
+                Some(msg)
+              )
+            )
+            .unit *>
+          ZIO.succeed(onReady.foreach(_.countDown()))
+      case None => ZIO.unit
+    }
+
+  /** Seed the initial status from the sync build path, recording ever-readiness for the machine. */
+  private[openfeature] def seedStatus(status: ProviderStatus): UIO[Unit] =
+    ZIO.succeed {
+      if (status == ProviderStatus.Ready || status == ProviderStatus.Stale) everReady.set(true)
+    } *> state.statusRef.set(status)
 
   override def awaitReady(within: Duration): UIO[ProviderStatus] =
     // `.changes` emits the current status first (so an already-Ready provider returns immediately) then every
@@ -936,13 +1003,13 @@ final private[openfeature] class FeatureFlagsLive(
         // Save old state for rollback on failure
         oldProvider <- providerRef.get
         oldName     <- ZIO.succeed(providerNameRef.get())
-        // 1. Transition to NOT_READY — new evaluations fail fast during swap. `swapInProgress` keeps the
-        //    PROVIDER_READY bridge from flipping NotReady => Ready off a stale event from the old provider.
+        // 1. Raise the gate BEFORE the NotReady transition: from here bridge events cannot drive the machine, so a
+        //    queued Ready event from the OLD provider cannot mark the instance Ready mid-swap.
         _ <- ZIO.succeed(swapInProgress.set(true))
-        _ <- state.statusRef.set(ProviderStatus.NotReady)
-        // 2. Update refs BEFORE registering with Java SDK, so the event bridge
-        //    (which fires PROVIDER_READY during setProviderAndWait) sees consistent metadata
-        newName = Option(newProvider.getMetadata).map(_.getName).getOrElse("unknown")
+        _ <- applySignal(Signal.SwapStarted)
+        // 2. Update refs BEFORE registering with Java SDK, so the event bridge (which fires PROVIDER_READY during
+        //    setProviderAndWait) and the identity guard see the new provider's metadata.
+        newName = Option(newProvider.getMetadata).map(_.getName).getOrElse(FeatureFlags.UnknownProviderName)
         _ <- providerRef.set(newProvider)
         _ <- ZIO.succeed(providerNameRef.set(newName))
         // 3. Register new provider with Java SDK (shuts down old, initializes new)
@@ -951,32 +1018,30 @@ final private[openfeature] class FeatureFlagsLive(
           case None    => ZIO.attemptBlocking(api.setProviderAndWait(newProvider))
         }).mapError(e => FeatureFlagError.ProviderInitializationFailed(e))
           .tapError(_ =>
-            // Rollback refs and set Error status so the instance is in a diagnosable state. Stamp
-            // `recentSwapFailureAtNanos` BEFORE the statusRef write so the async PROVIDER_READY handler sees a fresh
-            // failure timestamp and skips overwriting Error within the guard window.
-            ZIO.succeed(recentSwapFailureAtNanos.set(java.lang.System.nanoTime())) *>
-              providerRef.set(oldProvider) *>
+            // Roll back refs FIRST so the identity guard again reflects the (still registered) old provider, then
+            // record the failure via the machine.
+            providerRef.set(oldProvider) *>
               ZIO.succeed(providerNameRef.set(oldName)) *>
-              state.statusRef.set(ProviderStatus.Error)
+              applySignal(Signal.SwapFailed)
           )
-        // 4. Mark ready — the Java SDK event bridge will also fire PROVIDER_READY,
-        //    but we set it explicitly for immediate visibility. Stamp `recentSwapSuccessAtNanos`
-        //    first so a stale PROVIDER_ERROR from the just-replaced provider (see `errorHandler`)
-        //    can't race in and immediately overwrite the Ready we're about to set.
-        _ <- ZIO.succeed(recentSwapSuccessAtNanos.set(java.lang.System.nanoTime()))
-        _ <- state.statusRef.set(ProviderStatus.Ready)
+        // 4. Mark ready via the machine — the Java SDK bridge also fires PROVIDER_READY, but we set it explicitly for
+        //    immediate visibility.
+        _ <- applySignal(Signal.SwapSucceeded)
       } yield ()
-      // The guard must drop on every exit (success, failure, interruption) or the bridge would
-      // suppress legitimate NotReady => Ready transitions forever.
+      // The gate must drop on every exit (success, failure, interruption) or bridge events would be suppressed forever.
       swap.ensuring(ZIO.succeed(swapInProgress.set(false)))
     }
 
   // Shutdown API (spec 1.6.1, 1.6.2)
 
   override def shutdown: UIO[Unit] =
-    // ShuttingDown rejects evaluations for the duration of the teardown (checkProviderStatus);
-    // the terminal state after teardown is NotReady.
-    state.statusRef.set(ProviderStatus.ShuttingDown) *>
+    // ShuttingDown rejects evaluations for the duration of the teardown (checkProviderStatus); the terminal state
+    // after teardown is NotReady. The machine keeps both terminal: while ShuttingDown no bridge event transitions,
+    // and ShutdownCompleted makes the final NotReady stick against a late event from the dying provider.
+    applySignal(Signal.ShutdownStarted) *>
+      // Deregister the bridge handlers BEFORE tearing down the API so no emitter thread races the teardown (the scope
+      // finalizer also calls this — the SDK's removeHandler is idempotent).
+      ZIO.succeed(bridgeDeregister.get()()) *>
       state.hooksRef.set(List.empty) *>
       state.zioApiHooksRef.set(List.empty) *>
       state.globalContextRef.set(EvaluationContext.empty) *>
@@ -992,7 +1057,7 @@ final private[openfeature] class FeatureFlagsLive(
       // A non-owning `shutdown` therefore releases only this instance's own state (status/hooks/contexts/event hub,
       // torn down above); retire such clients via whatever owns the API (e.g. the registry).
       ZIO.when(ownsApi)(ZIO.attemptBlocking(api.shutdown()).ignore) *>
-      state.statusRef.set(ProviderStatus.NotReady)
+      applySignal(Signal.ShutdownCompleted).unit
 
   // Tracking API
 

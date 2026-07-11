@@ -104,6 +104,83 @@ trait FeatureFlags {
   def value[A: FlagType](key: String, default: A, ctx: EvaluationContext): IO[FeatureFlagError, A] =
     valueDetails(key, default, ctx).map(_.value)
 
+  // Total (never-fails) evaluation variants (spec §1.4.10 / §1.1.7: evaluation "MUST NOT throw ... always return the
+  // default value"). Any evaluation error is absorbed into the supplied default: `*OrDefault` returns the value,
+  // `resolveOrDefault` returns the full `FlagResolution` with `reason = Error` and `errorCode`/`errorMessage` populated
+  // so the caller can still see WHY the default was served. Both typed `FeatureFlagError`s and defects (unexpected
+  // exceptions) are absorbed — the opt-in "give me a value no matter what" contract — but fiber interruption is always
+  // propagated, so cancellation still works. The non-total methods above remain for callers who want to handle errors.
+
+  def booleanOrDefault(key: String, default: Boolean, ctx: EvaluationContext = EvaluationContext.empty): UIO[Boolean] =
+    totalResolution(booleanDetails(key, default, ctx), key, default).map(_.value)
+
+  def stringOrDefault(key: String, default: String, ctx: EvaluationContext = EvaluationContext.empty): UIO[String] =
+    totalResolution(stringDetails(key, default, ctx), key, default).map(_.value)
+
+  def intOrDefault(key: String, default: Int, ctx: EvaluationContext = EvaluationContext.empty): UIO[Int] =
+    totalResolution(intDetails(key, default, ctx), key, default).map(_.value)
+
+  def longOrDefault(key: String, default: Long, ctx: EvaluationContext = EvaluationContext.empty): UIO[Long] =
+    totalResolution(longDetails(key, default, ctx), key, default).map(_.value)
+
+  def doubleOrDefault(key: String, default: Double, ctx: EvaluationContext = EvaluationContext.empty): UIO[Double] =
+    totalResolution(doubleDetails(key, default, ctx), key, default).map(_.value)
+
+  def objOrDefault(
+    key: String,
+    default: Map[String, Any],
+    ctx: EvaluationContext = EvaluationContext.empty
+  ): UIO[Map[String, Any]] =
+    totalResolution(objDetails(key, default, ctx), key, default).map(_.value)
+
+  def valueOrDefault[A: FlagType](key: String, default: A, ctx: EvaluationContext = EvaluationContext.empty): UIO[A] =
+    totalResolution(valueDetails(key, default, ctx), key, default).map(_.value)
+
+  /** Total details variant: like [[valueDetails]] but never fails — an evaluation error yields a `FlagResolution` whose
+    * `reason` is `Error`, `value` is `default`, and `errorCode`/`errorMessage` describe the failure (spec §1.4.10).
+    */
+  def resolveOrDefault[A: FlagType](
+    key: String,
+    default: A,
+    ctx: EvaluationContext = EvaluationContext.empty,
+    options: EvaluationOptions = EvaluationOptions.empty
+  ): UIO[FlagResolution[A]] =
+    totalResolution(valueDetails(key, default, ctx, options), key, default)
+
+  private def totalResolution[A](
+    details: IO[FeatureFlagError, FlagResolution[A]],
+    key: String,
+    default: A
+  ): UIO[FlagResolution[A]] =
+    details.foldCauseZIO(
+      cause =>
+        // Propagate ONLY pure external cancellation, so structured cancellation still works. A collateral interrupt that
+        // co-occurs with a typed failure or defect (e.g. from parallelism inside a `*Details` implementation) is not
+        // cancellation — the real outcome is that failure, which we absorb into the default per the never-fails
+        // contract. In this branch the cause has no `Fail` nodes, so `stripFailures` only re-types it to `Cause[Nothing]`
+        // (keeping the effect in the `UIO` channel).
+        if (cause.isInterruptedOnly) ZIO.refailCause(cause.stripFailures)
+        else
+          cause.failureOption match {
+            case Some(e) =>
+              ZIO.succeed(FlagResolution.error(key, default, FeatureFlagError.toErrorCode(e), e.message))
+            case None =>
+              // A defect is an unexpected bug, not an expected provider error. Absorb it per spec §1.1.7, but leave a
+              // breadcrumb — the value-only `*OrDefault` variants discard the resolution, so without this a swallowed
+              // bug would be entirely invisible.
+              ZIO.logWarningCause(s"Total evaluation of '$key' absorbed a defect; serving the default", cause) *>
+                ZIO.succeed(
+                  FlagResolution.error(
+                    key,
+                    default,
+                    ErrorCode.General,
+                    cause.dieOption.fold("evaluation defect")(_.toString)
+                  )
+                )
+          },
+      ZIO.succeed(_)
+    )
+
   def setGlobalContext(ctx: EvaluationContext): UIO[Unit]
   def globalContext: UIO[EvaluationContext]
 
@@ -297,6 +374,65 @@ object FeatureFlags {
 
   def value[A: FlagType](key: String, default: A, ctx: EvaluationContext): ZIO[FeatureFlags, FeatureFlagError, A] =
     ZIO.serviceWithZIO(_.value(key, default, ctx))
+
+  // Service Accessors - total (never-fails) evaluation (spec §1.4.10)
+
+  def booleanOrDefault(
+    key: String,
+    default: Boolean,
+    ctx: EvaluationContext = EvaluationContext.empty
+  ): ZIO[FeatureFlags, Nothing, Boolean] =
+    ZIO.serviceWithZIO(_.booleanOrDefault(key, default, ctx))
+
+  def stringOrDefault(
+    key: String,
+    default: String,
+    ctx: EvaluationContext = EvaluationContext.empty
+  ): ZIO[FeatureFlags, Nothing, String] =
+    ZIO.serviceWithZIO(_.stringOrDefault(key, default, ctx))
+
+  def intOrDefault(
+    key: String,
+    default: Int,
+    ctx: EvaluationContext = EvaluationContext.empty
+  ): ZIO[FeatureFlags, Nothing, Int] =
+    ZIO.serviceWithZIO(_.intOrDefault(key, default, ctx))
+
+  def longOrDefault(
+    key: String,
+    default: Long,
+    ctx: EvaluationContext = EvaluationContext.empty
+  ): ZIO[FeatureFlags, Nothing, Long] =
+    ZIO.serviceWithZIO(_.longOrDefault(key, default, ctx))
+
+  def doubleOrDefault(
+    key: String,
+    default: Double,
+    ctx: EvaluationContext = EvaluationContext.empty
+  ): ZIO[FeatureFlags, Nothing, Double] =
+    ZIO.serviceWithZIO(_.doubleOrDefault(key, default, ctx))
+
+  def objOrDefault(
+    key: String,
+    default: Map[String, Any],
+    ctx: EvaluationContext = EvaluationContext.empty
+  ): ZIO[FeatureFlags, Nothing, Map[String, Any]] =
+    ZIO.serviceWithZIO(_.objOrDefault(key, default, ctx))
+
+  def valueOrDefault[A: FlagType](
+    key: String,
+    default: A,
+    ctx: EvaluationContext = EvaluationContext.empty
+  ): ZIO[FeatureFlags, Nothing, A] =
+    ZIO.serviceWithZIO(_.valueOrDefault(key, default, ctx))
+
+  def resolveOrDefault[A: FlagType](
+    key: String,
+    default: A,
+    ctx: EvaluationContext = EvaluationContext.empty,
+    options: EvaluationOptions = EvaluationOptions.empty
+  ): ZIO[FeatureFlags, Nothing, FlagResolution[A]] =
+    ZIO.serviceWithZIO(_.resolveOrDefault(key, default, ctx, options))
 
   // Service Accessors - detailed evaluation (with default parameters)
 

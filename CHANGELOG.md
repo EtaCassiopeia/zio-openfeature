@@ -28,6 +28,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Per-evaluation context handling avoids per-call allocation in the common case** (#252, performance). Context
+  merging now short-circuits empty layers — `merge` returns an existing instance (identity) instead of allocating a new
+  context and merged map when either side is empty, so the four merge passes per evaluation cost nothing when the
+  transaction/client/fiber-local/invocation layers are empty (the overwhelmingly common case). The Scala→Java context
+  conversion is cached by object identity, so when the merged context is the unchanged global context it is converted
+  once and reused rather than rebuilt (a fresh `MutableContext` + one `Value` per attribute) on every call; a different
+  context — after `setGlobalContext` or a non-empty invocation layer — misses and is re-converted, so no explicit
+  invalidation is needed, and reuse is safe because the OpenFeature contract treats the provider-facing context as
+  read-only. No behavior change. (The redundant per-stage hook filter in `FeatureHook.compose` is intentionally kept —
+  it is part of that public method's self-contained contract, and the pre-filter already makes it a no-op.)
+
 - **BREAKING: per-evaluation timeout is now an `EvaluationTimeout` ADT** (#251). `EvaluationOptions.timeout` changed from
   `Option[Duration]` to `EvaluationTimeout` (`Default` | `Disabled` | `After(d)`), so a single call can now express
   "no timeout" — previously impossible (`None` fell through to the global default, whose only escape was

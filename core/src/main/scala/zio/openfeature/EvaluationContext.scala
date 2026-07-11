@@ -5,10 +5,15 @@ final case class EvaluationContext(
   attributes: Map[String, AttributeValue]
 ) {
   def merge(other: EvaluationContext): EvaluationContext =
-    EvaluationContext(
-      targetingKey = other.targetingKey.orElse(targetingKey),
-      attributes = EvaluationContext.mergeAttributes(attributes, other.attributes)
-    )
+    // Short-circuit the common per-evaluation case (most layers are empty): merging with an empty context is identity,
+    // so return an existing instance instead of allocating a new context + merged map.
+    if (other.isEmpty) this
+    else if (isEmpty) other
+    else
+      EvaluationContext(
+        targetingKey = other.targetingKey.orElse(targetingKey),
+        attributes = EvaluationContext.mergeAttributes(attributes, other.attributes)
+      )
 
   def withTargetingKey(key: String): EvaluationContext =
     copy(targetingKey = Some(key))
@@ -38,17 +43,20 @@ object EvaluationContext {
     base: Map[String, AttributeValue],
     overrides: Map[String, AttributeValue]
   ): Map[String, AttributeValue] =
-    base ++ overrides.map { case (key, overrideVal) =>
-      key -> (base.get(key) match {
-        case Some(AttributeValue.StructValue(baseFields)) =>
-          overrideVal match {
-            case AttributeValue.StructValue(overrideFields) =>
-              AttributeValue.StructValue(mergeAttributes(baseFields, overrideFields))
-            case other => other
-          }
-        case _ => overrideVal
-      })
-    }
+    if (overrides.isEmpty) base
+    else if (base.isEmpty) overrides // no key collisions against an empty base, so no struct-merge is possible
+    else
+      base ++ overrides.map { case (key, overrideVal) =>
+        key -> (base.get(key) match {
+          case Some(AttributeValue.StructValue(baseFields)) =>
+            overrideVal match {
+              case AttributeValue.StructValue(overrideFields) =>
+                AttributeValue.StructValue(mergeAttributes(baseFields, overrideFields))
+              case other => other
+            }
+          case _ => overrideVal
+        })
+      }
 
   val empty: EvaluationContext = EvaluationContext(None, Map.empty)
 

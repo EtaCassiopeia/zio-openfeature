@@ -43,7 +43,7 @@ object HookErrorRoutingSpec extends ZIOSpecDefault {
   }
 
   private def recordingHook(log: Ref[List[String]]): FeatureHook = new FeatureHook {
-    override def before(ctx: HookContext, hints: HookHints): UIO[Option[(EvaluationContext, HookHints)]] =
+    override def before(ctx: HookContext, hints: HookHints): UIO[Option[EvaluationContext]] =
       log.update(_ :+ "before").as(None)
     override def after[A](ctx: HookContext, details: FlagResolution[A], hints: HookHints): UIO[Unit] =
       log.update(_ :+ "after")
@@ -57,7 +57,7 @@ object HookErrorRoutingSpec extends ZIOSpecDefault {
     * before-hook defect.
     */
   private def beforeDiesHook(log: Ref[List[String]]): FeatureHook = new FeatureHook {
-    override def before(ctx: HookContext, hints: HookHints): UIO[Option[(EvaluationContext, HookHints)]] =
+    override def before(ctx: HookContext, hints: HookHints): UIO[Option[EvaluationContext]] =
       log.update(_ :+ "before") *> ZIO.die(new RuntimeException("defect in before"))
     override def after[A](ctx: HookContext, details: FlagResolution[A], hints: HookHints): UIO[Unit] =
       log.update(_ :+ "after")
@@ -137,7 +137,7 @@ object HookErrorRoutingSpec extends ZIOSpecDefault {
           log  <- Ref.make[List[String]](Nil)
           gate <- Promise.make[Nothing, Unit]
           blockingHook = new FeatureHook {
-            override def before(ctx: HookContext, hints: HookHints): UIO[Option[(EvaluationContext, HookHints)]] =
+            override def before(ctx: HookContext, hints: HookHints): UIO[Option[EvaluationContext]] =
               log.update(_ :+ "before") *> gate.await.as(None)
             override def after[A](ctx: HookContext, details: FlagResolution[A], hints: HookHints): UIO[Unit] =
               log.update(_ :+ "after")

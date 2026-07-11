@@ -145,14 +145,9 @@ object HookSpec extends ZIOSpecDefault {
       },
       test("compose before merges contexts preserving existing attributes") {
         val hook = new FeatureHook {
-          override def before(ctx: HookContext, hints: HookHints): UIO[Option[(EvaluationContext, HookHints)]] =
+          override def before(ctx: HookContext, hints: HookHints): UIO[Option[EvaluationContext]] =
             ZIO.succeed(
-              Some(
-                (
-                  EvaluationContext.withAttributes("added" -> AttributeValue.string("value")),
-                  hints + ("hookRan" -> true)
-                )
-              )
+              Some(EvaluationContext.withAttributes("added" -> AttributeValue.string("value")))
             )
         }
 
@@ -164,32 +159,21 @@ object HookSpec extends ZIOSpecDefault {
         for {
           result <- composed.before(inputCtx, HookHints.empty)
         } yield assertTrue(result.isDefined) &&
-          assertTrue(result.get._1.getString("added").contains("value")) &&
-          assertTrue(result.get._1.getString("existing").contains("keep")) &&
-          assertTrue(result.get._2.get[Boolean]("hookRan").contains(true))
+          assertTrue(result.get.getString("added").contains("value")) &&
+          assertTrue(result.get.getString("existing").contains("keep"))
       },
       test("compose before merges contexts from multiple hooks") {
         val hook1 = new FeatureHook {
-          override def before(ctx: HookContext, hints: HookHints): UIO[Option[(EvaluationContext, HookHints)]] =
+          override def before(ctx: HookContext, hints: HookHints): UIO[Option[EvaluationContext]] =
             ZIO.succeed(
-              Some(
-                (
-                  EvaluationContext.withAttributes("from-hook1" -> AttributeValue.string("h1")),
-                  hints + ("hook1" -> true)
-                )
-              )
+              Some(EvaluationContext.withAttributes("from-hook1" -> AttributeValue.string("h1")))
             )
         }
 
         val hook2 = new FeatureHook {
-          override def before(ctx: HookContext, hints: HookHints): UIO[Option[(EvaluationContext, HookHints)]] =
+          override def before(ctx: HookContext, hints: HookHints): UIO[Option[EvaluationContext]] =
             ZIO.succeed(
-              Some(
-                (
-                  EvaluationContext.withAttributes("from-hook2" -> AttributeValue.string("h2")),
-                  hints + ("hook2" -> true)
-                )
-              )
+              Some(EvaluationContext.withAttributes("from-hook2" -> AttributeValue.string("h2")))
             )
         }
 
@@ -201,9 +185,9 @@ object HookSpec extends ZIOSpecDefault {
         for {
           result <- composed.before(inputCtx, HookHints.empty)
         } yield assertTrue(result.isDefined) &&
-          assertTrue(result.get._1.getString("original").contains("orig")) &&
-          assertTrue(result.get._1.getString("from-hook1").contains("h1")) &&
-          assertTrue(result.get._1.getString("from-hook2").contains("h2"))
+          assertTrue(result.get.getString("original").contains("orig")) &&
+          assertTrue(result.get.getString("from-hook1").contains("h1")) &&
+          assertTrue(result.get.getString("from-hook2").contains("h2"))
       }
     ),
     suite("FeatureHook.metrics")(
@@ -220,9 +204,8 @@ object HookSpec extends ZIOSpecDefault {
         val resolution = FlagResolution.default("metrics-test", true)
 
         for {
-          beforeResult <- hook.before(ctx, HookHints.empty)
-          hints = beforeResult.map(_._2).getOrElse(HookHints.empty)
-          _ <- hook.after(ctx, resolution, hints)
+          _ <- hook.before(ctx, HookHints.empty)
+          _ <- hook.after(ctx, resolution, HookHints.empty)
         } yield assertTrue(captured.isDefined) &&
           assertTrue(captured.get._1 == "metrics-test") &&
           assertTrue(captured.get._3 == true)
@@ -239,9 +222,8 @@ object HookSpec extends ZIOSpecDefault {
         val ctx = makeHookContext("error-test")
 
         for {
-          beforeResult <- hook.before(ctx, HookHints.empty)
-          hints = beforeResult.map(_._2).getOrElse(HookHints.empty)
-          _ <- hook.error(ctx, FeatureFlagError.FlagNotFound("error-test"), hints)
+          _ <- hook.before(ctx, HookHints.empty)
+          _ <- hook.error(ctx, FeatureFlagError.FlagNotFound("error-test"), HookHints.empty)
         } yield assertTrue(captured.isDefined) &&
           assertTrue(captured.get._1 == "error-test") &&
           assertTrue(captured.get._3 == false)
@@ -496,12 +478,12 @@ object HookSpec extends ZIOSpecDefault {
       },
       test("compose before without modifications returns None") {
         val hook1 = new FeatureHook {
-          override def before(ctx: HookContext, hints: HookHints): UIO[Option[(EvaluationContext, HookHints)]] =
+          override def before(ctx: HookContext, hints: HookHints): UIO[Option[EvaluationContext]] =
             ZIO.none
         }
 
         val hook2 = new FeatureHook {
-          override def before(ctx: HookContext, hints: HookHints): UIO[Option[(EvaluationContext, HookHints)]] =
+          override def before(ctx: HookContext, hints: HookHints): UIO[Option[EvaluationContext]] =
             ZIO.none
         }
 
@@ -538,7 +520,7 @@ object HookSpec extends ZIOSpecDefault {
       },
       test("hookData persists across hook stages") {
         val hook = new FeatureHook {
-          override def before(ctx: HookContext, hints: HookHints): UIO[Option[(EvaluationContext, HookHints)]] =
+          override def before(ctx: HookContext, hints: HookHints): UIO[Option[EvaluationContext]] =
             ZIO.succeed {
               ctx.hookData.set("span", "my-span-id")
               None
@@ -567,7 +549,7 @@ object HookSpec extends ZIOSpecDefault {
         var hook2Value: Option[String] = None
 
         val hook1 = new FeatureHook {
-          override def before(ctx: HookContext, hints: HookHints): UIO[Option[(EvaluationContext, HookHints)]] =
+          override def before(ctx: HookContext, hints: HookHints): UIO[Option[EvaluationContext]] =
             ZIO.succeed {
               ctx.hookData.set("owner", "hook1")
               None
@@ -578,7 +560,7 @@ object HookSpec extends ZIOSpecDefault {
         }
 
         val hook2 = new FeatureHook {
-          override def before(ctx: HookContext, hints: HookHints): UIO[Option[(EvaluationContext, HookHints)]] =
+          override def before(ctx: HookContext, hints: HookHints): UIO[Option[EvaluationContext]] =
             ZIO.succeed {
               ctx.hookData.set("owner", "hook2")
               None

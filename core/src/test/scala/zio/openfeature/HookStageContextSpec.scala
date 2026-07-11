@@ -86,8 +86,8 @@ object HookStageContextSpec extends ZIOSpecDefault {
     sawInFinally: Ref[Option[Boolean]]
   ): FeatureHook =
     new FeatureHook {
-      override def before(ctx: HookContext, hints: HookHints): UIO[Option[(EvaluationContext, HookHints)]] =
-        ZIO.some((ctx.evaluationContext.withAttribute(marker, AttributeValue.BoolValue(true)), hints))
+      override def before(ctx: HookContext, hints: HookHints): UIO[Option[EvaluationContext]] =
+        ZIO.some(ctx.evaluationContext.withAttribute(marker, AttributeValue.BoolValue(true)))
 
       override def after[A](ctx: HookContext, details: FlagResolution[A], hints: HookHints): UIO[Unit] =
         sawInAfter.set(Some(ctx.evaluationContext.getBoolean(marker).contains(true)))

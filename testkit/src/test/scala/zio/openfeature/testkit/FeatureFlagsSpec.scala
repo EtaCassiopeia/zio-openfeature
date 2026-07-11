@@ -261,7 +261,7 @@ object FeatureFlagsSpec extends ZIOSpecDefault {
         }
 
         val trackingHook = new FeatureHook {
-          override def before(ctx: HookContext, hints: HookHints): UIO[Option[(EvaluationContext, HookHints)]] =
+          override def before(ctx: HookContext, hints: HookHints): UIO[Option[EvaluationContext]] =
             callsRef.update(_ :+ s"before:${ctx.flagKey}").as(None)
 
           override def after[A](ctx: HookContext, details: FlagResolution[A], hints: HookHints): UIO[Unit] =
@@ -280,7 +280,7 @@ object FeatureFlagsSpec extends ZIOSpecDefault {
         }
 
         val invocationHook = new FeatureHook {
-          override def before(ctx: HookContext, hints: HookHints): UIO[Option[(EvaluationContext, HookHints)]] =
+          override def before(ctx: HookContext, hints: HookHints): UIO[Option[EvaluationContext]] =
             callsRef.update(_ :+ s"invocation-before:${ctx.flagKey}").as(None)
 
           override def after[A](ctx: HookContext, details: FlagResolution[A], hints: HookHints): UIO[Unit] =
@@ -299,12 +299,12 @@ object FeatureFlagsSpec extends ZIOSpecDefault {
         }
 
         val clientHook = new FeatureHook {
-          override def before(ctx: HookContext, hints: HookHints): UIO[Option[(EvaluationContext, HookHints)]] =
+          override def before(ctx: HookContext, hints: HookHints): UIO[Option[EvaluationContext]] =
             callsRef.update(_ :+ "client-before").as(None)
         }
 
         val invocationHook = new FeatureHook {
-          override def before(ctx: HookContext, hints: HookHints): UIO[Option[(EvaluationContext, HookHints)]] =
+          override def before(ctx: HookContext, hints: HookHints): UIO[Option[EvaluationContext]] =
             callsRef.update(_ :+ "invocation-before").as(None)
         }
 
@@ -349,7 +349,7 @@ object FeatureFlagsSpec extends ZIOSpecDefault {
         }
 
         val hintCheckHook = new FeatureHook {
-          override def before(ctx: HookContext, hints: HookHints): UIO[Option[(EvaluationContext, HookHints)]] =
+          override def before(ctx: HookContext, hints: HookHints): UIO[Option[EvaluationContext]] =
             receivedHints.set(hints.get[String]("test-hint")).as(None)
         }
 
@@ -368,7 +368,7 @@ object FeatureFlagsSpec extends ZIOSpecDefault {
         val stringOnlyHook = new FeatureHook {
           override def supportedFlagTypes: Set[FlagValueType] = Set(FlagValueType.String)
 
-          override def before(ctx: HookContext, hints: HookHints): UIO[Option[(EvaluationContext, HookHints)]] =
+          override def before(ctx: HookContext, hints: HookHints): UIO[Option[EvaluationContext]] =
             callsRef.update(_ :+ s"before:${ctx.flagKey}").as(None)
 
           override def after[A](ctx: HookContext, details: FlagResolution[A], hints: HookHints): UIO[Unit] =
@@ -779,7 +779,7 @@ object FeatureFlagsSpec extends ZIOSpecDefault {
         }
 
         val metaHook = new FeatureHook {
-          override def before(ctx: HookContext, hints: HookHints): UIO[Option[(EvaluationContext, HookHints)]] =
+          override def before(ctx: HookContext, hints: HookHints): UIO[Option[EvaluationContext]] =
             capturedMeta.set(Some(ctx.clientMetadata)).as(None)
         }
 
@@ -796,7 +796,7 @@ object FeatureFlagsSpec extends ZIOSpecDefault {
         }
 
         val metaHook = new FeatureHook {
-          override def before(ctx: HookContext, hints: HookHints): UIO[Option[(EvaluationContext, HookHints)]] =
+          override def before(ctx: HookContext, hints: HookHints): UIO[Option[EvaluationContext]] =
             capturedMeta.set(Some(ctx.providerMetadata)).as(None)
         }
 
@@ -855,7 +855,7 @@ object FeatureFlagsSpec extends ZIOSpecDefault {
         }
 
         val ctxCapture = new FeatureHook {
-          override def before(ctx: HookContext, hints: HookHints): UIO[Option[(EvaluationContext, HookHints)]] =
+          override def before(ctx: HookContext, hints: HookHints): UIO[Option[EvaluationContext]] =
             capturedCtx.set(Some(ctx.evaluationContext)).as(None)
         }
 
@@ -889,7 +889,7 @@ object FeatureFlagsSpec extends ZIOSpecDefault {
         }
 
         val ctxCapture = new FeatureHook {
-          override def before(ctx: HookContext, hints: HookHints): UIO[Option[(EvaluationContext, HookHints)]] =
+          override def before(ctx: HookContext, hints: HookHints): UIO[Option[EvaluationContext]] =
             capturedCtx.set(Some(ctx.evaluationContext)).as(None)
         }
 
@@ -975,7 +975,7 @@ object FeatureFlagsSpec extends ZIOSpecDefault {
         }
 
         val ctxCapture = new FeatureHook {
-          override def before(ctx: HookContext, hints: HookHints): UIO[Option[(EvaluationContext, HookHints)]] =
+          override def before(ctx: HookContext, hints: HookHints): UIO[Option[EvaluationContext]] =
             capturedCtxs
               .update(_ :+ (ctx.evaluationContext.targetingKey.getOrElse("unknown") -> ctx.evaluationContext))
               .as(None)
@@ -1113,8 +1113,8 @@ object FeatureFlagsSpec extends ZIOSpecDefault {
         }
 
         val hook = new FeatureHook {
-          override def before(ctx: HookContext, hints: HookHints): UIO[Option[(EvaluationContext, HookHints)]] =
-            ZIO.some((ctx.evaluationContext.withAttribute("enriched", AttributeValue.bool(true)), hints))
+          override def before(ctx: HookContext, hints: HookHints): UIO[Option[EvaluationContext]] =
+            ZIO.some(ctx.evaluationContext.withAttribute("enriched", AttributeValue.bool(true)))
 
           override def finallyAfter(ctx: HookContext, details: Option[FlagResolution[_]], hints: HookHints): UIO[Unit] =
             finallyRan.set(true)

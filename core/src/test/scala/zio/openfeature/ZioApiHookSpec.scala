@@ -73,7 +73,7 @@ object ZioApiHookSpec extends ZIOSpecDefault {
 
   private def recordingHook(label: String, log: Ref[List[String]]): FeatureHook =
     new FeatureHook {
-      override def before(ctx: HookContext, hints: HookHints): UIO[Option[(EvaluationContext, HookHints)]] =
+      override def before(ctx: HookContext, hints: HookHints): UIO[Option[EvaluationContext]] =
         log.update(_ :+ label).as(None)
 
       override def after[A](ctx: HookContext, details: FlagResolution[A], hints: HookHints): UIO[Unit] =

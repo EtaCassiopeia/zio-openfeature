@@ -259,11 +259,9 @@ final private[openfeature] class FeatureFlagsLive(
               case None => ZIO.refailCause(beforeCause)
             },
           beforeResult => {
-            val (effectiveCtx, hints) = beforeResult match {
-              case Some((modifiedCtx, h)) => (modifiedCtx, h)
-              case None                   => (context, initialHints)
-            }
-            val stageCtx = hookCtx.copy(evaluationContext = effectiveCtx)
+            val effectiveCtx = beforeResult.getOrElse(context)
+            val hints        = initialHints
+            val stageCtx     = hookCtx.copy(evaluationContext = effectiveCtx)
             finallyCtxRef.set((stageCtx, hints)) *>
               evaluate(effectiveCtx)
                 .tapBoth(

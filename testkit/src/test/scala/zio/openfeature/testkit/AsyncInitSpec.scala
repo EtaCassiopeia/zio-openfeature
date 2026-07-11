@@ -132,7 +132,7 @@ object AsyncInitSpec extends ZIOSpecDefault {
         for {
           hookCalled <- Ref.make(false)
           hook = new FeatureHook {
-            override def before(ctx: HookContext, hints: HookHints): UIO[Option[(EvaluationContext, HookHints)]] =
+            override def before(ctx: HookContext, hints: HookHints): UIO[Option[EvaluationContext]] =
               hookCalled.set(true).as(None)
           }
           tp     <- ZIO.service[TestFeatureProvider]

@@ -128,7 +128,7 @@ trait FeatureHook {
     */
   def supportedFlagTypes: Set[FlagValueType] = FlagValueType.allTypes
 
-  def before(ctx: HookContext, hints: HookHints): UIO[Option[(EvaluationContext, HookHints)]] =
+  def before(ctx: HookContext, hints: HookHints): UIO[Option[EvaluationContext]] =
     ZIO.none
 
   def after[A](ctx: HookContext, details: FlagResolution[A], hints: HookHints): UIO[Unit] =
@@ -157,18 +157,16 @@ object FeatureHook {
     private def applicableHooks(flagType: FlagValueType): List[FeatureHook] =
       hooks.filter(_.supportedFlagTypes.contains(flagType))
 
-    override def before(ctx: HookContext, hints: HookHints): UIO[Option[(EvaluationContext, HookHints)]] =
+    override def before(ctx: HookContext, hints: HookHints): UIO[Option[EvaluationContext]] =
       ZIO
-        .foldLeft(applicableHooks(ctx.flagType))((ctx.evaluationContext, hints, false)) {
-          case ((currentCtx, currentHints, modified), hook) =>
-            hook.before(ctxForHook(ctx.copy(evaluationContext = currentCtx), hook), currentHints).map {
-              case Some((newCtx, newHints)) => (currentCtx.merge(newCtx), newHints, true)
-              case None                     => (currentCtx, currentHints, modified)
+        .foldLeft(applicableHooks(ctx.flagType))((ctx.evaluationContext, false)) {
+          case ((currentCtx, modified), hook) =>
+            hook.before(ctxForHook(ctx.copy(evaluationContext = currentCtx), hook), hints).map {
+              case Some(newCtx) => (currentCtx.merge(newCtx), true)
+              case None         => (currentCtx, modified)
             }
         }
-        .map { case (finalCtx, finalHints, wasModified) =>
-          if (wasModified) Some((finalCtx, finalHints)) else None
-        }
+        .map { case (finalCtx, wasModified) => if (wasModified) Some(finalCtx) else None }
 
     override def after[A](ctx: HookContext, details: FlagResolution[A], hints: HookHints): UIO[Unit] =
       ZIO.foreachDiscard(applicableHooks(ctx.flagType).reverse)(hook =>
@@ -189,7 +187,7 @@ object FeatureHook {
     logAfter: Boolean = true,
     logError: Boolean = true
   ): FeatureHook = new FeatureHook {
-    override def before(ctx: HookContext, hints: HookHints): UIO[Option[(EvaluationContext, HookHints)]] =
+    override def before(ctx: HookContext, hints: HookHints): UIO[Option[EvaluationContext]] =
       ZIO
         .when(logBefore)(
           ZIO.logDebug(s"Evaluating flag '${ctx.flagKey}' (${ctx.flagType.name})")
@@ -286,7 +284,7 @@ object FeatureHook {
     // Uses HookData (per-hook mutable state) for start time instead of HookHints,
     // so that `before` can return None and avoid corrupting the compose pipeline's
     // context-modified tracking.
-    override def before(ctx: HookContext, hints: HookHints): UIO[Option[(EvaluationContext, HookHints)]] =
+    override def before(ctx: HookContext, hints: HookHints): UIO[Option[EvaluationContext]] =
       for {
         now <- Clock.nanoTime
         _   <- ZIO.succeed(ctx.hookData.set(startTimeKey, now))
@@ -342,15 +340,13 @@ object FeatureHook {
     new FeatureHook {
       private val startTimeKey = TypedKey[Long]("metrics.startTime")
 
-      override def before(ctx: HookContext, hints: HookHints): UIO[Option[(EvaluationContext, HookHints)]] =
-        Clock.nanoTime.map { start =>
-          Some((ctx.evaluationContext, hints.add(startTimeKey, start)))
-        }
+      override def before(ctx: HookContext, hints: HookHints): UIO[Option[EvaluationContext]] =
+        Clock.nanoTime.flatMap(now => ZIO.succeed(ctx.hookData.set(startTimeKey, now))).as(None)
 
       override def after[A](ctx: HookContext, details: FlagResolution[A], hints: HookHints): UIO[Unit] =
         for {
           end <- Clock.nanoTime
-          start    = hints.getOrElse(startTimeKey, end)
+          start    = ctx.hookData.get(startTimeKey).getOrElse(end)
           duration = Duration.fromNanos(end - start)
           _ <- onEvaluation(ctx.flagKey, duration, true)
         } yield ()
@@ -358,7 +354,7 @@ object FeatureHook {
       override def error(ctx: HookContext, err: FeatureFlagError, hints: HookHints): UIO[Unit] =
         for {
           end <- Clock.nanoTime
-          start    = hints.getOrElse(startTimeKey, end)
+          start    = ctx.hookData.get(startTimeKey).getOrElse(end)
           duration = Duration.fromNanos(end - start)
           _ <- onEvaluation(ctx.flagKey, duration, false)
         } yield ()
@@ -382,7 +378,7 @@ object FeatureHook {
   ): FeatureHook = new FeatureHook {
     private val startTimeKey = TypedKey[Long]("metricsDetailed.startTime")
 
-    override def before(ctx: HookContext, hints: HookHints): UIO[Option[(EvaluationContext, HookHints)]] =
+    override def before(ctx: HookContext, hints: HookHints): UIO[Option[EvaluationContext]] =
       for {
         now <- Clock.nanoTime
         _   <- ZIO.succeed(ctx.hookData.set(startTimeKey, now))
@@ -407,7 +403,7 @@ object FeatureHook {
     requireTargetingKey: Boolean = false,
     requiredAttributes: List[String] = Nil
   ): FeatureHook = new FeatureHook {
-    override def before(ctx: HookContext, hints: HookHints): UIO[Option[(EvaluationContext, HookHints)]] = {
+    override def before(ctx: HookContext, hints: HookHints): UIO[Option[EvaluationContext]] = {
       val keyWarning = Option
         .when(requireTargetingKey && ctx.evaluationContext.targetingKey.isEmpty)(
           s"Missing targeting key for flag '${ctx.flagKey}'"

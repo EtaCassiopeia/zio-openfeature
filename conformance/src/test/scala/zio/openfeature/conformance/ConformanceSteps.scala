@@ -255,7 +255,7 @@ class ConformanceSteps extends ScalaDsl with EN {
   // Hooks
 
   private def recordingHook: FeatureHook = new FeatureHook {
-    override def before(c: HookContext, h: HookHints): UIO[Option[(EvaluationContext, HookHints)]] =
+    override def before(c: HookContext, h: HookHints): UIO[Option[EvaluationContext]] =
       ZIO.succeed(hookStages.add("before")).as(None)
     override def after[A](c: HookContext, d: FlagResolution[A], h: HookHints): UIO[Unit] =
       ZIO.succeed { hookStages.add("after"); hookDetails = d.asInstanceOf[FlagResolution[Any]] }
@@ -331,8 +331,8 @@ class ConformanceSteps extends ScalaDsl with EN {
   }
 
   private def ctxHook(ctx: EvaluationContext): FeatureHook = new FeatureHook {
-    override def before(c: HookContext, h: HookHints): UIO[Option[(EvaluationContext, HookHints)]] =
-      ZIO.some((ctx, h))
+    override def before(c: HookContext, h: HookHints): UIO[Option[EvaluationContext]] =
+      ZIO.some(ctx)
   }
 
   When("""^Some flag was evaluated$""") { () =>

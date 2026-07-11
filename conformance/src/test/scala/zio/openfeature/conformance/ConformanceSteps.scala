@@ -5,7 +5,7 @@ import io.cucumber.scala.{EN, ScalaDsl}
 import zio._
 import zio.stream.SubscriptionRef
 import zio.openfeature._
-import zio.openfeature.testkit.TestFeatureProvider
+import zio.openfeature.testkit.{CachingReasonProvider, TestFeatureProvider}
 import dev.openfeature.sdk.{EvaluationContext => OFEvaluationContext, OpenFeatureAPIFactory}
 import dev.openfeature.sdk.providers.memory.InMemoryProvider
 
@@ -70,7 +70,12 @@ class ConformanceSteps extends ScalaDsl with EN {
     val ff = run(
       sc.extend[Any](
         FeatureFlags
-          .fromProviderWithDomain(new InMemoryProvider(Fixtures.inMemoryFlags), domain, statusRef, api = Some(api))
+          .fromProviderWithDomain(
+            new CachingReasonProvider(new InMemoryProvider(Fixtures.inMemoryFlags)),
+            domain,
+            statusRef,
+            api = Some(api)
+          )
           .build
           .map(_.get)
       )
@@ -153,15 +158,18 @@ class ConformanceSteps extends ScalaDsl with EN {
   private def evalDetails[A](io: IO[FeatureFlagError, FlagResolution[A]], default: A): FlagResolution[A] =
     run(io.catchAll(e => ZIO.succeed(bridge(e, default))))
 
-  When("""^the flag was evaluated with details$""") { () =>
-    result = (flagType match {
-      case "boolean" => evalDetails(flags.booleanDetails(flagKey, defaultBoolean, evalCtx), defaultBoolean)
-      case "string"  => evalDetails(flags.stringDetails(flagKey, defaultRaw, evalCtx), defaultRaw)
-      case "integer" => evalDetails(flags.intDetails(flagKey, defaultInt, evalCtx), defaultInt)
-      case "float"   => evalDetails(flags.doubleDetails(flagKey, defaultDouble, evalCtx), defaultDouble)
-      case "object"  => evalDetails(flags.objDetails(flagKey, defaultObject, evalCtx), defaultObject)
+  private def evaluate(options: EvaluationOptions): FlagResolution[Any] =
+    (flagType match {
+      case "boolean" => evalDetails(flags.booleanDetails(flagKey, defaultBoolean, evalCtx, options), defaultBoolean)
+      case "string"  => evalDetails(flags.stringDetails(flagKey, defaultRaw, evalCtx, options), defaultRaw)
+      case "integer" => evalDetails(flags.intDetails(flagKey, defaultInt, evalCtx, options), defaultInt)
+      case "float"   => evalDetails(flags.doubleDetails(flagKey, defaultDouble, evalCtx, options), defaultDouble)
+      case "object"  => evalDetails(flags.objDetails(flagKey, defaultObject, evalCtx, options), defaultObject)
       case other     => throw new IllegalArgumentException(s"unknown flag type: $other")
     }).asInstanceOf[FlagResolution[Any]]
+
+  When("""^the flag was evaluated with details$""") { () =>
+    result = evaluate(EvaluationOptions.empty)
   }
 
   // Assertions on the resolved details
@@ -297,6 +305,48 @@ class ConformanceSteps extends ScalaDsl with EN {
       if (value == "null") check(actual.isEmpty, s"error_code $actual should be null")
       else check(actual.contains(value), s"error_code $actual != $value")
     case other => throw new IllegalArgumentException(s"unknown hook detail key: $other")
+  }
+
+  // Evaluation options (spec 1.5.1)
+
+  private val optionHookLog                  = new java.util.concurrent.ConcurrentLinkedQueue[String]()
+  private var evalOptions: EvaluationOptions = EvaluationOptions.empty
+
+  // Per-invocation hook that tags each stage with its name, so we can assert both execution and ordering.
+  private def orderedHook(name: String): FeatureHook = new FeatureHook {
+    override def before(c: HookContext, h: HookHints): UIO[Option[EvaluationContext]] =
+      ZIO.succeed(optionHookLog.add(s"$name:before")).as(None)
+    override def after[A](c: HookContext, d: FlagResolution[A], h: HookHints): UIO[Unit] =
+      ZIO.succeed(optionHookLog.add(s"$name:after")).unit
+    override def error(c: HookContext, e: FeatureFlagError, h: HookHints): UIO[Unit] =
+      ZIO.succeed(optionHookLog.add(s"$name:error")).unit
+    override def finallyAfter(c: HookContext, d: Option[FlagResolution[_]], h: HookHints): UIO[Unit] =
+      ZIO.succeed(optionHookLog.add(s"$name:finally")).unit
+  }
+
+  Given("""^evaluation options containing specific hooks$""") { () =>
+    evalOptions = EvaluationOptions(orderedHook("first"), orderedHook("second"))
+  }
+
+  When("""^the flag was evaluated with details using the evaluation options$""") { () =>
+    result = evaluate(evalOptions)
+  }
+
+  Then("""^the specified hooks should execute during evaluation$""") { () =>
+    val log = optionHookLog.asScala.toList
+    val allRan = Set("first", "second").forall(n =>
+      log.contains(s"$n:before") && log.contains(s"$n:after") && log.contains(s"$n:finally")
+    )
+    check(allRan, s"option hooks did not all execute: $log")
+  }
+
+  Then("""^the hook order should be maintained$""") { () =>
+    // Spec 4.4.2: before hooks run in registration order; after/finally in reverse.
+    val log       = optionHookLog.asScala.toList
+    val beforeOk  = log.indexOf("first:before") < log.indexOf("second:before")
+    val afterOk   = log.indexOf("second:after") < log.indexOf("first:after")
+    val finallyOk = log.indexOf("second:finally") < log.indexOf("first:finally")
+    check(beforeOk && afterOk && finallyOk, s"hook order not maintained: $log")
   }
 
   // Context merging

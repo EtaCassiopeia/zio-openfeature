@@ -10,11 +10,16 @@ Keep these byte-identical to upstream so a re-sync is a clean diff. To update: r
 from the pinned path at a newer commit and run `sbt conformance/test`; new or changed scenarios
 surface as failing/undefined steps rather than silently going unrun.
 
-## Excluded tags (mirrors the OpenFeature Java SDK's own e2e runner)
+## Excluded tags
 
-`RunConformance` filters out: `@deprecated` (superseded by `evaluation_v2`), `@reason-codes-cached`,
-`@async`, `@immutability`, `@evaluation-options`. The `evaluation.feature` file is not vendored (it
-is entirely `@deprecated`).
+`RunConformance` filters out exactly `@deprecated`, `@async`, and `@immutability`, matching the
+zio-bdd runner's `excludeTags`. The canonical rationale for each exclusion lives in `ConformanceSpec`
+in the `conformance-zio-bdd` module. The `evaluation.feature` file is not vendored (it is entirely
+`@deprecated`).
+
+`@reason-codes-cached` (spec 1.4.7) and `@evaluation-options` (spec 1.5.1) are executed: the CACHED
+reason is exercised by wrapping the in-memory provider with the testkit `CachingReasonProvider`, and
+the evaluation-options step definitions live in `ConformanceSteps`.
 
 ## Provider-status scenarios
 

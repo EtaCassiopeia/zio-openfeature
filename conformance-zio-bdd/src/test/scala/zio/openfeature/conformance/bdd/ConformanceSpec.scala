@@ -8,7 +8,7 @@ import zio.bdd.core.step.{State, ZIOSteps}
 import zio.openfeature._
 // zio-bdd's Hooks trait defines `type FeatureHook = URIO[R, Unit]`, which shadows the OpenFeature hook trait; alias it.
 import zio.openfeature.FeatureHook as OFFeatureHook
-import zio.openfeature.testkit.TestFeatureProvider
+import zio.openfeature.testkit.{CachingReasonProvider, TestFeatureProvider}
 import zio.schema.{DeriveSchema, Schema}
 import dev.openfeature.sdk.{EvaluationContext => OFEvaluationContext, OpenFeatureAPIFactory}
 import dev.openfeature.sdk.providers.memory.InMemoryProvider
@@ -27,16 +27,18 @@ object HookRow { given Schema[HookRow] = DeriveSchema.gen[HookRow] }
   reporters = Array("pretty"),
   parallelism = 1,
   scenarioParallelism = 1,
+  // Canonical exclusion rationale for BOTH conformance runners (the Cucumber `RunConformance` references this).
   // The remaining excluded tags are out of scope for a ZIO SDK + in-memory testkit, not coverage gaps:
-  //   - async:               tautological — every evaluation already returns a non-blocking ZIO effect; there is no
-  //                          separate async API surface to assert against.
-  //   - reason-codes-cached: the in-memory testkit provider cannot emit a CACHED reason (it derives the reason from
-  //                          key presence only), so the scenario can't be satisfied without a contrived provider.
-  //   - deprecated:          superseded scenarios retained in the feature file for history, not meant to run.
-  //   - immutability:        the @immutability scenario asserts evaluation-*context* immutability (spec 1.4.15) and
-  //                          has no step definitions here; enabling it needs those steps implemented. It is unrelated
-  //                          to hook-*hints* immutability (spec 4.5.3), which #247 enforces at the type level.
-  excludeTags = Array("deprecated", "reason-codes-cached", "async", "immutability"),
+  //   - async:        tautological — every evaluation already returns a non-blocking ZIO effect; there is no separate
+  //                   async API surface to assert against.
+  //   - deprecated:   superseded scenarios retained in the feature file for history, not meant to run.
+  //   - immutability: the @immutability scenario asserts evaluation-*context* immutability (spec 1.4.15) and has no
+  //                   step definitions here; enabling it needs those steps implemented. It is unrelated to
+  //                   hook-*hints* immutability (spec 4.5.3), which #247 enforces at the type level.
+  // Both runners exclude exactly {deprecated, async, immutability}. @reason-codes-cached (spec 1.4.7) and
+  // @evaluation-options (spec 1.5.1) are now enabled: the former via the CachingReasonProvider decorator wrapping the
+  // in-memory provider, the latter via the evaluation-options step defs.
+  excludeTags = Array("deprecated", "async", "immutability"),
   logLevel = "warning"
 )
 object ConformanceSpec extends ZIOSteps[Any, World] {
@@ -52,7 +54,12 @@ object ConformanceSpec extends ZIOSteps[Any, World] {
       domain = s"bdd-${java.util.UUID.randomUUID()}"
       env <- sc.extend[Any](
         FeatureFlags
-          .fromProviderWithDomain(new InMemoryProvider(Fixtures.inMemoryFlags), domain, statusRef, api = Some(api))
+          .fromProviderWithDomain(
+            new CachingReasonProvider(new InMemoryProvider(Fixtures.inMemoryFlags)),
+            domain,
+            statusRef,
+            api = Some(api)
+          )
           .build
       )
     } yield env.get[FeatureFlags]

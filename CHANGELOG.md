@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`zio.openfeature.testkit.CachingReasonProvider`** (#257). A `FeatureProvider` decorator that reports the OpenFeature
+  `CACHED` reason (spec §1.4.7) on the second and subsequent evaluation of a given flag key, delegating everything else
+  to the wrapped provider. It lets tests exercise the `ResolutionReason.Cached` path against a provider (like the stock
+  in-memory one) that never emits `CACHED` on its own. Not to be confused with `extras.CachingProvider`, which caches
+  evaluation results — this only rewrites the reason and always re-delegates the evaluation.
+
 - **Total (never-fails) evaluation variants** (#256, spec §1.4.10 / §1.1.7). `booleanOrDefault`, `stringOrDefault`,
   `intOrDefault`, `longOrDefault`, `doubleOrDefault`, `objOrDefault`, and `valueOrDefault[A]` return `UIO[A]` — they never
   fail, absorbing any evaluation error into the supplied default, matching the spec's promise that evaluation "MUST NOT

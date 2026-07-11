@@ -12,9 +12,9 @@ import zio.openfeature.optimizely.matrix.{RecommendationResult, RecommendationSe
   * concurrently, and differs only by evaluation context.
   *
   * Contrast with [[FlagMatrixSpec]]: there, `@flags(datafile=X)` selects *which fixture* a scenario's own dedicated
-  * WireMock server serves. Here there is no `datafile` key at all — every `@flags(...)` tag is a set of
-  * evaluation-context attributes (e.g. `plan`, `region`), and all scenarios' providers point at one shared WireMock
-  * instance fronted by a mitmproxy container (see [[ProxyMatrixHarness]]). `recommendation_rate_limit` in the
+  * Rift mock space serves. Here there is no `datafile` key at all — every `@flags(...)` tag is a set of
+  * evaluation-context attributes (e.g. `plan`, `region`), and all scenarios' providers point at one shared Rift
+  * mock space (see [[ProxyMatrixHarness]]). `recommendation_rate_limit` in the
   * `audience-segments` datafile is gated on *both* attributes together (`plan = "premium" AND region = "eu"`), so a
   * single tag carrying both keys is what actually changes the flag's resolved value — not a provider swap.
   */

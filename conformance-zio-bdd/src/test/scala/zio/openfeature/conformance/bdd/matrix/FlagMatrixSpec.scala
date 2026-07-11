@@ -14,12 +14,12 @@ import zio.openfeature.optimizely.matrix.{RecommendationResult, RecommendationSe
   *
   * Each scenario is annotated with one or more @flags(datafile=<name>) tags. zio-bdd expands
   * each tag into a separate scenario run and calls flagLayer(meta, Map("datafile" -> "<name>")).
-  * That layer builds a fresh WireMock server + Optimizely provider scoped to that scenario —
+  * That layer provisions a fresh Rift mock space + Optimizely provider scoped to that scenario —
   * no global harness, no stub-swap between scenarios, no polling wait in step bodies.
   *
   * Isolation guarantees:
-  *   - Each run gets its own WireMock on an ephemeral port and its own Optimizely client.
-  *   - WireMock and the client are shut down when the scenario scope closes.
+  *   - Each run gets its own Rift mock space on an ephemeral loopback port and its own Optimizely client.
+  *   - The mock space is destroyed and the client shut down when the scenario scope closes.
   *   - scenarioParallelism > 1 is safe: providers don't share state.
   *
   * Lives in `conformance-zio-bdd` (rather than its own module) so this stays a single zio-bdd

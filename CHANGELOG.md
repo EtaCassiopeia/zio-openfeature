@@ -29,6 +29,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Optimizely initial datafile-load event suppression is now deterministic** (#308). The provider suppressed the
+  initial datafile load's spurious `PROVIDER_CONFIGURATION_CHANGED` by gating emission on `state == READY` read at
+  notification time, which raced the `optimizely.isValid` fast-path: if init reached READY before the handler processed
+  the initial-load notification, that notification arrived post-READY and leaked a spurious startup event (a
+  low-frequency CI flake). Suppression now keys on the datafile **revision** — the handler emits only when the current
+  revision differs from the one captured at init — so the initial load is suppressed regardless of which side wins the
+  READY race, and only genuine later revisions emit.
+
 - **Optimizely `ContextTransformer` produces attribute types the audience evaluator can actually match** (#266).
   Instant, list, and structure attributes were passed through unchanged, but Optimizely's audience evaluator matches
   only `String`/`Boolean`/`Number` — so a targeting rule against such an attribute evaluated to `UNKNOWN` on every

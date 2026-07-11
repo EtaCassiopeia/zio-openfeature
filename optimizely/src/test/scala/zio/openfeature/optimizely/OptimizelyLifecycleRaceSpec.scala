@@ -143,10 +143,22 @@ object OptimizelyLifecycleRaceSpec extends ZIOSpecDefault {
           ()
         }
       }
-      // Timing-sensitive: the initial-load suppression is reliable only when the handler observes the load before the
-      // `optimizely.isValid` fast-path flips the provider to READY; when the fast-path wins that race the initial-load
-      // notification arrives post-READY and is emitted. Retried while the deterministic fix is tracked in #308.
-    } @@ TestAspect.flaky,
+      // Deterministic since #308: suppression keys on the datafile revision, not READY timing. The initial-load fire
+      // carries the same revision the provider initialized with (only v1 is ever served), so it is suppressed whether
+      // or not the `optimizely.isValid` fast-path won the READY race — no @@ flaky needed.
+    },
+    test("shouldEmitConfigChange suppresses the initial load and emits only genuine revisions (#308)") {
+      // Pure discriminator underpinning the fix: emit iff a valid current revision differs from the initial one.
+      assertTrue(
+        !OptimizelyFeatureProvider.shouldEmitConfigChange(
+          null,
+          "1"
+        ), // initial-load fire before the revision is captured
+        !OptimizelyFeatureProvider.shouldEmitConfigChange("1", "1"),  // same datafile (incl. a post-READY late fire)
+        !OptimizelyFeatureProvider.shouldEmitConfigChange("1", null), // revision indeterminate -> never emit spuriously
+        OptimizelyFeatureProvider.shouldEmitConfigChange("1", "2")    // genuine later revision -> emit
+      )
+    },
     test("shutdown racing initialize never leaves the provider READY (#265.2)") {
       withMockServer { server =>
         // A delayed datafile keeps initialize in-flight so a concurrent shutdown genuinely interleaves.

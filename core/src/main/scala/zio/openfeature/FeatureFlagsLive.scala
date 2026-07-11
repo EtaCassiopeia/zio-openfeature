@@ -344,14 +344,16 @@ final private[openfeature] class FeatureFlagsLive(
     context: EvaluationContext,
     timeout: Option[Duration] = None
   ): IO[FeatureFlagError, FlagResolution[A]] =
-    for {
-      _       <- checkProviderStatus
-      txState <- state.transactionRef.get
-      result <- txState match {
-        case Some(ts) => evaluateWithTransaction(key, default, context, ts, timeout)
-        case None     => evaluateFromClient(key, default, context, timeout)
-      }
-    } yield result
+    // The provider-readiness gate (`checkProviderStatus`) applies only where the value must actually come from the
+    // provider. A transaction override or a cached evaluation resolves purely locally and MUST still succeed while the
+    // provider is NotReady / Fatal / shutting down — that fallback role is the whole point of overrides (spec:
+    // deterministic tests without a live provider, and forcing known-safe values while a provider is down). So the gate
+    // is pushed down onto the provider-hitting paths (`evaluateFromClient` here, `evaluateAndCache` in
+    // `evaluateWithTransaction`) rather than run up front.
+    state.transactionRef.get.flatMap {
+      case Some(ts) => evaluateWithTransaction(key, default, context, ts, timeout)
+      case None     => checkProviderStatus *> evaluateFromClient(key, default, context, timeout)
+    }
 
   private def evaluateWithTransaction[A: FlagType](
     key: String,
@@ -381,7 +383,8 @@ final private[openfeature] class FeatureFlagsLive(
         }
 
       case None =>
-        // Check for cached evaluation from previous call in this transaction
+        // Check for cached evaluation from previous call in this transaction. A usable cache hit resolves locally; only
+        // the paths that must reach the provider (`evaluateAndCache`) run behind the readiness gate.
         txState.getCachedEvaluation(key).flatMap {
           case Some(cached) =>
             val flagType = FlagType[A]
@@ -390,10 +393,10 @@ final private[openfeature] class FeatureFlagsLive(
                 ZIO.succeed(FlagResolution.cached(key, decoded))
               case Left(_) =>
                 // Type mismatch with cached value - re-evaluate from client
-                evaluateAndCache(key, default, context, txState, timeout)
+                checkProviderStatus *> evaluateAndCache(key, default, context, txState, timeout)
             }
           case None =>
-            evaluateAndCache(key, default, context, txState, timeout)
+            checkProviderStatus *> evaluateAndCache(key, default, context, txState, timeout)
         }
     }
 

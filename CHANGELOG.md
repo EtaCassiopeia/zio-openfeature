@@ -72,6 +72,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Transaction overrides resolve while the provider is not ready** (#254). The provider-readiness gate
+  (`checkProviderStatus`, which fail-fasts on `NotReady`/`Fatal`/`ShuttingDown`) ran before transaction override and
+  transaction-cache lookup, so `transaction(overrides = Map(...))` was rejected during async init, after a failed
+  hot-swap, or during shutdown — defeating the two headline uses of overrides (deterministic tests without a live
+  provider, and forcing known-safe values while a provider is down). The gate is now pushed down onto exactly the paths
+  that must reach the provider (`evaluateFromClient`, and `evaluateAndCache` inside a transaction); a transaction
+  override or a cached evaluation resolves purely locally and no longer consults provider status. A type-mismatched
+  override still fails locally with `OverrideTypeMismatch` (not `ProviderNotReady`), and a non-overridden flag inside a
+  transaction is still gated because its value must come from the provider.
 - **Event-delivery fixes** (#250). Three defects in `FeatureFlagsLive`'s event system: (1) the generic
   `on(eventType, handler)` rebuilt narrowed events from the typed callbacks, dropping payload fields (`errorCode`,
   `errorMessage`, `eventMetadata`) — it now delivers the original event from the stream (spec §5.1.4/§5.2.4), while

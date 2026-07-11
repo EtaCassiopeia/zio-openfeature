@@ -3,6 +3,7 @@ import zio.openfeature.internal.ProviderEvaluations
 
 import dev.openfeature.sdk.{
   EvaluationContext => OFEvaluationContext,
+  EventDetails,
   EventProvider,
   Metadata,
   OpenFeatureAPIFactory,
@@ -42,6 +43,9 @@ object FeatureFlagsShutdownSpec extends ZIOSpecDefault {
 
   private def uniqueDomain(label: String): String = s"shutdown-$label-${java.util.UUID.randomUUID()}"
 
+  private def readyEvent(name: String): EventDetails =
+    EventDetails.builder().providerName(name).build().asInstanceOf[EventDetails]
+
   private def buildShared(name: String, shut: AtomicBoolean, owns: Boolean, api: dev.openfeature.sdk.OpenFeatureAPI) =
     FeatureFlags.buildAsync(
       new TrackingProvider(name, shut),
@@ -60,14 +64,21 @@ object FeatureFlagsShutdownSpec extends ZIOSpecDefault {
       val api   = OpenFeatureAPIFactory.create()
       ZIO.scoped {
         for {
-          ffA     <- buildShared("A", shutA, owns = false, api)
-          _       <- buildShared("B", shutB, owns = false, api)
-          _       <- ffA.shutdown
-          statusA <- ffA.providerStatus
+          ffA       <- buildShared("A", shutA, owns = false, api)
+          _         <- buildShared("B", shutB, owns = false, api)
+          _         <- ffA.shutdown
+          afterShut <- ffA.providerStatus
+          // A late PROVIDER_READY from the just-shut provider must NOT resurrect the terminal NotReady (#285/#244):
+          // drive it explicitly so the assertion is deterministic instead of racing the SDK event bridge. The event
+          // hub is closed post-shutdown, so the publish step interrupts — tolerate it with .exit (as production's
+          // runHandler swallows it).
+          _          <- ffA.onReadyEvent(readyEvent("A")).exit
+          afterReady <- ffA.providerStatus
         } yield assertTrue(
-          !shutA.get(),                      // own provider is left to the api owner
-          !shutB.get(),                      // sibling's provider is untouched
-          statusA == ProviderStatus.NotReady // ...but ffA did release its own state
+          !shutA.get(),                         // own provider is left to the api owner
+          !shutB.get(),                         // sibling's provider is untouched
+          afterShut == ProviderStatus.NotReady, // ...but ffA did release its own state
+          afterReady == ProviderStatus.NotReady // and a late event cannot move it off terminal NotReady
         )
       }
     } @@ withLiveClock,

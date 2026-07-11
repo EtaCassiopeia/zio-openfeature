@@ -223,7 +223,7 @@ final class CircuitBreakerProvider private (
         // but are not real successes. `recordReachable` resets the failure counter in Closed state and
         // frees the probe slot in Half-Open, without advancing toward closing the circuit on app errors alone.
         breaker.recordReachable()
-        throw unwrapFiberFailure(e)
+        throw FiberFailures.unwrap(e)
       case e: VirtualMachineError => throw e
       case e: LinkageError =>
         breaker.recordFailure()
@@ -231,7 +231,7 @@ final class CircuitBreakerProvider private (
       case e: Throwable =>
         val didOpen = breaker.recordFailure()
         if (didOpen) safeEmitStale("Circuit breaker opened")
-        val unwrapped = unwrapFiberFailure(e)
+        val unwrapped = FiberFailures.unwrap(e)
         val error     = new GeneralError(s"Circuit breaker: delegate failed: ${unwrapped.getMessage}")
         error.initCause(unwrapped)
         throw error
@@ -247,24 +247,8 @@ final class CircuitBreakerProvider private (
     dev.openfeature.sdk.ErrorCode.INVALID_CONTEXT
   )
 
-  private def unwrapFiberFailure(e: Throwable): Throwable = e match {
-    case ff: zio.FiberFailure =>
-      ff.cause.failureOption match {
-        case Some(t: Throwable) => t
-        case _ =>
-          ff.cause.dieOption match {
-            case Some(t) => t
-            case None =>
-              if (ff.cause.isInterrupted)
-                new java.util.concurrent.TimeoutException("Evaluation was interrupted")
-              else ff
-          }
-      }
-    case other => other
-  }
-
   private def isApplicationError(e: Throwable): Boolean =
-    unwrapFiberFailure(e) match {
+    FiberFailures.unwrap(e) match {
       case ofe: dev.openfeature.sdk.exceptions.OpenFeatureError =>
         applicationErrorCodes.contains(ofe.getErrorCode)
       case _ => false

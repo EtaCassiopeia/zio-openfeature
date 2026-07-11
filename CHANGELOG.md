@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`CachingProvider` no longer throws `FiberFailure` into application code** (#258). Its synchronous cache lookup used
+  `getOrThrowFiberFailure()`, so a delegate failure surfaced as a `zio.FiberFailure` — which extends `Throwable`, not
+  `Exception`, and therefore sailed past the Java SDK's `catch (Exception)` around evaluation and was thrown into the
+  caller, breaking the spec's never-throw contract and bypassing the error hooks. The lookup now unwraps the failure
+  and rethrows the original `OpenFeatureError` as-is (so the SDK maps the right error code and reason), wrapping any
+  other throwable in `GeneralError`. The `FiberFailure`-unwrapping logic that `CircuitBreakerProvider` already used is
+  extracted into a shared `FiberFailures` helper reused by both.
+
 ### Added
 
 - **`zio.openfeature.testkit.CachingReasonProvider`** (#257). A `FeatureProvider` decorator that reports the OpenFeature

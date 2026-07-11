@@ -27,10 +27,11 @@ import scala.util.Try
   *
   * '''Lifecycle notes:'''
   *   - On `initialize()` we register an Optimizely `UpdateConfigNotification` handler. It counts down an internal latch
-  *     so the OpenFeature `setProviderAndWait` returns cleanly once the datafile has loaded. Fires that occur before
-  *     the provider announces READY (the initial datafile load) suppress the `PROVIDER_CONFIGURATION_CHANGED` event —
-  *     it isn't a change and must not precede PROVIDER_READY. Only fires once the provider is READY (genuine datafile
-  *     revisions) emit `PROVIDER_CONFIGURATION_CHANGED`.
+  *     so the OpenFeature `setProviderAndWait` returns cleanly once the datafile has loaded. The initial datafile load
+  *     isn't a "change" and must not precede PROVIDER_READY, so it suppresses `PROVIDER_CONFIGURATION_CHANGED`;
+  *     suppression is by datafile REVISION, not READY timing — the handler emits only when the current revision differs
+  *     from the one the provider initialized with (captured at READY), so a late initial-load fire delivered post-READY
+  *     is still suppressed and only genuine later revisions emit (#308).
   *   - If the datafile never arrives within `initWait`, or the config is invalid, or the handler can't be registered,
   *     `initialize()` throws (propagated by the OpenFeature SDK as a failed init) and leaves the provider in a `Failed`
   *     state with its handler removed. A subsequent `initialize()` on the same instance cleanly re-attempts (`Failed ->
@@ -77,6 +78,11 @@ final class OptimizelyFeatureProvider private[optimizely] (
   private val notificationHandle = new AtomicInteger(-1)
   // Replaced on re-initialization (caller-managed clients only); each init cycle gets a single-use latch.
   private val initLatchRef = new AtomicReference(new CountDownLatch(1))
+  // The datafile revision the provider initialized with (the "initial load"), captured when init reaches READY. The
+  // update handler emits CONFIGURATION_CHANGED only for a DIFFERENT revision, so the initial-load fire is suppressed
+  // deterministically — independent of whether that fire or the `optimizely.isValid` READY transition wins the race
+  // (#308). Null until the first successful init of a cycle; reset per init cycle.
+  private val initialRevisionRef = new AtomicReference[String](null)
   // The staleness watchdog's scheduled executor, or null when no watchdog is running. Held so shutdown()/failInitialize
   // can cancel it — its thread is a daemon, so even a missed cancel can never keep the JVM alive.
   private val watchdogRef = new AtomicReference[ScheduledExecutorService](null)
@@ -117,18 +123,18 @@ final class OptimizelyFeatureProvider private[optimizely] (
     if (!transitioned) return
 
     val initLatch = initLatchRef.get()
+    initialRevisionRef.set(null) // fresh per init cycle; captured when this cycle reaches READY
 
     val handlerId = optimizely.addUpdateConfigNotificationHandler { _ =>
-      // Suppress the CONFIGURATION_CHANGED event for any fire before the provider is READY — the initial datafile
-      // load isn't a "change" and would otherwise be delivered ahead of PROVIDER_READY. Only fires once the provider
-      // has announced READY (genuine datafile revisions) emit. Reading the state BEFORE counting the latch down is
-      // deliberate: the initial-load fire that opens the latch is, at that instant, still pre-READY (init is blocked
-      // on `initLatch.await` below and only sets READY after it returns), so it is reliably suppressed. A first fire
-      // that is instead observed via the `optimizely.isValid` fast-path below (handler never sees the initial load,
-      // e.g. the datafile loaded before registration) simply never reaches this handler, so nothing is emitted.
-      val alreadyReady = stateRef.get() == ProviderState.READY
+      // Suppress the CONFIGURATION_CHANGED event for the initial datafile load (which isn't a "change" and would
+      // otherwise be delivered ahead of PROVIDER_READY); emit only for genuine later revisions. The discriminator is
+      // the datafile REVISION, not READY timing: emit iff the current revision differs from the one the provider
+      // initialized with. This is deterministic regardless of whether the initial-load fire or the `optimizely.isValid`
+      // fast-path READY transition wins the init race — a late initial-load fire delivered post-READY still matches the
+      // captured initial revision and is suppressed (the #308 bug the old `stateRef == READY` gate leaked).
       initLatch.countDown()
-      if (alreadyReady) emitProviderConfigurationChanged(ProviderEventDetails.builder().build())
+      if (OptimizelyFeatureProvider.shouldEmitConfigChange(initialRevisionRef.get(), currentRevision()))
+        emitProviderConfigurationChanged(ProviderEventDetails.builder().build())
     }
     // Optimizely's NotificationManager returns a non-positive id when registration fails (e.g. a duplicate handler
     // is already present). Without the handler we'd silently never count down the latch via the datafile-update
@@ -167,6 +173,9 @@ final class OptimizelyFeatureProvider private[optimizely] (
       )
 
     if (optimizely.isValid) {
+      // Capture the datafile revision that brought us to READY (the initial load) BEFORE announcing READY, so the
+      // update handler can suppress that revision and emit only genuine later ones (#308).
+      initialRevisionRef.set(currentRevision())
       stateRef.set(ProviderState.READY)
       // Guard against a shutdown() that interleaved after the abort re-check above: shutdown sets
       // lifecycle = ShutDown first thing, so if it did, revert to NOT_READY rather than report READY on a
@@ -189,6 +198,14 @@ final class OptimizelyFeatureProvider private[optimizely] (
         "Optimizely client reported invalid configuration after datafile load (possible auth or parse failure)"
       )
   }
+
+  /** Current datafile revision as reported by the Optimizely client, or null when no valid config is loaded.
+    * Best-effort (the SDK may not yet have a config): any failure or absent config reads as null, which the emit gate
+    * treats as "cannot determine a change" and suppresses.
+    */
+  private def currentRevision(): String =
+    try Option(optimizely.getOptimizelyConfig).map(_.getRevision).orNull
+    catch { case scala.util.control.NonFatal(_) => null }
 
   /** Common failure path for `initialize()`: remove the handler registered this cycle (best-effort, as `shutdown` does)
     * so a retry doesn't leak it or fire duplicate CONFIGURATION_CHANGED events, mark the provider `Failed` (state
@@ -524,6 +541,16 @@ object OptimizelyFeatureProvider {
     // A throwing initialize() lands here (state ERROR, handler removed). A subsequent initialize() cleanly re-attempts.
     case object Failed extends Lifecycle
   }
+
+  /** Deterministic initial-load suppression (#308): a datafile-update fire emits `PROVIDER_CONFIGURATION_CHANGED` iff
+    * the current datafile revision differs from the revision the provider initialized with. A null `initialRevision`
+    * (the initial-load fire arriving before init captured the revision) or an equal revision (the same initial
+    * datafile, including a post-READY late delivery of the initial-load notification) is suppressed; a null
+    * `currentRevision` (revision indeterminate) is suppressed rather than risk a spurious emit. Only a genuinely
+    * different revision emits.
+    */
+  private[optimizely] def shouldEmitConfigChange(initialRevision: String, currentRevision: String): Boolean =
+    initialRevision != null && currentRevision != null && currentRevision != initialRevision
 
   /** Context attribute key callers can set to override which Optimizely variable is read for typed evaluations. */
   val VariableKeyAttribute: String = "openfeature.variableKey"

@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`OFREPProviderConfig` and scope-managed OFREP factories** (#268). `OFREPProvider.layer(...)` now uses
+  `ZLayer.scoped` with a bounded shutdown finalizer (mirroring the Optimizely module), so the provider's executor and
+  HttpClient are torn down on scope close instead of being orphaned — closing the JVM-exit-hang class (#217/#229) for a
+  caller-supplied non-daemon executor. Added `scoped(...)` overloads and an `OFREPProviderConfig` case class
+  (`baseUrl`, `requestTimeout`, `connectTimeout`, `headers`, `proxy`) with `make`/`scoped`/`layer` factories that build
+  the provider options internally with a daemon executor and validate the base URL **before** creating any thread pool
+  — so configuring timeouts/headers/a proxy no longer requires the raw Guava builder or risks re-arming the non-daemon
+  pool footgun.
+
 - **Optimizely provider staleness watchdog** (#267). After a successful init, datafile-poll failures never surfaced at
   the OpenFeature level — the provider served an aging datafile indefinitely with no operator signal. The provider now
   observes datafile fetches (via an HTTP-client wrapper that records the last successful fetch — distinguishing "polling

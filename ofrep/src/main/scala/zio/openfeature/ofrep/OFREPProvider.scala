@@ -1,11 +1,39 @@
 package zio.openfeature.ofrep
 
+import com.google.common.collect.{ImmutableList, ImmutableMap}
 import dev.openfeature.contrib.providers.ofrep.{OfrepProvider, OfrepProviderOptions}
 import zio._
 import zio.openfeature.FeatureFlagError
 
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.{Executors, ExecutorService, ThreadFactory}
+import scala.jdk.CollectionConverters._
+
+/** Scala-friendly configuration for an OFREP provider, mapped internally to the contrib provider's
+  * `OfrepProviderOptions`. Prefer this over hand-building `OfrepProviderOptions`: it exposes only the safe knobs, takes
+  * plain Scala types (no Guava `ImmutableMap`/`ImmutableList`), and — critically — the factories that consume it always
+  * wire in a daemon executor via [[OFREPProvider.daemonOptionsBuilder]] and validate before building, so the contrib
+  * default non-daemon 5-thread pool (a JVM-exit-blocking footgun, see issue #229) is never spawned by this path.
+  *
+  * @param baseUrl
+  *   OFREP endpoint base URL (validated — see
+  *   [[OFREPProvider.make(config:zio\.openfeature\.ofrep\.OFREPProviderConfig)*]])
+  * @param requestTimeout
+  *   Per-request timeout; `None` uses the contrib default
+  * @param connectTimeout
+  *   Connection-establishment timeout; `None` uses the contrib default
+  * @param headers
+  *   Static headers sent on every OFREP request (e.g. `"Authorization" -> List("Bearer …")`); empty means none
+  * @param proxy
+  *   Optional `java.net.ProxySelector` routing OFREP HTTP traffic through a proxy; `None` uses the JVM default
+  */
+final case class OFREPProviderConfig(
+  baseUrl: String,
+  requestTimeout: Option[java.time.Duration] = None,
+  connectTimeout: Option[java.time.Duration] = None,
+  headers: Map[String, List[String]] = Map.empty,
+  proxy: Option[java.net.ProxySelector] = None
+)
 
 /** Scala-friendly factories for the OpenFeature Java SDK's OFREP contrib provider
   * ([[dev.openfeature.contrib.providers.ofrep.OfrepProvider]]).
@@ -98,16 +126,69 @@ object OFREPProvider {
         .mapError(t => FeatureFlagError.InvalidConfiguration(s"OFREP provider construction failed: ${t.getMessage}"))
     } yield provider
 
+  /** Validate an [[OFREPProviderConfig]] and construct a provider. The `baseUrl` is validated FIRST — before any
+    * executor or options are built — so an invalid configuration fails without ever spawning a thread pool. Only on
+    * success are the options assembled internally, starting from [[daemonOptionsBuilder]] (daemon executor) and
+    * applying the configured request/connect timeouts, headers, and proxy.
+    *
+    * This is the ergonomic path for configuring timeouts/headers/proxy: it takes plain Scala types and keeps the
+    * daemon-executor and validate-before-pool guarantees, so callers never need to touch the raw Guava builder.
+    */
+  def make(config: OFREPProviderConfig): IO[FeatureFlagError.InvalidConfiguration, OfrepProvider] =
+    validateBaseUrl(config.baseUrl).flatMap { validated =>
+      ZIO
+        .attempt(OfrepProvider.constructProvider(buildOptions(config, validated)))
+        .mapError(t => FeatureFlagError.InvalidConfiguration(s"OFREP provider construction failed: ${t.getMessage}"))
+    }
+
+  /** Upper bound on provider teardown. `OfrepProvider.shutdown()` terminates the options executor and closes the
+    * HttpClient; the bound exists so a pathological close cannot hang scope teardown. When the executor is the daemon
+    * pool this wrapper installs, the JVM can exit regardless — but a caller-supplied non-daemon executor (via
+    * [[make(options:dev\.openfeature\.contrib\.providers\.ofrep\.OfrepProviderOptions)*]]) is only released by this
+    * shutdown, so the finalizer matters.
+    */
+  private val ShutdownTimeout: zio.Duration = 5.seconds
+
+  private def releaseOfrep(provider: OfrepProvider): UIO[Unit] =
+    // `.disconnect` because finalizers run uninterruptibly and the timeout must still fire.
+    ZIO.attemptBlocking(provider.shutdown()).disconnect.timeout(ShutdownTimeout).ignore
+
+  /** [[make(String)]] with scope-managed shutdown: when the surrounding `Scope` closes, the provider is shut down
+    * (bounded), terminating its executor and closing the HttpClient — even if it was never registered with a
+    * `FeatureFlags` layer.
+    */
+  def scoped(baseUrl: String): ZIO[Scope, FeatureFlagError.InvalidConfiguration, OfrepProvider] =
+    ZIO.acquireRelease(make(baseUrl))(releaseOfrep)
+
+  /** [[make(OfrepProviderOptions)]] with scope-managed shutdown — see [[scoped(baseUrl:String)*]]. Especially important
+    * here: caller-supplied options may hold a non-daemon executor, and this finalizer is what releases it.
+    */
+  def scoped(options: OfrepProviderOptions): ZIO[Scope, FeatureFlagError.InvalidConfiguration, OfrepProvider] =
+    ZIO.acquireRelease(make(options))(releaseOfrep)
+
+  /** [[make(config:zio\.openfeature\.ofrep\.OFREPProviderConfig)*]] with scope-managed shutdown — see
+    * [[scoped(baseUrl:String)*]].
+    */
+  def scoped(config: OFREPProviderConfig): ZIO[Scope, FeatureFlagError.InvalidConfiguration, OfrepProvider] =
+    ZIO.acquireRelease(make(config))(releaseOfrep)
+
   /** ZLayer convenience that wraps [[make(String)]]. Use as `OFREPProvider.layer("https://flags.example.com")` to wire
     * an OFREP provider into a ZIO application; failures arrive as typed `FeatureFlagError.InvalidConfiguration` at
-    * layer build time.
+    * layer build time. The layer owns the provider lifecycle: its finalizer shuts the provider down when the layer's
+    * scope closes.
     */
   def layer(baseUrl: String): ZLayer[Any, FeatureFlagError.InvalidConfiguration, OfrepProvider] =
-    ZLayer.fromZIO(make(baseUrl))
+    ZLayer.scoped(scoped(baseUrl))
 
-  /** ZLayer convenience that wraps [[make(OfrepProviderOptions)]]. */
+  /** ZLayer convenience that wraps [[make(OfrepProviderOptions)]]. Owns the provider lifecycle — see
+    * [[layer(baseUrl:String)*]].
+    */
   def layer(options: OfrepProviderOptions): ZLayer[Any, FeatureFlagError.InvalidConfiguration, OfrepProvider] =
-    ZLayer.fromZIO(make(options))
+    ZLayer.scoped(scoped(options))
+
+  /** ZLayer from an [[OFREPProviderConfig]]. Owns the provider lifecycle — see [[layer(baseUrl:String)*]]. */
+  def layer(config: OFREPProviderConfig): ZLayer[Any, FeatureFlagError.InvalidConfiguration, OfrepProvider] =
+    ZLayer.scoped(scoped(config))
 
   /** Create an OFREP provider with the contrib provider's built-in default options (baseUrl defaults to whatever the
     * contrib library declares — currently `http://localhost:8016`).
@@ -136,6 +217,27 @@ object OFREPProvider {
   @deprecated("Use OFREPProvider.make(options) or OFREPProvider.layer(options) for validated construction", "0.2.0")
   def fromOptions(options: OfrepProviderOptions): OfrepProvider =
     OfrepProvider.constructProvider(options)
+
+  // Options assembly
+
+  /** Assemble `OfrepProviderOptions` from a validated config. Always starts from [[daemonOptionsBuilder]] so the daemon
+    * executor is installed; the caller must have validated `validatedBaseUrl` already.
+    */
+  private def buildOptions(config: OFREPProviderConfig, validatedBaseUrl: String): OfrepProviderOptions = {
+    // The Guava-style builder returns itself from each setter, so this fold threads a single builder instance.
+    val base       = daemonOptionsBuilder().baseUrl(validatedBaseUrl)
+    val withReq    = config.requestTimeout.fold(base)(base.requestTimeout)
+    val withConn   = config.connectTimeout.fold(withReq)(withReq.connectTimeout)
+    val withProxy  = config.proxy.fold(withConn)(withConn.proxySelector)
+    val configured = if (config.headers.isEmpty) withProxy else withProxy.headers(toGuavaHeaders(config.headers))
+    configured.build()
+  }
+
+  private def toGuavaHeaders(headers: Map[String, List[String]]): ImmutableMap[String, ImmutableList[String]] = {
+    val builder = ImmutableMap.builder[String, ImmutableList[String]]()
+    headers.foreach { case (name, values) => builder.put(name, ImmutableList.copyOf(values.asJava)) }
+    builder.build()
+  }
 
   // Validation
 

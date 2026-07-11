@@ -1,0 +1,51 @@
+{
+  "version": "4",
+  "accountId": "1",
+  "projectId": "1",
+  "revision": "1",
+  "anonymizeIP": false,
+  "botFiltering": false,
+  "sendFlagDecisions": true,
+  "experiments": [],
+  "featureFlags": [
+    {
+      "id": "100",
+      "key": "object_flag",
+      "rolloutId": "200",
+      "experimentIds": [],
+      "variables": [
+        { "id": "500", "key": "value", "type": "json", "defaultValue": "{\"theme\":\"light\",\"limit\":0}" }
+      ]
+    }
+  ],
+  "rollouts": [
+    {
+      "id": "200",
+      "experiments": [
+        {
+          "id": "300",
+          "key": "rollout-200",
+          "status": "Running",
+          "layerId": "200",
+          "audienceIds": [],
+          "forcedVariations": {},
+          "trafficAllocation": [{ "entityId": "400", "endOfRange": 10000 }],
+          "variations": [
+            {
+              "id": "400",
+              "key": "on",
+              "featureEnabled": true,
+              "variables": [{ "id": "500", "value": "{\"theme\":\"dark\",\"limit\":10}" }]
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "audiences": [],
+  "typedAudiences": [],
+  "groups": [],
+  "attributes": [],
+  "variables": [],
+  "events": []
+}

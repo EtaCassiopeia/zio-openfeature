@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`OptimizelyFeatureProvider.getObjectEvaluation` reads the configured variable and falls back to the default** (#264).
+  Object evaluation returned the entire `decision.getVariables` map and never reached `defaultValue`, contradicting the
+  provider's own documentation and diverging from every other typed path (a flag with zero variables handed callers an
+  empty structure instead of their default). It now reads the single variable named by `variableKey` (default `"value"`,
+  overridable via the `openfeature.variableKey` context attribute) as a JSON object and falls back to `defaultValue`
+  with `Reason.DEFAULT` when that variable is absent or not a readable object — mirroring the string/integer/double
+  paths.
+
 - **CircuitBreaker robustness: monotonic timing, interruptible timeouts, no half-open probe leak** (#263). Three fixes:
   (1) elapsed-time decisions (open→half-open reset, delegate-state poll rate-limiting) now use a monotonic `Ticker`
   (`System.nanoTime`, injectable for tests) instead of a wall clock, so an NTP/clock step can no longer delay recovery

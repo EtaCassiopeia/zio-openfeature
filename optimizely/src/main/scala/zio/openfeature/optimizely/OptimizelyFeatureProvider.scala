@@ -250,12 +250,19 @@ final class OptimizelyFeatureProvider private[optimizely] (
   ): ProviderEvaluation[Value] =
     decide(key, ctx) match {
       case Right(d) =>
-        val map     = Option(d.getVariables).map(_.toMap).getOrElse(java.util.Collections.emptyMap[String, Object]())
-        val value   = new Value(Structure.mapToStructure(map))
+        // Mirror the other typed paths: read the single variable named by `variableKey` (a JSON object) rather than
+        // returning the whole variables map, and fall back to the OF default with reason DEFAULT when it is absent.
+        // Previously object evaluation ignored `variableKey` and never reached `defaultValue` (#264).
+        val variableKey = OptimizelyFeatureProvider.variableKey(ctx)
+        val variable    = readVariable[java.util.Map[_, _]](d, variableKey, classOf[java.util.Map[_, _]])
+        val (value, usedDefault) = variable match {
+          case Some(m) => (new Value(Structure.mapToStructure(m.asInstanceOf[java.util.Map[String, Object]])), false)
+          case None    => (defaultValue, true)
+        }
         val builder = ProviderEvaluation.builder[Value]()
         builder.value(value)
         builder.variant(d.getVariationKey)
-        builder.reason(deriveReason(d))
+        builder.reason(if (usedDefault) Reason.DEFAULT.name() else deriveReason(d))
         builder.flagMetadata(metadataFrom(d))
         builder.build().asInstanceOf[ProviderEvaluation[Value]]
       case Left(err) => failingEvaluation(defaultValue, err)

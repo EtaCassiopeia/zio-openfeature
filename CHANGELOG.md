@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`HoconProvider.reload` now refreshes the original construction source** (#260). `reload` previously ignored how the
+  provider was built — it always called `ConfigFactory.load()` against the classpath and read the `feature-flags`
+  default path, so `HoconProvider("my-flags").reload()` silently swapped the flag set to the (usually empty)
+  `feature-flags` subtree, and `HoconProvider.fromConfig(customConfig).reload()` discarded the injected config for
+  whatever was on the classpath. The provider now stores its source: `apply(path)` re-reads that same path (after
+  invalidating the config cache), and `fromConfig` keeps the injected config (which has no external source) instead of
+  discarding it. `reload` no longer takes a `path` argument (it reloads the constructed source).
+
 - **`CachingProvider` cache-correctness fixes** (#259). Two related defects: (1) a `DEFAULT`-reason evaluation (flag
   absent, delegate echoes the caller's default) was cached under a key that excludes the default value, so a second call
   site passing a different default received the first caller's value — labeled `CACHED` — for the whole TTL.

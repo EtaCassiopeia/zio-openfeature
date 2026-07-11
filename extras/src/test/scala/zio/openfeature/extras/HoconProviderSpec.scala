@@ -124,6 +124,35 @@ object HoconProviderSpec extends ZIOSpecDefault {
         val r   = p.getBooleanEvaluation("flag", false, ctx)
         assertTrue(r.getValue == true)
       }
-    )
+    ),
+    suite("reload (#260)")(
+      test("fromConfig reload preserves the injected config instead of discarding it to the classpath") {
+        val cfg = ConfigFactory.parseString("only-here = true")
+        val p   = HoconProvider.fromConfig(cfg)
+        for {
+          before <- ZIO.succeed(p.getBooleanEvaluation("only-here", false, ctx))
+          _      <- p.reload()
+          after  <- ZIO.succeed(p.getBooleanEvaluation("only-here", false, ctx))
+        } yield assertTrue(
+          before.getValue == true,
+          after.getValue == true, // pre-fix: reload discarded cfg → classpath has no "only-here" → false/DEFAULT
+          after.getReason == "STATIC"
+        )
+      },
+      test("apply(path) reload re-reads the constructed path, not the hardcoded 'feature-flags'") {
+        java.lang.System.setProperty("issue260-flags.limit", "10")
+        ConfigFactory.invalidateCaches()
+        val p = HoconProvider("issue260-flags")
+        (for {
+          before <- ZIO.succeed(p.getIntegerEvaluation("limit", 0, ctx))
+          _      <- ZIO.succeed(java.lang.System.setProperty("issue260-flags.limit", "20"))
+          _      <- p.reload()
+          after  <- ZIO.succeed(p.getIntegerEvaluation("limit", 0, ctx))
+        } yield assertTrue(
+          before.getValue == 10,
+          after.getValue == 20 // proves reload re-read "issue260-flags"; the hardcoded "feature-flags" would give 0
+        )).ensuring(ZIO.succeed(java.lang.System.clearProperty("issue260-flags.limit")))
+      }
+    ) @@ TestAspect.sequential
   )
 }

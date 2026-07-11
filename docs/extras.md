@@ -77,9 +77,10 @@ All evaluations return `STATIC` as the resolution reason since values are loaded
 ### Manual reload
 
 ```scala
-// Re-read config from disk without restarting
-val provider = HoconProvider()
-provider.reload() // or provider.reload("custom-path")
+// Re-read config without restarting. `reload()` refreshes the source the provider was built from:
+// the classpath path for `HoconProvider(path)`, or the injected config for `HoconProvider.fromConfig(...)`.
+val provider = HoconProvider("custom-path")
+provider.reload()
 ```
 
 ---

@@ -25,7 +25,10 @@ import scala.jdk.CollectionConverters._
   *   The Typesafe Config object scoped to the feature flags path
   */
 final class HoconProvider private (
-  private val configRef: AtomicReference[Config]
+  private val configRef: AtomicReference[Config],
+  // Re-reads the config from the ORIGINAL construction source, so `reload()` refreshes what the provider was built
+  // from — the classpath path for `apply`, or the injected `Config` (which has no external source) for `fromConfig`.
+  private val reloadSource: () => Config
 ) extends FeatureProvider {
 
   private val state = new AtomicReference[ProviderState](ProviderState.READY)
@@ -129,18 +132,16 @@ final class HoconProvider private (
       case ConfigValueType.NULL => new Value()
     }
 
-  /** Reload the config by re-parsing from the original source.
+  /** Reload the config by re-parsing from the original construction source (the classpath path passed to `apply`, or
+    * the injected `Config` from `fromConfig` — which has no external source, so `reload` keeps it rather than
+    * discarding it to the classpath).
     *
     * On failure, the existing config is preserved and provider state transitions to `ERROR`. The state remains `ERROR`
     * until a subsequent `reload` succeeds — callers must re-invoke to recover.
     */
-  def reload(path: String = "feature-flags"): Task[Unit] =
+  def reload(): Task[Unit] =
     ZIO
-      .attempt {
-        ConfigFactory.invalidateCaches()
-        val root = ConfigFactory.load()
-        if (root.hasPath(path)) root.getConfig(path) else ConfigFactory.empty()
-      }
+      .attempt(reloadSource())
       .tapBoth(
         _ => ZIO.succeed(state.set(ProviderState.ERROR)),
         newCfg => ZIO.succeed { configRef.set(newCfg); state.set(ProviderState.READY) }
@@ -150,14 +151,20 @@ final class HoconProvider private (
 
 object HoconProvider {
 
-  /** Create from the default `application.conf` at the given path. */
+  /** Create from the default `application.conf` at the given path. `reload()` re-reads this same path (after
+    * invalidating the config cache, so on-disk/classpath changes are picked up).
+    */
   def apply(path: String = "feature-flags"): HoconProvider = {
-    val root   = ConfigFactory.load()
-    val config = if (root.hasPath(path)) root.getConfig(path) else ConfigFactory.empty()
-    new HoconProvider(new AtomicReference(config))
+    def extract(root: Config): Config = if (root.hasPath(path)) root.getConfig(path) else ConfigFactory.empty()
+    new HoconProvider(
+      new AtomicReference(extract(ConfigFactory.load())),
+      () => { ConfigFactory.invalidateCaches(); extract(ConfigFactory.load()) }
+    )
   }
 
-  /** Create from a specific Config object. */
+  /** Create from a specific `Config` object. An injected config has no external source, so `reload()` keeps it as-is
+    * rather than discarding it — use `apply(path)` for a reloadable classpath-backed provider.
+    */
   def fromConfig(config: Config): HoconProvider =
-    new HoconProvider(new AtomicReference(config))
+    new HoconProvider(new AtomicReference(config), () => config)
 }

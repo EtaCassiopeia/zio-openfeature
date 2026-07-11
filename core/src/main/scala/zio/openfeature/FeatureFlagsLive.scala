@@ -285,9 +285,11 @@ final private[openfeature] class FeatureFlagsLive(
     providerStatus.flatMap {
       case ProviderStatus.Fatal    => ZIO.fail(FeatureFlagError.ProviderFatal)
       case ProviderStatus.NotReady => ZIO.fail(FeatureFlagError.ProviderNotReady(ProviderStatus.NotReady))
-      case ProviderStatus.Error    => ZIO.fail(FeatureFlagError.ProviderNotReady(ProviderStatus.Error))
       case ProviderStatus.ShuttingDown =>
         ZIO.fail(FeatureFlagError.ProviderNotReady(ProviderStatus.ShuttingDown))
+      // Error/Ready/Stale proceed: per OpenFeature spec 1.7.6/1.7.7 only NOT_READY and FATAL fail-fast. A provider in
+      // ERROR is typically a transient, recoverable state and commonly still serves cached values — let the evaluation
+      // reach it (the provider serves or errors on its own) rather than turning one PROVIDER_ERROR into a total outage.
       case _ => Exit.unit
     }
 
@@ -675,8 +677,9 @@ final private[openfeature] class FeatureFlagsLive(
     state.statusRef.get
 
   // Force status back to Ready. Used by `fromAcquireAsync` when a hot-swap to the real provider fails: `setProvider`'s
-  // rollback restores the still-live fallback to `providerRef` but leaves status `Error`, which would fail every
-  // evaluation with `ProviderNotReady(Error)` despite a usable fallback. Package-private — not part of the public API.
+  // rollback restores the still-live fallback to `providerRef` but leaves status `Error`. Evaluations still proceed in
+  // `Error` (spec 1.7.6/1.7.7), but restoring `Ready` keeps `providerStatus` / `awaitReady` accurate for the usable
+  // fallback (`Error` is not `canEvaluate`). Package-private — not part of the public API.
   private[openfeature] def forceReady: UIO[Unit] =
     state.statusRef.set(ProviderStatus.Ready)
 

@@ -86,14 +86,13 @@ object AsyncInitSpec extends ZIOSpecDefault {
       }.provide(asyncLayer(Map("flag" -> true)))
     ),
     suite("Error state")(
-      test("evaluations fail with ProviderNotReady when provider is in Error state") {
+      test("evaluations proceed when a ready provider transitions to Error state (spec 1.7.6/1.7.7)") {
         for {
           tp     <- ZIO.service[TestFeatureProvider]
-          _      <- tp.setStatus(ProviderStatus.Error)
-          result <- FeatureFlags.boolean("flag", default = false).either
-        } yield assertTrue(
-          result.is(_.left) == FeatureFlagError.ProviderNotReady(ProviderStatus.Error)
-        )
+          _      <- tp.setStatus(ProviderStatus.Ready) // provider becomes ready and serves
+          _      <- tp.setStatus(ProviderStatus.Error) // then a transient error — evaluations must still proceed
+          result <- FeatureFlags.boolean("flag", default = false)
+        } yield assertTrue(result == true)
       }.provide(asyncLayer(Map("flag" -> true))),
       test("evaluations fail with ProviderFatal when provider is in Fatal state") {
         for {
@@ -106,17 +105,15 @@ object AsyncInitSpec extends ZIOSpecDefault {
       }.provide(asyncLayer(Map("flag" -> true)))
     ),
     suite("Recovery")(
-      test("evaluations recover after provider transitions from Error to Ready") {
+      test("evaluations keep serving through an Error blip and remain healthy on recovery to Ready") {
         for {
-          tp  <- ZIO.service[TestFeatureProvider]
-          _   <- tp.setStatus(ProviderStatus.Error)
-          err <- FeatureFlags.boolean("flag", default = false).either
-          _   <- tp.setStatus(ProviderStatus.Ready)
-          ok  <- FeatureFlags.boolean("flag", default = false)
-        } yield assertTrue(
-          err.is(_.left).isInstanceOf[FeatureFlagError.ProviderNotReady],
-          ok == true
-        )
+          tp     <- ZIO.service[TestFeatureProvider]
+          _      <- tp.setStatus(ProviderStatus.Ready)
+          _      <- tp.setStatus(ProviderStatus.Error) // transient blip — evaluations still proceed (spec 1.7.6/1.7.7)
+          during <- FeatureFlags.boolean("flag", default = false)
+          _      <- tp.setStatus(ProviderStatus.Ready) // recovered
+          ok     <- FeatureFlags.boolean("flag", default = false)
+        } yield assertTrue(during == true, ok == true)
       }.provide(asyncLayer(Map("flag" -> true))),
       test("evaluations recover after provider transitions from NotReady to Ready") {
         for {

@@ -25,8 +25,9 @@ import java.util.concurrent.atomic.AtomicReference
   *
   * Cases covered here:
   *   1. Sync `initialize()` throws synchronously → layer build fails with the thrown exception. 5. Async provider fires
-  *      `PROVIDER_ERROR` after construction → status reflects `Error`, evaluations fail with `ProviderNotReady(Error)`.
-  *      6. Async provider recovers (ERROR → READY) → evaluations succeed after recovery. 7. Evaluation throws
+  *      `PROVIDER_ERROR` after construction → status reflects `Error`, but evaluations still proceed (spec 1.7.6/1.7.7:
+  *      only NOT_READY and FATAL fail-fast). 5b. Fail-fast contract: NOT_READY and FATAL block evaluation; Ready/Error
+  *      proceed. 6. Async provider recovers (ERROR → READY) → evaluations succeed after recovery. 7. Evaluation throws
   *      `UnknownHostException` from the Java SDK → classifier surfaces `Unreachable`.
   *
   * Cases 2, 3, 4 are already covered by [[ProviderInitHardeningSpec]] and are not duplicated here.
@@ -200,7 +201,9 @@ object ProviderInitFailureSpec extends ZIOSpecDefault {
         }
       )
     } @@ withLiveClock,
-    test("[B2 / case 5] async provider fires PROVIDER_ERROR after init -> evaluations fail with ProviderNotReady") {
+    test(
+      "[B2 / case 5] async provider fires PROVIDER_ERROR after init -> evaluations still proceed (spec 1.7.6/1.7.7)"
+    ) {
       val provider = new EventDriverProvider
       val api      = OpenFeatureAPIFactory.create()
       ZIO.scoped {
@@ -229,12 +232,49 @@ object ProviderInitFailureSpec extends ZIOSpecDefault {
             .repeatUntil(_ == ProviderStatus.Error)
             .timeout(5.seconds)
             .someOrFail(new Exception("timed out waiting for PROVIDER_ERROR to propagate"))
+          // Spec 1.7.6/1.7.7: only NOT_READY and FATAL fail-fast. In ERROR the evaluation proceeds to the provider
+          // (which serves cached values or errors on its own) instead of a blanket ProviderNotReady failure.
           result <- ff.booleanDetails("any-flag", default = false).either
+        } yield assertTrue(result.isRight)
+      }
+    } @@ withLiveClock,
+    test("[B2 / case 5b] checkProviderStatus fail-fast contract: only NOT_READY and FATAL block evaluation") {
+      val provider = new EventDriverProvider
+      val api      = OpenFeatureAPIFactory.create()
+      ZIO.scoped {
+        for {
+          statusRef <- SubscriptionRef.make[ProviderStatus](ProviderStatus.NotReady)
+          ff <- FeatureFlags.buildAsync(
+            provider,
+            domain = Some(uniqueDomain("status-gate")),
+            version = None,
+            initialHooks = Nil,
+            statusRef = Some(statusRef),
+            addShutdownFinalizer = false,
+            apiOverride = Some(api),
+            initTimeout = 60.seconds
+          )
+          _ <- ZIO.attempt(provider.release())
+          _ <- statusRef.get
+            .repeatUntil(_ == ProviderStatus.Ready)
+            .timeout(5.seconds)
+            .someOrFail(new Exception("timed out waiting for PROVIDER_READY to propagate"))
+          // Ready -> proceeds
+          readyEval <- ff.booleanDetails("any-flag", default = false).either
+          // Error -> proceeds (no longer fail-fast)
+          _         <- statusRef.set(ProviderStatus.Error)
+          errorEval <- ff.booleanDetails("any-flag", default = false).either
+          // NotReady -> fail-fast
+          _            <- statusRef.set(ProviderStatus.NotReady)
+          notReadyEval <- ff.booleanDetails("any-flag", default = false).either
+          // Fatal -> fail-fast
+          _         <- statusRef.set(ProviderStatus.Fatal)
+          fatalEval <- ff.booleanDetails("any-flag", default = false).either
         } yield assertTrue(
-          result match {
-            case Left(FeatureFlagError.ProviderNotReady(ProviderStatus.Error)) => true
-            case _                                                             => false
-          }
+          readyEval.isRight,
+          errorEval.isRight,
+          notReadyEval == Left(FeatureFlagError.ProviderNotReady(ProviderStatus.NotReady)),
+          fatalEval == Left(FeatureFlagError.ProviderFatal)
         )
       }
     } @@ withLiveClock,

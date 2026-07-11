@@ -3,6 +3,7 @@ package zio.openfeature.conformance
 import io.cucumber.datatable.DataTable
 import io.cucumber.scala.{EN, ScalaDsl}
 import zio._
+import zio.stream.SubscriptionRef
 import zio.openfeature._
 import zio.openfeature.testkit.TestFeatureProvider
 import dev.openfeature.sdk.{EvaluationContext => OFEvaluationContext, OpenFeatureAPIFactory}
@@ -63,7 +64,7 @@ class ConformanceSteps extends ScalaDsl with EN {
 
   private def setupInMemory(): Unit = {
     val sc        = openScope()
-    val statusRef = run(Ref.make[ProviderStatus](ProviderStatus.Ready))
+    val statusRef = run(SubscriptionRef.make[ProviderStatus](ProviderStatus.Ready))
     val api       = OpenFeatureAPIFactory.create()
     val domain    = s"conf-${java.util.UUID.randomUUID()}"
     val ff = run(

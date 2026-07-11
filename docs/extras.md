@@ -149,6 +149,30 @@ val provider = EnvVarProvider.withLookup(testEnv.get)
 
 ---
 
+## Deferred Provider
+
+`DeferredProvider` adapts a **constructor-blocking** provider — one that does all its network work in its Java constructor — into an `initialize()`-blocking one. It defers construction to `initialize(ctx)`, which the OpenFeature SDK runs on its own init executor, so every `*Async` factory (`fromProviderAsync`, `fromMultiProviderAsync`) already keeps that work off the caller's thread.
+
+```scala
+import zio.openfeature.extras.DeferredProvider
+
+// `construct` runs on the SDK init executor, not the layer-build thread
+val deferred = DeferredProvider("optimizely")(() => new CofOptimizelyLocalProvider(options))
+
+val layer = FeatureFlags.fromProviderAsync(deferred)
+```
+
+Behaviour:
+
+- **Stable metadata** — `getMetadata` returns the given name before and after construction, so the event bridge and `MultiProvider` keying see one identity.
+- **No NPE before ready** — evaluations before construction completes return a typed `ProviderEvaluation` with `ErrorCode.PROVIDER_NOT_READY`.
+- **Clean shutdown race** — `shutdown()` racing an in-flight `initialize()` shuts the delegate down once construction finishes, instead of leaking its poller/HTTP client.
+- **Hooks forwarded** — `getProviderHooks` delegates once active.
+
+Use `DeferredProvider` when you want plain async semantics (typed `PROVIDER_NOT_READY` until ready). When a fallback must *answer* during the init window, use [`FeatureFlags.fromAcquireAsync`](providers.md#fallback-first-initialization-fromacquireasync) instead — inside a `MultiProvider`, `DeferredProvider` still gates overall readiness, since the SDK awaits all children.
+
+---
+
 ## OFREP Provider
 
 Evaluates flags via the [OpenFeature Remote Evaluation Protocol](https://github.com/open-feature/protocol) (OFREP) — the standard HTTP protocol for vendor-neutral remote flag evaluation. Use this when your flags are served by an OFREP-compatible backend (flagd, OFREP relays, or any compliant server) and you want a vendor-agnostic client.

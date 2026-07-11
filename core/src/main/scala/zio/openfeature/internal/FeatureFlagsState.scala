@@ -1,6 +1,7 @@
 package zio.openfeature.internal
 
 import zio._
+import zio.stream.SubscriptionRef
 import zio.openfeature._
 
 final case class FeatureFlagsState(
@@ -11,7 +12,10 @@ final case class FeatureFlagsState(
   zioApiHooksRef: Ref[List[FeatureHook]],
   hooksRef: Ref[List[FeatureHook]],
   eventHub: Hub[ProviderEvent],
-  statusRef: Ref[ProviderStatus],
+  // SubscriptionRef (not plain Ref) so status transitions are observable as a stream: every writer (event bridge,
+  // setProvider, watchdog, shutdown) already goes through this ref, so `.changes` sees all of them with no extra
+  // wiring. `awaitReady` consumes `.changes`; the ref still behaves as a Ref for all existing set/get/modify callers.
+  statusRef: SubscriptionRef[ProviderStatus],
   trackRecorder: Ref[Chunk[(String, EvaluationContext, Option[TrackingEventDetails])]]
 )
 
@@ -33,7 +37,7 @@ object FeatureFlagsState {
       hooksRef       <- Ref.make(List.empty[FeatureHook])
       // Bounded; subscribers reconcile via current state on next evaluation, so dropping intermediate events is safe.
       eventHub  <- Hub.dropping[ProviderEvent](256)
-      statusRef <- Ref.make[ProviderStatus](ProviderStatus.NotReady)
+      statusRef <- SubscriptionRef.make[ProviderStatus](ProviderStatus.NotReady)
       trackRec  <- Ref.make(Chunk.empty[(String, EvaluationContext, Option[TrackingEventDetails])])
     } yield FeatureFlagsState(
       globalCtxRef,

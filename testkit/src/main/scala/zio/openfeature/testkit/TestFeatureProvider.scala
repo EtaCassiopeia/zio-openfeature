@@ -35,7 +35,7 @@ final class TestFeatureProvider private (
   private val state: AtomicReference[ProviderState],
   private val evaluations: CopyOnWriteArrayList[(String, OFEvaluationContext)],
   private val eventsHub: Hub[ProviderEvent],
-  private[openfeature] val statusRef: Ref[ProviderStatus],
+  private[openfeature] val statusRef: SubscriptionRef[ProviderStatus],
   private val initLatch: Option[CountDownLatch],
   private[testkit] val initDone: Option[CountDownLatch]
 ) extends EventProvider {
@@ -407,7 +407,7 @@ object TestFeatureProvider {
   def make(initialFlags: Map[String, Any]): UIO[TestFeatureProvider] =
     for {
       eventsHub <- Hub.unbounded[ProviderEvent]
-      statusRef <- Ref.make[ProviderStatus](ProviderStatus.Ready)
+      statusRef <- SubscriptionRef.make[ProviderStatus](ProviderStatus.Ready)
       provider <- ZIO.succeed {
         val flags = new ConcurrentHashMap[String, Any]()
         initialFlags.foreach { case (k, v) => flags.put(k, v) }
@@ -459,7 +459,7 @@ object TestFeatureProvider {
   private def makeReadyWithInitDone(initialFlags: Map[String, Any]): UIO[TestFeatureProvider] =
     for {
       eventsHub <- Hub.unbounded[ProviderEvent]
-      statusRef <- Ref.make[ProviderStatus](ProviderStatus.Ready)
+      statusRef <- SubscriptionRef.make[ProviderStatus](ProviderStatus.Ready)
       provider <- ZIO.succeed {
         val flags = new ConcurrentHashMap[String, Any]()
         initialFlags.foreach { case (k, v) => flags.put(k, v) }
@@ -545,7 +545,7 @@ object TestFeatureProvider {
   private[testkit] def makeNotReady(initialFlags: Map[String, Any]): UIO[TestFeatureProvider] =
     for {
       eventsHub <- Hub.unbounded[ProviderEvent]
-      statusRef <- Ref.make[ProviderStatus](ProviderStatus.NotReady)
+      statusRef <- SubscriptionRef.make[ProviderStatus](ProviderStatus.NotReady)
       provider <- ZIO.succeed {
         val flags = new ConcurrentHashMap[String, Any]()
         initialFlags.foreach { case (k, v) => flags.put(k, v) }

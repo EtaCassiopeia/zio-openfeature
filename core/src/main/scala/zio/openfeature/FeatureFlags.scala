@@ -136,6 +136,14 @@ trait FeatureFlags {
 
   def events: ZStream[Any, Nothing, ProviderEvent]
   def providerStatus: UIO[ProviderStatus]
+
+  /** Semantically block until the provider reaches an evaluable state (`canEvaluate` — Ready/Stale), returns early on
+    * `Fatal`, or `within` elapses — returning the status at that moment in every case. Backed by the status change
+    * stream (no polling), and safe for many concurrent waiters. Ideal for `/ready` probes:
+    * `ff.awaitReady(5.seconds).map(_.canEvaluate)`.
+    */
+  def awaitReady(within: Duration = Duration.Infinity): UIO[ProviderStatus]
+
   def providerMetadata: UIO[ProviderMetadata]
   def clientMetadata: UIO[ClientMetadata]
 
@@ -369,6 +377,9 @@ object FeatureFlags {
   def providerStatus: ZIO[FeatureFlags, Nothing, ProviderStatus] =
     ZIO.serviceWithZIO(_.providerStatus)
 
+  def awaitReady(within: Duration = Duration.Infinity): ZIO[FeatureFlags, Nothing, ProviderStatus] =
+    ZIO.serviceWithZIO(_.awaitReady(within))
+
   def providerMetadata: ZIO[FeatureFlags, Nothing, ProviderMetadata] =
     ZIO.serviceWithZIO(_.providerMetadata)
 
@@ -491,7 +502,7 @@ object FeatureFlags {
     domain: Option[String],
     version: Option[String],
     initialHooks: List[FeatureHook],
-    statusRef: Option[Ref[ProviderStatus]],
+    statusRef: Option[SubscriptionRef[ProviderStatus]],
     addShutdownFinalizer: Boolean,
     apiOverride: Option[OpenFeatureAPI] = None,
     evaluationTimeout: Option[Duration] = Some(DefaultEvaluationTimeout),
@@ -640,7 +651,7 @@ object FeatureFlags {
   private[openfeature] def fromProviderWithDomain(
     provider: OFFeatureProvider,
     domain: String,
-    statusRef: Ref[ProviderStatus],
+    statusRef: SubscriptionRef[ProviderStatus],
     api: Option[OpenFeatureAPI] = None,
     onReady: Option[java.util.concurrent.CountDownLatch] = None
   ): ZLayer[Scope, Throwable, FeatureFlags] =
@@ -702,7 +713,7 @@ object FeatureFlags {
     domain: Option[String],
     version: Option[String],
     initialHooks: List[FeatureHook],
-    statusRef: Option[Ref[ProviderStatus]],
+    statusRef: Option[SubscriptionRef[ProviderStatus]],
     addShutdownFinalizer: Boolean,
     apiOverride: Option[OpenFeatureAPI] = None,
     onReady: Option[java.util.concurrent.CountDownLatch] = None,
@@ -768,7 +779,15 @@ object FeatureFlags {
           case ProviderStatus.NotReady | ProviderStatus.Error => (true, ProviderStatus.Fatal)
           case other                                          => (false, other)
         }
-        .flatMap(transitioned => ZIO.when(transitioned)(ZIO.attemptBlocking(provider.shutdown()).ignore))).forkScoped
+        .flatMap(transitioned =>
+          ZIO.when(transitioned)(
+            // Fatal is terminal. Shut the provider down (its poller/HTTP threads must not outlive the layer) and
+            // release the onReady latch so latch-waiters (registry handshake, `awaitReady` seeded from the latch)
+            // don't hang forever. The transition itself is observable via `statusRef.changes` (see `awaitReady`).
+            ZIO.attemptBlocking(provider.shutdown()).ignore *>
+              ZIO.succeed(onReady.foreach(_.countDown()))
+          )
+        )).forkScoped
     } yield ff
 
   /** Create a FeatureFlags layer from any OpenFeature provider (non-blocking).
@@ -873,7 +892,7 @@ object FeatureFlags {
   private[openfeature] def fromProviderWithDomainAsync(
     provider: OFFeatureProvider,
     domain: String,
-    statusRef: Ref[ProviderStatus],
+    statusRef: SubscriptionRef[ProviderStatus],
     api: Option[OpenFeatureAPI] = None,
     onReady: Option[java.util.concurrent.CountDownLatch] = None
   ): ZLayer[Scope, Throwable, FeatureFlags] =
@@ -920,4 +939,97 @@ object FeatureFlags {
     import scala.jdk.CollectionConverters._
     fromProviderAsync(new MultiProvider(providers.asJava, strategy))
   }
+
+  /** Default `compose` for [[fromAcquireAsync]]: layer the real provider over the fallback with a first-successful
+    * strategy, so a sick real provider transparently falls through to the fallback. `MultiProvider` keys children by
+    * their metadata name and silently drops duplicates — the real and fallback providers must therefore have distinct
+    * names (rename one if they collide).
+    */
+  def defaultAcquireCompose(real: OFFeatureProvider, fallback: OFFeatureProvider): OFFeatureProvider = {
+    import scala.jdk.CollectionConverters._
+    new MultiProvider(List(real, fallback).asJava, new FirstSuccessfulStrategy())
+  }
+
+  /** Fallback-first async factory: build the layer immediately on a fresh `fallback`, construct the real provider in a
+    * background scoped fiber, and hot-swap it in when ready.
+    *
+    * Unlike every other factory, this takes the real provider **as an effect** (`acquire`) rather than a strict,
+    * already-constructed instance — so a provider whose Java constructor does network I/O never runs on the
+    * application's boot path. The layer's error channel is `Nothing` (`URLayer`): a failing real provider is handled
+    * internally (retried, then `onConstructionError`, then left on the fallback), so the compiler proves no
+    * provider-related failure can propagate into the application's layer graph.
+    *
+    *   - Status is `Ready` from time zero; evaluations answer fallback values (never `ProviderNotReady`) until the
+    *     swap.
+    *   - `acquire` runs with `.retry(constructionRetry)`, each attempt bounded by `constructionTimeout`. On terminal
+    *     failure, `onConstructionError` runs and the instance stays on the fallback.
+    *   - The composed stack uses a **fresh** fallback instance (the SDK shuts down the replaced provider on swap, so
+    *     the first fallback must not be reused). Hooks, contexts, and event handlers survive the swap.
+    *   - The construction fiber is scope-owned: layer release interrupts an in-flight `acquire`. A real provider
+    *     acquired but not yet swapped is torn down by scope close **when `acquire` registers it in its `Scope`** (e.g.
+    *     via `ZIO.acquireRelease`); a bare `attemptBlocking(new Provider(...))` registers no finalizer, so teardown of
+    *     the not-yet-swapped provider is then the caller's responsibility.
+    *
+    * @param acquire
+    *   the real provider as a scoped effect (typically `ZIO.attemptBlocking(new Provider(...))`)
+    * @param fallback
+    *   a scoped effect producing a FRESH fallback instance each time it is run
+    * @param compose
+    *   how to combine (real, freshFallback) into the swapped-in provider
+    * @param constructionRetry
+    *   retry policy for `acquire`
+    * @param constructionTimeout
+    *   per-attempt bound on `acquire`
+    * @param onConstructionError
+    *   run when `acquire` (or the swap) ultimately fails; the instance stays on the fallback
+    */
+  def fromAcquireAsync(
+    acquire: RIO[Scope, OFFeatureProvider],
+    fallback: URIO[Scope, OFFeatureProvider],
+    compose: (OFFeatureProvider, OFFeatureProvider) => OFFeatureProvider = defaultAcquireCompose,
+    constructionRetry: Schedule[Any, Throwable, Any] = Schedule.recurs(3) && Schedule.exponential(1.second).jittered,
+    constructionTimeout: Duration = DefaultInitTimeout,
+    onConstructionError: Throwable => UIO[Unit] = _ => ZIO.unit,
+    evaluationTimeout: Duration = DefaultEvaluationTimeout,
+    initTimeout: Duration = DefaultInitTimeout
+  ): URLayer[Scope, FeatureFlags] =
+    ZLayer.scoped {
+      for {
+        // Build immediately on a fresh fallback. An in-memory fallback whose init fails is a programming bug, not a
+        // recoverable condition, so a failed build is a defect (`orDie`) — this is what makes the layer a `URLayer`.
+        firstFallback <- fallback
+        ff <- build(
+          firstFallback,
+          domain = None,
+          version = None,
+          initialHooks = Nil,
+          statusRef = None,
+          addShutdownFinalizer = true,
+          evaluationTimeout = Some(evaluationTimeout),
+          initTimeout = initTimeout
+        ).orDie
+        // Background construction + swap. `acquire`'s Scope is the layer scope, so the acquired real provider is torn
+        // down on layer release even if it was never swapped in. The fiber is `forkScoped`, so an in-flight acquire is
+        // interrupted on release. A terminal construction/swap failure is caught, reported, and left on the fallback —
+        // nothing escapes to the (already-built) layer.
+        construct = for {
+          real <- acquire.disconnect
+            // `.disconnect` so the per-attempt timeout returns promptly even when `acquire` is an uninterruptible
+            // `attemptBlocking(new Provider(...))` — the underlying constructor may keep running in the background, but
+            // the retry advances instead of waiting on a hung attempt.
+            .timeoutFail(new TimeoutException(s"Provider construction exceeded $constructionTimeout"))(
+              constructionTimeout
+            )
+            .retry(constructionRetry)
+          freshFallback <- fallback
+          _ <- ff
+            .setProvider(compose(real, freshFallback))
+            // `setProvider`'s rollback restored the live fallback to the provider ref but left status `Error`; the
+            // fallback is still serving, so force status back to Ready before reporting the failure.
+            .tapError(_ => ff.forceReady)
+            .mapError(e => new RuntimeException(s"Provider swap failed: $e"))
+        } yield ()
+        _ <- construct.catchAll(onConstructionError).forkScoped
+      } yield ff
+    }
 }

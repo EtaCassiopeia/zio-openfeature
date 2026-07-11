@@ -501,6 +501,39 @@ yield result
 program.provide(Scope.default >>> FeatureFlags.fromProviderAsync(provider))
 ```
 
+### Fallback-first initialization (`fromAcquireAsync`)
+
+`fromProviderAsync` still takes a **strict, already-constructed** provider — so a provider whose *Java constructor* does the network work (e.g. the no-arg `HttpProjectConfigManager.build()`, which blocks up to 10s waiting for the first datafile) blocks the layer build before any factory runs. `fromAcquireAsync` closes that gap: it takes the real provider **as an effect**, builds the layer immediately on a fresh fallback, constructs the real provider in a background scoped fiber, and hot-swaps it in when ready.
+
+```scala
+import zio.openfeature.extras.EnvVarProvider
+
+val layer: URLayer[Scope, FeatureFlags] =
+  FeatureFlags.fromAcquireAsync(
+    acquire  = ZIO.attemptBlocking(new CofOptimizelyLocalProvider(options)), // constructor does the I/O
+    fallback = ZIO.succeed(EnvVarProvider()),                                // fresh instance per use
+    onConstructionError = e => ZIO.logWarning(s"Optimizely init failed, staying on EnvVar: ${e.getMessage}")
+  )
+```
+
+Key properties:
+
+- **`URLayer` (error channel `Nothing`)** — a failing real provider is retried, then reported to `onConstructionError`, then left on the fallback. The compiler proves no provider failure can fail your application's layer graph; there is nothing to `catchAll`.
+- **`Ready` from time zero** — the layer build is independent of `acquire` latency; evaluations answer *fallback* values (env-var kill-switches stay correct) instead of failing `ProviderNotReady` until the swap lands.
+- **Fresh fallback + preserved state** — the composed stack (`MultiProvider(real, fallback)` with `FirstSuccessfulStrategy` by default) uses a fresh fallback instance because the SDK shuts the replaced provider down on swap; hooks, contexts, and event handlers survive the swap.
+- **Scope-owned** — layer release interrupts an in-flight `acquire`. A real provider acquired but not yet swapped is torn down on scope close when `acquire` registers it in its `Scope` (e.g. via `ZIO.acquireRelease`); a bare `attemptBlocking(new Provider(...))` registers no finalizer, so teardown of the not-yet-swapped provider is then the caller's responsibility.
+
+For a constructor-blocking provider where you want plain async semantics (typed `PROVIDER_NOT_READY` until ready, no fallback), wrap it in [`DeferredProvider`](extras.md#deferredprovider) instead and pass it to `fromProviderAsync`.
+
+### Waiting for readiness (`awaitReady`)
+
+`awaitReady(within)` semantically blocks until the provider reaches an evaluable state (`Ready`/`Stale`), returns early on `Fatal`, or times out — returning the status at that moment in every case. It is backed by the status change stream (no polling) and safe for many concurrent waiters, which makes it the natural primitive for a `/ready` probe:
+
+```scala
+val readinessCheck: URIO[FeatureFlags, Boolean] =
+  ZIO.serviceWithZIO[FeatureFlags](_.awaitReady(5.seconds).map(_.canEvaluate))
+```
+
 ---
 
 ## Choosing a strategy — sync vs async, with vs without fallback

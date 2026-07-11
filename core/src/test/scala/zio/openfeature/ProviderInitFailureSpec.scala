@@ -2,6 +2,7 @@ package zio.openfeature
 import zio.openfeature.internal.ProviderEvaluations
 
 import zio._
+import zio.stream.SubscriptionRef
 import zio.test._
 import zio.test.TestAspect.{sequential, withLiveClock}
 import dev.openfeature.sdk.{
@@ -204,7 +205,7 @@ object ProviderInitFailureSpec extends ZIOSpecDefault {
       val api      = OpenFeatureAPIFactory.create()
       ZIO.scoped {
         for {
-          statusRef <- Ref.make[ProviderStatus](ProviderStatus.NotReady)
+          statusRef <- SubscriptionRef.make[ProviderStatus](ProviderStatus.NotReady)
           ff <- FeatureFlags.buildAsync(
             provider,
             domain = Some(uniqueDomain("async-error")),
@@ -242,7 +243,7 @@ object ProviderInitFailureSpec extends ZIOSpecDefault {
       val api      = OpenFeatureAPIFactory.create()
       ZIO.scoped {
         for {
-          statusRef <- Ref.make[ProviderStatus](ProviderStatus.NotReady)
+          statusRef <- SubscriptionRef.make[ProviderStatus](ProviderStatus.NotReady)
           ff <- FeatureFlags.buildAsync(
             provider,
             domain = Some(uniqueDomain("async-recovery")),
@@ -286,7 +287,7 @@ object ProviderInitFailureSpec extends ZIOSpecDefault {
       val api      = OpenFeatureAPIFactory.create()
       ZIO.scoped {
         for {
-          statusRef <- Ref.make[ProviderStatus](ProviderStatus.Ready)
+          statusRef <- SubscriptionRef.make[ProviderStatus](ProviderStatus.Ready)
           ff <- FeatureFlags.build(
             provider,
             domain = Some(uniqueDomain("classify-unreachable")),

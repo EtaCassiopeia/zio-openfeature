@@ -1,6 +1,6 @@
 package zio.openfeature.internal
 
-import dev.openfeature.sdk.ProviderEvaluation
+import dev.openfeature.sdk.{ErrorCode, ProviderEvaluation, Reason}
 
 /** Builds [[ProviderEvaluation]] without fluently chaining off the Lombok-generated builder's self-type.
   *
@@ -30,6 +30,19 @@ private[openfeature] object ProviderEvaluations {
     builder.reason(reason)
     // build() returns the existentially-captured C (bounded by ProviderEvaluation[T]); widen explicitly since
     // that bound doesn't auto-widen across this method's declared return type.
+    builder.build().asInstanceOf[ProviderEvaluation[T]]
+  }
+
+  /** Build an error evaluation carrying the given error code (reason `ERROR`). The `value` is the caller's default — a
+    * typed error evaluation still returns a value rather than throwing, so callers never NPE. Uses the same
+    * stable-reference builder pattern as `of` to sidestep the Scala 2.13 existential-chain issue.
+    */
+  def error[T](value: T, errorCode: ErrorCode, errorMessage: String): ProviderEvaluation[T] = {
+    val builder = ProviderEvaluation.builder[T]()
+    builder.value(value)
+    builder.reason(Reason.ERROR.toString)
+    builder.errorCode(errorCode)
+    builder.errorMessage(errorMessage)
     builder.build().asInstanceOf[ProviderEvaluation[T]]
   }
 }

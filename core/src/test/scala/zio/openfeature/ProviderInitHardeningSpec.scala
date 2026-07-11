@@ -2,6 +2,7 @@ package zio.openfeature
 import zio.openfeature.internal.ProviderEvaluations
 
 import zio._
+import zio.stream.SubscriptionRef
 import zio.test._
 import zio.test.TestAspect.{withLiveClock, sequential}
 import dev.openfeature.sdk.{
@@ -195,7 +196,7 @@ object ProviderInitHardeningSpec extends ZIOSpecDefault {
       val api      = OpenFeatureAPIFactory.create()
       ZIO.scoped {
         for {
-          statusRef <- Ref.make[ProviderStatus](ProviderStatus.NotReady)
+          statusRef <- SubscriptionRef.make[ProviderStatus](ProviderStatus.NotReady)
           _ <- FeatureFlags.buildAsync(
             provider,
             domain = Some(uniqueDomain("async-watchdog")),

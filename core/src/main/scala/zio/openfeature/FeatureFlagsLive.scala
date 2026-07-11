@@ -64,6 +64,25 @@ final private[openfeature] class FeatureFlagsLive(
   // the instance Ready while the swap is still in flight. The successful swap sets Ready explicitly at the end.
   private val swapInProgress = new java.util.concurrent.atomic.AtomicBoolean(false)
 
+  // Cache the Scala->Java context conversion by object identity. In the common case every per-call context layer
+  // (transaction/client/fiber-local/invocation) is empty, so the merged context IS the (unchanged) global context
+  // object — converting it once and reusing it avoids a fresh MutableContext plus one Value per attribute on every
+  // call. Keyed on identity: a different context (after `setGlobalContext`, or a non-empty invocation layer) misses and
+  // is re-converted, so no explicit invalidation is needed. Reuse is safe because the OpenFeature contract treats the
+  // context passed to a provider as read-only.
+  private val javaContextCache =
+    new java.util.concurrent.atomic.AtomicReference[(EvaluationContext, dev.openfeature.sdk.EvaluationContext)](null)
+
+  private def toJavaContext(context: EvaluationContext): dev.openfeature.sdk.EvaluationContext = {
+    val cached = javaContextCache.get()
+    if (cached != null && (cached._1 eq context)) cached._2
+    else {
+      val converted = ContextConverter.toOpenFeature(context)
+      javaContextCache.set((context, converted))
+      converted
+    }
+  }
+
   // Bridge Java SDK provider events to ZIO event system
   private[openfeature] def startEventBridge: ZIO[Scope, Nothing, Unit] = {
     // Read provider name dynamically so events after a provider swap use the new name
@@ -398,7 +417,7 @@ final private[openfeature] class FeatureFlagsLive(
     timeout: Option[Duration] = None
   ): IO[FeatureFlagError, FlagResolution[A]] = {
     val flagType  = FlagType[A]
-    val ofContext = ContextConverter.toOpenFeature(context)
+    val ofContext = toJavaContext(context)
 
     def withTimeout[B](effect: Task[B]): Task[B] =
       timeout match {
@@ -987,7 +1006,7 @@ final private[openfeature] class FeatureFlagsLive(
       recordTrack(eventName, merged, details) *>
         ZIO
           .attemptBlocking {
-            val ofContext = ContextConverter.toOpenFeature(merged)
+            val ofContext = toJavaContext(merged)
             details match {
               case Some(d) => client.track(eventName, ofContext, toOpenFeatureDetails(d))
               case None    => client.track(eventName, ofContext)

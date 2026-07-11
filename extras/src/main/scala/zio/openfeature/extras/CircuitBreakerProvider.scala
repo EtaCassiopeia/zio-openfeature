@@ -9,6 +9,7 @@ import dev.openfeature.sdk.{
   ProviderEvaluation,
   ProviderEventDetails,
   ProviderState,
+  TrackingEventDetails,
   Value
 }
 import dev.openfeature.sdk.exceptions.GeneralError
@@ -140,6 +141,14 @@ final class CircuitBreakerProvider private (
       scala.util.Try(EventProviderBridge.detach(underlying))
     underlying.shutdown()
   }
+
+  // Forward the delegate's provider hooks and tracking so wrapping a provider in a circuit breaker doesn't silently
+  // drop its telemetry/validation hooks or discard `track` events. `track` is fire-and-forget, so it passes through
+  // without consulting the circuit. See #261.
+  override def getProviderHooks = underlying.getProviderHooks
+
+  override def track(eventName: String, context: OFEvaluationContext, details: TrackingEventDetails): Unit =
+    underlying.track(eventName, context, details)
 
   override def getBooleanEvaluation(
     key: String,

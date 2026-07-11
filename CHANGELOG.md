@@ -51,6 +51,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Int-range `Long` values are no longer silently coerced to `Double`** (#249). At several layers a `Long` was mapped
+  to `Double`, so even small longs reached providers as `Double` (breaking `instanceof Integer` targeting rules) and a
+  long-typed flag evaluated through the provider's double resolver could `TYPE_MISMATCH`. Now an int-range `Long` is
+  sent as an `Integer` in context attributes (`ContextConverter`), tracking details (`FeatureFlagsLive`), and HOCON
+  values (`HoconProvider`), and a long-typed flag evaluation routes through the SDK's integer resolver for int-range
+  values (`ClientEvaluator`). OpenFeature's `Value` has no `Long` type, so out-of-int-range longs still use `Double`
+  (exact for integers up to 2^53; larger values lose precision — this bound is now documented rather than silently
+  applied to all longs). Spec §3.1.2 (typed context values), §1.3.4 (typed evaluation).
+
 - **Provider-specific resolution reasons are preserved instead of collapsed to `Unknown`** (#248). Per spec §1.4.7
   reasons are provider-extensible strings, but any unrecognized reason was mapped to `ResolutionReason.Unknown`,
   discarding the provider's actual disposition (Optimizely/flagd emit custom reasons). Added

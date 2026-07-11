@@ -23,10 +23,14 @@ private[openfeature] object ContextConverter {
 
   private def addAttributeToContext(ctx: MutableContext, key: String, attr: AttributeValue): Unit =
     attr match {
-      case AttributeValue.BoolValue(b)     => ctx.add(key, b)
-      case AttributeValue.StringValue(s)   => ctx.add(key, s)
-      case AttributeValue.IntValue(i)      => ctx.add(key, Integer.valueOf(i))
-      case AttributeValue.LongValue(l)     => ctx.add(key, java.lang.Double.valueOf(l.toDouble))
+      case AttributeValue.BoolValue(b)   => ctx.add(key, b)
+      case AttributeValue.StringValue(s) => ctx.add(key, s)
+      case AttributeValue.IntValue(i)    => ctx.add(key, Integer.valueOf(i))
+      // OpenFeature's Value has no Long: send an int-range long as Integer so provider targeting rules that do
+      // `instanceof Integer` match, and only fall back to Double (lossy beyond 2^53) for out-of-int-range values.
+      case AttributeValue.LongValue(l) =>
+        if (l.isValidInt) ctx.add(key, Integer.valueOf(l.toInt))
+        else ctx.add(key, java.lang.Double.valueOf(l.toDouble))
       case AttributeValue.DoubleValue(d)   => ctx.add(key, d)
       case AttributeValue.InstantValue(dt) => ctx.add(key, dt)
       case AttributeValue.ListValue(list) =>
@@ -43,7 +47,7 @@ private[openfeature] object ContextConverter {
     case AttributeValue.BoolValue(b)     => new Value(b)
     case AttributeValue.StringValue(s)   => new Value(s)
     case AttributeValue.IntValue(i)      => new Value(i)
-    case AttributeValue.LongValue(l)     => new Value(l.toDouble)
+    case AttributeValue.LongValue(l)     => if (l.isValidInt) new Value(l.toInt) else new Value(l.toDouble)
     case AttributeValue.DoubleValue(d)   => new Value(d)
     case AttributeValue.InstantValue(dt) => new Value(dt)
     case AttributeValue.ListValue(list) =>

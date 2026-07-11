@@ -496,6 +496,13 @@ object FeatureFlags {
     */
   private[openfeature] val DefaultInitTimeout: Duration = 30.seconds
 
+  /** Fallback provider name stamped when a provider exposes no metadata/name at registration time. The event-bridge
+    * identity guard (`FeatureFlagsLive.fromCurrentProvider`) treats this as an indeterminate identity and fails open,
+    * so a provider whose real name only appears after `initialize()` (e.g. the SDK's MultiProvider) still drives its
+    * own status.
+    */
+  private[openfeature] val UnknownProviderName: String = "unknown"
+
   /** Default per-evaluation timeout: **1 second, applied to every evaluation unless overridden**. Any provider call
     * that takes longer is interrupted and the effect fails with `FeatureFlagError.ProviderError` wrapping a
     * `TimeoutException` — so a remote provider with cold-start latency can fail its first evaluations out of the box.
@@ -555,15 +562,13 @@ object FeatureFlags {
         case (Some(d), None)    => ZIO.attempt(api.getClient(d))
         case _                  => ZIO.attempt(api.getClient())
       }
-      providerName = Option(provider.getMetadata).map(_.getName).getOrElse("unknown")
+      providerName = Option(provider.getMetadata).map(_.getName).getOrElse(UnknownProviderName)
       providerRef <- Ref.make(provider)
       providerNameRef = new java.util.concurrent.atomic.AtomicReference(providerName)
       swapLock  <- Semaphore.make(1)
       baseState <- FeatureFlagsState.make
       state = statusRef.fold(baseState)(ref => baseState.copy(statusRef = ref))
       _ <- state.hooksRef.set(initialHooks)
-      // Only seed status when the caller didn't hand us a shared ref (testkit shares one).
-      _ <- statusRef.fold(state.statusRef.set(verified))(_ => ZIO.unit)
       ff = new FeatureFlagsLive(
         client,
         providerRef,
@@ -579,6 +584,9 @@ object FeatureFlags {
         onReady,
         evaluationTimeout
       )
+      // Only seed status when the caller didn't hand us a shared ref (testkit shares one). Routed through
+      // `seedStatus` so the machine's `everReady` flag records a Ready/Stale seed.
+      _ <- statusRef.fold(ff.seedStatus(verified))(_ => ZIO.unit)
       _ <- ff.startEventBridge
     } yield ff
 
@@ -767,7 +775,7 @@ object FeatureFlags {
       }
       // `ZIO.attempt` for the same reason as the registration above: a throwing `getMetadata` here must be a
       // typed failure, not a defect that strands the registry build fiber (see the `setProvider` note).
-      providerName <- ZIO.attempt(Option(provider.getMetadata).map(_.getName).getOrElse("unknown"))
+      providerName <- ZIO.attempt(Option(provider.getMetadata).map(_.getName).getOrElse(UnknownProviderName))
       providerRef  <- Ref.make(provider)
       providerNameRef = new java.util.concurrent.atomic.AtomicReference(providerName)
       swapLock  <- Semaphore.make(1)
@@ -791,25 +799,11 @@ object FeatureFlags {
       )
       // Start event bridge — if provider is already ready, replay fires immediately
       _ <- ff.startEventBridge
-      // Init watchdog: after initTimeout, if the provider still hasn't moved past NotReady/Error, atomically
-      // transition it to Fatal AND shut it down so its background threads (datafile pollers, HTTP clients) don't
-      // outlive the useful lifetime of this layer. The shutdown is gated on the transition actually happening, so a
-      // provider that became ready/stale before the timeout is left running untouched. The fiber is forked into the
-      // layer's Scope, so it is also interrupted when the layer is released.
-      _ <- (ZIO.sleep(initTimeout) *> state.statusRef
-        .modify {
-          case ProviderStatus.NotReady | ProviderStatus.Error => (true, ProviderStatus.Fatal)
-          case other                                          => (false, other)
-        }
-        .flatMap(transitioned =>
-          ZIO.when(transitioned)(
-            // Fatal is terminal. Shut the provider down (its poller/HTTP threads must not outlive the layer) and
-            // release the onReady latch so latch-waiters (registry handshake, `awaitReady` seeded from the latch)
-            // don't hang forever. The transition itself is observable via `statusRef.changes` (see `awaitReady`).
-            ZIO.attemptBlocking(provider.shutdown()).ignore *>
-              ZIO.succeed(onReady.foreach(_.countDown()))
-          )
-        )).forkScoped
+      // Init watchdog (#244): after initTimeout, escalate to Fatal ONLY if the provider never became usable
+      // (`everReady` gate inside the machine), shutting it down and releasing the onReady latch. A provider that was
+      // Ready and later dipped to a transient Error is left running. The fiber is forked into the layer's Scope, so
+      // it is also interrupted when the layer is released.
+      _ <- (ZIO.sleep(initTimeout) *> ff.escalateInitTimeout(provider, initTimeout)).forkScoped
     } yield ff
 
   /** Create a FeatureFlags layer from any OpenFeature provider (non-blocking).

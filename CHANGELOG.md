@@ -82,6 +82,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Centralized provider-status state machine** (#244). Every provider-status write in `FeatureFlagsLive` and the async
+  init watchdog now goes through one pure, exhaustively-tested transition function
+  (`internal.ProviderStatusMachine`), replacing per-site ad-hoc guards. This fixes several concrete defects:
+  - **The init watchdog no longer Fatals (nor shuts down) a provider that was ever `Ready`.** It previously could not
+    distinguish "never initialized" from "was `Ready`, currently in a transient `Error`", so a recoverable
+    `PROVIDER_ERROR` just before the init deadline led to a permanent `Fatal` and shutdown of a live, recoverable
+    provider. The watchdog now tracks an `everReady` flag and only escalates a provider that never became usable; the
+    transient-error-at-deadline case leaves status `Error` with the provider running.
+  - **The watchdog `Fatal` transition now publishes a `ProviderEvent.Error`** carrying `ErrorCode.ProviderFatal` (it
+    previously published nothing), in addition to releasing the `onReady` latch.
+  - **A `PROVIDER_ERROR` event carrying `ErrorCode.PROVIDER_FATAL` now transitions to `Fatal`** (matching the Java SDK's
+    own `FATAL` state, spec 1.7.6), is sticky, and releases the `onReady` latch — previously every error event mapped to
+    the recoverable `Error`, so evaluations kept flowing to a provider the SDK considered dead.
+  - **Terminal states can no longer be clobbered or resurrected.** `Fatal` is sticky against every provider event; after
+    an explicit `shutdown` the terminal `NotReady` can no longer be moved by a late event from the dying provider; and a
+    `STALE` event can no longer stamp over `Fatal`/`ShuttingDown` (previously the stale handler had no guard at all).
+  - **The 500ms `nanoTime` swap-guard heuristics are gone**, replaced by provider-identity matching on the event's
+    stamped provider name: an event from a replaced/failed provider still queued on the SDK's emitter executor is
+    dropped (it is still published for observers, under the *emitting* provider's name — not the current one's).
+    Identity matching fails open when either the event or the current provider name is indeterminate (e.g. the SDK's
+    `MultiProvider`, whose metadata name only appears after `initialize()`), so a provider still drives its own status.
+    `shutdown` now also deregisters the event-bridge handlers before tearing the API down. A same-named hot-swap remains
+    indistinguishable by identity alone (the swap-in-progress window still covers the swap itself).
 - **Transaction overrides resolve while the provider is not ready** (#254). The provider-readiness gate
   (`checkProviderStatus`, which fail-fasts on `NotReady`/`Fatal`/`ShuttingDown`) ran before transaction override and
   transaction-cache lookup, so `transaction(overrides = Map(...))` was rejected during async init, after a failed

@@ -1,6 +1,7 @@
 package zio.openfeature.conformance.bdd
 
 import zio._
+import zio.stream.SubscriptionRef
 import zio.bdd.core.Suite
 import zio.bdd.core.Assertions.assertTrue
 import zio.bdd.core.step.{State, ZIOSteps}
@@ -45,7 +46,7 @@ object ConformanceSpec extends ZIOSteps[Any, World] {
   // released by the `afterScenario` hook below — no global/leaked scope.
   private def buildInMemory(sc: Scope.Closeable): ZIO[Any, Throwable, FeatureFlags] =
     for {
-      statusRef <- Ref.make[ProviderStatus](ProviderStatus.Ready)
+      statusRef <- SubscriptionRef.make[ProviderStatus](ProviderStatus.Ready)
       api    = OpenFeatureAPIFactory.create()
       domain = s"bdd-${java.util.UUID.randomUUID()}"
       env <- sc.extend[Any](

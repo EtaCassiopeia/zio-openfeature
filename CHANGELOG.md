@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Non-blocking provider initialization** (#241). Three additions so provider construction never sits on the
+  application boot path:
+  - **`FeatureFlags.fromAcquireAsync`** — a fallback-first async factory (`URLayer[Scope, FeatureFlags]`). It takes the
+    real provider *as an effect*, builds the layer immediately on a fresh fallback (status `Ready` from time zero,
+    evaluations answer fallback values), constructs the real provider in a background scoped fiber with retry/timeout,
+    and hot-swaps it in when ready. Terminal construction failures run `onConstructionError` and stay on the fallback;
+    the `Nothing` error channel proves at compile time that no provider failure can fail the app's layer graph. Covers
+    both constructor-blocking and `initialize()`-blocking providers.
+  - **`zio.openfeature.extras.DeferredProvider`** — adapts a constructor-blocking provider into an `initialize()`-blocking
+    one, deferring construction to the SDK init executor. Stable metadata name, typed `PROVIDER_NOT_READY` before ready,
+    a state machine that handles `shutdown()` racing an in-flight `initialize()`, and hook forwarding.
+  - **`FeatureFlags.awaitReady(within)`** — semantically blocks until the provider is evaluable (`Ready`/`Stale`),
+    returns early on `Fatal`, or times out, returning the status at that moment. Backed by a status change stream (no
+    polling) and safe for many concurrent waiters; ideal for `/ready` probes. The internal provider-status ref is now a
+    `SubscriptionRef`, and the async init watchdog's `Fatal` transition now releases the `onReady` latch and is
+    observable via `awaitReady`.
+
 ### Changed
 
 - **Bump `dev.openfeature:sdk` to 1.21.0** (#239). Per-provider error detail in multi-provider strategies and

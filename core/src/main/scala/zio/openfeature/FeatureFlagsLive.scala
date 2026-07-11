@@ -674,6 +674,25 @@ final private[openfeature] class FeatureFlagsLive(
   override def providerStatus: UIO[ProviderStatus] =
     state.statusRef.get
 
+  // Force status back to Ready. Used by `fromAcquireAsync` when a hot-swap to the real provider fails: `setProvider`'s
+  // rollback restores the still-live fallback to `providerRef` but leaves status `Error`, which would fail every
+  // evaluation with `ProviderNotReady(Error)` despite a usable fallback. Package-private — not part of the public API.
+  private[openfeature] def forceReady: UIO[Unit] =
+    state.statusRef.set(ProviderStatus.Ready)
+
+  override def awaitReady(within: Duration): UIO[ProviderStatus] =
+    // `.changes` emits the current status first (so an already-Ready provider returns immediately) then every
+    // subsequent transition — no polling. `runHead` completes on the first evaluable-or-Fatal status. On timeout
+    // (`None`) or an exhausted stream we return the then-current status, so every path yields a real status.
+    state.statusRef.changes
+      .filter(s => s.canEvaluate || s == ProviderStatus.Fatal)
+      .runHead
+      .timeout(within)
+      .flatMap {
+        case Some(Some(status)) => ZIO.succeed(status)
+        case _                  => state.statusRef.get
+      }
+
   override def providerMetadata: UIO[ProviderMetadata] =
     ZIO.succeed(ProviderMetadata(providerNameRef.get()))
 

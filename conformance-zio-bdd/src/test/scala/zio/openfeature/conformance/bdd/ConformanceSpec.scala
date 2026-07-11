@@ -30,11 +30,12 @@ object HookRow { given Schema[HookRow] = DeriveSchema.gen[HookRow] }
   // The remaining excluded tags are out of scope for a ZIO SDK + in-memory testkit, not coverage gaps:
   //   - async:               tautological — every evaluation already returns a non-blocking ZIO effect; there is no
   //                          separate async API surface to assert against.
-  //   - immutability:        compile-time guaranteed — context/details are immutable case classes, so there is no
-  //                          mutation API to exercise; the language enforces what the scenario asserts.
   //   - reason-codes-cached: the in-memory testkit provider cannot emit a CACHED reason (it derives the reason from
   //                          key presence only), so the scenario can't be satisfied without a contrived provider.
   //   - deprecated:          superseded scenarios retained in the feature file for history, not meant to run.
+  //   - immutability:        the @immutability scenario asserts evaluation-*context* immutability (spec 1.4.15) and
+  //                          has no step definitions here; enabling it needs those steps implemented. It is unrelated
+  //                          to hook-*hints* immutability (spec 4.5.3), which #247 enforces at the type level.
   excludeTags = Array("deprecated", "reason-codes-cached", "async", "immutability"),
   logLevel = "warning"
 )
@@ -260,7 +261,7 @@ object ConformanceSpec extends ZIOSteps[Any, World] {
 
   private def recordingHook(stages: Ref[Chunk[String]], details: Ref[Option[FlagResolution[Any]]]): OFFeatureHook =
     new OFFeatureHook {
-      override def before(c: HookContext, h: HookHints): UIO[Option[(EvaluationContext, HookHints)]] =
+      override def before(c: HookContext, h: HookHints): UIO[Option[EvaluationContext]] =
         stages.update(_ :+ "before").as(None)
       override def after[A](c: HookContext, d: FlagResolution[A], h: HookHints): UIO[Unit] =
         stages.update(_ :+ "after") *> details.set(Some(d.asInstanceOf[FlagResolution[Any]]))
@@ -315,7 +316,7 @@ object ConformanceSpec extends ZIOSteps[Any, World] {
   // Per-invocation hook that tags each stage with its name, so we can assert both execution and ordering.
   private def orderedHook(name: String, log: Ref[Chunk[String]]): OFFeatureHook =
     new OFFeatureHook {
-      override def before(c: HookContext, h: HookHints): UIO[Option[(EvaluationContext, HookHints)]] =
+      override def before(c: HookContext, h: HookHints): UIO[Option[EvaluationContext]] =
         log.update(_ :+ s"$name:before").as(None)
       override def after[A](c: HookContext, d: FlagResolution[A], h: HookHints): UIO[Unit] =
         log.update(_ :+ s"$name:after").unit
@@ -411,7 +412,7 @@ object ConformanceSpec extends ZIOSteps[Any, World] {
   }
 
   private def ctxHook(ctx: EvaluationContext): OFFeatureHook = new OFFeatureHook {
-    override def before(c: HookContext, h: HookHints): UIO[Option[(EvaluationContext, HookHints)]] = ZIO.some((ctx, h))
+    override def before(c: HookContext, h: HookHints): UIO[Option[EvaluationContext]] = ZIO.some(ctx)
   }
 
   When("Some flag was evaluated") {

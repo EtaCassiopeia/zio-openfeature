@@ -46,7 +46,7 @@ object HookDefectSpec extends ZIOSpecDefault {
 
   // A hook stage that throws synchronously (not in a ZIO effect), which ZIO converts to a Die defect.
   private def throwingHook(stageName: String, calledRef: Ref[List[String]]): FeatureHook = new FeatureHook {
-    override def before(ctx: HookContext, hints: HookHints): UIO[Option[(EvaluationContext, HookHints)]] =
+    override def before(ctx: HookContext, hints: HookHints): UIO[Option[EvaluationContext]] =
       calledRef.update(_ :+ s"$stageName.before") *>
         ZIO.die(new RuntimeException(s"defect in $stageName.before"))
 
@@ -64,7 +64,7 @@ object HookDefectSpec extends ZIOSpecDefault {
   }
 
   private def safeHook(calledRef: Ref[List[String]]): FeatureHook = new FeatureHook {
-    override def before(ctx: HookContext, hints: HookHints): UIO[Option[(EvaluationContext, HookHints)]] =
+    override def before(ctx: HookContext, hints: HookHints): UIO[Option[EvaluationContext]] =
       calledRef.update(_ :+ "safe.before").as(None)
 
     override def after[A](ctx: HookContext, details: FlagResolution[A], hints: HookHints): UIO[Unit] =
@@ -141,7 +141,7 @@ object HookDefectSpec extends ZIOSpecDefault {
         val called = new java.util.concurrent.atomic.AtomicBoolean(false)
         // This is the RECOMMENDED pattern: wrap untrusted hook code
         val safeWrapped = new FeatureHook {
-          override def before(ctx: HookContext, hints: HookHints): UIO[Option[(EvaluationContext, HookHints)]] =
+          override def before(ctx: HookContext, hints: HookHints): UIO[Option[EvaluationContext]] =
             ZIO
               .attempt {
                 called.set(true)

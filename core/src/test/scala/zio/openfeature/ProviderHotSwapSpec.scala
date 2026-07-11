@@ -122,7 +122,7 @@ object ProviderHotSwapSpec extends ZIOSpecDefault {
             override def before(
               ctx: HookContext,
               hints: HookHints
-            ): UIO[Option[(EvaluationContext, HookHints)]] =
+            ): UIO[Option[EvaluationContext]] =
               hookCalled.set(true).as(None)
           }
           ff     <- buildWithDomain(providerA)

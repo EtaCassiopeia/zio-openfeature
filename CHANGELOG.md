@@ -28,6 +28,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **BREAKING: `FeatureHook.before` no longer returns hook hints** (#247). Its signature changed from
+  `UIO[Option[(EvaluationContext, HookHints)]]` to `UIO[Option[EvaluationContext]]`, so a `before` hook can modify the
+  evaluation context but can no longer alter the hook hints seen by later hooks and stages — hints are now immutable
+  through the pipeline, as required by spec §4.5.3/§4.2.2.1. Per-hook state belongs in `HookData` (spec §4.6): the
+  built-in `FeatureHook.metrics` hook was migrated to store its start time in `ctx.hookData` (mirroring
+  `metricsDetailed`) instead of writing it into the hints. Migration: a `before` that returned
+  `Some((newContext, newHints))` should return `Some(newContext)` and move any per-hook state to `ctx.hookData`.
+
 - **Bump `dev.openfeature:sdk` to 1.21.0** (#239). Per-provider error detail in multi-provider strategies and
   isolated `OpenFeatureAPI` instance support now flow from the upstream fix with no further wrapper changes (our
   event hub and `apiOverride` plumbing already isolated us from the bugs this release fixes). The SDK's

@@ -11,6 +11,6 @@ import org.junit.runner.RunWith
   features = Array("classpath:zio/openfeature/conformance"),
   glue = Array("zio.openfeature.conformance"),
   plugin = Array("pretty"),
-  tags = "not @deprecated and not @reason-codes-cached and not @async and not @immutability and not @evaluation-options"
+  tags = "not @deprecated and not @reason-codes-cached and not @async and not @evaluation-options and not @immutability"
 )
 class RunConformance

@@ -43,6 +43,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Evaluations no longer hard-fail while the provider status is `Error`** (#245). Per the OpenFeature spec, only
+  `NOT_READY` (§1.7.6) and `FATAL` (§1.7.7) fail-fast; `checkProviderStatus` was also failing every evaluation with
+  `ProviderNotReady(Error)` whenever a single transient `PROVIDER_ERROR` (e.g. one failed datafile poll) arrived,
+  turning a degraded-but-serving provider into a total outage until a `PROVIDER_READY` re-arrived (which many providers
+  never re-emit). Evaluations in `ERROR` now proceed to the provider — it serves cached values or errors on its own.
+  `NOT_READY` and `FATAL` still fail-fast, and the `FeatureFlagRegistry` init handshake still fast-fails a provider that
+  errors before ever becoming ready (that init-time behavior is intentional and left to the status-state-machine rework
+  in #244).
+
 - **`FeatureFlagRegistry.getClient` no longer hangs when provider registration throws** (#242). `FeatureFlags.buildAsync`
   wrapped the synchronous Java SDK registration calls (`api.setProvider`, `provider.getMetadata`) in `ZIO.succeed`, so a
   throw became a ZIO *defect* rather than a typed error. Combined with `runBuild` handling only typed failures, such a

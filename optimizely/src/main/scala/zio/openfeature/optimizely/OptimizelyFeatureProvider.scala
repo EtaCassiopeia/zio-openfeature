@@ -324,12 +324,15 @@ final class OptimizelyFeatureProvider private[optimizely] (
   //   2. Targeting key — caller-supplied context error; only meaningful once the provider is actually usable.
   //   3. `optimizely.isValid` — defence-in-depth in case state says READY but the SDK silently went invalid.
   private def decide(key: String, ctx: OFEvaluationContext): Either[String, OptimizelyDecision] = {
-    val transformed = ContextTransformer.transform(ctx)
+    // Extract only the targeting key up front — cheap — and gate on it before normalizing attributes, so the
+    // NOT_READY / missing-key / invalid short-circuits don't pay for a full attribute conversion whose result is
+    // discarded (#266).
+    val userId = ContextTransformer.userId(ctx)
     if (stateRef.get() != ProviderState.READY) Left("PROVIDER_NOT_READY")
-    else if (transformed.userId.isEmpty) Left("TARGETING_KEY_MISSING")
+    else if (userId.isEmpty) Left("TARGETING_KEY_MISSING")
     else if (!Try(optimizely.isValid).getOrElse(false)) Left("PROVIDER_NOT_READY")
     else
-      Try(optimizely.createUserContext(transformed.userId, transformed.attributes).decide(key)).toEither.left
+      Try(optimizely.createUserContext(userId, ContextTransformer.attributes(ctx)).decide(key)).toEither.left
         .map(t => Option(t.getMessage).getOrElse(t.getClass.getSimpleName))
         .flatMap { decision =>
           if (isFlagNotFound(decision)) Left("FLAG_NOT_FOUND")

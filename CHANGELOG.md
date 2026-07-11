@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Optimizely `ContextTransformer` produces attribute types the audience evaluator can actually match** (#266).
+  Instant, list, and structure attributes were passed through unchanged, but Optimizely's audience evaluator matches
+  only `String`/`Boolean`/`Number` — so a targeting rule against such an attribute evaluated to `UNKNOWN` on every
+  evaluation (silently dead targeting with one WARN log per call and no startup signal). Now an `Instant` is converted
+  to its ISO-8601 string (matchable by string conditions), integral numbers are preserved as `Integer` instead of being
+  coerced to `Double`, and lists/structures — which Optimizely cannot match — are dropped rather than poisoning every
+  condition. Additionally, `decide()` now extracts the targeting key and checks provider readiness **before** normalizing
+  attributes, so the not-ready / missing-key / invalid short-circuits no longer pay for a full attribute conversion whose
+  result is discarded.
+
 - **`OptimizelyFeatureProvider` lifecycle robustness** (#265). Three fixes to the provider's init/shutdown state machine:
   (1) a failed `initialize` (datafile timeout, invalid config, handler-registration failure) previously left the
   provider in a state where a retry silently no-op'd — the SDK treated the non-throwing retry as success and emitted

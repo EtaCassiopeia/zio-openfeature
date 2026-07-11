@@ -28,6 +28,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **BREAKING: per-evaluation timeout is now an `EvaluationTimeout` ADT** (#251). `EvaluationOptions.timeout` changed from
+  `Option[Duration]` to `EvaluationTimeout` (`Default` | `Disabled` | `After(d)`), so a single call can now express
+  "no timeout" — previously impossible (`None` fell through to the global default, whose only escape was
+  `withTimeout(365.days)`). `EvaluationOptions.empty.withTimeout(d)` still bounds a call; new `.withoutTimeout` disables
+  it and skips the timeout scaffolding (a per-call fiber + timer race) entirely, which matters for microsecond-latency
+  in-memory providers. The 1-second default (applied to every evaluation unless overridden — a real behavioral cliff for
+  cold-start remote providers) is now documented prominently, and the `EvaluationOptions` doc that wrongly claimed the
+  default was "no timeout" is corrected. Migration: code that set `timeout = Some(d)` / `None` directly should use
+  `.withTimeout(d)` / `.withoutTimeout` (or `EvaluationTimeout.After(d)` / `Disabled` / `Default`).
+
 - **BREAKING: `FeatureHook.before` no longer returns hook hints** (#247). Its signature changed from
   `UIO[Option[(EvaluationContext, HookHints)]]` to `UIO[Option[EvaluationContext]]`, so a `before` hook can modify the
   evaluation context but can no longer alter the hook hints seen by later hooks and stages — hints are now immutable

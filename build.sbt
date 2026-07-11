@@ -4,7 +4,7 @@ import net.nmoncho.sbt.dependencycheck.settings._
 val scala213Version       = "2.13.16"
 val scala3Version         = "3.3.4"
 val zioVersion            = "2.1.14"
-val zioBddVersion         = "1.4.1"
+val zioBddVersion         = "1.4.2"
 val openFeatureSdkVersion = "1.21.0"
 
 // OpenFeature Specification Compatibility

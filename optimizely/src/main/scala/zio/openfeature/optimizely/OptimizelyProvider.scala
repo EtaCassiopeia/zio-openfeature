@@ -63,13 +63,20 @@ import java.util.concurrent.TimeUnit
   *   effectively none) can tune this instead of hand-rolling client construction.
   * @param blockingTimeout
   *   Upper bound on the SDK's internal blocking `getConfig()` waits; `None` uses the SDK default (10 seconds)
+  * @param staleAfter
+  *   Staleness watchdog threshold (#267). After the provider is READY, if datafile poll fetches stop succeeding for
+  *   this long the provider transitions to `PROVIDER_STALE` (and back to `PROVIDER_READY` once fetches resume). The
+  *   watchdog is only active when datafile polling is enabled (`pollingInterval` is `Some`) — with polling off there is
+  *   nothing to observe and no watchdog runs. When polling is on and this is `None`, the threshold defaults to `3 ×
+  *   pollingInterval`. Must be positive.
   */
 final case class OptimizelyProviderConfig(
   sdkKey: String,
   datafileUrl: Option[String] = None,
   initWait: java.time.Duration = OptimizelyProvider.DefaultInitWait,
   pollingInterval: Option[java.time.Duration] = None,
-  blockingTimeout: Option[java.time.Duration] = None
+  blockingTimeout: Option[java.time.Duration] = None,
+  staleAfter: Option[java.time.Duration] = None
 )
 
 object OptimizelyProvider {
@@ -130,15 +137,41 @@ object OptimizelyProvider {
       }
       _ <- validatePositive("pollingInterval", config.pollingInterval)
       _ <- validatePositive("blockingTimeout", config.blockingTimeout)
+      _ <- validatePositive("staleAfter", config.staleAfter)
+      // The watchdog observes datafile fetches, so it only makes sense when datafile polling is enabled. When it is,
+      // the fetch-success signal is shared between the observing HTTP client (below) and the provider's watchdog.
+      staleness = stalenessConfig(config)
+      observer  = staleness.map(_.observer)
       pair <- ZIO
-        .attempt(buildClient(validKey, validUrl, config.pollingInterval, config.blockingTimeout, httpClient))
+        .attempt(buildClient(validKey, validUrl, config.pollingInterval, config.blockingTimeout, httpClient, observer))
         .mapError(t => FeatureFlagError.InvalidConfiguration(s"Optimizely client build failed: ${t.getMessage}"))
     } yield new OptimizelyFeatureProvider(
       pair._1,
       config.initWait,
       closeOnShutdown = true,
-      configManager = Some(pair._2)
+      configManager = Some(pair._2),
+      staleness = staleness
     )
+
+  /** Derive the staleness watchdog configuration from a provider config, or `None` when the watchdog is disabled.
+    *
+    * The watchdog is enabled iff datafile polling is on (`pollingInterval` is `Some`) — with polling off there are no
+    * fetches to observe. When on, the staleness threshold is `staleAfter` if given, else `3 × pollingInterval`. The
+    * check interval is the smaller of one polling interval and half the threshold (so staleness is detected within
+    * roughly one poll of the window elapsing), floored at 1ms.
+    */
+  private def stalenessConfig(
+    config: OptimizelyProviderConfig
+  ): Option[OptimizelyFeatureProvider.StalenessConfig] =
+    config.pollingInterval.map { poll =>
+      val staleAfter = config.staleAfter.getOrElse(poll.multipliedBy(3))
+      val checkMs    = math.max(1L, math.min(poll.toMillis, staleAfter.toMillis / 2))
+      OptimizelyFeatureProvider.StalenessConfig(
+        new OptimizelyFeatureProvider.FetchObserver,
+        staleAfter,
+        java.time.Duration.ofMillis(checkMs)
+      )
+    }
 
   /** [[make]] with scope-managed shutdown: when the surrounding `Scope` closes, the provider is shut down (bounded),
     * stopping datafile polling and closing the SDK's HTTP client — even if the provider was never registered with a
@@ -213,7 +246,11 @@ object OptimizelyProvider {
     blockingTimeout: Option[java.time.Duration],
     // Test seam (see the `private[optimizely]` overloads below): inject a custom HTTP client. Production callers
     // never set this, so the SDK builds its default client.
-    httpClient: Option[com.optimizely.ab.OptimizelyHttpClient]
+    httpClient: Option[com.optimizely.ab.OptimizelyHttpClient],
+    // Present when the staleness watchdog is enabled: the HTTP client is wrapped so every successful datafile fetch
+    // advances this observer's timestamp (#267). Wrapping preserves the wrapped client's exact behaviour — for the
+    // production path that is the SDK default client, so nothing about how fetches are performed changes.
+    fetchObserver: Option[OptimizelyFeatureProvider.FetchObserver]
   ): (Optimizely, HttpProjectConfigManager) = {
     // Share a single NotificationCenter between the polling config manager and the Optimizely client. Without this,
     // the manager fires UpdateConfigNotification on its own private NotificationCenter and handlers registered via
@@ -230,7 +267,22 @@ object OptimizelyProvider {
     blockingTimeout.foreach(d =>
       configBuilder.withBlockingTimeout(java.lang.Long.valueOf(d.toMillis), TimeUnit.MILLISECONDS)
     )
-    httpClient.foreach(configBuilder.withOptimizelyHttpClient)
+    // Choose the HTTP client the config manager polls with, wrapping it to observe fetch outcomes when the watchdog
+    // is enabled:
+    //   - watchdog on, no injected client  -> observe the SDK's default client (production staleness path)
+    //   - watchdog on, injected client      -> observe the injected client (test seam still observed)
+    //   - watchdog off, injected client     -> use the injected client as-is
+    //   - watchdog off, no injected client  -> leave it unset so the SDK builds its own default (unchanged behaviour)
+    val effectiveHttpClient: Option[com.optimizely.ab.OptimizelyHttpClient] = fetchObserver match {
+      case Some(observer) =>
+        val onSuccess: Runnable = () => observer.recordSuccess()
+        Some(httpClient match {
+          case Some(injected) => com.optimizely.ab.ObservingOptimizelyHttpClient.wrapping(injected, onSuccess)
+          case None           => com.optimizely.ab.ObservingOptimizelyHttpClient.wrappingDefault(onSuccess)
+        })
+      case None => httpClient
+    }
+    effectiveHttpClient.foreach(configBuilder.withOptimizelyHttpClient)
     // `build()` (no-arg) would block construction up to the SDK's blocking timeout (default 10s) waiting for the
     // first datafile — with an unreachable CDN, construction stalls. `build(true)` skips that blocking wait, but
     // `HttpProjectConfigManager.Builder.build(boolean)` calls `start()` unconditionally either way (there's no

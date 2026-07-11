@@ -14,8 +14,8 @@ import dev.openfeature.sdk.{
   Structure,
   Value
 }
-import java.util.concurrent.atomic.{AtomicInteger, AtomicReference}
-import java.util.concurrent.{CountDownLatch, TimeUnit}
+import java.util.concurrent.atomic.{AtomicInteger, AtomicLong, AtomicReference}
+import java.util.concurrent.{CountDownLatch, Executors, ScheduledExecutorService, ThreadFactory, TimeUnit}
 import scala.jdk.CollectionConverters._
 import scala.util.Try
 
@@ -60,7 +60,11 @@ final class OptimizelyFeatureProvider private[optimizely] (
   // Present for factory-built providers: datafile polling is deliberately NOT running at construction
   // (see OptimizelyProvider.buildClient); initialize() starts it, and shutdown() stops it via
   // Optimizely.close(). Caller-managed clients (fromOptimizelyClient) own their polling lifecycle.
-  configManager: Option[com.optimizely.ab.config.HttpProjectConfigManager] = None
+  configManager: Option[com.optimizely.ab.config.HttpProjectConfigManager] = None,
+  // Present only when the staleness watchdog is enabled (factory-built providers with datafile polling on).
+  // When defined, initialize() starts a background daemon that flips READY <-> STALE based on whether datafile
+  // fetches keep succeeding (see the watchdog section below and issue #267). None = watchdog disabled.
+  staleness: Option[OptimizelyFeatureProvider.StalenessConfig] = None
 ) extends EventProvider {
 
   // Public construction is via the OptimizelyProvider factory in this package — the constructor is private to keep
@@ -73,6 +77,9 @@ final class OptimizelyFeatureProvider private[optimizely] (
   private val notificationHandle = new AtomicInteger(-1)
   // Replaced on re-initialization (caller-managed clients only); each init cycle gets a single-use latch.
   private val initLatchRef = new AtomicReference(new CountDownLatch(1))
+  // The staleness watchdog's scheduled executor, or null when no watchdog is running. Held so shutdown()/failInitialize
+  // can cancel it — its thread is a daemon, so even a missed cancel can never keep the JVM alive.
+  private val watchdogRef = new AtomicReference[ScheduledExecutorService](null)
 
   @scala.annotation.nowarn("msg=deprecated")
   override def getMetadata: Metadata = new Metadata {
@@ -165,6 +172,18 @@ final class OptimizelyFeatureProvider private[optimizely] (
       // lifecycle = ShutDown first thing, so if it did, revert to NOT_READY rather than report READY on a
       // shut-down provider.
       if (lifecycle.get() != Lifecycle.Initialized) stateRef.set(ProviderState.NOT_READY)
+      else
+        // Start the staleness watchdog only after the provider has genuinely reached READY (never before, so we can't
+        // emit STALE ahead of PROVIDER_READY). Reseed the fetch baseline to now: the initial datafile load just
+        // succeeded, so staleness is measured from this known-good point rather than the observer's construction time.
+        staleness.foreach { cfg =>
+          cfg.observer.reset()
+          startWatchdog(cfg)
+          // A shutdown that interleaved after we set READY may have run stopWatchdog() before this executor existed
+          // (watchdogRef was still null, so it cancelled nothing). Re-check and cancel the just-started executor so it
+          // can't leak — mirrors #265's post-CAS shutdown guards.
+          if (lifecycle.get() != Lifecycle.Initialized) stopWatchdog()
+        }
     } else
       failInitialize(
         "Optimizely client reported invalid configuration after datafile load (possible auth or parse failure)"
@@ -176,6 +195,7 @@ final class OptimizelyFeatureProvider private[optimizely] (
     * ERROR) so a subsequent `initialize()` cleanly re-attempts instead of silently no-op'ing, then throw.
     */
   private def failInitialize(msg: String): Nothing = {
+    stopWatchdog()
     val handle = notificationHandle.getAndSet(-1)
     if (handle > 0) {
       Try(optimizely.getNotificationCenter.removeNotificationListener(handle))
@@ -187,7 +207,10 @@ final class OptimizelyFeatureProvider private[optimizely] (
   }
 
   override def shutdown(): Unit = {
+    // Set ShutDown first so any watchdog tick already in flight sees it and won't emit STALE/READY after teardown,
+    // then cancel the watchdog thread before touching the underlying client.
     lifecycle.set(Lifecycle.ShutDown)
+    stopWatchdog()
     val handle = notificationHandle.getAndSet(-1)
     if (handle > 0) {
       // Removing the handler is best-effort; if the notification center is already shut down we ignore.
@@ -197,6 +220,61 @@ final class OptimizelyFeatureProvider private[optimizely] (
     if (closeOnShutdown) Try(optimizely.close())
     stateRef.set(ProviderState.NOT_READY)
   }
+
+  // Staleness watchdog (#267)
+  //
+  // The Optimizely SDK's config-changed notification fires only when the datafile actually CHANGES, so it cannot tell
+  // "polling still succeeding but datafile unchanged" from "polling failing". Instead the observing HTTP client (see
+  // com.optimizely.ab.ObservingOptimizelyHttpClient) stamps a timestamp on every successful datafile fetch, and this
+  // watchdog periodically checks how long it has been since the last success. If that exceeds `staleAfter` it flips
+  // the provider READY -> STALE and emits PROVIDER_STALE; once fetches resume it flips STALE -> READY and emits
+  // PROVIDER_READY. STALE is an evaluable state — the provider keeps serving the last-known datafile (see `decide`).
+
+  private def startWatchdog(cfg: OptimizelyFeatureProvider.StalenessConfig): Unit = {
+    val exec = Executors.newSingleThreadScheduledExecutor(OptimizelyFeatureProvider.watchdogThreadFactory)
+    // Only one watchdog runs at a time. A re-init while one is already running keeps the existing one (CAS fails, and
+    // we discard the freshly-created executor); shutdown()/failInitialize null the ref so the next init starts fresh.
+    if (watchdogRef.compareAndSet(null, exec)) {
+      val periodMs = math.max(1L, cfg.checkInterval.toMillis)
+      // scheduleWithFixedDelay (not fixedRate) so ticks never pile up if one is slow; each tick is trivial anyway.
+      exec.scheduleWithFixedDelay(() => watchdogTick(cfg), periodMs, periodMs, TimeUnit.MILLISECONDS)
+      ()
+    } else exec.shutdownNow(): Unit
+  }
+
+  private def stopWatchdog(): Unit = {
+    val exec = watchdogRef.getAndSet(null)
+    if (exec != null) exec.shutdownNow(): Unit
+  }
+
+  private def watchdogTick(cfg: OptimizelyFeatureProvider.StalenessConfig): Unit =
+    // Guard the whole tick: `scheduleWithFixedDelay` silently cancels all future ticks if a run throws, which would
+    // wedge the provider (e.g. stuck STALE, never recovering). Swallowing here keeps the loop self-healing.
+    try tick(cfg)
+    catch { case scala.util.control.NonFatal(_) => () }
+
+  private def tick(cfg: OptimizelyFeatureProvider.StalenessConfig): Unit =
+    // Never fight the #265 lifecycle state machine: only act while genuinely Initialized. If a shutdown or failed init
+    // has moved us elsewhere, do nothing — those paths own the state and the executor is being cancelled anyway.
+    if (lifecycle.get() == Lifecycle.Initialized) {
+      val idleNanos = System.nanoTime() - cfg.observer.lastSuccessNanos
+      if (idleNanos >= cfg.staleAfter.toNanos) {
+        // Datafile fetches have not succeeded within the window -> mark STALE exactly once (CAS off READY) and signal.
+        if (stateRef.compareAndSet(ProviderState.READY, ProviderState.STALE)) {
+          if (lifecycle.get() == Lifecycle.Initialized)
+            emitProviderStale(ProviderEventDetails.builder().build()): Unit
+          // A shutdown interleaved after our CAS: let its NOT_READY win rather than leave the provider STALE.
+          else stateRef.compareAndSet(ProviderState.STALE, ProviderState.NOT_READY): Unit
+        }
+      } else {
+        // A fresh successful fetch landed -> recover STALE -> READY exactly once and signal.
+        if (stateRef.compareAndSet(ProviderState.STALE, ProviderState.READY)) {
+          if (lifecycle.get() == Lifecycle.Initialized)
+            emitProviderReady(ProviderEventDetails.builder().build()): Unit
+          else stateRef.compareAndSet(ProviderState.READY, ProviderState.NOT_READY): Unit
+        }
+      }
+    }
 
   override def getBooleanEvaluation(
     key: String,
@@ -328,7 +406,10 @@ final class OptimizelyFeatureProvider private[optimizely] (
     // NOT_READY / missing-key / invalid short-circuits don't pay for a full attribute conversion whose result is
     // discarded (#266).
     val userId = ContextTransformer.userId(ctx)
-    if (stateRef.get() != ProviderState.READY) Left("PROVIDER_NOT_READY")
+    val state  = stateRef.get()
+    // STALE is an evaluable state per OpenFeature semantics: the provider keeps serving the last-known (aging)
+    // datafile while the watchdog waits for polling to recover. Only genuinely non-ready states short-circuit.
+    if (state != ProviderState.READY && state != ProviderState.STALE) Left("PROVIDER_NOT_READY")
     else if (userId.isEmpty) Left("TARGETING_KEY_MISSING")
     else if (!Try(optimizely.isValid).getOrElse(false)) Left("PROVIDER_NOT_READY")
     else
@@ -386,6 +467,49 @@ final class OptimizelyFeatureProvider private[optimizely] (
 
 object OptimizelyFeatureProvider {
   val Name: String = "Optimizely"
+
+  /** Tracks the `System.nanoTime()` instant of the last successful Optimizely datafile fetch. Updated by the observing
+    * HTTP client (`com.optimizely.ab.ObservingOptimizelyHttpClient`) on every fetch that returns HTTP status &lt; 400,
+    * and read by the staleness watchdog. Seeded to construction time so there is always a sane baseline; `initialize()`
+    * reseeds it the moment the provider reaches READY.
+    */
+  final private[optimizely] class FetchObserver {
+    private val lastSuccess = new AtomicLong(System.nanoTime())
+
+    /** Called by the observing HTTP client on each successful datafile fetch. */
+    def recordSuccess(): Unit = lastSuccess.set(System.nanoTime())
+
+    /** Reseed the baseline to now — used when the provider announces READY so staleness is measured from a known-good
+      * point rather than the observer's construction time.
+      */
+    def reset(): Unit = lastSuccess.set(System.nanoTime())
+
+    def lastSuccessNanos: Long = lastSuccess.get()
+  }
+
+  /** Everything the staleness watchdog needs. Present only when the watchdog is enabled (datafile polling on).
+    *
+    * @param observer
+    *   the fetch-success signal, shared with the observing HTTP client
+    * @param staleAfter
+    *   how long without a successful fetch before the provider is declared STALE
+    * @param checkInterval
+    *   how often the watchdog re-evaluates staleness
+    */
+  final private[optimizely] case class StalenessConfig(
+    observer: FetchObserver,
+    staleAfter: java.time.Duration,
+    checkInterval: java.time.Duration
+  )
+
+  /** Daemon thread factory for the watchdog. Daemon so a leaked watchdog can never keep the JVM (or a forked test run)
+    * alive — this repo is sensitive to non-daemon thread leaks (see the pre-push hook and #217/#229).
+    */
+  private val watchdogThreadFactory: ThreadFactory = (r: Runnable) => {
+    val t = new Thread(r, "optimizely-staleness-watchdog")
+    t.setDaemon(true)
+    t
+  }
 
   /** Provider lifecycle: `Fresh -> Initialized -> ShutDown`, plus `ShutDown -> Initialized` for caller-managed clients
     * and `Failed -> Initialized` for a clean retry after a failed init. Tracked explicitly (instead of a boolean) so

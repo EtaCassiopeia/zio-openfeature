@@ -174,6 +174,9 @@ lazy val optimizely = (project in file("optimizely"))
     commonSettings,
     libraryDependencies ++= Seq(
       "dev.zio"          %% "zio"                  % zioVersion,
+      // NOTE: on a core-api/core-httpclient upgrade, re-verify `com/optimizely/ab/ObservingOptimizelyHttpClient.java`
+      // — it lives in the `com.optimizely.ab` package to reach the package-private `OptimizelyHttpClient` ctor and
+      // `getHttpClient()` (the staleness fetch-observation seam for #267). A version bump breaks it at compile time.
       "com.optimizely.ab" % "core-api"             % "4.2.2",
       "com.optimizely.ab" % "core-httpclient-impl" % "4.2.2",
       "org.wiremock"      % "wiremock"             % "3.10.0" % Test

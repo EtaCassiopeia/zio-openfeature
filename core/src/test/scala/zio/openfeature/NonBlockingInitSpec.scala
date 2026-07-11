@@ -200,11 +200,12 @@ object NonBlockingInitSpec extends ZIOSpecDefault {
     ) {
       val fallback = ZIO.succeed[FeatureProvider](new FixedBoolProvider("fb", false))
       for {
-        released <- Ref.make(0)
-        acquired <- Promise.make[Nothing, Unit]
+        released  <- Ref.make(0)
+        acquired  <- Promise.make[Nothing, Unit]
+        releasedP <- Promise.make[Nothing, Unit]
         acquire: RIO[Scope, FeatureProvider] = ZIO
           .acquireRelease(acquired.succeed(()).as(new FixedBoolProvider("real", true): FeatureProvider))(_ =>
-            released.update(_ + 1)
+            released.update(_ + 1) *> releasedP.succeed(()).unit
           )
           .zipRight(ZIO.never)
         _ <- ZIO.scoped {
@@ -212,6 +213,11 @@ object NonBlockingInitSpec extends ZIOSpecDefault {
             acquired.await // return (and close the scope) once the real provider has been acquired
           }
         }
+        // finalizer runs on the interrupted background fiber; await it (don't race scope-close). Bounded via
+        // Live (the default TestClock is frozen) so a regression that skips the finalizer fails fast, not hangs.
+        _ <- Live.live(
+          releasedP.await.timeoutFail(new RuntimeException("AC4: release finalizer did not run"))(5.seconds)
+        )
         r <- released.get
       } yield assertTrue(r == 1)
     },

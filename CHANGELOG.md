@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Total (never-fails) evaluation variants** (#256, spec §1.4.10 / §1.1.7). `booleanOrDefault`, `stringOrDefault`,
+  `intOrDefault`, `longOrDefault`, `doubleOrDefault`, `objOrDefault`, and `valueOrDefault[A]` return `UIO[A]` — they never
+  fail, absorbing any evaluation error into the supplied default, matching the spec's promise that evaluation "MUST NOT
+  throw ... always return the default value." A `resolveOrDefault[A]` details variant returns `UIO[FlagResolution[A]]`
+  with `reason = Error` and `errorCode`/`errorMessage` populated, so callers can still see why the default was served.
+  Both typed `FeatureFlagError`s and defects (unexpected exceptions) are absorbed (the opt-in "give me a value no matter
+  what" contract), while fiber interruption is always propagated so cancellation still works. Implemented once in the
+  `FeatureFlags` trait and exposed through matching companion accessors; the fallible methods are unchanged for callers
+  who want to handle errors.
+
 - **`FeatureFlags.transactionEither`** — a typed, cross-version transaction error channel (#255). On Scala 2.13,
   `transaction`'s error channel is `Compat.OrError[E, FeatureFlagError]`, which erases to `Any` (2.13 has no union
   types), disabling all typed recovery — `catchAll` yields an untyped value, `mapError`/`orElse` composition breaks, and

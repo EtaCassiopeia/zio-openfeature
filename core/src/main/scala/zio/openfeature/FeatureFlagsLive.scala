@@ -754,17 +754,33 @@ final private[openfeature] class FeatureFlagsLive(
     * cost is at-least-once delivery — an event arriving in that window may invoke the handler via both the immediate
     * check and the stream.
     */
+  // Isolate a handler invocation so a defect does NOT kill the delivery fiber — the subscription is retained and the
+  // handler keeps receiving subsequent events (spec 5.2.5). `suspendSucceed` is essential: it captures a *synchronous*
+  // throw while `handler(a)` is producing its effect (e.g. a raw exception thrown in the handler body before it returns
+  // a ZIO) as a defect, not just an already-suspended `ZIO.die`. Interruption is re-raised (not logged) so cancelling
+  // the subscription still tears the fiber down.
+  private def isolate[A](handler: A => UIO[Unit]): A => UIO[Unit] =
+    a =>
+      ZIO.suspendSucceed(handler(a)).catchAllCause { cause =>
+        cause.dieOption match {
+          case Some(_) => ZIO.logErrorCause("event handler failed; subscription retained", cause)
+          case None    => ZIO.refailCause(cause)
+        }
+      }
+
   private def subscribeToEvent[A](
     immediateCondition: ProviderStatus => Boolean,
     immediatePayload: => A,
     collect: PartialFunction[ProviderEvent, A],
     handler: A => UIO[Unit]
-  ): UIO[UIO[Unit]] =
+  ): UIO[UIO[Unit]] = {
+    val safe = isolate(handler)
     for {
-      cancel <- consumeEvents(_.collect(collect).foreach(handler))
+      cancel <- consumeEvents(_.collect(collect).foreach(safe))
       status <- providerStatus
-      _      <- ZIO.when(immediateCondition(status))(handler(immediatePayload))
+      _      <- ZIO.when(immediateCondition(status))(safe(immediatePayload))
     } yield cancel
+  }
 
   override def onProviderReady(handler: ProviderMetadata => UIO[Unit]): UIO[UIO[Unit]] =
     ZIO.succeed(providerNameRef.get()).flatMap { pName =>
@@ -799,26 +815,46 @@ final private[openfeature] class FeatureFlagsLive(
       )
     }
 
-  override def onConfigurationChanged(handler: (Set[String], ProviderMetadata) => UIO[Unit]): UIO[UIO[Unit]] =
-    // Configuration changed doesn't have an "associated state" so no immediate execution needed
-    consumeEvents(
-      _.collect { case ProviderEvent.ConfigurationChanged(flags, m, _) => (flags, m) }
-        .foreach { case (flags, m) => handler(flags, m) }
-    )
+  override def onConfigurationChanged(handler: (Set[String], ProviderMetadata) => UIO[Unit]): UIO[UIO[Unit]] = {
+    // Configuration changed doesn't have an "associated state" so no immediate execution needed.
+    val safe = isolate[(Set[String], ProviderMetadata)] { case (flags, m) => handler(flags, m) }
+    consumeEvents(_.collect { case ProviderEvent.ConfigurationChanged(flags, m, _) => (flags, m) }.foreach(safe))
+  }
 
-  override def on(eventType: ProviderEventType, handler: ProviderEvent => UIO[Unit]): UIO[UIO[Unit]] =
+  // The generic `on` delivers the ORIGINAL event from the stream (preserving every payload field — errorCode,
+  // errorMessage, eventMetadata, ...), not a narrowed reconstruction. Associated-state events (Ready/Error/Stale) still
+  // fire immediately when the provider is already in that state (spec 5.3.3), using a synthetic event that reflects the
+  // current state (there is no original event to replay for an already-reached state). All invocations are isolated.
+  override def on(eventType: ProviderEventType, handler: ProviderEvent => UIO[Unit]): UIO[UIO[Unit]] = {
+    val metadata = ProviderMetadata(providerNameRef.get())
     eventType match {
       case ProviderEventType.Ready =>
-        onProviderReady(m => handler(ProviderEvent.Ready(m)))
+        subscribeToEvent[ProviderEvent](
+          _ == ProviderStatus.Ready,
+          ProviderEvent.Ready(metadata),
+          { case e: ProviderEvent.Ready => e },
+          handler
+        )
       case ProviderEventType.Error =>
-        onProviderError((e, m) => handler(ProviderEvent.Error(e, m)))
+        subscribeToEvent[ProviderEvent](
+          s => s == ProviderStatus.Error || s == ProviderStatus.Fatal,
+          ProviderEvent.Error(new RuntimeException("Provider in error state"), metadata),
+          { case e: ProviderEvent.Error => e },
+          handler
+        )
       case ProviderEventType.Stale =>
-        onProviderStale((reason, m) => handler(ProviderEvent.Stale(reason, m)))
+        subscribeToEvent[ProviderEvent](
+          _ == ProviderStatus.Stale,
+          ProviderEvent.Stale("Provider in stale state", metadata),
+          { case e: ProviderEvent.Stale => e },
+          handler
+        )
       case ProviderEventType.ConfigurationChanged =>
-        onConfigurationChanged((flags, m) => handler(ProviderEvent.ConfigurationChanged(flags, m)))
+        consumeEvents(_.filter(_.eventType == ProviderEventType.ConfigurationChanged).foreach(isolate(handler)))
       case ProviderEventType.Reconnecting =>
-        consumeEvents(_.filter(_.eventType == ProviderEventType.Reconnecting).foreach(handler))
+        consumeEvents(_.filter(_.eventType == ProviderEventType.Reconnecting).foreach(isolate(handler)))
     }
+  }
 
   override def addHook(hook: FeatureHook): UIO[Unit] =
     state.hooksRef.update(_ :+ hook)

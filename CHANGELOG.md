@@ -51,6 +51,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Event-delivery fixes** (#250). Three defects in `FeatureFlagsLive`'s event system: (1) the generic
+  `on(eventType, handler)` rebuilt narrowed events from the typed callbacks, dropping payload fields (`errorCode`,
+  `errorMessage`, `eventMetadata`) — it now delivers the original event from the stream (spec §5.1.4/§5.2.4), while
+  associated-state events still fire immediately when the provider is already in that state. (2) A defect in an event
+  handler killed its delivery fiber and silently unsubscribed it; handler invocations are now isolated so a failure is
+  logged and the subscription is retained (spec §5.2.5). (3) The internal event hub was `Hub.dropping`, which discards
+  the *newest* event on overflow and could hide the latest `ConfigurationChanged` (whose `changedFlags` aren't
+  reconstructible from status); it is now `Hub.sliding`, which discards the oldest so the newest always arrives
+  (spec §5.1.2).
+
 - **Int-range `Long` values are no longer silently coerced to `Double`** (#249). At several layers a `Long` was mapped
   to `Double`, so even small longs reached providers as `Double` (breaking `instanceof Integer` targeting rules) and a
   long-typed flag evaluated through the provider's double resolver could `TYPE_MISMATCH`. Now an int-range `Long` is

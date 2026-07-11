@@ -3,6 +3,7 @@ package zio.openfeature.extras
 import zio._
 import zio.test._
 import dev.openfeature.sdk.ImmutableContext
+import dev.openfeature.sdk.exceptions.ParseError
 
 object EnvVarProviderSpec extends ZIOSpecDefault {
 
@@ -12,7 +13,8 @@ object EnvVarProviderSpec extends ZIOSpecDefault {
     "FF_RATE_LIMIT"   -> "2.5",
     "FF_WELCOME_MSG"  -> "Hello!",
     "FF_DISABLED"     -> "false",
-    "FF_BAD_NUMBER"   -> "not-a-number"
+    "FF_BAD_NUMBER"   -> "not-a-number",
+    "FF_BAD_BOOL"     -> "enabled"
   )
 
   private val provider = EnvVarProvider.withLookup(testEnv.get)
@@ -33,6 +35,13 @@ object EnvVarProviderSpec extends ZIOSpecDefault {
         val result = provider.getBooleanEvaluation("missing", true, ctx)
         assertTrue(result.getValue == true) &&
         assertTrue(result.getReason == "DEFAULT")
+      },
+      test("throws ParseError for a set-but-unparseable value (#262)") {
+        // Previously this returned the default labeled STATIC, falsely claiming it came from the environment.
+        ZIO
+          .attempt(provider.getBooleanEvaluation("bad-bool", false, ctx))
+          .flip
+          .map(e => assertTrue(e.isInstanceOf[ParseError]))
       }
     ),
     suite("string evaluation")(
@@ -50,15 +59,25 @@ object EnvVarProviderSpec extends ZIOSpecDefault {
         val result = provider.getIntegerEvaluation("max-items", 10, ctx)
         assertTrue(result.getValue == 50)
       },
-      test("returns default for unparseable value") {
-        val result = provider.getIntegerEvaluation("bad-number", 10, ctx)
-        assertTrue(result.getValue == 10)
+      test("throws ParseError for a set-but-unparseable value (#262)") {
+        // Set-but-unparsable must surface as PARSE_ERROR, not silently collapse to the default (which is
+        // indistinguishable from the variable being unset).
+        ZIO
+          .attempt(provider.getIntegerEvaluation("bad-number", 10, ctx))
+          .flip
+          .map(e => assertTrue(e.isInstanceOf[ParseError]))
       }
     ),
     suite("double evaluation")(
       test("returns parsed double") {
         val result = provider.getDoubleEvaluation("rate-limit", 1.0, ctx)
         assertTrue(result.getValue == 2.5)
+      },
+      test("throws ParseError for a set-but-unparseable value (#262)") {
+        ZIO
+          .attempt(provider.getDoubleEvaluation("bad-number", 1.0, ctx))
+          .flip
+          .map(e => assertTrue(e.isInstanceOf[ParseError]))
       }
     ),
     suite("key transformation")(

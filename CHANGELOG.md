@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`EnvVarProvider` surfaces parse failures instead of swallowing them** (#262). A set-but-unparsable environment
+  variable was indistinguishable from an unset one: the integer/double paths collapsed a parse failure to the default
+  with reason `DEFAULT`, and the boolean path was worse — it returned the default labeled `STATIC`, falsely claiming the
+  value came from the environment (so `FF_NEW_CHECKOUT=enabled` silently ran on the code default). A set-but-unparsable
+  boolean/integer/double value now throws `ParseError`, which the SDK surfaces as a `PARSE_ERROR` evaluation (the zio
+  layer maps it to a typed `ParseError`) instead of hiding the misconfiguration. An unset variable still returns the
+  default with reason `DEFAULT`.
+
 - **`CachingProvider` and `CircuitBreakerProvider` now forward the delegate's provider hooks and tracking** (#261).
   Neither wrapper overrode `getProviderHooks` or `track`, so both inherited the Java SDK's no-op defaults: wrapping a
   provider that ships provider hooks (telemetry/validation) silently dropped them, and `client.track(...)` was silently

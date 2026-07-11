@@ -233,35 +233,62 @@ final private[openfeature] class FeatureFlagsLive(
   ): IO[FeatureFlagError, FlagResolution[A]] = {
     val composedHook = FeatureHook.compose(hooks)
 
-    for {
-      beforeResult <- composedHook.before(hookCtx, initialHints)
-      (effectiveCtx, hints) = beforeResult match {
-        case Some((modifiedCtx, h)) => (modifiedCtx, h)
-        case None                   => (context, initialHints)
-      }
-      // Per spec §4.3.5-4.3.8, after/error/finally stages must observe the evaluation context as modified
-      // by the before hooks, not the original one. finallyAfter runs on every exit (success, failure,
-      // interruption); the resolution is read straight off the Exit rather than smuggled through a
-      // per-evaluation Ref.
-      stageCtx = hookCtx.copy(evaluationContext = effectiveCtx)
-      result <- evaluate(effectiveCtx)
-        .tapBoth(
-          err => composedHook.error(stageCtx, err, hints),
-          // A resolution can be returned and still represent an error (FLAG_NOT_FOUND, TYPE_MISMATCH, ...): the Java
-          // SDK surfaces those as a default value plus an error code rather than a thrown error. Per spec §4.4.6 the
-          // `error` stage must observe such evaluations, so we run `after` (the resolution was returned) and, when it
-          // carries an error code, also `error`.
-          res =>
-            composedHook.after(stageCtx, res, hints) *>
-              ZIO.foreachDiscard(res.errorCode)(code =>
-                composedHook.error(stageCtx, errorFromResolution(res.flagKey, code, res.errorMessage), hints)
-              )
+    // `finallyAfter` must run on EVERY exit — including an interruption of `before` itself — so it is attached as one
+    // outer `onExit` wrapping the whole pipeline (an `onExit` nested inside the foldCauseZIO branches would be skipped
+    // when `before` is interrupted before that branch's effect is even entered). Per spec §4.3.5-4.3.8 the finally
+    // stage must observe the context as modified by the before hooks; that modified `(ctx, hints)` is recorded in a Ref
+    // once `before` succeeds, so the outer finalizer uses it, falling back to the original context when `before` never
+    // completed.
+    Ref.make((hookCtx, initialHints)).flatMap { finallyCtxRef =>
+      composedHook
+        .before(hookCtx, initialHints)
+        .foldCauseZIO(
+          // `before` is a UIO, so a non-success cause is a Die or an Interrupt. Only a Die is abnormal execution that
+          // runs the `error` stage (spec §4.3.8/§4.4.7) — a pure interruption (timeout / scope-close) is a cancellation,
+          // not a hook failure, so it must not be reported to `error`. The original cause is always preserved: even if
+          // the `error` stage itself defects, its cause is combined with (never replaces) `beforeCause`.
+          beforeCause =>
+            beforeCause.dieOption match {
+              case Some(defect) =>
+                composedHook
+                  .error(hookCtx, FeatureFlagError.ProviderError(defect), initialHints)
+                  .foldCauseZIO(
+                    errCause => ZIO.refailCause(beforeCause ++ errCause),
+                    _ => ZIO.refailCause(beforeCause)
+                  )
+              case None => ZIO.refailCause(beforeCause)
+            },
+          beforeResult => {
+            val (effectiveCtx, hints) = beforeResult match {
+              case Some((modifiedCtx, h)) => (modifiedCtx, h)
+              case None                   => (context, initialHints)
+            }
+            val stageCtx = hookCtx.copy(evaluationContext = effectiveCtx)
+            finallyCtxRef.set((stageCtx, hints)) *>
+              evaluate(effectiveCtx)
+                .tapBoth(
+                  err => composedHook.error(stageCtx, err, hints),
+                  // A returned resolution can still be *abnormal* execution — it carries an error code (FLAG_NOT_FOUND,
+                  // TYPE_MISMATCH, ...) that the Java SDK surfaces as a default value plus a code rather than a throw.
+                  // Per spec §4.3.6/§4.4.6 that is the `error` stage's domain, NOT `after`: run `error` for an
+                  // error-code resolution and `after` only for a clean one.
+                  res =>
+                    res.errorCode match {
+                      case Some(code) =>
+                        composedHook.error(stageCtx, errorFromResolution(res.flagKey, code, res.errorMessage), hints)
+                      case None =>
+                        composedHook.after(stageCtx, res, hints)
+                    }
+                )
+          }
         )
         .onExit { exit =>
-          val details: Option[FlagResolution[_]] = exit.foldExit(_ => None, res => Some(res))
-          composedHook.finallyAfter(stageCtx, details, hints)
+          finallyCtxRef.get.flatMap { case (ctx, hints) =>
+            val details: Option[FlagResolution[_]] = exit.foldExit(_ => None, res => Some(res))
+            composedHook.finallyAfter(ctx, details, hints)
+          }
         }
-    } yield result
+    }
   }
 
   /** Reconstruct a typed error from a resolution that carries an error code, so the `error` hook stage can observe a

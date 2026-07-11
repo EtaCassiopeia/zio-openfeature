@@ -105,9 +105,13 @@ final class HoconProvider private (
       case ConfigValueType.NUMBER =>
         cv.unwrapped() match {
           case i: java.lang.Integer => new Value(i.intValue())
-          case l: java.lang.Long    => new Value(l.doubleValue())
-          case d: java.lang.Double  => new Value(d)
-          case other                => new Value(other.toString)
+          // int-range long → Integer so it keeps an integer type (matching provider `instanceof Integer` targeting),
+          // rather than a Double; out-of-int-range longs fall back to Double (lossy beyond 2^53). Mostly defensive:
+          // HOCON parses int-range numbers as Integer already, so this branch typically sees only large values.
+          case l: java.lang.Long =>
+            if (l.longValue().isValidInt) new Value(l.intValue()) else new Value(l.doubleValue())
+          case d: java.lang.Double => new Value(d)
+          case other               => new Value(other.toString)
         }
       case ConfigValueType.STRING => new Value(cv.unwrapped().asInstanceOf[String])
       case ConfigValueType.OBJECT =>

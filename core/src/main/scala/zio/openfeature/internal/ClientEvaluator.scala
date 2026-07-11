@@ -113,7 +113,9 @@ private[openfeature] object ClientEvaluator {
       details.getValue.asInstanceOf[java.lang.Integer].intValue()
   }
 
-  // Long uses Double SDK method (exact integers up to 2^53)
+  // An int-range long routes through the SDK's Integer method so a flag stored as an integer resolves against the
+  // provider's integer resolver (rather than its double resolver, which can TYPE_MISMATCH). Out-of-int-range longs
+  // still use the Double method (exact for integers up to 2^53). `extractValue` accepts either numeric result.
   implicit val longEvaluator: ClientEvaluator[Long] = new ClientEvaluator[Long] {
     def evaluate(
       client: OFClient,
@@ -121,12 +123,13 @@ private[openfeature] object ClientEvaluator {
       default: Long,
       context: dev.openfeature.sdk.EvaluationContext
     ): Task[FlagEvaluationDetails[_]] =
-      ZIO.attemptBlocking(
-        client.getDoubleDetails(key, java.lang.Double.valueOf(default.toDouble), context)
-      )
+      if (default.isValidInt)
+        ZIO.attemptBlocking(client.getIntegerDetails(key, Integer.valueOf(default.toInt), context))
+      else
+        ZIO.attemptBlocking(client.getDoubleDetails(key, java.lang.Double.valueOf(default.toDouble), context))
 
     def extractValue(details: FlagEvaluationDetails[_]): Long =
-      details.getValue.asInstanceOf[java.lang.Double].longValue()
+      details.getValue.asInstanceOf[java.lang.Number].longValue()
   }
 
   // Float uses Double SDK method with conversion

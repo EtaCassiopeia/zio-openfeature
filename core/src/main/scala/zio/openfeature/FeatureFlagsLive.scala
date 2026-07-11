@@ -644,8 +644,13 @@ final private[openfeature] class FeatureFlagsLive(
     ctx: EvaluationContext,
     options: EvaluationOptions
   ): IO[FeatureFlagError, FlagResolution[A]] = {
-    // Per-call timeout overrides global; None means no timeout (backward compatible)
-    val timeout = options.timeout.orElse(evaluationTimeout)
+    // Resolve the per-call selection against the instance's global timeout. `After` and `Disabled` override the global;
+    // `Default` defers to it. The result is `Option[Duration]` (None => skip the timeout scaffolding entirely).
+    val timeout = options.timeout match {
+      case EvaluationTimeout.After(d) => Some(d)
+      case EvaluationTimeout.Disabled => None
+      case EvaluationTimeout.Default  => evaluationTimeout
+    }
     effectiveContext(ctx).flatMap { effectCtx =>
       runWithHooks(
         key,

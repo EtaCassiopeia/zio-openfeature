@@ -279,21 +279,24 @@ You can also set a timeout on individual evaluations via `EvaluationOptions`, wh
 
 ```scala
 // This evaluation times out after 100ms, regardless of the global setting
-val result = ff.booleanDetails(
-  "flag",
-  default = false,
-  options = EvaluationOptions.empty.withTimeout(100.millis)
-)
+val bounded = ff.booleanDetails("flag", default = false, options = EvaluationOptions.empty.withTimeout(100.millis))
+
+// This evaluation runs with NO timeout, regardless of the global setting (and skips the timeout scaffolding)
+val unbounded = ff.booleanDetails("flag", default = false, options = EvaluationOptions.empty.withoutTimeout)
 ```
+
+`EvaluationOptions.timeout` is an `EvaluationTimeout` — `Default` (defer to the instance global), `Disabled` (via
+`withoutTimeout`), or `After(d)` (via `withTimeout(d)`).
 
 | Setting | Scope | Default |
 |:--------|:------|:--------|
 | `fromProvider(provider, evaluationTimeout)` | All evaluations on this instance | `Some(1.second)` — `FeatureFlags.DefaultEvaluationTimeout` |
-| `EvaluationOptions.empty.withTimeout(duration)` | Single evaluation call | `None` (uses global) |
+| `EvaluationOptions.empty.withTimeout(duration)` / `.withoutTimeout` | Single evaluation call | `EvaluationTimeout.Default` (uses the global) |
 
-Per-call timeout takes precedence over global. As of 1.0.0 the global default is **1 second** (previously `None`), so
-a hung provider can no longer block a fiber indefinitely out of the box. Pass `evaluationTimeout = Some(largerDuration)`
-to raise the bound, or `evaluationTimeout = None` to disable it entirely.
+Per-call timeout takes precedence over global. The global default is **1 second**, applied to every evaluation unless
+overridden — so a hung provider can't block a fiber indefinitely out of the box, but a cold-start remote provider may
+time out on its first calls. Pass `evaluationTimeout = Some(largerDuration)` to raise the bound or
+`evaluationTimeout = None` to disable it globally; per call, use `.withTimeout(d)` / `.withoutTimeout`.
 
 ### Runtime provider replacement (hot-swap)
 

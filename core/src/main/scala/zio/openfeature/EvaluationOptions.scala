@@ -10,13 +10,15 @@ package zio.openfeature
   * @param hookHints
   *   Read-only hints passed to hooks
   * @param timeout
-  *   Maximum duration for this evaluation. Overrides the global evaluation timeout set on the `FeatureFlags` instance.
-  *   `None` means use the global default (which itself defaults to no timeout).
+  *   Timeout selection for this evaluation. [[EvaluationTimeout.Default]] uses the global evaluation timeout set on the
+  *   `FeatureFlags` instance — which itself defaults to **1 second** (not "no timeout"). Use
+  *   [[EvaluationTimeout.After]] (via `withTimeout`) to bound this call, or [[EvaluationTimeout.Disabled]] (via
+  *   `withoutTimeout`) to run it with no timeout at all.
   */
 final case class EvaluationOptions(
   hooks: List[FeatureHook] = Nil,
   hookHints: HookHints = HookHints.empty,
-  timeout: Option[zio.Duration] = None
+  timeout: EvaluationTimeout = EvaluationTimeout.Default
 ) {
   def withHook(hook: FeatureHook): EvaluationOptions =
     copy(hooks = hooks :+ hook)
@@ -27,8 +29,13 @@ final case class EvaluationOptions(
   def withHint(key: String, value: Any): EvaluationOptions =
     copy(hookHints = hookHints + (key -> value))
 
+  /** Bound this evaluation at `duration`, overriding the global default. */
   def withTimeout(duration: zio.Duration): EvaluationOptions =
-    copy(timeout = Some(duration))
+    copy(timeout = EvaluationTimeout.After(duration))
+
+  /** Run this evaluation with no timeout, overriding the global default. */
+  def withoutTimeout: EvaluationOptions =
+    copy(timeout = EvaluationTimeout.Disabled)
 }
 
 object EvaluationOptions {

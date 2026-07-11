@@ -476,10 +476,12 @@ object FeatureFlags {
     */
   private[openfeature] val DefaultInitTimeout: Duration = 30.seconds
 
-  /** Default per-evaluation timeout. Any provider call that takes longer is interrupted and the effect fails with
-    * `FeatureFlagError.ProviderError` wrapping a `TimeoutException`. Per-call overrides via `EvaluationOptions.timeout`
-    * take precedence over this global default. Pass `evaluationTimeout = Some(veryLargeDuration)` to a factory method
-    * to raise the bound; use `EvaluationOptions.empty.withTimeout(...)` at individual call sites for finer control.
+  /** Default per-evaluation timeout: **1 second, applied to every evaluation unless overridden**. Any provider call
+    * that takes longer is interrupted and the effect fails with `FeatureFlagError.ProviderError` wrapping a
+    * `TimeoutException` — so a remote provider with cold-start latency can fail its first evaluations out of the box.
+    * To change it: pass `evaluationTimeout = Some(otherDuration)` (or `None` to disable globally) to a factory method;
+    * per call, `EvaluationOptions.empty.withTimeout(d)` bounds a single evaluation and `.withoutTimeout` disables it
+    * (the latter also skips the timeout scaffolding, which matters for microsecond-latency in-memory providers).
     */
   val DefaultEvaluationTimeout: Duration = 1.second
 

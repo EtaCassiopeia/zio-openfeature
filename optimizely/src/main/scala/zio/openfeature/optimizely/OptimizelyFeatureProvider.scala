@@ -26,11 +26,17 @@ import scala.util.Try
   * event dispatch; this class translates between the two worlds.
   *
   * '''Lifecycle notes:'''
-  *   - On `initialize()` we register an Optimizely `UpdateConfigNotification` handler. The first time it fires
-  *     (datafile loaded), we count down an internal latch so the OpenFeature `setProviderAndWait` returns cleanly.
-  *     Subsequent fires emit OpenFeature `PROVIDER_CONFIGURATION_CHANGED` events.
-  *   - If the datafile never arrives within `initWait`, `initialize()` throws — propagated by the OpenFeature SDK as a
-  *     failed init.
+  *   - On `initialize()` we register an Optimizely `UpdateConfigNotification` handler. It counts down an internal latch
+  *     so the OpenFeature `setProviderAndWait` returns cleanly once the datafile has loaded. Fires that occur before
+  *     the provider announces READY (the initial datafile load) suppress the `PROVIDER_CONFIGURATION_CHANGED` event —
+  *     it isn't a change and must not precede PROVIDER_READY. Only fires once the provider is READY (genuine datafile
+  *     revisions) emit `PROVIDER_CONFIGURATION_CHANGED`.
+  *   - If the datafile never arrives within `initWait`, or the config is invalid, or the handler can't be registered,
+  *     `initialize()` throws (propagated by the OpenFeature SDK as a failed init) and leaves the provider in a `Failed`
+  *     state with its handler removed. A subsequent `initialize()` on the same instance cleanly re-attempts (`Failed ->
+  *     Initialized`) instead of silently no-op'ing and leaving every evaluation `PROVIDER_NOT_READY`.
+  *   - A `shutdown()` racing an in-flight `initialize()` aborts the init cleanly: the handler it registered is removed
+  *     and the provider is left NOT_READY (it never reports READY after a shutdown).
   *   - `shutdown()` removes the notification handler and closes the underlying client (which stops datafile polling and
   *     the HTTP client for factory-built providers).
   *   - Factory-built providers (via `OptimizelyProvider.make`/`scoped`/`layer`) perform no network activity and run no
@@ -78,10 +84,11 @@ final class OptimizelyFeatureProvider private[optimizely] (
 
   override def initialize(ctx: OFEvaluationContext): Unit = {
     // Lifecycle transitions: Fresh -> Initialized (first init), Initialized -> no-op (idempotent),
-    // ShutDown -> Initialized only for caller-managed clients (closeOnShutdown = false). A provider whose
-    // client was closed on shutdown cannot be revived — fail loudly instead of silently never becoming
-    // READY (the Java SDK treats a non-throwing initialize as success, so a silent no-op here would leave
-    // every subsequent evaluation failing with PROVIDER_NOT_READY far from the cause).
+    // ShutDown -> Initialized only for caller-managed clients (closeOnShutdown = false), and
+    // Failed -> Initialized for a clean retry after a throwing init. A provider whose client was closed on
+    // shutdown cannot be revived — fail loudly instead of silently never becoming READY (the Java SDK treats a
+    // non-throwing initialize as success, so a silent no-op here would leave every subsequent evaluation failing
+    // with PROVIDER_NOT_READY far from the cause).
     val transitioned =
       lifecycle.compareAndSet(Lifecycle.Fresh, Lifecycle.Initialized) || {
         if (lifecycle.get() == Lifecycle.ShutDown) {
@@ -93,6 +100,11 @@ final class OptimizelyFeatureProvider private[optimizely] (
             initLatchRef.set(new CountDownLatch(1)) // fresh single-use latch for this init cycle
             true
           } else false
+        } else if (lifecycle.compareAndSet(Lifecycle.Failed, Lifecycle.Initialized)) {
+          // Clean retry after a failed init (mirrors the ShutDown caller-managed retry): a fresh latch and a
+          // re-registered handler. `failInitialize` already removed the previous handler and set state ERROR.
+          initLatchRef.set(new CountDownLatch(1))
+          true
         } else false
       }
     if (!transitioned) return
@@ -100,20 +112,39 @@ final class OptimizelyFeatureProvider private[optimizely] (
     val initLatch = initLatchRef.get()
 
     val handlerId = optimizely.addUpdateConfigNotificationHandler { _ =>
-      // The latch is single-use; subsequent updates are CONFIGURATION_CHANGED only.
+      // Suppress the CONFIGURATION_CHANGED event for any fire before the provider is READY — the initial datafile
+      // load isn't a "change" and would otherwise be delivered ahead of PROVIDER_READY. Only fires once the provider
+      // has announced READY (genuine datafile revisions) emit. Reading the state BEFORE counting the latch down is
+      // deliberate: the initial-load fire that opens the latch is, at that instant, still pre-READY (init is blocked
+      // on `initLatch.await` below and only sets READY after it returns), so it is reliably suppressed. A first fire
+      // that is instead observed via the `optimizely.isValid` fast-path below (handler never sees the initial load,
+      // e.g. the datafile loaded before registration) simply never reaches this handler, so nothing is emitted.
+      val alreadyReady = stateRef.get() == ProviderState.READY
       initLatch.countDown()
-      emitProviderConfigurationChanged(ProviderEventDetails.builder().build())
+      if (alreadyReady) emitProviderConfigurationChanged(ProviderEventDetails.builder().build())
     }
     // Optimizely's NotificationManager returns a non-positive id when registration fails (e.g. a duplicate handler
     // is already present). Without the handler we'd silently never count down the latch via the datafile-update
-    // path and would always wait the full `initWait` window. Fail fast instead.
-    if (handlerId <= 0) {
-      stateRef.set(ProviderState.ERROR)
-      throw new RuntimeException(
+    // path and would always wait the full `initWait` window. Fail fast instead (no handler to remove — id <= 0).
+    if (handlerId <= 0)
+      failInitialize(
         s"Optimizely datafile update handler registration failed (returned id=$handlerId); cannot drive init"
       )
-    }
     notificationHandle.set(handlerId)
+
+    // A shutdown() may have interleaved between registering the handler and recording its id above; its
+    // getAndSet(-1) would then have observed the stale -1 and never removed our handler (a leak + duplicate
+    // CONFIGURATION_CHANGED on any re-init). Re-check now: if shut down, remove the handler we just registered and
+    // abort — do not start polling, await, or announce READY.
+    if (lifecycle.get() == Lifecycle.ShutDown) {
+      val handle = notificationHandle.getAndSet(-1)
+      if (handle > 0) {
+        Try(optimizely.getNotificationCenter.removeNotificationListener(handle))
+        ()
+      }
+      stateRef.set(ProviderState.NOT_READY)
+      return
+    }
 
     // The handler is registered before this call so a notification firing from here on can't be missed. The SDK
     // may already have a fetch in flight or completed from construction time (see OptimizelyProvider#buildClient),
@@ -123,20 +154,36 @@ final class OptimizelyFeatureProvider private[optimizely] (
 
     if (optimizely.isValid) initLatch.countDown()
 
-    if (!initLatch.await(initWait.toMillis, TimeUnit.MILLISECONDS)) {
-      stateRef.set(ProviderState.ERROR)
-      throw new RuntimeException(
+    if (!initLatch.await(initWait.toMillis, TimeUnit.MILLISECONDS))
+      failInitialize(
         s"Optimizely datafile did not load within $initWait; check the SDK key and network reachability"
       )
-    }
 
-    if (optimizely.isValid) stateRef.set(ProviderState.READY)
-    else {
-      stateRef.set(ProviderState.ERROR)
-      throw new RuntimeException(
+    if (optimizely.isValid) {
+      stateRef.set(ProviderState.READY)
+      // Guard against a shutdown() that interleaved after the abort re-check above: shutdown sets
+      // lifecycle = ShutDown first thing, so if it did, revert to NOT_READY rather than report READY on a
+      // shut-down provider.
+      if (lifecycle.get() != Lifecycle.Initialized) stateRef.set(ProviderState.NOT_READY)
+    } else
+      failInitialize(
         "Optimizely client reported invalid configuration after datafile load (possible auth or parse failure)"
       )
+  }
+
+  /** Common failure path for `initialize()`: remove the handler registered this cycle (best-effort, as `shutdown` does)
+    * so a retry doesn't leak it or fire duplicate CONFIGURATION_CHANGED events, mark the provider `Failed` (state
+    * ERROR) so a subsequent `initialize()` cleanly re-attempts instead of silently no-op'ing, then throw.
+    */
+  private def failInitialize(msg: String): Nothing = {
+    val handle = notificationHandle.getAndSet(-1)
+    if (handle > 0) {
+      Try(optimizely.getNotificationCenter.removeNotificationListener(handle))
+      ()
     }
+    stateRef.set(ProviderState.ERROR)
+    lifecycle.set(Lifecycle.Failed)
+    throw new RuntimeException(msg)
   }
 
   override def shutdown(): Unit = {
@@ -337,15 +384,18 @@ final class OptimizelyFeatureProvider private[optimizely] (
 object OptimizelyFeatureProvider {
   val Name: String = "Optimizely"
 
-  /** Provider lifecycle: `Fresh -> Initialized -> ShutDown`, plus `ShutDown -> Initialized` for caller-managed clients.
-    * Tracked explicitly (instead of a boolean) so initialize-after-shutdown can fail loudly when the underlying client
-    * was closed.
+  /** Provider lifecycle: `Fresh -> Initialized -> ShutDown`, plus `ShutDown -> Initialized` for caller-managed clients
+    * and `Failed -> Initialized` for a clean retry after a failed init. Tracked explicitly (instead of a boolean) so
+    * initialize-after-shutdown can fail loudly when the underlying client was closed, and so a failed init does not
+    * leave the provider stuck as a silent no-op on retry.
     */
   sealed private[optimizely] trait Lifecycle
   private[optimizely] object Lifecycle {
     case object Fresh       extends Lifecycle
     case object Initialized extends Lifecycle
     case object ShutDown    extends Lifecycle
+    // A throwing initialize() lands here (state ERROR, handler removed). A subsequent initialize() cleanly re-attempts.
+    case object Failed extends Lifecycle
   }
 
   /** Context attribute key callers can set to override which Optimizely variable is read for typed evaluations. */

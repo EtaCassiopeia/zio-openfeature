@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`OptimizelyFeatureProvider` lifecycle robustness** (#265). Three fixes to the provider's init/shutdown state machine:
+  (1) a failed `initialize` (datafile timeout, invalid config, handler-registration failure) previously left the
+  provider in a state where a retry silently no-op'd — the SDK treated the non-throwing retry as success and emitted
+  `PROVIDER_READY` while every evaluation kept failing `PROVIDER_NOT_READY`; a new `Failed` lifecycle state now cleans up
+  the registered handler on failure and lets a subsequent `initialize` cleanly re-attempt. (2) `shutdown()` racing an
+  in-flight `initialize()` could leak the update handler or leave the provider reporting `READY` after shutdown;
+  `initialize` now re-checks the lifecycle after registering its handler (removing it and aborting if a shutdown
+  interleaved) and makes the final `READY` transition conditional on not having been shut down. (3) the initial datafile
+  load no longer emits a spurious `PROVIDER_CONFIGURATION_CHANGED` ahead of `PROVIDER_READY` — the config-changed event
+  is emitted only once the provider is ready (genuine revisions), not for the initial load.
+
 - **`OptimizelyFeatureProvider.getObjectEvaluation` reads the configured variable and falls back to the default** (#264).
   Object evaluation returned the entire `decision.getVariables` map and never reached `defaultValue`, contradicting the
   provider's own documentation and diverging from every other typed path (a flag with zero variables handed callers an

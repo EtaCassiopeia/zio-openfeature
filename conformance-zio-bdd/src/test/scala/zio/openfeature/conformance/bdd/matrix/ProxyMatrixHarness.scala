@@ -79,7 +79,7 @@ object ProxyMatrixHarness {
                  )
         provider <- OptimizelyProvider.scoped(config).mapError(e => new RuntimeException(e.message))
         domain = s"proxy-flag-matrix-${java.util.UUID.randomUUID()}"
-        env <- FeatureFlags.fromProviderWithDomain(provider, domain).build
+        env <- FeatureFlags.fromProvider(provider, FeatureFlagsConfig().withDomain(domain)).build
         ff = env.get[FeatureFlags]
         ctx = contextAttributes.foldLeft(EvaluationContext.empty) { case (acc, (k, v)) =>
                 acc.withAttribute(k, AttributeValue.StringValue(v))

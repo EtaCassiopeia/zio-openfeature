@@ -31,7 +31,7 @@ import java.util.concurrent.TimeUnit
   *                  inner,
   *                  CircuitBreakerProviderConfig(failureThreshold = 5, resetTimeout = 30.seconds)
   *                )
-  *     env     <- FeatureFlags.fromProviderAsync(wrapped, 500.millis).build
+  *     env     <- FeatureFlags.fromProvider(wrapped, FeatureFlagsConfig(initMode = InitMode.Async).withEvaluationTimeout(500.millis)).build
   *     ff       = env.get[FeatureFlags]
   *     enabled <- ff.boolean("flag", default = false)
   *   } yield enabled
@@ -41,7 +41,7 @@ import java.util.concurrent.TimeUnit
   * '''Failure semantics on bad credentials / unreachable CDN:'''
   *   - If the Optimizely datafile fetch fails (auth, network, 5xx), the underlying client stays `!isValid` and
   *     [[OptimizelyFeatureProvider.initialize]] throws after its `initWait` elapses. The outer
-  *     `FeatureFlags.fromProvider*(initTimeout = …)` translates that into either a layer build failure (sync mode) or a
+  *     `FeatureFlagsConfig().withInitTimeout(…)` translates that into either a layer build failure (sync mode) or a
   *     `ProviderStatus.Fatal` transition (async mode), so an evaluation never silently returns the default value under
   *     a misconfigured provider.
   *   - Construction itself (this object's `make`) does NOT make network calls — it only validates inputs and builds the
@@ -105,7 +105,7 @@ object OptimizelyProvider {
     make(sdkKey, datafileUrl = Some(datafileUrl), initWait = DefaultInitWait)
 
   /** Full-control overload exposing the internal `initWait`. Most callers should prefer one of the simpler overloads
-    * plus the outer `FeatureFlags.fromProvider*` `initTimeout`.
+    * plus the outer `FeatureFlagsConfig.initTimeout`.
     */
   def make(
     sdkKey: String,

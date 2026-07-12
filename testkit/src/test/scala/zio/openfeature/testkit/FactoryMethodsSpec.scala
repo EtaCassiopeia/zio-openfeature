@@ -9,11 +9,15 @@ import zio.openfeature._
   *
   * These tests must run sequentially because they share the singleton's default provider slot. Isolated from other
   * specs to avoid cross-test contamination.
+  *
+  * Exercises the `FeatureFlagsConfig`-driven `fromProvider(provider, config)` factory (#253). The behavioral
+  * equivalence between this and the now-deprecated overloads it replaced is pinned separately, under
+  * `@nowarn("cat=deprecation")`, by `FactoryConfigSpec`'s T6 suite.
   */
 object FactoryMethodsSpec extends ZIOSpecDefault {
 
   def spec = suite("Factory Methods — global singleton API")(
-    suite("fromProviderWithHooks")(
+    suite("fromProvider with hooks")(
       test("layer created with initial hooks has those hooks") {
         val callsRef = Unsafe.unsafe { implicit u =>
           Runtime.default.unsafe.run(Ref.make(0)).getOrThrow()
@@ -26,48 +30,57 @@ object FactoryMethodsSpec extends ZIOSpecDefault {
 
         for {
           provider <- TestFeatureProvider.make(Map("flag" -> true))
-          layer = FeatureFlags.fromProviderWithHooks(provider, List(hook))
+          layer = FeatureFlags.fromProvider(provider, FeatureFlagsConfig().withHooks(List(hook)))
           _     <- FeatureFlags.boolean("flag", default = false).provide(Scope.default >>> layer)
           calls <- callsRef.get
         } yield assertTrue(calls == 1)
       }
     ),
-    suite("fromProviderWithDomain")(
-      test("fromProviderWithDomain with version exposes version in clientMetadata") {
+    suite("fromProvider with domain")(
+      test("domain + version config exposes version in clientMetadata") {
         for {
           provider <- TestFeatureProvider.make(Map("flag" -> true))
           domain = s"test-versioned-${java.util.UUID.randomUUID()}"
           result <- ZIO.scoped {
-            FeatureFlags.fromProviderWithDomain(provider, domain, "2.0.0").build.flatMap { env =>
-              val ff = env.get[FeatureFlags]
-              for {
-                meta <- ff.clientMetadata
-                flag <- ff.boolean("flag", default = false)
-              } yield assertTrue(meta.domain.contains(domain)) &&
-                assertTrue(meta.version.contains("2.0.0")) &&
-                assertTrue(flag == true)
-            }
+            FeatureFlags
+              .fromProvider(provider, FeatureFlagsConfig().withDomain(domain).withVersion("2.0.0"))
+              .build
+              .flatMap { env =>
+                val ff = env.get[FeatureFlags]
+                for {
+                  meta <- ff.clientMetadata
+                  flag <- ff.boolean("flag", default = false)
+                } yield assertTrue(meta.domain.contains(domain)) &&
+                  assertTrue(meta.version.contains("2.0.0")) &&
+                  assertTrue(flag == true)
+              }
           }
         } yield result
       }
     ),
-    suite("fromMultiProvider")(
-      test("fromMultiProvider creates a usable layer") {
+    suite("fromProvider with FeatureFlags.multiProvider")(
+      test("multiProvider creates a usable layer (first-match default)") {
         ZIO.scoped {
           for {
             provider <- TestFeatureProvider.make(Map("flag" -> true))
-            ff       <- FeatureFlags.fromMultiProvider(List(provider)).build.map(_.get)
-            result   <- ff.boolean("flag", default = false)
+            ff <- FeatureFlags
+              .fromProvider(FeatureFlags.multiProvider(List(provider)), FeatureFlagsConfig())
+              .build
+              .map(_.get)
+            result <- ff.boolean("flag", default = false)
           } yield assertTrue(result == true)
         }
       },
-      test("fromMultiProvider with custom strategy creates a usable layer") {
+      test("multiProvider with a custom strategy creates a usable layer") {
         import dev.openfeature.sdk.multiprovider.FirstSuccessfulStrategy
         ZIO.scoped {
           for {
             provider <- TestFeatureProvider.make(Map("flag" -> "hello"))
             ff <- FeatureFlags
-              .fromMultiProvider(List(provider), new FirstSuccessfulStrategy())
+              .fromProvider(
+                FeatureFlags.multiProvider(List(provider), new FirstSuccessfulStrategy()),
+                FeatureFlagsConfig()
+              )
               .build
               .map(_.get)
             result <- ff.string("flag", default = "none")
@@ -75,7 +88,7 @@ object FactoryMethodsSpec extends ZIOSpecDefault {
         }
       }
     ),
-    suite("fromProviderAsync")(
+    suite("fromProviderAsync / async config")(
       test("fromProviderAsync creates a working layer") {
         for {
           tp <- TestFeatureProvider.make(Map("flag" -> true))
@@ -88,7 +101,7 @@ object FactoryMethodsSpec extends ZIOSpecDefault {
           }
         } yield assertTrue(result == true)
       },
-      test("fromProviderWithHooksAsync includes hooks") {
+      test("async config with hooks includes hooks") {
         for {
           hookCalled <- Ref.make(false)
           hook = new FeatureHook {
@@ -97,50 +110,65 @@ object FactoryMethodsSpec extends ZIOSpecDefault {
           }
           tp <- TestFeatureProvider.make(Map("flag" -> true))
           result <- ZIO.scoped {
-            FeatureFlags.fromProviderWithHooksAsync(tp, List(hook)).build.flatMap { env =>
-              val ff = env.get[FeatureFlags]
-              ff.providerStatus.repeatUntil(_ == ProviderStatus.Ready).timeout(2.seconds) *>
-                ff.boolean("flag", default = false) *>
-                hookCalled.get
-            }
+            FeatureFlags
+              .fromProvider(tp, FeatureFlagsConfig(initMode = InitMode.Async).withHooks(List(hook)))
+              .build
+              .flatMap { env =>
+                val ff = env.get[FeatureFlags]
+                ff.providerStatus.repeatUntil(_ == ProviderStatus.Ready).timeout(2.seconds) *>
+                  ff.boolean("flag", default = false) *>
+                  hookCalled.get
+              }
           }
         } yield assertTrue(result)
       },
-      test("fromProviderWithDomainAsync creates a working layer") {
+      test("async config with domain creates a working layer") {
         for {
           tp <- TestFeatureProvider.make(Map("flag" -> true))
           domain = s"test-async-factory-${java.util.UUID.randomUUID()}"
           result <- ZIO.scoped {
-            FeatureFlags.fromProviderWithDomainAsync(tp, domain).build.flatMap { env =>
-              val ff = env.get[FeatureFlags]
-              ff.providerStatus.repeatUntil(_ == ProviderStatus.Ready).timeout(2.seconds) *>
-                ff.boolean("flag", default = false)
-            }
+            FeatureFlags
+              .fromProvider(tp, FeatureFlagsConfig(initMode = InitMode.Async).withDomain(domain))
+              .build
+              .flatMap { env =>
+                val ff = env.get[FeatureFlags]
+                ff.providerStatus.repeatUntil(_ == ProviderStatus.Ready).timeout(2.seconds) *>
+                  ff.boolean("flag", default = false)
+              }
           }
         } yield assertTrue(result == true)
       },
-      test("fromProviderWithDomainAsync with version creates a working layer") {
+      test("async config with domain and version creates a working layer") {
         for {
           tp <- TestFeatureProvider.make(Map("flag" -> true))
           domain = s"test-async-versioned-${java.util.UUID.randomUUID()}"
           result <- ZIO.scoped {
-            FeatureFlags.fromProviderWithDomainAsync(tp, domain, "1.2.3").build.flatMap { env =>
-              val ff = env.get[FeatureFlags]
-              ff.providerStatus.repeatUntil(_ == ProviderStatus.Ready).timeout(2.seconds) *>
-                ff.boolean("flag", default = false)
-            }
+            FeatureFlags
+              .fromProvider(
+                tp,
+                FeatureFlagsConfig(initMode = InitMode.Async).withDomain(domain).withVersion("1.2.3")
+              )
+              .build
+              .flatMap { env =>
+                val ff = env.get[FeatureFlags]
+                ff.providerStatus.repeatUntil(_ == ProviderStatus.Ready).timeout(2.seconds) *>
+                  ff.boolean("flag", default = false)
+              }
           }
         } yield assertTrue(result == true)
       },
-      test("fromMultiProviderAsync creates a working layer") {
+      test("async config with FeatureFlags.multiProvider creates a working layer") {
         for {
           tp <- TestFeatureProvider.make(Map("flag" -> true))
           result <- ZIO.scoped {
-            FeatureFlags.fromMultiProviderAsync(List(tp)).build.flatMap { env =>
-              val ff = env.get[FeatureFlags]
-              ff.providerStatus.repeatUntil(_ == ProviderStatus.Ready).timeout(2.seconds) *>
-                ff.boolean("flag", default = false)
-            }
+            FeatureFlags
+              .fromProvider(FeatureFlags.multiProvider(List(tp)), FeatureFlagsConfig(initMode = InitMode.Async))
+              .build
+              .flatMap { env =>
+                val ff = env.get[FeatureFlags]
+                ff.providerStatus.repeatUntil(_ == ProviderStatus.Ready).timeout(2.seconds) *>
+                  ff.boolean("flag", default = false)
+              }
           }
         } yield assertTrue(result == true)
       }

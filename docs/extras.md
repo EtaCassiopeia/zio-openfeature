@@ -152,7 +152,7 @@ val provider = EnvVarProvider.withLookup(testEnv.get)
 
 ## Deferred Provider
 
-`DeferredProvider` adapts a **constructor-blocking** provider — one that does all its network work in its Java constructor — into an `initialize()`-blocking one. It defers construction to `initialize(ctx)`, which the OpenFeature SDK runs on its own init executor, so every `*Async` factory (`fromProviderAsync`, `fromMultiProviderAsync`) already keeps that work off the caller's thread.
+`DeferredProvider` adapts a **constructor-blocking** provider — one that does all its network work in its Java constructor — into an `initialize()`-blocking one. It defers construction to `initialize(ctx)`, which the OpenFeature SDK runs on its own init executor, so any `InitMode.Async` config already keeps that work off the caller's thread.
 
 ```scala
 import zio.openfeature.extras.DeferredProvider
@@ -259,7 +259,7 @@ How a downstream failure shows up depends on where it originates:
 
 - **HTTP `4xx` / `5xx` from the OFREP endpoint**: the contrib provider catches the response and returns a successful `FlagResolution` with `errorCode` populated (typically `General`) and `errorMessage` set. The ZIO `FeatureFlags` layer hands this back to callers as a *successful* effect — operators are expected to alert on `resolution.errorCode.isDefined`.
 - **Network-level failures** (DNS, `ConnectException`, connection reset): the contrib provider's HTTP client throws synchronously, the throw escapes `attemptBlocking`, and `FeatureFlagError.classify` maps it to a typed error — `Unreachable` for the known network exception types, `ProviderError` as the fallback. These arrive in the effect's error channel.
-- **Evaluation timeout** (via `FeatureFlags.fromProvider(provider, evaluationTimeout)`): surfaces as `ProviderError` wrapping a `TimeoutException`.
+- **Evaluation timeout** (via `FeatureFlagsConfig().withEvaluationTimeout(d)`): surfaces as `ProviderError` wrapping a `TimeoutException`.
 
 The `OFREPFailureModeSpec` in this module pins these behaviours so a contrib-provider upgrade doesn't silently shift them. If you build alerting on top of the OFREP integration, alert on both branches: `errorCode` on resolutions AND `Unreachable`/`ProviderError`/timeout in the error channel.
 
@@ -313,9 +313,9 @@ val resilientProvider = CircuitBreakerProvider(
 )
 
 // Compose with fallback using MultiProvider
-val layer = FeatureFlags.fromMultiProvider(
-  List(resilientProvider, EnvVarProvider()),
-  MultiProviderStrategy.firstSuccessful
+val layer = FeatureFlags.fromProvider(
+  FeatureFlags.multiProvider(List(resilientProvider, EnvVarProvider()), MultiProviderStrategy.firstSuccessful),
+  FeatureFlagsConfig()
 )
 ```
 
@@ -326,9 +326,9 @@ for
   cb   <- CircuitBreakerProvider.make(optimizelyProvider, CircuitBreakerConfig(
              evaluationTimeout = 50.millis
            ))
-  layer = FeatureFlags.fromMultiProvider(
-            List(cb, EnvVarProvider()),
-            MultiProviderStrategy.firstSuccessful
+  layer = FeatureFlags.fromProvider(
+            FeatureFlags.multiProvider(List(cb, EnvVarProvider()), MultiProviderStrategy.firstSuccessful),
+            FeatureFlagsConfig()
           )
 yield layer
 ```
@@ -485,7 +485,7 @@ object MyApp extends ZIOAppDefault:
                       )
 
     // Combine: env vars → HOCON → cached remote
-    layer = FeatureFlags.fromMultiProvider(List(envProvider, hoconProvider, cachedRemote))
+    layer = FeatureFlags.fromProvider(FeatureFlags.multiProvider(List(envProvider, hoconProvider, cachedRemote)), FeatureFlagsConfig())
 
     // Use feature flags
     _ <- FeatureFlags.boolean("new-checkout", default = false).flatMap { enabled =>

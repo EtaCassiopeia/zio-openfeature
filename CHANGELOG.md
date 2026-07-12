@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`FeatureFlagsConfig` and the config-driven `FeatureFlags.fromProvider(provider, config)` factory** (#253). The 17
+  public factory overloads (`fromProvider*` / `fromProviderWithDomain*` / `fromProviderWithHooks*` /
+  `fromMultiProvider*`, sync and async) collapse to one config-driven entry point plus two kept shorthands
+  (`fromProvider(provider)`, `fromProviderAsync(provider)`). `FeatureFlagsConfig` composes `domain`, `version`,
+  `initialHooks`, `evaluationTimeout` (the #251 `EvaluationTimeout` ADT), `initTimeout`, and the new `InitMode`
+  (`Sync`/`Async`, replacing the sync/async factory-pair doubling) and `ApiOwnership` (`Auto`/`Owned`/`Shared`, making
+  the previously-implicit `WithDomain` shutdown-finalizer behavior an explicit, documented value — see #243) fields —
+  so combinations the old surface couldn't express (domain + hooks, domain + a per-instance evaluation timeout,
+  domain + version + a custom init timeout, hooks + init timeout on async init) are now one config value away. Added
+  `FeatureFlags.multiProvider(providers, strategy)` as the replacement for `fromMultiProvider*`, composable with every
+  other config field (e.g. multi-provider + domain).
+
 - **`OFREPProviderConfig` and scope-managed OFREP factories** (#268). `OFREPProvider.layer(...)` now uses
   `ZLayer.scoped` with a bounded shutdown finalizer (mirroring the Optimizely module), so the provider's executor and
   HttpClient are torn down on scope close instead of being orphaned — closing the JVM-exit-hang class (#217/#229) for a
@@ -26,6 +38,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   serving the last-known datafile, per OpenFeature STALE semantics), recovering to `PROVIDER_READY` on the next
   successful fetch. Configurable via `OptimizelyProviderConfig.staleAfter` (default `3 × pollingInterval`; disabled when
   polling is off). The watchdog thread is a daemon and is cancelled on shutdown.
+
+### Deprecated
+
+- **14 `FeatureFlags` factory overloads, superseded by `fromProvider(provider, config)`** (#253):
+  `fromProvider(p, evaluationTimeout)`, `fromProvider(p, evaluationTimeout, initTimeout)`,
+  `fromProviderWithDomain(p, domain[, version])`, `fromProviderWithHooks(p, hooks)`, `fromMultiProvider(ps[, strategy])`,
+  and their `*Async` twins `fromProviderAsync(p, evaluationTimeout[, initTimeout])`,
+  `fromProviderWithDomainAsync(p, domain[, version])`, `fromProviderWithHooksAsync(p, hooks)`, and
+  `fromMultiProviderAsync(ps[, strategy])`. Each forwards to an equivalent `fromProvider(p, FeatureFlagsConfig()...)`
+  call — see the `@deprecated` message on each overload for its exact one-line replacement. `fromProvider(provider)`
+  and `fromProviderAsync(provider)` are unaffected and remain the recommended shorthands for the common case.
 
 ### Fixed
 

@@ -392,7 +392,7 @@ val hooks = List(
   FeatureHook.metrics((k, d, s) => ZIO.unit)
 )
 
-val layer = FeatureFlags.fromProviderWithHooks(provider, hooks)
+val layer = FeatureFlags.fromProvider(provider, FeatureFlagsConfig().withHooks(hooks))
 
 // Remove all client hooks
 FeatureFlags.clearHooks

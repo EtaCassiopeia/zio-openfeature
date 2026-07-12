@@ -115,12 +115,12 @@ FeatureFlags.fromProvider(provider)
 
 | Method | Description |
 |:-------|:------------|
-| `fromProvider(provider)` | Create from any OpenFeature provider |
-| `fromProviderWithDomain(provider, domain)` | Create with named domain/client |
-| `fromProviderWithDomain(provider, domain, version)` | Create with domain and version |
-| `fromProviderWithHooks(provider, hooks)` | Create with initial hooks |
-| `fromMultiProvider(providers)` | Combine multiple providers (first-match strategy) |
-| `fromMultiProvider(providers, strategy)` | Combine multiple providers with custom strategy |
+| `fromProvider(provider)` | Create from any OpenFeature provider (blocking init) |
+| `fromProviderAsync(provider)` | Create from any OpenFeature provider (non-blocking init) |
+| `fromProvider(provider, config)` | The config-driven factory — domain, version, hooks, timeouts, `InitMode`, `ApiOwnership`, in any combination, via [`FeatureFlagsConfig`](providers.md#featureflagsconfig) |
+| `FeatureFlags.multiProvider(providers, strategy)` | Combine multiple providers into one `OFFeatureProvider` (first-match strategy by default), to pass into `fromProvider` |
+
+See [Factory Methods](providers.md#factory-methods) for the full `FeatureFlagsConfig` reference.
 
 ---
 

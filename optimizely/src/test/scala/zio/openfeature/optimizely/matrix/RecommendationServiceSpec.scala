@@ -43,11 +43,11 @@ object RecommendationServiceSpec extends ZIOSpecDefault {
           blockingTimeout = Some(java.time.Duration.ofSeconds(2))
         )
         provider <- OptimizelyProvider.scoped(config).mapError(e => new RuntimeException(e.message))
-        // fromProviderWithDomain (not the plain fromProvider) so each call gets its own named slot on
-        // the global OpenFeatureAPI singleton instead of overwriting the shared unnamed default client —
-        // fromProvider would let concurrently-running tests race to swap each other's active provider.
+        // A domain config (not the plain fromProvider) so each call gets its own named slot on the global
+        // OpenFeatureAPI singleton instead of overwriting the shared unnamed default client — fromProvider would
+        // let concurrently-running tests race to swap each other's active provider.
         domain = s"flag-matrix-${java.util.UUID.randomUUID()}"
-        env <- FeatureFlags.fromProviderWithDomain(provider, domain).build
+        env <- FeatureFlags.fromProvider(provider, FeatureFlagsConfig().withDomain(domain)).build
         ff  = env.get[FeatureFlags]
         svc = new RecommendationService(ff)
         result <- body(svc)

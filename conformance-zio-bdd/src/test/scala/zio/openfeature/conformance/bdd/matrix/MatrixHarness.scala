@@ -35,7 +35,7 @@ object MatrixHarness {
 
   /** A scoped ZLayer that owns one Rift mock space + one Optimizely provider for the named datafile.
     *
-    * Bound to a freshly-generated domain (`FeatureFlags.fromProviderWithDomain`) rather than the plain
+    * Bound to a freshly-generated domain (`FeatureFlagsConfig().withDomain(...)`) rather than the plain
     * `fromProvider` factory. `fromProvider` registers its provider as the *unnamed default* client on
     * the process-wide `OpenFeatureAPI` singleton — concurrent calls from different scenarios would race
     * to overwrite that single default slot, and since the OpenFeature SDK looks up the active provider
@@ -68,7 +68,7 @@ object MatrixHarness {
                   )
         provider <- OptimizelyProvider.scoped(config).mapError(e => new RuntimeException(e.message))
         domain    = s"flag-matrix-${java.util.UUID.randomUUID()}"
-        env      <- FeatureFlags.fromProviderWithDomain(provider, domain).build
+        env      <- FeatureFlags.fromProvider(provider, FeatureFlagsConfig().withDomain(domain)).build
         ff        = env.get[FeatureFlags]
         _ <- ZIO.foreachDiscard(plan)(p =>
                ff.setGlobalContext(EvaluationContext.empty.withAttribute("plan", AttributeValue.StringValue(p)))

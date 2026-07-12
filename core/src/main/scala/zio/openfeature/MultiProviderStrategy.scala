@@ -2,7 +2,7 @@ package zio.openfeature
 
 import dev.openfeature.sdk.multiprovider.{FirstMatchStrategy, FirstSuccessfulStrategy}
 
-/** Built-in strategies for [[FeatureFlags.fromMultiProvider]] and [[FeatureFlags.fromMultiProviderAsync]].
+/** Built-in strategies for [[FeatureFlags.multiProvider]].
   *
   * Re-exports the Java SDK's strategy implementations under stable Scala names so callers do not need to depend on the
   * `dev.openfeature.sdk.multiprovider` package directly.

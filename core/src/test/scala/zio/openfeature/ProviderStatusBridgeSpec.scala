@@ -124,6 +124,26 @@ object ProviderStatusBridgeSpec extends ZIOSpecDefault {
         }
       } yield out
     },
+    test("lazy-metadata provider: a READY event refreshes providerNameRef from unknown to the real name (#297)") {
+      // buildAsync captured "unknown" for a LateMetadataProvider (metadata name only materializes after init). When
+      // the provider's own READY arrives stamped with the real name, providerNameRef must be refreshed so
+      // providerMetadata reports the real name AND the identity guard regains discrimination.
+      for {
+        ref <- SubscriptionRef.make[ProviderStatus](ProviderStatus.NotReady)
+        out <- ZIO.scoped {
+          buildProvider(ref, new LateMetadataProvider).flatMap { ff =>
+            for {
+              beforeName <- ff.providerMetadata.map(_.name)
+              _          <- ff.onReadyEvent(details("multiprovider"))
+              afterName  <- ff.providerMetadata.map(_.name)
+            } yield assertTrue(
+              beforeName == FeatureFlags.UnknownProviderName,
+              afterName == "multiprovider"
+            )
+          }
+        }
+      } yield out
+    },
     test("null provider name fails open: transition applies") {
       for {
         ref <- SubscriptionRef.make[ProviderStatus](ProviderStatus.NotReady)

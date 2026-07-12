@@ -29,6 +29,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`providerNameRef` is refreshed for lazy-metadata providers on `PROVIDER_READY`** (#297). A provider whose metadata
+  name only materializes inside `initialize()` — notably the SDK's `MultiProvider` — had its name captured as the
+  `"unknown"` fallback at build time and never corrected, so a fully-ready `MultiProvider` reported
+  `ProviderMetadata("unknown")` and the event-identity guard stayed permanently failed-open for it. When a
+  `PROVIDER_READY` from the current provider arrives carrying a real stamped name, `providerNameRef` is now
+  refreshed from `"unknown"` to that name (via a race-safe `compareAndSet` that never clobbers a name set by a
+  concurrent swap), restoring accurate `providerMetadata` and re-enabling event-identity discrimination.
+
 - **Optimizely initial datafile-load event suppression is now deterministic** (#308). The provider suppressed the
   initial datafile load's spurious `PROVIDER_CONFIGURATION_CHANGED` by gating emission on `state == READY` read at
   notification time, which raced the `optimizely.isValid` fast-path: if init reached READY before the handler processed

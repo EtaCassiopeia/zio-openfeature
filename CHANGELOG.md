@@ -52,6 +52,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A failed hot-swap now rolls back SDK client routing, not just the internal provider ref** (#282). `setProvider`'s
+  failure path restored the internal `providerRef`/status but not the OpenFeature Java SDK's provider binding — the SDK
+  binds a new provider into its domain/default slot *before* calling `initialize()` and does not revert that binding
+  when init throws. So after a failed swap, evaluations (which route through the SDK client) kept returning values from
+  the *failed* provider while `providerMetadata`/`providerStatus` claimed the previous provider was active. The rollback
+  now re-registers the previous provider with the SDK (via a compile-time package shim `dev.openfeature.sdk.EventProviderAccess`
+  that resets an `EventProvider`'s attach state so re-registration doesn't hit the SDK's "already attached" guard), so a
+  failed swap reverts routing **and** status to the previous, still-serving provider. **Behavior change:** after a failed
+  swap whose rollback succeeds, `providerStatus` is now `Ready` (the previous provider is serving) and evaluations return
+  the previous provider's values; if the rollback itself fails (the previous provider's re-`initialize()` throws), status
+  remains `Error` and the failure is logged. **Caveat:** re-registration starts a fresh SDK state manager for the
+  previous provider, so its `initialize()` runs again (e.g. an Optimizely poller restarts) — unless it is still bound to
+  another domain of a shared API, whose ready state manager is reused. `setProvider` still fails with
+  `ProviderInitializationFailed` carrying the original error.
+
 - **`providerNameRef` is refreshed for lazy-metadata providers on `PROVIDER_READY`** (#297). A provider whose metadata
   name only materializes inside `initialize()` — notably the SDK's `MultiProvider` — had its name captured as the
   `"unknown"` fallback at build time and never corrected, so a fully-ready `MultiProvider` reported

@@ -1173,9 +1173,8 @@ object FeatureFlags {
           freshFallback <- fallback
           _ <- ff
             .setProvider(compose(real, freshFallback))
-            // `setProvider`'s rollback restored the live fallback to the provider ref but left status `Error`; the
-            // fallback is still serving, so force status back to Ready before reporting the failure.
-            .tapError(_ => ff.forceReady)
+            // `setProvider`'s rollback now restores both routing AND status (#282): a failed swap re-registers the
+            // still-live fallback with the SDK and sets Ready, so no local force-ready workaround is needed here.
             .mapError(e => new RuntimeException(s"Provider swap failed: $e"))
         } yield ()
         _ <- construct.catchAll(onConstructionError).forkScoped

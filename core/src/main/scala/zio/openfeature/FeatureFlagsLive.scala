@@ -15,6 +15,7 @@ import dev.openfeature.sdk.{
   FeatureProvider => OFFeatureProvider,
   ProviderEvent => JavaProviderEvent,
   EventDetails,
+  EventProviderAccess,
   FlagEvaluationDetails,
   MutableTrackingEventDetails,
   OpenFeatureAPI
@@ -794,12 +795,67 @@ final private[openfeature] class FeatureFlagsLive(
   override def providerStatus: UIO[ProviderStatus] =
     state.statusRef.get
 
-  // Force status back to Ready. Used by `fromAcquireAsync` when a hot-swap to the real provider fails: `setProvider`'s
-  // rollback restores the still-live fallback to `providerRef` but leaves status `Error`. Evaluations still proceed in
-  // `Error` (spec 1.7.6/1.7.7), but restoring `Ready` keeps `providerStatus` / `awaitReady` accurate for the usable
-  // fallback (`Error` is not `canEvaluate`). Package-private — not part of the public API.
-  private[openfeature] def forceReady: UIO[Unit] =
-    applySignal(Signal.ForceReady).unit
+  /** Re-register `oldProvider` with the SDK iff the failed swap left the SDK routing to `newProvider` (#282). Returns
+    * true iff the SDK is verified to route to `oldProvider` afterwards.
+    *
+    * The Java SDK binds the new provider's state manager into the domain/default slot before calling its `initialize()`
+    * and does not revert that binding when init throws, so after a failed swap the SDK client still routes evaluations
+    * to the failed provider while our refs have already rolled back to the old one. Re-registering the old provider
+    * reconciles the two — and, on success, triggers the SDK's own `shutDownOld` of the failed provider.
+    *
+    * Caveat: re-registration starts a fresh state manager for the old provider, so the SDK calls its `initialize()`
+    * again (an Optimizely poller restarts, an OFREP client re-fetches, ...) — unless the old provider is still bound to
+    * another domain of a shared API, whose READY manager is reused and skips re-init.
+    */
+  private def restoreSdkRegistration(
+    oldProvider: OFFeatureProvider,
+    newProvider: OFFeatureProvider
+  ): Task[Boolean] =
+    ZIO.attemptBlocking {
+      val bound = domain.fold(api.getProvider())(d => api.getProvider(d))
+      if (bound eq oldProvider) true // swap failed before binding (e.g. attach threw); already routing to old
+      // A concurrent sibling swap (shared-api topology) won the slot: leave it alone and report no restore, so status
+      // stays Error rather than us fighting the winner. The refs stay rolled back to oldProvider — a benign skew in
+      // this rare topology, deliberately not reconciled here.
+      else if (bound ne newProvider) false
+      else {
+        def register(): Unit = domain match {
+          case Some(d) => api.setProviderAndWait(d, oldProvider)
+          case None    => api.setProviderAndWait(oldProvider)
+        }
+        try register()
+        catch {
+          case _: IllegalStateException =>
+            // The "already attached" state a failed swap leaves an EventProvider in: its state manager was evicted from
+            // the slot but its `attach` CAS was never reset, so re-registration throws. Detach and retry once; any
+            // further failure propagates. This is precise for the case that matters — the ISE fires here only for an
+            // old provider still bound to ANOTHER domain when its reused READY manager skips attach entirely (so the
+            // detach is never called on a still-attached shared provider). The SDK's other ISE ("cannot set provider
+            // while repository is shutting down") also lands here, but it throws before any rebind, and the detach is
+            // moot then because the whole API is being torn down; the retry rethrows it and it propagates to cleanup.
+            EventProviderAccess.detach(oldProvider)
+            register()
+        }
+        true
+      }
+    }
+
+  /** Best-effort teardown of the failed new provider when rollback itself failed and left it unbound (#282). On a
+    * successful rollback the SDK's `shutDownOld` already does this; this covers only the rollback-failure path. If the
+    * failed provider is somehow still bound, do nothing.
+    */
+  private def cleanupUnboundFailedProvider(newProvider: OFFeatureProvider): UIO[Unit] =
+    (for {
+      bound <- ZIO.attemptBlocking(domain.fold(api.getProvider())(d => api.getProvider(d)))
+      _ <- ZIO.when(bound ne newProvider)(
+        ZIO.attemptBlocking(newProvider.shutdown()).ignore *>
+          ZIO.attemptBlocking(EventProviderAccess.deregisterGlobalProvider(api, newProvider)).ignore
+      )
+    } yield ())
+      // Log if even the best-effort teardown's own precondition read fails, so a leaked provider/thread from this
+      // doubly-rare path leaves a breadcrumb instead of vanishing silently.
+      .tapErrorCause(c => ZIO.logWarningCause("cleanupUnboundFailedProvider: best-effort teardown failed", c))
+      .ignore
 
   /** Async-init watchdog escalation (#244). Only when the machine actually transitions (the provider never became
     * usable — the `everReady` gate) does it shut the provider down, publish a terminal Error event with code
@@ -1030,11 +1086,31 @@ final private[openfeature] class FeatureFlagsLive(
           case None    => ZIO.attemptBlocking(api.setProviderAndWait(newProvider))
         }).mapError(e => FeatureFlagError.ProviderInitializationFailed(e))
           .tapError(_ =>
-            // Roll back refs FIRST so the identity guard again reflects the (still registered) old provider, then
-            // record the failure via the machine.
+            // Roll back refs FIRST so the identity guard again reflects the previous provider and record the failure
+            // via the machine, THEN reconcile the SDK client routing (#282): the SDK binds the new provider before
+            // init and does not revert on a failed init, so evaluations would keep hitting the failed provider while
+            // our refs point back at the old one. Re-registering the old provider restores routing; on success we
+            // restore Ready (the previous provider is serving again), on failure we log loudly and leave status Error.
             providerRef.set(oldProvider) *>
               ZIO.succeed(providerNameRef.set(oldName)) *>
-              applySignal(Signal.SwapFailed)
+              applySignal(Signal.SwapFailed) *>
+              restoreSdkRegistration(oldProvider, newProvider).foldZIO(
+                e =>
+                  ZIO.logErrorCause(
+                    s"setProvider rollback: failed to re-register previous provider '$oldName'; status remains Error " +
+                      "and evaluations may still route to the failed provider until a later setProvider succeeds",
+                    Cause.fail(e)
+                  ) *> cleanupUnboundFailedProvider(newProvider),
+                restored =>
+                  // restored == false only when a concurrent sibling swap already won the slot (see
+                  // restoreSdkRegistration): leave status Error and log a breadcrumb, don't fight the winner.
+                  if (restored) applySignal(Signal.RollbackSucceeded).unit
+                  else
+                    ZIO.logInfo(
+                      s"setProvider rollback: slot no longer bound to the failed provider (concurrent swap?); " +
+                        s"leaving status Error for '$oldName'"
+                    )
+              )
           )
         // 4. Mark ready via the machine — the Java SDK bridge also fires PROVIDER_READY, but we set it explicitly for
         //    immediate visibility.

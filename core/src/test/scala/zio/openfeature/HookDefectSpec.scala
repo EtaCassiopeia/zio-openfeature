@@ -5,7 +5,7 @@ import dev.openfeature.sdk.{
   EvaluationContext => OFEvaluationContext,
   EventProvider,
   Metadata,
-  OpenFeatureAPIFactory,
+  OpenFeatureAPI,
   ProviderEvaluation,
   ProviderState,
   Value
@@ -75,7 +75,7 @@ object HookDefectSpec extends ZIOSpecDefault {
   }
 
   private def buildFF(hooks: List[FeatureHook]): ZIO[Scope, Throwable, FeatureFlags] = {
-    val api    = OpenFeatureAPIFactory.create()
+    val api    = OpenFeatureAPI.createIsolated()
     val domain = s"hook-defect-${java.util.UUID.randomUUID()}"
     FeatureFlags.build(
       new SimpleProvider,

@@ -8,7 +8,7 @@ import dev.openfeature.sdk.{
   EvaluationContext => OFEvaluationContext,
   EventProvider,
   Metadata,
-  OpenFeatureAPIFactory,
+  OpenFeatureAPI,
   ProviderState,
   Value
 }
@@ -50,7 +50,7 @@ object TransactionOverrideFallbackSpec extends ZIOSpecDefault {
         initialHooks = Nil,
         statusRef = None,
         addShutdownFinalizer = true,
-        apiOverride = Some(OpenFeatureAPIFactory.create()),
+        apiOverride = Some(OpenFeatureAPI.createIsolated()),
         initTimeout = 1.hour // don't let the watchdog flip to Fatal during the test (live clock)
       )
 

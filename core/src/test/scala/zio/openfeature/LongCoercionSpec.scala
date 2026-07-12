@@ -8,7 +8,7 @@ import dev.openfeature.sdk.{
   EvaluationContext => OFEvaluationContext,
   EventProvider,
   Metadata,
-  OpenFeatureAPIFactory,
+  OpenFeatureAPI,
   ProviderEvaluation,
   ProviderState,
   TrackingEventDetails => OFTrackingEventDetails,
@@ -91,7 +91,7 @@ object LongCoercionSpec extends ZIOSpecDefault {
   }
 
   private def buildFF(provider: EventProvider): ZIO[Scope, Throwable, FeatureFlags] = {
-    val api = OpenFeatureAPIFactory.create()
+    val api = OpenFeatureAPI.createIsolated()
     FeatureFlags.build(
       provider,
       domain = Some(s"long-${java.util.UUID.randomUUID()}"),

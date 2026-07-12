@@ -8,7 +8,7 @@ import dev.openfeature.sdk.{
   EvaluationContext => OFEvaluationContext,
   EventProvider,
   Metadata,
-  OpenFeatureAPIFactory,
+  OpenFeatureAPI,
   ProviderEvaluation,
   ProviderState,
   Value
@@ -41,7 +41,7 @@ object HookHintsImmutabilitySpec extends ZIOSpecDefault {
   }
 
   private def buildFF(hooks: List[FeatureHook], evalDelayMillis: Long = 0L): ZIO[Scope, Throwable, FeatureFlags] = {
-    val api = OpenFeatureAPIFactory.create()
+    val api = OpenFeatureAPI.createIsolated()
     FeatureFlags.build(
       new SimpleProvider(evalDelayMillis),
       domain = Some(s"hook-hints-${java.util.UUID.randomUUID()}"),

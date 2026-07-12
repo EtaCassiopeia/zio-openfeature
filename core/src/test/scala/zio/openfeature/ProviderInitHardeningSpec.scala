@@ -9,7 +9,7 @@ import dev.openfeature.sdk.{
   EvaluationContext => OFEvaluationContext,
   EventProvider,
   Metadata,
-  OpenFeatureAPIFactory,
+  OpenFeatureAPI,
   ProviderEvaluation,
   ProviderState,
   Value
@@ -79,7 +79,7 @@ object ProviderInitHardeningSpec extends ZIOSpecDefault {
     test("[A1] sync fromProvider fails with TimeoutException when init blocks past initTimeout") {
       val latch    = new CountDownLatch(1)
       val provider = new BlockingInitProvider(latch)
-      val api      = OpenFeatureAPIFactory.create()
+      val api      = OpenFeatureAPI.createIsolated()
       val build = ZIO.scoped {
         FeatureFlags
           .build(
@@ -104,7 +104,7 @@ object ProviderInitHardeningSpec extends ZIOSpecDefault {
     } @@ withLiveClock,
     test("[A2] sync fromProvider fails if provider reports ERROR after init") {
       val provider = new InitToErrorProvider
-      val api      = OpenFeatureAPIFactory.create()
+      val api      = OpenFeatureAPI.createIsolated()
       val build = ZIO.scoped {
         FeatureFlags
           .build(
@@ -137,7 +137,7 @@ object ProviderInitHardeningSpec extends ZIOSpecDefault {
           super.shutdown()
         }
       }
-      val api = OpenFeatureAPIFactory.create()
+      val api = OpenFeatureAPI.createIsolated()
       val build = ZIO.scoped {
         FeatureFlags
           .build(
@@ -169,7 +169,7 @@ object ProviderInitHardeningSpec extends ZIOSpecDefault {
           super.shutdown()
         }
       }
-      val api = OpenFeatureAPIFactory.create()
+      val api = OpenFeatureAPI.createIsolated()
       val build = ZIO.scoped {
         FeatureFlags
           .build(
@@ -193,7 +193,7 @@ object ProviderInitHardeningSpec extends ZIOSpecDefault {
       // of NotReady is the watchdog.
       val latch    = new CountDownLatch(1)
       val provider = new BlockingInitProvider(latch)
-      val api      = OpenFeatureAPIFactory.create()
+      val api      = OpenFeatureAPI.createIsolated()
       ZIO.scoped {
         for {
           statusRef <- SubscriptionRef.make[ProviderStatus](ProviderStatus.NotReady)

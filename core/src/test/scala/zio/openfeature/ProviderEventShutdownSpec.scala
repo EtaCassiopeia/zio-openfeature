@@ -5,7 +5,7 @@ import dev.openfeature.sdk.{
   EvaluationContext => OFEvaluationContext,
   EventProvider,
   Metadata,
-  OpenFeatureAPIFactory,
+  OpenFeatureAPI,
   ProviderEvaluation,
   ProviderState,
   Value
@@ -41,7 +41,7 @@ object ProviderEventShutdownSpec extends ZIOSpecDefault {
   }
 
   private def buildFF: ZIO[Scope, Throwable, FeatureFlags] = {
-    val api    = OpenFeatureAPIFactory.create()
+    val api    = OpenFeatureAPI.createIsolated()
     val domain = s"event-shutdown-${java.util.UUID.randomUUID()}"
     FeatureFlags.build(
       new ReadyProvider,

@@ -9,7 +9,7 @@ import dev.openfeature.sdk.{
   EvaluationContext => OFEvaluationContext,
   EventProvider,
   Metadata,
-  OpenFeatureAPIFactory,
+  OpenFeatureAPI,
   ProviderEvaluation,
   ProviderEventDetails,
   ProviderState,
@@ -123,7 +123,7 @@ object ProviderInitFailureSpec extends ZIOSpecDefault {
     test("[B2 / case 1] sync initialize() that throws -> layer build fails with the thrown exception") {
       val boom     = new IllegalArgumentException("synthetic init failure")
       val provider = new ThrowingInitProvider(boom)
-      val api      = OpenFeatureAPIFactory.create()
+      val api      = OpenFeatureAPI.createIsolated()
       val build = ZIO.scoped {
         FeatureFlags
           .build(
@@ -148,7 +148,7 @@ object ProviderInitFailureSpec extends ZIOSpecDefault {
     } @@ withLiveClock,
     test("[B2 / case 8a] buildAsync: a throwing getMetadata surfaces a typed failure, not a defect (#242)") {
       val provider = new ThrowingMetadataProvider
-      val api      = OpenFeatureAPIFactory.create()
+      val api      = OpenFeatureAPI.createIsolated()
       val build = ZIO.scoped {
         FeatureFlags
           .buildAsync(
@@ -176,7 +176,7 @@ object ProviderInitFailureSpec extends ZIOSpecDefault {
     } @@ withLiveClock,
     test("[B2 / case 8b] buildAsync: a null provider surfaces a typed failure from setProvider, not a defect (#242)") {
       val nullProvider: dev.openfeature.sdk.FeatureProvider = null
-      val api                                               = OpenFeatureAPIFactory.create()
+      val api                                               = OpenFeatureAPI.createIsolated()
       val build = ZIO.scoped {
         FeatureFlags
           .buildAsync(
@@ -205,7 +205,7 @@ object ProviderInitFailureSpec extends ZIOSpecDefault {
       "[B2 / case 5] async provider fires PROVIDER_ERROR after init -> evaluations still proceed (spec 1.7.6/1.7.7)"
     ) {
       val provider = new EventDriverProvider
-      val api      = OpenFeatureAPIFactory.create()
+      val api      = OpenFeatureAPI.createIsolated()
       ZIO.scoped {
         for {
           statusRef <- SubscriptionRef.make[ProviderStatus](ProviderStatus.NotReady)
@@ -240,7 +240,7 @@ object ProviderInitFailureSpec extends ZIOSpecDefault {
     } @@ withLiveClock,
     test("[B2 / case 5b] checkProviderStatus fail-fast contract: only NOT_READY and FATAL block evaluation") {
       val provider = new EventDriverProvider
-      val api      = OpenFeatureAPIFactory.create()
+      val api      = OpenFeatureAPI.createIsolated()
       ZIO.scoped {
         for {
           statusRef <- SubscriptionRef.make[ProviderStatus](ProviderStatus.NotReady)
@@ -280,7 +280,7 @@ object ProviderInitFailureSpec extends ZIOSpecDefault {
     } @@ withLiveClock,
     test("[B2 / case 6] async provider recovers ERROR -> READY and evaluations succeed") {
       val provider = new EventDriverProvider
-      val api      = OpenFeatureAPIFactory.create()
+      val api      = OpenFeatureAPI.createIsolated()
       ZIO.scoped {
         for {
           statusRef <- SubscriptionRef.make[ProviderStatus](ProviderStatus.NotReady)
@@ -324,7 +324,7 @@ object ProviderInitFailureSpec extends ZIOSpecDefault {
       // OFREP failure-mode suite); it's also unit-tested in `FeatureFlagErrorSpec`. This test documents the boundary.
       val boom     = new java.net.UnknownHostException("flags.example.com")
       val provider = new ThrowingEvalProvider(boom)
-      val api      = OpenFeatureAPIFactory.create()
+      val api      = OpenFeatureAPI.createIsolated()
       ZIO.scoped {
         for {
           statusRef <- SubscriptionRef.make[ProviderStatus](ProviderStatus.Ready)

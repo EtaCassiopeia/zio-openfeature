@@ -6,8 +6,9 @@ import dev.openfeature.sdk.internal.{AutoCloseableReentrantReadWriteLock, TriCon
   *
   * Provider wrappers (CachingProvider, CircuitBreakerProvider) hold a delegate that is never registered with an
   * `OpenFeatureAPI`, so events the delegate emits would otherwise go nowhere — the SDK only attaches to the provider it
-  * registers (the wrapper). This object lives in the `dev.openfeature.sdk` package (same pattern as
-  * `OpenFeatureAPIFactory`) to reach the package-private attach hook and forward delegate emissions to the wrapper.
+  * registers (the wrapper). This object lives in the `dev.openfeature.sdk` package (the same package-shim pattern as
+  * core's `EventProviderAccess`) to reach the package-private attach hook and forward delegate emissions to the
+  * wrapper.
   *
   * A delegate supports exactly one attachment; wrapping a provider takes ownership of its event channel. Registering
   * the same delegate instance directly with an API while it is wrapped is unsupported (the SDK's own attach would

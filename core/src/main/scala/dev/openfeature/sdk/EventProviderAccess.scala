@@ -8,8 +8,8 @@ package dev.openfeature.sdk
   * state is first reset via the package-private `detach()`. This shim exposes that member.
   *
   * Compile-time checked rather than reflective: an SDK upgrade that changes these signatures fails compilation here
-  * instead of surfacing as a runtime reflection error. Same precedent as `OpenFeatureAPIFactory` sitting next to it
-  * (which accesses the package-private `OpenFeatureAPI` constructor).
+  * instead of surfacing as a runtime reflection error. Same package-shim pattern as `extras`' `EventProviderBridge`
+  * (which reaches the package-private `EventProvider.attach`/`detach`).
   */
 object EventProviderAccess {
 

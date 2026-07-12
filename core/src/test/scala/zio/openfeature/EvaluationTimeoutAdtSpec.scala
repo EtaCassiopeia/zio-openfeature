@@ -8,7 +8,7 @@ import dev.openfeature.sdk.{
   EvaluationContext => OFEvaluationContext,
   EventProvider,
   Metadata,
-  OpenFeatureAPIFactory,
+  OpenFeatureAPI,
   ProviderEvaluation,
   ProviderState,
   Value
@@ -42,7 +42,7 @@ object EvaluationTimeoutAdtSpec extends ZIOSpecDefault {
   }
 
   private def buildFF(globalTimeout: Option[Duration]): ZIO[Scope, Throwable, FeatureFlags] = {
-    val api = OpenFeatureAPIFactory.create()
+    val api = OpenFeatureAPI.createIsolated()
     FeatureFlags.build(
       new SlowProvider(200L),
       domain = Some(s"timeout-${java.util.UUID.randomUUID()}"),

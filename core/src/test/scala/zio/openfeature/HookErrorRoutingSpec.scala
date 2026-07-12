@@ -9,7 +9,7 @@ import dev.openfeature.sdk.{
   ErrorCode,
   EventProvider,
   Metadata,
-  OpenFeatureAPIFactory,
+  OpenFeatureAPI,
   ProviderEvaluation,
   ProviderState,
   Value
@@ -68,7 +68,7 @@ object HookErrorRoutingSpec extends ZIOSpecDefault {
   }
 
   private def buildFF(hooks: List[FeatureHook]): ZIO[Scope, Throwable, FeatureFlags] = {
-    val api = OpenFeatureAPIFactory.create()
+    val api = OpenFeatureAPI.createIsolated()
     FeatureFlags.build(
       new RoutingProvider,
       domain = Some(s"hook-routing-${java.util.UUID.randomUUID()}"),

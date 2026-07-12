@@ -397,7 +397,7 @@ class ConformanceSteps extends ScalaDsl with EN {
       case None => eval.unit.orDieWith(e => new RuntimeException(String.valueOf(e)))
     }
     run(full)
-    mergedCtx = run(testProvider.getEvaluations).last._2
+    mergedCtx = run(testProvider.getRawEvaluations).last._2
   }
 
   Then("""^The merged context contains an entry with key "([^"]*)" and value "([^"]*)"$""") {

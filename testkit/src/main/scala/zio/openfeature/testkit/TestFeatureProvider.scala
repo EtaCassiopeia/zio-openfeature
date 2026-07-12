@@ -3,7 +3,7 @@ package zio.openfeature.testkit
 import zio._
 import zio.stream._
 import zio.openfeature._
-import zio.openfeature.internal.{ErrorCodeConverter, ProviderEvaluations}
+import zio.openfeature.internal.{ContextConverter, ErrorCodeConverter, ProviderEvaluations}
 import dev.openfeature.sdk.{
   EvaluationContext => OFEvaluationContext,
   EventProvider,
@@ -191,8 +191,15 @@ final class TestFeatureProvider private (
   def setFlag[A](key: String, value: A): UIO[Unit] =
     ZIO.succeed(flags.put(key, value)).unit
 
-  /** Set multiple flag values. */
+  /** Merge these flag values into the existing flags. Flags seeded via `layer(Map(...))` / `make(Map(...))` or set by
+    * earlier `setFlag`/`setFlags` calls are kept; a key present in `newFlags` overwrites its previous value. Use
+    * [[replaceFlags]] to discard the existing flags first.
+    */
   def setFlags(newFlags: Map[String, Any]): UIO[Unit] =
+    ZIO.succeed(newFlags.foreach { case (k, v) => flags.put(k, v) })
+
+  /** Replace ALL flags with these — every existing flag is discarded first. */
+  def replaceFlags(newFlags: Map[String, Any]): UIO[Unit] =
     ZIO.succeed {
       flags.clear()
       newFlags.foreach { case (k, v) => flags.put(k, v) }
@@ -276,8 +283,15 @@ final class TestFeatureProvider private (
         }
       }
 
-  /** Get all evaluations that have been made. */
-  def getEvaluations: UIO[List[(String, OFEvaluationContext)]] =
+  /** All evaluations made so far, each captured context converted to the library's [[EvaluationContext]] so you can
+    * assert on `.targetingKey` / `.getString(...)` etc. directly instead of the Java SDK type. Use
+    * [[getRawEvaluations]] if you need the raw `dev.openfeature.sdk.EvaluationContext`.
+    */
+  def getEvaluations: UIO[List[(String, EvaluationContext)]] =
+    ZIO.succeed(evaluations.asScala.toList.map { case (key, ctx) => (key, ContextConverter.fromOpenFeature(ctx)) })
+
+  /** All evaluations made so far, with each captured context as the raw Java SDK `EvaluationContext`. */
+  def getRawEvaluations: UIO[List[(String, OFEvaluationContext)]] =
     ZIO.succeed(evaluations.asScala.toList)
 
   /** Clear the evaluation history. */

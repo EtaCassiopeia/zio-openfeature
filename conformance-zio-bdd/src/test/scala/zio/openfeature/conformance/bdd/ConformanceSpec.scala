@@ -436,7 +436,7 @@ object ConformanceSpec extends ZIOSteps[Any, World] {
         case None     => eval.unit.orDieWith(e => new RuntimeException(String.valueOf(e)))
       }
       _      <- run
-      merged <- w.testProvider.get.getEvaluations.map(_.last._2)
+      merged <- w.testProvider.get.getRawEvaluations.map(_.last._2)
       _      <- ScenarioContext.update(_.copy(mergedCtx = Some(merged)))
     } yield ()
   }

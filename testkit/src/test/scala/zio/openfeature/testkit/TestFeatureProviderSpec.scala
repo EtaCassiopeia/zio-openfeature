@@ -10,6 +10,49 @@ import dev.openfeature.sdk.{ImmutableContext, MutableContext, ProviderState}
 object TestFeatureProviderSpec extends ZIOSpecDefault {
 
   def spec = suite("TestFeatureProviderSpec")(
+    suite("#272 testkit DX")(
+      test("G1: getEvaluations returns the library EvaluationContext (no Java SDK type leak)") {
+        for {
+          provider <- TestFeatureProvider.make
+          jctx = new MutableContext("user-1").add("tier", "gold")
+          _    = provider.getBooleanEvaluation("flag", true, jctx)
+          evals <- provider.getEvaluations
+        } yield {
+          val captured: EvaluationContext = evals.head._2
+          assertTrue(
+            captured.targetingKey.contains("user-1"),
+            captured.getString("tier").contains("gold")
+          )
+        }
+      },
+      test("G2: getRawEvaluations still exposes the raw Java SDK EvaluationContext") {
+        for {
+          provider <- TestFeatureProvider.make
+          jctx = new MutableContext("user-2")
+          _    = provider.getBooleanEvaluation("flag", true, jctx)
+          raw <- provider.getRawEvaluations
+        } yield {
+          val captured: dev.openfeature.sdk.EvaluationContext = raw.head._2
+          assertTrue(captured.getTargetingKey == "user-2")
+        }
+      },
+      test("G3: setFlags merges into existing flags — seeded flags survive") {
+        for {
+          provider <- TestFeatureProvider.make(Map("seeded" -> 1))
+          _        <- provider.setFlags(Map("added" -> 2))
+          seeded = provider.getIntegerEvaluation("seeded", 0, new ImmutableContext())
+          added  = provider.getIntegerEvaluation("added", 0, new ImmutableContext())
+        } yield assertTrue(seeded.getValue == 1, added.getValue == 2)
+      },
+      test("G4: replaceFlags discards existing flags") {
+        for {
+          provider <- TestFeatureProvider.make(Map("old" -> 1))
+          _        <- provider.replaceFlags(Map("new" -> 2))
+          old = provider.getIntegerEvaluation("old", 0, new ImmutableContext())
+          nw  = provider.getIntegerEvaluation("new", 0, new ImmutableContext())
+        } yield assertTrue(old.getValue == 0, nw.getValue == 2)
+      }
+    ),
     suite("initialization")(
       test("starts with Ready status after creation") {
         for {
@@ -73,10 +116,10 @@ object TestFeatureProviderSpec extends ZIOSpecDefault {
           result = provider.getStringEvaluation("new-flag", "default", new ImmutableContext())
         } yield assertTrue(result.getValue == "value")
       },
-      test("setFlags replaces all flags") {
+      test("replaceFlags replaces all flags") {
         for {
           provider <- TestFeatureProvider.make(Map("old" -> 1))
-          _        <- provider.setFlags(Map("new" -> 2))
+          _        <- provider.replaceFlags(Map("new" -> 2))
           oldResult = provider.getIntegerEvaluation("old", 0, new ImmutableContext())
           newResult = provider.getIntegerEvaluation("new", 0, new ImmutableContext())
         } yield assertTrue(oldResult.getValue == 0) && // default, flag no longer exists
@@ -161,7 +204,7 @@ object TestFeatureProviderSpec extends ZIOSpecDefault {
           ctx = new ImmutableContext("user-123")
           _   = provider.getBooleanEvaluation("flag", true, ctx)
           evals <- provider.getEvaluations
-        } yield assertTrue(evals.head._2.getTargetingKey == "user-123")
+        } yield assertTrue(evals.head._2.targetingKey.contains("user-123"))
       }
     ),
     suite("layer integration")(

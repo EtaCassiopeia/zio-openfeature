@@ -19,7 +19,7 @@ jobs:
     # 6-hour default before someone notices a stuck release. Tests + ci-release normally complete well inside this.
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 

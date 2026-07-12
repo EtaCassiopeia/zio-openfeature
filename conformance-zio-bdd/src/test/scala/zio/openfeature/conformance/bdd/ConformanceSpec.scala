@@ -10,7 +10,7 @@ import zio.openfeature._
 import zio.openfeature.FeatureHook as OFFeatureHook
 import zio.openfeature.testkit.{CachingReasonProvider, TestFeatureProvider}
 import zio.schema.{DeriveSchema, Schema}
-import dev.openfeature.sdk.{EvaluationContext => OFEvaluationContext, OpenFeatureAPIFactory}
+import dev.openfeature.sdk.{EvaluationContext => OFEvaluationContext, OpenFeatureAPI}
 import dev.openfeature.sdk.providers.memory.InMemoryProvider
 
 /** Data-table row types (zio-bdd's `table[T]` maps a gherkin table to `List[T]` via a zio-schema record). */
@@ -50,7 +50,7 @@ object ConformanceSpec extends ZIOSteps[Any, World] {
   private def buildInMemory(sc: Scope.Closeable): ZIO[Any, Throwable, FeatureFlags] =
     for {
       statusRef <- SubscriptionRef.make[ProviderStatus](ProviderStatus.Ready)
-      api    = OpenFeatureAPIFactory.create()
+      api    = OpenFeatureAPI.createIsolated()
       domain = s"bdd-${java.util.UUID.randomUUID()}"
       env <- sc.extend[Any](
         FeatureFlags

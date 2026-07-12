@@ -6,7 +6,7 @@ import dev.openfeature.sdk.{
   EventDetails,
   EventProvider,
   Metadata,
-  OpenFeatureAPIFactory,
+  OpenFeatureAPI,
   ProviderEvaluation,
   ProviderState,
   Value
@@ -61,7 +61,7 @@ object FeatureFlagsShutdownSpec extends ZIOSpecDefault {
     test("shutdown on a non-owning (shared-api) client shuts down neither the shared api nor any provider (#243)") {
       val shutA = new AtomicBoolean(false)
       val shutB = new AtomicBoolean(false)
-      val api   = OpenFeatureAPIFactory.create()
+      val api   = OpenFeatureAPI.createIsolated()
       ZIO.scoped {
         for {
           ffA       <- buildShared("A", shutA, owns = false, api)
@@ -85,7 +85,7 @@ object FeatureFlagsShutdownSpec extends ZIOSpecDefault {
     test("shutdown on a sole-owner client shuts the shared api, cascading to siblings (#243 regression)") {
       val shutOwn = new AtomicBoolean(false)
       val shutSib = new AtomicBoolean(false)
-      val api     = OpenFeatureAPIFactory.create()
+      val api     = OpenFeatureAPI.createIsolated()
       ZIO.scoped {
         for {
           ffOwn <- buildShared("Own", shutOwn, owns = true, api)

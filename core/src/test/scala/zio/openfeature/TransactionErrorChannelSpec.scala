@@ -5,7 +5,7 @@ import zio.test._
 import zio.test.TestAspect.{sequential, withLiveClock}
 import zio.openfeature.internal.ProviderEvaluations
 import dev.openfeature.sdk.{EvaluationContext => OFEvaluationContext, EventProvider, Metadata, ProviderState, Value}
-import dev.openfeature.sdk.OpenFeatureAPIFactory
+import dev.openfeature.sdk.OpenFeatureAPI
 
 /** #255: on Scala 2.13 `transaction`'s error channel erased to `Any` (no union types), disabling typed recovery.
   * `transactionEither` gives a uniform, cross-version typed channel `Either[E, FeatureFlagError]` — `Left` is the
@@ -41,7 +41,7 @@ object TransactionErrorChannelSpec extends ZIOSpecDefault {
       initialHooks = Nil,
       statusRef = None,
       addShutdownFinalizer = true,
-      apiOverride = Some(OpenFeatureAPIFactory.create()),
+      apiOverride = Some(OpenFeatureAPI.createIsolated()),
       evaluationTimeout = Some(5.seconds)
     )
 

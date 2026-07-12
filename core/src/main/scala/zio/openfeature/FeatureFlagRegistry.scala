@@ -1,6 +1,6 @@
 package zio.openfeature
 
-import dev.openfeature.sdk.{FeatureProvider => OFFeatureProvider, OpenFeatureAPI, OpenFeatureAPIFactory}
+import dev.openfeature.sdk.{FeatureProvider => OFFeatureProvider, OpenFeatureAPI}
 import zio._
 
 trait FeatureFlagRegistry {
@@ -46,7 +46,7 @@ object FeatureFlagRegistry {
   def fromProvider(defaultProvider: OFFeatureProvider): ZLayer[Scope, Throwable, FeatureFlagRegistry] =
     ZLayer.scoped {
       for {
-        api            <- ZIO.succeed(OpenFeatureAPIFactory.create())
+        api            <- ZIO.succeed(OpenFeatureAPI.createIsolated())
         scope          <- ZIO.service[Scope]
         clients        <- Ref.make(Map.empty[String, Promise[FeatureFlagError, FeatureFlags]])
         providers      <- Ref.make(Map.empty[String, OFFeatureProvider])

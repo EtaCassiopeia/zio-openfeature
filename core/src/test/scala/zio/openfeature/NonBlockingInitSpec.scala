@@ -8,7 +8,7 @@ import dev.openfeature.sdk.{
   EvaluationContext => OFEvaluationContext,
   FeatureProvider,
   Metadata,
-  OpenFeatureAPIFactory,
+  OpenFeatureAPI,
   ProviderEvaluation,
   ProviderState,
   Value
@@ -77,7 +77,7 @@ object NonBlockingInitSpec extends ZIOSpecDefault {
       initialHooks = Nil,
       statusRef = Some(ref),
       addShutdownFinalizer = true,
-      apiOverride = Some(OpenFeatureAPIFactory.create()),
+      apiOverride = Some(OpenFeatureAPI.createIsolated()),
       onReady = onReady,
       initTimeout = initTimeout
     )

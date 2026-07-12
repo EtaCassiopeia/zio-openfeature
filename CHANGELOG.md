@@ -50,6 +50,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   call — see the `@deprecated` message on each overload for its exact one-line replacement. `fromProvider(provider)`
   and `fromProviderAsync(provider)` are unaffected and remain the recommended shorthands for the common case.
 
+### Removed
+
+- **`dev.openfeature.sdk.OpenFeatureAPIFactory`** (#316). This package shim existed only to reach the Java SDK's
+  package-private `OpenFeatureAPI` constructor for creating isolated API instances. SDK 1.21.0 added official support
+  via `public static OpenFeatureAPI.createIsolated()` (which the build already pins), so the shim is removed. **Migration:**
+  replace `OpenFeatureAPIFactory.create()` with `OpenFeatureAPI.createIsolated()` — a pure rename with identical
+  behavior (both allocate a fresh, isolated instance with its own lock).
+
 ### Fixed
 
 - **A failed hot-swap now rolls back SDK client routing, not just the internal provider ref** (#282). `setProvider`'s

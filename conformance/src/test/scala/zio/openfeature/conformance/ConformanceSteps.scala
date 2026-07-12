@@ -6,7 +6,7 @@ import zio._
 import zio.stream.SubscriptionRef
 import zio.openfeature._
 import zio.openfeature.testkit.{CachingReasonProvider, TestFeatureProvider}
-import dev.openfeature.sdk.{EvaluationContext => OFEvaluationContext, OpenFeatureAPIFactory}
+import dev.openfeature.sdk.{EvaluationContext => OFEvaluationContext, OpenFeatureAPI}
 import dev.openfeature.sdk.providers.memory.InMemoryProvider
 
 import scala.jdk.CollectionConverters._
@@ -65,7 +65,7 @@ class ConformanceSteps extends ScalaDsl with EN {
   private def setupInMemory(): Unit = {
     val sc        = openScope()
     val statusRef = run(SubscriptionRef.make[ProviderStatus](ProviderStatus.Ready))
-    val api       = OpenFeatureAPIFactory.create()
+    val api       = OpenFeatureAPI.createIsolated()
     val domain    = s"conf-${java.util.UUID.randomUUID()}"
     val ff = run(
       sc.extend[Any](

@@ -1,6 +1,6 @@
 package zio.openfeature.testkit
 
-import dev.openfeature.sdk.OpenFeatureAPIFactory
+import dev.openfeature.sdk.OpenFeatureAPI
 import zio._
 import zio.test._
 import zio.openfeature._
@@ -25,7 +25,7 @@ object EvaluationTimeoutSpec extends ZIOSpecDefault {
             initialHooks = Nil,
             statusRef = None,
             addShutdownFinalizer = false,
-            apiOverride = Some(OpenFeatureAPIFactory.create()),
+            apiOverride = Some(OpenFeatureAPI.createIsolated()),
             evaluationTimeout = evaluationTimeout
           )
         } yield (tp, ff)

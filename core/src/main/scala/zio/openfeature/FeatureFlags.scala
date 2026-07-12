@@ -3,7 +3,7 @@ package zio.openfeature
 import zio._
 import zio.stream._
 import zio.openfeature.internal.FeatureFlagsState
-import dev.openfeature.sdk.{FeatureProvider => OFFeatureProvider, OpenFeatureAPI, OpenFeatureAPIFactory, ProviderState}
+import dev.openfeature.sdk.{FeatureProvider => OFFeatureProvider, OpenFeatureAPI, ProviderState}
 import dev.openfeature.sdk.multiprovider.{MultiProvider, Strategy, FirstMatchStrategy, FirstSuccessfulStrategy}
 import java.util.concurrent.TimeoutException
 

@@ -9,7 +9,7 @@ import dev.openfeature.sdk.{
   EventProvider,
   ImmutableMetadata,
   Metadata,
-  OpenFeatureAPIFactory,
+  OpenFeatureAPI,
   ProviderEvaluation,
   ProviderEventDetails,
   ProviderState,
@@ -431,7 +431,7 @@ object TestFeatureProvider {
       .scoped {
         for {
           testProvider <- makeReadyWithInitDone(flags)
-          api    = OpenFeatureAPIFactory.create()
+          api    = OpenFeatureAPI.createIsolated()
           domain = s"test-${java.util.UUID.randomUUID()}"
           featureFlags <- FeatureFlags
             .fromProviderWithDomain(
@@ -487,7 +487,7 @@ object TestFeatureProvider {
 
   /** Create a FeatureFlags layer from an existing TestFeatureProvider. */
   def layerFrom(provider: TestFeatureProvider): ZLayer[Scope, Throwable, FeatureFlags] = {
-    val api    = OpenFeatureAPIFactory.create()
+    val api    = OpenFeatureAPI.createIsolated()
     val domain = s"test-${java.util.UUID.randomUUID()}"
     FeatureFlags.fromProviderWithDomain(provider, domain, provider.statusRef, api = Some(api))
   }
@@ -518,7 +518,7 @@ object TestFeatureProvider {
       .scoped {
         for {
           testProvider <- makeNotReady(flags)
-          api    = OpenFeatureAPIFactory.create()
+          api    = OpenFeatureAPI.createIsolated()
           domain = s"test-async-${java.util.UUID.randomUUID()}"
           featureFlags <- FeatureFlags
             .fromProviderWithDomainAsync(
@@ -577,7 +577,7 @@ object TestFeatureProvider {
       .scoped {
         for {
           testProvider <- makeNotReady(flags)
-          api    = OpenFeatureAPIFactory.create()
+          api    = OpenFeatureAPI.createIsolated()
           domain = s"test-async-ready-${java.util.UUID.randomUUID()}"
           featureFlags <- FeatureFlags
             .fromProviderWithDomainAsync(

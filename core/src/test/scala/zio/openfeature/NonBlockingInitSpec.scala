@@ -182,13 +182,15 @@ object NonBlockingInitSpec extends ZIOSpecDefault {
               hooks    <- ff.hooks
               ctx      <- ff.globalContext
               createdN <- ZIO.succeed(created.get())
-              fbDown   <- ZIO.succeed(fbShutdowns.get())
+              // The SDK's ProviderRepository.shutDownOld runs the old fallback's shutdown() asynchronously on its
+              // task executor, so poll for the count rather than reading immediately (which could race it, #320).
+              fbDown <- Live.live(ZIO.succeed(fbShutdowns.get()).repeatUntil(_ >= 1).timeout(5.seconds))
             } yield assertTrue(
               swapped.contains(Right(true)),
               hooks.contains(hook),                     // hooks survive the swap
               ctx.getString("marker").contains("keep"), // context survives the swap
               createdN == 2,                            // first fallback + fresh fallback
-              fbDown == 1                               // pre-swap fallback shut down exactly once
+              fbDown.contains(1)                        // pre-swap fallback shut down exactly once
             )
           }
       }

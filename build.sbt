@@ -85,12 +85,11 @@ ThisBuild / scalacOptions ++= {
 // surface the sbt-scoverage 2.3.x bump; once instrumentation compiles again, a coverage CI job can be reintroduced.
 ThisBuild / coverageEnabled := false
 
-// Binary-compatibility check via sbt-mima. `mimaPreviousArtifacts` is intentionally empty across all modules while
-// the project is pre-1.0: the `1.0.0-RCx` line is still making deliberate breaking changes, so baselining against an
-// RC would fail CI on intended breakage rather than catching accidental breakage. The baseline is set as part of
-// cutting `v1.0.0` — see `RELEASING.md` step "enable MiMa". After that, `sbt mimaReportBinaryIssues` catches
+// Binary-compatibility check via sbt-mima. The API is frozen as of `1.0.0`, so each module baselines against its
+// own `1.0.0` artifact (see `mimaPreviousArtifacts` in `commonSettings`): `sbt mimaReportBinaryIssues` catches
 // accidental breaking changes on every PR, and an intentional break is whitelisted with a `mimaBinaryIssueFilters`
-// rule scoped to the specific symbol — see https://github.com/lightbend/mima for the filter API.
+// rule scoped to the specific symbol — see https://github.com/lightbend/mima for the filter API. Bump the baseline
+// to the previous release when cutting each subsequent version, per `RELEASING.md`.
 ThisBuild / mimaFailOnNoPrevious := false
 
 // Version-specific source directories
@@ -125,9 +124,9 @@ lazy val commonSettings = Seq(
     "dev.zio" %% "zio-test"     % zioVersion % Test,
     "dev.zio" %% "zio-test-sbt" % zioVersion % Test
   ),
-  // Empty while pre-1.0 (see the ThisBuild `mimaFailOnNoPrevious := false` note above). When cutting `v1.0.0`,
-  // set this to `Set(organization.value %% moduleName.value % "<last-release>")` per `RELEASING.md`.
-  mimaPreviousArtifacts := Set.empty
+  // Baseline against each module's last release (see the ThisBuild MiMa note above). Bump `"1.0.0"` to the previous
+  // release version when cutting a new one, per `RELEASING.md`.
+  mimaPreviousArtifacts := Set(organization.value %% moduleName.value % "1.0.0")
 ) ++ crossVersionSourceDirs
 
 lazy val root = (project in file("."))

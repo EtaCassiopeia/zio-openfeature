@@ -5,7 +5,7 @@ import dev.openfeature.sdk.{
   EvaluationContext => OFEvaluationContext,
   EventProvider,
   Metadata,
-  OpenFeatureAPIFactory,
+  OpenFeatureAPI,
   ProviderEvaluation,
   ProviderState,
   Value
@@ -88,7 +88,7 @@ object ProviderHotSwapStressSpec extends ZIOSpecDefault {
       val providerA   = new ConstantProvider("A", true)
       val badProvider = new FailingInitProvider
       val providerB   = new ConstantProvider("B", false)
-      val api         = OpenFeatureAPIFactory.create()
+      val api         = OpenFeatureAPI.createIsolated()
       val domain      = s"stress-swap-${java.util.UUID.randomUUID()}"
 
       ZIO.scoped {
@@ -134,7 +134,7 @@ object ProviderHotSwapStressSpec extends ZIOSpecDefault {
       }
     } @@ withLiveClock @@ timeout(30.seconds),
     test("50 concurrent setProvider calls — all serialized, final provider coherent") {
-      val api    = OpenFeatureAPIFactory.create()
+      val api    = OpenFeatureAPI.createIsolated()
       val domain = s"concurrent-swap-${java.util.UUID.randomUUID()}"
       ZIO.scoped {
         for {

@@ -8,7 +8,7 @@ import dev.openfeature.sdk.{
   EvaluationContext => OFEvaluationContext,
   EventProvider,
   Metadata,
-  OpenFeatureAPIFactory,
+  OpenFeatureAPI,
   ProviderEvaluation,
   ProviderState,
   Value
@@ -38,7 +38,7 @@ object CustomResolutionReasonSpec extends ZIOSpecDefault {
   }
 
   private def buildFF(reason: String): ZIO[Scope, Throwable, FeatureFlags] = {
-    val api = OpenFeatureAPIFactory.create()
+    val api = OpenFeatureAPI.createIsolated()
     FeatureFlags.build(
       new ReasonProvider(reason),
       domain = Some(s"reason-${java.util.UUID.randomUUID()}"),

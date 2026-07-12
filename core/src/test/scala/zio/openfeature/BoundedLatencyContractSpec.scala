@@ -5,7 +5,7 @@ import dev.openfeature.sdk.{
   EvaluationContext => OFEvaluationContext,
   EventProvider,
   Metadata,
-  OpenFeatureAPIFactory,
+  OpenFeatureAPI,
   ProviderEvaluation,
   ProviderState,
   Value
@@ -58,7 +58,7 @@ object BoundedLatencyContractSpec extends ZIOSpecDefault {
   }
 
   private def buildWithTimeout(provider: EventProvider, evalTimeout: Duration): ZIO[Scope, Throwable, FeatureFlags] = {
-    val api    = OpenFeatureAPIFactory.create()
+    val api    = OpenFeatureAPI.createIsolated()
     val domain = s"latency-${java.util.UUID.randomUUID()}"
     FeatureFlags.build(
       provider,

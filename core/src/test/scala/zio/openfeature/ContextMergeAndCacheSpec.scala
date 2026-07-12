@@ -8,7 +8,7 @@ import dev.openfeature.sdk.{
   EvaluationContext => OFEvaluationContext,
   EventProvider,
   Metadata,
-  OpenFeatureAPIFactory,
+  OpenFeatureAPI,
   ProviderEvaluation,
   ProviderState,
   Value
@@ -43,7 +43,7 @@ object ContextMergeAndCacheSpec extends ZIOSpecDefault {
   }
 
   private def buildFF(seen: AtomicReference[String]): ZIO[Scope, Throwable, FeatureFlags] = {
-    val api = OpenFeatureAPIFactory.create()
+    val api = OpenFeatureAPI.createIsolated()
     FeatureFlags.build(
       new InspectingProvider(seen),
       domain = Some(s"ctx-${java.util.UUID.randomUUID()}"),

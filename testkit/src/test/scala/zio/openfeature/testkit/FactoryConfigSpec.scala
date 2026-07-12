@@ -9,7 +9,7 @@ import dev.openfeature.sdk.{
   EvaluationContext => OFEvaluationContext,
   EventProvider,
   Metadata,
-  OpenFeatureAPIFactory,
+  OpenFeatureAPI,
   ProviderState,
   Value
 }
@@ -21,7 +21,7 @@ import java.util.concurrent.atomic.AtomicBoolean
   * combination the pre-#253 factory-overload surface could not express (T1-T5), plus a behavioral-equivalence pin
   * between the deprecated forwards and the config path (T6).
   *
-  * Isolated `OpenFeatureAPI` instances (`OpenFeatureAPIFactory.create()`) + the `private[openfeature]`
+  * Isolated `OpenFeatureAPI` instances (`OpenFeatureAPI.createIsolated()`) + the `private[openfeature]`
   * `FeatureFlags.fromProvider(provider, config, statusRef, apiOverride, onReady)` variant are used throughout so these
   * tests never touch the process-global singleton and can run in parallel with every other spec.
   */
@@ -64,7 +64,7 @@ object FactoryConfigSpec extends ZIOSpecDefault {
         config = FeatureFlagsConfig().withDomain(domain).withHooks(List(hook))
         result <- ZIO.scoped {
           FeatureFlags
-            .fromProvider(provider, config, statusRef = None, apiOverride = Some(OpenFeatureAPIFactory.create()))
+            .fromProvider(provider, config, statusRef = None, apiOverride = Some(OpenFeatureAPI.createIsolated()))
             .build
             .flatMap { env =>
               val ff = env.get[FeatureFlags]
@@ -85,7 +85,7 @@ object FactoryConfigSpec extends ZIOSpecDefault {
         config = FeatureFlagsConfig().withDomain(domain).withEvaluationTimeout(20.millis)
         result <- ZIO.scoped {
           FeatureFlags
-            .fromProvider(provider, config, statusRef = None, apiOverride = Some(OpenFeatureAPIFactory.create()))
+            .fromProvider(provider, config, statusRef = None, apiOverride = Some(OpenFeatureAPI.createIsolated()))
             .build
             .flatMap(env => env.get[FeatureFlags].boolean("flag", default = false).either)
         }
@@ -107,7 +107,7 @@ object FactoryConfigSpec extends ZIOSpecDefault {
               provider,
               config,
               statusRef = Some(provider.statusRef),
-              apiOverride = Some(OpenFeatureAPIFactory.create()),
+              apiOverride = Some(OpenFeatureAPI.createIsolated()),
               onReady = provider.initDone
             )
             .build
@@ -128,7 +128,7 @@ object FactoryConfigSpec extends ZIOSpecDefault {
     test("T4a: Auto + domain — closing the config-layer scope does NOT shut the shared api (#243)") {
       val shutA = new AtomicBoolean(false)
       val shutB = new AtomicBoolean(false)
-      val api   = OpenFeatureAPIFactory.create()
+      val api   = OpenFeatureAPI.createIsolated()
       ZIO.scoped {
         for {
           ffA <- FeatureFlags
@@ -173,7 +173,7 @@ object FactoryConfigSpec extends ZIOSpecDefault {
                 .withDomain(uniqueDomain("t4b"))
                 .withApiOwnership(ApiOwnership.Owned),
               statusRef = None,
-              apiOverride = Some(OpenFeatureAPIFactory.create())
+              apiOverride = Some(OpenFeatureAPI.createIsolated())
             )
             .build
             .flatMap(env => env.get[FeatureFlags].awaitReady(5.seconds))
@@ -188,7 +188,7 @@ object FactoryConfigSpec extends ZIOSpecDefault {
         config = FeatureFlagsConfig().withDomain(domain).withoutEvaluationTimeout
         result <- ZIO.scoped {
           FeatureFlags
-            .fromProvider(provider, config, statusRef = None, apiOverride = Some(OpenFeatureAPIFactory.create()))
+            .fromProvider(provider, config, statusRef = None, apiOverride = Some(OpenFeatureAPI.createIsolated()))
             .build
             .flatMap(env => env.get[FeatureFlags].boolean("flag", default = false))
         }

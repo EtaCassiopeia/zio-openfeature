@@ -10,7 +10,7 @@ import dev.openfeature.sdk.{
   EventProvider,
   ImmutableMetadata,
   Metadata,
-  OpenFeatureAPIFactory,
+  OpenFeatureAPI,
   ProviderEvaluation,
   ProviderEventDetails,
   ProviderState,
@@ -64,7 +64,7 @@ object EventSystemSpec extends ZIOSpecDefault {
   }
 
   private def buildFF(provider: EventProvider): ZIO[Scope, Throwable, FeatureFlags] = {
-    val api = OpenFeatureAPIFactory.create()
+    val api = OpenFeatureAPI.createIsolated()
     FeatureFlags.build(
       provider,
       domain = Some(s"events-${java.util.UUID.randomUUID()}"),

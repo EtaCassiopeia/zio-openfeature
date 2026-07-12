@@ -9,7 +9,7 @@ import dev.openfeature.sdk.{
   EventDetails,
   FeatureProvider,
   Metadata,
-  OpenFeatureAPIFactory,
+  OpenFeatureAPI,
   ProviderState,
   Value
 }
@@ -54,7 +54,7 @@ object WatchdogEscalationSpec extends ZIOSpecDefault {
       initialHooks = Nil,
       statusRef = Some(ref),
       addShutdownFinalizer = true,
-      apiOverride = Some(OpenFeatureAPIFactory.create()),
+      apiOverride = Some(OpenFeatureAPI.createIsolated()),
       onReady = onReady,
       initTimeout = 1.hour
     )

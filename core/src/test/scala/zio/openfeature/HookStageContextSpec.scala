@@ -5,7 +5,7 @@ import dev.openfeature.sdk.{
   EvaluationContext => OFEvaluationContext,
   EventProvider,
   Metadata,
-  OpenFeatureAPIFactory,
+  OpenFeatureAPI,
   ProviderEvaluation,
   ProviderState
 }
@@ -64,7 +64,7 @@ object HookStageContextSpec extends ZIOSpecDefault {
   }
 
   private def buildIsolated(provider: EventProvider): ZIO[Scope, Throwable, FeatureFlags] = {
-    val api    = OpenFeatureAPIFactory.create()
+    val api    = OpenFeatureAPI.createIsolated()
     val domain = s"hook-stage-ctx-${java.util.UUID.randomUUID()}"
     FeatureFlags.build(
       provider,

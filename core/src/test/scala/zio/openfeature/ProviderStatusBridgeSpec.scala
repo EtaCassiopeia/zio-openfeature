@@ -10,7 +10,7 @@ import dev.openfeature.sdk.{
   EventDetails,
   FeatureProvider,
   Metadata,
-  OpenFeatureAPIFactory,
+  OpenFeatureAPI,
   ProviderState,
   Value
 }
@@ -65,7 +65,7 @@ object ProviderStatusBridgeSpec extends ZIOSpecDefault {
       initialHooks = Nil,
       statusRef = Some(ref),
       addShutdownFinalizer = true,
-      apiOverride = Some(OpenFeatureAPIFactory.create()),
+      apiOverride = Some(OpenFeatureAPI.createIsolated()),
       initTimeout = 1.hour
     )
 
@@ -77,7 +77,7 @@ object ProviderStatusBridgeSpec extends ZIOSpecDefault {
       initialHooks = Nil,
       statusRef = Some(ref),
       addShutdownFinalizer = true,
-      apiOverride = Some(OpenFeatureAPIFactory.create()),
+      apiOverride = Some(OpenFeatureAPI.createIsolated()),
       initTimeout = 1.hour
     )
 

@@ -6,7 +6,7 @@ import dev.openfeature.sdk.{
   EventProvider,
   HookContext => JavaHookContext,
   Metadata,
-  OpenFeatureAPIFactory,
+  OpenFeatureAPI,
   ProviderEvaluation,
   ProviderState
 }
@@ -78,7 +78,7 @@ object ProviderHookDuplicationSpec extends ZIOSpecDefault {
       ZIO.scoped {
         val counter = new AtomicInteger(0)
         val domain  = s"prov-hook-${java.util.UUID.randomUUID()}"
-        val api     = OpenFeatureAPIFactory.create()
+        val api     = OpenFeatureAPI.createIsolated()
         for {
           ff <- FeatureFlags.build(
             new ProviderWithCountingHook("p", value = true, counter),
@@ -97,7 +97,7 @@ object ProviderHookDuplicationSpec extends ZIOSpecDefault {
       ZIO.scoped {
         val counter = new AtomicInteger(0)
         val domain  = s"prov-hook-multi-${java.util.UUID.randomUUID()}"
-        val api     = OpenFeatureAPIFactory.create()
+        val api     = OpenFeatureAPI.createIsolated()
         for {
           ff <- FeatureFlags.build(
             new ProviderWithCountingHook("p", value = true, counter),

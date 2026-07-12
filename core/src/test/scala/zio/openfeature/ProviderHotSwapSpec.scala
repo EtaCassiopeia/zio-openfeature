@@ -5,7 +5,7 @@ import dev.openfeature.sdk.{
   EvaluationContext => OFEvaluationContext,
   EventProvider,
   Metadata,
-  OpenFeatureAPIFactory,
+  OpenFeatureAPI,
   ProviderEvaluation,
   ProviderState,
   Value
@@ -69,7 +69,7 @@ object ProviderHotSwapSpec extends ZIOSpecDefault {
   }
 
   private def buildWithDomain(provider: SimpleProvider): ZIO[Scope, Throwable, FeatureFlags] = {
-    val api    = OpenFeatureAPIFactory.create()
+    val api    = OpenFeatureAPI.createIsolated()
     val domain = s"test-swap-${java.util.UUID.randomUUID()}"
     for {
       ff <- FeatureFlags.build(
@@ -88,7 +88,7 @@ object ProviderHotSwapSpec extends ZIOSpecDefault {
   }
 
   private def buildNoDomain(provider: SimpleProvider): ZIO[Scope, Throwable, FeatureFlags] = {
-    val api = OpenFeatureAPIFactory.create()
+    val api = OpenFeatureAPI.createIsolated()
     for {
       ff <- FeatureFlags.build(
         provider,
@@ -443,7 +443,7 @@ object ProviderHotSwapSpec extends ZIOSpecDefault {
           override def initialize(ctx: OFEvaluationContext): Unit =
             throw new RuntimeException("Initialization failed")
         }
-        val api = OpenFeatureAPIFactory.create()
+        val api = OpenFeatureAPI.createIsolated()
         val d1  = s"d1-${java.util.UUID.randomUUID()}"
         val d2  = s"d2-${java.util.UUID.randomUUID()}"
         for {

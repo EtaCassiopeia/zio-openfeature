@@ -6,7 +6,7 @@ import dev.openfeature.sdk.{
   EventProvider,
   HookContext => JavaHookContext,
   Metadata,
-  OpenFeatureAPIFactory,
+  OpenFeatureAPI,
   ProviderEvaluation,
   ProviderState
 }
@@ -72,7 +72,7 @@ object ApiHookIsolationSpec extends ZIOSpecDefault {
   }
 
   private def buildIsolated(provider: EventProvider): ZIO[Scope, Throwable, FeatureFlags] = {
-    val api    = OpenFeatureAPIFactory.create()
+    val api    = OpenFeatureAPI.createIsolated()
     val domain = s"api-hook-iso-${java.util.UUID.randomUUID()}"
     for {
       ff <- FeatureFlags.build(

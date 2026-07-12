@@ -80,7 +80,8 @@ jobs:
         run: sbt +mimaReportBinaryIssues
 
   # Examples are not published artifacts but must compile so the README snippets and `examples/` reference code stay
-  # honest. Cheap to run; gives early signal when a public API change breaks the documented usage.
+  # honest. The testkit example additionally runs its spec (UserServiceSpec) — the canonical demonstration of the
+  # testing story — so a public API change that breaks the documented usage fails CI instead of rotting silently.
   examples:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -94,8 +95,8 @@ jobs:
           cache: sbt
       - name: Setup sbt
         uses: sbt/setup-sbt@v1
-      - name: Compile examples
-        run: sbt "examplesOfrepInitTimeout/compile" "examplesTestkitApp/compile"
+      - name: Compile and test examples
+        run: sbt "examplesOfrepInitTimeout/compile" "examplesTestkitApp/test"
 
   # Conformance runs the vendored OpenFeature gherkin suite via Cucumber. It is Scala 3 only and not aggregated by
   # root (so `++2.13.16 test` doesn't try to compile it), hence its own job on the primary JDK / default Scala.

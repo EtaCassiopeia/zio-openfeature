@@ -78,9 +78,12 @@ ThisBuild / scalacOptions ++= {
   }
 }
 
-ThisBuild / coverageEnabled          := false
-ThisBuild / coverageMinimumStmtTotal := 80
-ThisBuild / coverageFailOnMinimum    := true
+// Coverage is opt-in (`sbt coverage test coverageReport`), never wired into CI. No fail-on-minimum gate is set:
+// under the pinned sbt-scoverage 2.0.9, coverage instrumentation fails to compile the testkit module on Scala 3.3.4
+// (the instrumenter cannot rewrite `<FromJavaObject>` terms from the OpenFeature Java SDK), so an enforced 80% gate
+// would be an unrunnable, always-red trap. The Scala Steward automation (.github/workflows/scala-steward.yml) will
+// surface the sbt-scoverage 2.3.x bump; once instrumentation compiles again, a coverage CI job can be reintroduced.
+ThisBuild / coverageEnabled := false
 
 // Binary-compatibility check via sbt-mima. `mimaPreviousArtifacts` is intentionally empty across all modules while
 // the project is pre-1.0: the `1.0.0-RCx` line is still making deliberate breaking changes, so baselining against an

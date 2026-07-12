@@ -128,7 +128,19 @@ final private[openfeature] class FeatureFlagsLive(
   private[openfeature] def onReadyEvent(details: EventDetails): UIO[Unit] = {
     val em      = extractEventMetadata(details)
     val current = fromCurrentProvider(details)
-    (if (current) applySignal(Signal.EventReady) else ZIO.none) *>
+    // Refresh a still-"unknown" provider name from the event's stamped name when the READY is from the current
+    // provider. A lazy-metadata provider (notably the SDK's MultiProvider) only builds its metadata name inside
+    // initialize(), so the async build captured the "unknown" fallback; the provider's own READY carries the real
+    // name. Refreshing restores accurate providerMetadata and re-enables the event-identity guard for such providers
+    // (#297). `compareAndSet` from the fallback only: it never clobbers a real name set by a concurrent swap.
+    val refreshName = ZIO.succeed {
+      val eventName = details.getProviderName
+      if (current && eventName != null)
+        providerNameRef.compareAndSet(FeatureFlags.UnknownProviderName, eventName)
+      ()
+    }
+    refreshName *>
+      (if (current) applySignal(Signal.EventReady) else ZIO.none) *>
       state.eventHub.publish(ProviderEvent.Ready(eventProviderMetadata(details), em)).unit *>
       ZIO.succeed(if (current) onReady.foreach(_.countDown()))
   }

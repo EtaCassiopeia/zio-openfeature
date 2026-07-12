@@ -27,8 +27,11 @@ private[openfeature] object ProviderStatusMachine {
     case object ShutdownStarted                 extends Signal
     case object ShutdownCompleted               extends Signal
 
-    /** fromAcquireAsync: a failed hot-swap rolled back to a still-live fallback. */
-    case object ForceReady extends Signal
+    /** setProvider: a failed hot-swap was rolled back and the previous provider re-registered with the SDK, verified to
+      * be routing again (#282). Same transition as a successful swap outcome, applied by `setProvider` itself once the
+      * rollback re-registration confirms the old provider is bound.
+      */
+    case object RollbackSucceeded extends Signal
   }
 
   /** Cross-thread context the table needs but the public ProviderStatus cannot represent. */
@@ -52,7 +55,7 @@ private[openfeature] object ProviderStatusMachine {
       case Signal.SwapStarted       => Some(NotReady)
       case Signal.SwapSucceeded     => Some(Ready)
       case Signal.SwapFailed        => Some(Error)
-      case Signal.ForceReady        => Some(Ready)
+      case Signal.RollbackSucceeded => Some(Ready)
 
       // Non-lifecycle signals (the init watchdog and every bridge event) never take effect during a swap (the swap
       // sets its own outcome) nor after an explicit shutdown has completed (post-shutdown NotReady is terminal; a

@@ -29,7 +29,7 @@ object ProviderStatusMachineSpec extends ZIOSpecDefault {
     Signal.SwapStarted       -> NotReady,
     Signal.SwapSucceeded     -> Ready,
     Signal.SwapFailed        -> Error,
-    Signal.ForceReady        -> Ready
+    Signal.RollbackSucceeded -> Ready
   )
 
   def spec = suite("ProviderStatusMachineSpec")(

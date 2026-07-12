@@ -142,13 +142,12 @@ object NonBlockingInitSpec extends ZIOSpecDefault {
             .flatMap { ff =>
               for {
                 _ <- errP.await
-                // The real guarantee is that the instance stays *usable* on the fallback: the evaluation succeeds
-                // rather than hard-failing. Since #245 lets evaluations proceed in Error, this holds regardless of
-                // whether `forceReady` won the race or a late async PROVIDER_ERROR (from the failing provider's init)
-                // re-set the status to Error. (Asserting via `awaitReady` under this spec's frozen TestClock would
-                // block forever on that Error race, so assert on the evaluation itself.)
+                // #282: setProvider's rollback now re-registers the fallback with the SDK, so evaluations route back to
+                // the FALLBACK — not the failed provider. The fallback ("fb") returns false, so the evaluation must be
+                // Right(false), not the failed provider's true. (Pre-#282 this could return the failed provider's
+                // value; asserting the value, not just evaluability, is the original evidence case for this bug.)
                 v <- ff.boolean("x", true).either
-              } yield assertTrue(v.isRight)
+              } yield assertTrue(v == Right(false))
             }
         }
       } yield result

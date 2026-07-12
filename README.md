@@ -50,6 +50,23 @@ libraryDependencies += "io.github.etacassiopeia" %% "zio-openfeature-optimizely"
 libraryDependencies += "io.github.etacassiopeia" %% "zio-openfeature-testkit" % "<version>" % Test
 ```
 
+### Snapshot builds
+
+Every commit merged to `main` publishes a `-SNAPSHOT` to the Sonatype Central snapshots repository (via
+[`snapshot.yml`](.github/workflows/snapshot.yml), after CI passes on that commit), so you can try unreleased
+changes ahead of the next tagged release. Add the snapshots resolver and depend on a snapshot version:
+
+```scala
+resolvers += "Sonatype Central Snapshots" at "https://central.sonatype.com/repository/maven-snapshots/"
+
+libraryDependencies += "io.github.etacassiopeia" %% "zio-openfeature-core" % "<snapshot-version>"
+```
+
+Snapshots are versioned by `sbt-dynver` as `x.y.z+<n>-<sha>-SNAPSHOT` — a unique version per commit. Browse the
+[snapshots repository](https://central.sonatype.com/repository/maven-snapshots/io/github/etacassiopeia/) for the
+latest published version, or read it off the `Publish Snapshot` Actions run for the commit you want. Snapshots are
+unstable and may change or disappear at any time — pin a released version for anything you ship.
+
 ## Quick Start
 
 ```scala

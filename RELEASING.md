@@ -1,9 +1,14 @@
 # Releasing
 
-Publishing is driven by [sbt-ci-release]: pushing a `v*` tag triggers
-[`.github/workflows/release.yml`](.github/workflows/release.yml), which runs the tests on both Scala versions
-and then `sbt ci-release` to publish to Maven Central and create a GitHub Release. A plain `main` push publishes
-a `-SNAPSHOT`; only a `v*` **tag** publishes a real version.
+Publishing is driven by [sbt-ci-release]. Two workflows call `sbt ci-release`, which publishes a real release when
+the commit carries a `v*` tag and a `-SNAPSHOT` otherwise:
+
+- **Releases** — pushing a `v*` tag triggers [`.github/workflows/release.yml`](.github/workflows/release.yml),
+  which runs the tests on both Scala versions, publishes to Maven Central, and creates a GitHub Release.
+- **Snapshots** — every commit on `main` triggers [`.github/workflows/snapshot.yml`](.github/workflows/snapshot.yml)
+  *after* CI passes, publishing a `x.y.z+<n>-<sha>-SNAPSHOT` to the Sonatype Central snapshots repository. This runs
+  automatically between releases; `workflow_dispatch` allows an on-demand snapshot. Consumer instructions live in the
+  [README's "Snapshot builds" section](README.md#snapshot-builds).
 
 **The tag is the release.** Nothing is published until `v<x.y.z>` is pushed — so the CHANGELOG and README must
 never describe a version as released before its tag exists. This checklist keeps the docs from getting ahead of

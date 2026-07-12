@@ -1,0 +1,59 @@
+name: Publish Snapshot
+
+# Publishes a `-SNAPSHOT` to the Sonatype Central snapshots repository after CI passes on `main`, so consumers can
+# track unreleased changes between tagged releases. Tagged (real) publishing stays in release.yml. Triggered on a
+# *successful* CI run rather than the raw push, so a red commit never publishes a snapshot and the test suite is not
+# run twice (CI already gated the commit); a manual `workflow_dispatch` is provided for on-demand snapshots.
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Force any JavaScript action still bundled with Node 20 to run on Node 24. See #164 / ci.yml note.
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+# One in-flight snapshot publish at a time; a newer main commit supersedes an older queued one.
+concurrency:
+  group: publish-snapshot
+  cancel-in-progress: false
+
+jobs:
+  publish-snapshot:
+    # workflow_run: only when the CI run succeeded. workflow_dispatch: always (manual override).
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          # Full history so sbt-dynver derives the correct `x.y.z+N-<sha>-SNAPSHOT` version. Check out the exact
+          # commit CI validated (`workflow_run` exposes its head SHA); fall back to the ref for manual dispatch.
+          fetch-depth: 0
+          ref: ${{ github.event.workflow_run.head_sha || github.ref }}
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v5
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: sbt
+
+      - name: Setup sbt
+        uses: sbt/setup-sbt@v1
+
+      - name: Publish snapshot to Sonatype Central
+        # `sbt ci-release` detects the `-SNAPSHOT` version (this commit carries no `v*` tag) and publishes to the
+        # Central snapshots repository; the identical command publishes a real release from release.yml on a tag.
+        run: sbt ci-release
+        env:
+          PGP_PASSPHRASE: ${{ secrets.PGP_PASSPHRASE }}
+          PGP_SECRET: ${{ secrets.PGP_SECRET }}
+          SONATYPE_PASSWORD: ${{ secrets.SONATYPE_PASSWORD }}
+          SONATYPE_USERNAME: ${{ secrets.SONATYPE_USERNAME }}

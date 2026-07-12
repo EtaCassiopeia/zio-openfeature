@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0] — 2026-07-12
+
+First stable release. **Upgrading from 0.9.x:** two behavior changes may require action —
+**`FlagType` decoders no longer coerce silently** (strict type decoding, #187) and a **1-second default
+per-evaluation timeout** (bounds hung providers; opt out with `evaluationTimeout = None`). Note also the
+**BREAKING** entries below — the `EvaluationTimeout` ADT (#251) and the `FeatureHook.before` signature
+change (#247) — and the **Removed** `OpenFeatureAPIFactory` shim (#316). Details in the entries below.
+
 ### Added
 
 - **`FeatureFlagsConfig` and the config-driven `FeatureFlags.fromProvider(provider, config)` factory** (#253). The 17
@@ -360,17 +368,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   clients the caller never touched. `shutdown` now only shuts the API when the instance solely owns it; a shared-API
   (registry/domain) client leaves the shared API and its provider untouched — both are owned by whatever owns the API
   (e.g. the registry, which tears every provider down once on its own scope close) — and releases only its own state.
-
-## [1.0.0] — unreleased
-
-> **Not yet published.** The latest artifact on Maven Central is `1.0.0-RC2`; the `v1.0.0` tag has not been
-> cut. The changes below shipped in the `1.0.0-RC1`/`1.0.0-RC2` pre-releases and are staged for the first
-> stable release. This heading is dated when `v1.0.0` is tagged (see [`RELEASING.md`](RELEASING.md)).
-
-Planned first stable release. **Upgrading from 0.9.x:** two behavior changes may require action —
-**`FlagType` decoders no longer coerce silently** (strict type decoding, #187) and a **1-second default
-per-evaluation timeout** (bounds hung providers; opt out with `evaluationTimeout = None`). Details in the
-entries below.
 
 ### Added
 

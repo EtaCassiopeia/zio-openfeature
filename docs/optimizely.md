@@ -321,7 +321,7 @@ Hybrid: Optimizely serves the bulk of flags; a small `EnvVarProvider` is the sec
 
 ```scala
 import zio.openfeature.extras.EnvVarProvider
-import dev.openfeature.sdk.multiprovider.FirstSuccessfulStrategy
+import zio.openfeature.MultiProviderStrategy
 
 val critical = Map(
   "FF_MAINTENANCE_MODE"    -> "false",
@@ -333,14 +333,14 @@ ZIO.scoped {
     optimizely <- OptimizelyProvider.make(sys.env("OPTIMIZELY_SDK_KEY"))
     envProvider = EnvVarProvider.withLookup(critical.get)
     env        <- FeatureFlags.fromProvider(
-                    FeatureFlags.multiProvider(List(optimizely, envProvider), new FirstSuccessfulStrategy()),
+                    FeatureFlags.multiProvider(List(optimizely, envProvider), MultiProviderStrategy.firstSuccessful),
                     FeatureFlagsConfig(initMode = InitMode.Async)
                   ).build
   yield env.get[FeatureFlags]
 }
 ```
 
-`FirstSuccessfulStrategy` tries Optimizely first; if it fails or is unready, falls through to `EnvVarProvider`. Because `EnvVarProvider` is instantly `Ready`, the `MultiProvider`'s aggregate state is `Ready` immediately and the 30-second watchdog never fires — meaning Optimizely-specific failures are no longer visible at the `FeatureFlags` layer. If you want to alert on Optimizely-side problems anyway, poll the underlying client's `isValid` from a side healthcheck or hook into `onProviderError`.
+`MultiProviderStrategy.firstSuccessful` tries Optimizely first; if it fails or is unready, falls through to `EnvVarProvider`. Because `EnvVarProvider` is instantly `Ready`, the `MultiProvider`'s aggregate state is `Ready` immediately and the 30-second watchdog never fires — meaning Optimizely-specific failures are no longer visible at the `FeatureFlags` layer. If you want to alert on Optimizely-side problems anyway, poll the underlying client's `isValid` from a side healthcheck or hook into `onProviderError`.
 
 ### Picking between A, B, and C
 

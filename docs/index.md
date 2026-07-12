@@ -54,6 +54,8 @@ object MyApp extends ZIOAppDefault:
 | [Getting Started]({{ site.baseurl }}/getting-started) | Installation and basic usage |
 | [Architecture]({{ site.baseurl }}/architecture) | Core design and components |
 | [Providers]({{ site.baseurl }}/providers) | Using OpenFeature providers |
+| [Extras]({{ site.baseurl }}/extras) | HOCON, env var, and caching providers |
+| [Optimizely]({{ site.baseurl }}/optimizely) | Optimizely Feature Experimentation integration |
 | [Evaluation Context]({{ site.baseurl }}/context) | Targeting and context hierarchy |
 | [Hooks]({{ site.baseurl }}/hooks) | Cross-cutting concerns |
 | [Transactions]({{ site.baseurl }}/transactions) | Flag overrides and tracking |
@@ -65,6 +67,9 @@ object MyApp extends ZIOAppDefault:
 | Module | Description |
 |:-------|:------------|
 | **core** | ZIO wrapper around OpenFeature SDK |
+| **extras** | Built-in HOCON, env var, and caching providers |
+| **ofrep** | OpenFeature Remote Evaluation Protocol (OFREP) provider over HTTP |
+| **optimizely** | First-party Optimizely Feature Experimentation integration |
 | **testkit** | In-memory provider for testing |
 
 ## Requirements

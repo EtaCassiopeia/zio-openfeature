@@ -22,9 +22,9 @@ ZIO OpenFeature wraps the [OpenFeature Java SDK](https://openfeature.dev/docs/re
 ```scala
 import zio.*
 import zio.openfeature.*
-import dev.openfeature.contrib.providers.optimizely.OptimizelyProvider
+import dev.openfeature.contrib.providers.flagd.FlagdProvider
 
-val layer = FeatureFlags.fromProvider(provider)
+val layer = FeatureFlags.fromProvider(new FlagdProvider())
 
 program.provide(Scope.default >>> layer)
 ```

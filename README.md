@@ -85,7 +85,7 @@ object MyApp extends ZIOAppDefault:
   yield ()
 
   def run = program.provide(
-    Scope.default >>> TestFeatureProvider.layer(Map("my-feature" -> true))
+    TestFeatureProvider.scopedLayer(Map("my-feature" -> true))
   )
 ```
 
@@ -112,7 +112,7 @@ object ProductionApp extends ZIOAppDefault:
 
 ### Using Optimizely Feature Experimentation
 
-`zio-openfeature-optimizely` is the first-party integration with [Optimizely](https://www.optimizely.com/products/feature-experimentation/). It validates the SDK key before constructing, uses the default 30 s `initTimeout`, and composes cleanly with `CircuitBreakerProvider` from `zio-openfeature-extras` for production resilience. See the [Optimizely guide]({{ site.baseurl }}/optimizely) for the full story (init timeout tuning, self-hosted Agent, what to alert on).
+`zio-openfeature-optimizely` is the first-party integration with [Optimizely](https://www.optimizely.com/products/feature-experimentation/). It validates the SDK key before constructing, uses the default 30 s `initTimeout`, and composes cleanly with `CircuitBreakerProvider` from `zio-openfeature-extras` for production resilience. See the [Optimizely guide](https://etacassiopeia.github.io/zio-openfeature/optimizely) for the full story (init timeout tuning, self-hosted Agent, what to alert on).
 
 ```scala
 import zio.*
@@ -254,6 +254,9 @@ FeatureFlags.onConfigurationChanged { (flags, _) =>
 | Module | Description |
 |--------|-------------|
 | **core** | ZIO wrapper around OpenFeature SDK with FeatureFlags service |
+| **extras** | Built-in providers: HOCON, env vars, and a caching wrapper |
+| **ofrep** | OpenFeature Remote Evaluation Protocol (OFREP) provider over HTTP |
+| **optimizely** | First-party Optimizely Feature Experimentation integration |
 | **testkit** | TestFeatureProvider for testing without external dependencies |
 
 ## Documentation

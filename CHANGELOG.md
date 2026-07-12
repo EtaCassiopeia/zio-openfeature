@@ -39,6 +39,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   successful fetch. Configurable via `OptimizelyProviderConfig.staleAfter` (default `3 × pollingInterval`; disabled when
   polling is off). The watchdog thread is a daemon and is cancelled on shutdown.
 
+### Changed
+
+- **Testkit `TestFeatureProvider` DX** (#272). `getEvaluations` now returns the library's own
+  `List[(String, zio.openfeature.EvaluationContext)]` instead of leaking the Java SDK's
+  `dev.openfeature.sdk.EvaluationContext`, so context-propagation assertions use the Scala API
+  (`.targetingKey`, `.getString(...)`) directly; the raw Java contexts remain available via the new
+  `getRawEvaluations`. `setFlags` now **merges** into the existing flags (a key overwrites its previous value) rather
+  than silently clearing everything first — flags seeded via `make(Map(...))` / `layer(Map(...))` or earlier
+  `setFlag`/`setFlags` calls survive; the previous replace-all behavior is available as the new `replaceFlags`. Both
+  are breaking changes for testkit users: switch `getEvaluations` call sites that need the Java type to
+  `getRawEvaluations`, and `setFlags` call sites that relied on the clear-first behavior to `replaceFlags`.
+
 ### Deprecated
 
 - **14 `FeatureFlags` factory overloads, superseded by `fromProvider(provider, config)`** (#253):

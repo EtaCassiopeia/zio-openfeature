@@ -108,14 +108,26 @@ for
 yield ()
 ```
 
-### Replacing All Flags
+### Setting Multiple Flags
+
+`setFlags` **merges** into the existing flags — flags seeded via `make(Map(...))` / `layer(Map(...))` or set earlier
+are kept, and a key present in the new map overwrites its previous value:
 
 ```scala
 provider.setFlags(Map(
   "flag-1" -> true,
   "flag-2" -> "value"
 ))
-// Previous flags are removed
+// Existing flags are kept; flag-1 / flag-2 are added or overwritten
+```
+
+Use `replaceFlags` to discard every existing flag first:
+
+```scala
+provider.replaceFlags(Map(
+  "flag-1" -> true
+))
+// All previous flags are removed; only flag-1 remains
 ```
 
 ### Removing Flags
@@ -169,8 +181,9 @@ for
                .provide(Scope.default >>> layer)
   evals    <- provider.getEvaluations
 yield
-  // evals is List[(String, dev.openfeature.sdk.EvaluationContext)]
-  // The context is the OpenFeature SDK's EvaluationContext (after conversion)
+  // evals is List[(String, zio.openfeature.EvaluationContext)] — the library's own context type,
+  // so you can assert on evals.head._2.targetingKey / .getString(...) directly.
+  // Need the raw dev.openfeature.sdk.EvaluationContext instead? Use provider.getRawEvaluations.
   assertTrue(evals.length == 2)
 ```
 
@@ -360,7 +373,8 @@ test("service evaluates expected flags") {
 
 ### Testing Context Propagation
 
-The `getEvaluations` method returns OpenFeature SDK contexts (after conversion from ZIO contexts). You can verify that context attributes were correctly propagated:
+The `getEvaluations` method returns each captured context as the library's own `EvaluationContext`, so you can assert
+on context propagation with the Scala API — no Java SDK types required:
 
 ```scala
 test("context is passed to provider") {
@@ -373,13 +387,16 @@ test("context is passed to provider") {
     _        <- FeatureFlags.boolean("feature", false, ctx)
                  .provide(Scope.default >>> layer)
     evals    <- provider.getEvaluations
-    (_, sdkCtx) = evals.head
+    (_, captured) = evals.head
   yield
-    // sdkCtx is dev.openfeature.sdk.EvaluationContext (Java SDK type)
-    assertTrue(sdkCtx.getTargetingKey == "user-123") &&
-    assertTrue(sdkCtx.getValue("plan") != null)
+    // captured is zio.openfeature.EvaluationContext (the library type)
+    assertTrue(captured.targetingKey.contains("user-123")) &&
+    assertTrue(captured.getString("plan").contains("premium"))
 }
 ```
+
+If you specifically need the raw `dev.openfeature.sdk.EvaluationContext` (e.g. to assert on the SDK type), use
+`getRawEvaluations` instead, which returns `List[(String, dev.openfeature.sdk.EvaluationContext)]`.
 
 ### Using Transactions for Override Testing
 

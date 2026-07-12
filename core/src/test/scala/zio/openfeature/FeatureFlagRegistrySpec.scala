@@ -70,6 +70,18 @@ object FeatureFlagRegistrySpec extends ZIOSpecDefault {
   private def registryLayer(defaultProvider: SimpleProvider): ZLayer[Scope, Throwable, FeatureFlagRegistry] =
     FeatureFlagRegistry.fromProvider(defaultProvider)
 
+  // Poll an AtomicInteger until it reaches `target` (or a live-time bound), so assertions on the SDK's async
+  // provider shutdown (dispatched to its own executor at registry release) don't race a fixed sleep.
+  private def awaitCount(counter: java.util.concurrent.atomic.AtomicInteger, target: Int): UIO[Int] =
+    Live
+      .live(
+        ZIO
+          .succeed(counter.get())
+          .repeat(Schedule.recurUntil((_: Int) >= target) && Schedule.spaced(10.millis))
+          .timeout(5.seconds)
+      )
+      .as(counter.get())
+
   def spec = suite("FeatureFlagRegistry")(
     test("getClient returns a working client using default provider") {
       ZIO.scoped {
@@ -314,6 +326,66 @@ object FeatureFlagRegistrySpec extends ZIOSpecDefault {
             assertTrue(false) // timed out → getClient hung (regression)
         }
       }
+    },
+    test("domain provider stays live during use and is shut down only at registry release (#276)") {
+      // #276 claimed the provider is torn down "during setup, while still in use". In fact the registry shuts
+      // registered providers only when its scope closes (release). This test snapshots the shutdown count INSIDE
+      // the scope (must be 0 — provider live throughout use) and again AFTER the scope closes (must be 1 — shut
+      // exactly once at release). Reading the count via an effect (not a lazily-rendered `assertTrue` expression)
+      // is essential: a smart-assertion `shutCount.get()` is evaluated at result-render time, after the finalizer
+      // has already run, which is what made the original reproduction misread teardown as a setup-time shutdown.
+      val shutCount       = new java.util.concurrent.atomic.AtomicInteger(0)
+      val defaultProvider = new SimpleProvider("Default", Map("flag" -> "default"))
+      val p = new SimpleProvider("A", Map("flag" -> "a")) {
+        override def shutdown(): Unit = { shutCount.incrementAndGet(); () }
+      }
+      for {
+        duringUse <- ZIO.scoped {
+          for {
+            registry <- registryLayer(defaultProvider).build.map(_.get[FeatureFlagRegistry])
+            _        <- registry.setProvider("a", p)
+            client   <- registry.getClient("a")
+            v        <- client.string("flag", default = "none")
+            _        <- Live.live(ZIO.sleep(300.millis)) // window for any (erroneous) async teardown to land
+            snap     <- ZIO.succeed(shutCount.get())
+          } yield (v, snap)
+        }
+        afterRelease <- awaitCount(shutCount, 1) // release-time shutdown lands async on the SDK executor
+      } yield assertTrue(duringUse._1 == "a", duringUse._2 == 0, afterRelease == 1)
+    },
+    test("domain providers stay live during use — two domains, shut only at release (#276)") {
+      val shutA           = new java.util.concurrent.atomic.AtomicInteger(0)
+      val shutB           = new java.util.concurrent.atomic.AtomicInteger(0)
+      val defaultProvider = new SimpleProvider("Default", Map("flag" -> "default"))
+      val pa = new SimpleProvider("A", Map("flag" -> "a")) {
+        override def shutdown(): Unit = { shutA.incrementAndGet(); () }
+      }
+      val pb = new SimpleProvider("B", Map("flag" -> "b")) {
+        override def shutdown(): Unit = { shutB.incrementAndGet(); () }
+      }
+      for {
+        duringUse <- ZIO.scoped {
+          for {
+            registry <- registryLayer(defaultProvider).build.map(_.get[FeatureFlagRegistry])
+            _        <- registry.setProvider("a", pa)
+            _        <- registry.setProvider("b", pb)
+            ca       <- registry.getClient("a")
+            cb       <- registry.getClient("b")
+            va       <- ca.string("flag", default = "none")
+            vb       <- cb.string("flag", default = "none")
+            _        <- Live.live(ZIO.sleep(300.millis))
+            snap     <- ZIO.succeed((shutA.get(), shutB.get()))
+          } yield (va, vb, snap)
+        }
+        afterA <- awaitCount(shutA, 1)
+        afterB <- awaitCount(shutB, 1)
+      } yield assertTrue(
+        duringUse._1 == "a",
+        duringUse._2 == "b",
+        duringUse._3 == (0, 0),
+        afterA == 1,
+        afterB == 1
+      )
     }
   )
 }

@@ -87,6 +87,38 @@ object ProviderHotSwapSpec extends ZIOSpecDefault {
     } yield ff
   }
 
+  private def buildNoDomain(provider: SimpleProvider): ZIO[Scope, Throwable, FeatureFlags] = {
+    val api = OpenFeatureAPIFactory.create()
+    for {
+      ff <- FeatureFlags.build(
+        provider,
+        domain = None,
+        version = None,
+        initialHooks = Nil,
+        statusRef = None,
+        addShutdownFinalizer = false,
+        apiOverride = Some(api)
+      )
+      _ <- ZIO.attemptBlocking(Thread.sleep(50)).ignore
+    } yield ff
+  }
+
+  // Build a client on a caller-provided API + domain so several clients can share one API instance (registry topology).
+  private def buildOn(
+    api: dev.openfeature.sdk.OpenFeatureAPI,
+    domain: String,
+    provider: SimpleProvider
+  ): ZIO[Scope, Throwable, FeatureFlags] =
+    FeatureFlags.build(
+      provider,
+      domain = Some(domain),
+      version = None,
+      initialHooks = Nil,
+      statusRef = None,
+      addShutdownFinalizer = false,
+      apiOverride = Some(api)
+    )
+
   def spec = suite("Provider Hot-Swap")(
     test("setProvider swaps to a new provider") {
       ZIO.scoped {
@@ -203,20 +235,27 @@ object ProviderHotSwapSpec extends ZIOSpecDefault {
           assertTrue(vi == 42) && assertTrue(vd == 3.14)
       }
     },
-    test("failed swap sets status to Error") {
+    test("failed swap rolls back routing and status to the previous provider (#282)") {
+      // The core regression: after a failed swap, evaluations must route back to provider A (not the failed
+      // provider), status must be Ready, and metadata must name A — the SDK client routing is reconciled, not just
+      // the internal providerRef.
       ZIO.scoped {
         val providerA = new SimpleProvider("A", Map("flag" -> true))
-        val failingProvider = new SimpleProvider("Failing", Map.empty) {
+        val failingProvider = new SimpleProvider("Failing", Map("flag" -> false)) {
           override def initialize(ctx: OFEvaluationContext): Unit =
             throw new RuntimeException("Initialization failed")
         }
         for {
           ff     <- buildWithDomain(providerA)
           result <- ff.setProvider(failingProvider).either
+          v      <- ff.boolean("flag", default = false)
           status <- ff.providerStatus
+          m      <- ff.providerMetadata
         } yield assertTrue(result.isLeft) &&
           assertTrue(result.left.toOption.get.isInstanceOf[FeatureFlagError.ProviderInitializationFailed]) &&
-          assertTrue(status == ProviderStatus.Error)
+          assertTrue(v == true) &&
+          assertTrue(status == ProviderStatus.Ready) &&
+          assertTrue(m.name == "A")
       }
     },
     test("stale PROVIDER_READY from the old provider does not mark status Ready mid-swap (#181)") {
@@ -264,10 +303,165 @@ object ProviderHotSwapSpec extends ZIOSpecDefault {
           v      <- ff.boolean("flag", default = true)
           s2     <- ff.providerStatus
           m      <- ff.providerMetadata
-        } yield assertTrue(status == ProviderStatus.Error) &&
+        } yield assertTrue(status == ProviderStatus.Ready) &&
           assertTrue(v == false) &&
           assertTrue(s2 == ProviderStatus.Ready) &&
           assertTrue(m.name == "C")
+      }
+    },
+    test("no-domain failed swap rolls back routing and status (#282)") {
+      // The rollback branches on `domain`; exercise the default-slot (no-domain) path.
+      ZIO.scoped {
+        val providerA = new SimpleProvider("A", Map("flag" -> true))
+        val failingProvider = new SimpleProvider("Failing", Map("flag" -> false)) {
+          override def initialize(ctx: OFEvaluationContext): Unit =
+            throw new RuntimeException("Initialization failed")
+        }
+        for {
+          ff     <- buildNoDomain(providerA)
+          result <- ff.setProvider(failingProvider).either
+          v      <- ff.boolean("flag", default = false)
+          status <- ff.providerStatus
+          m      <- ff.providerMetadata
+        } yield assertTrue(result.isLeft) &&
+          assertTrue(v == true) &&
+          assertTrue(status == ProviderStatus.Ready) &&
+          assertTrue(m.name == "A")
+      }
+    },
+    test("failed swap re-initializes the previous provider exactly once more (#282)") {
+      // Pins the documented re-init caveat: rollback re-registers the old provider, so its initialize() runs a second
+      // time (once at build, once at rollback).
+      ZIO.scoped {
+        val initCount = new java.util.concurrent.atomic.AtomicInteger(0)
+        val providerA = new SimpleProvider("A", Map("flag" -> true)) {
+          override def initialize(ctx: OFEvaluationContext): Unit = { initCount.incrementAndGet(); () }
+        }
+        val failingProvider = new SimpleProvider("Failing", Map.empty) {
+          override def initialize(ctx: OFEvaluationContext): Unit =
+            throw new RuntimeException("Initialization failed")
+        }
+        for {
+          ff <- buildWithDomain(providerA)
+          _  <- ff.setProvider(failingProvider).either
+          n  <- ZIO.succeed(initCount.get())
+        } yield assertTrue(n == 2)
+      }
+    },
+    test("failed swap re-attaches the previous EventProvider so its events still flow (#282)") {
+      // The detach->re-register round-trip must not sever event propagation: after rollback, A can still emit a
+      // configuration-changed event that reaches subscribers.
+      ZIO.scoped {
+        class EmittingProvider extends SimpleProvider("A", Map("flag" -> true)) {
+          def fireConfigChanged(): Unit =
+            emitProviderConfigurationChanged(dev.openfeature.sdk.ProviderEventDetails.builder().build())
+        }
+        val providerA = new EmittingProvider
+        val failingProvider = new SimpleProvider("Failing", Map.empty) {
+          override def initialize(ctx: OFEvaluationContext): Unit =
+            throw new RuntimeException("Initialization failed")
+        }
+        for {
+          ff       <- buildWithDomain(providerA)
+          received <- Queue.unbounded[ProviderEvent]
+          _        <- ff.on(ProviderEventType.ConfigurationChanged, e => received.offer(e).unit)
+          _        <- ff.setProvider(failingProvider).either
+          _        <- ZIO.attemptBlocking(providerA.fireConfigChanged()).orDie
+          ev <- received.take.timeoutFail(new RuntimeException("no config-changed event after rollback"))(5.seconds)
+        } yield assertTrue(ev.eventType == ProviderEventType.ConfigurationChanged)
+      }
+    },
+    test("failed swap eventually shuts the failed provider down (#282)") {
+      // On a successful rollback the SDK's shutDownOld tears down the failed provider (async).
+      ZIO.scoped {
+        val failShutdowns = new java.util.concurrent.atomic.AtomicInteger(0)
+        val providerA     = new SimpleProvider("A", Map("flag" -> true))
+        val failingProvider = new SimpleProvider("Failing", Map.empty) {
+          override def initialize(ctx: OFEvaluationContext): Unit =
+            throw new RuntimeException("Initialization failed")
+          override def shutdown(): Unit = { failShutdowns.incrementAndGet(); () }
+        }
+        for {
+          ff <- buildWithDomain(providerA)
+          _  <- ff.setProvider(failingProvider).either
+          _ <- ZIO
+            .succeed(failShutdowns.get())
+            .repeatUntil(_ >= 1)
+            .timeoutFail(new RuntimeException("failed provider never shut down"))(5.seconds)
+        } yield assertTrue(failShutdowns.get() >= 1)
+      }
+    },
+    test("rollback failure: old provider re-init throws leaves status Error, surfaces original error, no hang (#282)") {
+      // When the old provider's re-initialize() throws, rollback fails: setProvider still reports the ORIGINAL swap
+      // failure, status stays Error, and the call completes (no hang). The SDK slot was rebound to the old provider
+      // before its failing init ran, so evaluations still route to it.
+      ZIO.scoped {
+        val initCount = new java.util.concurrent.atomic.AtomicInteger(0)
+        // A succeeds on the first init (at build), throws on the second (rollback re-register).
+        val providerA = new SimpleProvider("A", Map("flag" -> true)) {
+          override def initialize(ctx: OFEvaluationContext): Unit =
+            if (initCount.incrementAndGet() >= 2) throw new RuntimeException("re-init boom") else ()
+        }
+        val failingProvider = new SimpleProvider("Failing", Map.empty) {
+          override def initialize(ctx: OFEvaluationContext): Unit =
+            throw new RuntimeException("original swap failure")
+        }
+        for {
+          ff <- buildWithDomain(providerA)
+          result <- ff
+            .setProvider(failingProvider)
+            .either
+            .timeoutFail(new RuntimeException("setProvider hung on rollback failure"))(10.seconds)
+          status <- ff.providerStatus
+          m      <- ff.providerMetadata
+        } yield assertTrue(result.isLeft) &&
+          assertTrue(result.left.toOption.get.isInstanceOf[FeatureFlagError.ProviderInitializationFailed]) &&
+          assertTrue(
+            result.left.toOption.get
+              .asInstanceOf[FeatureFlagError.ProviderInitializationFailed]
+              .underlying
+              .getMessage
+              .contains("original swap failure")
+          ) &&
+          assertTrue(status == ProviderStatus.Error) &&
+          assertTrue(m.name == "A")
+      }
+    },
+    test("shared provider bound to two domains: failed swap on one leaves the shared provider intact (#282)") {
+      // Decision-2 guard: one provider instance bound to two domains of the same API. A failed swap on domain 1 must
+      // NOT detach or re-initialize the shared provider (its READY manager on domain 2 is reused), so its events on
+      // domain 2 keep flowing and its init count does not grow.
+      ZIO.scoped {
+        val sharedInit = new java.util.concurrent.atomic.AtomicInteger(0)
+        class SharedProvider extends SimpleProvider("Shared", Map("flag" -> true)) {
+          override def initialize(ctx: OFEvaluationContext): Unit = { sharedInit.incrementAndGet(); () }
+          def fireConfigChanged(): Unit =
+            emitProviderConfigurationChanged(dev.openfeature.sdk.ProviderEventDetails.builder().build())
+        }
+        val shared = new SharedProvider
+        val failingProvider = new SimpleProvider("Failing", Map.empty) {
+          override def initialize(ctx: OFEvaluationContext): Unit =
+            throw new RuntimeException("Initialization failed")
+        }
+        val api = OpenFeatureAPIFactory.create()
+        val d1  = s"d1-${java.util.UUID.randomUUID()}"
+        val d2  = s"d2-${java.util.UUID.randomUUID()}"
+        for {
+          ff1 <- buildOn(api, d1, shared)
+          ff2 <- buildOn(api, d2, shared)
+          _   <- ZIO.attemptBlocking(Thread.sleep(50)).ignore
+          initBefore = sharedInit.get()
+          // Failed swap on domain 1; shared stays bound to domain 2, so rollback reuses its manager (no detach/re-init).
+          _        <- ff1.setProvider(failingProvider).either
+          received <- Queue.unbounded[ProviderEvent]
+          _        <- ff2.on(ProviderEventType.ConfigurationChanged, e => received.offer(e).unit)
+          _        <- ZIO.attemptBlocking(shared.fireConfigChanged()).orDie
+          ev <- received.take.timeoutFail(new RuntimeException("domain-2 events severed by domain-1 rollback"))(
+            5.seconds
+          )
+          initAfter = sharedInit.get()
+        } yield assertTrue(ev.eventType == ProviderEventType.ConfigurationChanged) &&
+          assertTrue(initAfter == initBefore)
       }
     }
   ) @@ TestAspect.sequential

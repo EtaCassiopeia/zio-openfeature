@@ -196,15 +196,19 @@ object FeatureFlagRegistrySpec extends ZIOSpecDefault {
           client   <- registry.getClient("domain1")
           v1       <- client.string("flag", default = "none")
           result   <- registry.setProvider("domain1", failingProvider).either
-          // After failed swap, client is in Error state (old provider was shut down by Java SDK)
+          // #282: after a failed swap the rollback re-registers the previous provider with the SDK, so the client
+          // routes back to it (status Ready, evaluations return the old provider's values) rather than being stranded
+          // on the failed provider.
           status <- client.providerStatus
+          v2     <- client.string("flag", default = "none")
           // Recover with a working provider
           _  <- registry.setProvider("domain1", recoveryProvider)
           v3 <- client.string("flag", default = "none")
         } yield assertTrue(
           v1 == "default",
           result.is(_.left).isInstanceOf[FeatureFlagError],
-          status == ProviderStatus.Error,
+          status == ProviderStatus.Ready,
+          v2 == "default",
           v3 == "recovered"
         )
       }

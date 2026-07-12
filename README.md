@@ -62,10 +62,13 @@ resolvers += "Sonatype Central Snapshots" at "https://central.sonatype.com/repos
 libraryDependencies += "io.github.etacassiopeia" %% "zio-openfeature-core" % "<snapshot-version>"
 ```
 
-Snapshots are versioned by `sbt-dynver` as `x.y.z+<n>-<sha>-SNAPSHOT` — a unique version per commit. Browse the
-[snapshots repository](https://central.sonatype.com/repository/maven-snapshots/io/github/etacassiopeia/) for the
-latest published version, or read it off the `Publish Snapshot` Actions run for the commit you want. Snapshots are
-unstable and may change or disappear at any time — pin a released version for anything you ship.
+Snapshots share a single moving coordinate — the next version with a `-SNAPSHOT` suffix (e.g. `1.0.0-RC3-SNAPSHOT`
+while `v1.0.0-RC2` is the latest release tag). Every `main` commit republishes to that same version, so you can pin
+it and pull the newest build via a normal `-SNAPSHOT` refresh. The current coordinate is the latest tag with its
+final segment bumped; find it in the
+[snapshots repository](https://central.sonatype.com/repository/maven-snapshots/io/github/etacassiopeia/) or the
+`Publish Snapshot` Actions log. Snapshots are unstable and may change at any time — pin a released version for
+anything you ship.
 
 ## Quick Start
 

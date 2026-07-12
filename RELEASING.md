@@ -6,8 +6,10 @@ the commit carries a `v*` tag and a `-SNAPSHOT` otherwise:
 - **Releases** — pushing a `v*` tag triggers [`.github/workflows/release.yml`](.github/workflows/release.yml),
   which runs the tests on both Scala versions, publishes to Maven Central, and creates a GitHub Release.
 - **Snapshots** — every commit on `main` triggers [`.github/workflows/snapshot.yml`](.github/workflows/snapshot.yml)
-  *after* CI passes, publishing a `x.y.z+<n>-<sha>-SNAPSHOT` to the Sonatype Central snapshots repository. This runs
-  automatically between releases; `workflow_dispatch` allows an on-demand snapshot. Consumer instructions live in the
+  *after* CI passes, publishing to the Sonatype Central snapshots repository under a single moving
+  `<next>-SNAPSHOT` coordinate (the latest tag with its final segment bumped, e.g. `1.0.0-RC3-SNAPSHOT` after
+  `v1.0.0-RC2`; see the `version` override in [`build.sbt`](build.sbt)). It tracks the next release automatically —
+  no manual version bump — and `workflow_dispatch` allows an on-demand snapshot. Consumer instructions live in the
   [README's "Snapshot builds" section](README.md#snapshot-builds).
 
 **The tag is the release.** Nothing is published until `v<x.y.z>` is pushed — so the CHANGELOG and README must

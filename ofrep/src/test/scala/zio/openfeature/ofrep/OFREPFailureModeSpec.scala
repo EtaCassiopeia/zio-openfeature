@@ -54,8 +54,11 @@ object OFREPFailureModeSpec extends ZIOSpecDefault {
             for {
               provider <- OFREPProvider.make(baseUrl(server))
               env <- evaluationTimeout match {
-                case Some(d) => FeatureFlags.fromProviderAsync(provider, d).build
-                case None    => FeatureFlags.fromProviderAsync(provider).build
+                case Some(d) =>
+                  FeatureFlags
+                    .fromProvider(provider, FeatureFlagsConfig(initMode = InitMode.Async).withEvaluationTimeout(d))
+                    .build
+                case None => FeatureFlags.fromProviderAsync(provider).build
               }
               ff = env.get[FeatureFlags]
               // Wait briefly so PROVIDER_READY fires before we start evaluating.
@@ -187,7 +190,12 @@ object OFREPFailureModeSpec extends ZIOSpecDefault {
                 .scoped {
                   for {
                     provider <- OFREPProvider.make(baseUrl(server))
-                    env      <- FeatureFlags.fromProviderAsync(provider, 1.second).build
+                    env <- FeatureFlags
+                      .fromProvider(
+                        provider,
+                        FeatureFlagsConfig(initMode = InitMode.Async).withEvaluationTimeout(1.second)
+                      )
+                      .build
                     ff = env.get[FeatureFlags]
                     _      <- ZIO.sleep(100.millis)
                     before <- ff.booleanDetails("probe", default = false).either

@@ -147,12 +147,12 @@ FeatureFlags.booleanDetails("flag", false, EvaluationContext.empty, options)
 | Requirement | Status | Implementation |
 |:------------|:-------|:---------------|
 | Initialize (blocking) | ✅ | `setProviderAndWait` on layer creation |
-| Initialize (async) | ✅ | `setProvider` via `fromProviderAsync` variants |
+| Initialize (async) | ✅ | `setProvider` via `fromProviderAsync` / `FeatureFlagsConfig(initMode = InitMode.Async)` |
 | Shutdown (1.6.1) | ✅ | Automatic via ZIO Scope finalizer + explicit `shutdown` method |
 | Provider metadata | ✅ | `providerMetadata` returns name and version |
 | Client metadata | ✅ | `clientMetadata` returns domain and version |
-| Domain binding | ✅ | `fromProviderWithDomain` |
-| Client version | ✅ | `fromProviderWithDomain(provider, domain, version)` |
+| Domain binding | ✅ | `FeatureFlagsConfig().withDomain(domain)` |
+| Client version | ✅ | `FeatureFlagsConfig().withDomain(domain).withVersion(version)` |
 
 ---
 

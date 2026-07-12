@@ -82,13 +82,12 @@ The 30-second default is friendly for most apps. You'll want to tune it in three
 - **Cold start on a constrained network** — raise it if your CI runners or first production deploys regularly need >30 s for the initial datafile fetch.
 - **Run-anywhere CLIs** — set it lower (5–10 s) so users on flaky networks get a clear startup error instead of waiting half a minute.
 
-Override via the 3-arg async factory:
+Override via `FeatureFlagsConfig`:
 
 ```scala
-FeatureFlags.fromProviderAsync(
+FeatureFlags.fromProvider(
   provider,
-  evaluationTimeout = 500.millis,
-  initTimeout       = 5.seconds
+  FeatureFlagsConfig(initMode = InitMode.Async).withEvaluationTimeout(500.millis).withInitTimeout(5.seconds)
 )
 ```
 
@@ -137,7 +136,7 @@ val program = ZIO.scoped {
     sdkKey   <- ZIO.attempt(sys.env("OPTIMIZELY_SDK_KEY"))
     inner    <- OptimizelyProvider.make(sdkKey).mapError(e => new RuntimeException(e.message))
     wrapped  <- CircuitBreakerProvider.make(inner, breakerConfig)
-    env      <- FeatureFlags.fromProviderAsync(wrapped, evaluationTimeout = 500.millis).build
+    env      <- FeatureFlags.fromProvider(wrapped, FeatureFlagsConfig(initMode = InitMode.Async).withEvaluationTimeout(500.millis)).build
     ff        = env.get[FeatureFlags]
     enabled  <- ff.boolean("flag", default = false).mapError(e => new RuntimeException(e.message))
   yield enabled
@@ -283,8 +282,8 @@ Highest availability after boot, but during the cold-start window every flag ret
 ZIO.scoped {
   for
     provider <- OptimizelyProvider.make(sys.env("OPTIMIZELY_SDK_KEY"))
-    env      <- FeatureFlags.fromProviderAsync(provider, evaluationTimeout = 500.millis).build
-    // initTimeout uses the library default (30 s); override via the 3-arg overload
+    env      <- FeatureFlags.fromProvider(provider, FeatureFlagsConfig(initMode = InitMode.Async).withEvaluationTimeout(500.millis)).build
+    // initTimeout uses the library default (30 s); override via .withInitTimeout(...)
   yield env.get[FeatureFlags]
 }
 ```
@@ -303,8 +302,9 @@ ZIO.scoped {
     provider <- OptimizelyProvider.make(sys.env("OPTIMIZELY_SDK_KEY"))
     env      <- FeatureFlags.fromProvider(
                   provider,
-                  evaluationTimeout = 500.millis,
-                  initTimeout       = 15.seconds   // tight — fail fast on misconfig
+                  FeatureFlagsConfig()
+                    .withEvaluationTimeout(500.millis)
+                    .withInitTimeout(15.seconds)   // tight — fail fast on misconfig
                 ).build
   yield env.get[FeatureFlags]
 }
@@ -332,9 +332,9 @@ ZIO.scoped {
   for
     optimizely <- OptimizelyProvider.make(sys.env("OPTIMIZELY_SDK_KEY"))
     envProvider = EnvVarProvider.withLookup(critical.get)
-    env        <- FeatureFlags.fromMultiProviderAsync(
-                    List(optimizely, envProvider),
-                    new FirstSuccessfulStrategy()
+    env        <- FeatureFlags.fromProvider(
+                    FeatureFlags.multiProvider(List(optimizely, envProvider), new FirstSuccessfulStrategy()),
+                    FeatureFlagsConfig(initMode = InitMode.Async)
                   ).build
   yield env.get[FeatureFlags]
 }

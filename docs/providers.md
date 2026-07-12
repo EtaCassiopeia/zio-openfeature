@@ -94,7 +94,7 @@ object MyApp extends ZIOAppDefault:
   }
 ```
 
-`OptimizelyProvider.make(sdkKey)` validates the key shape (non-empty, allowed characters, not a known placeholder) and returns `FeatureFlagError.InvalidConfiguration` on bad input. The async layer uses the library's default 30-second `initTimeout`; override via `FeatureFlags.fromProviderAsync(provider, evaluationTimeout = 500.millis, initTimeout = 5.seconds)`.
+`OptimizelyProvider.make(sdkKey)` validates the key shape (non-empty, allowed characters, not a known placeholder) and returns `FeatureFlagError.InvalidConfiguration` on bad input. The async layer uses the library's default 30-second `initTimeout`; override via `FeatureFlags.fromProvider(provider, FeatureFlagsConfig(initMode = InitMode.Async).withEvaluationTimeout(500.millis).withInitTimeout(5.seconds))`.
 
 ### User Targeting
 
@@ -248,27 +248,111 @@ object MyApp extends ZIOAppDefault:
 
 ## Factory Methods
 
-ZIO OpenFeature provides several factory methods to create the `FeatureFlags` layer:
-
-### fromProvider
-
-Create from any OpenFeature provider:
+Two shorthands cover the overwhelmingly common cases:
 
 ```scala
 import dev.openfeature.sdk.FeatureProvider
 
 val provider: FeatureProvider = new OptimizelyProvider(config)
 
+// Blocking init — layer build waits for the provider to become ready
 val layer: ZLayer[Scope, Throwable, FeatureFlags] =
   FeatureFlags.fromProvider(provider)
+
+// Non-blocking init — layer builds immediately, provider becomes ready in the background
+val asyncLayer: ZLayer[Scope, Throwable, FeatureFlags] =
+  FeatureFlags.fromProviderAsync(provider)
 ```
 
-### fromProvider with evaluation timeout
-
-Create with a global evaluation timeout to prevent hung providers from blocking fibers indefinitely. If a provider evaluation takes longer than the timeout, it fails with `ProviderError` containing a `TimeoutException`.
+Everything else — a named domain, initial hooks, a custom evaluation/init timeout, async initialization, or any
+*combination* of those — goes through `FeatureFlagsConfig` and the single config-driven factory,
+`FeatureFlags.fromProvider(provider, config)`:
 
 ```scala
-val layer = FeatureFlags.fromProvider(provider, evaluationTimeout = 500.millis)
+val layer: ZLayer[Scope, Throwable, FeatureFlags] =
+  FeatureFlags.fromProvider(provider, FeatureFlagsConfig().withDomain("checkout").withHooks(myHooks))
+```
+
+`FeatureFlagsConfig()` (all defaults) reproduces `fromProvider(provider)` exactly, so there's one code path
+underneath every factory call, however it's spelled.
+
+### FeatureFlagsConfig
+
+| Field | Default | Set via |
+|:------|:--------|:--------|
+| `domain` | `None` | `.withDomain(d)` |
+| `version` | `None` | `.withVersion(v)` (requires `domain`) |
+| `initialHooks` | `Nil` | `.withHooks(hooks)` / `.withHook(hook)` |
+| `evaluationTimeout` | `EvaluationTimeout.Default` (1 second) | `.withEvaluationTimeout(d)` / `.withoutEvaluationTimeout` |
+| `initTimeout` | 30 seconds | `.withInitTimeout(d)` |
+| `initMode` | `InitMode.Sync` | `.withAsyncInit` / `.withSyncInit`, or the constructor arg `initMode = InitMode.Async` |
+| `apiOwnership` | `ApiOwnership.Auto` | `.withApiOwnership(o)` |
+
+**Combinations that were inexpressible before #253** are now one config value away:
+
+```scala
+// Named domain + initial hooks
+FeatureFlags.fromProvider(provider, FeatureFlagsConfig().withDomain("checkout").withHooks(myHooks))
+
+// Named domain + a per-instance evaluation timeout
+FeatureFlags.fromProvider(provider, FeatureFlagsConfig().withDomain("checkout").withEvaluationTimeout(300.millis))
+
+// Named domain + version + a custom init timeout
+FeatureFlags.fromProvider(
+  provider,
+  FeatureFlagsConfig().withDomain("checkout").withVersion("1.4.0").withInitTimeout(10.seconds)
+)
+
+// Initial hooks + a custom init timeout, non-blocking
+FeatureFlags.fromProvider(
+  provider,
+  FeatureFlagsConfig(initMode = InitMode.Async).withHooks(myHooks).withInitTimeout(45.seconds)
+)
+
+// Multi-provider + a named domain (see FeatureFlags.multiProvider below)
+FeatureFlags.fromProvider(
+  FeatureFlags.multiProvider(List(localProvider, remoteProvider)),
+  FeatureFlagsConfig().withDomain("checkout")
+)
+```
+
+### InitMode — sync vs async
+
+`FeatureFlagsConfig.initMode` replaces the old sync/async *factory pairs* (`fromProvider*` vs `fromProvider*Async`)
+with a single field:
+
+- **`InitMode.Sync`** (default) — `setProviderAndWait`. Layer build blocks until the provider is `READY`/`STALE` or
+  `initTimeout` elapses; misconfiguration fails the build itself.
+- **`InitMode.Async`** — `setProvider`. Layer build returns immediately; evaluations fail `ProviderNotReady` until the
+  provider becomes ready. The `initTimeout` watchdog still runs in the background — see
+  [Async Variants](#async-variants-non-blocking-initialization) below.
+
+### ApiOwnership — the domain/finalizer relationship, made explicit
+
+Before #253, whether a factory registered an API-shutdown finalizer was an invisible side effect of which factory
+name you called (`fromProvider` did; `fromProviderWithDomain` didn't). `FeatureFlagsConfig.apiOwnership` makes that
+choice a first-class, documented value:
+
+| `apiOwnership` | Behavior |
+|:---------------|:---------|
+| `ApiOwnership.Auto` (default) | `domain.isEmpty => Owned`, `domain.isDefined => Shared` — the historical behavior |
+| `ApiOwnership.Owned` | Scope close / `shutdown` tears down the underlying API, and with it every provider registered on it |
+| `ApiOwnership.Shared` | Scope close / `shutdown` leaves the API untouched — sibling domain clients sharing it keep working |
+
+The `Auto` default exists because a named domain almost always means several domain clients share one process-global
+`OpenFeatureAPI` (see [Provider Registry](#provider-registry) and #243) — if a domain client tore the whole API down,
+every sibling domain would die with it. An unnamed default client, by contrast, is presumed to be the sole owner.
+Override the default (`.withApiOwnership(ApiOwnership.Owned)` / `.withApiOwnership(ApiOwnership.Shared)`) when your
+topology doesn't match the truth table — e.g. a single-domain app that still wants scope-close to tear the API down.
+
+### Evaluation timeout
+
+`FeatureFlagsConfig.evaluationTimeout` sets a global evaluation timeout to prevent hung providers from blocking
+fibers indefinitely. If a provider evaluation takes longer than the timeout, it fails with `ProviderError` containing
+a `TimeoutException`.
+
+```scala
+FeatureFlags.fromProvider(provider, FeatureFlagsConfig().withEvaluationTimeout(500.millis))
 ```
 
 When the timeout fires, the calling fiber receives the error immediately. The underlying provider thread completes naturally in the background (it is not interrupted, avoiding potential corruption of provider internal state).
@@ -286,17 +370,19 @@ val unbounded = ff.booleanDetails("flag", default = false, options = EvaluationO
 ```
 
 `EvaluationOptions.timeout` is an `EvaluationTimeout` — `Default` (defer to the instance global), `Disabled` (via
-`withoutTimeout`), or `After(d)` (via `withTimeout(d)`).
+`withoutTimeout`), or `After(d)` (via `withTimeout(d)`). `FeatureFlagsConfig.evaluationTimeout` is the same
+`EvaluationTimeout` ADT — `Default` maps to the library's 1-second default, `Disabled` (`.withoutEvaluationTimeout`)
+turns the global timeout off entirely, and `After(d)` (`.withEvaluationTimeout(d)`) sets it.
 
 | Setting | Scope | Default |
 |:--------|:------|:--------|
-| `fromProvider(provider, evaluationTimeout)` | All evaluations on this instance | `Some(1.second)` — `FeatureFlags.DefaultEvaluationTimeout` |
+| `FeatureFlagsConfig().withEvaluationTimeout(d)` / `.withoutEvaluationTimeout` | All evaluations on this instance | `EvaluationTimeout.Default` — `FeatureFlags.DefaultEvaluationTimeout` (1 second) |
 | `EvaluationOptions.empty.withTimeout(duration)` / `.withoutTimeout` | Single evaluation call | `EvaluationTimeout.Default` (uses the global) |
 
 Per-call timeout takes precedence over global. The global default is **1 second**, applied to every evaluation unless
 overridden — so a hung provider can't block a fiber indefinitely out of the box, but a cold-start remote provider may
-time out on its first calls. Pass `evaluationTimeout = Some(largerDuration)` to raise the bound or
-`evaluationTimeout = None` to disable it globally; per call, use `.withTimeout(d)` / `.withoutTimeout`.
+time out on its first calls. Use `.withEvaluationTimeout(largerDuration)` to raise the bound or
+`.withoutEvaluationTimeout` to disable it globally; per call, use `.withTimeout(d)` / `.withoutTimeout`.
 
 ### Runtime provider replacement (hot-swap)
 
@@ -377,18 +463,18 @@ ff.setProvider(cb)
 FeatureFlags.setProvider(newProvider)
 ```
 
-### fromProviderWithDomain
+### Named domains
 
 Create with a named domain. Each domain gets its own client, useful for segmenting feature flag configuration:
 
 ```scala
-val layer = FeatureFlags.fromProviderWithDomain(provider, "my-service")
+val layer = FeatureFlags.fromProvider(provider, FeatureFlagsConfig().withDomain("my-service"))
 ```
 
-Optionally include a version string (useful for telemetry and debugging):
+Optionally include a version string (useful for telemetry and debugging; requires `domain`):
 
 ```scala
-val layer = FeatureFlags.fromProviderWithDomain(provider, "my-service", "1.2.3")
+val layer = FeatureFlags.fromProvider(provider, FeatureFlagsConfig().withDomain("my-service").withVersion("1.2.3"))
 ```
 
 The version is available via `clientMetadata`:
@@ -402,9 +488,7 @@ for {
 
 > For test isolation, prefer `TestFeatureProvider.layer` which automatically creates isolated API instances.
 
-### fromProviderWithHooks
-
-Create with initial hooks:
+### Initial hooks
 
 ```scala
 val hooks = List(
@@ -412,12 +496,12 @@ val hooks = List(
   FeatureHook.metrics((k, d, s) => ZIO.unit)
 )
 
-val layer = FeatureFlags.fromProviderWithHooks(provider, hooks)
+val layer = FeatureFlags.fromProvider(provider, FeatureFlagsConfig().withHooks(hooks))
 ```
 
-### fromMultiProvider
+### FeatureFlags.multiProvider
 
-Create from multiple providers using the SDK's MultiProvider support. By default this uses the first-match strategy — the first provider whose result is not a default value is returned (a provider error from any source aborts the chain):
+Combine multiple providers using the SDK's MultiProvider support. By default this uses the first-match strategy — the first provider whose result is not a default value is returned (a provider error from any source aborts the chain):
 
 ```scala
 import dev.openfeature.sdk.FeatureProvider
@@ -426,7 +510,7 @@ val localProvider: FeatureProvider = // local overrides
 val remoteProvider: FeatureProvider = // remote service
 
 // Uses first-match strategy by default
-val layer = FeatureFlags.fromMultiProvider(List(localProvider, remoteProvider))
+val layer = FeatureFlags.fromProvider(FeatureFlags.multiProvider(List(localProvider, remoteProvider)), FeatureFlagsConfig())
 ```
 
 You can also supply a custom strategy. The two built-in strategies are exposed via `MultiProviderStrategy` so you don't need to import the Java SDK's multiprovider package directly:
@@ -434,56 +518,69 @@ You can also supply a custom strategy. The two built-in strategies are exposed v
 ```scala
 import zio.openfeature.MultiProviderStrategy
 
-val layer = FeatureFlags.fromMultiProvider(
-  List(primaryProvider, fallbackProvider),
-  MultiProviderStrategy.firstSuccessful
+val layer = FeatureFlags.fromProvider(
+  FeatureFlags.multiProvider(List(primaryProvider, fallbackProvider), MultiProviderStrategy.firstSuccessful),
+  FeatureFlagsConfig()
 )
 ```
 
-`MultiProviderStrategy.firstMatch` and `MultiProviderStrategy.firstSuccessful` are the two built-ins. For a custom strategy, implement the `MultiProviderStrategy.Strategy` interface (an alias for the Java SDK's `Strategy`) and pass an instance the same way.
+`MultiProviderStrategy.firstMatch` and `MultiProviderStrategy.firstSuccessful` are the two built-ins. For a custom strategy, implement the `MultiProviderStrategy.Strategy` interface (an alias for the Java SDK's `Strategy`) and pass an instance the same way. Because `multiProvider` just returns an `OFFeatureProvider`, it composes with every other `FeatureFlagsConfig` field — e.g. `FeatureFlags.fromProvider(FeatureFlags.multiProvider(ps), FeatureFlagsConfig().withDomain("checkout"))`, which the old `fromMultiProvider` factory could not express.
 
 ### Initialization Timeout
 
-Every `fromProvider` and `fromProviderAsync` factory bounds initialization at **30 seconds by default**. The bound applies to both modes:
+Every layer bounds initialization at **30 seconds by default** (`FeatureFlagsConfig.initTimeout`). The bound applies to both `InitMode` values:
 
-- **Sync (`fromProvider`)**: if `setProviderAndWait` takes longer than `initTimeout`, the layer build fails with a `TimeoutException`. After init returns, the library verifies the provider's actual state — anything other than `READY` / `STALE` fails the build with an `IllegalStateException`, so a wrong SDK key or unreachable endpoint surfaces at startup instead of returning default values on every evaluation.
-- **Async (`fromProviderAsync`)**: a watchdog fiber forked into the layer's `Scope` sleeps `initTimeout`, then escalates to `Fatal` **only if the provider never became usable** — i.e. it is still `NotReady` / `Error` and has never reached `Ready` / `Stale`. A provider that reached `Ready` before the deadline (even if it has since dipped into a transient `Error`) is left running untouched. On escalation the watchdog also shuts the provider down (so its poller/HTTP threads don't outlive the layer) and publishes a `ProviderEvent.Error` carrying `ErrorCode.ProviderFatal`. Callers polling `providerStatus` stop waiting. Because the provider is shut down, this `Fatal` is terminal (see [Recovery semantics under `Fatal`](#recovery-semantics-under-fatal)).
+- **Sync (`InitMode.Sync`, the default)**: if `setProviderAndWait` takes longer than `initTimeout`, the layer build fails with a `TimeoutException`. After init returns, the library verifies the provider's actual state — anything other than `READY` / `STALE` fails the build with an `IllegalStateException`, so a wrong SDK key or unreachable endpoint surfaces at startup instead of returning default values on every evaluation.
+- **Async (`InitMode.Async`)**: a watchdog fiber forked into the layer's `Scope` sleeps `initTimeout`, then escalates to `Fatal` **only if the provider never became usable** — i.e. it is still `NotReady` / `Error` and has never reached `Ready` / `Stale`. A provider that reached `Ready` before the deadline (even if it has since dipped into a transient `Error`) is left running untouched. On escalation the watchdog also shuts the provider down (so its poller/HTTP threads don't outlive the layer) and publishes a `ProviderEvent.Error` carrying `ErrorCode.ProviderFatal`. Callers polling `providerStatus` stop waiting. Because the provider is shut down, this `Fatal` is terminal (see [Recovery semantics under `Fatal`](#recovery-semantics-under-fatal)).
 
-Override via the explicit-`initTimeout` overload:
+Override via `.withInitTimeout(...)`:
 
 ```scala
 // Lower for tests / quick-start CLIs that should fail fast on a missing flag service
-FeatureFlags.fromProvider(provider, evaluationTimeout = 500.millis, initTimeout = 5.seconds)
+FeatureFlags.fromProvider(provider, FeatureFlagsConfig().withEvaluationTimeout(500.millis).withInitTimeout(5.seconds))
 
 // Raise for cold-start datafile fetches on slow networks
-FeatureFlags.fromProviderAsync(provider, evaluationTimeout = 500.millis, initTimeout = 90.seconds)
+FeatureFlags.fromProvider(
+  provider,
+  FeatureFlagsConfig(initMode = InitMode.Async).withEvaluationTimeout(500.millis).withInitTimeout(90.seconds)
+)
 
 // Effectively disable (not recommended in production)
-FeatureFlags.fromProvider(provider, evaluationTimeout = 500.millis, initTimeout = 365.days)
+FeatureFlags.fromProvider(provider, FeatureFlagsConfig().withEvaluationTimeout(500.millis).withInitTimeout(365.days))
 ```
 
 ### Async Variants (Non-Blocking Initialization)
 
-Every factory method has an async counterpart that uses the Java SDK's non-blocking `setProvider` instead of `setProviderAndWait`. The provider initializes in the background; evaluations fail with `ProviderNotReady` until the provider is ready. The init-timeout watchdog described above still applies — after the configured `initTimeout` elapses, a provider that never became usable transitions to `Fatal` (and is shut down) so callers stop polling for ready.
+`FeatureFlagsConfig(initMode = InitMode.Async)` uses the Java SDK's non-blocking `setProvider` instead of `setProviderAndWait`. The provider initializes in the background; evaluations fail with `ProviderNotReady` until the provider is ready. The init-timeout watchdog described above still applies — after the configured `initTimeout` elapses, a provider that never became usable transitions to `Fatal` (and is shut down) so callers stop polling for ready.
 
 This is useful for microservices that need fast startup and can tolerate returning default flag values during the brief initialization window.
 
 ```scala
-// Non-blocking: layer is available immediately
+// Non-blocking: layer is available immediately (the kept shorthand)
 val layer = FeatureFlags.fromProviderAsync(provider)
 
 // With domain
-val domainLayer = FeatureFlags.fromProviderWithDomainAsync(provider, "my-service")
+val domainLayer = FeatureFlags.fromProvider(provider, FeatureFlagsConfig(initMode = InitMode.Async).withDomain("my-service"))
 
 // With domain and version
-val versionedLayer = FeatureFlags.fromProviderWithDomainAsync(provider, "my-service", "1.0.0")
+val versionedLayer = FeatureFlags.fromProvider(
+  provider,
+  FeatureFlagsConfig(initMode = InitMode.Async).withDomain("my-service").withVersion("1.0.0")
+)
 
 // With hooks
-val hookedLayer = FeatureFlags.fromProviderWithHooksAsync(provider, hooks)
+val hookedLayer = FeatureFlags.fromProvider(provider, FeatureFlagsConfig(initMode = InitMode.Async).withHooks(hooks))
 
 // Multi-provider
-val multiLayer = FeatureFlags.fromMultiProviderAsync(List(provider1, provider2))
+val multiLayer = FeatureFlags.fromProvider(
+  FeatureFlags.multiProvider(List(provider1, provider2)),
+  FeatureFlagsConfig(initMode = InitMode.Async)
+)
 ```
+
+> There is deliberately no `fromProviderAsync(provider, config)` overload — once you have a `FeatureFlagsConfig`, the
+> mode belongs in it (`initMode = InitMode.Async`), so `fromProvider(provider, config)` is the only config-driven
+> entry point.
 
 Use `onProviderReady` or `providerStatus` to detect when the provider becomes available:
 
@@ -579,7 +676,10 @@ In every async configuration without a same-process fallback, there is a window 
    val critical = Map("FF_MAINTENANCE_MODE" -> "false", "FF_FRAUD_CHECK_ENABLED" -> "true")
    val envProvider = EnvVarProvider.withLookup(critical.get)
    val providers   = List(optimizelyProvider, envProvider)
-   FeatureFlags.fromMultiProviderAsync(providers, FirstSuccessfulStrategy())
+   FeatureFlags.fromProvider(
+     FeatureFlags.multiProvider(providers, FirstSuccessfulStrategy()),
+     FeatureFlagsConfig(initMode = InitMode.Async)
+   )
    ```
 
    The cost of a `MultiProvider` lookup is microseconds; the benefit is that your critical flags have a deterministic value even when the remote is down.

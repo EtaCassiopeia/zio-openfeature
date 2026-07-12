@@ -215,35 +215,40 @@ val provider: FeatureProvider = // any OpenFeature provider
 val layer = FeatureFlags.fromProvider(provider)
 ```
 
-### With Domain Isolation
+### With Domain Isolation, Hooks, Timeouts, ...
 
-For multi-provider setups, use domains to isolate providers:
+Anything beyond the plain provider — a named domain, initial hooks, custom timeouts, async init, or any combination —
+goes through `FeatureFlagsConfig` and the config-driven factory `FeatureFlags.fromProvider(provider, config)`:
 
 ```scala
-val layer = FeatureFlags.fromProviderWithDomain(provider, "my-domain")
+// Domain isolation, for multi-provider setups
+val layer = FeatureFlags.fromProvider(provider, FeatureFlagsConfig().withDomain("my-domain"))
 
 // Optionally include a version for telemetry/debugging
-val versionedLayer = FeatureFlags.fromProviderWithDomain(provider, "my-domain", "1.0.0")
-```
+val versionedLayer = FeatureFlags.fromProvider(provider, FeatureFlagsConfig().withDomain("my-domain").withVersion("1.0.0"))
 
-### With Initial Hooks
-
-```scala
+// Initial hooks
 val hooks = List(
   FeatureHook.logging(),
   FeatureHook.metrics((k, d, s) => ZIO.unit)
 )
+val hookedLayer = FeatureFlags.fromProvider(provider, FeatureFlagsConfig().withHooks(hooks))
 
-val layer = FeatureFlags.fromProviderWithHooks(provider, hooks)
+// Domain + hooks together — not expressible with the pre-#253 factory overloads
+val combinedLayer = FeatureFlags.fromProvider(provider, FeatureFlagsConfig().withDomain("my-domain").withHooks(hooks))
 ```
 
 ### With Multiple Providers
 
-Combine multiple providers using the SDK's MultiProvider support:
+Combine multiple providers using the SDK's MultiProvider support via `FeatureFlags.multiProvider`, then pass the
+result into `fromProvider` like any other provider:
 
 ```scala
-val layer = FeatureFlags.fromMultiProvider(List(localProvider, remoteProvider))
+val layer = FeatureFlags.fromProvider(FeatureFlags.multiProvider(List(localProvider, remoteProvider)), FeatureFlagsConfig())
 ```
+
+See [Factory Methods](providers.md#factory-methods) in the Providers guide for the full `FeatureFlagsConfig`
+reference, including `InitMode` (sync vs async) and `ApiOwnership`.
 
 ## Tracking Events
 

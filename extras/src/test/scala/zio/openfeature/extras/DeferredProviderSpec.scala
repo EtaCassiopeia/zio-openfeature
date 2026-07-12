@@ -2,7 +2,7 @@ package zio.openfeature.extras
 
 import zio._
 import zio.test._
-import zio.openfeature.{FeatureFlags, ProviderStatus}
+import zio.openfeature.{FeatureFlags, FeatureFlagsConfig, InitMode, ProviderStatus}
 import zio.openfeature.internal.ProviderEvaluations
 import dev.openfeature.sdk.{
   EvaluationContext => OFEvaluationContext,
@@ -112,18 +112,22 @@ object DeferredProviderSpec extends ZIOSpecDefault {
         }
       } yield result
     } @@ TestAspect.withLiveClock,
-    // AC5: works through fromMultiProviderAsync
-    test("works through fromMultiProviderAsync") {
+    // AC5: works through an async multi-provider config layer
+    test("works through an async multi-provider config layer") {
       val delegate = new RecordingProvider(true)
       val dp       = DeferredProvider("deferred-multi")(() => delegate)
       val other    = new RecordingProvider(false)
       ZIO.scoped {
-        FeatureFlags.fromMultiProviderAsync(List(dp, other)).build.map(_.get[FeatureFlags]).flatMap { ff =>
-          for {
-            status <- ff.awaitReady(10.seconds)
-            v      <- ff.boolean("flag", false)
-          } yield assertTrue(status == ProviderStatus.Ready, v)
-        }
+        FeatureFlags
+          .fromProvider(FeatureFlags.multiProvider(List(dp, other)), FeatureFlagsConfig(initMode = InitMode.Async))
+          .build
+          .map(_.get[FeatureFlags])
+          .flatMap { ff =>
+            for {
+              status <- ff.awaitReady(10.seconds)
+              v      <- ff.boolean("flag", false)
+            } yield assertTrue(status == ProviderStatus.Ready, v)
+          }
       }
     } @@ TestAspect.withLiveClock
   ) @@ TestAspect.sequential

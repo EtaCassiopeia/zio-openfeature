@@ -484,7 +484,7 @@ test("tracks evaluations") {
 }
 ```
 
-> **Note:** The public factory methods (`FeatureFlags.fromProvider`, `fromMultiProvider`, etc.)
+> **Note:** The public factory methods (`FeatureFlags.fromProvider`, `fromProvider(provider, config)`, etc.)
 > use the global `OpenFeatureAPI` singleton and are **not** isolated. If you test with these
 > directly, use `@@ TestAspect.sequential` to prevent conflicts.
 

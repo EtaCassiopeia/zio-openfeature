@@ -35,10 +35,10 @@ object UserServiceSpec extends ZIOSpecDefault {
         greeting <- svc.welcome("bob")
       } yield assertTrue(greeting.contains("Hey bob"))
     },
-    test("evaluation fails fast when the provider is in Error state") {
+    test("evaluation fails fast when the provider is not ready") {
       for {
         provider <- ZIO.service[TestFeatureProvider]
-        _        <- provider.setStatus(ProviderStatus.Error)
+        _        <- provider.setStatus(ProviderStatus.NotReady)
         svc      <- ZIO.service[UserService]
         result   <- svc.welcome("carol").either
       } yield assertTrue(

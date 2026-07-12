@@ -22,8 +22,8 @@ ZIO OpenFeature provides a type-safe, functional interface for feature flag eval
 
 | ZIO OpenFeature | OpenFeature Spec | OpenFeature Java SDK |
 |:----------------|:-----------------|:---------------------|
-| 1.0.0-RC2 (latest published) | [v0.8.0](https://github.com/open-feature/spec/releases/tag/v0.8.0) | 1.20.2 |
-| 1.0.0 (upcoming) | [v0.8.0](https://github.com/open-feature/spec/releases/tag/v0.8.0) | 1.21.0 |
+| 1.0.0 (latest published) | [v0.8.0](https://github.com/open-feature/spec/releases/tag/v0.8.0) | 1.21.0 |
+| 1.0.0-RC2 | [v0.8.0](https://github.com/open-feature/spec/releases/tag/v0.8.0) | 1.20.2 |
 
 This library implements the **dynamic-context paradigm** (server-side) of the OpenFeature specification. See [Spec Compliance](https://etacassiopeia.github.io/zio-openfeature/spec-compliance) for details.
 
@@ -62,8 +62,8 @@ resolvers += "Sonatype Central Snapshots" at "https://central.sonatype.com/repos
 libraryDependencies += "io.github.etacassiopeia" %% "zio-openfeature-core" % "<snapshot-version>"
 ```
 
-Snapshots share a single moving coordinate — the next version with a `-SNAPSHOT` suffix (e.g. `1.0.0-RC3-SNAPSHOT`
-while `v1.0.0-RC2` is the latest release tag). Every `main` commit republishes to that same version, so you can pin
+Snapshots share a single moving coordinate — the next version with a `-SNAPSHOT` suffix (e.g. `1.0.1-SNAPSHOT`
+while `v1.0.0` is the latest release tag). Every `main` commit republishes to that same version, so you can pin
 it and pull the newest build via a normal `-SNAPSHOT` refresh. The current coordinate is the latest tag with its
 final segment bumped; find it in the
 [snapshots repository](https://central.sonatype.com/repository/maven-snapshots/io/github/etacassiopeia/) or the

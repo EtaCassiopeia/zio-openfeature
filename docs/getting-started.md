@@ -28,6 +28,12 @@ libraryDependencies += "io.github.etacassiopeia" %% "zio-openfeature-core" % "<v
 // Built-in providers: HOCON, env vars, caching wrapper (optional)
 libraryDependencies += "io.github.etacassiopeia" %% "zio-openfeature-extras" % "<version>"
 
+// OFREP — OpenFeature Remote Evaluation Protocol provider (HTTP)
+libraryDependencies += "io.github.etacassiopeia" %% "zio-openfeature-ofrep" % "<version>"
+
+// Optimizely Feature Experimentation — direct integration on top of the Optimizely Java SDK
+libraryDependencies += "io.github.etacassiopeia" %% "zio-openfeature-optimizely" % "<version>"
+
 // For testing
 libraryDependencies += "io.github.etacassiopeia" %% "zio-openfeature-testkit" % "<version>" % Test
 ```
@@ -80,7 +86,7 @@ object TestApp extends ZIOAppDefault:
   yield ()
 
   def run = program.provide(
-    Scope.default >>> TestFeatureProvider.layer(Map("my-feature" -> true))
+    TestFeatureProvider.scopedLayer(Map("my-feature" -> true))
   )
 ```
 

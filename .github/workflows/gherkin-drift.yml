@@ -1,0 +1,111 @@
+name: Gherkin drift
+
+# Detects the vendored OpenFeature gherkin conformance assets falling behind upstream. Scheduled,
+# never a PR gate: upstream moving is not a PR author's doing, so blocking unrelated PRs on it would
+# punish the wrong person. The in-repo mirror invariant IS a PR author's doing and is checked in
+# ci.yml's `format` job instead.
+#
+# The pin drifted for ~2 months before anyone noticed (#331) — that silence is what this job exists
+# to end.
+
+on:
+  schedule:
+    # Mondays 06:00 UTC. Upstream moves on the order of months, so weekly is ample.
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'open-feature/spec ref to compare against (default: main)'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  drift:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      # `main` on a schedule: the point is "has upstream moved since the pin?", which comparing
+      # against the pin itself could never answer. A manual dispatch may override the ref.
+      - name: Check for upstream drift
+        id: drift
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REF: ${{ inputs.ref || 'main' }}
+        run: |
+          set +e
+          .github/scripts/check-gherkin-drift.sh upstream "$REF" --report drift-report.md
+          status=$?
+          set -e
+          # Only `status` is published, and it is `$?` — always a bare integer, so it cannot inject
+          # extra lines into $GITHUB_OUTPUT. `ref` is deliberately NOT published: it derives from a
+          # free-text dispatch input, and a value containing a newline plus `status=0` would append
+          # a second status line that masks a real drift as clean. Downstream steps re-derive the
+          # ref from the same expression instead.
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          # An exhaustive partition on success, NOT a whitelist of known-bad codes. 0 is the only
+          # value meaning "checked, no drift"; 1 means drift and is handled by the next step.
+          # Everything else — 2 from `die`, or 126/127/137 from a lost mode bit, a missing `gh`, or
+          # an OOM kill — means the check did not run. Letting an unrecognised code fall through as
+          # success is exactly the "silently reports no drift" failure this job exists to end.
+          # Fail without filing: "could not tell" is not "there is drift", and filing on it would
+          # train the maintainer to ignore the issue.
+          if [ "$status" -eq 0 ]; then
+            echo "no drift against $REF"
+          elif [ "$status" -ne 1 ]; then
+            echo "::error::drift check could not run against $REF (exit $status)"
+            exit 1
+          fi
+
+      - name: File or update the drift issue
+        if: steps.drift.outputs.status == '1'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REF: ${{ inputs.ref || 'main' }}
+          RUN_ID: ${{ github.run_id }}
+          TITLE: Gherkin conformance assets drifted from upstream spec
+        run: |
+          # pipefail: without it a failing `gh issue list` is masked by jq's exit 0, leaving
+          # `existing` empty — which files a duplicate issue instead of commenting on the open one.
+          set -o pipefail
+          # Dedup on the exact title among OPEN issues. Without this the weekly schedule would
+          # file a duplicate every Monday until someone re-syncs. `--arg` rather than escaping
+          # the title into the jq program, so the query survives the title ever changing.
+          existing=$(gh issue list --state open --search "\"$TITLE\" in:title" --json number,title \
+            | jq -r --arg title "$TITLE" '[.[] | select(.title == $title)] | .[0].number // empty')
+
+          {
+            echo "The vendored gherkin conformance assets no longer match \`open-feature/spec@$REF\`."
+            echo
+            echo "Re-sync per \`conformance/src/test/resources/zio/openfeature/conformance/README.md\`:"
+            echo "re-copy the changed files into **both** vendored copies, update the pinned tag, and"
+            echo "run \`sbt conformance/test\` + \`sbt conformanceZioBdd/test\`."
+            echo
+            echo "Reproduce locally: \`.github/scripts/check-gherkin-drift.sh upstream $REF\`"
+            echo
+            cat drift-report.md
+            echo
+            echo "_Filed by the \`Gherkin drift\` workflow (run $RUN_ID)._"
+          } > issue-body.md
+
+          if [ -n "$existing" ]; then
+            echo "drift issue #$existing already open — commenting instead of filing a duplicate"
+            gh issue comment "$existing" --body-file issue-body.md
+          else
+            gh issue create --title "$TITLE" --body-file issue-body.md \
+              --label spec-compliance --label needs-triage
+          fi
+
+      # Runs after the issue step so the drift is recorded before the job goes red.
+      - name: Fail if drift was found
+        if: steps.drift.outputs.status == '1'
+        env:
+          REF: ${{ inputs.ref || 'main' }}
+        run: |
+          echo "::error::vendored gherkin assets drifted from open-feature/spec@$REF"
+          exit 1

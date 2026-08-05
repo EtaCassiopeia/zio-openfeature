@@ -6,9 +6,15 @@ conformance suite, executed against the ZIO `FeatureFlags` API by Cucumber (see 
 - Source: https://github.com/open-feature/spec — `specification/assets/gherkin/`
 - Pinned tag: **v0.9.0** (commit `d5b0a734d8cb9b42bf89be2a97c627f58208e811`)
 
+That "Pinned tag" line is **authoritative and machine-read**: `.github/scripts/check-gherkin-drift.sh`
+parses it for the ref to compare against when run without an explicit one, so this file is the single
+source of truth for the pin (#336 — it used to be duplicated in the script, which could rot silently).
+Preserve the exact shape ``- Pinned tag: **vX.Y.Z** (commit `<sha>`)`` when re-syncing; the script
+exits 2 ("could not check") rather than guessing if the line is missing, malformed, or duplicated.
+
 Keep these byte-identical to upstream so a re-sync is a clean diff. To update: re-copy the files
-from the pinned path at a newer tag and run `sbt conformance/test`; new or changed scenarios
-surface as failing/undefined steps rather than silently going unrun.
+from the pinned path at a newer tag, update the pin line above, and run `sbt conformance/test`; new
+or changed scenarios surface as failing/undefined steps rather than silently going unrun.
 
 The same four files are vendored a second time under
 `conformance-zio-bdd/src/test/resources/features/openfeature/`, where the zio-bdd runner executes

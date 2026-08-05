@@ -13,7 +13,8 @@
 #   check-gherkin-drift.sh mirror
 #   check-gherkin-drift.sh upstream [<ref>] [--report <file>]
 #
-# `<ref>` defaults to the pinned tag below. Pass `main` to ask "has upstream moved since the pin?".
+# `<ref>` defaults to the pin read from the conformance README (see `pinned_ref`). Pass `main` to
+# ask "has upstream moved since the pin?".
 # Exit 0 = no drift, 1 = drift found (report written), 2 = usage/fetch error.
 #
 # Exit 2 is deliberately distinct from 1: a GitHub API failure or an empty upstream listing means
@@ -22,14 +23,14 @@
 
 set -euo pipefail
 
-# The spec ref these assets are vendored from. Keep in sync with the conformance README.
-PINNED_REF="v0.9.0"
-
 UPSTREAM_REPO="open-feature/spec"
 UPSTREAM_DIR="specification/assets/gherkin"
 
 CUCUMBER_DIR="conformance/src/test/resources/zio/openfeature/conformance"
 ZIOBDD_DIR="conformance-zio-bdd/src/test/resources/features/openfeature"
+
+# Authoritative record of the vendored spec ref; parsed by `pinned_ref`.
+README_PATH="$CUCUMBER_DIR/README.md"
 
 # The vendoring contract is the gherkin *suites* — `*.feature` and nothing else. Upstream's
 # gherkin directory also ships `README.md` (documentation of their assets; ours in the same
@@ -56,6 +57,36 @@ is_excluded() {
     [[ "$candidate" == "$excluded" ]] && return 0
   done
   return 1
+}
+
+# Single source of truth for the pin: the conformance README's "Pinned tag" line. The script parses
+# it rather than keeping a second copy — two copies of the pin is how #336 happened, in a tool whose
+# whole purpose is ending silent pin rot. Called lazily (only by `upstream` with no explicit ref) so
+# `mirror` mode never depends on README formatting.
+#
+# Ambiguity dies as exit 2 ("could not check"), never as a guess: answering "does the pin still
+# hold?" against a pin we failed to read is the silent fallback this script exists to prevent.
+pinned_ref() {
+  local claims matches
+  # Count lines that *claim* to be the pin — however malformed — before parsing one. Counting only
+  # well-formed matches would let a broken current pin sitting above a stale well-formed one resolve
+  # silently to the stale ref: a wrong pin reported as fine, which is the failure this file exists
+  # to prevent.
+  #
+  # The `|| die` is load-bearing, not belt-and-braces: BSD sed exits 1 on an unreadable file while
+  # GNU sed exits 2, so leaving it to `set -e` would abort with 1 on macOS — and the scheduled
+  # workflow reads 1 as "drift found" and files a bogus issue. This normalises both to 2.
+  claims="$(sed -n '/^- Pinned tag:/p' "$README_PATH")" \
+    || die "cannot read $README_PATH"
+  [[ -n "$claims" ]] || die "no '- Pinned tag: **vX.Y.Z**' line found in $README_PATH"
+  [[ "$(printf '%s\n' "$claims" | wc -l | tr -d ' ')" == "1" ]] \
+    || die "multiple 'Pinned tag' lines in $README_PATH — cannot determine the pin"
+
+  matches="$(printf '%s\n' "$claims" | sed -n 's/^- Pinned tag: \*\*\(v[0-9][0-9.]*\)\*\*.*/\1/p')" \
+    || die "cannot parse the 'Pinned tag' line in $README_PATH"
+  [[ -n "$matches" ]] \
+    || die "unparseable '- Pinned tag' line in $README_PATH — expected '- Pinned tag: **vX.Y.Z**'"
+  printf '%s\n' "$matches"
 }
 
 # --- mirror -----------------------------------------------------------------------------------
@@ -197,7 +228,7 @@ main() {
       ;;
     upstream)
       shift
-      local ref="$PINNED_REF" report=""
+      local ref="" report=""
       while [[ $# -gt 0 ]]; do
         case "$1" in
           --report)
@@ -211,6 +242,9 @@ main() {
             ;;
         esac
       done
+      # Resolved after parsing so an explicit ref never pays the README read — and so a malformed
+      # README cannot fail a run that did not need the pin at all.
+      [[ -n "$ref" ]] || ref="$(pinned_ref)"
       check_upstream "$ref" "$report"
       ;;
     *)

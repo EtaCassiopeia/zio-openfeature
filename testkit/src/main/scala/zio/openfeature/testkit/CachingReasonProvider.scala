@@ -74,6 +74,13 @@ final class CachingReasonProvider(delegate: OFFeatureProvider) extends EventProv
   ): ProviderEvaluation[java.lang.Double] =
     cached(key, delegate.getDoubleEvaluation(key, defaultValue, context))
 
+  override def getLongEvaluation(
+    key: String,
+    defaultValue: java.lang.Long,
+    context: OFEvaluationContext
+  ): ProviderEvaluation[java.lang.Long] =
+    cached(key, delegate.getLongEvaluation(key, defaultValue, context))
+
   override def getObjectEvaluation(
     key: String,
     defaultValue: Value,
@@ -89,6 +96,11 @@ final class CachingReasonProvider(delegate: OFFeatureProvider) extends EventProv
   override def getState: ProviderState = delegate.getState
 
   override def initialize(context: OFEvaluationContext): Unit = delegate.initialize(context)
+
+  override def initialize(context: OFEvaluationContext, domain: String): Unit =
+    delegate.initialize(context, domain)
+
+  override def isDomainScoped(): Boolean = delegate.isDomainScoped()
 
   override def shutdown(): Unit = delegate.shutdown()
 

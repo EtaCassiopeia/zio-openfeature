@@ -56,8 +56,9 @@ final class DeferredProvider(name: String)(construct: () => FeatureProvider) ext
       case _                      => ProviderState.NOT_READY
     }
 
-  override def initialize(context: OFEvaluationContext): Unit =
-    // Only the first initialize() constructs; a second call (or one after shutdown) is a no-op.
+  // Only the first initialize() constructs; a second call (or one after shutdown) is a no-op. `runDelegateInit`
+  // carries the ctx-only vs ctx+domain choice so both `initialize` overloads share the construction/teardown logic.
+  private def doInitialize(runDelegateInit: FeatureProvider => Unit): Unit =
     if (stateRef.compareAndSet(State.NotStarted, State.Constructing)) {
       // If construction throws, don't wedge in Constructing (which would report NOT_READY forever and no-op shutdown):
       // move to Shutdown and rethrow so the SDK marks the provider errored.
@@ -66,7 +67,7 @@ final class DeferredProvider(name: String)(construct: () => FeatureProvider) ext
         catch { case t: Throwable => stateRef.set(State.Shutdown); throw t }
       // If delegate.initialize throws, the delegate is already built — shut it down so its poller/HTTP client doesn't
       // leak, move to Shutdown, and rethrow.
-      try delegate.initialize(context)
+      try runDelegateInit(delegate)
       catch {
         case t: Throwable =>
           stateRef.set(State.Shutdown)
@@ -77,6 +78,20 @@ final class DeferredProvider(name: String)(construct: () => FeatureProvider) ext
       // Shutdown and we must tear the freshly built delegate down so its background threads don't leak.
       if (!stateRef.compareAndSet(State.Constructing, State.Active(delegate)))
         delegate.shutdown()
+    }
+
+  override def initialize(context: OFEvaluationContext): Unit =
+    doInitialize(_.initialize(context))
+
+  override def initialize(context: OFEvaluationContext, domain: String): Unit =
+    doInitialize(_.initialize(context, domain))
+
+  // No delegate exists before construction completes, so there is no domain-scoping fact to report yet; `false`
+  // matches the SDK's own interface default until the delegate becomes active.
+  override def isDomainScoped(): Boolean =
+    stateRef.get() match {
+      case State.Active(delegate) => delegate.isDomainScoped()
+      case _                      => false
     }
 
   override def shutdown(): Unit =
@@ -129,6 +144,13 @@ final class DeferredProvider(name: String)(construct: () => FeatureProvider) ext
     context: OFEvaluationContext
   ): ProviderEvaluation[java.lang.Double] =
     delegateOr(defaultValue)(_.getDoubleEvaluation(key, defaultValue, context))
+
+  override def getLongEvaluation(
+    key: String,
+    defaultValue: java.lang.Long,
+    context: OFEvaluationContext
+  ): ProviderEvaluation[java.lang.Long] =
+    delegateOr(defaultValue)(_.getLongEvaluation(key, defaultValue, context))
 
   override def getObjectEvaluation(
     key: String,

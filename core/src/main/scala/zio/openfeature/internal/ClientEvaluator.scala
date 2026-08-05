@@ -113,9 +113,16 @@ private[openfeature] object ClientEvaluator {
       details.getValue.asInstanceOf[java.lang.Integer].intValue()
   }
 
-  // An int-range long routes through the SDK's Integer method so a flag stored as an integer resolves against the
-  // provider's integer resolver (rather than its double resolver, which can TYPE_MISMATCH). Out-of-int-range longs
-  // still use the Double method (exact for integers up to 2^53). `extractValue` accepts either numeric result.
+  // SDK 1.22.0 added a native Long surface, so Long evaluations dispatch to the provider's own `getLongEvaluation`
+  // rather than being routed here. That routing used to live at this call site: an int-range default went to
+  // `getIntegerDetails` (so an integer-stored flag met the provider's integer resolver instead of its double one),
+  // and anything larger went to `getDoubleDetails` — exact only up to 2^53, silently lossy beyond it.
+  //
+  // Going native trades that silent precision loss for either an exact 64-bit result (providers that override
+  // `getLongEvaluation`, which every provider this library ships now does) or a loud TYPE_MISMATCH from the SDK's
+  // double-backed default. It also makes SDK-level `LongHook`s and `FlagValueType.LONG` observable, which the
+  // hand-rolled routing hid. A third-party provider that does NOT override `getLongEvaluation` can be wrapped in
+  // `zio.openfeature.extras.IntegerWideningLongProvider` to restore the old int-range behaviour.
   implicit val longEvaluator: ClientEvaluator[Long] = new ClientEvaluator[Long] {
     def evaluate(
       client: OFClient,
@@ -123,11 +130,9 @@ private[openfeature] object ClientEvaluator {
       default: Long,
       context: dev.openfeature.sdk.EvaluationContext
     ): Task[FlagEvaluationDetails[_]] =
-      if (default.isValidInt)
-        ZIO.attemptBlocking(client.getIntegerDetails(key, Integer.valueOf(default.toInt), context))
-      else
-        ZIO.attemptBlocking(client.getDoubleDetails(key, java.lang.Double.valueOf(default.toDouble), context))
+      ZIO.attemptBlocking(client.getLongDetails(key, java.lang.Long.valueOf(default), context))
 
+    // Still `Number`, not a `Long` cast: the SDK's double-backed default path can hand back a boxed Double.
     def extractValue(details: FlagEvaluationDetails[_]): Long =
       details.getValue.asInstanceOf[java.lang.Number].longValue()
   }

@@ -86,6 +86,22 @@ final class EnvVarProvider private (
         ProviderEvaluations.of(defaultValue, "DEFAULT")
     }
 
+  override def getLongEvaluation(
+    key: String,
+    defaultValue: java.lang.Long,
+    context: OFEvaluationContext
+  ): ProviderEvaluation[java.lang.Long] =
+    lookup(key) match {
+      case Some(v) =>
+        scala.util.Try(v.toLong) match {
+          case scala.util.Success(n) => ProviderEvaluations.of(java.lang.Long.valueOf(n), "STATIC")
+          case scala.util.Failure(_) =>
+            throw new ParseError(s"Env var ${envKey(key)}='$v' is not a valid long for flag '$key'")
+        }
+      case None =>
+        ProviderEvaluations.of(defaultValue, "DEFAULT")
+    }
+
   override def getDoubleEvaluation(
     key: String,
     defaultValue: java.lang.Double,

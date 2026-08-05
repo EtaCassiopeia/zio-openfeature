@@ -19,6 +19,13 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
+      # The four vendored gherkin files exist twice — once per conformance runner — and must stay
+      # byte-identical. Unlike upstream drift (scheduled, see gherkin-drift.yml), breaking the
+      # in-repo mirror is the PR author's doing, so it blocks here. Runs first: it needs no JDK, no
+      # sbt and no network, so failing it early gives the signal in seconds rather than burying it
+      # behind a multi-minute scalafmt run — which would mask it entirely whenever scalafmt fails.
+      - name: Check vendored gherkin copies are in sync
+        run: .github/scripts/check-gherkin-drift.sh mirror
       - name: Set up JDK 21
         uses: actions/setup-java@v5
         with:

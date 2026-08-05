@@ -69,5 +69,16 @@ asserts (same value/reason/error-code, different channel).
 
 Spec v0.9.0 renumbered these scenarios from `@spec-1.7.6`/`@spec-1.7.7` to `@spec-2.2.7`: provider
 status is now derived from provider-emitted events, and the client short-circuit those requirements
-mandated is no longer required. Neither runner filters on `@spec-*` tags, so the rename is inert
-here. Adapting the library's own behaviour to that change is tracked separately in #332.
+mandated is no longer required. Neither runner filters on `@spec-*` tags, so the rename is inert here.
+
+**The short-circuit stays anyway, as deliberate library policy** (#332). v0.9.0 permits it rather than
+requiring it, and removing it would change the published 1.0.0 error contract — `FeatureFlags`
+evaluations fail with a typed `ProviderNotReady`/`ProviderFatal`, while transaction overrides and cached
+evaluations deliberately bypass the gate — for no spec gain, since the gherkin asserts the same
+observable outcomes either way. The step-definition bridge above therefore stays too. The behavioural
+half of v0.9.0 (providers emitting their own lifecycle events) is upstream-blocked and tracked in #340.
+
+Note the two `@spec-1.7.6`/`@spec-1.7.7` references in the paragraph above are deliberate: they record
+what the scenarios *used to be* numbered so a future re-sync can trace the rename. Nothing in the code
+or docs claims those requirements as current — the only other surviving mentions are past `CHANGELOG.md`
+entries, which are release history and stay as written.

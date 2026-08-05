@@ -25,10 +25,11 @@ import java.util.concurrent.atomic.AtomicReference
   *
   * Cases covered here:
   *   1. Sync `initialize()` throws synchronously → layer build fails with the thrown exception. 5. Async provider fires
-  *      `PROVIDER_ERROR` after construction → status reflects `Error`, but evaluations still proceed (spec 1.7.6/1.7.7:
-  *      only NOT_READY and FATAL fail-fast). 5b. Fail-fast contract: NOT_READY and FATAL block evaluation; Ready/Error
-  *      proceed. 6. Async provider recovers (ERROR → READY) → evaluations succeed after recovery. 7. Evaluation throws
-  *      `UnknownHostException` from the Java SDK → classifier surfaces `Unreachable`.
+  *      `PROVIDER_ERROR` after construction → status reflects `Error`, but evaluations still proceed (library policy:
+  *      only NOT_READY and FATAL fail-fast, permitted — no longer required — under spec v0.9.0). 5b. Fail-fast
+  *      contract: NOT_READY and FATAL block evaluation; Ready/Error proceed. 6. Async provider recovers (ERROR → READY)
+  *      → evaluations succeed after recovery. 7. Evaluation throws `UnknownHostException` from the Java SDK →
+  *      classifier surfaces `Unreachable`.
   *
   * Cases 2, 3, 4 are already covered by [[ProviderInitHardeningSpec]] and are not duplicated here.
   */
@@ -202,7 +203,7 @@ object ProviderInitFailureSpec extends ZIOSpecDefault {
       )
     } @@ withLiveClock,
     test(
-      "[B2 / case 5] async provider fires PROVIDER_ERROR after init -> evaluations still proceed (spec 1.7.6/1.7.7)"
+      "[B2 / case 5] async provider fires PROVIDER_ERROR after init -> evaluations still proceed (library policy)"
     ) {
       val provider = new EventDriverProvider
       val api      = OpenFeatureAPI.createIsolated()
@@ -232,8 +233,9 @@ object ProviderInitFailureSpec extends ZIOSpecDefault {
             .repeatUntil(_ == ProviderStatus.Error)
             .timeout(5.seconds)
             .someOrFail(new Exception("timed out waiting for PROVIDER_ERROR to propagate"))
-          // Spec 1.7.6/1.7.7: only NOT_READY and FATAL fail-fast. In ERROR the evaluation proceeds to the provider
-          // (which serves cached values or errors on its own) instead of a blanket ProviderNotReady failure.
+          // Library policy: only NOT_READY and FATAL fail-fast (permitted, not required, under spec v0.9.0). In ERROR
+          // the evaluation proceeds to the provider (which serves cached values or errors on its own) instead of a
+          // blanket ProviderNotReady failure.
           result <- ff.booleanDetails("any-flag", default = false).either
         } yield assertTrue(result.isRight)
       }

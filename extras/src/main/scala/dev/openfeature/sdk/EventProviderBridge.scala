@@ -13,6 +13,9 @@ import dev.openfeature.sdk.internal.{AutoCloseableReentrantReadWriteLock, TriCon
   * A delegate supports exactly one attachment; wrapping a provider takes ownership of its event channel. Registering
   * the same delegate instance directly with an API while it is wrapped is unsupported (the SDK's own attach would
   * fail).
+  *
+  * Phase 2 watch-point (#340): re-verify this bridge still applies once the OpenFeature Java SDK ships the spec-v0.9.0
+  * provider-event marker — it may change how event attachment/emission works.
   */
 object EventProviderBridge {
 

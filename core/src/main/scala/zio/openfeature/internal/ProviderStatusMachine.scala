@@ -15,8 +15,8 @@ private[openfeature] object ProviderStatusMachine {
   object Signal {
     case object EventReady extends Signal
 
-    /** `fatal = true` when the event carries ErrorCode.PROVIDER_FATAL — the Java SDK's state manager maps that to FATAL
-      * (spec 1.7.6); mirror it.
+    /** `fatal = true` when the event carries ErrorCode.PROVIDER_FATAL — the Java SDK's state manager maps that to
+      * FATAL; mirror it.
       */
     final case class EventError(fatal: Boolean) extends Signal
     case object EventStale                      extends Signal
@@ -49,7 +49,7 @@ private[openfeature] object ProviderStatusMachine {
     signal match {
       // Lifecycle: authoritative from anywhere. setProvider is the ONLY exit from Fatal and from
       // post-shutdown NotReady — it installs a NEW provider, so the old one's irrecoverability
-      // (spec 1.7.6) no longer applies.
+      // no longer applies.
       case Signal.ShutdownStarted   => Some(ShuttingDown)
       case Signal.ShutdownCompleted => Some(NotReady)
       case Signal.SwapStarted       => Some(NotReady)

@@ -96,6 +96,9 @@ final private[openfeature] class FeatureFlagsLive(
   // whose metadata name only materializes inside initialize() (so the async build captured "unknown", while the
   // provider's own later events carry the real name). Same-named swaps are indistinguishable — see "Known limitation"
   // in #244.
+  //
+  // Phase 2 watch-point (#340): re-verify this identity-guard behaviour once the OpenFeature Java SDK ships the
+  // spec-v0.9.0 provider-event marker — it may offer a more direct way to attribute an event to its emitting provider.
   private def fromCurrentProvider(details: EventDetails): Boolean = {
     val eventName   = details.getProviderName
     val currentName = providerNameRef.get()
@@ -382,9 +385,11 @@ final private[openfeature] class FeatureFlagsLive(
       case ProviderStatus.NotReady => ZIO.fail(FeatureFlagError.ProviderNotReady(ProviderStatus.NotReady))
       case ProviderStatus.ShuttingDown =>
         ZIO.fail(FeatureFlagError.ProviderNotReady(ProviderStatus.ShuttingDown))
-      // Error/Ready/Stale proceed: per OpenFeature spec 1.7.6/1.7.7 only NOT_READY and FATAL fail-fast. A provider in
-      // ERROR is typically a transient, recoverable state and commonly still serves cached values — let the evaluation
-      // reach it (the provider serves or errors on its own) rather than turning one PROVIDER_ERROR into a total outage.
+      // Error/Ready/Stale proceed: fast-failing only NOT_READY and FATAL is this library's deliberate policy — spec
+      // v0.9.0 removed the requirements that used to mandate this and renumbered the equivalent scenarios to
+      // @spec-2.2.7 (+ @spec-1.4.10) as *permitted*, not required, behaviour. A provider in ERROR is typically a
+      // transient, recoverable state and commonly still serves cached values — let the evaluation reach it (the
+      // provider serves or errors on its own) rather than turning one PROVIDER_ERROR into a total outage.
       case _ => Exit.unit
     }
 
@@ -1080,7 +1085,9 @@ final private[openfeature] class FeatureFlagsLive(
         newName = Option(newProvider.getMetadata).map(_.getName).getOrElse(FeatureFlags.UnknownProviderName)
         _ <- providerRef.set(newProvider)
         _ <- ZIO.succeed(providerNameRef.set(newName))
-        // 3. Register new provider with Java SDK (shuts down old, initializes new)
+        // 3. Register new provider with Java SDK (shuts down old, initializes new). Assumes `setProviderAndWait`
+        //    returning normally means READY was reached (Phase 2 watch-point #340: re-verify against the SDK's
+        //    spec-v0.9.0 provider-event marker once shipped).
         _ <- (domain match {
           case Some(d) => ZIO.attemptBlocking(api.setProviderAndWait(d, newProvider))
           case None    => ZIO.attemptBlocking(api.setProviderAndWait(newProvider))

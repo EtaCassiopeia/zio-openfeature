@@ -686,9 +686,9 @@ In every async configuration without a same-process fallback, there is a window 
 
 ### Recovery semantics under `Fatal`
 
-`Fatal` is a **terminal** "stop waiting, take operator action" signal (OpenFeature spec 1.7.6: `FATAL` is irrecoverable). The watchdog only ever escalates a provider that **never became usable** within `initTimeout`, and it shuts that provider down as it does so — so there is no live poller left to recover, and a later `PROVIDER_READY` from the same provider cannot resurrect it. To resume evaluation after a `Fatal`, install a new provider via `setProvider` (or rebuild the layer); `setProvider` is the only exit from `Fatal`.
+`Fatal` is a **terminal** "stop waiting, take operator action" signal — irrecoverable, mirroring the Java SDK's own `FATAL` state. The watchdog only ever escalates a provider that **never became usable** within `initTimeout`, and it shuts that provider down as it does so — so there is no live poller left to recover, and a later `PROVIDER_READY` from the same provider cannot resurrect it. To resume evaluation after a `Fatal`, install a new provider via `setProvider` (or rebuild the layer); `setProvider` is the only exit from `Fatal`.
 
-The transient case is handled *before* it can reach `Fatal`: a provider that reached `Ready` and later hits a recoverable `PROVIDER_ERROR` stays in `Error` (spec 1.7.6/1.7.7 keeps evaluations flowing to a provider that commonly still serves cached values), and a genuine `PROVIDER_READY` restores it to `Ready`. Only a provider that carries `ErrorCode.PROVIDER_FATAL` (mirroring the Java SDK's own `FATAL` state) goes terminal on its own.
+The transient case is handled *before* it can reach `Fatal`: a provider that reached `Ready` and later hits a recoverable `PROVIDER_ERROR` stays in `Error` (this library keeps evaluations flowing to a provider that commonly still serves cached values — see the policy note under "Provider Lifecycle"), and a genuine `PROVIDER_READY` restores it to `Ready`. Only a provider that carries `ErrorCode.PROVIDER_FATAL` (mirroring the Java SDK's own `FATAL` state) goes terminal on its own.
 
 Healthchecks that gate on `Ready`/`Stale` will see the pod un-route once a provider goes `Fatal`; because that state is terminal, treat it as a signal to replace the provider or recycle the pod rather than waiting for self-recovery.
 
@@ -880,6 +880,34 @@ eventHandler.fork
 > (defaults to `FlagMetadata.empty`). Providers can attach arbitrary metadata to events — for
 > example, diagnostic info or the source of a configuration change. Access it via the `eventMeta`
 > extension method: `event.eventMeta.getString("source")`.
+
+### Lifecycle-event emission by bundled provider
+
+Audited against spec v0.9.0's `appendix-e-migrations.md` (#332). v0.9.0 moves lifecycle-event ownership
+to providers: each should emit `PROVIDER_READY` before a successful `initialize()` returns and
+`PROVIDER_ERROR` before it throws, opting in via a marker the SDK defines. **No bundled provider emits
+init-time events today**, and that is deliberate — see below.
+
+| Provider | Base | Emits at init | Emits in steady state |
+|---|---|---|---|
+| `OptimizelyFeatureProvider` | `EventProvider` | none — blocking init; the SDK synthesizes | `READY`/`STALE` from the staleness watchdog, `CONFIGURATION_CHANGED` on a new datafile revision |
+| `TestFeatureProvider` (testkit) | `EventProvider` | none — the SDK synthesizes | full control surface: `READY`, `ERROR`, `STALE`, `CONFIGURATION_CHANGED` |
+| `CircuitBreakerProvider` (extras) | `EventProvider` | none | **emits its own** `READY`/`STALE` on breaker transitions, *and* forwards the delegate's events |
+| `CachingProvider` (extras) | `EventProvider` | none | forwards the delegate's events only |
+| `CachingReasonProvider` (testkit) | `EventProvider` | none | **none** — extends `EventProvider` but never attaches to the delegate, so the delegate's events are dropped (same limitation as `DeferredProvider`) |
+| `DeferredProvider` (extras) | `FeatureProvider` | none | none — documented limitation: wrapping an `EventProvider` does not forward its events |
+| `HoconProvider` (extras) | `FeatureProvider` | none | none — static config, no lifecycle to report |
+| `EnvVarProvider` (extras) | `FeatureProvider` | none | none — static config, no lifecycle to report |
+| `IntegerWideningLongProvider` (extras) | `FeatureProvider` | none | none — evaluation-only wrapper; like `DeferredProvider` it does not forward a wrapped `EventProvider`'s events |
+| `OFREPProvider` | n/a — factory returning the contrib provider | upstream's | upstream's |
+
+**Why init-time emission is deferred (#340).** Until the Java SDK ships the opt-in marker it keeps
+synthesizing lifecycle events, so a provider that emitted its own would produce a duplicate. The spec
+calls such duplicates "expected legacy behavior" — but that judgement concerns the *SDK's* derived
+status, and it does not hold here: this library's status machine absorbs a repeat `READY`, while the
+event hub publishes **every** bridged event to user handlers. Duplicates would therefore reach user code.
+Both halves of that asymmetry are pinned in `ProviderStatusBridgeSpec`, so the change becomes visible the
+moment Phase 2 flips it.
 
 ---
 

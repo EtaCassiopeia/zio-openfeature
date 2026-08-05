@@ -740,7 +740,7 @@ object FeatureFlagsSpec extends ZIOSpecDefault {
         } yield assertTrue(details.contains(None))
       }.provide(testLayer(Map("test-flag" -> true)))
     ),
-    suite("Provider NotReady Guard (spec 1.7.6)")(
+    suite("Provider NotReady Guard (library policy)")(
       test("evaluation fails with ProviderNotReady when provider status is NotReady") {
         for {
           testProvider <- ZIO.service[TestFeatureProvider]
@@ -763,7 +763,7 @@ object FeatureFlagsSpec extends ZIOSpecDefault {
         } yield assertTrue(result == true)
       }.provide(testLayer(Map("test-flag" -> true))),
       test(
-        "evaluation proceeds when provider is in Error status (spec 1.7.6/1.7.7: only NOT_READY and FATAL fail-fast)"
+        "evaluation proceeds when provider is in Error status (library policy: only NOT_READY and FATAL fail-fast)"
       ) {
         for {
           testProvider <- ZIO.service[TestFeatureProvider]

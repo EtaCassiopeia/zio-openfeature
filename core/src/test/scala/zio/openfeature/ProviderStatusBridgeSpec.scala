@@ -3,7 +3,7 @@ package zio.openfeature
 import zio._
 import zio.test._
 import zio.stream.SubscriptionRef
-import zio.openfeature.internal.ProviderEvaluations
+import zio.openfeature.internal.{ProviderEvaluations, ProviderStatusMachine}
 import dev.openfeature.sdk.{
   ErrorCode => OFErrorCode,
   EvaluationContext => OFEvaluationContext,
@@ -221,6 +221,58 @@ object ProviderStatusBridgeSpec extends ZIOSpecDefault {
           }
         }
       } yield out
+    },
+    // --- Duplicate-event behaviour, pinned ahead of spec v0.9.0 Phase 2 (#332) ---
+    //
+    // These two are characterization tests: they pass today and are expected to. Their job is to make a future
+    // change visible rather than to prove a fix. Under spec v0.9.0 providers emit their own lifecycle events while
+    // the SDK still synthesizes them on the legacy path, so a provider that adopts emission early produces a
+    // duplicate READY. The spec's appendix-e calls those duplicates "expected legacy behavior" — but that verdict
+    // is about the *SDK's* status, and the two tests below record that the two halves of this library disagree on
+    // how tolerable they are. That asymmetry is the whole reason Phase 2 defers provider-side emission.
+    test("a duplicate READY leaves status Ready — the status machine is idempotent") {
+      // Asserting the readback alone would be satisfied by a machine that blindly re-asserts Ready, so the
+      // mechanism is pinned directly too: `transition` must return None (no transition at all) for a repeat
+      // READY. Without this, the test's name would claim more than it checks.
+      val repeatReady = ProviderStatusMachine.transition(
+        ProviderStatus.Ready,
+        ProviderStatusMachine.Signal.EventReady,
+        ProviderStatusMachine.Context(everReady = true, swapInProgress = false, shutdownCompleted = false)
+      )
+      ZIO.scoped {
+        for {
+          ref <- SubscriptionRef.make[ProviderStatus](ProviderStatus.NotReady)
+          ff  <- build(ref, "current")
+          _   <- ff.onReadyEvent(details("current"))
+          s1  <- ff.providerStatus
+          _   <- ff.onReadyEvent(details("current"))
+          s2  <- ff.providerStatus
+        } yield assertTrue(s1 == ProviderStatus.Ready, s2 == ProviderStatus.Ready, repeatReady.isEmpty)
+      }
+    },
+    test("but the event hub delivers BOTH READYs to observers — duplicates are user-visible") {
+      ZIO.scoped {
+        for {
+          ref   <- SubscriptionRef.make[ProviderStatus](ProviderStatus.NotReady)
+          ff    <- build(ref, "current")
+          count <- Ref.make(0)
+          both  <- Promise.make[Nothing, Unit]
+          // `on` establishes the hub subscription before returning, so no event can slip in between registering
+          // and firing. Status is NotReady here, so the spec-5.3.3 immediate-fire does not add a phantom count.
+          cancel <- ff.on(
+            ProviderEventType.Ready,
+            _ => count.updateAndGet(_ + 1).flatMap(n => both.succeed(()).when(n >= 2)).unit
+          )
+          _ <- ff.onReadyEvent(details("current"))
+          _ <- ff.onReadyEvent(details("current"))
+          _ <- both.await.timeoutFail(new RuntimeException("hub delivered fewer than two READY events"))(10.seconds)
+          n <- count.get
+          _ <- cancel
+          // Delivered twice even though the machine transitioned once. Emitting init events from our own providers
+          // while the SDK still synthesizes them would therefore surface as duplicate READYs in USER handlers — a
+          // visible regression, not internal noise. If Phase 2 makes this 1, that is the deliberate flip.
+        } yield assertTrue(n == 2)
+      }
     }
-  ) @@ TestAspect.sequential
+  ) @@ TestAspect.sequential @@ TestAspect.withLiveClock
 }

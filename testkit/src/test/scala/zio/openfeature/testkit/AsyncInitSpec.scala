@@ -86,7 +86,7 @@ object AsyncInitSpec extends ZIOSpecDefault {
       }.provide(asyncLayer(Map("flag" -> true)))
     ),
     suite("Error state")(
-      test("evaluations proceed when a ready provider transitions to Error state (spec 1.7.6/1.7.7)") {
+      test("evaluations proceed when a ready provider transitions to Error state (library policy)") {
         for {
           tp     <- ZIO.service[TestFeatureProvider]
           _      <- tp.setStatus(ProviderStatus.Ready) // provider becomes ready and serves
@@ -109,7 +109,7 @@ object AsyncInitSpec extends ZIOSpecDefault {
         for {
           tp     <- ZIO.service[TestFeatureProvider]
           _      <- tp.setStatus(ProviderStatus.Ready)
-          _      <- tp.setStatus(ProviderStatus.Error) // transient blip — evaluations still proceed (spec 1.7.6/1.7.7)
+          _      <- tp.setStatus(ProviderStatus.Error) // transient blip — evaluations still proceed (library policy)
           during <- FeatureFlags.boolean("flag", default = false)
           _      <- tp.setStatus(ProviderStatus.Ready) // recovered
           ok     <- FeatureFlags.boolean("flag", default = false)

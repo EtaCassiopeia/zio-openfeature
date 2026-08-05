@@ -10,6 +10,9 @@ package dev.openfeature.sdk
   * Compile-time checked rather than reflective: an SDK upgrade that changes these signatures fails compilation here
   * instead of surfacing as a runtime reflection error. Same package-shim pattern as `extras`' `EventProviderBridge`
   * (which reaches the package-private `EventProvider.attach`/`detach`).
+  *
+  * Phase 2 watch-point (#340): re-verify this shim still applies once the OpenFeature Java SDK ships the spec-v0.9.0
+  * provider-event marker — it may change how attach/detach state is managed.
   */
 object EventProviderAccess {
 

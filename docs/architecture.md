@@ -242,7 +242,7 @@ The OpenFeature SDK manages provider lifecycle. ZIO OpenFeature adds scoped reso
 |:------|:------------|
 | `NotReady` | Provider not initialized. Evaluations fail with `ProviderNotReady` |
 | `Ready` | Can evaluate flags |
-| `Error` | Provider encountered a recoverable error. Evaluations still proceed (spec 1.7.6/1.7.7) — the provider serves cached values or errors on its own |
+| `Error` | Provider encountered a recoverable error. Evaluations still proceed (deliberate library policy — only `NotReady`/`Fatal` fail fast) — the provider serves cached values or errors on its own |
 | `Stale` | Provider data may be outdated |
 | `Fatal` | Provider encountered unrecoverable error. Evaluations fail with `ProviderFatal` |
 

@@ -65,9 +65,12 @@ object HookSpec extends ZIOSpecDefault {
         val fvt = FlagValueType.fromFlagType[Double]
         assertTrue(fvt == FlagValueType.Double)
       },
-      test("fromFlagType returns Int for Long") {
+      // Long stopped being reported as Int with SDK 1.22.0 (#333): the SDK gained a distinct LONG flag type, and
+      // `ff.long` now dispatches to the provider's native long resolver. Mislabelling it as Int meant a hook that
+      // narrowed `supportedFlagTypes` to Int also ran for long evaluations, and one narrowed to Long never did.
+      test("fromFlagType returns Long for Long") {
         val fvt = FlagValueType.fromFlagType[Long]
-        assertTrue(fvt == FlagValueType.Int)
+        assertTrue(fvt == FlagValueType.Long)
       },
       test("fromFlagType returns Double for Float") {
         val fvt = FlagValueType.fromFlagType[Float]

@@ -44,6 +44,10 @@ final class TestFeatureProvider private (
 
   private[testkit] val behaviorRef: AtomicReference[BehaviorConfig] = new AtomicReference(BehaviorConfig())
 
+  // SDK 1.22.0 hands the bound domain to `initialize(ctx, domain)` (null for the default provider). Recorded so
+  // tests can assert what a domain-registered client actually delivered — there is no other observation point.
+  private val boundDomainRef: AtomicReference[Option[String]] = new AtomicReference(None)
+
   private def applyBehavior(): Unit = {
     val config = behaviorRef.get()
     config.delay.foreach(d => Thread.sleep(d.toMillis))
@@ -77,6 +81,15 @@ final class TestFeatureProvider private (
     // Note: initDone is NOT counted down here. It is counted down by the event bridge's
     // readyHandler when the Java SDK fires PROVIDER_READY, ensuring the SDK has fully
     // processed the initialization before setStatus(Ready) returns.
+  }
+
+  /** SDK 1.22.0 calls this overload with the bound domain (null for the default provider) and its interface default
+    * forwards to the one-argument form. Recording the domain before delegating keeps all existing init behaviour while
+    * giving [[boundDomain]] something to report.
+    */
+  override def initialize(context: OFEvaluationContext, domain: String): Unit = {
+    boundDomainRef.set(Option(domain))
+    initialize(context)
   }
 
   override def shutdown(): Unit = {
@@ -131,6 +144,27 @@ final class TestFeatureProvider private (
     )
   }
 
+  override def getLongEvaluation(
+    key: String,
+    defaultValue: java.lang.Long,
+    context: OFEvaluationContext
+  ): ProviderEvaluation[java.lang.Long] = {
+    applyBehavior()
+    evaluations.add((key, context))
+    val value = Option(flags.get(key))
+      .map {
+        case l: Long   => l
+        case i: Int    => i.toLong
+        case d: Double => d.toLong
+        case other     => other.toString.toLong
+      }
+      .getOrElse(defaultValue.longValue())
+    ProviderEvaluations.of(
+      java.lang.Long.valueOf(value),
+      if (flags.containsKey(key)) "TARGETING_MATCH" else "DEFAULT"
+    )
+  }
+
   override def getDoubleEvaluation(
     key: String,
     defaultValue: java.lang.Double,
@@ -170,7 +204,7 @@ final class TestFeatureProvider private (
     case b: Boolean    => new Value(b)
     case s: String     => new Value(s)
     case i: Int        => new Value(i)
-    case l: Long       => new Value(l.toDouble)
+    case l: Long       => new Value(l)
     case d: Double     => new Value(d)
     case list: List[_] => new Value(list.map(anyToValue).asJava)
     case map: Map[_, _] =>
@@ -282,6 +316,12 @@ final class TestFeatureProvider private (
             () // No Java SDK equivalent for reconnecting
         }
       }
+
+  /** The domain this provider was registered under, as the SDK delivered it to `initialize(ctx, domain)`.
+    *
+    * `None` before initialization, and `None` for the default (domain-less) provider — the SDK passes null there.
+    */
+  def boundDomain: UIO[Option[String]] = ZIO.succeed(boundDomainRef.get())
 
   /** All evaluations made so far, each captured context converted to the library's [[EvaluationContext]] so you can
     * assert on `.targetingKey` / `.getString(...)` etc. directly instead of the Java SDK type. Use

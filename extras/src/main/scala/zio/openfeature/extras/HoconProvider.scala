@@ -81,6 +81,16 @@ final class HoconProvider private (
     else
       ProviderEvaluations.of(defaultValue, "DEFAULT")
 
+  override def getLongEvaluation(
+    key: String,
+    defaultValue: java.lang.Long,
+    context: OFEvaluationContext
+  ): ProviderEvaluation[java.lang.Long] =
+    if (config.hasPath(key))
+      ProviderEvaluations.of(java.lang.Long.valueOf(typedRead(key, config.getLong(key))), "STATIC")
+    else
+      ProviderEvaluations.of(defaultValue, "DEFAULT")
+
   override def getDoubleEvaluation(
     key: String,
     defaultValue: java.lang.Double,

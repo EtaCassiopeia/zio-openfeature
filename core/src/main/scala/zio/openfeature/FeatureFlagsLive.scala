@@ -1215,10 +1215,12 @@ final private[openfeature] class FeatureFlagsLive(
       case b: Boolean => details.add(key, b)
       case s: String  => details.add(key, s)
       case i: Int     => details.add(key, Integer.valueOf(i))
-      // int-range long → Integer (no precision loss, matches integer targeting); else Double (lossy beyond 2^53).
+      // int-range long → Integer (no precision loss, and matches integer targeting); anything larger goes through
+      // `Value`'s native Long support (SDK 1.22.0) rather than the old Double fallback, which was silently lossy
+      // beyond 2^53.
       case l: Long =>
         if (l.isValidInt) details.add(key, Integer.valueOf(l.toInt))
-        else details.add(key, java.lang.Double.valueOf(l.toDouble))
+        else details.add(key, new dev.openfeature.sdk.Value(java.lang.Long.valueOf(l)))
       case d: Double                  => details.add(key, d)
       case f: Float                   => details.add(key, java.lang.Double.valueOf(f.toDouble))
       case instant: java.time.Instant => details.add(key, instant)

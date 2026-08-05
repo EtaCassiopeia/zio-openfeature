@@ -120,11 +120,21 @@ final class CachingProvider private (
     ()
   }
 
-  override def initialize(context: OFEvaluationContext): Unit = {
+  private def attachDelegate(): Unit =
     if (delegateAttached.compareAndSet(false, true))
       EventProviderBridge.attach(underlying, onDelegateEvent)
+
+  override def initialize(context: OFEvaluationContext): Unit = {
+    attachDelegate()
     underlying.initialize(context)
   }
+
+  override def initialize(context: OFEvaluationContext, domain: String): Unit = {
+    attachDelegate()
+    underlying.initialize(context, domain)
+  }
+
+  override def isDomainScoped(): Boolean = underlying.isDomainScoped()
 
   override def shutdown(): Unit = {
     if (delegateAttached.compareAndSet(true, false))
@@ -240,6 +250,13 @@ final class CachingProvider private (
     context: OFEvaluationContext
   ): ProviderEvaluation[java.lang.Double] =
     cached(key, "double", context, underlying.getDoubleEvaluation(key, defaultValue, context))
+
+  override def getLongEvaluation(
+    key: String,
+    defaultValue: java.lang.Long,
+    context: OFEvaluationContext
+  ): ProviderEvaluation[java.lang.Long] =
+    cached(key, "long", context, underlying.getLongEvaluation(key, defaultValue, context))
 
   override def getObjectEvaluation(
     key: String,

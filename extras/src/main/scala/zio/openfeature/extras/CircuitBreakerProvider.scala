@@ -127,17 +127,25 @@ final class CircuitBreakerProvider private (
     ()
   }
 
-  override def initialize(context: OFEvaluationContext): Unit =
+  private def doInitialize(runDelegateInit: => Unit): Unit =
     try {
       if (delegateAttached.compareAndSet(false, true))
         EventProviderBridge.attach(underlying, onDelegateEvent)
-      underlying.initialize(context)
+      runDelegateInit
       checkDelegateState()
     } catch {
       case e: Exception =>
         breaker.trip()
         throw e
     }
+
+  override def initialize(context: OFEvaluationContext): Unit =
+    doInitialize(underlying.initialize(context))
+
+  override def initialize(context: OFEvaluationContext, domain: String): Unit =
+    doInitialize(underlying.initialize(context, domain))
+
+  override def isDomainScoped(): Boolean = underlying.isDomainScoped()
 
   override def shutdown(): Unit = {
     if (delegateAttached.compareAndSet(true, false))
@@ -180,6 +188,13 @@ final class CircuitBreakerProvider private (
     context: OFEvaluationContext
   ): ProviderEvaluation[java.lang.Double] =
     protect(() => underlying.getDoubleEvaluation(key, defaultValue, context))
+
+  override def getLongEvaluation(
+    key: String,
+    defaultValue: java.lang.Long,
+    context: OFEvaluationContext
+  ): ProviderEvaluation[java.lang.Long] =
+    protect(() => underlying.getLongEvaluation(key, defaultValue, context))
 
   override def getObjectEvaluation(
     key: String,

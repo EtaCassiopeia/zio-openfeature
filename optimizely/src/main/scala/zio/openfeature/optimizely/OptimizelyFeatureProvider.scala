@@ -352,6 +352,40 @@ final class OptimizelyFeatureProvider private[optimizely] (
   ): ProviderEvaluation[java.lang.Double] =
     typedEvaluation[java.lang.Double](key, defaultValue, ctx, classOf[java.lang.Double])
 
+  // Optimizely has no long-typed variable, so Long evaluations read the same integer variable that
+  // getIntegerEvaluation does and widen it — Int -> Long is exact, so a resolved value is never lossy.
+  //
+  // This deliberately does NOT reuse `typedEvaluation`. Doing so would mean seeding it with a default of the
+  // wrong type: narrowing the caller's Long would silently truncate anything outside Int range
+  // (`long("f", 5000000000L)` -> 705032704), and seeding a sentinel instead would leave this method having to
+  // infer "did a variable resolve?" from the built result. That inference is not sound — `deriveReason` reports
+  // DEFAULT whenever the decision has no variation key, independently of whether a variable was read, so a flag
+  // that is off but still carries variable defaults would have its real value discarded here while
+  // `getIntegerEvaluation` returned it. Reading the variable directly keeps `usedDefault` a fact rather than a
+  // guess, and mirrors `getObjectEvaluation`, which resolves its own variable for the same reason.
+  override def getLongEvaluation(
+    key: String,
+    defaultValue: java.lang.Long,
+    ctx: OFEvaluationContext
+  ): ProviderEvaluation[java.lang.Long] =
+    decide(key, ctx) match {
+      case Right(d) =>
+        val variableKey = OptimizelyFeatureProvider.variableKey(ctx)
+        val variable    = readVariable[java.lang.Integer](d, variableKey, classOf[java.lang.Integer])
+        val (value, usedDefault) = variable match {
+          case Some(i) => (java.lang.Long.valueOf(i.longValue()), false)
+          case None    => (defaultValue, true)
+        }
+        // Builder calls are split across statements (not chained) — see the note on getBooleanEvaluation above.
+        val builder = ProviderEvaluation.builder[java.lang.Long]()
+        builder.value(value)
+        builder.variant(d.getVariationKey)
+        builder.reason(if (usedDefault) Reason.DEFAULT.name() else deriveReason(d))
+        builder.flagMetadata(metadataFrom(d))
+        builder.build().asInstanceOf[ProviderEvaluation[java.lang.Long]]
+      case Left(err) => failingEvaluation(defaultValue, err)
+    }
+
   /** Shared scaffold for Integer/Double evaluations: extract the named variable, fall back to the OF default with a
     * `DEFAULT` reason if the variable is missing. The Optimizely SDK throws `JsonParseException` from `getValue` when
     * the key is absent, so we wrap in `Try` and treat any failure as a missing variable.

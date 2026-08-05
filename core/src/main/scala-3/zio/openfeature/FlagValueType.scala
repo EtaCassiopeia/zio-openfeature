@@ -4,6 +4,7 @@ enum FlagValueType:
   case Boolean
   case String
   case Int
+  case Long
   case Double
   case Object
 
@@ -17,7 +18,7 @@ object FlagValueType:
       case "Boolean" => Boolean
       case "String"  => String
       case "Int"     => Int
-      case "Long"    => Int
+      case "Long"    => Long
       case "Float"   => Double
       case "Double"  => Double
       case _         => Object

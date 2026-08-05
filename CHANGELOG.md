@@ -7,6 +7,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **`Long` flag evaluation now uses the OpenFeature SDK's native long surface** (#333). `ff.long` / `ff.longDetails`
+  call `client.getLongDetails`, so the **provider's** `getLongEvaluation` decides the result instead of this library
+  choosing a resolver for it. Previously an int-range default was routed to the provider's integer resolver and
+  anything larger to its double resolver — exact only up to 2^53, and **silently lossy beyond it**.
+  - Every provider shipped here (`TestFeatureProvider`, `HoconProvider`, `EnvVarProvider`,
+    `OptimizelyFeatureProvider`) now implements `getLongEvaluation` natively and resolves the full 64-bit range
+    exactly, so **there is no behaviour change if you use one of them**.
+  - **Who is affected:** a *third-party* provider written against SDK &lt; 1.22.0 that does not override
+    `getLongEvaluation`. It inherits the SDK's default, which answers from `getDoubleEvaluation` and returns a
+    `TYPE_MISMATCH` (with your default echoed back) outside ±(2^53−1) instead of a quietly wrong number. An
+    integer-stored flag will now meet that provider's *double* resolver.
+  - **Remedy:** wrap it in the new `IntegerWideningLongProvider` to restore the previous int-range routing.
+- **`FlagValueType.Long` is now reported for long evaluations** instead of `FlagValueType.Int` (#333). Only hooks
+  that explicitly narrowed `supportedFlagTypes` are affected: one narrowed to `Int` no longer runs for long
+  evaluations, and one narrowed to `Long` now does. `HookContext.flagType` is public, so this is observable.
+- Out-of-int-range `Long` **tracking** attributes are now sent through `Value`'s native long support rather than
+  being widened to `Double` (#333) — the same silent precision loss, on the tracking path.
+
+### Added
+
+- `IntegerWideningLongProvider` (`extras`) — wraps a provider that predates SDK 1.22.0 and resolves `Long`
+  evaluations through its existing integer resolver for int-range defaults. The escape hatch for the behaviour
+  change above; bundled providers never need it.
+- `TestFeatureProvider.boundDomain` (`testkit`) — reports the domain the SDK bound the provider to, so tests can
+  assert domain propagation (SDK 1.22.0's `initialize(ctx, domain)`).
+
+### Fixed
+
+- **The delegating wrappers no longer strip new SDK interface methods** (#333). `CachingProvider`,
+  `CircuitBreakerProvider`, `DeferredProvider` and `CachingReasonProvider` forwarded only the surface they were
+  written against, so every capability the SDK adds as a *default method* was silently answered by the interface
+  default instead of the wrapped provider. Under 1.22.0 that meant three at once: a `CachingProvider` around a
+  provider with native 64-bit resolution routed long evaluations through the double-backed default,
+  `initialize(ctx, domain)` dropped the bound domain, and `isDomainScoped` hid a wrapped provider's scoping from
+  the SDK. All three are now forwarded, and a reflection-based completeness spec fails when a future SDK method
+  goes unforwarded.
+
+### Dependencies
+
+- OpenFeature Java SDK 1.21.0 → 1.22.0
+- zio-bdd 1.4.2 → 1.4.4 (test-only)
+
 ## [1.0.0] — 2026-07-12
 
 First stable release. **Upgrading from 0.9.x:** two behavior changes may require action —

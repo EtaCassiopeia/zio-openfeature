@@ -3,7 +3,7 @@ package zio.openfeature
 import zio._
 import zio.test._
 import zio.stream.SubscriptionRef
-import zio.openfeature.internal.ProviderEvaluations
+import zio.openfeature.internal.{ProviderEvaluations, ProviderStatusMachine}
 import dev.openfeature.sdk.{
   ErrorCode => OFErrorCode,
   EvaluationContext => OFEvaluationContext,
@@ -231,6 +231,14 @@ object ProviderStatusBridgeSpec extends ZIOSpecDefault {
     // is about the *SDK's* status, and the two tests below record that the two halves of this library disagree on
     // how tolerable they are. That asymmetry is the whole reason Phase 2 defers provider-side emission.
     test("a duplicate READY leaves status Ready — the status machine is idempotent") {
+      // Asserting the readback alone would be satisfied by a machine that blindly re-asserts Ready, so the
+      // mechanism is pinned directly too: `transition` must return None (no transition at all) for a repeat
+      // READY. Without this, the test's name would claim more than it checks.
+      val repeatReady = ProviderStatusMachine.transition(
+        ProviderStatus.Ready,
+        ProviderStatusMachine.Signal.EventReady,
+        ProviderStatusMachine.Context(everReady = true, swapInProgress = false, shutdownCompleted = false)
+      )
       ZIO.scoped {
         for {
           ref <- SubscriptionRef.make[ProviderStatus](ProviderStatus.NotReady)
@@ -239,7 +247,7 @@ object ProviderStatusBridgeSpec extends ZIOSpecDefault {
           s1  <- ff.providerStatus
           _   <- ff.onReadyEvent(details("current"))
           s2  <- ff.providerStatus
-        } yield assertTrue(s1 == ProviderStatus.Ready, s2 == ProviderStatus.Ready)
+        } yield assertTrue(s1 == ProviderStatus.Ready, s2 == ProviderStatus.Ready, repeatReady.isEmpty)
       }
     },
     test("but the event hub delivers BOTH READYs to observers — duplicates are user-visible") {

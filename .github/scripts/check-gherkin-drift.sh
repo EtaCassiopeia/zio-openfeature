@@ -9,8 +9,12 @@
 #   mirror    the two in-repo copies (conformance/ and conformance-zio-bdd/) are byte-identical to
 #             each other. Breaking that IS a PR author's doing, so CI runs this one per PR.
 #
+# `print-pin` is a third mode but not a third invariant: it just resolves and prints the pin. It
+# exists so the README parse below is exercised by CI at all — see its case arm in `main` (#338).
+#
 # Usage:
 #   check-gherkin-drift.sh mirror
+#   check-gherkin-drift.sh print-pin
 #   check-gherkin-drift.sh upstream [<ref>] [--report <file>]
 #
 # `<ref>` defaults to the pin read from the conformance README (see `pinned_ref`). Pass `main` to
@@ -226,6 +230,12 @@ main() {
     mirror)
       check_mirror
       ;;
+    print-pin)
+      # Parse-only: resolve and print the pin from the conformance README. Exit 0 with the pin on
+      # stdout, exit 2 if the line is missing, duplicated, or unparseable — the same contract
+      # `pinned_ref` already enforces. No network and no gh, so it is safe as a per-PR gate (#338).
+      pinned_ref
+      ;;
     upstream)
       shift
       local ref="" report=""
@@ -248,7 +258,7 @@ main() {
       check_upstream "$ref" "$report"
       ;;
     *)
-      die "usage: $(basename "$0") mirror | upstream [<ref>] [--report <file>]"
+      die "usage: $(basename "$0") mirror | print-pin | upstream [<ref>] [--report <file>]"
       ;;
   esac
 }

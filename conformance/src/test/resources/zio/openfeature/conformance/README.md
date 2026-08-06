@@ -29,14 +29,21 @@ different owners:
 |------|-----------|------|
 | `upstream` | vendored files match `open-feature/spec` at a ref | `.github/workflows/gherkin-drift.yml` — weekly + on dispatch |
 | `mirror` | the two in-repo copies are identical | the `format` job in `ci.yml` — every PR |
+| `print-pin` | the "Pinned tag" line above still parses | the `format` job in `ci.yml` — every PR |
 
 Upstream drift is not a PR author's doing, so it is scheduled and files a deduped issue rather than
 blocking PRs. Breaking the in-repo mirror **is** a PR author's doing, so that one blocks.
 
-Run either locally:
+`print-pin` is a parse-only mode (no network, no `gh`) that exists so the pin line's format is
+CI-checked per PR: the scheduled `upstream` job always passes an explicit ref, so nothing else in CI
+ever exercises the parse. Reformatting the pin line therefore fails the PR that makes it, rather
+than surfacing later as a confusing exit 2 on somebody's machine (#338).
+
+Run any of them locally:
 
 ```sh
 .github/scripts/check-gherkin-drift.sh mirror
+.github/scripts/check-gherkin-drift.sh print-pin           # what ref does the README pin to?
 .github/scripts/check-gherkin-drift.sh upstream            # against the pinned tag
 .github/scripts/check-gherkin-drift.sh upstream main       # has upstream moved since the pin?
 ```

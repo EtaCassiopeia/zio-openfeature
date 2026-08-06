@@ -26,6 +26,13 @@ jobs:
       # behind a multi-minute scalafmt run — which would mask it entirely whenever scalafmt fails.
       - name: Check vendored gherkin copies are in sync
         run: .github/scripts/check-gherkin-drift.sh mirror
+      # The pin is machine-read from the conformance README (#336). Nothing else in CI executes that
+      # parse: the scheduled drift job always passes an explicit ref (deliberately — it compares
+      # against upstream main), so without this step a README edit that breaks the parse would
+      # surface only on a developer's machine (#338). Parse-only — no JDK, no sbt, no network — so
+      # it belongs up here beside the mirror check rather than behind the multi-minute sbt setup.
+      - name: Check the gherkin pin parses from the README
+        run: .github/scripts/check-gherkin-drift.sh print-pin
       - name: Set up JDK 21
         uses: actions/setup-java@v5
         with:

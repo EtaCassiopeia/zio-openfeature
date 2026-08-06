@@ -90,9 +90,19 @@ object OptimizelyPollingLifecycleSpec extends ZIOSpecDefault {
           _           <- sleepBlocking(1.second)
           whileActive <- ZIO.succeed(requestCount(server))
           _           <- ZIO.succeed(provider.shutdown())
-          afterStop   <- ZIO.succeed(requestCount(server))
-          _           <- sleepBlocking(700.millis)
-          afterWait   <- ZIO.succeed(requestCount(server))
+          // Settle before baselining. Two windows can still move the count after `shutdown()`
+          // returns without any post-shutdown poll being initiated: the SDK may dispatch a fetch in
+          // the instant before the poller is cancelled (the same race test 1 documents with its
+          // `requests <= 1`, #211), and WireMock appends to its serve-event journal when it *serves*
+          // the request, so one already in flight is recorded moments later. Absorbing those
+          // stragglers into the baseline keeps the assertion below strict rather than trading it for
+          // a tolerance: a straggler lands promptly, while a genuinely surviving poller keeps firing
+          // every 200ms and still puts 3+ events into the observation window. Do not remove this
+          // sleep — the flake it fixes only reproduces under module-level load (#341).
+          _         <- sleepBlocking(300.millis)
+          afterStop <- ZIO.succeed(requestCount(server))
+          _         <- sleepBlocking(700.millis)
+          afterWait <- ZIO.succeed(requestCount(server))
         } yield assertTrue(
           beforeInit == 0,
           initResult.isRight,
@@ -117,7 +127,11 @@ object OptimizelyPollingLifecycleSpec extends ZIOSpecDefault {
               result   <- ZIO.succeed(tryInit(provider))
             } yield result
           }
-          // Scope is closed: the failed provider must not keep retrying the 403 endpoint in the background
+          // Scope is closed: the failed provider must not keep retrying the 403 endpoint in the background.
+          // Settle first, for the same reason as the shutdown baseline above — a fetch in flight at scope
+          // close is journalled moments later. Only ever raises `duringInit`, so `duringInit >= 1` below is
+          // unaffected. Do not remove (#211, #341).
+          _          <- sleepBlocking(300.millis)
           duringInit <- ZIO.succeed(requestCount(server))
           _          <- sleepBlocking(700.millis)
           afterClose <- ZIO.succeed(requestCount(server))
@@ -144,6 +158,10 @@ object OptimizelyPollingLifecycleSpec extends ZIOSpecDefault {
               ZIO.succeed(tryInit(provider)) *> sleepBlocking(500.millis)
             }
           }
+          // Settle before baselining, as above: the layer finalizer's shutdown can leave a fetch in
+          // flight that WireMock journals moments later. Only ever raises `afterRelease`, so the
+          // `afterRelease >= 1` assertion is unaffected. Do not remove (#211, #341).
+          _            <- sleepBlocking(300.millis)
           afterRelease <- ZIO.succeed(requestCount(server))
           _            <- sleepBlocking(700.millis)
           afterWait    <- ZIO.succeed(requestCount(server))

@@ -34,6 +34,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   change above; bundled providers never need it.
 - `TestFeatureProvider.boundDomain` (`testkit`) — reports the domain the SDK bound the provider to, so tests can
   assert domain propagation (SDK 1.22.0's `initialize(ctx, domain)`).
+- `docs/testing-real-providers.md` (#335): guide to fault-testing a **real** provider through rift-scala's TLS-MITM
+  intercept fixtures — the gap `TestFeatureProvider` cannot cover, since it simulates provider *states* rather than
+  exercising a real SDK's HTTP client, TLS, payload parsing and init/polling paths. Covers the six-scenario matrix
+  (healthy, stall, stall + configured fallback, 401, connection reset, malformed payload), which wiring tier each
+  kind of HTTP client needs, why waits and faults require `redirectTo(imposter)` rather than a `serve` rule, and
+  the `awaitReady` / `Schedule.recurUntil` / `.exit` assertion patterns. No rift dependency is added to any
+  published module — the wiring belongs in the reader's own test build.
 
 ### Fixed
 

@@ -270,6 +270,7 @@ Full documentation: https://etacassiopeia.github.io/zio-openfeature/
 - [Hooks](https://etacassiopeia.github.io/zio-openfeature/hooks) - Cross-cutting concerns
 - [Transactions](https://etacassiopeia.github.io/zio-openfeature/transactions) - Overrides and tracking
 - [Testkit](https://etacassiopeia.github.io/zio-openfeature/testkit) - Testing utilities
+- [Testing Real Providers](https://etacassiopeia.github.io/zio-openfeature/testing-real-providers) - Fault-testing a real provider over TLS-MITM
 - [Spec Compliance](https://etacassiopeia.github.io/zio-openfeature/spec-compliance) - OpenFeature specification compliance
 
 ## License

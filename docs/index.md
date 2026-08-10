@@ -60,6 +60,7 @@ object MyApp extends ZIOAppDefault:
 | [Hooks]({{ site.baseurl }}/hooks) | Cross-cutting concerns |
 | [Transactions]({{ site.baseurl }}/transactions) | Flag overrides and tracking |
 | [Testkit]({{ site.baseurl }}/testkit) | Testing utilities |
+| [Testing Real Providers]({{ site.baseurl }}/testing-real-providers) | Fault-testing a real provider over TLS-MITM |
 | [Spec Compliance]({{ site.baseurl }}/spec-compliance) | OpenFeature specification compliance |
 
 ## Modules

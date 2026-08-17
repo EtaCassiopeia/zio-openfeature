@@ -40,6 +40,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`fromAcquireAsync` can verify the real provider before swapping it in** (#349). Construction success is a weak
+  health signal — a provider can construct on bad credentials or an empty config and then serve *successful wrong
+  values* that a first-successful chain accepts without ever consulting the fallback. A new trailing
+  `verify: OFFeatureProvider => Task[Unit]` parameter (default: accept everything) runs on each acquired candidate
+  **before** the swap; a failure rejects the candidate exactly like an `acquire` failure (released, `constructionRetry`
+  advances, fallback keeps serving, terminal error reaches `onConstructionError`), and `acquire` + `verify` share the
+  per-attempt `constructionTimeout`. `Verify.flagExists[A](key)` is the ready-made sentinel check — it evaluates `key`
+  on the bare candidate through the getter matching `FlagType[A].wireType` and fails on any error code — and
+  `Verify.all(...)` chains checks:
+
+  ```scala
+  FeatureFlags.fromAcquireAsync(acquire, fallback, verify = Verify.flagExists[Boolean]("kill-switch"))
+  ```
+
+  `verify` sees the candidate exactly as `acquire` returned it: the SDK has not called `initialize()` on it yet, and no
+  ambient context applies — a provider that only answers after `initialize()` must be initialized inside `acquire`.
+
+  **Teardown contract, tightened:** every attempt now runs `acquire` in its own child scope. A candidate that does not
+  make it into service — rejected, timed out, or whose swap failed and rolled back — has its finalizers run
+  immediately instead of lingering until layer close; the swapped-in candidate's scope is handed to the layer scope,
+  so the real provider is torn down on layer release exactly as before. Binary-incompatible against 1.0.0 (new defaulted parameter, same remedy as #353: recompile) —
+  covered by the existing `fromAcquireAsync` MiMa filter.
 - **`TestFeatureProvider.makeNamed` — a test provider can be given its own metadata name** (#371). Every instance
   previously reported `"TestFeatureProvider"` with no way to change it, and two things key providers by that name: a
   `MultiProvider` chain keeps only the **last** provider of a given name (the SDK logs the collision at INFO and moves
@@ -48,7 +70,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   failed for the wrong reason — and a hot-swap between two of them was invisible to the guard. `makeNamed(name,
   initialFlags = Map.empty)` fixes both, and `TestFeatureProvider.DefaultName` is what every other factory still
   reports, so **nothing changes unless you call `makeNamed`**. Purely additive; no core change.
-
 - **Typed test fixtures from a `FlagDef` (`testkit`)** (#351). `TestFeatureProvider`'s key-based
   `setFlag[A](key, value)` accepts anything, so a fixture could pin a value production would never decode — the test
   passed against the fixture and production failed with `TYPE_MISMATCH`. Building the fixture from a `FlagDef`

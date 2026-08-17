@@ -498,7 +498,12 @@ final private[openfeature] class FeatureFlagsLive(
 
     val evaluation: IO[FeatureFlagError, FlagResolution[A]] =
       ClientEvaluator.evaluateStandard[A](flagType, client, key, default, ofContext) match {
-        case Some(erased) =>
+        // The instance declares a scalar `wireType` its `encode` does not produce — a contract violation, surfaced as
+        // a typed error rather than an opaque ClassCastException from inside the SDK bridge (#360).
+        case Some(Left(message)) =>
+          ZIO.fail(FeatureFlagError.TypeMismatch(key, flagType.typeName, message))
+
+        case Some(Right(erased)) =>
           withTimeout(erased.task)
             .mapError(e => FeatureFlagError.classify(e))
             .flatMap { details =>

@@ -53,12 +53,16 @@ private[openfeature] object ClientEvaluator {
     extract: FlagEvaluationDetails[_] => Either[String, A]
   )
 
-  /** Look up the evaluator for `flagType.wireType` and produce the type-erased evaluation. Returns None for non-scalar
-    * wire types (Object, custom) which need special handling.
+  /** Look up the evaluator for `flagType.wireType` and produce the type-erased evaluation.
     *
     * Dispatch is on `wireType`, not `typeName`, so a domain type carried over the wire as a scalar is resolved through
     * that scalar's SDK method. The default sent down is `flagType.encode(default)` — already the wire value — and the
     * result is run back through `flagType.decode`.
+    *
+    *   - `None` — the wire type is not a scalar (`Object`, or a domain name); the caller uses the object path.
+    *   - `Some(Right(erased))` — dispatch resolved.
+    *   - `Some(Left(message))` — the instance is internally inconsistent: it declares a scalar `wireType` that its
+    *     `encode` does not produce. The caller reports this as a typed `TypeMismatch` (#360).
     */
   def evaluateStandard[A](
     flagType: FlagType[A],
@@ -66,19 +70,36 @@ private[openfeature] object ClientEvaluator {
     key: String,
     default: A,
     context: dev.openfeature.sdk.EvaluationContext
-  ): Option[Erased[A]] = {
-    def erased[T](ev: ClientEvaluator[T]): Erased[A] =
-      Erased[A](
-        ev.evaluate(client, key, flagType.encode(default).asInstanceOf[T], context),
-        details => flagType.decode(ev.extractValue(details))
-      )
+  ): Option[Either[String, Erased[A]]] = {
+    // `wireClass` is the box the chosen evaluator will unbox. The `asInstanceOf[T]` below is erased, so a mismatch
+    // does NOT fail here — it fails later inside the evaluator's bridge method as a bare ClassCastException carrying
+    // no flag key and no hint about the wireType/encode mismatch. Checking the box up front is what turns that
+    // programmer error at a documented extension point into an actionable typed failure (#360).
+    def erased[T](ev: ClientEvaluator[T], wireClass: Class[_]): Either[String, Erased[A]] = {
+      val wire = flagType.encode(default)
+      // `null` is let through: it reached the SDK before this check existed, and narrowing that is not this change's
+      // business.
+      if (wire == null || wireClass.isInstance(wire))
+        Right(
+          Erased[A](
+            ev.evaluate(client, key, wire.asInstanceOf[T], context),
+            details => flagType.decode(ev.extractValue(details))
+          )
+        )
+      else
+        Left(
+          s"FlagType '${flagType.typeName}' declares wireType '${flagType.wireType}' but encode produced " +
+            s"${wire.getClass.getName}; override encode to produce ${wireClass.getName}"
+        )
+    }
+
     flagType.wireType match {
-      case "Boolean" => Some(erased(booleanEvaluator))
-      case "String"  => Some(erased(stringEvaluator))
-      case "Int"     => Some(erased(intEvaluator))
-      case "Long"    => Some(erased(longEvaluator))
-      case "Float"   => Some(erased(floatEvaluator))
-      case "Double"  => Some(erased(doubleEvaluator))
+      case "Boolean" => Some(erased(booleanEvaluator, classOf[java.lang.Boolean]))
+      case "String"  => Some(erased(stringEvaluator, classOf[String]))
+      case "Int"     => Some(erased(intEvaluator, classOf[java.lang.Integer]))
+      case "Long"    => Some(erased(longEvaluator, classOf[java.lang.Long]))
+      case "Float"   => Some(erased(floatEvaluator, classOf[java.lang.Float]))
+      case "Double"  => Some(erased(doubleEvaluator, classOf[java.lang.Double]))
       case _         => None
     }
   }

@@ -12,7 +12,7 @@ import zio.test._
 
 import java.util.UUID
 import java.util.concurrent.{CountDownLatch, TimeUnit}
-import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.{AtomicInteger, AtomicReference}
 
 /** Race and retry tests for `OptimizelyFeatureProvider` covering the three lifecycle defects fixed in #265:
   *   1. A failed `initialize()` leaves the provider retryable (`Failed -> Initialized`) instead of a silent no-op.
@@ -27,6 +27,14 @@ object OptimizelyLifecycleRaceSpec extends ZIOSpecDefault {
   private val DatafilePath    = "/datafiles/race-key.json"
   private val ValidDatafileV1 = readResource("/test-datafile-with-flag.json")
   private val targetedContext = new ImmutableContext("user-race")
+
+  // Budgets for the #265.1 retry test; `awaitValidDatafile` below explains why recovery is deliberately late.
+  // `RecoveryDelay > RetryInitWait` is the load-bearing relation: it makes the wait a counterfactual rather than
+  // belt-and-braces, so deleting the wait fails the test.
+  private val RetryInitWait       = java.time.Duration.ofSeconds(2)
+  private val RecoveryDelay       = RetryInitWait.plusMillis(1500)
+  private val RecoveryBudget      = java.time.Duration.ofSeconds(20)
+  private val RecoveryProbeMillis = 50L
 
   private def readResource(path: String): String =
     scala.io.Source.fromInputStream(getClass.getResourceAsStream(path)).mkString
@@ -48,6 +56,26 @@ object OptimizelyLifecycleRaceSpec extends ZIOSpecDefault {
     try { provider.initialize(new ImmutableContext()); Right(()) }
     catch { case t: Throwable => Left(t) }
 
+  /** Blocks until the SDK reports a valid datafile, or the deadline passes; returns whether it recovered.
+    *
+    * This is what keeps the retry leg of the #265.1 test off the wall clock (#346). `initialize()` gives the datafile
+    * only `initWait` to arrive, and that window must contain a whole polling tick — about a second wide, so a
+    * multi-second stall of the test JVM (stop-the-world GC, scheduler starvation under a forked-test storm) landing on
+    * it exhausted the budget and failed a test whose subject is the `Failed -> Initialized` retry, not its latency.
+    * Waiting here instead means `initialize()` takes its `optimizely.isValid` fast path and has no window left to lose.
+    * Sound because a *polling* config manager only ever replaces a valid config with another valid one (a failed fetch
+    * polls `null`, which `setConfig` ignores), so `isValid` cannot go back to false between this check and
+    * `initialize()`'s own.
+    */
+  @scala.annotation.tailrec
+  private def awaitValidDatafile(client: Optimizely, deadlineNanos: Long): Boolean =
+    if (client.isValid) true
+    else if (java.lang.System.nanoTime() >= deadlineNanos) false
+    else {
+      Thread.sleep(RecoveryProbeMillis)
+      awaitValidDatafile(client, deadlineNanos)
+    }
+
   def spec: Spec[TestEnvironment & Scope, Any] = suite("OptimizelyFeatureProvider lifecycle races (#265)")(
     test("failed init is retryable — a second initialize after the datafile recovers succeeds (#265.1)") {
       withMockServer { server =>
@@ -68,26 +96,47 @@ object OptimizelyLifecycleRaceSpec extends ZIOSpecDefault {
           .withOptimizelyHttpClient(TestHttpClient.failFast())
           .build()
         val client   = Optimizely.builder().withConfigManager(mgr).withNotificationCenter(sharedCenter).build()
-        val provider = new OptimizelyFeatureProvider(client, java.time.Duration.ofSeconds(5), closeOnShutdown = true)
+        val provider = new OptimizelyFeatureProvider(client, RetryInitWait, closeOnShutdown = true)
+        // A thread dying on an uncaught exception is invisible to `join`, so capture any failure and assert on it —
+        // otherwise a broken re-stub would surface only as a puzzling `recovered == false` 20s later.
+        val recoveryFailure = new AtomicReference[Throwable]()
+        val recovery = new Thread(
+          () =>
+            try {
+              Thread.sleep(RecoveryDelay.toMillis)
+              server.stubFor(get(urlEqualTo(DatafilePath)).willReturn(okJson(ValidDatafileV1)))
+              ()
+            } catch { case t: Throwable => recoveryFailure.set(t) },
+          "datafile-recovery"
+        )
+        recovery.setDaemon(true)
         try {
           val first          = tryInit(provider) // throws: datafile never loads within initWait
           val stateAfterFail = stateOf(provider)
-          // Recover the datafile source; the still-running poller fetches a valid file on its next tick. A newest-wins
-          // re-stub (not resetAll) avoids dropping the poller's keep-alive connections.
-          server.stubFor(get(urlEqualTo(DatafilePath)).willReturn(okJson(ValidDatafileV1)))
+          // Recover the datafile source, deliberately later than `initWait`. A newest-wins re-stub (not resetAll)
+          // avoids dropping the poller's keep-alive connections.
+          recovery.start()
+          // `recovered` pins this test's precondition — the datafile really did come back — not the provider fix
+          // itself; the retry assertions below are what discriminate the #265.1 behaviour.
+          val recovered       = awaitValidDatafile(client, java.lang.System.nanoTime() + RecoveryBudget.toNanos)
           val second          = tryInit(provider) // clean retry from Failed
           val stateAfterRetry = stateOf(provider)
           val eval = provider.getBooleanEvaluation("lifecycle_flag", java.lang.Boolean.FALSE, targetedContext)
           assertTrue(
             first.isLeft,
             stateAfterFail == ProviderState.ERROR,
+            recoveryFailure.get() == null,
+            recovered,
             // Against the pre-#265 code the retry silently no-ops (matches neither Fresh nor ShutDown) and the
             // provider stays not-ready forever. The fix re-attempts cleanly from the Failed state.
             second.isRight,
             stateAfterRetry == ProviderState.READY,
             eval.getValue == java.lang.Boolean.TRUE
           )
-        } finally provider.shutdown()
+        } finally
+          // Nested so an interrupted `join` cannot skip the shutdown and leak the provider's poller.
+          try recovery.join(RecoveryDelay.toMillis * 2)
+          finally provider.shutdown()
       }
     },
     test("handler fire for the initial datafile load emits no CONFIGURATION_CHANGED event (#265.3)") {

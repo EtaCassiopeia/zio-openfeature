@@ -93,6 +93,31 @@ for
 yield ()
 ```
 
+### Naming a Provider
+
+Every provider reports a metadata name, and two things key providers by it — so two test providers that share a name
+cannot be told apart. `makeNamed` gives each one its own:
+
+```scala
+for
+  primary  <- TestFeatureProvider.makeNamed("primary")
+  fallback <- TestFeatureProvider.makeNamed("fallback", Map("flag" -> true))
+yield (primary, fallback)
+```
+
+You need it in exactly two situations:
+
+- **Chaining two test providers.** The Java SDK keys a `MultiProvider`'s providers by metadata name and keeps only the
+  **last** of a given name (logging the collision at INFO), so a chain of two default-named test providers is really a
+  chain of one — and a test of fall-through or precedence between them passes or fails for the wrong reason. See
+  [Absent keys and provider chains](#absent-keys-and-provider-chains) for what makes a chain fall through at all.
+- **Swapping providers.** `FeatureFlags.setProvider` compares the old and new provider's names to decide which
+  provider an incoming event came from, so a swap between two same-named providers is invisible to that guard.
+
+There are deliberately no named twins of `layer` / `scopedLayer` / `asyncLayer`: a chain is built from raw
+providers, and a single named provider becomes a `FeatureFlags` layer through `layerFrom(provider)`, which preserves
+its name. Every provider-creating factory other than `makeNamed` reports `TestFeatureProvider.DefaultName`.
+
 ---
 
 ## Managing Flags
@@ -171,8 +196,7 @@ val chain = FeatureFlags.multiProvider(List(testProvider, realProvider))
 `MultiProviderStrategy.firstMatch` advances to the next provider only when a provider reports `FLAG_NOT_FOUND`; a
 result carrying `reason = DEFAULT` is treated as an answer and ends the chain. One caveat when chaining two test
 providers: the Java SDK keys a chain's providers by metadata name and silently keeps only the last of two same-named
-instances, and every `TestFeatureProvider` currently reports the same name — so pair it with a differently-named
-provider (see #371).
+instances — give each one its own name with [`makeNamed`](#naming-a-provider).
 
 ---
 

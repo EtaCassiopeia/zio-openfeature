@@ -62,6 +62,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   immediately instead of lingering until layer close; the swapped-in candidate's scope is handed to the layer scope,
   so the real provider is torn down on layer release exactly as before. Binary-incompatible against 1.0.0 (new defaulted parameter, same remedy as #353: recompile) —
   covered by the existing `fromAcquireAsync` MiMa filter.
+- **`TestFeatureProvider.makeNamed` — a test provider can be given its own metadata name** (#371). Every instance
+  previously reported `"TestFeatureProvider"` with no way to change it, and two things key providers by that name: a
+  `MultiProvider` chain keeps only the **last** provider of a given name (the SDK logs the collision at INFO and moves
+  on), and the event-identity guard behind `FeatureFlags.setProvider` compares the old and new provider's names. So a
+  chain of two test providers was really a chain of one — a test of fall-through or precedence between them passed or
+  failed for the wrong reason — and a hot-swap between two of them was invisible to the guard. `makeNamed(name,
+  initialFlags = Map.empty)` fixes both, and `TestFeatureProvider.DefaultName` is what every other factory still
+  reports, so **nothing changes unless you call `makeNamed`**. Purely additive; no core change.
 - **Typed test fixtures from a `FlagDef` (`testkit`)** (#351). `TestFeatureProvider`'s key-based
   `setFlag[A](key, value)` accepts anything, so a fixture could pin a value production would never decode — the test
   passed against the fixture and production failed with `TYPE_MISMATCH`. Building the fixture from a `FlagDef`

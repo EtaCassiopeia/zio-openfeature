@@ -4,6 +4,23 @@ import scala.util.Try
 
 trait FlagType[A]:
   def typeName: String
+
+  /** The representation the *provider* is asked for, which is not always the domain type.
+    *
+    * Evaluation dispatches on this, not on [[typeName]]: a domain type backed by a scalar — an enum-valued flag stored
+    * as a string, a newtype over an int — must be resolved through that scalar's SDK method and then decoded. One of
+    * `"Boolean" | "String" | "Int" | "Long" | "Float" | "Double"` selects the matching resolver; anything else
+    * (including `"Object"`) is resolved on the object path.
+    *
+    * Defaults to [[typeName]], so every instance that does not set it keeps its existing behaviour.
+    *
+    * '''If you override this, [[encode]] must return the matching boxed type''' — `java.lang.Boolean`, `String`,
+    * `java.lang.Integer`, `java.lang.Long`, `java.lang.Float` or `java.lang.Double` respectively. The pairing is not
+    * checked at compile time and a mismatch surfaces as a `ClassCastException` when the provider is called.
+    * [[FlagType.mapped]] gets the pairing right by construction, so prefer it where it fits.
+    */
+  def wireType: String = typeName
+
   def decode(value: Any): Either[String, A]
   def encode(value: A): Any = value
   def defaultValue: A
@@ -127,6 +144,11 @@ object FlagType:
         decode(jlist.asScala.toList)
       case _ => Left(s"Cannot convert ${value.getClass.getSimpleName} to List")
 
+  /** Builds an instance that leaves [[FlagType.wireType]] at `name`, so unless `name` happens to be one of the scalar
+    * wire names it is resolved on the object path. For a type carried over the wire as a *scalar* — a string-backed
+    * enum, a newtype over an int — prefer [[mapped]], which inherits its underlying `wireType` and keeps `encode`
+    * consistent with it; failing that, override `wireType` and `encode` together.
+    */
   def from[A](
     name: String,
     default: A,
@@ -141,7 +163,10 @@ object FlagType:
   def mapped[A, B](name: String, default: A)(map: B => A, contramap: A => B)(using
     underlying: FlagType[B]
   ): FlagType[A] = new FlagType[A]:
-    def typeName: String                      = name
+    def typeName: String = name
+    // A mapped instance is by construction carried over the wire as its underlying type, so it inherits that
+    // wire type — this is what makes `mapped` scalar-backed types evaluatable without any user action.
+    override def wireType: String             = underlying.wireType
     def defaultValue: A                       = default
     def decode(value: Any): Either[String, A] = underlying.decode(value).map(map)
     override def encode(value: A): Any        = underlying.encode(contramap(value))

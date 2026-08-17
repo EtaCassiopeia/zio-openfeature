@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Hooks are now filtered on a flag's wire type, and a `null` string is an error** (#356). Two user-visible
+  consequences of `FlagType.wireType` (above), both affecting custom flag types only:
+  - `FlagValueType.fromFlagType` reports `wireType` rather than `typeName`, and that value is what
+    `FeatureHook.supportedFlagTypes` filters on and what `HookContext.flagType` carries. A hook scoped to
+    `FlagValueType.String` now fires for a string-backed custom flag where it was previously filtered out as
+    `Object`. Note `HookContext.flagType` describes the **wire** type while `defaultValue` and
+    `FlagResolution.value` carry **domain** values, so do not cast the latter based on the former.
+  - Evaluation now runs `FlagType.decode` on the value extracted from the provider instead of casting it. For
+    every built-in type the decode is an identity and results are unchanged, with one exception: a provider
+    returning a `null` **String** now yields a typed `TypeMismatch` instead of a `null` flag value, matching
+    what the object path already did.
 - **`Long` flag evaluation now uses the OpenFeature SDK's native long surface** (#333). `ff.long` / `ff.longDetails`
   call `client.getLongDetails`, so the **provider's** `getLongEvaluation` decides the result instead of this library
   choosing a resolver for it. Previously an int-range default was routed to the provider's integer resolver and
@@ -29,6 +40,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`FlagType.wireType` — scalar-backed custom flag types are now evaluatable** (#356). A custom `FlagType[A]`
+  whose wire representation is a *scalar* — the most common feature-flag shape, an enum stored as a string
+  (`"off" | "dual_write" | "shard_only"`), or a newtype over an int — previously had no working evaluation path:
+  dispatch keyed on `typeName`, so a domain `typeName` fell through to the object resolver and asked the provider
+  for an object it does not hold, while forcing `typeName = "String"` hit a `ClassCastException`. `FlagType` now
+  carries `wireType` (the representation the provider is asked for, defaulting to `typeName`); evaluation
+  dispatches on it, sends `encode(default)`, and decodes the result, with a decode failure becoming a typed
+  `TypeMismatch`. `FlagType.mapped` inherits its underlying `wireType` automatically, so
+  `FlagType.mapped[Plan, String](…)` now just works — see `docs/architecture.md` "Scalar-backed custom types".
+  Every existing instance keeps `wireType == typeName` and behaves exactly as before.
 - **`FlagDef[A]` — typed flag definitions** (#347). States a flag's key, type and default once as a single
   first-class value, instead of restating them at every call site where they can drift:
   `val NewCheckout = FlagDef("checkout.v2", false, "new checkout flow")`. `value`, `valueOrDefault`,

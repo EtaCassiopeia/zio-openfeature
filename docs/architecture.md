@@ -133,6 +133,7 @@ See [Factory Methods](providers.md#factory-methods) for the full `FeatureFlagsCo
 ```scala
 trait FlagType[A]:
   def typeName: String
+  def wireType: String = typeName   // what the PROVIDER is asked for; see "Scalar-backed custom types"
   def decode(value: Any): Either[String, A]
   def encode(value: A): Any
   def defaultValue: A
@@ -152,28 +153,78 @@ Built-in instances:
 
 ### Custom Flag Types
 
-Create custom flag types for domain-specific values:
+Create custom flag types for domain-specific values. **How the flag is stored decides which constructor you
+want** — see the next section; getting this wrong is the difference between a working flag and a
+`TYPE_MISMATCH`.
+
+`FlagType.from` builds an **object-backed** type: the value is fetched with the provider's *object*
+resolver and then decoded. Use it when the flag really is stored as a structure/JSON:
+
+```scala
+final case class RolloutPlan(tier: String, percentage: Int)
+
+given rolloutFlagType: FlagType[RolloutPlan] = FlagType.from(
+  name = "RolloutPlan",
+  default = RolloutPlan("free", 0),
+  decoder = {
+    case m: Map[?, ?] =>
+      val sm = m.asInstanceOf[Map[String, Any]]
+      Right(RolloutPlan(sm.getOrElse("tier", "free").toString, sm.get("percentage").fold(0)(_.toString.toInt)))
+    case other => Left(s"Unknown rollout plan: $other")
+  }
+)
+```
+
+### Scalar-backed custom types
+
+The most common feature flag is an **enum stored as a string** (`"off" | "dual_write" | "shard_only"`). Such
+a flag is *not* an object: the provider holds a string, so it must be fetched with the **string** resolver and
+then decoded into the domain type. `FlagType` expresses this with `wireType` — the representation the provider
+is asked for, as distinct from `typeName`, the domain type.
+
+`FlagType.mapped` sets `wireType` from its underlying type automatically, so this is all it takes:
 
 ```scala
 enum Plan:
   case Free, Premium, Enterprise
 
-given planFlagType: FlagType[Plan] = FlagType.from(
-  name = "Plan",
-  default = Plan.Free,
-  decoder = {
-    case "free"       => Right(Plan.Free)
-    case "premium"    => Right(Plan.Premium)
-    case "enterprise" => Right(Plan.Enterprise)
-    case other        => Left(s"Unknown plan: $other")
-  },
-  encoder = _.toString.toLowerCase
-)
+object Plan:
+  def parse(s: String): Plan = s match
+    case "premium"    => Premium
+    case "enterprise" => Enterprise
+    case _            => Free
+  def render(p: Plan): String = p.toString.toLowerCase
 
-// Use with type safety
+// wireType == "String" (inherited), typeName == "Plan"
+given planFlagType: FlagType[Plan] =
+  FlagType.mapped[Plan, String]("Plan", Plan.Free)(Plan.parse, Plan.render)
+
+// Use with type safety — resolved through the provider's STRING resolver, then decoded
 val plan: IO[FeatureFlagError, Plan] =
   FeatureFlags.value[Plan]("user-plan", Plan.Free)
 ```
+
+The same works over any scalar: `FlagType.mapped[Level, Int](…)` for a newtype over an int, and so on.
+
+> **Do not reach for `FlagType.from` for a string-backed enum.** It leaves `wireType` at the domain name, so
+> the evaluation goes to the provider's *object* resolver, asks for an object the provider does not have, and
+> comes back `TYPE_MISMATCH`.
+
+If you need a **fallible** decoder on a scalar-backed type — rejecting an unknown variant rather than mapping
+it to a fallback, which `mapped`'s total function cannot express — override `wireType` and `encode` together:
+
+```scala
+given tierFlagType: FlagType[Tier] with
+  def typeName: String            = "Tier"
+  override def wireType: String   = "String"        // fetch via the string resolver
+  def defaultValue: Tier          = Tier.Free
+  def decode(v: Any)              = Tier.parseStrict(v)   // may return Left => TYPE_MISMATCH
+  override def encode(t: Tier)    = Tier.render(t)  // MUST produce the wireType's boxed type
+```
+
+A decode failure becomes a typed `TypeMismatch` error rather than a silently-substituted default. Note that
+`wireType` also determines the `FlagValueType` hooks are filtered on, so a hook scoped to
+`FlagValueType.String` sees these evaluations.
 
 ### Typed Flag Definitions
 

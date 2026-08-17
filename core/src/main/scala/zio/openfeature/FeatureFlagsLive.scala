@@ -422,6 +422,10 @@ final private[openfeature] class FeatureFlagsLive(
     txState.getOverride(key) match {
       case Some(overrideValue) =>
         val flagType = FlagType[A]
+        // NOTE: `decode` is used here against a value the CALLER supplied, not a provider wire value. For the built-ins
+        // those coincide, but for a custom type whose wire form differs from its domain form (see `FlagType.wireType`)
+        // an override must be given as the WIRE value — `withOverride(key, "dual_write")`, not the domain enum.
+        // Pre-existing for object-backed custom types; #356 makes it reachable for scalar-backed ones too.
         flagType.decode(overrideValue) match {
           case Right(decoded) =>
             val resolution = FlagResolution.cached(key, decoded)
@@ -444,6 +448,12 @@ final private[openfeature] class FeatureFlagsLive(
         txState.getCachedEvaluation(key).flatMap {
           case Some(cached) =>
             val flagType = FlagType[A]
+            // `cached.value` is the DOMAIN value (see `FlagEvaluation.evaluated`), so this decode round-trips a
+            // domain value rather than a wire value. For the built-ins those coincide; for a custom type whose wire
+            // form differs it returns Left and the evaluation falls through to the provider below — i.e. the
+            // in-transaction cache does not hit for such types. Pre-existing (object-backed custom types have the
+            // same behaviour); #356 makes it reachable for scalar-backed types too. Correctness is unaffected —
+            // a re-read still returns the right value — only the caching optimisation is lost.
             flagType.decode(cached.value) match {
               case Right(decoded) =>
                 ZIO.succeed(FlagResolution.cached(key, decoded))
@@ -487,14 +497,25 @@ final private[openfeature] class FeatureFlagsLive(
       }
 
     val evaluation: IO[FeatureFlagError, FlagResolution[A]] =
-      ClientEvaluator.evaluateStandard[A](flagType.typeName, client, key, default, ofContext) match {
+      ClientEvaluator.evaluateStandard[A](flagType, client, key, default, ofContext) match {
         case Some(erased) =>
           withTimeout(erased.task)
             .mapError(e => FeatureFlagError.classify(e))
             .flatMap { details =>
-              toFlagResolution(key, details).map(r => r.copy(value = erased.extract(details)))
+              erased.extract(details) match {
+                case Right(value) =>
+                  toFlagResolution(key, details).map(r => r.copy(value = value))
+                case Left(message) =>
+                  // The provider answered, but its value is not a valid `A` — e.g. an unknown enum variant on a
+                  // string-backed type. A typed failure, not a silent fall back to the default: the total tier
+                  // (`*OrDefault`) still absorbs it upstream for callers who opted into that.
+                  ZIO.fail(FeatureFlagError.TypeMismatch(key, flagType.typeName, message))
+              }
             }
 
+        // Deliberately `typeName`, not `wireType`: this branch casts the default to `Map[String, Any]`, which is only
+        // sound for the built-in object instance. A *custom* type whose wire form is an object has a domain `typeName`
+        // and must fall through to the decode branch below instead.
         case None if flagType.typeName == "Object" =>
           withTimeout(
             ZIO.attemptBlocking {

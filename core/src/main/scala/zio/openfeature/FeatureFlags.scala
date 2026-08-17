@@ -914,6 +914,15 @@ object FeatureFlags {
     * with [[fromProvider(OFFeatureProvider, FeatureFlagsConfig)]] to express combinations `fromMultiProvider` could
     * not, e.g. multi-provider + domain: `fromProvider(multiProvider(ps), FeatureFlagsConfig(domain =
     * Some("checkout")))`.
+    *
+    * '''Each provider in the chain needs a distinct metadata name.''' The SDK's `MultiProvider` keys its providers by
+    * `getMetadata.getName`, so two instances of the same provider type — two `HoconProvider`s over different configs,
+    * say — collapse into one, and the survivor is the '''last''' of them regardless of the strategy. The SDK logs
+    * `duplicated provider name` at INFO and otherwise carries on, so this is easy to miss. Wrap one of them in a
+    * provider that reports a different name if you need both.
+    *
+    * For the chain to advance past a provider, that provider must report `FLAG_NOT_FOUND` for a key it does not hold;
+    * see [[MultiProviderStrategy.firstMatch]] for what does and does not cause fall-through.
     */
   def multiProvider(
     providers: List[OFFeatureProvider],

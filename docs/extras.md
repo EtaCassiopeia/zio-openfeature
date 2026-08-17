@@ -72,7 +72,33 @@ val layer = FeatureFlags.fromProvider(HoconProvider.fromConfig(myConfig))
 - **Double**: `flag = 3.14`
 - **Object**: Nested config objects are converted to SDK `Structure` values
 
-All evaluations return `STATIC` as the resolution reason since values are loaded from config.
+A key that is present returns `STATIC` as the resolution reason, since the value came from config.
+
+### Absent keys and provider chains
+
+A key the config does **not** contain resolves as `FLAG_NOT_FOUND`, carrying your default as the value. No
+evaluation fails and `*OrDefault` still gives you the default, but two things are observable: the resolution carries
+`reason = Error` with `errorCode = FlagNotFound`, and hooks see the **`error`** stage rather than `after` — so
+`Hook.logging()` reports an absent key at error level where it previously reported it at info. That is the
+spec-correct stage for an error-coded resolution, though if you use a provider as an opt-in source where most keys
+are deliberately absent, tune `logError`/`errorLevel` on your hooks.
+
+Reporting not-found is what makes a chain work:
+
+```scala
+// The HOCON file has no "checkout.v2" key, so the chain moves on to the next provider.
+FeatureFlags.multiProvider(List(HoconProvider(), EnvVarProvider()))
+```
+
+`MultiProviderStrategy.firstMatch` advances to the next provider only when a provider reports `FLAG_NOT_FOUND`. A
+result carrying `reason = DEFAULT` is treated as an answer and ends the chain — which is why "no such key" has to
+be reported as not-found rather than as a default. It also means an operator can tell "configured to this value"
+from "not configured here", which a `DEFAULT` answer hides.
+
+> **Each provider in a chain needs a distinct metadata name.** The SDK keys providers by `getMetadata.getName`, so
+> two `HoconProvider`s over different configs collapse into one — and the survivor is the **last** one, not the
+> first, whatever the strategy is called. The SDK logs `duplicated provider name` at INFO, so it is easy to miss
+> unless SDK info logging is on. Chain different provider *types*, or wrap one in a provider reporting another name.
 
 ### Manual reload
 
@@ -137,7 +163,13 @@ val layer = FeatureFlags.fromProvider(
 - **Double**: Parsed via `toDouble`
 - **String**: Raw env var value
 
-Unparseable values fall back to the provided default.
+A variable that is **set but unparseable** surfaces as `errorCode = ParseError` on the resolution (and through the
+`error` hook stage) rather than quietly behaving like the default, so a typo in a deployed value is visible. The
+evaluation itself does not fail — you still get your default as the value.
+
+A variable that is **not set** resolves as `FLAG_NOT_FOUND`, carrying your default as the value — the same
+behaviour, and for the same chaining reason, as
+[an absent HOCON key](#absent-keys-and-provider-chains).
 
 ### Testing
 

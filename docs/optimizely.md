@@ -342,6 +342,8 @@ ZIO.scoped {
 
 `MultiProviderStrategy.firstSuccessful` tries Optimizely first; if it fails or is unready, falls through to `EnvVarProvider`. Because `EnvVarProvider` is instantly `Ready`, the `MultiProvider`'s aggregate state is `Ready` immediately and the 30-second watchdog never fires — meaning Optimizely-specific failures are no longer visible at the `FeatureFlags` layer. If you want to alert on Optimizely-side problems anyway, poll the underlying client's `isValid` from a side healthcheck or hook into `onProviderError`.
 
+One consequence of `EnvVarProvider` reporting `FLAG_NOT_FOUND` for an unset variable, which is worth knowing for exactly this pattern: `firstSuccessful` treats a provider as successful only when it returns no error code. So when Optimizely is failing **and** the key is not among the few you set as env-var overrides, the chain now surfaces `errorCode = General` carrying the aggregated per-provider errors, rather than a silent default. You still get your default as the value and nothing fails. That is largely the point — it is what makes the invisibility described above visible — but it means an absent-everywhere key is now an error-coded resolution, and hooks see the `error` stage for it.
+
 ### Picking between A, B, and C
 
 | Question | Pattern A (Optimizely, async) | Pattern B (Optimizely, sync) | Pattern C (Optimizely + EnvVar) |

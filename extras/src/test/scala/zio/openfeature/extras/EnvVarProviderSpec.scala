@@ -31,10 +31,12 @@ object EnvVarProviderSpec extends ZIOSpecDefault {
         val result = provider.getBooleanEvaluation("disabled", false, ctx)
         assertTrue(result.getValue == false)
       },
-      test("returns default for missing key") {
+      test("returns the caller's default with FLAG_NOT_FOUND for a missing key") {
+        // The value is still the caller's default; the reason is no longer DEFAULT, so a MultiProvider chain and an
+        // operator can both tell "not set here" from "set to this value" (#355).
         val result = provider.getBooleanEvaluation("missing", true, ctx)
         assertTrue(result.getValue == true) &&
-        assertTrue(result.getReason == "DEFAULT")
+        assertTrue(result.getErrorCode == dev.openfeature.sdk.ErrorCode.FLAG_NOT_FOUND)
       },
       test("throws ParseError for a set-but-unparseable value (#262)") {
         // Previously this returned the default labeled STATIC, falsely claiming it came from the environment.

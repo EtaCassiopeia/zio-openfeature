@@ -30,10 +30,12 @@ object HoconProviderSpec extends ZIOSpecDefault {
         assertTrue(result.getValue == true) &&
         assertTrue(result.getReason == "STATIC")
       },
-      test("returns default for missing key") {
+      test("returns the caller's default with FLAG_NOT_FOUND for a missing key") {
+        // The value is still the caller's default; the reason is no longer DEFAULT, so a MultiProvider chain and an
+        // operator can both tell "not configured here" from "configured to this value" (#355).
         val result = provider.getBooleanEvaluation("missing", true, ctx)
         assertTrue(result.getValue == true) &&
-        assertTrue(result.getReason == "DEFAULT")
+        assertTrue(result.getErrorCode == dev.openfeature.sdk.ErrorCode.FLAG_NOT_FOUND)
       }
     ),
     suite("string evaluation")(

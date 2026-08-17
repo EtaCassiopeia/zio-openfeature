@@ -793,7 +793,8 @@ object FeatureFlags {
     apiOverride: Option[OpenFeatureAPI] = None,
     evaluationTimeout: Option[Duration] = Some(DefaultEvaluationTimeout),
     initTimeout: Duration = DefaultInitTimeout,
-    onReady: Option[java.util.concurrent.CountDownLatch] = None
+    onReady: Option[java.util.concurrent.CountDownLatch] = None,
+    contextSource: ContextSource = ContextSource.empty
   ): ZIO[Scope, Throwable, FeatureFlagsLive] =
     for {
       api <- ZIO.succeed(apiOverride.getOrElse(OpenFeatureAPI.getInstance()))
@@ -839,7 +840,8 @@ object FeatureFlags {
         ownsApi = addShutdownFinalizer,
         swapLock,
         onReady,
-        evaluationTimeout
+        evaluationTimeout,
+        contextSource
       )
       // Only seed status when the caller didn't hand us a shared ref (testkit shares one). Routed through
       // `seedStatus` so the machine's `everReady` flag records a Ready/Stale seed.
@@ -892,7 +894,8 @@ object FeatureFlags {
             apiOverride = apiOverride,
             evaluationTimeout = evalTimeout,
             initTimeout = config.initTimeout,
-            onReady = onReady
+            onReady = onReady,
+            contextSource = config.contextSource
           )
         case InitMode.Async =>
           buildAsync(
@@ -905,7 +908,8 @@ object FeatureFlags {
             apiOverride = apiOverride,
             onReady = onReady,
             evaluationTimeout = evalTimeout,
-            initTimeout = config.initTimeout
+            initTimeout = config.initTimeout,
+            contextSource = config.contextSource
           )
       }
     }
@@ -1045,7 +1049,8 @@ object FeatureFlags {
     apiOverride: Option[OpenFeatureAPI] = None,
     onReady: Option[java.util.concurrent.CountDownLatch] = None,
     evaluationTimeout: Option[Duration] = Some(DefaultEvaluationTimeout),
-    initTimeout: Duration = DefaultInitTimeout
+    initTimeout: Duration = DefaultInitTimeout,
+    contextSource: ContextSource = ContextSource.empty
   ): ZIO[Scope, Throwable, FeatureFlagsLive] =
     for {
       api <- ZIO.succeed(apiOverride.getOrElse(OpenFeatureAPI.getInstance()))
@@ -1092,7 +1097,8 @@ object FeatureFlags {
         ownsApi = addShutdownFinalizer,
         swapLock,
         onReady,
-        evaluationTimeout
+        evaluationTimeout,
+        contextSource
       )
       // Start event bridge — if provider is already ready, replay fires immediately
       _ <- ff.startEventBridge
@@ -1270,7 +1276,10 @@ object FeatureFlags {
     constructionTimeout: Duration = DefaultInitTimeout,
     onConstructionError: Throwable => UIO[Unit] = _ => ZIO.unit,
     evaluationTimeout: Duration = DefaultEvaluationTimeout,
-    initTimeout: Duration = DefaultInitTimeout
+    initTimeout: Duration = DefaultInitTimeout,
+    // Taken directly rather than via `FeatureFlagsConfig`, because this factory bypasses config entirely — a
+    // config-only surface would leave the fallback-first path with no way to supply an ambient context (#353).
+    contextSource: ContextSource = ContextSource.empty
   ): URLayer[Scope, FeatureFlags] =
     ZLayer.scoped {
       for {
@@ -1285,7 +1294,8 @@ object FeatureFlags {
           statusRef = None,
           addShutdownFinalizer = true,
           evaluationTimeout = Some(evaluationTimeout),
-          initTimeout = initTimeout
+          initTimeout = initTimeout,
+          contextSource = contextSource
         ).orDie
         // Background construction + swap. `acquire`'s Scope is the layer scope, so the acquired real provider is torn
         // down on layer release even if it was never swapped in. The fiber is `forkScoped`, so an in-flight acquire is

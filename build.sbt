@@ -1,5 +1,6 @@
 import xerial.sbt.Sonatype.sonatypeCentralHost
 import net.nmoncho.sbt.dependencycheck.settings._
+import com.typesafe.tools.mima.core._
 
 val scala213Version       = "2.13.16"
 val scala3Version         = "3.3.4"
@@ -91,6 +92,27 @@ ThisBuild / coverageEnabled := false
 // rule scoped to the specific symbol — see https://github.com/lightbend/mima for the filter API. Bump the baseline
 // to the previous release when cutting each subsequent version, per `RELEASING.md`.
 ThisBuild / mimaFailOnNoPrevious := false
+
+// Intentional break, whitelisted per the note above (#353). `ContextSource` adds a defaulted `contextSource` to
+// `FeatureFlagsConfig` and a trailing defaulted parameter to the three factories that build a client. Both are
+// source-compatible — every existing call site still compiles unchanged — but neither is binary-compatible: adding a
+// field to a case class regenerates `apply`/`copy`/`<init>` with a new descriptor, and a defaulted parameter is still
+// a new signature at the bytecode level. So a caller that compiled against 1.0.0 and is NOT recompiled will fail with
+// a NoSuchMethodError on these five symbols; recompiling against the new release fixes it with no source edits.
+// Scoped to the specific symbols rather than the classes, so an unrelated break in either still fails the gate.
+ThisBuild / mimaBinaryIssueFilters ++= Seq(
+  ProblemFilters.exclude[DirectMissingMethodProblem]("zio.openfeature.FeatureFlagsConfig.apply"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("zio.openfeature.FeatureFlagsConfig.this"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("zio.openfeature.FeatureFlagsConfig.copy"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("zio.openfeature.FeatureFlags.build"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("zio.openfeature.FeatureFlags.buildAsync"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("zio.openfeature.FeatureFlags.fromAcquireAsync"),
+  // Scala 2.13 only, and consequently invisible to a Scala-3-only MiMa run: 2.13 makes a case class's companion
+  // extend `AbstractFunctionN` for its arity, so a 7-field config growing an 8th changes the companion's parent
+  // from `AbstractFunction7` to `AbstractFunction8`. Scala 3 emits no such parent. Same root cause as the entries
+  // above — nothing extra is broken by it.
+  ProblemFilters.exclude[MissingTypesProblem]("zio.openfeature.FeatureFlagsConfig$")
+)
 
 // Version-specific source directories
 lazy val crossVersionSourceDirs = Seq(

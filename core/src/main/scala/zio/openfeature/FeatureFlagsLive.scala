@@ -40,7 +40,9 @@ final private[openfeature] class FeatureFlagsLive(
   ownsApi: Boolean,
   swapLock: Semaphore,
   onReady: Option[java.util.concurrent.CountDownLatch] = None,
-  evaluationTimeout: Option[Duration] = Some(FeatureFlags.DefaultEvaluationTimeout)
+  evaluationTimeout: Option[Duration] = Some(FeatureFlags.DefaultEvaluationTimeout),
+  // Pull-based ambient context (#353), consulted per evaluation and per `track` in `effectiveContext`.
+  contextSource: ContextSource = ContextSource.empty
 ) extends FeatureFlags {
 
   // True while `setProvider` holds the swap lock and is re-registering the provider. Bridge events must not drive
@@ -252,17 +254,27 @@ final private[openfeature] class FeatureFlagsLive(
     }
   }
 
-  // Context merges per OpenFeature spec: API (global) -> Transaction -> Client -> FiberLocal -> Invocation
+  // Context merges per OpenFeature spec: API (global) -> Transaction -> Client -> FiberLocal -> Invocation,
+  // with the pull-based ContextSource slotted between Client and FiberLocal (#353): ambient request identity
+  // overrides static client/global context, but an explicit `withContext` or a per-call context still wins over it.
+  //
+  // This is also the reason a ContextSource cannot be a `before` hook. A hook's contribution is merged on TOP of the
+  // finished context below, so it could only ever take the highest-precedence slot — and `HookContext` exposes one
+  // flattened context with no provenance, so a hook cannot rebuild this ordering either.
+  //
+  // Both evaluation and `track` route through here, so the source applies to both.
   private def effectiveContext(invocation: EvaluationContext): UIO[EvaluationContext] =
     for {
       global      <- state.globalContextRef.get
       clientCtx   <- state.clientContextRef.get
+      ambient     <- contextSource.current
       fiberLocal  <- state.fiberContextRef.get
       transaction <- state.transactionRef.get
       txContext = transaction.map(_.context).getOrElse(EvaluationContext.empty)
     } yield global
       .merge(txContext)
       .merge(clientCtx)
+      .merge(ambient)
       .merge(fiberLocal)
       .merge(invocation)
 

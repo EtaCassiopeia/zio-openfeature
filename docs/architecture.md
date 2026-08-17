@@ -318,17 +318,39 @@ UserPlan.sameKey(FlagDef("user-plan", Plan.Enterprise))  // true
 
 ## Context Hierarchy
 
-Evaluation context flows through five levels (per OpenFeature spec), with later levels taking precedence:
+Evaluation context flows through six levels, with later levels taking precedence:
 
 | Level | Scope | Use Case |
 |:------|:------|:---------|
 | **Global** | Application-wide | App version, environment, deployment region |
 | **Transaction** | Within transaction block | Test overrides, experiment context |
 | **Client** | FeatureFlags instance | Service name, region |
+| **Context source** | Pulled per evaluation | Ambient identity held outside ZIO (MDC, tracing tags) |
 | **Scoped** | Block of code (via `withContext`) | User session, request context |
 | **Invocation** | Single evaluation | One-off targeting attributes |
 
-Contexts merge with higher-precedence levels overriding lower ones: `Invocation > Scoped > Client > Transaction > Global`.
+Contexts merge with higher-precedence levels overriding lower ones:
+`Invocation > Scoped > ContextSource > Client > Transaction > Global`. The five spec-defined levels are
+push-based — the caller sets them. `ContextSource` is the one pull-based level: an effect the library
+consults on every evaluation, for identity the application holds somewhere the ZIO environment cannot see.
+
+Its slot is deliberate, and it is why this is library machinery rather than a hook. Ambient request
+identity should override static client and global context, while an explicit `withContext` or a per-call
+context at the call site should still win over it. A `before` hook cannot express that: its contribution is
+merged on top of the already-finished effective context, so it can only ever take the highest-precedence
+slot — and `HookContext` exposes one flattened context with no record of which attribute came from where,
+so a hook cannot rebuild the ordering either.
+
+```scala
+val fromMdc = ContextSource(ZIO.succeed(EvaluationContext(Mdc.get("userId"))))
+
+FeatureFlags.fromProvider(provider, FeatureFlagsConfig().withContextSource(fromMdc))
+```
+
+`current` returns `UIO`, so a source can never fail an evaluation — a source with nothing to contribute
+returns `EvaluationContext.empty`, which merges to a no-op. It is consulted on every evaluation and on
+`track`, so keep it cheap (a `FiberRef` or `ThreadLocal` read, not a network call). Compose sources with
+`++`; the right-hand side wins on key collisions, matching the right-biased merge used everywhere else.
 
 See [Evaluation Context]({{ site.baseurl }}/context) for detailed usage, attribute types, and practical examples.
 

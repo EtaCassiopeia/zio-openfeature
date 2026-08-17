@@ -147,6 +147,78 @@ trait FeatureFlags {
   ): UIO[FlagResolution[A]] =
     totalResolution(valueDetails(key, default, ctx, options), key, default)
 
+  // Typed flag definition overloads (#347)
+  //
+  // Each delegates to the key-based generic tier above, passing `flag.default` as the evaluation default and
+  // `flag.flagType` as the decoding instance. There is no new evaluation machinery here, and no new failure mode:
+  // the partial overloads keep the `FeatureFlagError` channel, the total ones keep the never-fails `UIO` contract.
+  //
+  // Spelled as default-free arity pairs rather than with default arguments, because the key-based `valueOrDefault` /
+  // `resolveOrDefault` / `valueDetails` already carry defaults and Scala rejects two overloads of one method that
+  // both have default arguments. This also matches how `boolean`/`string`/`int` are spelled.
+  //
+  // The local `implicit val` is a cross-build necessity rather than a style lapse: this file compiles for both 2.13
+  // and 3, and passing a context-bound instance explicitly would need `(using flag.flagType)` on 3 but
+  // `(flag.flagType)` on 2.13 — which cannot be written once. An `implicit val` in scope satisfies both.
+
+  def value[A](flag: FlagDef[A]): IO[FeatureFlagError, A] = {
+    implicit val ft: FlagType[A] = flag.flagType
+    value(flag.key, flag.default)
+  }
+
+  def value[A](flag: FlagDef[A], ctx: EvaluationContext): IO[FeatureFlagError, A] = {
+    implicit val ft: FlagType[A] = flag.flagType
+    value(flag.key, flag.default, ctx)
+  }
+
+  def valueOrDefault[A](flag: FlagDef[A]): UIO[A] = {
+    implicit val ft: FlagType[A] = flag.flagType
+    valueOrDefault(flag.key, flag.default)
+  }
+
+  def valueOrDefault[A](flag: FlagDef[A], ctx: EvaluationContext): UIO[A] = {
+    implicit val ft: FlagType[A] = flag.flagType
+    valueOrDefault(flag.key, flag.default, ctx)
+  }
+
+  def resolveOrDefault[A](flag: FlagDef[A]): UIO[FlagResolution[A]] = {
+    implicit val ft: FlagType[A] = flag.flagType
+    resolveOrDefault(flag.key, flag.default)
+  }
+
+  def resolveOrDefault[A](flag: FlagDef[A], ctx: EvaluationContext): UIO[FlagResolution[A]] = {
+    implicit val ft: FlagType[A] = flag.flagType
+    resolveOrDefault(flag.key, flag.default, ctx)
+  }
+
+  def resolveOrDefault[A](
+    flag: FlagDef[A],
+    ctx: EvaluationContext,
+    options: EvaluationOptions
+  ): UIO[FlagResolution[A]] = {
+    implicit val ft: FlagType[A] = flag.flagType
+    resolveOrDefault(flag.key, flag.default, ctx, options)
+  }
+
+  def valueDetails[A](flag: FlagDef[A]): IO[FeatureFlagError, FlagResolution[A]] = {
+    implicit val ft: FlagType[A] = flag.flagType
+    valueDetails(flag.key, flag.default)
+  }
+
+  def valueDetails[A](flag: FlagDef[A], ctx: EvaluationContext): IO[FeatureFlagError, FlagResolution[A]] = {
+    implicit val ft: FlagType[A] = flag.flagType
+    valueDetails(flag.key, flag.default, ctx)
+  }
+
+  def valueDetails[A](
+    flag: FlagDef[A],
+    ctx: EvaluationContext,
+    options: EvaluationOptions
+  ): IO[FeatureFlagError, FlagResolution[A]] = {
+    implicit val ft: FlagType[A] = flag.flagType
+    valueDetails(flag.key, flag.default, ctx, options)
+  }
+
   private def totalResolution[A](
     details: IO[FeatureFlagError, FlagResolution[A]],
     key: String,
@@ -491,6 +563,55 @@ object FeatureFlags {
     options: EvaluationOptions = EvaluationOptions.empty
   ): ZIO[FeatureFlags, FeatureFlagError, FlagResolution[A]] =
     ZIO.serviceWithZIO(_.valueDetails(key, default, ctx, options))
+
+  // Service Accessors - typed flag definitions (#347)
+  //
+  // No `implicit val` is needed here (unlike the trait methods): the `FlagDef` carries its own `FlagType`, and the
+  // trait overload it delegates to takes no context bound.
+
+  def value[A](flag: FlagDef[A]): ZIO[FeatureFlags, FeatureFlagError, A] =
+    ZIO.serviceWithZIO(_.value(flag))
+
+  def value[A](flag: FlagDef[A], ctx: EvaluationContext): ZIO[FeatureFlags, FeatureFlagError, A] =
+    ZIO.serviceWithZIO(_.value(flag, ctx))
+
+  def valueOrDefault[A](flag: FlagDef[A]): ZIO[FeatureFlags, Nothing, A] =
+    ZIO.serviceWithZIO(_.valueOrDefault(flag))
+
+  def valueOrDefault[A](flag: FlagDef[A], ctx: EvaluationContext): ZIO[FeatureFlags, Nothing, A] =
+    ZIO.serviceWithZIO(_.valueOrDefault(flag, ctx))
+
+  def resolveOrDefault[A](flag: FlagDef[A]): ZIO[FeatureFlags, Nothing, FlagResolution[A]] =
+    ZIO.serviceWithZIO(_.resolveOrDefault(flag))
+
+  def resolveOrDefault[A](
+    flag: FlagDef[A],
+    ctx: EvaluationContext
+  ): ZIO[FeatureFlags, Nothing, FlagResolution[A]] =
+    ZIO.serviceWithZIO(_.resolveOrDefault(flag, ctx))
+
+  def resolveOrDefault[A](
+    flag: FlagDef[A],
+    ctx: EvaluationContext,
+    options: EvaluationOptions
+  ): ZIO[FeatureFlags, Nothing, FlagResolution[A]] =
+    ZIO.serviceWithZIO(_.resolveOrDefault(flag, ctx, options))
+
+  def valueDetails[A](flag: FlagDef[A]): ZIO[FeatureFlags, FeatureFlagError, FlagResolution[A]] =
+    ZIO.serviceWithZIO(_.valueDetails(flag))
+
+  def valueDetails[A](
+    flag: FlagDef[A],
+    ctx: EvaluationContext
+  ): ZIO[FeatureFlags, FeatureFlagError, FlagResolution[A]] =
+    ZIO.serviceWithZIO(_.valueDetails(flag, ctx))
+
+  def valueDetails[A](
+    flag: FlagDef[A],
+    ctx: EvaluationContext,
+    options: EvaluationOptions
+  ): ZIO[FeatureFlags, FeatureFlagError, FlagResolution[A]] =
+    ZIO.serviceWithZIO(_.valueDetails(flag, ctx, options))
 
   def setGlobalContext(ctx: EvaluationContext): ZIO[FeatureFlags, Nothing, Unit] =
     ZIO.serviceWithZIO(_.setGlobalContext(ctx))

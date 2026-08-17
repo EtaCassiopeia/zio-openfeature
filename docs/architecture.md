@@ -175,6 +175,45 @@ val plan: IO[FeatureFlagError, Plan] =
   FeatureFlags.value[Plan]("user-plan", Plan.Free)
 ```
 
+### Typed Flag Definitions
+
+The call above restates the key, the type and the default at every use site, so they can drift — two sites
+falling back to different defaults for the same key, or reading one key at two types. `FlagDef[A]` states all
+three once:
+
+```scala
+val UserPlan = FlagDef("user-plan", Plan.Free, "subscription tier")
+
+val plan: IO[FeatureFlagError, Plan] =
+  FeatureFlags.value(UserPlan)
+```
+
+`value`, `valueOrDefault`, `resolveOrDefault` and `valueDetails` each accept a `FlagDef` in place of the
+`(key, default)` pair, on both the `FeatureFlags` trait and its companion accessors, with the same
+context/options arities as the key-based forms:
+
+```scala
+FeatureFlags.valueOrDefault(UserPlan)                      // UIO[Plan] — never fails
+FeatureFlags.value(UserPlan, ctx)                          // honours a targeting context
+FeatureFlags.valueDetails(UserPlan, ctx, options)          // full resolution + invocation hooks
+```
+
+These are delegations to the generic tier, not a separate evaluation path, so hooks, caching, transactions,
+timeouts and error semantics are all unchanged. The string-key API remains fully supported — `FlagDef` is
+additive.
+
+> **Which default is used.** `FlagType[A]` also carries a `defaultValue`, so a `FlagDef` looks like it holds two
+> defaults. It does not in any way that matters: **`FlagDef.default` is always the value served** on a miss or
+> error. `FlagType.defaultValue` is a type-level zero needed internally by `FlagType.from`/`mapped` and is never
+> consulted when evaluating.
+
+Two definitions for the same key with different defaults are **not** equal — they are genuinely different
+definitions. Use `sameKey` to compare by key alone, across differing type parameters:
+
+```scala
+UserPlan.sameKey(FlagDef("user-plan", Plan.Enterprise))  // true
+```
+
 ---
 
 ## Context Hierarchy

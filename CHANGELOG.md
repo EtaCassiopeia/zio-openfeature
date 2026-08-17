@@ -29,6 +29,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`FlagDef[A]` — typed flag definitions** (#347). States a flag's key, type and default once as a single
+  first-class value, instead of restating them at every call site where they can drift:
+  `val NewCheckout = FlagDef("checkout.v2", false, "new checkout flow")`. `value`, `valueOrDefault`,
+  `resolveOrDefault` and `valueDetails` all gain `FlagDef` overloads on both the `FeatureFlags` trait and its
+  companion accessors; each delegates to the existing key-based tier, so there is no new evaluation machinery
+  and no behaviour change to the string-key API, which stays fully supported. `FlagDef.default` is always the
+  value served on a miss or error — `FlagType.defaultValue` is a type-level zero and is never consulted on the
+  evaluation path. Equality is structural over key/default/description (the `FlagType` instance is excluded);
+  `sameKey` compares by key alone across differing type parameters.
 - `IntegerWideningLongProvider` (`extras`) — wraps a provider that predates SDK 1.22.0 and resolves `Long`
   evaluations through its existing integer resolver for int-range defaults. The escape hatch for the behaviour
   change above; bundled providers never need it.

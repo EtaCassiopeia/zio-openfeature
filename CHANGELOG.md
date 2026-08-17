@@ -74,6 +74,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Object-backed custom flag types now receive the caller's default and report `FLAG_NOT_FOUND` correctly.** Two
+  defects on the custom-type evaluation path, both surfaced by the pre-implementation audit on #348:
+  - the caller's default **never reached the provider** — an empty `Value()` was sent instead of
+    `flagType.encode(default)` — so a provider had no way to serve the caller's default for a custom type the way it
+    does for the built-in scalars;
+  - anything that failed to extract was relabelled **`TYPE_MISMATCH`**, so a provider-reported `FLAG_NOT_FOUND` came
+    back as a type error and a plain missing flag looked like a codec bug. The object path now mirrors the scalar
+    path: the provider's own error code is preserved and the caller's default is served, while a payload that
+    genuinely cannot decode still fails loudly with `TypeMismatch`.
 - **A `FlagType` whose `encode` contradicts its declared `wireType` now fails with a diagnostic error** (#360).
   Overriding `wireType` to a scalar while leaving `encode` producing something else — the mistake the `wireType`
   scaladoc warns about, reachable at a documented extension point — used to surface as a bare

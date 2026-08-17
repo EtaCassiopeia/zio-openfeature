@@ -40,6 +40,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`TestFeatureProvider.makeNamed` — a test provider can be given its own metadata name** (#371). Every instance
+  previously reported `"TestFeatureProvider"` with no way to change it, and two things key providers by that name: a
+  `MultiProvider` chain keeps only the **last** provider of a given name (the SDK logs the collision at INFO and moves
+  on), and the event-identity guard behind `FeatureFlags.setProvider` compares the old and new provider's names. So a
+  chain of two test providers was really a chain of one — a test of fall-through or precedence between them passed or
+  failed for the wrong reason — and a hot-swap between two of them was invisible to the guard. `makeNamed(name,
+  initialFlags = Map.empty)` fixes both, and `TestFeatureProvider.DefaultName` is what every other factory still
+  reports, so **nothing changes unless you call `makeNamed`**. Purely additive; no core change.
+
 - **Typed test fixtures from a `FlagDef` (`testkit`)** (#351). `TestFeatureProvider`'s key-based
   `setFlag[A](key, value)` accepts anything, so a fixture could pin a value production would never decode — the test
   passed against the fixture and production failed with `TYPE_MISMATCH`. Building the fixture from a `FlagDef`

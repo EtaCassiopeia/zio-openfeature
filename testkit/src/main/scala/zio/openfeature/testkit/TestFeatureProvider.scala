@@ -41,7 +41,8 @@ final class TestFeatureProvider private (
   private val eventsHub: Hub[ProviderEvent],
   private[openfeature] val statusRef: SubscriptionRef[ProviderStatus],
   private val initLatch: Option[CountDownLatch],
-  private[testkit] val initDone: Option[CountDownLatch]
+  private[testkit] val initDone: Option[CountDownLatch],
+  private val name: String
 ) extends EventProvider {
 
   import TestFeatureProvider.{BehaviorConfig, ErrorMode}
@@ -71,7 +72,7 @@ final class TestFeatureProvider private (
 
   @scala.annotation.nowarn("msg=deprecated")
   override def getMetadata: Metadata = new Metadata {
-    override def getName: String = "TestFeatureProvider"
+    override def getName: String = name
   }
 
   override def getState: ProviderState = state.get()
@@ -403,7 +404,7 @@ final class TestFeatureProvider private (
     ZStream.fromHub(eventsHub)
 
   /** Provider metadata (ZIO-style). */
-  val metadata: ProviderMetadata = ProviderMetadata("TestFeatureProvider", "1.0.0")
+  val metadata: ProviderMetadata = ProviderMetadata(name, "1.0.0")
 
   /** Get status as ZIO effect. */
   def status: UIO[ProviderStatus] = statusRef.get
@@ -507,12 +508,38 @@ object TestFeatureProvider {
     TestAspect.before(setup) >>> TestAspect.after(cleanup)
   }
 
+  /** The metadata name every factory except [[makeNamed]] reports. */
+  final val DefaultName: String = "TestFeatureProvider"
+
   /** Create a new TestFeatureProvider with no initial flags. */
   def make: UIO[TestFeatureProvider] =
     make(Map.empty[String, Any])
 
   /** Create a new TestFeatureProvider with initial flags. */
   def make(initialFlags: Map[String, Any]): UIO[TestFeatureProvider] =
+    makeReady(DefaultName, initialFlags)
+
+  /** Like [[make]], but the provider reports `name` as its metadata name instead of [[DefaultName]].
+    *
+    * Two things key providers by that name, so two identically-named instances cannot be told apart:
+    *   - a `MultiProvider` chain keeps only the '''last''' provider of a given name (the SDK logs the collision at INFO
+    *     and moves on), so a chain of two default-named test providers is a chain of one;
+    *   - the event-identity guard behind `FeatureFlags.setProvider` compares the old and new provider's names.
+    *
+    * Give each one a distinct name when a test depends on either:
+    *
+    * {{{
+    * for {
+    *   primary  <- TestFeatureProvider.makeNamed("primary")
+    *   fallback <- TestFeatureProvider.makeNamed("fallback", Map("flag" -> true))
+    *   ff       <- FeatureFlags.fromProvider(FeatureFlags.multiProvider(List(primary, fallback))).build
+    * } yield ff.get[FeatureFlags]
+    * }}}
+    */
+  def makeNamed(name: String, initialFlags: Map[String, Any] = Map.empty): UIO[TestFeatureProvider] =
+    makeReady(name, initialFlags)
+
+  private def makeReady(name: String, initialFlags: Map[String, Any]): UIO[TestFeatureProvider] =
     for {
       eventsHub <- Hub.unbounded[ProviderEvent]
       statusRef <- SubscriptionRef.make[ProviderStatus](ProviderStatus.Ready)
@@ -521,7 +548,16 @@ object TestFeatureProvider {
         initialFlags.foreach { case (k, v) => flags.put(k, v) }
         val state       = new AtomicReference[ProviderState](ProviderState.READY)
         val evaluations = new CopyOnWriteArrayList[(String, OFEvaluationContext)]()
-        new TestFeatureProvider(flags, state, evaluations, eventsHub, statusRef, initLatch = None, initDone = None)
+        new TestFeatureProvider(
+          flags,
+          state,
+          evaluations,
+          eventsHub,
+          statusRef,
+          initLatch = None,
+          initDone = None,
+          name = name
+        )
       }
     } yield provider
 
@@ -639,7 +675,8 @@ object TestFeatureProvider {
           eventsHub,
           statusRef,
           initLatch = None,
-          initDone = Some(new CountDownLatch(1))
+          initDone = Some(new CountDownLatch(1)),
+          name = DefaultName
         )
       }
     } yield provider
@@ -725,7 +762,8 @@ object TestFeatureProvider {
           eventsHub,
           statusRef,
           initLatch = Some(new CountDownLatch(1)),
-          initDone = Some(new CountDownLatch(1))
+          initDone = Some(new CountDownLatch(1)),
+          name = DefaultName
         )
       }
     } yield provider

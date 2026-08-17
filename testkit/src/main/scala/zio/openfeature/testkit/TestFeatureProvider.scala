@@ -251,6 +251,42 @@ final class TestFeatureProvider private (
   def removeFlag(key: String): UIO[Unit] =
     ZIO.succeed(flags.remove(key)).unit
 
+  // Typed fixture helpers (#351)
+  //
+  // These take a `FlagDef[A]` instead of a bare key, so the value is checked against the flag's declared type and is
+  // stored through `flagType.encode` — the test then reads it back through the same decode path production uses. The
+  // key-based methods above stay: they are still how you test an undeclared key, a foreign key, or a negative case
+  // like FLAG_NOT_FOUND.
+  //
+  // Each takes a type parameter rather than a `FlagDef[?]`/`FlagDef[_]` wildcard, because this file is cross-compiled
+  // and the two versions spell that wildcard differently. `A` is inferred at every call site, so it costs callers
+  // nothing.
+
+  /** Set a flag from its definition, storing `flag.flagType.encode(value)`.
+    *
+    * This coexisting safely with `setFlag[A](key: String, value: A)` rests on `FlagDef` being '''invariant''' in `A`:
+    * that is what forces `A = Tier` from a `FlagDef[Tier]` argument, so `setFlag(TierFlag, "paid")` is rejected. Were
+    * `FlagDef` declared `+A`, `A` would widen to a common supertype and the type guarantee here would evaporate — worth
+    * knowing, since that declaration lives in another module.
+    */
+  def setFlag[A](flag: FlagDef[A], value: A): UIO[Unit] =
+    setFlag(flag.key, flag.flagType.encode(value))
+
+  /** Apply typed overrides, keeping any flags already set. */
+  def setFlags(overrides: FlagOverride*): UIO[Unit] =
+    ZIO.succeed(overrides.foreach(o => flags.put(o.key, o.encoded)))
+
+  /** Replace ALL flags with these typed overrides. */
+  def replaceFlags(overrides: FlagOverride*): UIO[Unit] =
+    ZIO.succeed {
+      flags.clear()
+      overrides.foreach(o => flags.put(o.key, o.encoded))
+    }
+
+  /** Remove a flag by its definition. */
+  def removeFlag[A](flag: FlagDef[A]): UIO[Unit] =
+    removeFlag(flag.key)
+
   /** Clear all flags. */
   def clearFlags: UIO[Unit] =
     ZIO.succeed(flags.clear())
@@ -353,6 +389,14 @@ final class TestFeatureProvider private (
   /** Count how many times a flag was evaluated. */
   def evaluationCount(flagKey: String): UIO[Int] =
     ZIO.succeed(evaluations.asScala.count(_._1 == flagKey))
+
+  /** Check if a flag was evaluated, by its definition (#351). */
+  def wasEvaluated[A](flag: FlagDef[A]): UIO[Boolean] =
+    wasEvaluated(flag.key)
+
+  /** Count how many times a flag was evaluated, by its definition (#351). */
+  def evaluationCount[A](flag: FlagDef[A]): UIO[Int] =
+    evaluationCount(flag.key)
 
   /** Get the events hub for streaming. */
   def events: ZStream[Any, Nothing, ProviderEvent] =
@@ -463,7 +507,7 @@ object TestFeatureProvider {
 
   /** Create a new TestFeatureProvider with no initial flags. */
   def make: UIO[TestFeatureProvider] =
-    make(Map.empty)
+    make(Map.empty[String, Any])
 
   /** Create a new TestFeatureProvider with initial flags. */
   def make(initialFlags: Map[String, Any]): UIO[TestFeatureProvider] =
@@ -479,9 +523,68 @@ object TestFeatureProvider {
       }
     } yield provider
 
+  // Typed fixture factories (#351)
+  //
+  // Every untyped factory gets a `FlagOverride*` twin, so reaching for `scopedLayer` after learning `layer` does not
+  // suddenly drop back to `Map[String, Any]`. Each delegates through `toFlagMap`, so typed and untyped fixtures build
+  // exactly the same provider — the only difference is that the typed route checked the value against the flag's
+  // declared type and encoded it on the way in.
+
+  private def toFlagMap(overrides: Seq[FlagOverride]): Map[String, Any] = {
+    // Rejected rather than silently last-wins: two overrides for one key means two `FlagDef`s share it, most likely at
+    // different types, which is a fixture bug the test would otherwise run straight past. `:=` already throws for a
+    // codec problem, so failing here is consistent.
+    val duplicates = overrides.groupBy(_.key).collect { case (k, os) if os.sizeIs > 1 => k }
+    require(
+      duplicates.isEmpty,
+      s"Duplicate flag overrides for ${duplicates.mkString("'", "', '", "'")} — each flag may be pinned once per fixture."
+    )
+    overrides.map(o => o.key -> o.encoded).toMap
+  }
+
+  /** Create a new TestFeatureProvider from typed overrides. */
+  def make(overrides: FlagOverride*): UIO[TestFeatureProvider] =
+    make(toFlagMap(overrides))
+
+  /** Create a FeatureFlags layer from typed overrides. */
+  def layer(overrides: FlagOverride*): ZLayer[Scope, Throwable, TestFeatureProvider with FeatureFlags] =
+    layer(toFlagMap(overrides))
+
+  /** Create a self-contained (scope-providing) layer from typed overrides. */
+  def scopedLayer(overrides: FlagOverride*): ZLayer[Any, Throwable, TestFeatureProvider with FeatureFlags] =
+    scopedLayer(toFlagMap(overrides))
+
+  /** Create an async-init layer from typed overrides. */
+  def asyncLayer(overrides: FlagOverride*): ZLayer[Scope, Throwable, TestFeatureProvider with FeatureFlags] =
+    asyncLayer(toFlagMap(overrides))
+
+  /** Create just the TestFeatureProvider layer from typed overrides. */
+  def providerLayer(overrides: FlagOverride*): ULayer[TestFeatureProvider] =
+    ZLayer.fromZIO(make(toFlagMap(overrides)))
+
+  /** Create a self-contained async layer from typed overrides. */
+  def scopedAsyncLayer(overrides: FlagOverride*): ZLayer[Any, Throwable, TestFeatureProvider with FeatureFlags] =
+    Scope.default >>> asyncLayer(toFlagMap(overrides))
+
+  /** Create an auto-transitioning async layer from typed overrides.
+    *
+    * The delay is explicit here, unlike its defaulted counterpart: the untyped `asyncReadyLayer` defaults both of its
+    * parameters, so a bare `asyncReadyLayer()` is legal today and a plain varargs overload would make that call
+    * ambiguous. Requiring the delay keeps every existing call compiling.
+    *
+    * The parameter is named `delay` rather than `initDelay` deliberately — named-argument resolution filters
+    * alternatives by parameter name, so reusing `initDelay` here would make `asyncReadyLayer(initDelay = 200.millis)`
+    * ambiguous between this and the defaulted `(Map, Duration)` form.
+    */
+  def asyncReadyLayer(
+    delay: Duration,
+    overrides: FlagOverride*
+  ): ZLayer[Scope, Throwable, TestFeatureProvider with FeatureFlags] =
+    asyncReadyLayer(toFlagMap(overrides), delay)
+
   /** Create a FeatureFlags layer from TestFeatureProvider. */
   def layer: ZLayer[Scope, Throwable, TestFeatureProvider with FeatureFlags] =
-    layer(Map.empty)
+    layer(Map.empty[String, Any])
 
   /** Create a FeatureFlags layer with initial flags.
     *
@@ -568,7 +671,7 @@ object TestFeatureProvider {
     * to simulate the provider becoming ready. Evaluations will fail with `ProviderNotReady` until then.
     */
   def asyncLayer: ZLayer[Scope, Throwable, TestFeatureProvider with FeatureFlags] =
-    asyncLayer(Map.empty)
+    asyncLayer(Map.empty[String, Any])
 
   /** Create a FeatureFlags layer with async initialization and initial flags.
     *

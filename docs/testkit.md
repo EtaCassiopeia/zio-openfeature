@@ -101,7 +101,7 @@ yield ()
 
 ```scala
 for
-  provider <- TestFeatureProvider.make(Map.empty)
+  provider <- TestFeatureProvider.make
   _        <- provider.setFlag("new-flag", true)
   _        <- provider.setFlag("count", 42)
   _        <- provider.setFlag("name", "test")
@@ -553,6 +553,51 @@ See [Optimizely → Testing your app]({{ site.baseurl }}/optimizely) for a worke
 
 ---
 
+## Typed fixtures with FlagDef
+
+`setFlag("user.tier", "premum")` compiles. The typo ships, the test passes, and production fails with
+`TYPE_MISMATCH`. Building the fixture from a [`FlagDef`]({{ site.baseurl }}/architecture#typed-flag-definitions)
+instead makes the value type-checked against the flag's declared type:
+
+```scala
+import zio.openfeature.testkit.FlagOverride.Ops   // brings `:=` into scope
+
+val UserPlan = FlagDef[Tier]("user.tier", Tier.Free)
+
+val layer = TestFeatureProvider.layer(UserPlan := Tier.Premium)   // compiles
+// TestFeatureProvider.layer(UserPlan := "premium")               // does not
+```
+
+The value is stored as `flagType.encode(value)` — the wire form a real provider would carry — so the test reads it
+back through the same decode path production uses. `:=` additionally checks that the encoding round-trips back
+through `decode`, and fails at fixture-construction if it cannot: a codec that cannot read its own output would
+otherwise hand you a fixture your test believes in and production cannot read.
+
+Every flag-seeding factory has a typed twin, so switching factories does not send you back to `Map[String, Any]`:
+
+```scala
+TestFeatureProvider.make(UserPlan := Tier.Premium)
+TestFeatureProvider.layer(UserPlan := Tier.Premium)
+TestFeatureProvider.scopedLayer(UserPlan := Tier.Premium)
+TestFeatureProvider.asyncLayer(UserPlan := Tier.Premium)
+TestFeatureProvider.asyncReadyLayer(100.millis, UserPlan := Tier.Premium)
+```
+
+`asyncReadyLayer` takes its delay explicitly here, because its untyped form defaults both parameters and a plain
+varargs overload would make a bare `asyncReadyLayer()` ambiguous.
+
+The same helpers accept a `FlagDef` wherever they took a key — `setFlag`, `setFlags`, `replaceFlags`, `removeFlag`,
+`wasEvaluated`, `evaluationCount`.
+
+> The key-based API is unchanged and is still the right tool for the cases a `FlagDef` cannot express: an
+> undeclared key, a key belonging to another system, or a negative case such as `FLAG_NOT_FOUND`.
+
+One inference trap worth knowing: `FlagDef("k", Tier.Free)` where `Tier.Free` is a `case object` infers the type as
+`Tier.Free.type` and then cannot find a `FlagType` for it. Name the type — `FlagDef[Tier]("k", Tier.Free)`. A Scala 3
+`enum`'s *parameterless* cases are typed as the enum itself and are unaffected.
+
+---
+
 ## Law-checking a custom FlagType
 
 If you hand-write a `FlagType[A]`, `FlagTypeLaws` holds it to the same contract the library's own instances meet.
@@ -649,7 +694,7 @@ test("service only evaluates necessary flags") {
 ```scala
 suite("edge cases")(
   test("handles missing flag") {
-    val layer = TestFeatureProvider.layer(Map.empty)
+    val layer = TestFeatureProvider.layer
 
     FeatureFlags.boolean("missing", false)
       .map(result => assertTrue(result == false))

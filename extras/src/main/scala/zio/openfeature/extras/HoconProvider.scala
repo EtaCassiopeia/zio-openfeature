@@ -2,6 +2,7 @@ package zio.openfeature.extras
 
 import com.typesafe.config.{Config, ConfigException, ConfigFactory, ConfigValueType}
 import dev.openfeature.sdk.{
+  ErrorCode,
   EvaluationContext => OFEvaluationContext,
   FeatureProvider,
   Metadata,
@@ -51,6 +52,22 @@ final class HoconProvider private (
       case e: ConfigException.BadValue  => throw new ParseError(s"Flag '$key': ${e.getMessage}")
     }
 
+  /** A key this config does not contain is `FLAG_NOT_FOUND`, not a `DEFAULT`-reason answer (#355).
+    *
+    * That is what lets a `MultiProvider` chain distinguish "not configured here" from "configured to this value" and
+    * move on to the next provider, and what lets an operator tell the two apart.
+    *
+    * The returned '''value''' is still the caller's default and no evaluation fails. Two things do change for
+    * observers, though: the resolution carries `reason = Error` with `errorCode = FlagNotFound`, and hooks see the
+    * `error` stage rather than `after` — so `Hook.logging()` reports an absent key at error level where it previously
+    * reported it at info. That is the spec-correct stage for an error-coded resolution (§4.3.6/§4.4.6).
+    *
+    * The message names the flag key rather than a config path: `key` is relative to whatever sub-config this provider
+    * was scoped to, so it is not the line an operator would add to `application.conf`.
+    */
+  private def notFound[T](key: String, defaultValue: T): ProviderEvaluation[T] =
+    ProviderEvaluations.error(defaultValue, ErrorCode.FLAG_NOT_FOUND, s"Flag '$key' is not present in this config")
+
   override def getBooleanEvaluation(
     key: String,
     defaultValue: java.lang.Boolean,
@@ -59,7 +76,7 @@ final class HoconProvider private (
     if (config.hasPath(key))
       ProviderEvaluations.of(java.lang.Boolean.valueOf(typedRead(key, config.getBoolean(key))), "STATIC")
     else
-      ProviderEvaluations.of(defaultValue, "DEFAULT")
+      notFound(key, defaultValue)
 
   override def getStringEvaluation(
     key: String,
@@ -69,7 +86,7 @@ final class HoconProvider private (
     if (config.hasPath(key))
       ProviderEvaluations.of(typedRead(key, config.getString(key)), "STATIC")
     else
-      ProviderEvaluations.of(defaultValue, "DEFAULT")
+      notFound(key, defaultValue)
 
   override def getIntegerEvaluation(
     key: String,
@@ -79,7 +96,7 @@ final class HoconProvider private (
     if (config.hasPath(key))
       ProviderEvaluations.of(java.lang.Integer.valueOf(typedRead(key, config.getInt(key))), "STATIC")
     else
-      ProviderEvaluations.of(defaultValue, "DEFAULT")
+      notFound(key, defaultValue)
 
   override def getLongEvaluation(
     key: String,
@@ -89,7 +106,7 @@ final class HoconProvider private (
     if (config.hasPath(key))
       ProviderEvaluations.of(java.lang.Long.valueOf(typedRead(key, config.getLong(key))), "STATIC")
     else
-      ProviderEvaluations.of(defaultValue, "DEFAULT")
+      notFound(key, defaultValue)
 
   override def getDoubleEvaluation(
     key: String,
@@ -99,7 +116,7 @@ final class HoconProvider private (
     if (config.hasPath(key))
       ProviderEvaluations.of(java.lang.Double.valueOf(typedRead(key, config.getDouble(key))), "STATIC")
     else
-      ProviderEvaluations.of(defaultValue, "DEFAULT")
+      notFound(key, defaultValue)
 
   override def getObjectEvaluation(
     key: String,
@@ -110,7 +127,7 @@ final class HoconProvider private (
       val value = typedRead(key, configValueToSdkValue(config.getValue(key)))
       ProviderEvaluations.of(value, "STATIC")
     } else
-      ProviderEvaluations.of(defaultValue, "DEFAULT")
+      notFound(key, defaultValue)
 
   private def configValueToSdkValue(cv: com.typesafe.config.ConfigValue): Value =
     cv.valueType() match {

@@ -104,6 +104,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`HoconProvider` and `EnvVarProvider` now report `FLAG_NOT_FOUND` for an absent key** (#355), instead of a
+  `DEFAULT`-reason result. A default-reason answer with no error code reads to a `MultiProvider` chain as "I
+  answered", so the chain **stopped at the first provider** rather than trying the next one — a chain of two
+  config-style providers only ever consulted the first. It also made the two cases indistinguishable to an
+  operator: "the config holds this value" and "the config has no such key" looked identical.
+
+  The returned *value* is unchanged and **no evaluation fails** — `ff.boolean`, `*OrDefault` and `resolveOrDefault`
+  all still yield the caller's default. Verified end-to-end through `FeatureFlags`: a key absent from every provider
+  in a chain still resolves to the caller's default, because substituting it is the SDK client's job rather than the
+  provider's.
+
+  **Two things do change for observers, so read this before upgrading:**
+  - the resolution now carries `reason = Error` and `errorCode = FlagNotFound` where it previously carried
+    `reason = Default` and no code;
+  - hooks see the **`error`** stage instead of `after`. With the bundled `Hook.logging()` that means an absent key
+    is logged at **error** level where it was previously info (`Hook.structuredLogging` uses warning). This is the
+    spec-correct stage for an error-coded resolution (§4.3.6/§4.4.6), but it matters most for `EnvVarProvider`,
+    which is often used as an opt-in override source where most variables are deliberately unset — tune
+    `logError`/`errorLevel` on your hooks if that is your setup.
+
+  **`MultiProviderStrategy.firstSuccessful` chains behave differently too.** A trailing `EnvVarProvider` holding
+  only a few critical flags — a pattern `docs/optimizely.md` recommends — used to end the chain successfully for
+  *any* key, because a clean `DEFAULT` counts as success. It now reports `FLAG_NOT_FOUND`, so when the primary
+  provider is failing **and** the key is not in the fallback, the chain surfaces `errorCode = General` with the
+  aggregated per-provider errors instead of a silent default. The value is still the caller's default and nothing
+  fails. This is arguably the point — those same docs warned that the old shape made primary-provider failures
+  invisible — but it is a visible change to a documented pattern.
+
+  Two documentation errors this uncovered are corrected in the same change:
+  - `MultiProviderStrategy.firstMatch` claimed the chain skips a provider "whose evaluation does not surface a
+    default value". It does not — a `reason = DEFAULT` result with no error code is taken as an answer and ends the
+    chain. Only `FLAG_NOT_FOUND` causes fall-through, which is exactly why this fix was needed.
+  - `FeatureFlags.multiProvider` now documents that **each provider in a chain needs a distinct metadata name**:
+    the SDK keys providers by `getMetadata.getName`, so two instances of the same provider type collapse into one
+    and the chain silently consults only the survivor.
 - **In-transaction caching and overrides now work for custom `FlagType`s** (#359). The transaction machinery fed
   `FlagType.decode` — a wire → domain function — the *domain* value in two places, which only worked for the
   built-ins where the two coincide. For a custom type (`FlagType.mapped`, `FlagType.from`, or a hand-rolled

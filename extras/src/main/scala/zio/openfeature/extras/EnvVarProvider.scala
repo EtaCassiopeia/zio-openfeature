@@ -1,6 +1,7 @@
 package zio.openfeature.extras
 
 import dev.openfeature.sdk.{
+  ErrorCode,
   EvaluationContext => OFEvaluationContext,
   FeatureProvider,
   Metadata,
@@ -40,6 +41,21 @@ final class EnvVarProvider private (
 
   override def getState: ProviderState = ProviderState.READY
 
+  /** An unset environment variable is `FLAG_NOT_FOUND`, not a `DEFAULT`-reason answer (#355).
+    *
+    * That is what lets a `MultiProvider` chain distinguish "not set here" from "set to this value" and move on to the
+    * next provider. The message names the resolved environment variable, since that is what an operator has to set.
+    *
+    * The returned '''value''' is still the caller's default and no evaluation fails. Two things do change for
+    * observers: the resolution carries `reason = Error` with `errorCode = FlagNotFound`, and hooks see the `error`
+    * stage rather than `after` — so `Hook.logging()` reports an unset variable at error level where it previously
+    * reported it at info. That is spec-correct for an error-coded resolution (§4.3.6/§4.4.6), but it is worth knowing
+    * for this provider in particular: it is often used as an opt-in override source where most variables are
+    * deliberately unset, so consider tuning `logError`/`errorLevel` on your hooks.
+    */
+  private def notFound[T](flagKey: String, defaultValue: T): ProviderEvaluation[T] =
+    ProviderEvaluations.error(defaultValue, ErrorCode.FLAG_NOT_FOUND, s"Env var ${envKey(flagKey)} is not set")
+
   override def getBooleanEvaluation(
     key: String,
     defaultValue: java.lang.Boolean,
@@ -55,7 +71,7 @@ final class EnvVarProvider private (
           case _ => throw new ParseError(s"Env var ${envKey(key)}='$v' is not a valid boolean for flag '$key'")
         }
       case None =>
-        ProviderEvaluations.of(defaultValue, "DEFAULT")
+        notFound(key, defaultValue)
     }
 
   override def getStringEvaluation(
@@ -67,7 +83,7 @@ final class EnvVarProvider private (
       case Some(v) =>
         ProviderEvaluations.of(v, "STATIC")
       case None =>
-        ProviderEvaluations.of(defaultValue, "DEFAULT")
+        notFound(key, defaultValue)
     }
 
   override def getIntegerEvaluation(
@@ -83,7 +99,7 @@ final class EnvVarProvider private (
             throw new ParseError(s"Env var ${envKey(key)}='$v' is not a valid int for flag '$key'")
         }
       case None =>
-        ProviderEvaluations.of(defaultValue, "DEFAULT")
+        notFound(key, defaultValue)
     }
 
   override def getLongEvaluation(
@@ -99,7 +115,7 @@ final class EnvVarProvider private (
             throw new ParseError(s"Env var ${envKey(key)}='$v' is not a valid long for flag '$key'")
         }
       case None =>
-        ProviderEvaluations.of(defaultValue, "DEFAULT")
+        notFound(key, defaultValue)
     }
 
   override def getDoubleEvaluation(
@@ -115,7 +131,7 @@ final class EnvVarProvider private (
             throw new ParseError(s"Env var ${envKey(key)}='$v' is not a valid double for flag '$key'")
         }
       case None =>
-        ProviderEvaluations.of(defaultValue, "DEFAULT")
+        notFound(key, defaultValue)
     }
 
   override def getObjectEvaluation(
@@ -127,7 +143,7 @@ final class EnvVarProvider private (
       case Some(v) =>
         ProviderEvaluations.of(new Value(v), "STATIC")
       case None =>
-        ProviderEvaluations.of(defaultValue, "DEFAULT")
+        notFound(key, defaultValue)
     }
 }
 

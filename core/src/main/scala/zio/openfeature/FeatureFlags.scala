@@ -1245,7 +1245,11 @@ object FeatureFlags {
     * provider-related failure can propagate into the application's layer graph.
     *
     *   - Status is `Ready` from time zero; evaluations answer fallback values (never `ProviderNotReady`) until the
-    *     swap.
+    *     swap. Because `providerStatus` therefore cannot tell fallback from real, the layer also provides an
+    *     [[AcquireStatus]] whose [[AcquireState]] is `Constructing` until the real provider is acquired, verified
+    *     **and** swapped in (`Live`), or the construction fails terminally (`Failed(cause)`, set just before
+    *     `onConstructionError` runs). `onSwapped` is the success-side twin of `onConstructionError`: it runs once
+    *     `Live` is observable.
     *   - Each attempt runs `acquire` and then `verify` on the acquired candidate, the pair bounded by
     *     `constructionTimeout` and retried with `constructionRetry`. A `verify` failure is an attempt failure exactly
     *     like an `acquire` failure: the candidate is released, the schedule advances, the fallback keeps serving. On
@@ -1286,6 +1290,8 @@ object FeatureFlags {
     * @param verify
     *   run on each acquired candidate before the swap; failure rejects the candidate and counts as a failed attempt.
     *   Defaults to accepting every candidate. See [[Verify]] for ready-made checks.
+    * @param onSwapped
+    *   run once after the real provider is swapped in and [[AcquireState.Live]] is observable
     */
   def fromAcquireAsync(
     acquire: RIO[Scope, OFFeatureProvider],
@@ -1300,14 +1306,18 @@ object FeatureFlags {
     // config-only surface would leave the fallback-first path with no way to supply an ambient context (#353).
     contextSource: ContextSource = ContextSource.empty,
     // Last, so every existing positional call site keeps compiling; `compose` stays the one mid-list parameter a
-    // caller plausibly passes positionally (#349).
-    verify: OFFeatureProvider => Task[Unit] = _ => ZIO.unit
-  ): URLayer[Scope, FeatureFlags] =
-    ZLayer.scoped {
+    // caller plausibly passes positionally (#349, #352).
+    verify: OFFeatureProvider => Task[Unit] = _ => ZIO.unit,
+    onSwapped: UIO[Unit] = ZIO.unit
+  ): URLayer[Scope, FeatureFlags with AcquireStatus] =
+    // `scopedEnvironment` rather than `scoped`: the layer emits two services, and only an explicit ZEnvironment can
+    // carry an intersection.
+    ZLayer.scopedEnvironment {
       for {
         // Build immediately on a fresh fallback. An in-memory fallback whose init fails is a programming bug, not a
         // recoverable condition, so a failed build is a defect (`orDie`) — this is what makes the layer a `URLayer`.
         firstFallback <- fallback
+        state         <- SubscriptionRef.make[AcquireState](AcquireState.Constructing)
         ff <- build(
           firstFallback,
           domain = None,
@@ -1355,12 +1365,30 @@ object FeatureFlags {
             .setProvider(compose(accepted._2, freshFallback))
             // `setProvider`'s rollback now restores both routing AND status (#282): a failed swap re-registers the
             // still-live fallback with the SDK and sets Ready, so no local force-ready workaround is needed here.
-            .mapError(e => new RuntimeException(s"Provider swap failed: $e"))
+            .mapError(ProviderSwapFailed(_))
             // The rollback leaves the SDK on the fallback, so a candidate whose swap failed is dead: release it now
             // rather than at layer close. `Scope.close` is idempotent, so the layer-scope finalizer is then a no-op.
             .tapError(e => accepted._1.close(Exit.fail(e)))
+          // State flips before the callback so a probe reading `AcquireStatus.get` from inside it already sees Live.
+          _ <- state.set(AcquireState.Live) *> onSwapped
         } yield ()
-        _ <- construct.catchAll(onConstructionError).forkScoped
-      } yield ff
+        // Same ordering on the failure side: Failed is observable before `onConstructionError` runs. Failed is
+        // terminal — the schedule is exhausted (or the swap failed) and nothing restarts construction. The whole
+        // Cause is handled, not just typed failures: a defect (say `acquire = ZIO.succeed(new Provider(...))` whose
+        // constructor throws) would otherwise kill the fiber with the state stuck at Constructing and no callback —
+        // a probe waiting for the outcome would hang. A defect is still re-raised after being recorded, so it keeps
+        // whatever visibility an unhandled fiber defect had before; interruption (layer release) is not an outcome.
+        _ <- construct.catchAllCause { cause =>
+          val e = cause.squashWith(identity)
+          val record =
+            if (cause.isInterruptedOnly) ZIO.unit
+            else
+              state.get.flatMap {
+                case AcquireState.Constructing => state.set(AcquireState.Failed(e)) *> onConstructionError(e)
+                case _                         => ZIO.unit // a defect in `onSwapped` must not retract Live
+              }
+          record *> ZIO.when(cause.isDie || cause.isInterrupted)(ZIO.refailCause(cause))
+        }.forkScoped
+      } yield ZEnvironment[FeatureFlags](ff).add[AcquireStatus](AcquireStatus.fromRef(state))
     }
 }

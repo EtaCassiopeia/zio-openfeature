@@ -40,6 +40,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`fromAcquireAsync` tells you whether the real provider is live** (#352). The factory is fallback-first, so
+  `providerStatus` reads `Ready` from time zero (and dips through `NotReady` during the swap) — a `/ready` probe
+  could not tell fallback values from real ones. It now returns `URLayer[Scope, FeatureFlags with AcquireStatus]`,
+  a second small service provided by this factory only: `AcquireStatus.get` reads an `AcquireState` —
+  `Constructing` (fallback serving; `acquire`/`verify` in flight), `Live` (real provider acquired, **verified** and
+  swapped in), or `Failed(cause)` (terminal; set just before `onConstructionError` runs) — and
+  `AcquireStatus.changes` streams the current state first, then the transition. A new trailing
+  `onSwapped: UIO[Unit]` callback is the success-side twin of `onConstructionError`. The widened output is
+  source-compatible (`ZLayer` is covariant in its output), and the new defaulted parameter is covered by the existing
+  `fromAcquireAsync` MiMa filter. Two related tightenings: a swap failure now reaches `onConstructionError` (and
+  `Failed`) as `ProviderSwapFailed(error: FeatureFlagError)` instead of a bare `RuntimeException` with the error
+  flattened into its message; and a **defect** during construction (e.g. `acquire = ZIO.succeed(new Provider(...))`
+  whose constructor throws) now also resolves to `Failed` and fires `onConstructionError` — previously it killed the
+  construction fiber silently — and is then re-raised so it keeps whatever visibility it had.
+
+  ```scala
+  val ready: URIO[AcquireStatus, Boolean] = AcquireStatus.get.map(_.isLive)
+  ```
 - **`fromAcquireAsync` can verify the real provider before swapping it in** (#349). Construction success is a weak
   health signal — a provider can construct on bad credentials or an empty config and then serve *successful wrong
   values* that a first-successful chain accepts without ever consulting the fallback. A new trailing

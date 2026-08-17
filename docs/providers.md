@@ -639,6 +639,36 @@ FeatureFlags.fromAcquireAsync(
 
 `verify` sees the candidate **exactly as `acquire` returned it** — never the composed stack, so in-flight evaluations cannot observe a half-verified provider — which means the SDK has **not** called `initialize()` on it yet (that happens inside the swap) and no ambient context applies. The Optimizely-style provider above is usable pre-`initialize` because its constructor does the work; a provider that only answers after `initialize()` must be initialized inside `acquire` (its `initialize` must then tolerate the SDK's second call), or be verified through its own readiness API. Otherwise every attempt is rejected and the instance is left on the fallback — visibly, via `onConstructionError`.
 
+#### Knowing which provider is serving (`AcquireStatus`)
+
+Because the instance is `Ready` from time zero, `providerStatus` cannot tell you whether you are serving fallback values or real ones — and it dips through `NotReady` during the swap itself, so a probe polling it sees a transient that means nothing and misses the state that matters. `fromAcquireAsync` therefore returns `URLayer[Scope, FeatureFlags with AcquireStatus]`: a second small service, provided by this factory only, whose `AcquireState` is
+
+- `Constructing` — the fallback is serving; `acquire` (including retries and `verify`) is in flight;
+- `Live` — the real provider was acquired, **verified**, and swapped in;
+- `Failed(cause)` — construction, verification, or the swap failed terminally; the fallback serves for the life of the layer. `Failed` is set just before `onConstructionError` runs and never changes afterwards. A swap failure carries a `ProviderSwapFailed(error: FeatureFlagError)`; a defect during construction (e.g. `acquire = ZIO.succeed(new Provider(...))` whose constructor throws — use `attemptBlocking`) also resolves to `Failed` and reaches `onConstructionError`, so a probe waiting for the outcome never hangs.
+
+`AcquireStatus.get` reads the state; `AcquireStatus.changes` streams the current state first and then the (at most one) transition, so a late subscriber is never left waiting. `onSwapped` is the success-side twin of `onConstructionError` and runs once `Live` is observable. Note this reports the outcome of *this factory's construction*, not continuous health: `Live` never retracts if the real provider later degrades (the first-successful chain then quietly serves fallback values) — post-swap health is [`CircuitBreakerProvider`](extras.md)'s job.
+
+```scala
+val layer: URLayer[Scope, FeatureFlags with AcquireStatus] =
+  FeatureFlags.fromAcquireAsync(
+    acquire   = ZIO.attemptBlocking(new CofOptimizelyLocalProvider(options)),
+    fallback  = ZIO.succeed(EnvVarProvider()),
+    verify    = Verify.flagExists[Boolean]("kill-switch"),
+    onSwapped = ZIO.logInfo("Optimizely is live"),
+    onConstructionError = e => ZIO.logWarning(s"staying on EnvVar: ${e.getMessage}")
+  )
+
+// A /ready probe that flips only when the real provider is actually answering:
+val ready: URIO[AcquireStatus, Boolean] = AcquireStatus.get.map(_.isLive)
+
+// Wait for the outcome, either way (Live or Failed):
+val outcome: URIO[AcquireStatus, Option[AcquireState]] =
+  AcquireStatus.changes.filter(_ != AcquireState.Constructing).runHead
+```
+
+The widened output is source-compatible: `val l: URLayer[Scope, FeatureFlags] = FeatureFlags.fromAcquireAsync(...)` still compiles, and `provide`/`ZLayer.make` users are unaffected.
+
 For a constructor-blocking provider where you want plain async semantics (typed `PROVIDER_NOT_READY` until ready, no fallback), wrap it in [`DeferredProvider`](extras.md#deferredprovider) instead and pass it to `fromProviderAsync`.
 
 ### Waiting for readiness (`awaitReady`)

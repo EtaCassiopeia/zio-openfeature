@@ -140,6 +140,40 @@ provider.removeFlag("flag-to-remove")
 provider.clearFlags
 ```
 
+### Absent keys and provider chains
+
+A key that has **not** been set (never set, removed, or cleared) resolves as `FLAG_NOT_FOUND`, carrying your default
+as the value. No evaluation fails and `ff.boolean` / `*OrDefault` still give you the default, but two things are
+observable: the resolution carries `reason = Error` with `errorCode = FlagNotFound`, and hooks see the **`error`**
+stage rather than `after` — so `Hook.logging()` reports an unset key at error level. That is the spec-correct stage
+for an error-coded resolution, and it is what every real provider shipped here reports for an absent key.
+
+```scala
+for
+  resolution <- FeatureFlags.booleanDetails("never-set", default = false)
+yield assertTrue(
+  resolution.value == false,                              // your default
+  resolution.reason == ResolutionReason.Error,
+  resolution.errorCode.contains(ErrorCode.FlagNotFound)
+)
+```
+
+So a test that means "this flag is **off**" should set it to `false` rather than leave it unset — an unset key is
+"this provider has no such flag", which is a different state.
+
+Reporting not-found is what lets the test provider take part in a chain:
+
+```scala
+// The test provider has no "checkout.v2", so the chain moves on to the next provider.
+val chain = FeatureFlags.multiProvider(List(testProvider, realProvider))
+```
+
+`MultiProviderStrategy.firstMatch` advances to the next provider only when a provider reports `FLAG_NOT_FOUND`; a
+result carrying `reason = DEFAULT` is treated as an answer and ends the chain. One caveat when chaining two test
+providers: the Java SDK keys a chain's providers by metadata name and silently keeps only the last of two same-named
+instances, and every `TestFeatureProvider` currently reports the same name — so pair it with a differently-named
+provider (see #371).
+
 ---
 
 ## Tracking Evaluations
@@ -259,6 +293,11 @@ yield ()
 ```
 
 Available error modes: `FlagNotFound`, `ParseError`, `TypeMismatch`, `ProviderNotReady`, `General`.
+
+An error mode applies to **every** evaluation while it is set. `ErrorMode.FlagNotFound` produces the same resolution a
+genuinely absent key does (`reason = Error`, `errorCode = FlagNotFound`, your default as the value — see
+[Absent keys and provider chains](#absent-keys-and-provider-chains)) but for all keys at once; to model "this key is
+absent, that one is present", just leave the key unset.
 
 Provider exceptions are caught by the Java SDK and returned as default-valued resolutions with error codes. Use `booleanDetails` (or other `*Details` methods) to inspect the error code:
 
@@ -696,6 +735,7 @@ suite("edge cases")(
   test("handles missing flag") {
     val layer = TestFeatureProvider.layer
 
+    // The value is the default; the resolution behind it is FLAG_NOT_FOUND (reason Error), not DEFAULT.
     FeatureFlags.boolean("missing", false)
       .map(result => assertTrue(result == false))
       .provide(Scope.default >>> layer)

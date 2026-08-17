@@ -165,6 +165,20 @@ FeatureFlags.resolveOrDefault[Boolean]("feature-toggle", default = false).map { 
 
 Both typed errors and unexpected defects are absorbed into the default; only fiber interruption still propagates.
 
+Every served-default fallback leaves a **warn** log line naming the flag, why it degraded and the value served —
+`Flag 'checkout-v2' fell back to its default false (FlagNotFound: flag not found)` — **rate-limited per flag key** so a
+provider outage on a hot flag does not drown the one line that matters. By default one line per key per 60 seconds; the
+next line for that key carries `(suppressed 412 similar)`. Absorbed defects go through the same limiter but in their
+own per-key bucket, keep their cause, and are still logged under `Off` — a defect is a bug, not outage noise. Beyond
+1024 distinct keys, further keys share one throttled overflow bucket rather than going unlimited. Hooks and metrics
+still see every evaluation; only this log line is limited. A flag that is *permanently* absent from the provider is a
+permanent (throttled) warn source — define it, or evaluate it through the typed API. Tune or silence it per instance:
+
+```scala
+FeatureFlagsConfig().withFallbackLogging(FallbackLogging.Throttled(5.minutes)) // or Off, or Always
+FeatureFlags.fromAcquireAsync(acquire, fallback, fallbackLogging = FallbackLogging.Off)
+```
+
 ## Using Evaluation Context
 
 Pass user and environment information for targeted flag evaluation:

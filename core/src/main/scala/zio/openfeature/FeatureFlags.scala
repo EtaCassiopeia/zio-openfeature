@@ -2,7 +2,7 @@ package zio.openfeature
 
 import zio._
 import zio.stream._
-import zio.openfeature.internal.FeatureFlagsState
+import zio.openfeature.internal.{FallbackLogLimiter, FeatureFlagsState}
 import dev.openfeature.sdk.{FeatureProvider => OFFeatureProvider, OpenFeatureAPI, ProviderState}
 import dev.openfeature.sdk.multiprovider.{MultiProvider, Strategy, FirstMatchStrategy, FirstSuccessfulStrategy}
 import java.util.concurrent.TimeoutException
@@ -235,23 +235,35 @@ trait FeatureFlags {
         else
           cause.failureOption match {
             case Some(e) =>
-              ZIO.succeed(FlagResolution.error(key, default, FeatureFlagError.toErrorCode(e), e.message))
+              val served = FlagResolution.error(key, default, FeatureFlagError.toErrorCode(e), e.message)
+              logFallback(key, served, defect = None).as(served)
             case None =>
               // A defect is an unexpected bug, not an expected provider error. Absorb it per spec §1.1.7, but leave a
               // breadcrumb — the value-only `*OrDefault` variants discard the resolution, so without this a swallowed
               // bug would be entirely invisible.
-              ZIO.logWarningCause(s"Total evaluation of '$key' absorbed a defect; serving the default", cause) *>
-                ZIO.succeed(
-                  FlagResolution.error(
-                    key,
-                    default,
-                    ErrorCode.General,
-                    cause.dieOption.fold("evaluation defect")(_.toString)
-                  )
+              val served =
+                FlagResolution.error(
+                  key,
+                  default,
+                  ErrorCode.General,
+                  cause.dieOption.fold("evaluation defect")(_.toString)
                 )
+              logFallback(key, served, defect = Some(cause.stripFailures)).as(served)
           },
-      ZIO.succeed(_)
+      // A provider-reported problem (FLAG_NOT_FOUND, PARSE_ERROR, ...) arrives as a *successful* error-coded resolution
+      // that already carries the default — a served-default fallback all the same, so it gets the same breadcrumb.
+      resolved =>
+        if (resolved.isError) logFallback(key, resolved, defect = None).as(resolved) else ZIO.succeed(resolved)
     )
+
+  /** The total tier's breadcrumb for a served-default fallback: called by `totalResolution` with the resolution about
+    * to be served and, for an absorbed defect, its cause. Logging only — it never affects the resolution. The default
+    * is what every implementor got before this hook existed: absorbed defects logged at warn on every occurrence,
+    * error-coded fallbacks silent. `FeatureFlagsLive` overrides it with the instance's [[FallbackLogging]] policy
+    * (per-key rate limiting, error-coded fallbacks included).
+    */
+  protected def logFallback[A](key: String, resolution: FlagResolution[A], defect: Option[Cause[Nothing]]): UIO[Unit] =
+    defect.fold[UIO[Unit]](ZIO.unit)(cause => ZIO.logWarningCause(FallbackLogLimiter.absorbedDefectMessage(key), cause))
 
   def setGlobalContext(ctx: EvaluationContext): UIO[Unit]
   def globalContext: UIO[EvaluationContext]
@@ -794,7 +806,8 @@ object FeatureFlags {
     evaluationTimeout: Option[Duration] = Some(DefaultEvaluationTimeout),
     initTimeout: Duration = DefaultInitTimeout,
     onReady: Option[java.util.concurrent.CountDownLatch] = None,
-    contextSource: ContextSource = ContextSource.empty
+    contextSource: ContextSource = ContextSource.empty,
+    fallbackLogging: FallbackLogging = FallbackLogging.Default
   ): ZIO[Scope, Throwable, FeatureFlagsLive] =
     for {
       api <- ZIO.succeed(apiOverride.getOrElse(OpenFeatureAPI.getInstance()))
@@ -826,7 +839,8 @@ object FeatureFlags {
       swapLock  <- Semaphore.make(1)
       baseState <- FeatureFlagsState.make
       state = statusRef.fold(baseState)(ref => baseState.copy(statusRef = ref))
-      _ <- state.hooksRef.set(initialHooks)
+      _                  <- state.hooksRef.set(initialHooks)
+      fallbackLogLimiter <- FallbackLogLimiter.make(fallbackLogging)
       ff = new FeatureFlagsLive(
         client,
         providerRef,
@@ -839,6 +853,7 @@ object FeatureFlags {
         // scope-close teardown consistent, so a shared-api (registry/domain) client never shuts the whole api.
         ownsApi = addShutdownFinalizer,
         swapLock,
+        fallbackLogLimiter,
         onReady,
         evaluationTimeout,
         contextSource
@@ -895,7 +910,8 @@ object FeatureFlags {
             evaluationTimeout = evalTimeout,
             initTimeout = config.initTimeout,
             onReady = onReady,
-            contextSource = config.contextSource
+            contextSource = config.contextSource,
+            fallbackLogging = config.fallbackLogging
           )
         case InitMode.Async =>
           buildAsync(
@@ -909,7 +925,8 @@ object FeatureFlags {
             onReady = onReady,
             evaluationTimeout = evalTimeout,
             initTimeout = config.initTimeout,
-            contextSource = config.contextSource
+            contextSource = config.contextSource,
+            fallbackLogging = config.fallbackLogging
           )
       }
     }
@@ -1050,7 +1067,8 @@ object FeatureFlags {
     onReady: Option[java.util.concurrent.CountDownLatch] = None,
     evaluationTimeout: Option[Duration] = Some(DefaultEvaluationTimeout),
     initTimeout: Duration = DefaultInitTimeout,
-    contextSource: ContextSource = ContextSource.empty
+    contextSource: ContextSource = ContextSource.empty,
+    fallbackLogging: FallbackLogging = FallbackLogging.Default
   ): ZIO[Scope, Throwable, FeatureFlagsLive] =
     for {
       api <- ZIO.succeed(apiOverride.getOrElse(OpenFeatureAPI.getInstance()))
@@ -1083,7 +1101,8 @@ object FeatureFlags {
       swapLock  <- Semaphore.make(1)
       baseState <- FeatureFlagsState.make
       state = statusRef.fold(baseState)(ref => baseState.copy(statusRef = ref))
-      _ <- state.hooksRef.set(initialHooks)
+      _                  <- state.hooksRef.set(initialHooks)
+      fallbackLogLimiter <- FallbackLogLimiter.make(fallbackLogging)
       ff = new FeatureFlagsLive(
         client,
         providerRef,
@@ -1096,6 +1115,7 @@ object FeatureFlags {
         // scope-close teardown consistent, so a shared-api (registry/domain) client never shuts the whole api.
         ownsApi = addShutdownFinalizer,
         swapLock,
+        fallbackLogLimiter,
         onReady,
         evaluationTimeout,
         contextSource
@@ -1308,7 +1328,10 @@ object FeatureFlags {
     // Last, so every existing positional call site keeps compiling; `compose` stays the one mid-list parameter a
     // caller plausibly passes positionally (#349, #352).
     verify: OFFeatureProvider => Task[Unit] = _ => ZIO.unit,
-    onSwapped: UIO[Unit] = ZIO.unit
+    onSwapped: UIO[Unit] = ZIO.unit,
+    // Its own parameter, not a config field: this factory bypasses `FeatureFlagsConfig`, and it is exactly the
+    // fallback-first path where a served-default log storm during an outage matters most (#350).
+    fallbackLogging: FallbackLogging = FallbackLogging.Default
   ): URLayer[Scope, FeatureFlags with AcquireStatus] =
     // `scopedEnvironment` rather than `scoped`: the layer emits two services, and only an explicit ZEnvironment can
     // carry an intersection.
@@ -1327,7 +1350,8 @@ object FeatureFlags {
           addShutdownFinalizer = true,
           evaluationTimeout = Some(evaluationTimeout),
           initTimeout = initTimeout,
-          contextSource = contextSource
+          contextSource = contextSource,
+          fallbackLogging = fallbackLogging
         ).orDie
         // One attempt = acquire, then verify the candidate, inside a child scope of the layer scope. The child scope
         // exists so a REJECTED candidate (acquire failed after registering finalizers, verify failed, or the attempt

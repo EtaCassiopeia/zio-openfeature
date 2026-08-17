@@ -1,0 +1,29 @@
+package zio.openfeature
+
+import zio.Duration
+import zio.durationInt
+
+/** How the total tier (`*OrDefault` / `resolveOrDefault`) logs a served-default fallback — the built-in warn line
+  * that names the flag, why it degraded, and the value served. Hooks and metrics see every evaluation regardless;
+  * only this log line is governed here.
+  *
+  *   - [[FallbackLogging.Off]] — no served-default line at all.
+  *   - [[FallbackLogging.Always]] — every fallback is logged (a provider outage on a hot flag is a log storm).
+  *   - [[FallbackLogging.Throttled]] — at most one line per flag key per `window`; the next emitted line for that key
+  *     carries `(suppressed N similar)`. `Throttled(Duration.Zero)` behaves like `Always`;
+  *     `Throttled(Duration.Infinity)` logs the first fallback per key only.
+  *
+  * An absorbed *defect* is a bug, not outage noise: its line has its own per-key bucket under `Throttled` and is
+  * still emitted under `Off` — this breadcrumb is the only place a swallowed bug surfaces from the value-only
+  * `*OrDefault` variants.
+  */
+sealed trait FallbackLogging extends Product with Serializable
+
+object FallbackLogging {
+  case object Off                              extends FallbackLogging
+  case object Always                           extends FallbackLogging
+  final case class Throttled(window: Duration) extends FallbackLogging
+
+  /** One line per key per minute. */
+  val Default: FallbackLogging = Throttled(60.seconds)
+}

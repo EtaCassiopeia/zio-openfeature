@@ -232,15 +232,15 @@ object NonBlockingInitSpec extends ZIOSpecDefault {
         release <- Promise.make[Nothing, Unit]
         // The evaluation observed from INSIDE verify: the swap must not have happened yet.
         duringVerify <- Ref.make(Option.empty[Either[FeatureFlagError, Boolean]])
+        ffPromise    <- Promise.make[Nothing, FeatureFlags]
         result <- ZIO.scoped {
+          val verify = (p: FeatureProvider) =>
+            seen.set(Some(p)) *>
+              ffPromise.await.flatMap(ff => ff.boolean("x", true).either.flatMap(v => duringVerify.set(Some(v)))) *>
+              release.await
           for {
-            ffRef <- Ref.make(Option.empty[FeatureFlags])
-            verify = (p: FeatureProvider) =>
-              seen.set(Some(p)) *>
-                ffRef.get.flatMap(ZIO.foreach(_)(_.boolean("x", true).either)).flatMap(duringVerify.set) *>
-                release.await
             ff <- FeatureFlags.fromAcquireAsync(acquire, fallback, verify = verify).build.map(_.get[FeatureFlags])
-            _  <- ffRef.set(Some(ff))
+            _  <- ffPromise.succeed(ff)
             // While verify is blocked the fallback still serves and status is Ready (edge case d).
             _       <- Live.live(seen.get.repeatUntil(_.isDefined).timeout(5.seconds))
             pre     <- ff.boolean("x", true)

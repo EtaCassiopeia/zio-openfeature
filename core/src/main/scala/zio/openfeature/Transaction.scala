@@ -64,25 +64,33 @@ object TransactionResult {
 
 final private[openfeature] case class TransactionState(
   overrides: Map[String, Any],
-  evaluated: Ref[Map[String, FlagEvaluation[_]]],
+  evaluated: Ref[Map[String, TransactionState.Cached]],
   context: EvaluationContext,
   cacheEvaluations: Boolean
 ) {
-  def record[A](evaluation: FlagEvaluation[A]): UIO[Unit] =
-    evaluated.update(_ + (evaluation.key -> evaluation))
+
+  /** Stores the evaluation together with `encode(evaluation.value)` — the value the provider would carry — so that a
+    * re-read can run it back through `decode` exactly as it would a provider answer. Computed here, not by the caller,
+    * so the cache cannot be handed a domain value by mistake.
+    */
+  def record[A](evaluation: FlagEvaluation[A])(implicit flagType: FlagType[A]): UIO[Unit] = {
+    // Encoded outside the `update` closure: `Ref.update` may re-run its function on a lost CAS, and `encode` is user code.
+    val wire = flagType.encode(evaluation.value)
+    evaluated.update(_ + (evaluation.key -> TransactionState.Cached(evaluation, wire)))
+  }
 
   def getOverride(key: String): Option[Any] =
     overrides.get(key)
 
-  def getCachedEvaluation(key: String): UIO[Option[FlagEvaluation[_]]] =
+  def getCachedEvaluation(key: String): UIO[Option[TransactionState.Cached]] =
     if (cacheEvaluations) evaluated.get.map(_.get(key))
     else ZIO.none
 
   def getEvaluations: UIO[Map[String, FlagEvaluation[_]]] =
-    evaluated.get
+    evaluated.get.map(_.map { case (k, c) => k -> c.evaluation })
 
   def toResult[A](result: A): UIO[TransactionResult[A]] =
-    evaluated.get.map { evals =>
+    getEvaluations.map { evals =>
       TransactionResult(
         result = result,
         evaluatedFlags = evals,
@@ -92,12 +100,19 @@ final private[openfeature] case class TransactionState(
 }
 
 private[openfeature] object TransactionState {
+
+  /** A recorded evaluation plus the WIRE form of its value. The evaluation carries the domain value (what callers see
+    * in `TransactionResult`); the wire form is what a same-key re-read decodes, because `FlagType.decode` is wire →
+    * domain and feeding it the domain value only works for the built-ins, where the two coincide (#359).
+    */
+  final case class Cached(evaluation: FlagEvaluation[_], wire: Any)
+
   def make(
     overrides: Map[String, Any],
     context: EvaluationContext,
     cacheEvaluations: Boolean = true
   ): UIO[TransactionState] =
-    Ref.make(Map.empty[String, FlagEvaluation[_]]).map { evaluated =>
+    Ref.make(Map.empty[String, Cached]).map { evaluated =>
       TransactionState(overrides, evaluated, context, cacheEvaluations)
     }
 }

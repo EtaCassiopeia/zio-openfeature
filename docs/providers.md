@@ -621,7 +621,23 @@ Key properties:
 - **`URLayer` (error channel `Nothing`)** — a failing real provider is retried, then reported to `onConstructionError`, then left on the fallback. The compiler proves no provider failure can fail your application's layer graph; there is nothing to `catchAll`.
 - **`Ready` from time zero** — the layer build is independent of `acquire` latency; evaluations answer *fallback* values (env-var kill-switches stay correct) instead of failing `ProviderNotReady` until the swap lands.
 - **Fresh fallback + preserved state** — the composed stack (`MultiProvider(real, fallback)` with `FirstSuccessfulStrategy` by default) uses a fresh fallback instance because the SDK shuts the replaced provider down on swap; hooks, contexts, and event handlers survive the swap.
-- **Scope-owned** — layer release interrupts an in-flight `acquire`. A real provider acquired but not yet swapped is torn down on scope close when `acquire` registers it in its `Scope` (e.g. via `ZIO.acquireRelease`); a bare `attemptBlocking(new Provider(...))` registers no finalizer, so teardown of the not-yet-swapped provider is then the caller's responsibility.
+- **Scope-owned** — layer release interrupts an in-flight attempt. A real provider acquired but not yet swapped is torn down on scope close when `acquire` registers it in its `Scope` (e.g. via `ZIO.acquireRelease`); a bare `attemptBlocking(new Provider(...))` registers no finalizer, so teardown of the not-yet-swapped provider is then the caller's responsibility. Each attempt runs in its own child scope, so a candidate that is *rejected* (see `verify` below) or times out is released right away, not at layer close.
+
+#### Gating the swap with `verify`
+
+Construction success is a weak health signal: a provider can construct on bad credentials or an empty config, and then serve *successful wrong values* (built-in defaults with no error code) that a first-successful chain accepts without ever consulting the fallback. `verify` runs on each acquired candidate **before** the swap and, if it fails, rejects the candidate exactly as if `acquire` had failed — the candidate is released, `constructionRetry` advances, the fallback keeps serving, and a terminal failure reaches `onConstructionError` with `verify`'s error. `acquire` and `verify` together are bounded by `constructionTimeout`.
+
+```scala
+FeatureFlags.fromAcquireAsync(
+  acquire  = ZIO.attemptBlocking(new CofOptimizelyLocalProvider(options)),
+  fallback = ZIO.succeed(EnvVarProvider()),
+  verify   = Verify.flagExists[Boolean]("kill-switch")   // the real provider must know this flag
+)
+```
+
+`Verify.flagExists[A](key)` evaluates `key` directly on the bare candidate through the SDK getter matching `FlagType[A].wireType` and fails with `Verify.VerificationFailed(key, errorCode, message)` when the answer carries **any** error code (`FLAG_NOT_FOUND`, `TYPE_MISMATCH`, …); a value with any reason, including `DEFAULT`, passes. `Verify.all(check1, check2, …)` runs several checks in order. Any `OFFeatureProvider => Task[Unit]` works as a check, so a wrapper can probe whatever "actually answering" means for its provider.
+
+`verify` sees the candidate **exactly as `acquire` returned it** — never the composed stack, so in-flight evaluations cannot observe a half-verified provider — which means the SDK has **not** called `initialize()` on it yet (that happens inside the swap) and no ambient context applies. The Optimizely-style provider above is usable pre-`initialize` because its constructor does the work; a provider that only answers after `initialize()` must be initialized inside `acquire` (its `initialize` must then tolerate the SDK's second call), or be verified through its own readiness API. Otherwise every attempt is rejected and the instance is left on the fallback — visibly, via `onConstructionError`.
 
 For a constructor-blocking provider where you want plain async semantics (typed `PROVIDER_NOT_READY` until ready, no fallback), wrap it in [`DeferredProvider`](extras.md#deferredprovider) instead and pass it to `fromProviderAsync`.
 

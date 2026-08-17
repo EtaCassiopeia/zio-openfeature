@@ -222,6 +222,255 @@ object NonBlockingInitSpec extends ZIOSpecDefault {
         r <- released.get
       } yield assertTrue(r == 1)
     },
+    // #349 verify: runs against the bare candidate, before the swap, and gates it
+    test("fromAcquireAsync: verify runs against the bare candidate before the swap and gates it") {
+      val real                                 = new FixedBoolProvider("real", true)
+      val fallback                             = ZIO.succeed[FeatureProvider](new FixedBoolProvider("fb", false))
+      val acquire: RIO[Scope, FeatureProvider] = ZIO.succeed(real)
+      for {
+        seen    <- Ref.make(Option.empty[FeatureProvider])
+        release <- Promise.make[Nothing, Unit]
+        // The evaluation observed from INSIDE verify: the swap must not have happened yet.
+        duringVerify <- Ref.make(Option.empty[Either[FeatureFlagError, Boolean]])
+        result <- ZIO.scoped {
+          for {
+            ffRef <- Ref.make(Option.empty[FeatureFlags])
+            verify = (p: FeatureProvider) =>
+              seen.set(Some(p)) *>
+                ffRef.get.flatMap(ZIO.foreach(_)(_.boolean("x", true).either)).flatMap(duringVerify.set) *>
+                release.await
+            ff <- FeatureFlags.fromAcquireAsync(acquire, fallback, verify = verify).build.map(_.get[FeatureFlags])
+            _  <- ffRef.set(Some(ff))
+            // While verify is blocked the fallback still serves and status is Ready (edge case d).
+            _       <- Live.live(seen.get.repeatUntil(_.isDefined).timeout(5.seconds))
+            pre     <- ff.boolean("x", true)
+            st      <- ff.providerStatus
+            _       <- release.succeed(())
+            swapped <- Live.live(ff.boolean("x", false).either.repeatUntil(_ == Right(true)).timeout(30.seconds))
+            s       <- seen.get
+            dv      <- duringVerify.get
+          } yield assertTrue(
+            s.exists(_ eq real),        // bare candidate, not the composed MultiProvider (edge case e)
+            !pre,                       // fallback answered while verify was in flight
+            st == ProviderStatus.Ready, // and status stayed Ready (no NotReady dip before the swap)
+            dv == Some(Right(false)),   // evaluation issued from inside verify saw the fallback
+            swapped.contains(Right(true))
+          )
+        }
+      } yield result
+    },
+    // #349 verify failure = attempt failure: candidate released, retry advances, terminal error reported
+    test(
+      "fromAcquireAsync: verify failure releases the candidate, advances the retry, and reports the terminal error"
+    ) {
+      val fallback = ZIO.succeed[FeatureProvider](new FixedBoolProvider("fb", false))
+      for {
+        acquired <- Ref.make(0)
+        released <- Ref.make(0)
+        verified <- Ref.make(0)
+        errP     <- Promise.make[Nothing, Throwable]
+        acquire: RIO[Scope, FeatureProvider] = ZIO.acquireRelease(
+          acquired.update(_ + 1).as(new FixedBoolProvider("real", true): FeatureProvider)
+        )(_ => released.update(_ + 1))
+        verify = (_: FeatureProvider) => verified.update(_ + 1) *> ZIO.fail(new RuntimeException("sentinel missing"))
+        result <- ZIO.scoped {
+          FeatureFlags
+            .fromAcquireAsync(
+              acquire,
+              fallback,
+              constructionRetry = Schedule.recurs(2), // 3 attempts, no delay
+              onConstructionError = e => errP.succeed(e).unit,
+              verify = verify
+            )
+            .build
+            .map(_.get[FeatureFlags])
+            .flatMap { ff =>
+              for {
+                err <- errP.await
+                a   <- acquired.get
+                r   <- released.get
+                v   <- verified.get
+                st  <- ff.providerStatus
+                x   <- ff.boolean("x", true)
+              } yield assertTrue(
+                err.getMessage == "sentinel missing", // verify's error is what onConstructionError sees
+                a == 3,
+                v == 3, // every attempt was verified
+                r == 3, // every rejected candidate was released BEFORE layer close
+                st == ProviderStatus.Ready,
+                !x // fallback still serving
+              )
+            }
+        }
+      } yield result
+    },
+    // #349: rejected candidates are released promptly; the winning one lives until layer close
+    test("fromAcquireAsync: a candidate that passes verify after earlier rejections is swapped in and kept alive") {
+      val fallback = ZIO.succeed[FeatureProvider](new FixedBoolProvider("fb", false))
+      for {
+        attempts <- Ref.make(0)
+        released <- Ref.make(0)
+        acquire: RIO[Scope, FeatureProvider] = ZIO.acquireRelease(
+          attempts.updateAndGet(_ + 1).map(n => new FixedBoolProvider(s"real-$n", true): FeatureProvider)
+        )(_ => released.update(_ + 1))
+        // Third candidate is the first to pass.
+        verify = (p: FeatureProvider) =>
+          ZIO
+            .fail(new RuntimeException(s"reject ${p.getMetadata.getName}"))
+            .unless(p.getMetadata.getName == "real-3")
+            .unit
+        liveCounts <- ZIO.scoped {
+          FeatureFlags
+            .fromAcquireAsync(acquire, fallback, constructionRetry = Schedule.recurs(5), verify = verify)
+            .build
+            .map(_.get[FeatureFlags])
+            .flatMap { ff =>
+              for {
+                swapped <- Live.live(ff.boolean("x", false).either.repeatUntil(_ == Right(true)).timeout(30.seconds))
+                a       <- attempts.get
+                r       <- released.get
+              } yield (swapped, a, r)
+            }
+        }
+        afterClose <- released.get
+      } yield assertTrue(
+        liveCounts._1.contains(Right(true)),
+        liveCounts._2 == 3, // stopped retrying once verify passed
+        liveCounts._3 == 2, // the two rejected candidates were released while the layer was live
+        afterClose == 3     // the winner is released at layer close, not before
+      )
+    },
+    // #349: the documented wiring — Verify.flagExists as the verify argument — end to end
+    test("fromAcquireAsync: Verify.flagExists gates the swap on the sentinel flag") {
+      // Answers FLAG_NOT_FOUND for every key until `known` is set, then answers `true` (like a provider whose config
+      // has finally arrived).
+      class LazyProvider(known: java.util.concurrent.atomic.AtomicBoolean) extends FixedBoolProvider("real", true) {
+        override def getBooleanEvaluation(k: String, d: java.lang.Boolean, c: OFEvaluationContext) =
+          if (known.get()) super.getBooleanEvaluation(k, d, c)
+          else ProviderEvaluations.error(d, dev.openfeature.sdk.ErrorCode.FLAG_NOT_FOUND, s"no $k")
+      }
+      val fallback = ZIO.succeed[FeatureProvider](new FixedBoolProvider("fb", false))
+      for {
+        known <- ZIO.succeed(new java.util.concurrent.atomic.AtomicBoolean(false))
+        errP  <- Promise.make[Nothing, Throwable]
+        rejected <- ZIO.scoped {
+          FeatureFlags
+            .fromAcquireAsync(
+              ZIO.succeed(new LazyProvider(known): FeatureProvider),
+              fallback,
+              constructionRetry = Schedule.recurs(1),
+              onConstructionError = e => errP.succeed(e).unit,
+              verify = Verify.flagExists[Boolean]("kill-switch")
+            )
+            .build
+            .map(_.get[FeatureFlags])
+            .flatMap(ff => errP.await.zip(ff.boolean("x", true)))
+        }
+        _ <- ZIO.succeed(known.set(true))
+        swapped <- ZIO.scoped {
+          FeatureFlags
+            .fromAcquireAsync(
+              ZIO.succeed(new LazyProvider(known): FeatureProvider),
+              fallback,
+              verify = Verify.flagExists[Boolean]("kill-switch")
+            )
+            .build
+            .map(_.get[FeatureFlags])
+            .flatMap(ff => Live.live(ff.boolean("x", false).either.repeatUntil(_ == Right(true)).timeout(30.seconds)))
+        }
+      } yield assertTrue(
+        rejected._1 == Verify.VerificationFailed("kill-switch", ErrorCode.FlagNotFound, Some("no kill-switch")),
+        !rejected._2,                 // stayed on the fallback
+        swapped.contains(Right(true)) // sentinel resolves → swap lands
+      )
+    },
+    // #349: layer release while verify is in flight closes the child scope exactly once
+    test("fromAcquireAsync: layer release during verify releases the in-flight candidate exactly once") {
+      val fallback = ZIO.succeed[FeatureProvider](new FixedBoolProvider("fb", false))
+      for {
+        released  <- Ref.make(0)
+        verifying <- Promise.make[Nothing, Unit]
+        releasedP <- Promise.make[Nothing, Unit]
+        acquire: RIO[Scope, FeatureProvider] =
+          ZIO.acquireRelease(ZIO.succeed(new FixedBoolProvider("real", true): FeatureProvider))(_ =>
+            released.update(_ + 1) *> releasedP.succeed(()).unit
+          )
+        verify = (_: FeatureProvider) => verifying.succeed(()) *> ZIO.never
+        _ <- ZIO.scoped {
+          FeatureFlags.fromAcquireAsync(acquire, fallback, verify = verify).build.map(_.get[FeatureFlags]).flatMap {
+            _ => verifying.await // close the layer while verify is blocked
+          }
+        }
+        _ <- Live.live(
+          releasedP.await.timeoutFail(new RuntimeException("candidate was not released on layer close"))(5.seconds)
+        )
+        r <- released.get
+      } yield assertTrue(r == 1)
+    },
+    // #349: a candidate whose swap fails is released promptly, not at layer close
+    test("fromAcquireAsync: swap failure releases the accepted candidate before layer close") {
+      val fallback = ZIO.succeed[FeatureProvider](new FixedBoolProvider("fb", false))
+      val badCompose: (FeatureProvider, FeatureProvider) => FeatureProvider = (_, _) =>
+        new FixedBoolProvider("bad", true) {
+          override def initialize(c: OFEvaluationContext): Unit = throw new RuntimeException("init boom")
+        }
+      for {
+        released <- Ref.make(0)
+        errP     <- Promise.make[Nothing, Throwable]
+        acquire: RIO[Scope, FeatureProvider] =
+          ZIO.acquireRelease(ZIO.succeed(new FixedBoolProvider("real", true): FeatureProvider))(_ =>
+            released.update(_ + 1)
+          )
+        liveCount <- ZIO.scoped {
+          FeatureFlags
+            .fromAcquireAsync(acquire, fallback, compose = badCompose, onConstructionError = e => errP.succeed(e).unit)
+            .build
+            .map(_.get[FeatureFlags])
+            .flatMap(_ => errP.await *> released.get)
+        }
+        afterClose <- released.get
+      } yield assertTrue(liveCount == 1, afterClose == 1)
+    },
+    // #349: acquire + verify share the per-attempt constructionTimeout
+    test("fromAcquireAsync: verify is bounded by constructionTimeout") {
+      val fallback = ZIO.succeed[FeatureProvider](new FixedBoolProvider("fb", false))
+      for {
+        released <- Ref.make(0)
+        errP     <- Promise.make[Nothing, Throwable]
+        acquire: RIO[Scope, FeatureProvider] =
+          ZIO.acquireRelease(ZIO.succeed(new FixedBoolProvider("real", true): FeatureProvider))(_ =>
+            released.update(_ + 1)
+          )
+        verify = (_: FeatureProvider) => ZIO.never
+        result <- Live.live {
+          ZIO.scoped {
+            FeatureFlags
+              .fromAcquireAsync(
+                acquire,
+                fallback,
+                constructionRetry = Schedule.recurs(1), // 2 attempts
+                constructionTimeout = 200.millis,
+                onConstructionError = e => errP.succeed(e).unit,
+                verify = verify
+              )
+              .build
+              .map(_.get[FeatureFlags])
+              .flatMap { ff =>
+                for {
+                  err <- errP.await.timeoutFail(new RuntimeException("onConstructionError never ran"))(10.seconds)
+                  r   <- released.get
+                  x   <- ff.boolean("x", true)
+                } yield assertTrue(
+                  err.isInstanceOf[java.util.concurrent.TimeoutException],
+                  err.getMessage.contains("exceeded"),
+                  r == 2, // both timed-out candidates released
+                  !x
+                )
+              }
+          }
+        }
+      } yield result
+    },
     // AC6 (a) many concurrent waiters
     test("awaitReady: many concurrent waiters all complete when status becomes Ready") {
       for {

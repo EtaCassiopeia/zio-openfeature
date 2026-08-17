@@ -1246,14 +1246,30 @@ object FeatureFlags {
     *
     *   - Status is `Ready` from time zero; evaluations answer fallback values (never `ProviderNotReady`) until the
     *     swap.
-    *   - `acquire` runs with `.retry(constructionRetry)`, each attempt bounded by `constructionTimeout`. On terminal
-    *     failure, `onConstructionError` runs and the instance stays on the fallback.
+    *   - Each attempt runs `acquire` and then `verify` on the acquired candidate, the pair bounded by
+    *     `constructionTimeout` and retried with `constructionRetry`. A `verify` failure is an attempt failure exactly
+    *     like an `acquire` failure: the candidate is released, the schedule advances, the fallback keeps serving. On
+    *     terminal failure, `onConstructionError` runs (with `verify`'s error where that was the cause) and the instance
+    *     stays on the fallback.
+    *   - `verify` sees the **bare** candidate exactly as `acquire` returned it — before `compose`, before the swap,
+    *     never the live stack — so in-flight evaluations cannot observe a half-verified provider. Two consequences: the
+    *     SDK has **not** called `initialize()` on it yet (that happens inside the swap), and no ambient context
+    *     (`contextSource`, global context) applies. A provider that only answers after `initialize()` must be
+    *     initialized inside `acquire` (and its `initialize` must then tolerate the SDK's second call on swap), or be
+    *     verified through its own readiness API rather than an evaluation. Construction success is a weak health signal
+    *     (a provider can construct on bad credentials or an empty config and then serve wrong values that a
+    *     first-successful chain would happily accept); `verify` is where a sentinel evaluation such as
+    *     [[Verify.flagExists]] proves the candidate is actually answering.
     *   - The composed stack uses a **fresh** fallback instance (the SDK shuts down the replaced provider on swap, so
     *     the first fallback must not be reused). Hooks, contexts, and event handlers survive the swap.
-    *   - The construction fiber is scope-owned: layer release interrupts an in-flight `acquire`. A real provider
-    *     acquired but not yet swapped is torn down by scope close **when `acquire` registers it in its `Scope`** (e.g.
-    *     via `ZIO.acquireRelease`); a bare `attemptBlocking(new Provider(...))` registers no finalizer, so teardown of
-    *     the not-yet-swapped provider is then the caller's responsibility.
+    *   - **Teardown.** Every attempt runs `acquire` in its own child `Scope`. A candidate that does not make it into
+    *     service — `acquire` failed after registering finalizers, `verify` failed, the attempt timed out, or the swap
+    *     itself failed and rolled back — has that scope closed immediately, so its finalizers run then rather than at
+    *     layer close. The candidate that is swapped in has its scope handed to the layer scope, so a real provider
+    *     acquired but not yet swapped is still torn down on layer release, and layer release still interrupts an
+    *     in-flight attempt. As before, this only tears down what `acquire` registers in its `Scope` (e.g. via
+    *     `ZIO.acquireRelease`); a bare `attemptBlocking(new Provider(...))` registers no finalizer, so teardown of the
+    *     not-yet-swapped provider is then the caller's responsibility.
     *
     * @param acquire
     *   the real provider as a scoped effect (typically `ZIO.attemptBlocking(new Provider(...))`)
@@ -1262,11 +1278,14 @@ object FeatureFlags {
     * @param compose
     *   how to combine (real, freshFallback) into the swapped-in provider
     * @param constructionRetry
-    *   retry policy for `acquire`
+    *   retry policy for the `acquire` + `verify` attempt
     * @param constructionTimeout
-    *   per-attempt bound on `acquire`
+    *   per-attempt bound on `acquire` + `verify`
     * @param onConstructionError
-    *   run when `acquire` (or the swap) ultimately fails; the instance stays on the fallback
+    *   run when `acquire`, `verify`, or the swap ultimately fails; the instance stays on the fallback
+    * @param verify
+    *   run on each acquired candidate before the swap; failure rejects the candidate and counts as a failed attempt.
+    *   Defaults to accepting every candidate. See [[Verify]] for ready-made checks.
     */
   def fromAcquireAsync(
     acquire: RIO[Scope, OFFeatureProvider],
@@ -1279,7 +1298,10 @@ object FeatureFlags {
     initTimeout: Duration = DefaultInitTimeout,
     // Taken directly rather than via `FeatureFlagsConfig`, because this factory bypasses config entirely — a
     // config-only surface would leave the fallback-first path with no way to supply an ambient context (#353).
-    contextSource: ContextSource = ContextSource.empty
+    contextSource: ContextSource = ContextSource.empty,
+    // Last, so every existing positional call site keeps compiling; `compose` stays the one mid-list parameter a
+    // caller plausibly passes positionally (#349).
+    verify: OFFeatureProvider => Task[Unit] = _ => ZIO.unit
   ): URLayer[Scope, FeatureFlags] =
     ZLayer.scoped {
       for {
@@ -1297,25 +1319,46 @@ object FeatureFlags {
           initTimeout = initTimeout,
           contextSource = contextSource
         ).orDie
-        // Background construction + swap. `acquire`'s Scope is the layer scope, so the acquired real provider is torn
-        // down on layer release even if it was never swapped in. The fiber is `forkScoped`, so an in-flight acquire is
-        // interrupted on release. A terminal construction/swap failure is caught, reported, and left on the fallback —
+        // One attempt = acquire, then verify the candidate, inside a child scope of the layer scope. The child scope
+        // exists so a REJECTED candidate (acquire failed after registering finalizers, verify failed, or the attempt
+        // timed out) is released right away instead of lingering until layer close; the ACCEPTED candidate's scope is
+        // handed to the layer scope, so a real provider acquired but not yet swapped is still torn down on layer
+        // release. Interruption (layer release mid-attempt) takes the same close-the-child path via `onError`. The
+        // mask keeps "close on failure" and "hand over on success" from being skipped by an interrupt landing between
+        // them; `restore` keeps the attempt itself interruptible.
+        attempt = ZIO.uninterruptibleMask { restore =>
+          for {
+            layerScope <- ZIO.scope
+            candidate  <- Scope.make
+            real <- restore(
+              candidate
+                .extend[Any](acquire.flatMap(real => verify(real).as(real)))
+                // `.disconnect` so the per-attempt timeout returns promptly even when `acquire` is an uninterruptible
+                // `attemptBlocking(new Provider(...))` — the underlying constructor may keep running in the background,
+                // but the retry advances instead of waiting on a hung attempt. A finalizer it registers late lands in
+                // an already-closed child scope and runs immediately.
+                .disconnect
+                .timeoutFail(new TimeoutException(s"Provider construction exceeded $constructionTimeout"))(
+                  constructionTimeout
+                )
+            ).onError(cause => candidate.close(Exit.failCause(cause)))
+            _ <- layerScope.addFinalizerExit(candidate.close(_))
+          } yield (candidate, real)
+        }
+        // Background construction + swap. The fiber is `forkScoped`, so an in-flight attempt is interrupted on
+        // release. A terminal construction/verification/swap failure is caught, reported, and left on the fallback —
         // nothing escapes to the (already-built) layer.
         construct = for {
-          real <- acquire.disconnect
-            // `.disconnect` so the per-attempt timeout returns promptly even when `acquire` is an uninterruptible
-            // `attemptBlocking(new Provider(...))` — the underlying constructor may keep running in the background, but
-            // the retry advances instead of waiting on a hung attempt.
-            .timeoutFail(new TimeoutException(s"Provider construction exceeded $constructionTimeout"))(
-              constructionTimeout
-            )
-            .retry(constructionRetry)
+          accepted      <- attempt.retry(constructionRetry)
           freshFallback <- fallback
           _ <- ff
-            .setProvider(compose(real, freshFallback))
+            .setProvider(compose(accepted._2, freshFallback))
             // `setProvider`'s rollback now restores both routing AND status (#282): a failed swap re-registers the
             // still-live fallback with the SDK and sets Ready, so no local force-ready workaround is needed here.
             .mapError(e => new RuntimeException(s"Provider swap failed: $e"))
+            // The rollback leaves the SDK on the fallback, so a candidate whose swap failed is dead: release it now
+            // rather than at layer close. `Scope.close` is idempotent, so the layer-scope finalizer is then a no-op.
+            .tapError(e => accepted._1.close(Exit.fail(e)))
         } yield ()
         _ <- construct.catchAll(onConstructionError).forkScoped
       } yield ff

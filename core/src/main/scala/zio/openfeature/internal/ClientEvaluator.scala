@@ -40,19 +40,28 @@ private[openfeature] trait ClientEvaluator[A] {
 
 private[openfeature] object ClientEvaluator {
 
-  /** A standard-type evaluation produced by [[evaluateStandard]], with the typed extractor pre-applied to the caller's
-    * `A`. The `asInstanceOf[A]` cast lives once here, not at each call site.
+  /** A standard-type evaluation produced by [[evaluateStandard]], with the wire extractor and the `FlagType`'s decoder
+    * pre-applied to the caller's `A`.
+    *
+    * `extract` yields an `Either` rather than an `A` because the wire value is not always the domain value: for a
+    * scalar-backed custom type the decode can legitimately reject what the provider returned (an unknown enum variant),
+    * and that outcome has to be representable. Returning `A` forced an unchecked `asInstanceOf[A]` here, which threw
+    * `ClassCastException` — a defect — instead of producing a typed `TypeMismatch`.
     */
   final case class Erased[A](
     task: Task[FlagEvaluationDetails[_]],
-    extract: FlagEvaluationDetails[_] => A
+    extract: FlagEvaluationDetails[_] => Either[String, A]
   )
 
-  /** Look up the evaluator for a standard type by name and produce the type-erased evaluation. Returns None for
-    * non-standard types (Object, custom) which need special handling.
+  /** Look up the evaluator for `flagType.wireType` and produce the type-erased evaluation. Returns None for non-scalar
+    * wire types (Object, custom) which need special handling.
+    *
+    * Dispatch is on `wireType`, not `typeName`, so a domain type carried over the wire as a scalar is resolved through
+    * that scalar's SDK method. The default sent down is `flagType.encode(default)` — already the wire value — and the
+    * result is run back through `flagType.decode`.
     */
   def evaluateStandard[A](
-    typeName: String,
+    flagType: FlagType[A],
     client: OFClient,
     key: String,
     default: A,
@@ -60,10 +69,10 @@ private[openfeature] object ClientEvaluator {
   ): Option[Erased[A]] = {
     def erased[T](ev: ClientEvaluator[T]): Erased[A] =
       Erased[A](
-        ev.evaluate(client, key, default.asInstanceOf[T], context),
-        details => ev.extractValue(details).asInstanceOf[A]
+        ev.evaluate(client, key, flagType.encode(default).asInstanceOf[T], context),
+        details => flagType.decode(ev.extractValue(details))
       )
-    typeName match {
+    flagType.wireType match {
       case "Boolean" => Some(erased(booleanEvaluator))
       case "String"  => Some(erased(stringEvaluator))
       case "Int"     => Some(erased(intEvaluator))

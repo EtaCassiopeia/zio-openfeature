@@ -175,6 +175,16 @@ given rolloutFlagType: FlagType[RolloutPlan] = FlagType.from(
 )
 ```
 
+On this path the `encoder` matters even if you never read the encoded form yourself: it is what the caller's default
+is converted to before being handed to the provider, so a provider can serve that default on a miss. A missing flag
+comes back the same way it does for the built-in types — the caller's default with the provider's `FLAG_NOT_FOUND`
+error code, not a `TYPE_MISMATCH`. A `TYPE_MISMATCH` on this path means what it says: the provider returned a
+payload your `decoder` rejected.
+
+Note the numbers your decoder receives arrive as `Double` (they pass through the OpenFeature `Value` bridge), and
+null-valued fields are dropped rather than arriving as `null` — decode through `FlagType[Int]`/`FlagType[Long]`
+rather than casting, and model optional fields as `Option`.
+
 ### Scalar-backed custom types
 
 The most common feature flag is an **enum stored as a string** (`"off" | "dual_write" | "shard_only"`). Such

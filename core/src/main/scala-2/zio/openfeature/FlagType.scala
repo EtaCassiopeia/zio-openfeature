@@ -8,9 +8,8 @@ import scala.util.Try
   *
   * '''Round-trip law:''' `decode(encode(a)) == Right(a)` for every `a: A`. Evaluation relies on it in three places, so
   * an instance that breaks it will see values come back different from what went in:
-  *   - for a scalar [[wireType]] the default handed to the provider is `encode(default)`, and it comes back through
-  *     `decode` when the provider serves it (`DEFAULT` reason); a custom object-backed type is resolved with an empty
-  *     default;
+  *   - the default handed to the provider is `encode(default)`, and it comes back through `decode` when the provider
+  *     serves it (`DEFAULT` reason);
   *   - a transaction caches `encode(value)` and serves a same-key re-read through `decode`;
   *   - a transaction override may be given as either the wire value or the domain value — the latter is accepted by
   *     round-tripping it through `encode` and `decode`, with `decode` the arbiter of what is an `A`.

@@ -548,31 +548,53 @@ final private[openfeature] class FeatureFlagsLive(
             }
 
         case None =>
-          // Custom type - try to decode from object
+          // Custom type: resolve through the object surface and decode. The caller's default is ENCODED and sent
+          // down — it used to be an empty `Value()`, which meant a provider could never serve the caller's default
+          // for a custom type the way it does for the scalar ones.
           withTimeout(
             ZIO.attemptBlocking {
-              client.getObjectDetails(key, new dev.openfeature.sdk.Value(), ofContext)
+              client.getObjectDetails(key, anyToValue(flagType.encode(default)), ofContext)
             }
           ).mapError(e => FeatureFlagError.classify(e))
             .flatMap { details =>
-              valueToAny(details.getValue) match {
-                case Some(rawValue) =>
-                  flagType.decode(rawValue) match {
-                    case Right(decoded) =>
-                      toFlagMetadata(details.getFlagMetadata).map { metadata =>
-                        FlagResolution(
-                          value = decoded,
-                          variant = Option(details.getVariant),
-                          reason = toResolutionReason(details.getReason),
-                          metadata = metadata,
-                          flagKey = key,
-                          errorCode = Option(details.getErrorCode).map(ErrorCodeConverter.fromJava),
-                          errorMessage = Option(details.getErrorMessage)
-                        )
-                      }
-                    case Left(_) =>
-                      ZIO.fail(FeatureFlagError.TypeMismatch(key, flagType.typeName, "Object"))
+              val providerError = Option(details.getErrorCode).map(ErrorCodeConverter.fromJava)
+              val decoded       = valueToAny(details.getValue).map(flagType.decode)
+
+              decoded match {
+                case Some(Right(value)) =>
+                  toFlagMetadata(details.getFlagMetadata).map { metadata =>
+                    FlagResolution(
+                      value = value,
+                      variant = Option(details.getVariant),
+                      reason = toResolutionReason(details.getReason),
+                      metadata = metadata,
+                      flagKey = key,
+                      errorCode = providerError,
+                      errorMessage = Option(details.getErrorMessage)
+                    )
                   }
+
+                // The provider itself reported a problem — FLAG_NOT_FOUND, PARSE_ERROR, ... Serve the caller's
+                // default and surface the provider's own code, which is exactly what the scalar path does.
+                // Relabelling this a `TypeMismatch` (the previous behaviour) hid the real cause and made every
+                // miss on a custom type look like a codec bug.
+                case _ if providerError.isDefined =>
+                  toFlagMetadata(details.getFlagMetadata).map { metadata =>
+                    FlagResolution(
+                      value = default,
+                      variant = Option(details.getVariant),
+                      reason = ResolutionReason.Error,
+                      metadata = metadata,
+                      flagKey = key,
+                      errorCode = providerError,
+                      errorMessage = Option(details.getErrorMessage)
+                    )
+                  }
+
+                // The provider answered successfully but the payload is not a valid `A` — a genuine codec failure,
+                // which must stay loud rather than being absorbed into the default.
+                case Some(Left(message)) =>
+                  ZIO.fail(FeatureFlagError.TypeMismatch(key, flagType.typeName, message))
                 case None =>
                   ZIO.fail(FeatureFlagError.TypeMismatch(key, flagType.typeName, "null"))
               }
@@ -662,6 +684,28 @@ final private[openfeature] class FeatureFlagsLive(
       map.asInstanceOf[Map[String, Any]].map { case (k, v) => k -> anyToObject(v) }.asJava
     case null  => null
     case other => other.toString
+  }
+
+  /** Encode an already-decoded value back into an SDK `Value`, so a custom type's default can actually be handed to the
+    * provider on the object path. Same shape as [[anyToObject]], one level up.
+    */
+  private def anyToValue(value: Any): dev.openfeature.sdk.Value = value match {
+    case null                         => new dev.openfeature.sdk.Value()
+    case v: dev.openfeature.sdk.Value => v
+    case b: Boolean                   => new dev.openfeature.sdk.Value(b)
+    case s: String                    => new dev.openfeature.sdk.Value(s)
+    case i: Int                       => new dev.openfeature.sdk.Value(i)
+    case l: Long                      => new dev.openfeature.sdk.Value(l)
+    case d: Double                    => new dev.openfeature.sdk.Value(d)
+    case f: Float                     => new dev.openfeature.sdk.Value(f.toDouble)
+    case list: List[_]                => new dev.openfeature.sdk.Value(list.map(anyToValue).asJava)
+    case map: Map[_, _] =>
+      new dev.openfeature.sdk.Value(
+        dev.openfeature.sdk.Structure.mapToStructure(
+          map.asInstanceOf[Map[String, Any]].map { case (k, v) => k -> anyToObject(v) }.asJava
+        )
+      )
+    case other => new dev.openfeature.sdk.Value(other.toString)
   }
 
   private def valueToMap(value: dev.openfeature.sdk.Value): Map[String, Any] =

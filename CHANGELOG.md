@@ -74,6 +74,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A `FlagType` whose `encode` contradicts its declared `wireType` now fails with a diagnostic error** (#360).
+  Overriding `wireType` to a scalar while leaving `encode` producing something else — the mistake the `wireType`
+  scaladoc warns about, reachable at a documented extension point — used to surface as a bare
+  `ClassCastException` from inside the SDK's bridge method, carrying no flag key and no hint at the cause.
+  Evaluation now checks the encoded value against the box the chosen resolver will unbox, and fails with a
+  `TypeMismatch` naming the domain type, the declared `wireType`, and what `encode` actually produced.
+- **Corrected the CI comment describing the binary-compatibility gate** (#358). `.github/workflows/ci.yml` said
+  `mimaPreviousArtifacts` "is currently empty … so this is a no-op", which was wrong: `commonSettings` baselines
+  every module against its own `1.0.0` and those artifacts are published, so the gate has been live all along.
+  The comment now says so and records the one real caveat — `mimaFailOnNoPrevious := false` means a module with
+  no published baseline is skipped silently, so a green result alone does not prove a module was compared.
 - **The delegating wrappers no longer strip new SDK interface methods** (#333). `CachingProvider`,
   `CircuitBreakerProvider`, `DeferredProvider` and `CachingReasonProvider` forwarded only the surface they were
   written against, so every capability the SDK adds as a *default method* was silently answered by the interface

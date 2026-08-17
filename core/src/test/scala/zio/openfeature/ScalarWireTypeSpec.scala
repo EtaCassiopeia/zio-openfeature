@@ -100,6 +100,19 @@ object ScalarWireTypeSpec extends ZIOSpecDefault {
   implicit val regionFlagType: FlagType[Region] =
     FlagType.from[Region]("Region", Region.Us, Region.parse, Region.render)
 
+  /** #360: an instance that declares a scalar `wireType` its `encode` does not actually produce. This is the mistake
+    * the `wireType` scaladoc warns about, and it is reachable at a documented extension point, so it must surface as a
+    * diagnostic typed error rather than an opaque `ClassCastException` from inside the SDK bridge.
+    */
+  final case class Broken(v: String)
+  implicit val brokenFlagType: FlagType[Broken] = new FlagType[Broken] {
+    def typeName: String                           = "Broken"
+    override def wireType: String                  = "Int"   // declares Int…
+    def defaultValue: Broken                       = Broken("x")
+    def decode(value: Any): Either[String, Broken] = Right(Broken(value.toString))
+    override def encode(value: Broken): Any        = value.v // …but encodes to String
+  }
+
   // Hand-rolled rather than via `FlagType.from`, because `from` builds object-backed instances. Overriding
   // `wireType` on the trait is the supported way to declare a scalar-backed type with a FALLIBLE decoder —
   // `mapped` cannot express rejection, since its `B => A` is total.
@@ -377,6 +390,25 @@ object ScalarWireTypeSpec extends ZIOSpecDefault {
       ZIO.scoped {
         build(new WireProvider(identity, "DEFAULT"), "builtin-bool").flatMap { ff =>
           ff.value[Boolean]("b.flag", false).map(v => assertTrue(v))
+        }
+      }
+    },
+    test("a FlagType whose encode contradicts its declared wireType fails with a diagnostic TypeMismatch") {
+      ZIO.scoped {
+        // Without the guard this is a bare ClassCastException from the evaluator's bridge method (unboxing a
+        // String to Int) — a defect with no flag key and no hint about the wireType/encode mismatch. `.either`
+        // does not catch defects, so this test fails outright if the guard is missing rather than passing vacuously.
+        build(new WireProvider(identity, "DEFAULT"), "broken").flatMap { ff =>
+          ff.value[Broken]("broken.flag", Broken("x")).either.map { r =>
+            assertTrue(
+              r.isLeft,
+              r.left.toOption.exists(_.isInstanceOf[FeatureFlagError.TypeMismatch]),
+              // The diagnostic must name the domain type, the declared wire type, and what encode actually produced.
+              r.left.toOption.exists(_.message.contains("Broken")),
+              r.left.toOption.exists(_.message.contains("Int")),
+              r.left.toOption.exists(_.message.contains("String"))
+            )
+          }
         }
       }
     },

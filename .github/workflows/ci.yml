@@ -75,8 +75,14 @@ jobs:
         run: sbt "++${{ matrix.scala-version }} test"
 
   # Binary-compatibility check runs once on the primary JDK. mima checks bytecode, which is JDK-independent given a
-  # single target bytecode level. `mimaPreviousArtifacts` is currently empty (see build.sbt) so this is a no-op until
-  # the first post-mima release tag — the step is wired now so it's already in CI when that tag lands.
+  # single target bytecode level. `mimaPreviousArtifacts` baselines each module against its own `1.0.0` (see
+  # `commonSettings` in build.sbt), and those artifacts are published on Maven Central — so this gate is LIVE: it
+  # really does compare every PR against 1.0.0, and an accidental break fails here.
+  #
+  # One caveat when reading a green result: `ThisBuild / mimaFailOnNoPrevious := false` means a module with no
+  # published baseline (a newly added one, before its first release) is skipped SILENTLY rather than failing. So
+  # "mima green" is not by itself proof that a given module was compared — check `mimaPreviousArtifacts` resolves
+  # for a new module when you add one.
   mima:
     runs-on: ubuntu-latest
     timeout-minutes: 10

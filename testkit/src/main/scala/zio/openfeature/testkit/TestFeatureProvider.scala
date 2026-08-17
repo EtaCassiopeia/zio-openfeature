@@ -201,11 +201,19 @@ final class TestFeatureProvider private (
   }
 
   private def anyToValue(any: Any): Value = any match {
+    // Option is unwrapped before the `other.toString` fallback below, and a `Value` passes straight through. Without
+    // these, seeding a flag with an encoder's output — `setFlag(key, FlagType[Rollout].encode(r))`, the natural way
+    // to test a derived product — sends an Option-valued field as the literal string "Some(x)". Kept in step with
+    // the equivalent helper in `FeatureFlagsLive`.
+    case v: Value      => v
+    case Some(inner)   => anyToValue(inner)
+    case None          => new Value()
     case b: Boolean    => new Value(b)
     case s: String     => new Value(s)
     case i: Int        => new Value(i)
     case l: Long       => new Value(l)
     case d: Double     => new Value(d)
+    case f: Float      => new Value(f.toDouble)
     case list: List[_] => new Value(list.map(anyToValue).asJava)
     case map: Map[_, _] =>
       val javaMap: java.util.Map[String, Object] = map

@@ -236,6 +236,45 @@ A decode failure becomes a typed `TypeMismatch` error rather than a silently-sub
 `wireType` also determines the `FlagValueType` hooks are filtered on, so a hook scoped to
 `FlagValueType.String` sees these evaluations.
 
+### Derived instances (Scala 3)
+
+Most of the above can be skipped entirely: `FlagType` derives from the type's own structure, so a
+string-backed enum or a structured flag needs no hand-written codec.
+
+```scala
+enum Plan derives FlagType:
+  case Free, Premium, Enterprise
+
+final case class Rollout(tier: String, pct: Int = 10, note: Option[String]) derives FlagType
+```
+
+An **enum with parameterless cases** derives a string codec over the case labels — `wireType` is `"String"`, so
+it resolves through the provider's string method. `encode` emits the label as declared, `decode` matches
+case-insensitively, and `defaultValue` is the first declared case. A case *with* parameters is not supported and
+fails to compile; use `FlagType.from`/`mapped` for those.
+
+A **product** derives a `Map[String, Any]` codec, field by field through each field's own `FlagType`, so nested
+products, `Option` and `List` fields all work with no extra wiring. It stays on the object path. Unknown keys in
+the payload are ignored, which keeps forward-compatible payloads working, and an absent key resolves in this
+order:
+
+1. the field's declared **Scala default**, if it has one (`pct = 10` above);
+2. otherwise whatever the field's own instance makes of an absent value — which is how an `Option` field becomes
+   `None`;
+3. otherwise a decode error naming the field.
+
+`defaultValue` for a derived product is built from its fields' own `defaultValue`s — `Rollout("", 0, None)` — a
+type-level zero rather than the declared Scala defaults. That asymmetry is deliberate: `defaultValue` is never
+consulted when evaluating (the caller's default is), whereas the Scala defaults describe how to read a real
+payload.
+
+Derivation is Scala 3 only, since it is built on `Mirror`. On 2.13 the same types are written with
+`FlagType.from`/`mapped`, which remain fully supported on both versions.
+
+> `FlagType.derived` is deliberately **not** a `given`, so it never competes in implicit search and the built-in
+> instances keep priority for their own shapes. Use a `derives` clause, or write
+> `given FlagType[X] = FlagType.derived[X]` explicitly.
+
 ### Typed Flag Definitions
 
 The call above restates the key, the type and the default at every use site, so they can drift — two sites

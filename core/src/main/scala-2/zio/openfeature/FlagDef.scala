@@ -27,6 +27,12 @@ package zio.openfeature
   * '''not''' equal — that is deliberate, since they are genuinely different definitions. Use [[sameKey]] to compare by
   * key alone, across differing type parameters.
   *
+  * ==Inference with a case-object default==
+  *
+  * `FlagDef("k", Tier.Free)` where `Tier.Free` is a `case object` infers `A` as `Tier.Free.type`, not `Tier`, and then
+  * looks for a `FlagType[Tier.Free.type]` that does not exist. Name the type when the default is a case object —
+  * `FlagDef[Tier]("k", Tier.Free)`.
+  *
   * ==Copying==
   *
   * `flagType` lives in an `implicit` parameter list, so the derived `copy` re-summons a `FlagType[A]` from the call

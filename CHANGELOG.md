@@ -40,6 +40,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Typed test fixtures from a `FlagDef` (`testkit`)** (#351). `TestFeatureProvider`'s key-based
+  `setFlag[A](key, value)` accepts anything, so a fixture could pin a value production would never decode — the test
+  passed against the fixture and production failed with `TYPE_MISMATCH`. Building the fixture from a `FlagDef`
+  type-checks the value against the flag's declared type and stores it through `flagType.encode`, so the test reads
+  it back through the same decode path production uses:
+
+  ```scala
+  import zio.openfeature.testkit.FlagOverride.Ops   // brings `:=` into scope
+
+  TestFeatureProvider.layer(UserPlan := Tier.Premium)   // compiles
+  TestFeatureProvider.layer(UserPlan := "premium")      // does not
+  ```
+
+  - New `FlagOverride` plus `:=` on any `FlagDef`. `:=` also checks the encoding **round-trips** back through
+    `decode` and fails loudly if it cannot — a codec that cannot read its own output would otherwise produce a
+    fixture the test believes in and production cannot read.
+  - `setFlag`, `setFlags`, `replaceFlags`, `removeFlag`, `wasEvaluated` and `evaluationCount` all gain `FlagDef`
+    forms, and every flag-seeding factory gains a typed twin — `make`, `layer`, `scopedLayer`, `asyncLayer`,
+    `asyncReadyLayer`, `providerLayer` and `scopedAsyncLayer` — so reaching for another factory after learning `layer`
+    does not drop back to `Map[String, Any]`.
+  - Two overrides for the same key are rejected rather than silently merged last-wins: that means two `FlagDef`s share
+    a key, most likely at different types, which is a fixture bug worth failing on.
+  - Additive: the key-based API is unchanged and remains the way to test an undeclared key, a foreign key, or a
+    negative case such as `FLAG_NOT_FOUND`.
+  - `FlagOverride` is deliberately **not** parameterised: the parameter would be unused after construction and would
+    force a `[?]`/`[_]` wildcard into varargs signatures that cannot be spelled once across Scala 2.13 and 3. The
+    compile-time guarantee lives in `:=`, which requires an `A` for a `FlagDef[A]`. For the same cross-build reason
+    `:=` is an `implicit class` rather than a Scala 3 `extension`, which also means 2.13 projects get the sugar.
+  - `asyncReadyLayer`'s typed twin takes `initDelay` explicitly, because the untyped one defaults both parameters —
+    a plain varargs overload would have made the currently-legal `asyncReadyLayer()` ambiguous.
+
+  **Source-compatibility note for Scala 2.13 only.** Every method that now has both a `Map[String, Any]` and a
+  `FlagOverride*` form — `make`, `layer`, `scopedLayer`, `asyncLayer`, `asyncReadyLayer`, `providerLayer`,
+  `scopedAsyncLayer`, and the instance-level `setFlags`/`replaceFlags` — loses 2.13's ability to infer the type
+  arguments of a bare `Map.empty` at that call site. `TestFeatureProvider.layer(Map.empty)` stops compiling and needs
+  either `layer` (the parameterless form, which is what such a call usually meant) or `layer(Map.empty[String, Any])`;
+  likewise `provider.setFlags(Map.empty)`. A populated `Map(...)` literal is unaffected, as is every call on Scala 3,
+  which infers it fine. Four call sites inside this repo needed the adjustment, so it is a real if narrow break rather
+  than a theoretical one.
 - **`FlagTypeLaws` (`testkit`) — law-check a hand-written `FlagType`** (#348). Holds a custom codec to the
   round-trip contract `FlagType` documents, driven by a `Gen`:
   `FlagTypeLaws.all(Gen.int.map(Celsius(_)))`. Two laws, deliberately distinct:

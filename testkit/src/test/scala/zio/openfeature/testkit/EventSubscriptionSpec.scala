@@ -11,7 +11,7 @@ import zio.openfeature._
 object EventSubscriptionSpec extends ZIOSpecDefault {
 
   private def testLayer: ZLayer[Any, Throwable, TestFeatureProvider with FeatureFlags] =
-    Scope.default >>> TestFeatureProvider.layer(Map.empty)
+    Scope.default >>> TestFeatureProvider.layer
 
   private def awaitCount(ref: Ref[Int], atLeast: Int): UIO[Int] =
     ref.get.repeatUntil(_ >= atLeast)

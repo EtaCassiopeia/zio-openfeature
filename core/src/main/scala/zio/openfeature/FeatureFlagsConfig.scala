@@ -13,7 +13,8 @@ final case class FeatureFlagsConfig(
   initTimeout: Duration = FeatureFlags.DefaultInitTimeout,
   initMode: InitMode = InitMode.Sync,
   apiOwnership: ApiOwnership = ApiOwnership.Auto,
-  contextSource: ContextSource = ContextSource.empty
+  contextSource: ContextSource = ContextSource.empty,
+  fallbackLogging: FallbackLogging = FallbackLogging.Default
 ) {
   def withDomain(d: String): FeatureFlagsConfig               = copy(domain = Some(d))
   def withVersion(v: String): FeatureFlagsConfig              = copy(version = Some(v))
@@ -31,6 +32,9 @@ final case class FeatureFlagsConfig(
     * `++` to add to one.
     */
   def withContextSource(source: ContextSource): FeatureFlagsConfig = copy(contextSource = source)
+
+  /** How the total tier logs served-default fallbacks — see [[FallbackLogging]]. */
+  def withFallbackLogging(policy: FallbackLogging): FeatureFlagsConfig = copy(fallbackLogging = policy)
 }
 
 /** How the provider is initialized.

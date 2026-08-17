@@ -287,6 +287,8 @@ underneath every factory call, however it's spelled.
 | `initTimeout` | 30 seconds | `.withInitTimeout(d)` |
 | `initMode` | `InitMode.Sync` | `.withAsyncInit` / `.withSyncInit`, or the constructor arg `initMode = InitMode.Async` |
 | `apiOwnership` | `ApiOwnership.Auto` | `.withApiOwnership(o)` |
+| `contextSource` | `ContextSource.empty` | `.withContextSource(s)` |
+| `fallbackLogging` | `FallbackLogging.Default` (one warn line per flag key per 60s) | `.withFallbackLogging(FallbackLogging.Off / Always / Throttled(d))` — see [Total Evaluation](getting-started.md#total-evaluation-never-fails) |
 
 **Combinations that were inexpressible before #253** are now one config value away:
 

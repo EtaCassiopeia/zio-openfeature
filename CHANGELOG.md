@@ -40,6 +40,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Served-default fallbacks are logged at warn, rate-limited per flag key** (#350). The total tier
+  (`*OrDefault` / `resolveOrDefault`) previously logged only absorbed *defects* — every occurrence, unthrottled — and
+  said nothing when a provider-reported problem (`FLAG_NOT_FOUND`, `PROVIDER_NOT_READY`, a timeout, …) made it serve
+  the default. It now logs every served-default fallback at warn (`Flag 'k' fell back to its default false
+  (FlagNotFound: …)`), **one line per flag key per window** (default 60 s), with `(suppressed N similar)` on the next
+  line for that key; the absorbed-defect line goes through the same limiter in its own per-key bucket, keeps its cause,
+  and is still emitted under `Off` (a defect is a bug, not outage noise). The per-key map is bounded (1024 keys; beyond
+  that, further keys share one throttled overflow bucket). Policy is the new `FallbackLogging` ADT —
+  `Off | Always | Throttled(window)`, default `Throttled(60.seconds)` — set with
+  `FeatureFlagsConfig.withFallbackLogging(...)` or, on the config-less factory, `fromAcquireAsync(...,
+  fallbackLogging = ...)`. Hooks and metrics still see every evaluation; only the built-in log line is limited.
+  Wired through a defaulted `protected def logFallback` on the `FeatureFlags` trait (overridden by the live instance),
+  so external implementors keep today's behaviour unchanged. `FeatureFlagsConfig` gains a ninth field — same
+  binary-compat note and remedy as #353, covered by the existing MiMa filters.
 - **`fromAcquireAsync` tells you whether the real provider is live** (#352). The factory is fallback-first, so
   `providerStatus` reads `Ready` from time zero (and dips through `NotReady` during the swap) — a `/ready` probe
   could not tell fallback values from real ones. It now returns `URLayer[Scope, FeatureFlags with AcquireStatus]`,

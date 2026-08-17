@@ -6,6 +6,7 @@ import zio.openfeature.internal.{
   ClientEvaluator,
   ContextConverter,
   ErrorCodeConverter,
+  FallbackLogLimiter,
   FeatureFlagsState,
   ProviderStatusMachine,
   ValueBridge
@@ -39,11 +40,21 @@ final private[openfeature] class FeatureFlagsLive(
   // `shutdown` must NOT touch the shared api or provider; both belong to whatever owns the api's lifecycle.
   ownsApi: Boolean,
   swapLock: Semaphore,
+  fallbackLogLimiter: FallbackLogLimiter,
   onReady: Option[java.util.concurrent.CountDownLatch] = None,
   evaluationTimeout: Option[Duration] = Some(FeatureFlags.DefaultEvaluationTimeout),
   // Pull-based ambient context (#353), consulted per evaluation and per `track` in `effectiveContext`.
   contextSource: ContextSource = ContextSource.empty
 ) extends FeatureFlags {
+
+  // The total tier's served-default breadcrumb, under this instance's `FallbackLogging` policy (#350). Lives here, not
+  // in `FeatureFlagsState`: the trait's `totalResolution` reaches state only through this hook.
+  override protected def logFallback[A](
+    key: String,
+    resolution: FlagResolution[A],
+    defect: Option[Cause[Nothing]]
+  ): UIO[Unit] =
+    fallbackLogLimiter.log(key, resolution, defect)
 
   // True while `setProvider` holds the swap lock and is re-registering the provider. Bridge events must not drive
   // the status machine during that window: a queued event from the OLD provider would clobber the swap's own

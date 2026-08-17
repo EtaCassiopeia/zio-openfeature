@@ -12,7 +12,8 @@ final case class FeatureFlagsConfig(
   evaluationTimeout: EvaluationTimeout = EvaluationTimeout.Default,
   initTimeout: Duration = FeatureFlags.DefaultInitTimeout,
   initMode: InitMode = InitMode.Sync,
-  apiOwnership: ApiOwnership = ApiOwnership.Auto
+  apiOwnership: ApiOwnership = ApiOwnership.Auto,
+  contextSource: ContextSource = ContextSource.empty
 ) {
   def withDomain(d: String): FeatureFlagsConfig               = copy(domain = Some(d))
   def withVersion(v: String): FeatureFlagsConfig              = copy(version = Some(v))
@@ -24,6 +25,12 @@ final case class FeatureFlagsConfig(
   def withAsyncInit: FeatureFlagsConfig                       = copy(initMode = InitMode.Async)
   def withSyncInit: FeatureFlagsConfig                        = copy(initMode = InitMode.Sync)
   def withApiOwnership(o: ApiOwnership): FeatureFlagsConfig   = copy(apiOwnership = o)
+
+  /** Consult `source` for ambient context on every evaluation, merged between the client and fiber-local contexts — see
+    * [[ContextSource]] for the full precedence and why that slot matters. Replaces any source already set; compose with
+    * `++` to add to one.
+    */
+  def withContextSource(source: ContextSource): FeatureFlagsConfig = copy(contextSource = source)
 }
 
 /** How the provider is initialized.

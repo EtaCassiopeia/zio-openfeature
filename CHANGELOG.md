@@ -79,6 +79,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   likewise `provider.setFlags(Map.empty)`. A populated `Map(...)` literal is unaffected, as is every call on Scala 3,
   which infers it fine. Four call sites inside this repo needed the adjustment, so it is a real if narrow break rather
   than a theoretical one.
+
+- **`ContextSource` — pull-based ambient evaluation context** (#353). Where every existing context level is
+  push-based (the caller sets it), a `ContextSource` is an effect the library *consults* on each evaluation —
+  for request identity the application holds somewhere the ZIO environment cannot see (an MDC-style map, a
+  tracing/tag manager, a correlation-id carrier), so there is no natural place to call `withContext`:
+
+  ```scala
+  val fromMdc = ContextSource(ZIO.succeed(EvaluationContext(Mdc.get("userId"))))
+
+  FeatureFlags.fromProvider(provider, FeatureFlagsConfig().withContextSource(fromMdc))
+  ```
+
+  - **Precedence is the point.** The source is merged at a fixed slot:
+    `Invocation > Scoped > ContextSource > Client > Transaction > Global`. Ambient identity **overrides**
+    static client and global context, while an explicit `withContext` or a per-call context still **wins**
+    over it. That slot is why this is library machinery rather than a `before` hook: a hook's contribution is
+    merged on top of the finished effective context, so it could only ever take the *highest*-precedence slot,
+    and `HookContext` exposes one flattened context with no provenance, so a hook cannot rebuild the ordering
+    either.
+  - `current` returns `UIO`, so a source can never fail an evaluation; a source with nothing to contribute
+    returns `EvaluationContext.empty`, which merges to a no-op. It is consulted on every evaluation and on
+    `track`, so keep it cheap (a `FiberRef` or `ThreadLocal` read, not a network call).
+  - Compose with `++` (right-hand side wins on collisions, matching merge everywhere else);
+    `ContextSource.empty` is the identity and the default, so **an existing client's behaviour is unchanged**.
+  - `FeatureFlagsConfig` gains a defaulted `contextSource` field and a `withContextSource` setter.
+  - **Source-compatible, but NOT binary-compatible** — the first whitelisted break since the `1.0.0` freeze.
+    Every existing call site still compiles unchanged, but adding a field to a case class regenerates
+    `apply`/`copy`/`<init>` with a new descriptor, and adding a trailing defaulted parameter is still a new
+    signature in bytecode. A caller compiled against `1.0.0` and **not recompiled** will hit a
+    `NoSuchMethodError` on `FeatureFlagsConfig.{apply, copy, <init>}` or on
+    `FeatureFlags.{build, buildAsync, fromAcquireAsync}`. **Remedy: recompile against the new release** — no
+    source edits are needed. On Scala 2.13 the `FeatureFlagsConfig` companion also stops extending
+    `AbstractFunction7` (2.13 gives a case-class companion an `AbstractFunctionN` parent for its arity; Scala 3
+    emits none), which affects only code that relied on that companion as a `Function7`. Whitelisted in
+    `build.sbt` with `mimaBinaryIssueFilters` scoped to exactly those symbols, so any unrelated break in the
+    same classes still fails the gate.
 - **`FlagTypeLaws` (`testkit`) — law-check a hand-written `FlagType`** (#348). Holds a custom codec to the
   round-trip contract `FlagType` documents, driven by a `Gen`:
   `FlagTypeLaws.all(Gen.int.map(Celsius(_)))`. Two laws, deliberately distinct:

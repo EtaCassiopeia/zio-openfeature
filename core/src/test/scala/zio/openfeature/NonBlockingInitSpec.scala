@@ -471,6 +471,247 @@ object NonBlockingInitSpec extends ZIOSpecDefault {
         }
       } yield result
     },
+    // #352: Constructing until the swap, Live after; onSwapped runs once Live is observable
+    test("acquireStatus: Constructing until the swap, Live after, onSwapped runs once Live is observable") {
+      val fallback = ZIO.succeed[FeatureProvider](new FixedBoolProvider("fb", false))
+      for {
+        gate          <- Promise.make[Nothing, Unit]
+        seenInSwapped <- Promise.make[Nothing, AcquireState]
+        acquire: RIO[Scope, FeatureProvider] = gate.await.as(new FixedBoolProvider("real", true): FeatureProvider)
+        result <- ZIO.scoped {
+          for {
+            statusP <- Promise.make[Nothing, AcquireStatus]
+            env <- FeatureFlags
+              .fromAcquireAsync(
+                acquire,
+                fallback,
+                onSwapped = statusP.await.flatMap(_.get).flatMap(seenInSwapped.succeed(_)).unit
+              )
+              .build
+            ff     = env.get[FeatureFlags]
+            status = env.get[AcquireStatus]
+            _      <- statusP.succeed(status)
+            before <- status.get
+            v0     <- ff.boolean("x", true)
+            _      <- gate.succeed(())
+            live   <- Live.live(status.changes.filter(_ == AcquireState.Live).runHead.timeout(30.seconds))
+            inCb   <- Live.live(seenInSwapped.await.timeout(10.seconds))
+            after  <- status.get
+            v1     <- Live.live(ff.boolean("x", false).either.repeatUntil(_ == Right(true)).timeout(30.seconds))
+          } yield assertTrue(
+            before == AcquireState.Constructing,
+            !before.isLive,
+            !v0, // fallback serving while Constructing
+            live.flatten == Some(AcquireState.Live),
+            inCb == Some(AcquireState.Live), // onSwapped observes Live via `get`
+            after == AcquireState.Live,
+            after.isLive,
+            v1.contains(Right(true))
+          )
+        }
+      } yield result
+    },
+    // #352: verify rejections and retries do not leave Constructing; Live only once acquired AND verified AND swapped
+    test("acquireStatus: stays Constructing across verify rejections and retries, then Live") {
+      val fallback = ZIO.succeed[FeatureProvider](new FixedBoolProvider("fb", false))
+      for {
+        attempts <- Ref.make(0)
+        seen     <- Ref.make(List.empty[AcquireState])
+        acquire: RIO[Scope, FeatureProvider] =
+          attempts.updateAndGet(_ + 1).map(n => new FixedBoolProvider(s"real-$n", true): FeatureProvider)
+        result <- ZIO.scoped {
+          for {
+            statusP <- Promise.make[Nothing, AcquireStatus]
+            verify = (p: FeatureProvider) =>
+              statusP.await.flatMap(_.get).flatMap(s => seen.update(s :: _)) *>
+                ZIO.fail(new RuntimeException("reject")).unless(p.getMetadata.getName == "real-3").unit
+            env <- FeatureFlags
+              .fromAcquireAsync(acquire, fallback, constructionRetry = Schedule.recurs(5), verify = verify)
+              .build
+            status = env.get[AcquireStatus]
+            _      <- statusP.succeed(status)
+            live   <- Live.live(status.changes.filter(_ == AcquireState.Live).runHead.timeout(30.seconds))
+            states <- seen.get
+            n      <- attempts.get
+          } yield assertTrue(
+            live.flatten == Some(AcquireState.Live),
+            n == 3,
+            states.length == 3,
+            states.forall(_ == AcquireState.Constructing) // every verify (incl. the passing one) ran while Constructing
+          )
+        }
+      } yield result
+    },
+    // #352: terminal failure → Failed(cause), set before onConstructionError, and terminal
+    test("acquireStatus: terminal acquire failure sets Failed(cause) before onConstructionError and stays Failed") {
+      val fallback = ZIO.succeed[FeatureProvider](new FixedBoolProvider("fb", false))
+      val boom     = new RuntimeException("boom")
+      for {
+        inCb <- Promise.make[Nothing, (Throwable, AcquireState)]
+        acquire: RIO[Scope, FeatureProvider] = ZIO.fail(boom)
+        result <- ZIO.scoped {
+          for {
+            statusP <- Promise.make[Nothing, AcquireStatus]
+            env <- FeatureFlags
+              .fromAcquireAsync(
+                acquire,
+                fallback,
+                constructionRetry = Schedule.recurs(2),
+                onConstructionError = e => statusP.await.flatMap(_.get).flatMap(s => inCb.succeed((e, s))).unit
+              )
+              .build
+            status = env.get[AcquireStatus]
+            _   <- statusP.succeed(status)
+            cb  <- inCb.await
+            now <- status.get
+            // Give any hypothetical "retry back to Constructing" a chance to happen; Failed must be terminal.
+            later <- Live.live(ZIO.sleep(200.millis) *> status.get)
+            v     <- env.get[FeatureFlags].boolean("x", true)
+          } yield assertTrue(
+            cb._1 eq boom,
+            cb._2 == AcquireState.Failed(boom), // already Failed inside onConstructionError
+            now == AcquireState.Failed(boom),
+            later == AcquireState.Failed(boom),
+            !now.isLive,
+            !v // fallback still serving
+          )
+        }
+      } yield result
+    },
+    // #352: verified-but-swap-failed → Failed, and onConstructionError still fires (compat)
+    test("acquireStatus: swap failure sets Failed and still fires onConstructionError") {
+      val fallback = ZIO.succeed[FeatureProvider](new FixedBoolProvider("fb", false))
+      val badCompose: (FeatureProvider, FeatureProvider) => FeatureProvider = (_, _) =>
+        new FixedBoolProvider("bad", true) {
+          override def initialize(c: OFEvaluationContext): Unit = throw new RuntimeException("init boom")
+        }
+      for {
+        errP <- Promise.make[Nothing, Throwable]
+        acquire: RIO[Scope, FeatureProvider] = ZIO.succeed(new FixedBoolProvider("real", true))
+        result <- ZIO.scoped {
+          for {
+            env <- FeatureFlags
+              .fromAcquireAsync(
+                acquire,
+                fallback,
+                compose = badCompose,
+                onConstructionError = e => errP.succeed(e).unit
+              )
+              .build
+            err   <- errP.await
+            state <- env.get[AcquireStatus].get
+          } yield assertTrue(
+            err.getMessage.startsWith("Provider swap failed"),
+            err.isInstanceOf[ProviderSwapFailed], // structured cause survives, not just a message
+            state == AcquireState.Failed(err)
+          )
+        }
+      } yield result
+    },
+    // #352: verify rejecting on EVERY attempt → Failed(verify's error) once the schedule is exhausted
+    test("acquireStatus: verify failing on every attempt sets Failed with verify's error") {
+      val fallback                             = ZIO.succeed[FeatureProvider](new FixedBoolProvider("fb", false))
+      val verifyErr                            = new RuntimeException("verify always rejects")
+      val acquire: RIO[Scope, FeatureProvider] = ZIO.succeed(new FixedBoolProvider("real", true))
+      for {
+        errP <- Promise.make[Nothing, Throwable]
+        result <- ZIO.scoped {
+          FeatureFlags
+            .fromAcquireAsync(
+              acquire,
+              fallback,
+              constructionRetry = Schedule.recurs(2),
+              onConstructionError = e => errP.succeed(e).unit,
+              verify = (_: FeatureProvider) => ZIO.fail(verifyErr)
+            )
+            .build
+            .flatMap { env =>
+              for {
+                err   <- errP.await
+                state <- env.get[AcquireStatus].get
+              } yield assertTrue(err eq verifyErr, state == AcquireState.Failed(verifyErr))
+            }
+        }
+      } yield result
+    },
+    // #352: a DEFECT in construction (not a typed failure) still resolves to Failed and reaches onConstructionError,
+    // instead of killing the fiber with the state stuck at Constructing forever
+    test("acquireStatus: a defect during acquire sets Failed(cause) and fires onConstructionError") {
+      val fallback = ZIO.succeed[FeatureProvider](new FixedBoolProvider("fb", false))
+      val boom     = new IllegalStateException("ctor boom")
+      // `ZIO.succeed` does not catch — this is a Die, the shape a caller gets by not using attempt/attemptBlocking.
+      val acquire: RIO[Scope, FeatureProvider] = ZIO.succeed[FeatureProvider](throw boom)
+      for {
+        errP <- Promise.make[Nothing, Throwable]
+        result <- ZIO.scoped {
+          FeatureFlags
+            .fromAcquireAsync(acquire, fallback, onConstructionError = e => errP.succeed(e).unit)
+            .build
+            .flatMap { env =>
+              for {
+                err <- Live
+                  .live(errP.await.timeoutFail(new RuntimeException("onConstructionError never ran"))(10.seconds))
+                outcome <- Live.live(
+                  env.get[AcquireStatus].changes.filter(_ != AcquireState.Constructing).runHead.timeout(10.seconds)
+                )
+                v <- env.get[FeatureFlags].boolean("x", true)
+              } yield assertTrue(
+                err eq boom,
+                outcome.flatten == Some(
+                  AcquireState.Failed(boom)
+                ), // the documented "wait for the outcome" idiom returns
+                !v // fallback still serving
+              )
+            }
+        }
+      } yield result
+    },
+    // #352: changes emits the current state first, then transitions — a late subscriber is not left waiting
+    test("acquireStatus: changes emits the current state first and then transitions") {
+      val fallback = ZIO.succeed[FeatureProvider](new FixedBoolProvider("fb", false))
+      for {
+        gate <- Promise.make[Nothing, Unit]
+        acquire: RIO[Scope, FeatureProvider] = gate.await.as(new FixedBoolProvider("real", true): FeatureProvider)
+        result <- ZIO.scoped {
+          for {
+            env <- FeatureFlags.fromAcquireAsync(acquire, fallback).build
+            status = env.get[AcquireStatus]
+            // Early subscriber: `changes` hands over the current value on subscribe, so the first `take` proves the
+            // subscription is attached (gate still closed → Constructing) before the transition is triggered.
+            q      <- Queue.unbounded[AcquireState]
+            _      <- status.changes.runForeach(q.offer).forkScoped
+            first  <- q.take
+            _      <- gate.succeed(())
+            second <- Live.live(q.take.timeout(30.seconds))
+            // Late subscriber (after Live): first element is the CURRENT state, not a wait for the next change.
+            late <- Live.live(status.changes.runHead.timeout(10.seconds))
+          } yield assertTrue(
+            first == AcquireState.Constructing,
+            second == Some(AcquireState.Live),
+            late.flatten == Some(AcquireState.Live)
+          )
+        }
+      } yield result
+    },
+    // #352: the layer provides BOTH services, and the widened output still ascribes to the old type
+    test(
+      "acquireStatus: layer provides FeatureFlags and AcquireStatus and still ascribes to URLayer[Scope, FeatureFlags]"
+    ) {
+      val fallback                             = ZIO.succeed[FeatureProvider](new FixedBoolProvider("fb", false))
+      val acquire: RIO[Scope, FeatureProvider] = ZIO.succeed(new FixedBoolProvider("real", true))
+      val widened: URLayer[Scope, FeatureFlags with AcquireStatus] = FeatureFlags.fromAcquireAsync(acquire, fallback)
+      val narrowed: URLayer[Scope, FeatureFlags]                   = widened // source compatibility (covariant ROut)
+      val program = for {
+        _   <- ZIO.service[FeatureFlags]
+        st  <- AcquireStatus.get
+        st2 <- ZIO.serviceWithZIO[AcquireStatus](_.changes.runHead)
+      } yield assertTrue(
+        st == AcquireState.Constructing || st == AcquireState.Live,
+        st2.isDefined
+      )
+      program.provideSome[Scope](widened) *>
+        ZIO.serviceWith[FeatureFlags](_ => assertCompletes).provideSome[Scope](narrowed)
+    },
     // AC6 (a) many concurrent waiters
     test("awaitReady: many concurrent waiters all complete when status becomes Ready") {
       for {

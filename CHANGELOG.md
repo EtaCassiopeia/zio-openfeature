@@ -40,6 +40,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`FlagTypeLaws` (`testkit`) — law-check a hand-written `FlagType`** (#348). Holds a custom codec to the
+  round-trip contract `FlagType` documents, driven by a `Gen`:
+  `FlagTypeLaws.all(Gen.int.map(Celsius(_)))`. Two laws, deliberately distinct:
+  - `roundTrip` checks `decode(encode(a)) == Right(a)` in memory. This is the law as stated, and it passes
+    trivially for every built-in instance because their `encode` is the identity.
+  - `throughValueBridge` checks the same after crossing the OpenFeature `Value` conversion that every object-path
+    evaluation really crosses — which is where lossy encodings show up, since **every number returns as a
+    `Double`** (so a `Long` beyond 2^53 does not survive) and an unrepresentable structure member is dropped.
+    A codec can satisfy `roundTrip` and still fail this one.
+
+  The laws exercise the library's real conversion code, not a copy of it: those helpers moved from
+  `FeatureFlagsLive` into `internal.ValueBridge` so the testkit checks the same bridge production uses. The laws
+  are in the shared source tree, so they work on Scala 2.13 as well as 3, and are applied to the library's own
+  instances in `FlagTypeLawsSpec`. See `docs/testkit.md` → "Law-checking a custom FlagType".
 - **`FlagType.derived` — Mirror-based derivation for enums and case classes** (#348, Scala 3 only). A
   string-backed enum or a structured flag no longer needs a hand-written codec:
   `enum Plan derives FlagType` and `final case class Rollout(...) derives FlagType` are enough.

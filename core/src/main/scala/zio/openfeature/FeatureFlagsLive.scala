@@ -7,7 +7,8 @@ import zio.openfeature.internal.{
   ContextConverter,
   ErrorCodeConverter,
   FeatureFlagsState,
-  ProviderStatusMachine
+  ProviderStatusMachine,
+  ValueBridge
 }
 import zio.openfeature.internal.ProviderStatusMachine.Signal
 import dev.openfeature.sdk.{
@@ -702,77 +703,13 @@ final private[openfeature] class FeatureFlagsLive(
         .attempt(convertImmutableMetadata(metadata))
         .catchAll(e => ZIO.logWarning(s"Failed to parse flag metadata: ${e.getMessage}").as(FlagMetadata.empty))
 
-  private def anyToObject(value: Any): Object = value match {
-    case b: Boolean    => java.lang.Boolean.valueOf(b)
-    case s: String     => s
-    case i: Int        => java.lang.Integer.valueOf(i)
-    case l: Long       => java.lang.Long.valueOf(l)
-    case d: Double     => java.lang.Double.valueOf(d)
-    case f: Float      => java.lang.Float.valueOf(f)
-    case list: List[_] => list.map(anyToObject).asJava
-    case map: Map[_, _] =>
-      map.asInstanceOf[Map[String, Any]].map { case (k, v) => k -> anyToObject(v) }.asJava
-    case null  => null
-    case other => other.toString
-  }
-
-  /** Encode an already-decoded value back into an SDK `Value`, so a custom type's default can actually be handed to the
-    * provider on the object path. Same shape as [[anyToObject]], one level up.
-    */
-  private def anyToValue(value: Any): dev.openfeature.sdk.Value = value match {
-    case null                         => new dev.openfeature.sdk.Value()
-    case v: dev.openfeature.sdk.Value => v
-    // Option must be unwrapped before the `other.toString` fallback below, or a `Some("x")` field is sent as the
-    // literal string "Some(x)". Reachable from any encoder producing an Option-valued field — `FlagType.derived`
-    // does exactly that for an `Option` field. `None` becomes an empty Value; as a STRUCTURE member that then reads
-    // back as an absent key (and so as `None`) — note it is `valueToMap` below that drops it, NOT the SDK:
-    // `Structure.mapToStructure` stores an empty `Value` rather than filtering the entry.
-    case Some(inner)   => anyToValue(inner)
-    case None          => new dev.openfeature.sdk.Value()
-    case b: Boolean    => new dev.openfeature.sdk.Value(b)
-    case s: String     => new dev.openfeature.sdk.Value(s)
-    case i: Int        => new dev.openfeature.sdk.Value(i)
-    case l: Long       => new dev.openfeature.sdk.Value(l)
-    case d: Double     => new dev.openfeature.sdk.Value(d)
-    case f: Float      => new dev.openfeature.sdk.Value(f.toDouble)
-    case list: List[_] => new dev.openfeature.sdk.Value(list.map(anyToValue).asJava)
-    case map: Map[_, _] =>
-      new dev.openfeature.sdk.Value(
-        dev.openfeature.sdk.Structure.mapToStructure(
-          map
-            .asInstanceOf[Map[String, Any]]
-            // Via `anyToValue().asObject()` rather than `anyToObject` directly, so nested Option/Value handling
-            // above applies to structure members too.
-            .map { case (k, v) => k -> anyToValue(v).asObject() }
-            .asJava
-        )
-      )
-    case other => new dev.openfeature.sdk.Value(other.toString)
-  }
-
-  private def valueToMap(value: dev.openfeature.sdk.Value): Map[String, Any] =
-    if (value == null || !value.isStructure) Map.empty
-    else
-      value
-        .asStructure()
-        .asMap()
-        .asScala
-        .flatMap { case (k, v) => valueToAny(v).map(k -> _) }
-        .toMap
-
-  private def valueToAny(value: dev.openfeature.sdk.Value): Option[Any] =
-    if (value == null) None
-    else if (value.isBoolean) Some(value.asBoolean())
-    else if (value.isString) Some(value.asString())
-    else if (value.isNumber) Some(value.asDouble())
-    // Arity-preserving on purpose: an element the bridge cannot convert becomes `null` rather than being dropped.
-    // `flatMap` here silently SHORTENED the list — positional data loss with no error — and a `List[Option[A]]`
-    // containing `None` hits exactly that. A `null` element instead reaches the element's own `FlagType`, which
-    // either accepts it (`Option` decodes it to `None`) or rejects it loudly.
-    else if (value.isList) Some(value.asList().asScala.map(v => valueToAny(v).orNull).toList)
-    else if (value.isStructure) Some(valueToMap(value))
-    else if (value.isInstant) Some(value.asInstant())
-    else None
+  // The Scala <-> SDK `Value` conversions live in `internal.ValueBridge` so that `testkit.FlagTypeLaws` can check a
+  // `FlagType` against the bridge this code actually crosses, rather than against a copy that could drift from it.
+  // Kept as local aliases so call sites read unchanged.
+  private def anyToObject(value: Any): Object                                = ValueBridge.anyToObject(value)
+  private def anyToValue(value: Any): dev.openfeature.sdk.Value              = ValueBridge.anyToValue(value)
+  private def valueToMap(value: dev.openfeature.sdk.Value): Map[String, Any] = ValueBridge.valueToMap(value)
+  private def valueToAny(value: dev.openfeature.sdk.Value): Option[Any]      = ValueBridge.valueToAny(value)
 
   // Detailed evaluation methods (one per type, with default parameters from trait)
 

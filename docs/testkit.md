@@ -553,6 +553,44 @@ See [Optimizely → Testing your app]({{ site.baseurl }}/optimizely) for a worke
 
 ---
 
+## Law-checking a custom FlagType
+
+If you hand-write a `FlagType[A]`, `FlagTypeLaws` holds it to the same contract the library's own instances meet.
+Pass a `Gen` for your type:
+
+```scala
+import zio.openfeature.testkit.FlagTypeLaws
+
+object CelsiusCodecSpec extends ZIOSpecDefault {
+  def spec = suite("Celsius")(
+    FlagTypeLaws.all(Gen.int(-100, 100).map(Celsius(_)))
+  )
+}
+```
+
+There are two laws, and the difference between them is the point:
+
+| Law | Checks | Catches |
+|:----|:-------|:--------|
+| `roundTrip` | `decode(encode(a)) == Right(a)` in memory | an encoder and decoder that disagree |
+| `throughValueBridge` | the same, but after crossing the OpenFeature `Value` conversion | a *lossy* encoding |
+
+`roundTrip` is the law as `FlagType` states it, and it passes trivially for every built-in instance because their
+`encode` is the identity. `throughValueBridge` is the one that finds real problems, because that conversion is
+lossy in two ways worth knowing about:
+
+- **every number comes back as a `Double`**, so a `Long` beyond 2^53 does not survive an object-path round trip;
+- a structure member the bridge cannot represent is **dropped**, so its key reads back as absent (which is exactly
+  how an `Option` field decodes to `None`).
+
+`all` runs both. Reach for `throughValueBridge` in particular when your type is object-backed — when its
+`wireType` is not one of the scalars — since that is the path it will actually be evaluated on.
+
+The laws live in the shared source tree, so they are available on Scala 2.13 as well as 3. (Only
+`FlagType.derived` is Scala 3 only.)
+
+---
+
 ## Best Practices
 
 ### 1. Use Descriptive Flag Names

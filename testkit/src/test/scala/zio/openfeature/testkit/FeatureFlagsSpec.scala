@@ -20,6 +20,8 @@ object FeatureFlagsSpec extends ZIOSpecDefault {
         } yield assertTrue(result == true)
       }.provide(testLayer(Map("dark-mode" -> true))),
       test("boolean returns default when flag not found") {
+        // The value is the caller's default and the evaluation does not fail; the resolution behind it is
+        // FLAG_NOT_FOUND (see `stringDetails reports FLAG_NOT_FOUND when not found`).
         for {
           result <- FeatureFlags.boolean("missing-flag", default = false)
         } yield assertTrue(result == false)
@@ -53,11 +55,13 @@ object FeatureFlagsSpec extends ZIOSpecDefault {
           assertTrue(resolution.flagKey == "feature-x") &&
           assertTrue(resolution.reason == ResolutionReason.TargetingMatch)
       }.provide(testLayer(Map("feature-x" -> true))),
-      test("stringDetails returns default reason when not found") {
+      test("stringDetails reports FLAG_NOT_FOUND when not found") {
         for {
           resolution <- FeatureFlags.stringDetails("missing", default = "default-value")
         } yield assertTrue(resolution.value == "default-value") &&
-          assertTrue(resolution.reason == ResolutionReason.Default)
+          assertTrue(resolution.reason == ResolutionReason.Error) &&
+          assertTrue(resolution.errorCode.contains(ErrorCode.FlagNotFound)) &&
+          assertTrue(resolution.errorMessage.exists(_.contains("missing")))
       }.provide(testLayer()),
       test("intDetails includes variant") {
         for {

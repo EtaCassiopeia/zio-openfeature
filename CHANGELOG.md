@@ -143,6 +143,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`TestFeatureProvider` now reports `FLAG_NOT_FOUND` for a key that has not been set** (#369), instead of a
+  `DEFAULT`-reason result — the testkit half of #355. A default-reason answer with no error code reads to a
+  `MultiProvider` chain as "I answered", so a chain never fell through past the test provider, and a test that
+  chained it ahead of a real provider passed or failed for the wrong reason. It now reports what every real
+  provider shipped here reports for an absent key (and what the SDK's own `InMemoryProvider` produces by throwing
+  `FlagNotFoundError`), so it can sit in a `FeatureFlags.multiProvider(...)` chain.
+
+  The returned *value* is unchanged and **no evaluation fails** — `ff.boolean`, `*OrDefault` and `resolveOrDefault`
+  still yield the caller's default; a present key still resolves with `reason = TargetingMatch` and no error code;
+  and an unset key is still recorded by `wasEvaluated` / `evaluationCount`. **Who is affected:** downstream tests
+  that assert `reason == ResolutionReason.Default` / `getReason == "DEFAULT"` for a flag they never set, and hook or
+  log assertions that expect the `after` stage for such a key — the resolution now carries `reason = Error` /
+  `errorCode = FlagNotFound` and hooks see the **`error`** stage (so `Hook.logging()` logs the miss at error level).
+  A test that means "this flag is off" should set it to `false` explicitly rather than rely on absence; the
+  `examples/testkit-app` reference spec is updated to do exactly that. `ErrorMode.FlagNotFound` is unchanged: it
+  yields the same resolution shape but for every key at once. New `AbsentKeyChainSpec` in the testkit proves
+  fall-through, precedence and the all-absent case through `FeatureFlags.multiProvider` (chained with the SDK's
+  `InMemoryProvider` — two `TestFeatureProvider`s collapse into one because they share a metadata name, see #371),
+  plus the hook-stage change.
 - **`HoconProvider` and `EnvVarProvider` now report `FLAG_NOT_FOUND` for an absent key** (#355), instead of a
   `DEFAULT`-reason result. A default-reason answer with no error code reads to a `MultiProvider` chain as "I
   answered", so the chain **stopped at the first provider** rather than trying the next one — a chain of two

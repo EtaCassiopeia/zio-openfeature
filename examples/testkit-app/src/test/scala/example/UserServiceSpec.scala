@@ -21,8 +21,12 @@ object UserServiceSpec extends ZIOSpecDefault {
     )
 
   def spec = suite("UserService — flag-driven greeting")(
-    test("legacy copy when the new-greeting flag is OFF (default)") {
+    test("legacy copy when the new-greeting flag is OFF") {
+      // Set the flag explicitly rather than relying on it being absent: an unset key resolves to the caller's default
+      // too, but as a FLAG_NOT_FOUND resolution (reason `Error`), which is not the state this test is about.
       for {
+        provider <- ZIO.service[TestFeatureProvider]
+        _        <- provider.setFlag("new-greeting-copy", false)
         svc      <- ZIO.service[UserService]
         greeting <- svc.welcome("alice")
       } yield assertTrue(greeting == "Welcome, alice.")

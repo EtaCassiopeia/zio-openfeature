@@ -5,7 +5,7 @@ import zio.stream._
 import zio.test._
 import zio.test.Assertion._
 import zio.openfeature._
-import dev.openfeature.sdk.{ImmutableContext, MutableContext, ProviderState}
+import dev.openfeature.sdk.{ErrorCode => OFErrorCode, ImmutableContext, MutableContext, ProviderState}
 
 object TestFeatureProviderSpec extends ZIOSpecDefault {
 
@@ -75,12 +75,13 @@ object TestFeatureProviderSpec extends ZIOSpecDefault {
       }
     ),
     suite("flag resolution via OpenFeature API")(
-      test("returns default value for unknown flag") {
+      test("reports FLAG_NOT_FOUND with the caller's default for an unknown flag") {
         for {
           provider <- TestFeatureProvider.make
           result = provider.getBooleanEvaluation("unknown", true, new ImmutableContext())
         } yield assertTrue(result.getValue == true) &&
-          assertTrue(result.getReason == "DEFAULT")
+          assertTrue(result.getReason == "ERROR") &&
+          assertTrue(result.getErrorCode == OFErrorCode.FLAG_NOT_FOUND)
       },
       test("returns configured value for known flag") {
         for {
@@ -125,22 +126,24 @@ object TestFeatureProviderSpec extends ZIOSpecDefault {
         } yield assertTrue(oldResult.getValue == 0) && // default, flag no longer exists
           assertTrue(newResult.getValue == 2)
       },
-      test("removeFlag removes a flag") {
+      test("removeFlag removes a flag, which then reports FLAG_NOT_FOUND") {
         for {
           provider <- TestFeatureProvider.make(Map("flag" -> true))
           _        <- provider.removeFlag("flag")
           result = provider.getBooleanEvaluation("flag", false, new ImmutableContext())
         } yield assertTrue(result.getValue == false) &&
-          assertTrue(result.getReason == "DEFAULT")
+          assertTrue(result.getReason == "ERROR") &&
+          assertTrue(result.getErrorCode == OFErrorCode.FLAG_NOT_FOUND)
       },
-      test("clearFlags removes all flags") {
+      test("clearFlags removes all flags, which then report FLAG_NOT_FOUND") {
         for {
           provider <- TestFeatureProvider.make(Map("a" -> 1, "b" -> 2))
           _        <- provider.clearFlags
           resultA = provider.getIntegerEvaluation("a", 0, new ImmutableContext())
           resultB = provider.getIntegerEvaluation("b", 0, new ImmutableContext())
-        } yield assertTrue(resultA.getReason == "DEFAULT") &&
-          assertTrue(resultB.getReason == "DEFAULT")
+        } yield assertTrue(resultA.getValue == 0, resultB.getValue == 0) &&
+          assertTrue(resultA.getErrorCode == OFErrorCode.FLAG_NOT_FOUND) &&
+          assertTrue(resultB.getErrorCode == OFErrorCode.FLAG_NOT_FOUND)
       }
     ),
     suite("status management")(

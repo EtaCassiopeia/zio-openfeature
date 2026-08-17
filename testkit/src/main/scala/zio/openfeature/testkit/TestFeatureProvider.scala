@@ -5,6 +5,7 @@ import zio.stream._
 import zio.openfeature._
 import zio.openfeature.internal.{ContextConverter, ErrorCodeConverter, ProviderEvaluations}
 import dev.openfeature.sdk.{
+  ErrorCode => OFErrorCode,
   EvaluationContext => OFEvaluationContext,
   EventProvider,
   ImmutableMetadata,
@@ -29,6 +30,9 @@ import java.util.concurrent.atomic.AtomicReference
   *   - Track which flags were evaluated and with what context
   *   - Simulate different provider states
   *   - Emit provider events
+  *
+  * A key that has not been set resolves as `FLAG_NOT_FOUND` with the caller's default as the value, exactly as the real
+  * providers do — see `notFound` for what that changes for observers.
   */
 final class TestFeatureProvider private (
   private val flags: ConcurrentHashMap[String, Any],
@@ -98,6 +102,26 @@ final class TestFeatureProvider private (
     state.set(ProviderState.NOT_READY)
   }
 
+  /** A key this provider does not hold is `FLAG_NOT_FOUND`, not a `DEFAULT`-reason answer. Only `FLAG_NOT_FOUND` makes
+    * a `MultiProvider` chain move on to the next provider — a `DEFAULT` result ends the chain here — so this is what
+    * lets the test provider sit in a chain. The returned '''value''' is still the caller's default and no evaluation
+    * fails; what changes for observers is `reason = Error` / `errorCode = FlagNotFound` and that hooks see the `error`
+    * stage rather than `after`. A test that means "this flag is off" should set it to `false` rather than leave it
+    * unset.
+    */
+  private def notFound[T](key: String, defaultValue: T): ProviderEvaluation[T] =
+    ProviderEvaluations.error(
+      defaultValue,
+      OFErrorCode.FLAG_NOT_FOUND,
+      s"Flag '$key' is not set on this TestFeatureProvider"
+    )
+
+  private def evaluate[T](key: String, defaultValue: T)(convert: Any => T): ProviderEvaluation[T] =
+    Option(flags.get(key)) match {
+      case Some(raw) => ProviderEvaluations.of(convert(raw), "TARGETING_MATCH")
+      case None      => notFound(key, defaultValue)
+    }
+
   override def getBooleanEvaluation(
     key: String,
     defaultValue: java.lang.Boolean,
@@ -105,11 +129,7 @@ final class TestFeatureProvider private (
   ): ProviderEvaluation[java.lang.Boolean] = {
     applyBehavior()
     evaluations.add((key, context))
-    val value = Option(flags.get(key)).map(_.asInstanceOf[Boolean]).getOrElse(defaultValue.booleanValue())
-    ProviderEvaluations.of(
-      java.lang.Boolean.valueOf(value),
-      if (flags.containsKey(key)) "TARGETING_MATCH" else "DEFAULT"
-    )
+    evaluate(key, defaultValue)(raw => java.lang.Boolean.valueOf(raw.asInstanceOf[Boolean]))
   }
 
   override def getStringEvaluation(
@@ -119,8 +139,7 @@ final class TestFeatureProvider private (
   ): ProviderEvaluation[String] = {
     applyBehavior()
     evaluations.add((key, context))
-    val value = Option(flags.get(key)).map(_.toString).getOrElse(defaultValue)
-    ProviderEvaluations.of(value, if (flags.containsKey(key)) "TARGETING_MATCH" else "DEFAULT")
+    evaluate(key, defaultValue)(_.toString)
   }
 
   override def getIntegerEvaluation(
@@ -130,18 +149,12 @@ final class TestFeatureProvider private (
   ): ProviderEvaluation[java.lang.Integer] = {
     applyBehavior()
     evaluations.add((key, context))
-    val value = Option(flags.get(key))
-      .map {
-        case i: Int    => i
-        case l: Long   => l.toInt
-        case d: Double => d.toInt
-        case other     => other.toString.toInt
-      }
-      .getOrElse(defaultValue.intValue())
-    ProviderEvaluations.of(
-      java.lang.Integer.valueOf(value),
-      if (flags.containsKey(key)) "TARGETING_MATCH" else "DEFAULT"
-    )
+    evaluate(key, defaultValue) {
+      case i: Int    => java.lang.Integer.valueOf(i)
+      case l: Long   => java.lang.Integer.valueOf(l.toInt)
+      case d: Double => java.lang.Integer.valueOf(d.toInt)
+      case other     => java.lang.Integer.valueOf(other.toString.toInt)
+    }
   }
 
   override def getLongEvaluation(
@@ -151,18 +164,12 @@ final class TestFeatureProvider private (
   ): ProviderEvaluation[java.lang.Long] = {
     applyBehavior()
     evaluations.add((key, context))
-    val value = Option(flags.get(key))
-      .map {
-        case l: Long   => l
-        case i: Int    => i.toLong
-        case d: Double => d.toLong
-        case other     => other.toString.toLong
-      }
-      .getOrElse(defaultValue.longValue())
-    ProviderEvaluations.of(
-      java.lang.Long.valueOf(value),
-      if (flags.containsKey(key)) "TARGETING_MATCH" else "DEFAULT"
-    )
+    evaluate(key, defaultValue) {
+      case l: Long   => java.lang.Long.valueOf(l)
+      case i: Int    => java.lang.Long.valueOf(i.toLong)
+      case d: Double => java.lang.Long.valueOf(d.toLong)
+      case other     => java.lang.Long.valueOf(other.toString.toLong)
+    }
   }
 
   override def getDoubleEvaluation(
@@ -172,19 +179,13 @@ final class TestFeatureProvider private (
   ): ProviderEvaluation[java.lang.Double] = {
     applyBehavior()
     evaluations.add((key, context))
-    val value = Option(flags.get(key))
-      .map {
-        case d: Double => d
-        case f: Float  => f.toDouble
-        case i: Int    => i.toDouble
-        case l: Long   => l.toDouble
-        case other     => other.toString.toDouble
-      }
-      .getOrElse(defaultValue.doubleValue())
-    ProviderEvaluations.of(
-      java.lang.Double.valueOf(value),
-      if (flags.containsKey(key)) "TARGETING_MATCH" else "DEFAULT"
-    )
+    evaluate(key, defaultValue) {
+      case d: Double => java.lang.Double.valueOf(d)
+      case f: Float  => java.lang.Double.valueOf(f.toDouble)
+      case i: Int    => java.lang.Double.valueOf(i.toDouble)
+      case l: Long   => java.lang.Double.valueOf(l.toDouble)
+      case other     => java.lang.Double.valueOf(other.toString.toDouble)
+    }
   }
 
   override def getObjectEvaluation(
@@ -194,10 +195,7 @@ final class TestFeatureProvider private (
   ): ProviderEvaluation[Value] = {
     applyBehavior()
     evaluations.add((key, context))
-    val value = Option(flags.get(key))
-      .map(anyToValue)
-      .getOrElse(defaultValue)
-    ProviderEvaluations.of(value, if (flags.containsKey(key)) "TARGETING_MATCH" else "DEFAULT")
+    evaluate(key, defaultValue)(anyToValue)
   }
 
   private def anyToValue(any: Any): Value = any match {
@@ -240,14 +238,16 @@ final class TestFeatureProvider private (
   def setFlags(newFlags: Map[String, Any]): UIO[Unit] =
     ZIO.succeed(newFlags.foreach { case (k, v) => flags.put(k, v) })
 
-  /** Replace ALL flags with these — every existing flag is discarded first. */
+  /** Replace ALL flags with these — every existing flag is discarded first, and a discarded key then resolves as
+    * `FLAG_NOT_FOUND`.
+    */
   def replaceFlags(newFlags: Map[String, Any]): UIO[Unit] =
     ZIO.succeed {
       flags.clear()
       newFlags.foreach { case (k, v) => flags.put(k, v) }
     }
 
-  /** Remove a flag. */
+  /** Remove a flag. The key then resolves as `FLAG_NOT_FOUND` (caller's default, `reason = Error`), not `DEFAULT`. */
   def removeFlag(key: String): UIO[Unit] =
     ZIO.succeed(flags.remove(key)).unit
 
@@ -287,7 +287,7 @@ final class TestFeatureProvider private (
   def removeFlag[A](flag: FlagDef[A]): UIO[Unit] =
     removeFlag(flag.key)
 
-  /** Clear all flags. */
+  /** Clear all flags. Every key then resolves as `FLAG_NOT_FOUND` (caller's default, `reason = Error`). */
   def clearFlags: UIO[Unit] =
     ZIO.succeed(flags.clear())
 
@@ -470,6 +470,8 @@ object TestFeatureProvider {
     failureProbability: Double = 0.0
   )
 
+  /** Simulated provider failures, thrown for every evaluation while set; to model a single absent key, leave it unset.
+    */
   sealed trait ErrorMode extends Product with Serializable
   object ErrorMode {
     case object FlagNotFound     extends ErrorMode

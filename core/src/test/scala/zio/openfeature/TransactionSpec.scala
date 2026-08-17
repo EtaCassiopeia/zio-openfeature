@@ -191,14 +191,29 @@ object TransactionSpec extends ZIOSpecDefault {
           cached <- state.getCachedEvaluation("nonexistent")
         } yield assertTrue(cached.isEmpty)
       },
-      test("getCachedEvaluation returns evaluation after record") {
+      test("getCachedEvaluation returns the evaluation and its wire value after record") {
+        // A String-backed domain type whose wire form differs, so the recorded wire is observably `encode(value)`.
+        final case class Tag(name: String)
+        implicit val tagFlagType: FlagType[Tag] =
+          FlagType.mapped[Tag, String]("Tag", Tag(""))(s => Tag(s.stripPrefix("tag:")), "tag:" + _.name)
         for {
           state  <- TransactionState.make(Map.empty, EvaluationContext.empty)
-          eval   <- FlagEvaluation.evaluated("cached-flag", FlagResolution.default("cached-flag", "cached-value"))
+          eval   <- FlagEvaluation.evaluated("cached-flag", FlagResolution.default("cached-flag", Tag("blue")))
           _      <- state.record(eval)
           cached <- state.getCachedEvaluation("cached-flag")
         } yield assertTrue(cached.isDefined) &&
-          assertTrue((cached.get.value: Any) == "cached-value")
+          assertTrue((cached.get.evaluation.value: Any) == Tag("blue")) &&
+          assertTrue((cached.get.wire: Any) == "tag:blue")
+      },
+      test("getCachedEvaluation returns None when cacheEvaluations is off, even after record") {
+        for {
+          state  <- TransactionState.make(Map.empty, EvaluationContext.empty, cacheEvaluations = false)
+          eval   <- FlagEvaluation.evaluated("cached-flag", FlagResolution.default("cached-flag", "cached-value"))
+          _      <- state.record(eval)
+          cached <- state.getCachedEvaluation("cached-flag")
+          evals  <- state.getEvaluations
+        } yield assertTrue(cached.isEmpty) &&
+          assertTrue(evals.contains("cached-flag"))
       }
     )
   )

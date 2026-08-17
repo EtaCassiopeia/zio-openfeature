@@ -417,29 +417,20 @@ final private[openfeature] class FeatureFlagsLive(
     context: EvaluationContext,
     txState: TransactionState,
     timeout: Option[Duration] = None
-  ): IO[FeatureFlagError, FlagResolution[A]] =
+  ): IO[FeatureFlagError, FlagResolution[A]] = {
+    val flagType = FlagType[A]
     // First check for explicit overrides
     txState.getOverride(key) match {
       case Some(overrideValue) =>
-        val flagType = FlagType[A]
-        // NOTE: `decode` is used here against a value the CALLER supplied, not a provider wire value. For the built-ins
-        // those coincide, but for a custom type whose wire form differs from its domain form (see `FlagType.wireType`)
-        // an override must be given as the WIRE value — `withOverride(key, "dual_write")`, not the domain enum.
-        // Pre-existing for object-backed custom types; #356 makes it reachable for scalar-backed ones too.
-        flagType.decode(overrideValue) match {
+        decodeOverride(flagType, overrideValue) match {
           case Right(decoded) =>
             val resolution = FlagResolution.cached(key, decoded)
             FlagEvaluation.overridden(key, decoded).flatMap { eval =>
               txState.record(eval).as(resolution)
             }
-          case Left(_) =>
-            ZIO.fail(
-              FeatureFlagError.OverrideTypeMismatch(
-                key,
-                flagType.typeName,
-                overrideValue.getClass.getSimpleName
-              )
-            )
+          case Left(reason) =>
+            val actual = if (overrideValue == null) "null" else overrideValue.getClass.getSimpleName
+            ZIO.fail(FeatureFlagError.OverrideTypeMismatch(key, flagType.typeName, s"$actual ($reason)"))
         }
 
       case None =>
@@ -447,22 +438,43 @@ final private[openfeature] class FeatureFlagsLive(
         // the paths that must reach the provider (`evaluateAndCache`) run behind the readiness gate.
         txState.getCachedEvaluation(key).flatMap {
           case Some(cached) =>
-            val flagType = FlagType[A]
-            // `cached.value` is the DOMAIN value (see `FlagEvaluation.evaluated`), so this decode round-trips a
-            // domain value rather than a wire value. For the built-ins those coincide; for a custom type whose wire
-            // form differs it returns Left and the evaluation falls through to the provider below — i.e. the
-            // in-transaction cache does not hit for such types. Pre-existing (object-backed custom types have the
-            // same behaviour); #356 makes it reachable for scalar-backed types too. Correctness is unaffected —
-            // a re-read still returns the right value — only the caching optimisation is lost.
-            flagType.decode(cached.value) match {
+            // The cache holds the WIRE value, so this is the same decode the provider path runs — a custom type's
+            // domain value would not decode (decode is wire → domain), and that is what used to make the cache miss on
+            // every read for such types (#359). A `Left` now means a genuine cross-type read of the same key (cached as
+            // Boolean, re-read as String): not an error, just not servable from the cache.
+            flagType.decode(cached.wire) match {
               case Right(decoded) =>
                 ZIO.succeed(FlagResolution.cached(key, decoded))
-              case Left(_) =>
-                // Type mismatch with cached value - re-evaluate from client
-                checkProviderStatus *> evaluateAndCache(key, default, context, txState, timeout)
+              case Left(reason) =>
+                ZIO.logDebug(
+                  s"Transaction cache for '$key' does not decode as ${flagType.typeName} ($reason); evaluating from the provider"
+                ) *> checkProviderStatus *> evaluateAndCache(key, default, context, txState, timeout)
             }
           case None =>
             checkProviderStatus *> evaluateAndCache(key, default, context, txState, timeout)
+        }
+    }
+  }
+
+  /** An override may be given as the WIRE value (`"dual_write"`) or the DOMAIN value (`Phase.DualWrite`). Wire is tried
+    * first — for every built-in the two coincide, so that is the whole story there. Otherwise the value is treated as a
+    * domain value and round-tripped through `encode`; `decode` stays the sole arbiter, so whatever is accepted is a
+    * real `A` that `decode` produced. A value of the wrong type typically throws inside `encode` (the erased cast is
+    * caught here) or encodes to something `decode` rejects; a total `encode` that maps a foreign value to a decodable
+    * wire form would accept it. Both reasons are reported — the wire one first, since it names the type the caller most
+    * likely meant, then why the value did not pass as a domain value either.
+    */
+  private def decodeOverride[A](flagType: FlagType[A], raw: Any): Either[String, A] =
+    flagType.decode(raw).left.flatMap { wireReason =>
+      scala.util
+        .Try(flagType.encode(raw.asInstanceOf[A]))
+        .toEither
+        .left
+        .map(t => s"encode threw ${t.getClass.getSimpleName}: ${t.getMessage}")
+        .flatMap(flagType.decode)
+        .left
+        .map { domainReason =>
+          if (domainReason == wireReason) wireReason else s"$wireReason; not a domain value either: $domainReason"
         }
     }
 
@@ -570,8 +582,8 @@ final private[openfeature] class FeatureFlagsLive(
                           errorMessage = Option(details.getErrorMessage)
                         )
                       }
-                    case Left(_) =>
-                      ZIO.fail(FeatureFlagError.TypeMismatch(key, flagType.typeName, "Object"))
+                    case Left(message) =>
+                      ZIO.fail(FeatureFlagError.TypeMismatch(key, flagType.typeName, message))
                   }
                 case None =>
                   ZIO.fail(FeatureFlagError.TypeMismatch(key, flagType.typeName, "null"))

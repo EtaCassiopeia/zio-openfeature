@@ -61,6 +61,18 @@ val result = FeatureFlags.transaction(overrides, ctx) {
 }
 ```
 
+### Overriding a Custom Flag Type
+
+For a custom `FlagType` whose wire form differs from its domain form (a `FlagType.mapped` enum, a `FlagType.from` object type), an override may be given as **either** the domain value or the wire value — both decode to the same result:
+
+```scala
+// Phase is a domain enum carried over the wire as a string ("off" | "dual_write" | ...)
+FeatureFlags.transaction(Map("rollout.phase" -> Phase.DualWrite)) { ... }  // domain value
+FeatureFlags.transaction(Map("rollout.phase" -> "dual_write")) { ... }     // wire value, same effect
+```
+
+The wire form is tried first, and the domain form only if that fails, so the two spellings agree as long as the type's wire and domain values are distinguishable (or coincide, as they do for every built-in). A value that is neither fails the evaluation with `OverrideTypeMismatch`, whose message names the value's class and why it did not decode. This relies on the instance's round-trip law, `decode(encode(a)) == Right(a)` — see the `FlagType` scaladoc.
+
 ---
 
 ## Evaluation Caching
@@ -81,6 +93,9 @@ This behavior:
 - Ensures consistency within a transaction
 - Reduces provider calls for better performance
 - Returns `ResolutionReason.Cached` for subsequent evaluations
+- Applies to custom `FlagType`s too: the cache holds the wire value and a re-read decodes it exactly as a provider answer would be decoded
+
+Re-reading the same key at a *different* type is served from the cache when the cached wire value decodes as that type (an `Int` re-read as `Long`; a string-backed custom type re-read as `String` yields its wire string), and otherwise falls through to the provider (a `Boolean` re-read as `String`).
 
 ### Disabling Caching
 

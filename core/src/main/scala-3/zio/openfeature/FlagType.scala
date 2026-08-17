@@ -2,6 +2,19 @@ package zio.openfeature
 
 import scala.util.Try
 
+/** Codec between a domain type `A` and the value a provider carries — its ''wire'' value. For the built-in instances
+  * the two coincide; a custom instance (`FlagType.mapped`, `FlagType.from`, or a hand-rolled one) may keep them apart,
+  * e.g. a `Phase` enum carried as the string `"dual_write"`.
+  *
+  * '''Round-trip law:''' `decode(encode(a)) == Right(a)` for every `a: A`. Evaluation relies on it in three places, so
+  * an instance that breaks it will see values come back different from what went in:
+  *   - for a scalar [[wireType]] the default handed to the provider is `encode(default)`, and it comes back through
+  *     `decode` when the provider serves it (`DEFAULT` reason); a custom object-backed type is resolved with an empty
+  *     default;
+  *   - a transaction caches `encode(value)` and serves a same-key re-read through `decode`;
+  *   - a transaction override may be given as either the wire value or the domain value — the latter is accepted by
+  *     round-tripping it through `encode` and `decode`, with `decode` the arbiter of what is an `A`.
+  */
 trait FlagType[A]:
   def typeName: String
 
@@ -63,6 +76,7 @@ object FlagType:
         val d = n.doubleValue()
         if d.isValidInt then Right(d.toInt) else Left(s"Numeric value $n is not a valid Int")
       case s: String => s.toIntOption.toRight(s"Cannot parse '$s' as Int")
+      case null      => Left("Cannot convert null to Int")
       case _         => Left(s"Cannot convert ${value.getClass.getSimpleName} to Int")
 
   given longFlagType: FlagType[Long] with
@@ -76,6 +90,7 @@ object FlagType:
         val d = n.doubleValue()
         if isExactLong(d) then Right(d.toLong) else Left(s"Numeric value $n is not a valid Long")
       case s: String => s.toLongOption.toRight(s"Cannot parse '$s' as Long")
+      case null      => Left("Cannot convert null to Long")
       case _         => Left(s"Cannot convert ${value.getClass.getSimpleName} to Long")
 
   given doubleFlagType: FlagType[Double] with
@@ -88,6 +103,7 @@ object FlagType:
       case l: Long   => Right(l.toDouble)
       case n: Number => Right(n.doubleValue())
       case s: String => s.toDoubleOption.toRight(s"Cannot parse '$s' as Double")
+      case null      => Left("Cannot convert null to Double")
       case _         => Left(s"Cannot convert ${value.getClass.getSimpleName} to Double")
 
   given floatFlagType: FlagType[Float] with
@@ -103,6 +119,7 @@ object FlagType:
       case i: Int    => Right(i.toFloat)
       case l: Long   => Right(l.toFloat)
       case s: String => s.toFloatOption.toRight(s"Cannot parse '$s' as Float")
+      case null      => Left("Cannot convert null to Float")
       case _         => Left(s"Cannot convert ${value.getClass.getSimpleName} to Float")
 
   given objectFlagType: FlagType[Map[String, Any]] with
@@ -114,6 +131,7 @@ object FlagType:
       case m: java.util.Map[?, ?] =>
         import scala.jdk.CollectionConverters.*
         Try(m.asScala.toMap.asInstanceOf[Map[String, Any]]).toEither.left.map(_.getMessage)
+      case null => Left("Cannot convert null to Object")
       case _ =>
         Left(s"Cannot convert ${value.getClass.getSimpleName} to Object")
 
@@ -125,6 +143,11 @@ object FlagType:
       case None    => Right(None)
       case Some(v) => underlying.decode(v).map(Some(_))
       case other   => underlying.decode(other).map(Some(_))
+    // Carried as the underlying wire value or null — exactly what `decode` accepts back. The inherited identity
+    // `encode` would hand `Some(domainValue)` to `decode`, breaking the round-trip law for `Option[Custom]` (#359).
+    override def encode(value: Option[A]): Any = value match
+      case Some(a) => underlying.encode(a)
+      case None    => null
 
   given listFlagType[A](using underlying: FlagType[A]): FlagType[List[A]] with
     def typeName: String      = s"List[${underlying.typeName}]"
@@ -142,7 +165,9 @@ object FlagType:
       case jlist: java.util.List[?] =>
         import scala.jdk.CollectionConverters.*
         decode(jlist.asScala.toList)
-      case _ => Left(s"Cannot convert ${value.getClass.getSimpleName} to List")
+      case null => Left("Cannot convert null to List")
+      case _    => Left(s"Cannot convert ${value.getClass.getSimpleName} to List")
+    override def encode(value: List[A]): Any = value.map(underlying.encode)
 
   /** Builds an instance that leaves [[FlagType.wireType]] at `name`, so unless `name` happens to be one of the scalar
     * wire names it is resolved on the object path. For a type carried over the wire as a *scalar* — a string-backed

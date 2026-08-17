@@ -74,6 +74,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **In-transaction caching and overrides now work for custom `FlagType`s** (#359). The transaction machinery fed
+  `FlagType.decode` — a wire → domain function — the *domain* value in two places, which only worked for the
+  built-ins where the two coincide. For a custom type (`FlagType.mapped`, `FlagType.from`, or a hand-rolled
+  instance) a same-key re-read inside a caching transaction silently missed the cache and re-evaluated against
+  the provider on every read, and an override could only be given in its wire form (`"dual_write"`, never
+  `Phase.DualWrite`) — with the decode reason discarded in both cases. The cache now stores the wire value
+  (`encode(value)`) next to each evaluation and decodes that on re-read, exactly as it decodes a provider answer;
+  overrides accept either the domain or the wire value; and `OverrideTypeMismatch` now names the value's class
+  *and* the decode reason (a `null` override is a typed `OverrideTypeMismatch` instead of a
+  `NullPointerException` defect). Built-in evaluations are unaffected. The round-trip law this relies on,
+  `decode(encode(a)) == Right(a)`, is now stated on the `FlagType` scaladoc, and two library instances that broke
+  it are fixed: `FlagType[Option[A]]` and `FlagType[List[A]]` now `encode` through their underlying instance
+  (previously the inherited identity), so an `Option`/`List` of a custom type caches and overrides like the custom
+  type itself. Two adjacent diagnostics also improved: the `Int`/`Long`/`Double`/`Float`/`Object`/`List` decoders
+  return `Left("Cannot convert null to …")` for `null` instead of throwing, and a custom object-path decode
+  rejection now reports the decoder's reason in `TypeMismatch.actual` instead of the literal `"Object"`.
 - **A `FlagType` whose `encode` contradicts its declared `wireType` now fails with a diagnostic error** (#360).
   Overriding `wireType` to a scalar while leaving `encode` producing something else — the mistake the `wireType`
   scaladoc warns about, reachable at a documented extension point — used to surface as a bare

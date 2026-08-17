@@ -28,8 +28,9 @@ trait FlagType[A] {
     *
     * '''If you override this, [[encode]] must return the matching boxed type''' — `java.lang.Boolean`, `String`,
     * `java.lang.Integer`, `java.lang.Long`, `java.lang.Float` or `java.lang.Double` respectively. The pairing is not
-    * checked at compile time and a mismatch surfaces as a `ClassCastException` when the provider is called.
-    * [[FlagType.mapped]] gets the pairing right by construction, so prefer it where it fits.
+    * checked at compile time; at evaluation time a mismatch fails with a `TypeMismatch` that names the domain type, the
+    * declared `wireType`, and the type `encode` actually produced (#360). [[FlagType.mapped]] gets the pairing right by
+    * construction, so prefer it where it fits.
     */
   def wireType: String = typeName
 

@@ -536,12 +536,10 @@ final private[openfeature] class FeatureFlagsLive(
         case None if flagType.typeName == "Object" =>
           withTimeout(
             ZIO.attemptBlocking {
-              val defaultValue = new dev.openfeature.sdk.Value(
-                dev.openfeature.sdk.Structure.mapToStructure(
-                  default.asInstanceOf[Map[String, Any]].map { case (k, v) => k -> anyToObject(v) }.asJava
-                )
-              )
-              client.getObjectDetails(key, defaultValue, ofContext)
+              // Through `anyToValue` so a `Map` flag encodes its members exactly as a derived product does. Building
+              // the structure with `anyToObject` instead left this path stringifying `Option` members (`"Some(1)"`)
+              // while the custom-type path sent the unwrapped value.
+              client.getObjectDetails(key, anyToValue(default.asInstanceOf[Map[String, Any]]), ofContext)
             }
           ).mapError(e => FeatureFlagError.classify(e))
             .flatMap { details =>
@@ -607,8 +605,28 @@ final private[openfeature] class FeatureFlagsLive(
                 // which must stay loud rather than being absorbed into the default.
                 case Some(Left(message)) =>
                   ZIO.fail(FeatureFlagError.TypeMismatch(key, flagType.typeName, message))
+
+                // Nothing extractable, and the provider reported no error. Let the instance say what an absent
+                // value means before failing: `FlagType[Option[A]]` decodes null to `None`, and its typeName
+                // (`Option[String]`) routes it down this very path, so failing outright here would make a legitimately
+                // empty optional flag unresolvable.
                 case None =>
-                  ZIO.fail(FeatureFlagError.TypeMismatch(key, flagType.typeName, "null"))
+                  flagType.decode(null) match {
+                    case Right(empty) =>
+                      toFlagMetadata(details.getFlagMetadata).map { metadata =>
+                        FlagResolution(
+                          value = empty,
+                          variant = Option(details.getVariant),
+                          reason = toResolutionReason(details.getReason),
+                          metadata = metadata,
+                          flagKey = key,
+                          errorCode = providerError,
+                          errorMessage = Option(details.getErrorMessage)
+                        )
+                      }
+                    case Left(message) =>
+                      ZIO.fail(FeatureFlagError.TypeMismatch(key, flagType.typeName, message))
+                  }
               }
             }
       }
@@ -704,17 +722,29 @@ final private[openfeature] class FeatureFlagsLive(
   private def anyToValue(value: Any): dev.openfeature.sdk.Value = value match {
     case null                         => new dev.openfeature.sdk.Value()
     case v: dev.openfeature.sdk.Value => v
-    case b: Boolean                   => new dev.openfeature.sdk.Value(b)
-    case s: String                    => new dev.openfeature.sdk.Value(s)
-    case i: Int                       => new dev.openfeature.sdk.Value(i)
-    case l: Long                      => new dev.openfeature.sdk.Value(l)
-    case d: Double                    => new dev.openfeature.sdk.Value(d)
-    case f: Float                     => new dev.openfeature.sdk.Value(f.toDouble)
-    case list: List[_]                => new dev.openfeature.sdk.Value(list.map(anyToValue).asJava)
+    // Option must be unwrapped before the `other.toString` fallback below, or a `Some("x")` field is sent as the
+    // literal string "Some(x)". Reachable from any encoder producing an Option-valued field — `FlagType.derived`
+    // does exactly that for an `Option` field. `None` becomes an empty Value; as a STRUCTURE member that then reads
+    // back as an absent key (and so as `None`) — note it is `valueToMap` below that drops it, NOT the SDK:
+    // `Structure.mapToStructure` stores an empty `Value` rather than filtering the entry.
+    case Some(inner)   => anyToValue(inner)
+    case None          => new dev.openfeature.sdk.Value()
+    case b: Boolean    => new dev.openfeature.sdk.Value(b)
+    case s: String     => new dev.openfeature.sdk.Value(s)
+    case i: Int        => new dev.openfeature.sdk.Value(i)
+    case l: Long       => new dev.openfeature.sdk.Value(l)
+    case d: Double     => new dev.openfeature.sdk.Value(d)
+    case f: Float      => new dev.openfeature.sdk.Value(f.toDouble)
+    case list: List[_] => new dev.openfeature.sdk.Value(list.map(anyToValue).asJava)
     case map: Map[_, _] =>
       new dev.openfeature.sdk.Value(
         dev.openfeature.sdk.Structure.mapToStructure(
-          map.asInstanceOf[Map[String, Any]].map { case (k, v) => k -> anyToObject(v) }.asJava
+          map
+            .asInstanceOf[Map[String, Any]]
+            // Via `anyToValue().asObject()` rather than `anyToObject` directly, so nested Option/Value handling
+            // above applies to structure members too.
+            .map { case (k, v) => k -> anyToValue(v).asObject() }
+            .asJava
         )
       )
     case other => new dev.openfeature.sdk.Value(other.toString)
@@ -735,7 +765,11 @@ final private[openfeature] class FeatureFlagsLive(
     else if (value.isBoolean) Some(value.asBoolean())
     else if (value.isString) Some(value.asString())
     else if (value.isNumber) Some(value.asDouble())
-    else if (value.isList) Some(value.asList().asScala.flatMap(v => valueToAny(v)).toList)
+    // Arity-preserving on purpose: an element the bridge cannot convert becomes `null` rather than being dropped.
+    // `flatMap` here silently SHORTENED the list — positional data loss with no error — and a `List[Option[A]]`
+    // containing `None` hits exactly that. A `null` element instead reaches the element's own `FlagType`, which
+    // either accepts it (`Option` decodes it to `None`) or rejects it loudly.
+    else if (value.isList) Some(value.asList().asScala.map(v => valueToAny(v).orNull).toList)
     else if (value.isStructure) Some(valueToMap(value))
     else if (value.isInstant) Some(value.asInstant())
     else None

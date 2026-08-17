@@ -40,6 +40,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`FlagType.derived` — Mirror-based derivation for enums and case classes** (#348, Scala 3 only). A
+  string-backed enum or a structured flag no longer needs a hand-written codec:
+  `enum Plan derives FlagType` and `final case class Rollout(...) derives FlagType` are enough.
+  - An **enum with parameterless cases** derives a string codec over the case labels: `wireType` is `"String"`
+    (so it resolves through the provider's string method — this is what #356 unlocked), `encode` emits the label
+    as declared, `decode` matches case-insensitively, and `defaultValue` is the first declared case. A case with
+    parameters is unsupported and does not compile; use `FlagType.from`/`mapped` for those.
+  - A **product** derives a `Map[String, Any]` codec, field by field through each field's own instance, so nested
+    products, `Option` and `List` fields work with no extra wiring. Unknown payload keys are ignored. An absent
+    key resolves to the field's declared Scala default if it has one, else to whatever the field's instance makes
+    of an absent value (which is how an `Option` field becomes `None`), else a decode error naming the field.
+    `defaultValue` is built from the fields' own `defaultValue`s — a type-level zero, not the Scala defaults,
+    since it is never consulted when evaluating.
+  - Derivation is deliberately **not** a `given`, so it never competes in implicit search and the built-in
+    instances keep priority for their own shapes. Derivation is Scala-3 only and purely additive: the 2.13 API is
+    unchanged, and `from`/`mapped` remain supported on both versions.
 - **`FlagType.wireType` — scalar-backed custom flag types are now evaluatable** (#356). A custom `FlagType[A]`
   whose wire representation is a *scalar* — the most common feature-flag shape, an enum stored as a string
   (`"off" | "dual_write" | "shard_only"`), or a newtype over an int — previously had no working evaluation path:
@@ -89,6 +105,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (previously the inherited identity), so an `Option`/`List` of a custom type caches and overrides like the custom
   type itself. One adjacent diagnostic also improved: the `Int`/`Long`/`Double`/`Float`/`Object`/`List` decoders
   return `Left("Cannot convert null to …")` for `null` instead of throwing.
+- **Three defects on the object path for `Option`-shaped values**, all surfaced while building `FlagType.derived`:
+  - an `Option`-valued **field** reached the provider as the literal string `"Some(x)"` — the object path's encoder
+    had no `Option` case, so it fell through to a `toString` fallback. `Some` is now unwrapped and `None` becomes an
+    empty value, which reads back as an absent key (and so as `None`). The same gap is fixed in
+    `TestFeatureProvider`, which is how a derived product's flag is normally seeded in tests;
+  - a top-level `Option[A]` **flag** could not resolve to `None`. `FlagType[Option[A]]`'s `typeName` routes it to
+    the object path, where an empty answer with no provider error code was reported as `TypeMismatch("null")`. The
+    instance now decides what an absent value means before failing, so an empty optional flag yields `None`;
+  - a `None` **inside a `List` field** was silently dropped, shortening the list — positional data loss with no
+    error. List members that cannot be converted now stay in place as `null` and are handed to the element's own
+    `FlagType`, which either accepts them (`Option` → `None`) or rejects them loudly.
+- The built-in `Map[String, Any]` flag path now encodes its members exactly as a derived product does; it
+  previously stringified `Option` members while the custom-type path sent the unwrapped value.
 - **Object-backed custom flag types now receive the caller's default and report `FLAG_NOT_FOUND` correctly.** Two
   defects on the custom-type evaluation path, both surfaced by the pre-implementation audit on #348:
   - the caller's default **never reached the provider** — an empty `Value()` was sent instead of

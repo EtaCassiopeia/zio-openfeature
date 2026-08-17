@@ -1,5 +1,7 @@
 package zio.openfeature
 
+import scala.compiletime.{constValue, constValueTuple, summonAll}
+import scala.deriving.Mirror
 import scala.util.Try
 
 /** Codec between a domain type `A` and the value a provider carries — its ''wire'' value. For the built-in instances
@@ -183,6 +185,166 @@ object FlagType:
     def defaultValue: A                       = default
     def decode(value: Any): Either[String, A] = decoder(value)
     override def encode(value: A): Any        = encoder(value)
+
+  /** Derives a `FlagType[A]` from `A`'s structure (#348). Scala 3 only — the 2.13 twin keeps `from`/`mapped`.
+    *
+    * {{{
+    * enum Plan derives FlagType:
+    *   case Free, Premium, Enterprise
+    *
+    * final case class Rollout(tier: String, pct: Int = 10, note: Option[String]) derives FlagType
+    * }}}
+    *
+    * ==Sum of singleton cases==
+    *
+    * An `enum` whose cases take no parameters derives a '''string''' codec over the case labels: `wireType` is
+    * `"String"`, so the flag is resolved through the provider's string method and decoded — the single most common
+    * feature-flag shape. `encode` emits the canonical label as declared; `decode` matches case-insensitively.
+    * `defaultValue` is the '''first declared case'''.
+    *
+    * Only parameterless cases are supported. A sum with a parameterised case fails to compile with a missing `ValueOf`
+    * instance for that case; write such a type with [[from]] or [[mapped]] instead.
+    *
+    * ==Product==
+    *
+    * A product derives a `Map[String, Any]` codec, field by field through each field's own `FlagType` (so nested
+    * products, `Option` and `List` fields all work). `wireType` stays the type's name, so it is resolved on the object
+    * path. Unknown keys in the payload are ignored, which keeps forward-compatible payloads working.
+    *
+    * An absent key resolves in this order: the field's declared Scala default if it has one; otherwise whatever the
+    * field's own instance makes of `null` — which is how an `Option` field becomes `None`; otherwise a `Left` naming
+    * the field.
+    *
+    * `defaultValue` is built from the fields' own `defaultValue`s, i.e. a zero (`""`, `0`, `None`) rather than the
+    * declared Scala defaults. That asymmetry with decoding is deliberate: `defaultValue` is a type-level zero that is
+    * never consulted on the evaluation path, whereas the Scala defaults describe how to read a real payload.
+    *
+    * ==Precedence==
+    *
+    * This is intentionally not a `given`, so it never enters implicit search and the built-in instances keep priority
+    * for their own shapes — `Option` has a `Mirror.SumOf`, so an implicit derivation would otherwise hijack it.
+    */
+  // NOTE: both branches are expanded here rather than delegated to `derivedSum`/`derivedProduct` helpers. Passing the
+  // mirror to a helper whose parameter is declared `Mirror.SumOf[A]` WIDENS it, which erases the concrete
+  // `MirroredElemTypes`/`MirroredElemLabels` this derivation reads — `summonFrom` then sees an abstract type, finds
+  // nothing, and the whole thing fails as if every enum case were parameterised. The refinement only survives inside
+  // this inline body.
+  inline def derived[A](using m: Mirror.Of[A]): FlagType[A] =
+    inline m match
+      case s: Mirror.SumOf[A] =>
+        sumInstance[A](
+          constValue[s.MirroredLabel],
+          constValueTuple[s.MirroredElemLabels].productIterator.map(_.asInstanceOf[String]).toVector,
+          summonAll[Tuple.Map[s.MirroredElemTypes, ValueOf]].productIterator
+            .map(_.asInstanceOf[ValueOf[A]].value)
+            .toVector,
+          s
+        )
+      case p: Mirror.ProductOf[A] =>
+        productInstance[A](
+          constValue[p.MirroredLabel],
+          constValueTuple[p.MirroredElemLabels].productIterator.map(_.asInstanceOf[String]).toVector,
+          summonAll[Tuple.Map[p.MirroredElemTypes, FlagType]].productIterator
+            .map(_.asInstanceOf[FlagType[Any]])
+            .toVector,
+          p
+        )
+
+  // Split out of the inline body so the code duplicated at each derivation site stays small. These take
+  // already-computed values, so widening is harmless here.
+  private def sumInstance[A](
+    name: String,
+    labels: Vector[String],
+    cases: Vector[A],
+    mirror: Mirror.SumOf[A]
+  ): FlagType[A] = new FlagType[A]:
+    def typeName: String               = name
+    override def wireType: String      = "String"
+    def defaultValue: A                = cases.head
+    override def encode(value: A): Any = labels(mirror.ordinal(value))
+
+    def decode(value: Any): Either[String, A] = value match
+      case str: String =>
+        labels.indexWhere(_.equalsIgnoreCase(str)) match
+          case -1 => Left(s"Unknown $name: '$str' (expected one of ${labels.mkString(", ")})")
+          case i  => Right(cases(i))
+      case null  => Left(s"Cannot convert null to $name")
+      case other => Left(s"Cannot convert ${other.getClass.getSimpleName} to $name")
+
+  private def productInstance[A](
+    name: String,
+    labels: Vector[String],
+    fields: Vector[FlagType[Any]],
+    mirror: Mirror.ProductOf[A]
+  ): FlagType[A] = new FlagType[A]:
+
+    // For a case class the Mirror IS the companion object, so Scala-declared field defaults are reachable as
+    // `apply$default$N`. Probed by name rather than by catching NoSuchMethodException, so a type with no defaults
+    // costs nothing and no exception is swallowed.
+    // Matched by EXACT name, never by suffix. `<methodName>$default$<n>` is the scheme for every defaulted
+    // parameter on the class, not just the constructor's — so a companion holding an unrelated defaulted method
+    // (`def parse(raw: String, strict: Boolean = true)` emits `parse$default$2`) would be picked up by position and
+    // supply that method's default as field 2's, either throwing from `fromProduct` or, when the types happen to
+    // agree, decoding a silently wrong value. Both constructor names are tried because either may be the one
+    // emitted. Resolved once per instance, so only `invoke` is per-decode.
+    private val defaults: Vector[Option[() => Any]] =
+      val byName = mirror.getClass.getMethods.iterator
+        .filter(_.getParameterCount == 0)
+        .map(m => m.getName -> m)
+        .toMap
+      labels.indices.map { i =>
+        val n = i + 1
+        byName
+          .get(s"apply$$default$$$n")
+          .orElse(byName.get(s"$$lessinit$$greater$$default$$$n"))
+          .map(m => () => m.invoke(mirror))
+      }.toVector
+
+    def typeName: String = name
+
+    private lazy val zero: A = mirror.fromProduct(Tuple.fromArray(fields.map(_.defaultValue).toArray))
+    def defaultValue: A      = zero
+
+    override def encode(value: A): Any =
+      labels.iterator
+        .zip(value.asInstanceOf[Product].productIterator)
+        .zip(fields.iterator)
+        .map { case ((label, fieldValue), ft) => label -> ft.encode(fieldValue) }
+        .toMap
+
+    def decode(value: Any): Either[String, A] = value match
+      case m: Map[?, ?] => decodeFields(m.asInstanceOf[Map[String, Any]])
+      case m: java.util.Map[?, ?] =>
+        import scala.jdk.CollectionConverters.*
+        decodeFields(m.asScala.toMap.asInstanceOf[Map[String, Any]])
+      case null  => Left(s"Cannot convert null to $name")
+      case other => Left(s"Cannot convert ${other.getClass.getSimpleName} to $name")
+
+    private def decodeFields(payload: Map[String, Any]): Either[String, A] =
+      labels.indices
+        .foldLeft[Either[String, List[Any]]](Right(Nil)) { (acc, i) =>
+          acc.flatMap(values => fieldValue(payload, i).map(_ :: values))
+        }
+        .map(values => mirror.fromProduct(Tuple.fromArray(values.reverse.toArray)))
+
+    private def fieldValue(payload: Map[String, Any], index: Int): Either[String, Any] =
+      val label = labels(index)
+      val ft    = fields(index)
+      payload.get(label) match
+        case Some(raw) => ft.decode(raw).left.map(reason => s"$name.$label: $reason")
+        case None =>
+          defaults(index) match
+            // `invoke` is guarded: a reflective call can fail (an inaccessible companion, a module boundary) and
+            // that must stay inside the `Either` contract rather than escaping `decode` as a defect.
+            case Some(readDefault) =>
+              Try(readDefault()).toEither.left.map(e => s"$name.$label: reading the declared default failed: $e")
+            case None =>
+              // `decode(null)` is a capability probe, not a data-path decode: an instance that accepts null (every
+              // `Option`) treats an absent key as its empty value. Wrapped in `Try` because the instance may be a
+              // third-party one that throws on null rather than returning a `Left`.
+              Try(ft.decode(null)).toOption.flatMap(_.toOption) match
+                case Some(empty) => Right(empty)
+                case None        => Left(s"$name.$label: missing key '$label'")
 
   def mapped[A, B](name: String, default: A)(map: B => A, contramap: A => B)(using
     underlying: FlagType[B]

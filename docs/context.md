@@ -19,7 +19,7 @@ nav_order: 5
 
 Evaluation context provides information about the current evaluation environment. This includes user information, application state, and any other data that might influence flag evaluation. The context is converted to OpenFeature SDK format and passed to the underlying provider.
 
-ZIO OpenFeature supports a hierarchical context system with five levels (per OpenFeature spec):
+ZIO OpenFeature supports a hierarchical context system. Five levels are the spec-defined push-based ones — the caller sets them:
 
 1. **Global context** - API-level, shared across all evaluations, set via `setGlobalContext`
 2. **Transaction context** - Applied within a transaction block
@@ -28,6 +28,9 @@ ZIO OpenFeature supports a hierarchical context system with five levels (per Ope
 5. **Invocation context** - Passed directly to evaluation methods
 
 Contexts are merged in order, with later contexts taking precedence.
+
+One further level is pull-based: a [context source](#context-source) sits between client and scoped
+context, and is consulted by the library on every evaluation rather than set by the caller.
 
 ---
 
@@ -236,32 +239,78 @@ Non-struct values still replace entirely, even if the base attribute was a struc
 
 ### Merge Order
 
-Per the OpenFeature specification, contexts are merged in this order (lowest to highest precedence):
+Contexts are merged in this order (lowest to highest precedence). The five spec-defined levels keep their
+specified relative order; the pull-based context source is inserted between client and scoped context:
 
 ```
-┌──────────────────────────────────────────────────────────────┐
-│                     Final Merged Context                      │
-│  (Invocation > Scoped > Client > Transaction > Global)       │
-└──────────────────────────────────────────────────────────────┘
-                            ▲
-                            │
-    ┌───────────────────────┼───────────────────────┐
-    │                       │                       │
-┌───┴───┐             ┌─────┴─────┐           ┌─────┴─────┐
-│Invoc. │             │  Scoped   │           │  Client   │
-│(high) │             │  Context  │           │  Context  │
-└───────┘             └───────────┘           └───────────┘
-                            │
-                     ┌──────┴──────┐
-                     │Transaction  │
-                     │  Context    │
-                     └─────────────┘
-                            │
-                     ┌──────┴──────┐
-                     │   Global    │
-                     │  (lowest)   │
-                     └─────────────┘
+                     ┌─────────────────────┐
+                     │  Final Merged Ctx   │
+                     └──────────▲──────────┘
+                                │
+  Invocation      (highest) ────┤   passed to the evaluation call
+  Scoped                   ─────┤   withContext (fiber-local)
+  ContextSource            ─────┤   pulled by the library, per evaluation
+  Client                   ─────┤   setClientContext
+  Transaction              ─────┤   transaction block
+  Global          (lowest)  ────┘   setGlobalContext
 ```
+
+---
+
+## Context Source
+
+Every level above is **push-based**: the caller sets the context, and the library reads what was set. A
+`ContextSource` is the **pull-based** counterpart — an effect the library consults on every evaluation:
+
+```scala
+val fromMdc = ContextSource(ZIO.succeed(EvaluationContext(Mdc.get("userId"))))
+
+val flags = FeatureFlags.fromProvider(
+  provider,
+  FeatureFlagsConfig().withContextSource(fromMdc)
+)
+```
+
+Use it when the request identity your flags need to target on lives somewhere the ZIO environment cannot
+see — an MDC-style map, a tracing/tag manager, a correlation-id carrier — so there is no natural place to
+call `withContext`.
+
+### Precedence, and why this is not a hook
+
+The source is merged between client and scoped context:
+
+```
+Invocation > Scoped > ContextSource > Client > Transaction > Global
+```
+
+So ambient request identity **overrides** static client and global context, while an explicit `withContext`
+or a per-call context at the call site still **wins** over it — the call site is the more specific
+statement of intent.
+
+That slot is the whole reason this is library machinery rather than a `before` hook. A hook's context
+contribution is merged on top of the already-finished effective context, so it can only ever occupy the
+highest-precedence slot — it would override `withContext` and per-call context, which is backwards. Nor can
+a hook reconstruct the ordering itself: `HookContext` exposes a single flattened context with no record of
+which attribute came from the client, the fiber, or the call site.
+
+### Composition and cost
+
+```scala
+// Right-hand side wins on key collisions, matching merge everywhere else.
+val combined = fromMdc ++ fromTracing
+
+// ContextSource.empty contributes nothing and is the identity of `++`. It is also the default,
+// so a client with no configured source behaves exactly as before.
+```
+
+Two properties worth knowing:
+
+- **`current` returns `UIO`**, so a source can never fail an evaluation. Anything fallible must be handled
+  inside the source; a source with nothing to contribute returns `EvaluationContext.empty`, which merges to
+  a no-op.
+- **It is consulted on every evaluation and on `track`.** Keep it cheap — read a `FiberRef` or a
+  `ThreadLocal`; do not call a network service. The effect is by-name, so it is genuinely re-evaluated per
+  call rather than captured once.
 
 ---
 

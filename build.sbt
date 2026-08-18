@@ -181,9 +181,9 @@ lazy val core = (project in file("core"))
     name := "zio-openfeature-core",
     commonSettings,
     libraryDependencies ++= Seq(
-      "dev.zio"         %% "zio"         % zioVersion,
-      "dev.zio"         %% "zio-streams" % zioVersion,
-      "dev.openfeature"  % "sdk"         % openFeatureSdkVersion
+      "dev.zio"        %% "zio"         % zioVersion,
+      "dev.zio"        %% "zio-streams" % zioVersion,
+      "dev.openfeature" % "sdk"         % openFeatureSdkVersion
     )
   )
 
@@ -194,9 +194,9 @@ lazy val extras = (project in file("extras"))
     name := "zio-openfeature-extras",
     commonSettings,
     libraryDependencies ++= Seq(
-      "dev.zio"      %% "zio"       % zioVersion,
-      "dev.zio"      %% "zio-cache" % "0.2.3",
-      "com.typesafe"  % "config"    % "1.4.3"
+      "dev.zio"     %% "zio"       % zioVersion,
+      "dev.zio"     %% "zio-cache" % "0.2.3",
+      "com.typesafe" % "config"    % "1.4.3"
     )
   )
 
@@ -209,9 +209,9 @@ lazy val ofrep = (project in file("ofrep"))
     name := "zio-openfeature-ofrep",
     commonSettings,
     libraryDependencies ++= Seq(
-      "dev.zio"                            %% "zio"       % zioVersion,
-      "dev.openfeature.contrib.providers"   % "ofrep"     % "0.0.1",
-      "org.wiremock"                        % "wiremock"  % "3.10.0" % Test
+      "dev.zio"                          %% "zio"      % zioVersion,
+      "dev.openfeature.contrib.providers" % "ofrep"    % "0.0.1",
+      "org.wiremock"                      % "wiremock" % "3.10.0" % Test
     ),
     // GHSA-72hv-8253-57qq (jackson-core <2.18.0) is patched in 2.18+; the OFREP contrib provider pulls 2.21.2, so we
     // override jackson-core to that version to avoid a split Jackson family (core 2.18 / databind 2.21 → runtime
@@ -229,7 +229,7 @@ lazy val optimizely = (project in file("optimizely"))
     name := "zio-openfeature-optimizely",
     commonSettings,
     libraryDependencies ++= Seq(
-      "dev.zio"          %% "zio"                  % zioVersion,
+      "dev.zio" %% "zio" % zioVersion,
       // NOTE: on a core-api/core-httpclient upgrade, re-verify `com/optimizely/ab/ObservingOptimizelyHttpClient.java`
       // — it lives in the `com.optimizely.ab` package to reach the package-private `OptimizelyHttpClient` ctor and
       // `getHttpClient()` (the staleness fetch-observation seam for #267). A version bump breaks it at compile time.
@@ -283,15 +283,15 @@ lazy val conformanceZioBdd = (project in file("conformance-zio-bdd"))
     publish / skip     := true,
     crossScalaVersions := Seq(scala3Version),
     libraryDependencies ++= Seq(
-      "dev.openfeature"         % "sdk"                    % openFeatureSdkVersion % Test,
-      "io.github.etacassiopeia" %% "zio-bdd"               % zioBddVersion         % Test,
+      "dev.openfeature"          % "sdk"     % openFeatureSdkVersion % Test,
+      "io.github.etacassiopeia" %% "zio-bdd" % zioBddVersion         % Test,
       // Rift's in-process HTTP mock engine (native, no Docker) replaces the WireMock + mitmproxy
       // container the matrix suites used to fake the Optimizely CDN. `-natives` bundles the engine
       // binaries; `-jdk21` is the JDK21 FFM binding (CI runs conformance on JDK 21).
       "io.github.etacassiopeia" %% "zio-bdd-rift-embedded-jdk21"   % zioBddVersion % Test,
       "io.github.etacassiopeia"  % "zio-bdd-rift-embedded-natives" % zioBddVersion % Test,
-      "dev.zio"                 %% "zio-schema"            % "1.6.6"               % Test,
-      "dev.zio"                 %% "zio-schema-derivation" % "1.6.6"               % Test
+      "dev.zio"                 %% "zio-schema"                    % "1.6.6"       % Test,
+      "dev.zio"                 %% "zio-schema-derivation"         % "1.6.6"       % Test
     ),
     // Run tests in a forked JVM, like every module that uses `commonSettings`. This module doesn't
     // (it deliberately uses only the zio-bdd framework, not zio-test), so it was missing the fork —
@@ -358,9 +358,9 @@ lazy val examplesTestkitApp = (project in file("examples/testkit-app"))
   .settings(
     name := "zio-openfeature-example-testkit-app",
     libraryDependencies ++= Seq(
-      "dev.zio" %% "zio"           % zioVersion,
-      "dev.zio" %% "zio-test"      % zioVersion % Test,
-      "dev.zio" %% "zio-test-sbt"  % zioVersion % Test
+      "dev.zio" %% "zio"          % zioVersion,
+      "dev.zio" %% "zio-test"     % zioVersion % Test,
+      "dev.zio" %% "zio-test-sbt" % zioVersion % Test
     ),
     testFrameworks += new TestFramework("zio.test.sbt.ZTestFramework")
   )

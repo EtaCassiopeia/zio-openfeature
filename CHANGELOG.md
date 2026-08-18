@@ -257,6 +257,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`sbt scalafmtSbt` no longer breaks the build definition** (#381). `.scalafmt.conf` pinned the Scala 2 dialect
+  for `src/main`, `src/test` and `scala-2`, but build files fell through to the top-level `runner.dialect = scala3`
+  with `convertToNewSyntax` and `removeOptionalBraces`. Running `scalafmtSbt` therefore rewrote `build.sbt`'s
+  `match { case ... }` into braceless form and `import scala.sys.process._` into `.*` — and sbt compiles build files
+  with Scala 2.12, which parses neither, so the *next* sbt JVM failed to load the project at all
+  (`'{' expected but 'case' found`), hanging a non-interactive run on the `(r)etry, (q)uit` prompt. Build files are
+  now pinned to `scala212` with both rewrites off. Contributor-facing only — no library behaviour changes.
+  - CI now also runs `scalafmtSbtCheck`. `scalafmtCheckAll` covers `src/**` only, so nothing exercised the build
+    files' formatting and this defect was invisible to the gate; it would have been caught on day one. Making that
+    check pass required a one-time whitespace realignment of `build.sbt` and `project/plugins.sbt`, which is
+    included and changes no behaviour.
 - **`TestFeatureProvider` now reports `FLAG_NOT_FOUND` for a key that has not been set** (#369), instead of a
   `DEFAULT`-reason result — the testkit half of #355. A default-reason answer with no error code reads to a
   `MultiProvider` chain as "I answered", so a chain never fell through past the test provider, and a test that

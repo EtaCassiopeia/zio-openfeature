@@ -41,8 +41,14 @@ jobs:
           cache: sbt
       - name: Setup sbt
         uses: sbt/setup-sbt@v1
+      # `scalafmtCheckAll` covers `src/**` only, so nothing here used to exercise how the formatter
+      # treats build files. That gap is what let the Scala 3 dialect reach them: `scalafmtSbt`
+      # rewrote `match { case ... }` braceless and `import a._` into `a.*`, neither of which the
+      # Scala 2.12 compiler sbt uses for build files can parse, so the project stopped loading at
+      # all — and no gate saw it. `scalafmtSbtCheck` closes that gap; it shares this step so the
+      # job pays one sbt JVM start rather than two, and sbt still names whichever task fails.
       - name: Check formatting
-        run: sbt scalafmtCheckAll
+        run: sbt scalafmtCheckAll scalafmtSbtCheck
 
   # Build + test on every supported (JDK, Scala) pair. The library advertises Java 11+ via the OpenFeature Java SDK
   # but we don't currently support running CI on JDK 11 because Optimizely's core-httpclient-impl requires JDK 17+;

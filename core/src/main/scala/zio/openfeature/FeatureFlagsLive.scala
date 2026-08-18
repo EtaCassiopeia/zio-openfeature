@@ -370,7 +370,11 @@ final private[openfeature] class FeatureFlagsLive(
                   res =>
                     res.errorCode match {
                       case Some(code) =>
-                        composedHook.error(stageCtx, errorFromResolution(res.flagKey, code, res.errorMessage), hints)
+                        composedHook.error(
+                          stageCtx,
+                          errorFromResolution(res.flagKey, code, res.errorMessage, expected = hookCtx.flagType.name),
+                          hints
+                        )
                       case None =>
                         composedHook.after(stageCtx, res, hints)
                     }
@@ -386,14 +390,22 @@ final private[openfeature] class FeatureFlagsLive(
     }
   }
 
-  /** Reconstruct a typed error from a resolution that carries an error code, so the `error` hook stage can observe a
-    * provider-reported failure (FLAG_NOT_FOUND, TYPE_MISMATCH, ...) that was returned as a default value rather than
-    * thrown. `ProviderNotReady`/`ProviderFatal` codes never reach here — they fail the effect upstream.
+  /** Reconstruct a typed error from a resolution that carries an error code — a provider-reported failure
+    * (FLAG_NOT_FOUND, TYPE_MISMATCH, ...) returned as a default value rather than thrown. Used both to hand the `error`
+    * hook stage something typed and, since #388, to fail the typed tier itself. `expected` names the flag's type for
+    * `TypeMismatch`; the provider's message becomes `actual`, since the provider is the one that knows what it found.
+    * `ProviderNotReady`/`ProviderFatal` codes are normally caught upstream in `evaluateFromClient`; the arms are kept
+    * so the mapping is total.
     */
-  private def errorFromResolution(key: String, code: ErrorCode, message: Option[String]): FeatureFlagError =
+  private def errorFromResolution(
+    key: String,
+    code: ErrorCode,
+    message: Option[String],
+    expected: String
+  ): FeatureFlagError =
     code match {
       case ErrorCode.FlagNotFound => FeatureFlagError.FlagNotFound(key)
-      case ErrorCode.TypeMismatch => FeatureFlagError.TypeMismatch(key, "unknown", message.getOrElse("unknown"))
+      case ErrorCode.TypeMismatch => FeatureFlagError.TypeMismatch(key, expected, message.getOrElse("unknown"))
       case ErrorCode.ParseError =>
         FeatureFlagError.ParseError(key, new RuntimeException(message.getOrElse("parse error")))
       case ErrorCode.TargetingKeyMissing => FeatureFlagError.TargetingKeyMissing(key)
@@ -805,16 +817,32 @@ final private[openfeature] class FeatureFlagsLive(
       case EvaluationTimeout.Disabled => None
       case EvaluationTimeout.Default  => evaluationTimeout
     }
-    effectiveContext(ctx).flatMap { effectCtx =>
-      runWithHooks(
-        key,
-        default,
-        effectCtx,
-        c => evaluateFlag(key, default, c, timeout),
-        options.hooks,
-        options.hookHints
-      )
-    }
+    effectiveContext(ctx)
+      .flatMap { effectCtx =>
+        runWithHooks(
+          key,
+          default,
+          effectCtx,
+          c => evaluateFlag(key, default, c, timeout),
+          options.hooks,
+          options.hookHints
+        )
+      }
+      .flatMap { resolution =>
+        // The typed tier fails on a provider-reported error CODE, not only on a thrown one (#388). Most providers report
+        // FLAG_NOT_FOUND / TYPE_MISMATCH / ... as a code on the resolution and never throw, so without this the tier a
+        // caller reaches for precisely because a default would be wrong handed the default back with no signal — a
+        // fail-closed gate written with `value` was silently fail-open. Promoted HERE, after the hook pipeline, so hooks
+        // keep observing exactly what they did (the `error` stage via the pipeline's own errorCode branch, and a
+        // `finallyAfter` with the details — which is also what the Java SDK hands `finally` on error), and so a
+        // transaction still records the evaluation for audit. The total tier (`*OrDefault`/`resolveOrDefault`) is built
+        // on this failure channel and keeps serving the default with the code, as before.
+        resolution.errorCode match {
+          case Some(code) =>
+            ZIO.fail(errorFromResolution(key, code, resolution.errorMessage, expected = FlagType[A].typeName))
+          case None => ZIO.succeed(resolution)
+        }
+      }
   }
 
   override def setGlobalContext(ctx: EvaluationContext): UIO[Unit] =

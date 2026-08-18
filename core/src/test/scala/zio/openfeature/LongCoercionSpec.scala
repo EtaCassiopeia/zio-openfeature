@@ -186,13 +186,16 @@ object LongCoercionSpec extends ZIOSpecDefault {
     test("an out-of-safe-range default against a resolver-less provider is a loud TYPE_MISMATCH, not a wrong number") {
       ZIO.scoped {
         for {
-          ff  <- buildFF(new ResolverProvider)
-          det <- ff.longDetails("flag", default = Long.MaxValue)
+          ff    <- buildFF(new ResolverProvider)
+          det   <- ff.longDetails("flag", default = Long.MaxValue).either
+          total <- ff.resolveOrDefault[Long]("flag", default = Long.MaxValue)
         } yield assertTrue(
-          // The SDK refuses to answer rather than silently truncating through a Double...
-          det.errorCode.contains(ErrorCode.TypeMismatch),
-          // ...and hands the caller's own default back untouched.
-          det.value == Long.MaxValue
+          // The SDK refuses to answer rather than silently truncating through a Double, and the typed tier surfaces
+          // that refusal as a typed failure (#388)...
+          det.left.exists(_.isInstanceOf[FeatureFlagError.TypeMismatch]),
+          // ...while the total tier still hands the caller's own default back untouched, with the code.
+          total.errorCode.contains(ErrorCode.TypeMismatch),
+          total.value == Long.MaxValue
         )
       }
     },

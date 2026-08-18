@@ -56,6 +56,14 @@ trait LibraryEvaluationSteps { self: ZIOSteps[Any, LibraryWorld] =>
     } yield ()
   }
 
+  When("the boolean flag " / string / " is resolved with default " / string) { (key: String, default: String) =>
+    for {
+      w   <- ScenarioContext.get
+      res <- w.ff.resolveOrDefault[Boolean](key, default.toBoolean)
+      _   <- record(Right(res.asInstanceOf[FlagResolution[Any]]))
+    } yield ()
+  }
+
   When("the string flag " / string / " is evaluated with default " / string) { (key: String, default: String) =>
     for {
       w   <- ScenarioContext.get
@@ -78,6 +86,15 @@ trait LibraryEvaluationSteps { self: ZIOSteps[Any, LibraryWorld] =>
         w   <- ScenarioContext.get
         out <- w.ff.objDetails(key, Map[String, Any](field -> value)).either
         _   <- record(out.map(_.asInstanceOf[FlagResolution[Any]]))
+      } yield ()
+  }
+
+  When("the object flag " / string / " is resolved with default field " / string / " set to " / string) {
+    (key: String, field: String, value: String) =>
+      for {
+        w   <- ScenarioContext.get
+        res <- w.ff.resolveOrDefault[Map[String, Any]](key, Map[String, Any](field -> value))
+        _   <- record(Right(res.asInstanceOf[FlagResolution[Any]]))
       } yield ()
   }
 

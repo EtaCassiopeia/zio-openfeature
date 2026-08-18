@@ -5,13 +5,19 @@ Feature: An absent flag key reports FLAG_NOT_FOUND
   and #374 (the testkit provider) make an absent key `FLAG_NOT_FOUND`; #364 additionally sends the
   caller's own default down the object path and keeps the provider's error code on the way back.
 
-  Note what stays true either way: an absent key does not *fail* the evaluation. The caller still
-  gets a value — their own default — and what changed is the `errorCode`/`reason` riding along with
-  it, which is what observers (and a provider chain) key on.
+  How the two tiers surface it (#388): the TYPED tier (`value` / `*Details`) fails with a typed
+  `FlagNotFound` — the tier a caller reaches for precisely because a default would be wrong must not
+  hand one back silently — while the TOTAL tier (`*OrDefault` / `resolveOrDefault`) serves the
+  caller's default with `errorCode = FLAG_NOT_FOUND` and `reason = ERROR`.
 
-  Scenario: The testkit provider reports FLAG_NOT_FOUND for a key it does not hold
+  Scenario: The testkit provider reports FLAG_NOT_FOUND for a key it does not hold — the typed tier fails
     Given a test provider
     When the boolean flag "unknown.flag" is evaluated with default "false"
+    Then the evaluation fails with error code "FLAG_NOT_FOUND"
+
+  Scenario: The testkit provider reports FLAG_NOT_FOUND for a key it does not hold — the total tier serves the default
+    Given a test provider
+    When the boolean flag "unknown.flag" is resolved with default "false"
     Then the resolved error code is "FLAG_NOT_FOUND"
     And the resolved reason is "ERROR"
     And the flag value is "false"
@@ -19,7 +25,7 @@ Feature: An absent flag key reports FLAG_NOT_FOUND
   Scenario: The HOCON provider reports FLAG_NOT_FOUND for an absent key
     Given a HOCON provider configured with "known.flag = true"
     When the boolean flag "unknown.flag" is evaluated with default "false"
-    Then the resolved error code is "FLAG_NOT_FOUND"
+    Then the evaluation fails with error code "FLAG_NOT_FOUND"
 
   Scenario: The HOCON provider still serves the keys it does hold
     Given a HOCON provider configured with "known.flag = true"
@@ -29,7 +35,7 @@ Feature: An absent flag key reports FLAG_NOT_FOUND
   Scenario: The environment-variable provider reports FLAG_NOT_FOUND for an absent key
     Given an environment-variable provider holding "FF_KNOWN_FLAG" = "true"
     When the boolean flag "unknown.flag" is evaluated with default "false"
-    Then the resolved error code is "FLAG_NOT_FOUND"
+    Then the evaluation fails with error code "FLAG_NOT_FOUND"
 
   Scenario: The environment-variable provider still serves the keys it does hold
     Given an environment-variable provider holding "FF_KNOWN_FLAG" = "true"
@@ -41,9 +47,15 @@ Feature: An absent flag key reports FLAG_NOT_FOUND
     When the boolean flag "kill.switch" is evaluated with default "false"
     Then the flag value is "true"
 
-  Scenario: The caller's default reaches the provider on the object path and the error code survives
+  Scenario: The caller's default reaches the provider on the object path and the error code survives — typed tier
     Given a provider that records the defaults it is handed
     When the object flag "config.blob" is evaluated with default field "region" set to "eu"
+    Then the evaluation fails with error code "FLAG_NOT_FOUND"
+    And the provider was handed the object default field "region" with value "eu"
+
+  Scenario: The caller's default reaches the provider on the object path and is served back — total tier
+    Given a provider that records the defaults it is handed
+    When the object flag "config.blob" is resolved with default field "region" set to "eu"
     Then the resolved error code is "FLAG_NOT_FOUND"
     And the object field "region" is "eu"
     And the provider was handed the object default field "region" with value "eu"

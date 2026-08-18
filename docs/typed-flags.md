@@ -102,7 +102,7 @@ Which one to reach for:
 
 | Method | Returns | Use when |
 |:-------|:--------|:---------|
-| `value` | `IO[FeatureFlagError, A]` | you want a provider outage to fail the effect |
+| `value` | `IO[FeatureFlagError, A]` | you want a missing flag or a provider problem to *fail* the effect (typed `FlagNotFound`, `TypeMismatch`, …) |
 | `valueOrDefault` | `UIO[A]` | the flag must never take down the request — serves `FlagDef.default` |
 | `valueDetails` | `IO[…, FlagResolution[A]]` | you need the reason, variant or metadata |
 | `resolveOrDefault` | `UIO[FlagResolution[A]]` | both of the above: full resolution, never fails |

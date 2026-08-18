@@ -123,7 +123,7 @@ object FallbackLoggingSpec extends ZIOSpecDefault {
         } yield assertTrue(
           v1,                // resolution unchanged: default served
           first.length == 2, // one line per key
-          first.exists(m => m.contains("'hot'") && m.contains("FlagNotFound") && m.contains("does not exist")),
+          first.exists(m => m.contains("'hot'") && m.contains("FlagNotFound") && m.contains("not found")),
           first.exists(m => m.contains("'other'") && m.contains("7")),
           first.forall(!_.contains("suppressed")),
           all.length == 3,
@@ -173,9 +173,9 @@ object FallbackLoggingSpec extends ZIOSpecDefault {
         for {
           base <- baseline
           ff   <- layer(FeatureFlagsConfig()).build.map(_.get[FeatureFlags])
-          d    <- ff.booleanDetails("k", true)
+          d    <- ff.booleanDetails("k", true).either
           logs <- warnings(base)
-        } yield assertTrue(d.errorCode == Some(ErrorCode.FlagNotFound), logs.isEmpty)
+        } yield assertTrue(d == Left(FeatureFlagError.FlagNotFound("k")), logs.isEmpty)
       }
     },
     test("a successful (non-error) resolution logs nothing") {

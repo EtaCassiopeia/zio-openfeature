@@ -87,10 +87,10 @@ object HookErrorRoutingSpec extends ZIOSpecDefault {
         for {
           log   <- Ref.make[List[String]](Nil)
           ff    <- buildFF(List(recordingHook(log)))
-          v     <- ff.boolean("missing", default = false) // error-code resolution still returns the default value
+          v     <- ff.boolean("missing", default = false).either // the typed tier now fails on the code (#388)
           calls <- log.get
         } yield assertTrue(
-          !v, // provider's default (false) is returned despite the error code
+          v == Left(FeatureFlagError.FlagNotFound("missing")),
           calls.contains("before"),
           calls.contains("error"),
           !calls.contains("after"),
@@ -165,7 +165,7 @@ object HookErrorRoutingSpec extends ZIOSpecDefault {
           counts <- Ref.make[List[Boolean]](Nil)
           hook = FeatureHook.metrics((_, _, success) => counts.update(_ :+ success))
           ff <- buildFF(List(hook))
-          _  <- ff.boolean("missing", default = false)
+          _  <- ff.boolean("missing", default = false).either
           cs <- counts.get
         } yield assertTrue(cs == List(false)) // exactly one call, marked failure — not success+failure
       }

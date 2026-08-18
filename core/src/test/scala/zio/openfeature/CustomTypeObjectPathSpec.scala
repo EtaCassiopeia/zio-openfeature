@@ -94,10 +94,10 @@ object CustomTypeObjectPathSpec extends ZIOSpecDefault {
         }
       }
     },
-    test("a provider-reported FLAG_NOT_FOUND serves the default and keeps the provider's error code") {
+    test("a provider-reported FLAG_NOT_FOUND keeps its own error code on the total tier and serves the default") {
       ZIO.scoped {
         build(new ObjProvider(notFound), "notfound").flatMap { ff =>
-          ff.valueDetails[Cfg]("cfg.flag", Cfg("gold", 42)).map { res =>
+          ff.resolveOrDefault[Cfg]("cfg.flag", Cfg("gold", 42)).map { res =>
             assertTrue(
               // Not relabelled a type error, and the caller's default is served — matching the scalar path.
               res.errorCode.contains(ErrorCode.FlagNotFound),
@@ -108,12 +108,13 @@ object CustomTypeObjectPathSpec extends ZIOSpecDefault {
         }
       }
     },
-    test("FLAG_NOT_FOUND on the object path does not fail the partial tier") {
+    test("FLAG_NOT_FOUND on the object path fails the partial tier with FlagNotFound, as the scalar path does (#388)") {
       ZIO.scoped {
         build(new ObjProvider(notFound), "notfound2").flatMap { ff =>
-          // The scalar path returns the default here rather than failing; the object path must agree.
+          // Both paths agree: a provider-reported code is a typed failure on the typed tier — and it is FlagNotFound,
+          // not a TypeMismatch relabelling of the object path's empty payload.
           ff.value[Cfg]("cfg.flag", Cfg("gold", 42)).either.map { r =>
-            assertTrue(r == Right(Cfg("gold", 42)))
+            assertTrue(r == Left(FeatureFlagError.FlagNotFound("cfg.flag")))
           }
         }
       }

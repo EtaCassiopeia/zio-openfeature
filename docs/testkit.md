@@ -167,16 +167,22 @@ provider.clearFlags
 
 ### Absent keys and provider chains
 
-A key that has **not** been set (never set, removed, or cleared) resolves as `FLAG_NOT_FOUND`, carrying your default
-as the value. No evaluation fails and `ff.boolean` / `*OrDefault` still give you the default, but two things are
-observable: the resolution carries `reason = Error` with `errorCode = FlagNotFound`, and hooks see the **`error`**
-stage rather than `after` — so `Hook.logging()` reports an unset key at error level. That is the spec-correct stage
-for an error-coded resolution, and it is what every real provider shipped here reports for an absent key.
+A key that has **not** been set (never set, removed, or cleared) is reported as `FLAG_NOT_FOUND` — what every real
+provider shipped here reports for an absent key. How that surfaces depends on the tier you evaluate through:
+
+- the **typed tier** (`boolean` / `booleanDetails` / `value` / …) **fails** with `FeatureFlagError.FlagNotFound(key)`
+  — the tier you reach for precisely because a default would be wrong does not hand one back silently;
+- the **total tier** (`booleanOrDefault` / `resolveOrDefault` / …) serves your default, and the resolution carries
+  `reason = Error` with `errorCode = FlagNotFound`;
+- hooks see the **`error`** stage rather than `after` either way — so `Hook.logging()` reports an unset key at error
+  level, the spec-correct stage for an error-coded resolution.
 
 ```scala
 for
-  resolution <- FeatureFlags.booleanDetails("never-set", default = false)
+  typed      <- FeatureFlags.boolean("never-set", default = false).either
+  resolution <- FeatureFlags.resolveOrDefault[Boolean]("never-set", default = false)
 yield assertTrue(
+  typed == Left(FeatureFlagError.FlagNotFound("never-set")),
   resolution.value == false,                              // your default
   resolution.reason == ResolutionReason.Error,
   resolution.errorCode.contains(ErrorCode.FlagNotFound)
@@ -318,21 +324,24 @@ yield ()
 
 Available error modes: `FlagNotFound`, `ParseError`, `TypeMismatch`, `ProviderNotReady`, `General`.
 
-An error mode applies to **every** evaluation while it is set. `ErrorMode.FlagNotFound` produces the same resolution a
-genuinely absent key does (`reason = Error`, `errorCode = FlagNotFound`, your default as the value — see
-[Absent keys and provider chains](#absent-keys-and-provider-chains)) but for all keys at once; to model "this key is
-absent, that one is present", just leave the key unset.
+An error mode applies to **every** evaluation while it is set. `ErrorMode.FlagNotFound` behaves exactly like a
+genuinely absent key (see [Absent keys and provider chains](#absent-keys-and-provider-chains)) but for all keys at
+once; to model "this key is absent, that one is present", just leave the key unset.
 
-Provider exceptions are caught by the Java SDK and returned as default-valued resolutions with error codes. Use `booleanDetails` (or other `*Details` methods) to inspect the error code:
+Provider exceptions are caught by the Java SDK and come back as an error code on the resolution. The typed tier turns
+that code into the matching typed failure; the total tier serves your default and keeps the code on the resolution.
+Pick the one your test wants to assert:
 
 ```scala
 tp.setErrorMode(TestFeatureProvider.ErrorMode.FlagNotFound)
-resolution <- FeatureFlags.booleanDetails("flag", default = false)
+
+typed      <- FeatureFlags.booleanDetails("flag", default = false).either
+// typed == Left(FeatureFlagError.FlagNotFound("flag"))
+
+resolution <- FeatureFlags.resolveOrDefault[Boolean]("flag", default = false)
 // resolution.errorCode == Some(ErrorCode.FlagNotFound)
 // resolution.value == false (the default)
 ```
-
-The exception is `ProviderNotReady`, which propagates as a ZIO-level `FeatureFlagError.ProviderNotReady`.
 
 ### TestAspect API
 
@@ -347,8 +356,9 @@ test("handles slow provider") {
 
 test("handles provider failures") {
   for
-    resolution <- FeatureFlags.booleanDetails("flag", default = false)
-  yield assertTrue(resolution.errorCode.isDefined)
+    typed      <- FeatureFlags.booleanDetails("flag", default = false).either
+    resolution <- FeatureFlags.resolveOrDefault[Boolean]("flag", default = false)
+  yield assertTrue(typed.isLeft, resolution.errorCode.isDefined)
 } @@ TestFeatureProvider.withFailures
 ```
 
@@ -759,8 +769,8 @@ suite("edge cases")(
   test("handles missing flag") {
     val layer = TestFeatureProvider.layer
 
-    // The value is the default; the resolution behind it is FLAG_NOT_FOUND (reason Error), not DEFAULT.
-    FeatureFlags.boolean("missing", false)
+    // A missing key is FLAG_NOT_FOUND: the typed tier fails, the total tier serves the default.
+    FeatureFlags.booleanOrDefault("missing", false)
       .map(result => assertTrue(result == false))
       .provide(Scope.default >>> layer)
   },

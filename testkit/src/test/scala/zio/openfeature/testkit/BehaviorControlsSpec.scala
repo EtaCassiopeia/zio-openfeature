@@ -10,27 +10,33 @@ object BehaviorControlsSpec extends ZIOSpecDefault {
 
   def spec = suite("Behavior Controls")(
     suite("imperative API")(
-      test("setFailing causes error resolution") {
+      // Since #388 the typed tier fails on a provider-reported error code; the total tier serves the default and keeps
+      // the code on the resolution. Each control is asserted on both.
+      test("setFailing causes a typed failure and an error resolution") {
         for {
           tp         <- ZIO.service[TestFeatureProvider]
           _          <- tp.setFailing(true)
-          resolution <- FeatureFlags.booleanDetails("flag", default = false)
+          typed      <- FeatureFlags.booleanDetails("flag", default = false).either
+          resolution <- FeatureFlags.resolveOrDefault[Boolean]("flag", default = false)
           _          <- tp.setFailing(false)
           ok         <- FeatureFlags.boolean("flag", default = false)
         } yield assertTrue(
+          typed.isLeft,
           resolution.errorCode.isDefined,
           resolution.reason == ResolutionReason.Error,
           resolution.value == false,
           ok == true
         )
       },
-      test("setErrorMode(FlagNotFound) returns FlagNotFound error code") {
+      test("setErrorMode(FlagNotFound) fails with FlagNotFound and reports the FlagNotFound error code") {
         for {
           tp         <- ZIO.service[TestFeatureProvider]
           _          <- tp.setErrorMode(TestFeatureProvider.ErrorMode.FlagNotFound)
-          resolution <- FeatureFlags.booleanDetails("flag", default = false)
+          typed      <- FeatureFlags.booleanDetails("flag", default = false).either
+          resolution <- FeatureFlags.resolveOrDefault[Boolean]("flag", default = false)
           _          <- tp.clearErrorMode
         } yield assertTrue(
+          typed == Left(FeatureFlagError.FlagNotFound("flag")),
           resolution.errorCode.contains(ErrorCode.FlagNotFound),
           resolution.reason == ResolutionReason.Error
         )
@@ -45,13 +51,14 @@ object BehaviorControlsSpec extends ZIOSpecDefault {
           result.left.toOption.exists(_.isInstanceOf[FeatureFlagError.ProviderNotReady])
         )
       },
-      test("setFailureProbability(1.0) causes error resolution") {
+      test("setFailureProbability(1.0) causes a typed failure and an error resolution") {
         for {
           tp         <- ZIO.service[TestFeatureProvider]
           _          <- tp.setFailureProbability(1.0)
-          resolution <- FeatureFlags.booleanDetails("flag", default = false)
+          typed      <- FeatureFlags.booleanDetails("flag", default = false).either
+          resolution <- FeatureFlags.resolveOrDefault[Boolean]("flag", default = false)
           _          <- tp.setFailureProbability(0.0)
-        } yield assertTrue(resolution.errorCode.isDefined)
+        } yield assertTrue(typed.isLeft, resolution.errorCode.isDefined)
       },
       test("setFailureProbability(0.0) has no effect") {
         for {
@@ -84,27 +91,35 @@ object BehaviorControlsSpec extends ZIOSpecDefault {
         for {
           tp    <- ZIO.service[TestFeatureProvider]
           _     <- tp.setFailing(true)
-          _     <- FeatureFlags.boolean("flag", default = false)
+          _     <- FeatureFlags.boolean("flag", default = false).either
           _     <- tp.setFailing(false)
           count <- tp.evaluationCount("flag")
         } yield assertTrue(count == 0)
       }
     ).provide(testLayer),
     suite("TestAspect API")(
-      test("withFailures causes error resolution") {
+      // Since #388 the typed tier fails on a provider-reported error code, so a behaviour control that makes the provider
+      // answer with a code is observed as a typed failure there — and as an error-coded resolution on the total tier.
+      test("withFailures causes a typed failure on the typed tier and an error resolution on the total tier") {
         for {
-          resolution <- FeatureFlags.booleanDetails("flag", default = false)
-        } yield assertTrue(resolution.errorCode.isDefined, resolution.reason == ResolutionReason.Error)
+          typed <- FeatureFlags.booleanDetails("flag", default = false).either
+          total <- FeatureFlags.resolveOrDefault[Boolean]("flag", default = false)
+        } yield assertTrue(typed.isLeft, total.errorCode.isDefined, total.reason == ResolutionReason.Error)
       } @@ TestFeatureProvider.withFailures,
-      test("withErrorMode causes specific error code") {
+      test("withErrorMode causes the specific typed error and error code") {
         for {
-          resolution <- FeatureFlags.booleanDetails("flag", default = false)
-        } yield assertTrue(resolution.errorCode.contains(ErrorCode.FlagNotFound))
+          typed <- FeatureFlags.booleanDetails("flag", default = false).either
+          total <- FeatureFlags.resolveOrDefault[Boolean]("flag", default = false)
+        } yield assertTrue(
+          typed == Left(FeatureFlagError.FlagNotFound("flag")),
+          total.errorCode.contains(ErrorCode.FlagNotFound)
+        )
       } @@ TestFeatureProvider.withErrorMode(TestFeatureProvider.ErrorMode.FlagNotFound),
-      test("withFailureProbability(1.0) causes error resolution") {
+      test("withFailureProbability(1.0) causes a typed failure and an error resolution") {
         for {
-          resolution <- FeatureFlags.booleanDetails("flag", default = false)
-        } yield assertTrue(resolution.errorCode.isDefined)
+          typed <- FeatureFlags.booleanDetails("flag", default = false).either
+          total <- FeatureFlags.resolveOrDefault[Boolean]("flag", default = false)
+        } yield assertTrue(typed.isLeft, total.errorCode.isDefined)
       } @@ TestFeatureProvider.withFailureProbability(1.0),
       test("withDelay slows evaluations") {
         for {

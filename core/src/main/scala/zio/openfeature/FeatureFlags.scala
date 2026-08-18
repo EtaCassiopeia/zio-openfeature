@@ -250,8 +250,9 @@ trait FeatureFlags {
                 )
               logFallback(key, served, defect = Some(cause.stripFailures)).as(served)
           },
-      // A provider-reported problem (FLAG_NOT_FOUND, PARSE_ERROR, ...) arrives as a *successful* error-coded resolution
-      // that already carries the default — a served-default fallback all the same, so it gets the same breadcrumb.
+      // Since #388 a provider-reported error CODE fails the typed tier, so it arrives on the `Fail` branch above; this
+      // branch is reached only by a resolution with `reason = Error` and no code — still a served-default fallback, so
+      // it still gets the breadcrumb.
       resolved =>
         if (resolved.isError) logFallback(key, resolved, defect = None).as(resolved) else ZIO.succeed(resolved)
     )

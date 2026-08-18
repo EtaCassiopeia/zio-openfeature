@@ -321,9 +321,10 @@ object ProviderInitFailureSpec extends ZIOSpecDefault {
     ) {
       // The OpenFeature Java SDK catches provider exceptions and returns a `FlagEvaluationDetails` with `errorCode`
       // populated (rather than propagating the throw). That means our `classify` doesn't fire on provider throws via
-      // the Boolean/String/Int/Double evaluation paths — operators see the failure via the resolution's `errorCode`
-      // and `errorMessage`. The classifier IS still exercised end-to-end through provider HTTP failures (see the
-      // OFREP failure-mode suite); it's also unit-tested in `FeatureFlagErrorSpec`. This test documents the boundary.
+      // the Boolean/String/Int/Double evaluation paths — the SDK has already swallowed the throwable, so what the typed
+      // tier promotes (#388) is the GENERAL code, i.e. a `ProviderError`, not an `Unreachable`. The classifier IS still
+      // exercised end-to-end through provider HTTP failures (see the OFREP failure-mode suite); it's also unit-tested
+      // in `FeatureFlagErrorSpec`. This test documents the boundary.
       val boom     = new java.net.UnknownHostException("flags.example.com")
       val provider = new ThrowingEvalProvider(boom)
       val api      = OpenFeatureAPI.createIsolated()
@@ -342,10 +343,10 @@ object ProviderInitFailureSpec extends ZIOSpecDefault {
           )
           result <- ff.booleanDetails("any-flag", default = false).either
         } yield assertTrue(
-          // We expect a successful FlagResolution with errorCode populated (NOT a typed Unreachable failure).
+          // A typed failure carrying the SDK's GENERAL code as a ProviderError — NOT a typed Unreachable failure.
           result match {
-            case Right(resolution) => resolution.errorCode.isDefined
-            case _                 => false
+            case Left(FeatureFlagError.ProviderError(_)) => true
+            case _                                       => false
           }
         )
       }

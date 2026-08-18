@@ -1,7 +1,7 @@
 ---
 layout: default
 title: Extras
-nav_order: 7
+nav_order: 6
 ---
 
 # Extras Module
@@ -552,3 +552,61 @@ for
   result <- ff.boolean("feature", default = false)
 yield result
 ```
+
+---
+
+## Integer Widening Long Provider
+
+An escape hatch for third-party providers that predate OpenFeature Java SDK 1.22.0. You only need it if you
+hit the symptom below.
+
+### Background: `Long` is now resolved natively
+
+`FeatureFlags.long` / `longDetails` call the SDK's native long surface, so the **provider's** own
+`getLongEvaluation` decides the result. Previously this library chose a resolver for you — an int-range
+default went to the provider's integer resolver, anything larger to its double resolver, which is exact only
+up to 2^53 and **silently lossy beyond it**. A 64-bit id or a cents-denominated cap could come back quietly
+wrong.
+
+Going native trades that silent loss for one of two loud, correct outcomes:
+
+- a provider that implements `getLongEvaluation` resolves the full 64-bit range **exactly**;
+- a provider that does not inherits the SDK's default, which answers from `getDoubleEvaluation` and returns
+  `TYPE_MISMATCH` (echoing your default back) outside ±(2^53−1) — a visible error instead of a wrong number.
+
+{: .note }
+> **Every provider shipped with this library already implements `getLongEvaluation` natively** —
+> `HoconProvider`, `EnvVarProvider`, `TestFeatureProvider` and `OptimizelyFeatureProvider`. If you use one of
+> them, there is no behaviour change and nothing to do here.
+
+It also means long evaluations are now visible to SDK-level long hooks and report
+`FlagValueType.Long` rather than `FlagValueType.Int` — so a hook that narrowed `supportedFlagTypes` to `Int`
+no longer fires for them, and one narrowed to `Long` now does.
+
+### Who needs the wrapper
+
+A **third-party** provider written against SDK &lt; 1.22.0 that never overrode `getLongEvaluation`. Its
+integer-stored flags now meet its *double* resolver, which may `TYPE_MISMATCH`. Wrapping it restores the old
+int-range routing:
+
+```scala
+import zio.openfeature.*
+import zio.openfeature.extras.*
+
+val layer = FeatureFlags.fromProvider(IntegerWideningLongProvider(legacyProvider))
+```
+
+### Behaviour
+
+- A default that **fits in an `Int`** is resolved through the wrapped provider's `getIntegerEvaluation` and
+  widened back to `Long`, preserving the underlying `reason`, `variant`, error code and flag metadata.
+- A default **outside** `Int` range falls through to the wrapped provider's own long path (i.e. the SDK
+  default's double resolver) rather than truncating.
+- A `null` default is passed through rather than unboxed, matching the interface contract.
+
+{: .warning }
+> Like `DeferredProvider`, this is an evaluation-only wrapper: it does not forward a wrapped `EventProvider`'s
+> events. See the wrapper table in [Providers]({{ site.baseurl }}/providers) for the full comparison.
+
+Prefer fixing the provider — implementing `getLongEvaluation` upstream — over carrying the wrapper
+indefinitely.

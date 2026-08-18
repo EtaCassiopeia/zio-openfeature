@@ -126,6 +126,23 @@ val config: ZIO[FeatureFlags, FeatureFlagError, Map[String, Any]] =
   FeatureFlags.obj("feature-config", default = Map("timeout" -> 30))
 ```
 
+### Declaring a flag once
+
+Each call above names the key, the type and the default at the use site. For a flag read from more than one
+place, declare it once with a `FlagDef` and pass the definition instead:
+
+```scala
+val MaxItems = FlagDef("max-items", 100, "cart page size")
+
+val limit: ZIO[FeatureFlags, FeatureFlagError, Int] =
+  FeatureFlags.value(MaxItems)
+```
+
+`value`, `valueOrDefault`, `valueDetails` and `resolveOrDefault` all accept a `FlagDef` in place of the
+`(key, default)` pair, with the same context and options arities. It is the same evaluation path — see
+[Typed Flags]({{ site.baseurl }}/typed-flags) for the full picture, including how to use your own enums and
+case classes as flag types.
+
 ### Detailed Evaluation
 
 Get full resolution details including variant, reason, and metadata:
@@ -312,6 +329,7 @@ FeatureFlags.onProviderError { (error, metadata) =>
 
 ## Next Steps
 
+- Read [Typed Flags]({{ site.baseurl }}/typed-flags) to declare each flag once and use your own domain types
 - Learn about [Evaluation Context]({{ site.baseurl }}/context) for targeted flag evaluation
 - Explore [Hooks]({{ site.baseurl }}/hooks) for logging, metrics, and validation
 - Use [Transactions]({{ site.baseurl }}/transactions) for flag overrides and tracking

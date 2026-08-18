@@ -1,7 +1,7 @@
 ---
 layout: default
 title: Architecture
-nav_order: 3
+nav_order: 4
 ---
 
 # Architecture
@@ -284,7 +284,7 @@ three once:
 ```scala
 val UserPlan = FlagDef("user-plan", Plan.Free, "subscription tier")
 
-val plan: IO[FeatureFlagError, Plan] =
+val plan: ZIO[FeatureFlags, FeatureFlagError, Plan] =
   FeatureFlags.value(UserPlan)
 ```
 

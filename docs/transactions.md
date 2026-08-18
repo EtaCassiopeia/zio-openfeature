@@ -94,6 +94,7 @@ This behavior:
 - Reduces provider calls for better performance
 - Returns `ResolutionReason.Cached` for subsequent evaluations
 - Applies to custom `FlagType`s too: the cache holds the wire value and a re-read decodes it exactly as a provider answer would be decoded
+- Never serves an **error-coded** evaluation: if the provider answered `FLAG_NOT_FOUND` (or any other code), the evaluation is *recorded* — so `TransactionResult` still shows the key was asked for and how it failed — but a re-read goes back to the provider, exactly as it would outside a transaction. Serving it would have turned a `FlagNotFound` on the first read into a successful `CACHED` default on the second
 
 Re-reading the same key at a *different* type is served from the cache when the cached wire value decodes as that type (an `Int` re-read as `Long`; a string-backed custom type re-read as `String` yields its wire string), and otherwise falls through to the provider (a `Boolean` re-read as `String`).
 
@@ -117,6 +118,7 @@ FeatureFlags.transaction(cacheEvaluations = false) {
 | `overrides` | `Map[String, Any]` | `Map.empty` | Flag values to override |
 | `context` | `EvaluationContext` | `empty` | Context for this transaction |
 | `cacheEvaluations` | `Boolean` | `true` | Cache flag values within transaction |
+| `nested` | `NestedPolicy` | `Fail` | What to do when already inside a transaction: `Fail` raises `NestedTransactionNotAllowed`; `Reuse` runs the body inside the enclosing transaction — see [Nested Transactions](#nested-transactions) |
 
 ---
 

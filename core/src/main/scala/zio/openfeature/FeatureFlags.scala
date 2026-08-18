@@ -7,9 +7,28 @@ import dev.openfeature.sdk.{FeatureProvider => OFFeatureProvider, OpenFeatureAPI
 import dev.openfeature.sdk.multiprovider.{MultiProvider, Strategy, FirstMatchStrategy, FirstSuccessfulStrategy}
 import java.util.concurrent.TimeoutException
 
+/** The ZIO face of an OpenFeature client. Evaluation comes in two tiers, and which one you call is a statement about
+  * what a missing or broken flag should do to the caller:
+  *
+  *   - '''Typed tier''' — `boolean`/`string`/`int`/`long`/`double`/`obj`/`value`, every `*Details`, and the `FlagDef`
+  *     overloads. Return `IO[FeatureFlagError, _]` and '''fail''' whenever the evaluation cannot produce a real value:
+  *     a provider that throws, a decode that rejects the payload, and — since #388 — a provider that answers with an
+  *     '''error code''' on the resolution (`FLAG_NOT_FOUND`, `TYPE_MISMATCH`, `PARSE_ERROR`, …), which is how most
+  *     providers report problems. The code is mapped to the matching [[FeatureFlagError]] (`FlagNotFound(key)`,
+  *     `TypeMismatch(key, expected, actual)`, …). Reach for this tier when a default would be ''wrong'' — a fail-closed
+  *     gate written with `value` actually fails closed.
+  *   - '''Total tier''' — `*OrDefault` and `resolveOrDefault`. Return `UIO[_]` and '''never fail''': the caller's
+  *     default is served and, on `resolveOrDefault`, the returned [[FlagResolution]] says why (`reason = Error`,
+  *     `errorCode`, `errorMessage`). This is the OpenFeature spec's §1.4.10 "always return the default" contract, and
+  *     it is the migration path for code that used to read `errorCode` off a `*Details` result.
+  *
+  * Hooks observe an error-coded resolution as the `error` stage on both tiers; the two tiers differ only in what the
+  * ''caller'' sees. Everything else — context merging, transactions, caching, timeouts — is shared.
+  */
 trait FeatureFlags {
 
-  // Abstract detailed evaluation methods (one per type, with defaults for ctx and options)
+  // Typed tier: abstract detailed evaluation methods (one per type, with defaults for ctx and options). Each fails with
+  // a typed `FeatureFlagError` when the evaluation cannot produce a real value — see the trait scaladoc for the contract.
 
   def booleanDetails(
     key: String,

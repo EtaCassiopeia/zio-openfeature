@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`CircuitBreakerProvider` now wraps any `FeatureProvider`, not only an `EventProvider`** (#379). Its delegate
+  parameter and its `underlying` field are typed `FeatureProvider`, so a provider that implements only
+  `FeatureProvider` (plus perhaps `Tracking`) can be protected by the breaker. No adapter is interposed — the
+  delegate is held as given. Only the event-driven tripping mechanism needs an `EventProvider`, and it degrades
+  cleanly for a plain delegate: nothing is attached, no delegate events arrive, and the breaker relies on the
+  failure-count and state-driven mechanisms exactly as it already does for an `EventProvider` that never emits.
+  Every other part of the delegate's surface — all six resolvers including `getLongEvaluation`, both `initialize`
+  overloads, `isDomainScoped`, `getProviderHooks`, `track`, `shutdown`, `getMetadata` and `getState` — is forwarded
+  unchanged.
+  - **Source-compatible, not binary-compatible.** `EventProvider` is a subclass of `FeatureProvider`, so every
+    existing call site compiles unchanged. But the widened types are new descriptors at the bytecode level, so a
+    caller compiled against 1.0.0 and *not* recompiled fails with a `NoSuchMethodError` on
+    `CircuitBreakerProvider.make`, `.apply` or `.underlying`; recompiling against this release fixes it with no
+    source edits. The three symbols are whitelisted in `mimaBinaryIssueFilters`.
+  - `CachingProvider` still requires an `EventProvider`; this change is scoped to the circuit breaker.
+
 - **Hooks are now filtered on a flag's wire type, and a `null` string is an error** (#356). Two user-visible
   consequences of `FlagType.wireType` (above), both affecting custom flag types only:
   - `FlagValueType.fromFlagType` reports `wireType` rather than `typeName`, and that value is what

@@ -4,14 +4,19 @@ import zio.openfeature.internal.ProviderEvaluations
 import dev.openfeature.sdk.{
   EvaluationContext => OFEvaluationContext,
   EventProvider,
+  FeatureProvider,
+  Hook,
   ImmutableContext,
   Metadata,
+  MutableTrackingEventDetails,
   ProviderEvaluation,
   ProviderState,
+  TrackingEventDetails,
   Value
 }
 import zio._
 import zio.test._
+import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.{AtomicInteger, AtomicReference}
 
 object CircuitBreakerProviderSpec extends ZIOSpecDefault {
@@ -106,6 +111,118 @@ object CircuitBreakerProviderSpec extends ZIOSpecDefault {
       currentNanos.updateAndGet(_ + duration.toNanos)
 
     override def nanos(): Long = currentNanos.get()
+  }
+
+  /** A delegate that implements only `FeatureProvider`, never `EventProvider` — the shape #379 is about.
+    *
+    * Deliberately overrides neither `getState` nor `getLongEvaluation`: it stands in for a pre-1.22 third-party
+    * provider, so it exercises the SDK's `READY` state default and its double-backed long default.
+    */
+  private class PlainProvider(
+    flags: Map[String, Any] = Map.empty,
+    domainScoped: Boolean = true
+  ) extends FeatureProvider {
+    val evaluationCount               = new AtomicInteger(0)
+    val doubleCount                   = new AtomicInteger(0)
+    val longCount                     = new AtomicInteger(0)
+    val initCount                     = new AtomicInteger(0)
+    val domainInitCount               = new AtomicInteger(0)
+    val shutdownCount                 = new AtomicInteger(0)
+    val tracked                       = new CopyOnWriteArrayList[String]()
+    private val providerHook: Hook[_] = new Hook[java.lang.Object] {}
+    private val shouldFail            = new AtomicReference[Boolean](false)
+
+    def setFailing(failing: Boolean): Unit = shouldFail.set(failing)
+
+    @scala.annotation.nowarn("msg=deprecated")
+    override def getMetadata: Metadata = new Metadata { override def getName: String = "PlainProvider" }
+
+    override def initialize(c: OFEvaluationContext): Unit                 = { initCount.incrementAndGet(); () }
+    override def initialize(c: OFEvaluationContext, domain: String): Unit = { domainInitCount.incrementAndGet(); () }
+    override def isDomainScoped(): Boolean                                = domainScoped
+    override def shutdown(): Unit                                         = { shutdownCount.incrementAndGet(); () }
+    override def getProviderHooks(): java.util.List[Hook[_]] = java.util.Collections.singletonList(providerHook)
+    override def track(eventName: String, c: OFEvaluationContext, d: TrackingEventDetails): Unit = {
+      tracked.add(eventName); ()
+    }
+
+    private def failIfAsked(): Unit =
+      if (shouldFail.get()) throw new RuntimeException("Provider failure")
+
+    override def getBooleanEvaluation(
+      key: String,
+      defaultValue: java.lang.Boolean,
+      c: OFEvaluationContext
+    ): ProviderEvaluation[java.lang.Boolean] = {
+      evaluationCount.incrementAndGet()
+      failIfAsked()
+      val v = flags.get(key).map(_.asInstanceOf[Boolean]).getOrElse(defaultValue.booleanValue())
+      ProviderEvaluations.of[java.lang.Boolean](v, "STATIC")
+    }
+
+    override def getStringEvaluation(
+      key: String,
+      defaultValue: String,
+      c: OFEvaluationContext
+    ): ProviderEvaluation[String] = {
+      evaluationCount.incrementAndGet()
+      failIfAsked()
+      ProviderEvaluations.of[String](flags.get(key).map(_.toString).getOrElse(defaultValue), "STATIC")
+    }
+
+    override def getIntegerEvaluation(
+      key: String,
+      defaultValue: java.lang.Integer,
+      c: OFEvaluationContext
+    ): ProviderEvaluation[java.lang.Integer] = {
+      evaluationCount.incrementAndGet()
+      failIfAsked()
+      val v = flags.get(key).map(_.asInstanceOf[Int]).getOrElse(defaultValue.intValue())
+      ProviderEvaluations.of[java.lang.Integer](v, "STATIC")
+    }
+
+    override def getDoubleEvaluation(
+      key: String,
+      defaultValue: java.lang.Double,
+      c: OFEvaluationContext
+    ): ProviderEvaluation[java.lang.Double] = {
+      evaluationCount.incrementAndGet()
+      doubleCount.incrementAndGet()
+      failIfAsked()
+      val v = flags.get(key).map(_.asInstanceOf[Double]).getOrElse(defaultValue.doubleValue())
+      ProviderEvaluations.of[java.lang.Double](v, "STATIC")
+    }
+
+    override def getObjectEvaluation(
+      key: String,
+      defaultValue: Value,
+      c: OFEvaluationContext
+    ): ProviderEvaluation[Value] = {
+      evaluationCount.incrementAndGet()
+      failIfAsked()
+      ProviderEvaluations.of[Value](flags.get(key).map(a => new Value(a.toString)).getOrElse(defaultValue), "STATIC")
+    }
+  }
+
+  /** A plain delegate that *does* define `getLongEvaluation`, returning a value its `getDoubleEvaluation` never
+    * produces — so a wrapper that drops the override and falls back to the SDK's double path is distinguishable.
+    */
+  private class LongAwarePlainProvider extends PlainProvider(Map("n" -> 99.0)) {
+    override def getLongEvaluation(
+      key: String,
+      defaultValue: java.lang.Long,
+      c: OFEvaluationContext
+    ): ProviderEvaluation[java.lang.Long] = {
+      longCount.incrementAndGet()
+      ProviderEvaluations.of[java.lang.Long](java.lang.Long.valueOf(7L), "STATIC")
+    }
+  }
+
+  /** A plain delegate that reports its own state, for the state-driven trip path. */
+  private class StatefulPlainProvider extends PlainProvider(Map("flag" -> true)) {
+    private val providerState                = new AtomicReference[ProviderState](ProviderState.READY)
+    def setState(state: ProviderState): Unit = providerState.set(state)
+    override def getState: ProviderState     = providerState.get()
   }
 
   private val ctx = new ImmutableContext()
@@ -742,6 +859,133 @@ object CircuitBreakerProviderSpec extends ZIOSpecDefault {
         // Should complete well under 1 second, not 5 seconds
         assertTrue(elapsed < 1000L)
       } @@ TestAspect.withLiveClock
+    ),
+    suite("Plain FeatureProvider delegate (#379)")(
+      test("apply accepts a plain FeatureProvider and forwards evaluations") {
+        val delegate = new PlainProvider(Map("flag" -> true))
+        val cb       = CircuitBreakerProvider(delegate)
+        val result   = cb.getBooleanEvaluation("flag", false, ctx)
+        assertTrue(result.getValue == true, delegate.evaluationCount.get() == 1)
+      },
+      test("make accepts a plain FeatureProvider") {
+        val delegate = new PlainProvider(Map("flag" -> true))
+        for {
+          cb     <- CircuitBreakerProvider.make(delegate)
+          result <- ZIO.attempt(cb.getBooleanEvaluation("flag", false, ctx))
+        } yield assertTrue(result.getValue == true, delegate.evaluationCount.get() == 1)
+      },
+      test("forwards every resolver to a plain delegate") {
+        val delegate = new PlainProvider(Map("b" -> true, "s" -> "hello", "i" -> 42, "d" -> 3.14, "o" -> "obj"))
+        val cb       = CircuitBreakerProvider(delegate)
+        assertTrue(
+          cb.getBooleanEvaluation("b", false, ctx).getValue == true,
+          cb.getStringEvaluation("s", "", ctx).getValue == "hello",
+          cb.getIntegerEvaluation("i", 0, ctx).getValue == 42,
+          cb.getDoubleEvaluation("d", 0.0, ctx).getValue == 3.14,
+          cb.getObjectEvaluation("o", new Value(), ctx).getValue.asString() == "obj",
+          delegate.evaluationCount.get() == 5
+        )
+      },
+      test("forwards getLongEvaluation to a plain delegate that defines it") {
+        val delegate = new LongAwarePlainProvider
+        val cb       = CircuitBreakerProvider(delegate)
+        val result   = cb.getLongEvaluation("n", java.lang.Long.valueOf(0L), ctx)
+        // 7L comes only from the delegate's own override; the SDK's double-backed default would yield 99L.
+        assertTrue(
+          result.getValue.longValue == 7L,
+          delegate.longCount.get() == 1,
+          delegate.doubleCount.get() == 0
+        )
+      },
+      test("routes long resolution through a pre-1.22 plain delegate's own double default") {
+        val delegate = new PlainProvider(Map("n" -> 42.0))
+        val cb       = CircuitBreakerProvider(delegate)
+        val result   = cb.getLongEvaluation("n", java.lang.Long.valueOf(0L), ctx)
+        assertTrue(result.getValue.longValue == 42L, delegate.doubleCount.get() == 1)
+      },
+      test("forwards initialize, initialize(domain), isDomainScoped and shutdown to a plain delegate") {
+        val delegate = new PlainProvider()
+        val cb       = CircuitBreakerProvider(delegate)
+        cb.initialize(ctx)
+        cb.initialize(ctx, "orders")
+        val domainScoped = cb.isDomainScoped()
+        cb.shutdown()
+        // Assert both values: the SDK's own default is `false`, so a delegate that only ever reported
+        // `false` would agree with a wrapper that had dropped the override entirely.
+        val notDomainScoped = CircuitBreakerProvider(new PlainProvider(domainScoped = false)).isDomainScoped()
+        assertTrue(
+          delegate.initCount.get() == 1,
+          delegate.domainInitCount.get() == 1,
+          domainScoped,
+          !notDomainScoped,
+          delegate.shutdownCount.get() == 1
+        )
+      },
+      test("initializing a plain delegate twice is safe and re-runs delegate initialization") {
+        val delegate = new PlainProvider()
+        val cb       = CircuitBreakerProvider(delegate)
+        cb.initialize(ctx)
+        cb.initialize(ctx)
+        assertTrue(delegate.initCount.get() == 2)
+      },
+      test("forwards getProviderHooks and track to a plain delegate") {
+        val delegate = new PlainProvider()
+        val cb       = CircuitBreakerProvider(delegate)
+        cb.track("purchase", ctx, new MutableTrackingEventDetails())
+        assertTrue(cb.getProviderHooks.size == 1, delegate.tracked.contains("purchase"))
+      },
+      test("names the wrapped plain delegate in its metadata") {
+        val cb = CircuitBreakerProvider(new PlainProvider())
+        assertTrue(cb.getMetadata.getName == "CircuitBreakerProvider(PlainProvider)")
+      },
+      test("opens after failureThreshold failures from a plain delegate") {
+        // The delegate does not override getState, so every poll sees the SDK's READY default. That must not
+        // clear accumulated failures, or a plain provider could never trip on failure count alone.
+        val delegate = new PlainProvider(Map("flag" -> true))
+        val clock    = new TestClock()
+        val config   = CircuitBreakerProviderConfig(failureThreshold = 3, resetTimeout = 1.minute)
+        val cb       = CircuitBreakerProvider(delegate, config, clock)
+        delegate.setFailing(true)
+        (1 to 3).foreach(_ => scala.util.Try(cb.getBooleanEvaluation("flag", false, ctx)))
+        val countWhenOpen = delegate.evaluationCount.get()
+        scala.util.Try(cb.getBooleanEvaluation("flag", false, ctx))
+        assertTrue(delegate.evaluationCount.get() == countWhenOpen, cb.getState == ProviderState.ERROR)
+      },
+      test("recovers through a half-open probe after resetTimeout with a plain delegate") {
+        val delegate = new PlainProvider(Map("flag" -> true))
+        val clock    = new TestClock()
+        val config   = CircuitBreakerProviderConfig(failureThreshold = 2, resetTimeout = 30.seconds)
+        val cb       = CircuitBreakerProvider(delegate, config, clock)
+        delegate.setFailing(true)
+        (1 to 2).foreach(_ => scala.util.Try(cb.getBooleanEvaluation("flag", false, ctx)))
+        val openedState = cb.getState
+        clock.advance(31.seconds)
+        delegate.setFailing(false)
+        val probe = cb.getBooleanEvaluation("flag", false, ctx)
+        assertTrue(
+          openedState == ProviderState.ERROR,
+          probe.getValue == true,
+          cb.getState == ProviderState.READY
+        )
+      },
+      test("opens immediately when a plain delegate reports ERROR state") {
+        val delegate = new StatefulPlainProvider
+        val clock    = new TestClock()
+        val cb       = CircuitBreakerProvider(delegate, CircuitBreakerProviderConfig(resetTimeout = 1.minute), clock)
+        delegate.setState(ProviderState.ERROR)
+        val result        = scala.util.Try(cb.getBooleanEvaluation("flag", false, ctx))
+        val countAtReject = delegate.evaluationCount.get()
+        assertTrue(result.isFailure, countAtReject == 0, cb.getState == ProviderState.ERROR)
+      },
+      test("opens immediately when a plain delegate reports FATAL state") {
+        val delegate = new StatefulPlainProvider
+        val clock    = new TestClock()
+        val cb       = CircuitBreakerProvider(delegate, CircuitBreakerProviderConfig(resetTimeout = 1.minute), clock)
+        delegate.setState(ProviderState.FATAL)
+        val result        = scala.util.Try(cb.getBooleanEvaluation("flag", false, ctx))
+        val countAtReject = delegate.evaluationCount.get()
+        assertTrue(result.isFailure, countAtReject == 0, cb.getState == ProviderState.ERROR)
+      }
     ),
     suite("make() factory")(
       test("creates a working CircuitBreakerProvider via ZIO") {

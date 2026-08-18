@@ -5,6 +5,7 @@ import dev.openfeature.sdk.{
   ProviderEvent => JavaProviderEvent,
   EventProvider,
   EventProviderBridge,
+  FeatureProvider,
   Metadata,
   ProviderEvaluation,
   ProviderEventDetails,
@@ -75,7 +76,15 @@ final case class CircuitBreakerProviderConfig(
   *     `PROVIDER_READY` resets an externally-opened circuit, `PROVIDER_STALE` applies `stalePolicy`. Delegate events
   *     are also re-emitted through this wrapper so downstream subscribers still see them. The wrapper takes ownership
   *     of the delegate's event channel on `initialize`; do not register the same delegate instance directly with an
-  *     `OpenFeatureAPI` while it is wrapped.
+  *     `OpenFeatureAPI` while it is wrapped. This mechanism requires an `EventProvider` delegate — see below.
+  *
+  * '''Plain providers''': the delegate is a `FeatureProvider`, so a provider that does not extend `EventProvider` can
+  * be wrapped too (#379). Only the event-driven mechanism needs the richer type, and it degrades cleanly: nothing is
+  * attached, no delegate events arrive, and the breaker relies on the failure-count and state-driven mechanisms exactly
+  * as it already does for an `EventProvider` that never emits. Every other part of the delegate's surface — all six
+  * resolvers, both `initialize` overloads, `isDomainScoped`, `getProviderHooks`, `track`, `shutdown`, `getMetadata` and
+  * `getState` — is `FeatureProvider` surface and is forwarded unchanged. The delegate is held as given, with no adapter
+  * interposed, so no hand-mirrored forwarding layer exists to fall behind the SDK (#333).
   *
   * In open state, after `resetTimeout` elapses, the circuit transitions to half-open and allows a single probe
   * evaluation through. On success the circuit closes; on failure it re-opens.
@@ -86,7 +95,7 @@ final case class CircuitBreakerProviderConfig(
   * the provider is reachable — they reset the failure counter and pass through without tripping the circuit.
   */
 final class CircuitBreakerProvider private (
-  val underlying: EventProvider,
+  val underlying: FeatureProvider,
   val config: CircuitBreakerProviderConfig,
   private[extras] val breaker: CircuitBreaker,
   private val runtime: Runtime[Any]
@@ -107,6 +116,13 @@ final class CircuitBreakerProvider private (
   }
 
   private val delegateAttached = new java.util.concurrent.atomic.AtomicBoolean(false)
+
+  // Event integration is derived from the delegate's type rather than stored as a separate flag, so
+  // "attached to something that cannot emit" is unrepresentable. Empty for a plain `FeatureProvider`.
+  private val eventDelegate: Option[EventProvider] = underlying match {
+    case ev: EventProvider => Some(ev)
+    case _                 => None
+  }
 
   // Forward delegate emissions upward (the delegate is never registered with an API, so without this its
   // events go nowhere) and feed them into the breaker so an unhealthy delegate is detected as soon as it
@@ -129,8 +145,9 @@ final class CircuitBreakerProvider private (
 
   private def doInitialize(runDelegateInit: => Unit): Unit =
     try {
-      if (delegateAttached.compareAndSet(false, true))
-        EventProviderBridge.attach(underlying, onDelegateEvent)
+      eventDelegate.foreach { ev =>
+        if (delegateAttached.compareAndSet(false, true)) EventProviderBridge.attach(ev, onDelegateEvent)
+      }
       runDelegateInit
       checkDelegateState()
     } catch {
@@ -148,8 +165,9 @@ final class CircuitBreakerProvider private (
   override def isDomainScoped(): Boolean = underlying.isDomainScoped()
 
   override def shutdown(): Unit = {
-    if (delegateAttached.compareAndSet(true, false))
-      scala.util.Try(EventProviderBridge.detach(underlying))
+    eventDelegate.foreach { ev =>
+      if (delegateAttached.compareAndSet(true, false)) scala.util.Try(EventProviderBridge.detach(ev))
+    }
     underlying.shutdown()
   }
 
@@ -342,13 +360,13 @@ final class CircuitBreakerProvider private (
 object CircuitBreakerProvider {
 
   def make(
-    underlying: EventProvider,
+    underlying: FeatureProvider,
     config: CircuitBreakerProviderConfig = CircuitBreakerProviderConfig()
   ): UIO[CircuitBreakerProvider] =
     make(underlying, config, Ticker.system)
 
   private[extras] def make(
-    underlying: EventProvider,
+    underlying: FeatureProvider,
     config: CircuitBreakerProviderConfig,
     ticker: Ticker
   ): UIO[CircuitBreakerProvider] =
@@ -358,7 +376,7 @@ object CircuitBreakerProvider {
     }
 
   def apply(
-    underlying: EventProvider,
+    underlying: FeatureProvider,
     config: CircuitBreakerProviderConfig = CircuitBreakerProviderConfig()
   ): CircuitBreakerProvider =
     apply(underlying, config, Ticker.system)
@@ -367,7 +385,7 @@ object CircuitBreakerProvider {
   // construction where a ZIO runtime is not available. Production code should use `make`, which
   // captures the application runtime via ZIO.runtime[Any] and avoids spawning an extra thread pool.
   private[extras] def apply(
-    underlying: EventProvider,
+    underlying: FeatureProvider,
     config: CircuitBreakerProviderConfig,
     ticker: Ticker
   ): CircuitBreakerProvider = {

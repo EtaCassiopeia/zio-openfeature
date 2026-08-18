@@ -316,7 +316,33 @@ trait FeatureFlags {
   )(zio: ZIO[R, E, A]): ZIO[R, Either[E, FeatureFlagError], TransactionResult[A]]
 
   def inTransaction: UIO[Boolean]
+
+  /** The flags the current transaction has evaluated so far — `Map.empty` both when there is no transaction and when
+    * there is one that has evaluated nothing yet. That ambiguity is deliberate for a convenience read but is the wrong
+    * shape for an audit record ("which flags shaped this request"), where an empty answer must not be mistaken for a
+    * real one: prefer [[transactionEvaluations]], which answers `None` outside a transaction (#387).
+    */
   def currentEvaluatedFlags: UIO[Map[String, FlagEvaluation[_]]]
+
+  /** The current transaction's evaluations, or `None` when this fiber is not inside a transaction at all (#387).
+    *
+    * `Some(Map.empty)` is a real answer — a transaction that has evaluated nothing yet — and `None` is a different one:
+    * there is no transaction, so the question does not apply. [[currentEvaluatedFlags]] returns `Map.empty` for both,
+    * which is exactly what lets audit code that has drifted outside its transaction boundary write empty flag sets into
+    * production records silently. Use this where that distinction matters; it fails loudly at the type.
+    *
+    * A concrete default rather than an abstract member so an existing implementor of this trait keeps compiling: it is
+    * derived from [[inTransaction]] and [[currentEvaluatedFlags]], in that order. The order is what makes it sound:
+    * whether this fiber is in a transaction is fiber-local and cannot flip between the two reads, so the presence check
+    * decides `None`/`Some` and the map read only fills the payload. That payload is a snapshot — a fiber forked inside
+    * the same transaction may record more evaluations at any moment. The live implementation overrides it with a single
+    * read.
+    */
+  def transactionEvaluations: UIO[Option[Map[String, FlagEvaluation[_]]]] =
+    inTransaction.flatMap {
+      case true  => currentEvaluatedFlags.map(Some(_))
+      case false => ZIO.none
+    }
 
   def events: ZStream[Any, Nothing, ProviderEvent]
   def providerStatus: UIO[ProviderStatus]
@@ -671,6 +697,9 @@ object FeatureFlags {
 
   def currentEvaluatedFlags: ZIO[FeatureFlags, Nothing, Map[String, FlagEvaluation[_]]] =
     ZIO.serviceWithZIO(_.currentEvaluatedFlags)
+
+  def transactionEvaluations: ZIO[FeatureFlags, Nothing, Option[Map[String, FlagEvaluation[_]]]] =
+    ZIO.serviceWithZIO(_.transactionEvaluations)
 
   def events: ZStream[FeatureFlags, Nothing, ProviderEvent] =
     ZStream.serviceWithStream(_.events)

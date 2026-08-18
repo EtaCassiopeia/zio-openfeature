@@ -882,6 +882,12 @@ final private[openfeature] class FeatureFlagsLive(
       case None     => Exit.succeed(Map.empty)
     }
 
+  override def transactionEvaluations: UIO[Option[Map[String, zio.openfeature.FlagEvaluation[_]]]] =
+    state.transactionRef.get.flatMap {
+      case Some(ts) => ts.getEvaluations.map(Some(_))
+      case None     => Exit.succeed(None)
+    }
+
   override def events: ZStream[Any, Nothing, ProviderEvent] =
     ZStream.fromHub(state.eventHub)
 

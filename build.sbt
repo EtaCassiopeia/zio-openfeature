@@ -1,4 +1,3 @@
-import xerial.sbt.Sonatype.sonatypeCentralHost
 import net.nmoncho.sbt.dependencycheck.settings._
 import com.typesafe.tools.mima.core._
 
@@ -37,9 +36,11 @@ ThisBuild / scmInfo := Some(
   )
 )
 
-// Publishing to Sonatype Central
-ThisBuild / sonatypeCredentialHost := sonatypeCentralHost
-ThisBuild / versionScheme          := Some("semver-spec")
+// Publishing to Sonatype Central. sbt-ci-release 1.12.0 dropped sbt-sonatype in favour of sbt 1.11+'s built-in Central
+// Portal support, so there is no `sonatypeCredentialHost` to set: `publishTo` resolves to the Central snapshots repo
+// for a `-SNAPSHOT` version and to local staging (uploaded by `sonaRelease`) for a release, and sbt reads the
+// `SONATYPE_USERNAME` / `SONATYPE_PASSWORD` env vars into credentials for `central.sonatype.com` on its own.
+ThisBuild / versionScheme := Some("semver-spec")
 
 // Stable moving snapshot coordinate. Between releases every `main` commit publishes to a SINGLE `<next>-SNAPSHOT`
 // version — the most recent tag with its final number bumped (e.g. after `v1.0.0-RC2` → `1.0.0-RC3-SNAPSHOT`) — so

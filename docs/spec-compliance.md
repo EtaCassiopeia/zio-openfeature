@@ -265,7 +265,8 @@ Beyond the OpenFeature spec, ZIO OpenFeature provides:
 
 | Feature | Description |
 |:--------|:------------|
-| Transactions | Scoped overrides with evaluation caching and tracking |
+| Transactions | Scoped overrides with evaluation caching and tracking; re-entrant via `NestedPolicy.Reuse`; `transactionEvaluations` tells "no transaction" from "nothing evaluated" |
+| Typed and total tiers | `value`/`*Details` fail typed on any evaluation problem, including a provider-reported error code; `*OrDefault`/`resolveOrDefault` never fail and serve the default (the spec's §1.4.10 contract) |
 | Fiber-local context | `withContext` scopes context to a code block via FiberRef |
 | Type-safe evaluation | `FlagType` type class for compile-time safety |
 | Typed flag definitions | `FlagDef[A]` states a flag's key, type and default once — see [Typed Flags]({{ site.baseurl }}/typed-flags) |

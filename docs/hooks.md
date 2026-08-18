@@ -27,7 +27,9 @@ Each hook can implement four stages:
 
 1. **before** - Runs before flag evaluation, can modify context
 2. **after** - Runs after successful evaluation
-3. **error** - Runs when evaluation fails
+3. **error** - Runs when evaluation fails — including when the provider answers with an error *code*
+   (`FLAG_NOT_FOUND`, `TYPE_MISMATCH`, …) rather than by throwing; the typed tier surfaces that as a typed failure and
+   the total tier as a served default, but hooks see the `error` stage on both
 4. **finallyAfter** - Always runs, regardless of success or failure
 
 ```

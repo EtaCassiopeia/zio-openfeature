@@ -190,6 +190,22 @@ details.map { resolution =>
 }
 ```
 
+Those are the **typed tier**: they fail with a typed `FeatureFlagError` when the flag cannot be read — including when
+the provider answers with an error *code* (`FlagNotFound`, `TypeMismatch`, …), so a fail-closed gate stays closed.
+When you would rather always get a value, the **total tier** never fails and serves your default instead, with the
+reason on the resolution:
+
+```scala
+val enabled: ZIO[FeatureFlags, Nothing, Boolean] =
+  FeatureFlags.booleanOrDefault("feature", default = false)
+
+// The full resolution, never failing — reason, errorCode and errorMessage say why a default was served
+val res: ZIO[FeatureFlags, Nothing, FlagResolution[Boolean]] =
+  FeatureFlags.resolveOrDefault[Boolean]("feature", default = false)
+```
+
+See [Getting Started → Two tiers](https://etacassiopeia.github.io/zio-openfeature/getting-started#two-tiers-typed-and-total).
+
 ### Evaluation Context
 
 ```scala
@@ -229,6 +245,12 @@ result.map { txResult =>
   println(s"Overrides used: ${txResult.overrideCount}")
 }
 ```
+
+A transaction used as middleware composes: pass `nested = NestedPolicy.Reuse` and an inner transaction runs inside
+the enclosing one instead of failing with `NestedTransactionNotAllowed`. Inside a transaction,
+`FeatureFlags.transactionEvaluations` answers `Some(evaluated flags)` — and `None` when there is no transaction at
+all, so an audit read cannot mistake the two. See
+[Transactions](https://etacassiopeia.github.io/zio-openfeature/transactions).
 
 ### Hooks
 

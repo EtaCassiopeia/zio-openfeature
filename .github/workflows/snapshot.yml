@@ -51,9 +51,39 @@ jobs:
       - name: Publish snapshot to Sonatype Central
         # `sbt ci-release` detects the `-SNAPSHOT` version (this commit carries no `v*` tag) and publishes to the
         # Central snapshots repository; the identical command publishes a real release from release.yml on a tag.
-        run: sbt ci-release
+        #
+        # `ci-release` returns 0 on all of its "doing nothing" paths — no secrets, a non-SNAPSHOT version, or (before
+        # sbt-ci-release 1.12.0 / sbt 1.11) "Sonatype Central does not accept snapshots ... Aborting release." That is
+        # how this workflow reported success on every run while never uploading a single artifact. So don't trust the
+        # exit code alone: require the log line that only the snapshot branch prints.
+        run: |
+          set -o pipefail
+          echo "PUBLISH_STARTED_AT=$(date -u +%s)" >> "$GITHUB_ENV"
+          sbt ci-release 2>&1 | tee ci-release.log
+          grep -q 'No tag push, publishing SNAPSHOT' ci-release.log \
+            || { echo "::error::ci-release exited 0 without taking the snapshot path — nothing was published"; exit 1; }
         env:
           PGP_PASSPHRASE: ${{ secrets.PGP_PASSPHRASE }}
           PGP_SECRET: ${{ secrets.PGP_SECRET }}
           SONATYPE_PASSWORD: ${{ secrets.SONATYPE_PASSWORD }}
           SONATYPE_USERNAME: ${{ secrets.SONATYPE_USERNAME }}
+
+      - name: Verify the snapshot reached the repository
+        # End-to-end check that artifacts actually landed where the README tells consumers to look. Checking only that
+        # the metadata *exists* would stay green forever after the first successful publish, so compare its
+        # `lastUpdated` against the moment this run started publishing: a run that uploaded nothing leaves a stale
+        # timestamp behind. The 5-minute slack absorbs clock skew between the runner and Sonatype.
+        run: |
+          meta=https://central.sonatype.com/repository/maven-snapshots/io/github/etacassiopeia/zio-openfeature-core_3/maven-metadata.xml
+          curl -fsS "$meta" -o maven-metadata.xml \
+            || { echo "::error::no snapshot metadata on Central — the publish did not reach the repository"; exit 1; }
+          stamp=$(grep -oE '<lastUpdated>[0-9]+</lastUpdated>' maven-metadata.xml | grep -oE '[0-9]+')
+          [ -n "$stamp" ] || { echo "::error::snapshot metadata has no <lastUpdated>"; exit 1; }
+          [ -n "${PUBLISH_STARTED_AT:-}" ] || { echo "::error::PUBLISH_STARTED_AT unset — cannot judge freshness"; exit 1; }
+          updated=$(date -u -d "${stamp:0:4}-${stamp:4:2}-${stamp:6:2} ${stamp:8:2}:${stamp:10:2}:${stamp:12:2}" +%s)
+          if [ "$updated" -lt "$((PUBLISH_STARTED_AT - 300))" ]; then
+            echo "::error::snapshot metadata was last updated $stamp, before this run started — nothing was published"
+            exit 1
+          fi
+          echo "Snapshot metadata updated at $stamp:"
+          grep -E '<version>|<latest>' maven-metadata.xml | tail -5

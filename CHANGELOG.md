@@ -334,6 +334,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Snapshots are actually published now** (#397). `Publish Snapshot` has run green on every `main` commit since it
+  was added and never uploaded a single artifact: sbt-ci-release 1.9.2 routes snapshots through sbt-sonatype, which
+  answers `sonatypeCentralHost` with "Sonatype Central does not accept snapshots, only official releases. Aborting
+  release." — and then **exits 0**, so the workflow reported success while the snapshots repository stayed empty and
+  the README's snapshot instructions pointed at a 404. Fixed by moving to Central Portal publishing proper:
+  sbt-ci-release 1.12.0 (which drops sbt-sonatype for sbt 1.11+'s built-in support) on sbt 1.12.15, with
+  `sonatypeCredentialHost` removed — `publishTo` now resolves to
+  `https://central.sonatype.com/repository/maven-snapshots/` for a `-SNAPSHOT` version, and sbt reads the existing
+  `SONATYPE_USERNAME` / `SONATYPE_PASSWORD` secrets into credentials for `central.sonatype.com` itself, so no secret
+  changes were needed. Tagged releases are unaffected in outcome but take a new route: `+publishSigned` into local
+  staging, then `sonaRelease` uploads the bundle.
+  - The workflow no longer trusts `ci-release`'s exit code. It requires the log line that only the snapshot branch
+    prints, and then fetches `maven-metadata.xml` from the snapshots repository — every "doing nothing" path
+    (missing secrets, a non-SNAPSHOT version, an unsupported host) now fails the run loudly instead of passing in
+    silence. Consumer-facing only in that snapshot coordinates finally resolve; no library behaviour changes.
+
 - **`sbt scalafmtSbt` no longer breaks the build definition** (#381). `.scalafmt.conf` pinned the Scala 2 dialect
   for `src/main`, `src/test` and `scala-2`, but build files fell through to the top-level `runner.dialect = scala3`
   with `convertToNewSyntax` and `removeOptionalBraces`. Running `scalafmtSbt` therefore rewrote `build.sbt`'s
@@ -460,6 +476,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - OpenFeature Java SDK 1.21.0 → 1.22.0
 - zio-bdd 1.4.2 → 1.4.4 (test-only)
+- sbt 1.10.6 → 1.12.15 (build-only; required for Central Portal publishing, #397)
+- sbt-ci-release 1.9.2 → 1.12.0 (build-only, #397)
 
 ## [1.0.0] — 2026-07-12
 

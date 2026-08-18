@@ -56,6 +56,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`transactionEvaluations` — "not in a transaction" is now distinguishable from "in one that read nothing"**
+  (#387). `currentEvaluatedFlags` answers `Map.empty` in both situations, which is the wrong shape for what the read
+  is usually for — an audit record of which flags shaped a request — because a refactor that moves the audit call
+  outside the transaction boundary keeps compiling and starts writing empty flag sets into production records with
+  no error and nothing in the logs. The new `transactionEvaluations: UIO[Option[Map[String, FlagEvaluation[_]]]]`
+  (trait + companion accessor) answers `None` outside a transaction and `Some(...)` inside one — `Some(Map.empty)`
+  being a real answer. `currentEvaluatedFlags` is unchanged and its scaladoc now names the ambiguity and points here.
+  Additive: a concrete default on the `FeatureFlags` trait (derived from `inTransaction` + `currentEvaluatedFlags`),
+  so an existing implementor keeps compiling and no MiMa filter is needed; the live instance overrides it with a
+  single fiber-local read. The breaking form the issue also proposed — changing `currentEvaluatedFlags`'s return type
+  — was not taken because it is a *source* break for every caller (`.contains`, `.get`, `.keys` stop compiling on
+  `Option[Map]`), unlike every other break this cycle; whether to retire the old method is a 2.0 question.
 - **Re-entrant transactions: `NestedPolicy` on `transaction` / `transactionEither`** (#386). Opening a transaction
   inside another one has always failed with `NestedTransactionNotAllowed` — a sound default for code that means to open
   two, but the wrong shape for a transaction used as *middleware*: a per-request wrapper and a handler that wraps a

@@ -281,15 +281,38 @@ had to hand-roll this guard with `inTransaction` — a guard whose two branches 
 
 ## Checking Transaction State
 
-You can check if code is running inside a transaction:
+Three reads, for three different questions:
 
 ```scala
+// Am I inside a transaction?
 val inTx: ZIO[FeatureFlags, Nothing, Boolean] = FeatureFlags.inTransaction
 
-// Get currently evaluated flags in active transaction
-val evaluated: ZIO[FeatureFlags, Nothing, Map[String, FlagEvaluation[?]]] =
+// What has the current transaction evaluated — and IS there one? None means "no transaction".
+val evaluated: ZIO[FeatureFlags, Nothing, Option[Map[String, FlagEvaluation[?]]]] =
+  FeatureFlags.transactionEvaluations
+
+// Convenience: the same map, or Map.empty when there is no transaction.
+val evaluatedOrEmpty: ZIO[FeatureFlags, Nothing, Map[String, FlagEvaluation[?]]] =
   FeatureFlags.currentEvaluatedFlags
 ```
+
+The distinction between the last two matters exactly where these reads are usually made — **audit records**
+("which flags shaped this request"). `currentEvaluatedFlags` answers `Map.empty` both outside any transaction and
+inside one that has evaluated nothing yet, so a refactor that moves the audit call outside the transaction boundary
+(or a middleware that stops wrapping) keeps compiling and starts writing empty flag sets into production records,
+silently. `transactionEvaluations` puts the difference in the type: `Some(Map.empty)` is a real answer, `None` is
+"this question does not apply here" — and it cannot be mistaken for the other.
+
+```scala
+def recordAudit(requestId: String): ZIO[FeatureFlags & Audit, Nothing, Unit] =
+  FeatureFlags.transactionEvaluations.flatMap {
+    case Some(flags) => Audit.record(requestId, flags)
+    case None        => ZIO.logWarning(s"$requestId: audit called outside a flag transaction — nothing recorded")
+  }
+```
+
+`transactionEvaluations` composes with [`NestedPolicy.Reuse`](#nested-transactions): inside a reused inner call
+it reports the enclosing transaction's evaluations, since that is the transaction that is running.
 
 ---
 

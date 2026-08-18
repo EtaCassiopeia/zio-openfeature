@@ -69,21 +69,26 @@ jobs:
           SONATYPE_USERNAME: ${{ secrets.SONATYPE_USERNAME }}
 
       - name: Verify the snapshot reached the repository
-        # End-to-end check that artifacts actually landed where the README tells consumers to look. Checking only that
-        # the metadata *exists* would stay green forever after the first successful publish, so compare its
-        # `lastUpdated` against the moment this run started publishing: a run that uploaded nothing leaves a stale
-        # timestamp behind. The 5-minute slack absorbs clock skew between the runner and Sonatype.
+        # End-to-end check that artifacts actually landed where the README tells consumers to look. Assert on the
+        # *artifact*, not on `maven-metadata.xml`: sbt publishes through Ivy, which does not generate that file, and
+        # Central's snapshot repository does not synthesize one either — it is a permanent 404 here even though every
+        # jar and pom uploaded fine. Take the pom URL straight out of the publish log (so this tracks the version the
+        # run actually published, with no second copy of the versioning logic) and require it to be fetchable and
+        # written during this run. `Last-Modified` is what makes this a real gate rather than one that goes
+        # permanently green after the first success; the 5-minute slack absorbs runner/Sonatype clock skew.
         run: |
-          meta=https://central.sonatype.com/repository/maven-snapshots/io/github/etacassiopeia/zio-openfeature-core_3/maven-metadata.xml
-          curl -fsS "$meta" -o maven-metadata.xml \
-            || { echo "::error::no snapshot metadata on Central — the publish did not reach the repository"; exit 1; }
-          stamp=$(grep -oE '<lastUpdated>[0-9]+</lastUpdated>' maven-metadata.xml | grep -oE '[0-9]+')
-          [ -n "$stamp" ] || { echo "::error::snapshot metadata has no <lastUpdated>"; exit 1; }
+          pom=$(sed 's/\x1b\[[0-9;]*m//g' ci-release.log \
+            | grep -oE 'https://central\.sonatype\.com/repository/maven-snapshots/[^ ]*zio-openfeature-core_3[^ ]*\.pom' \
+            | head -1)
+          [ -n "$pom" ] || { echo "::error::publish log records no uploaded pom for zio-openfeature-core_3"; exit 1; }
           [ -n "${PUBLISH_STARTED_AT:-}" ] || { echo "::error::PUBLISH_STARTED_AT unset — cannot judge freshness"; exit 1; }
-          updated=$(date -u -d "${stamp:0:4}-${stamp:4:2}-${stamp:6:2} ${stamp:8:2}:${stamp:10:2}:${stamp:12:2}" +%s)
+          echo "Checking $pom"
+          modified=$(curl -fsSI "$pom" | grep -i '^last-modified:' | cut -d' ' -f2- | tr -d '\r') \
+            || { echo "::error::published pom is not fetchable from Central — the upload did not reach the repository"; exit 1; }
+          [ -n "$modified" ] || { echo "::error::Central returned no Last-Modified for the published pom"; exit 1; }
+          updated=$(date -u -d "$modified" +%s)
           if [ "$updated" -lt "$((PUBLISH_STARTED_AT - 300))" ]; then
-            echo "::error::snapshot metadata was last updated $stamp, before this run started — nothing was published"
+            echo "::error::published pom was last modified $modified, before this run started — nothing was uploaded"
             exit 1
           fi
-          echo "Snapshot metadata updated at $stamp:"
-          grep -E '<version>|<latest>' maven-metadata.xml | tail -5
+          echo "Snapshot published and readable from Central (pom Last-Modified: $modified)"

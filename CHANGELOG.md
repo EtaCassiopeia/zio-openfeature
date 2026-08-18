@@ -346,9 +346,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   changes were needed. Tagged releases are unaffected in outcome but take a new route: `+publishSigned` into local
   staging, then `sonaRelease` uploads the bundle.
   - The workflow no longer trusts `ci-release`'s exit code. It requires the log line that only the snapshot branch
-    prints, and then fetches `maven-metadata.xml` from the snapshots repository — every "doing nothing" path
+    prints, and then re-fetches the pom that run uploaded and checks its `Last-Modified` — every "doing nothing" path
     (missing secrets, a non-SNAPSHOT version, an unsupported host) now fails the run loudly instead of passing in
-    silence. Consumer-facing only in that snapshot coordinates finally resolve; no library behaviour changes.
+    silence. Note that `maven-metadata.xml` is a permanent 404 on this repository: sbt publishes through Ivy, which
+    does not generate one, and Central does not synthesize it. Resolution is unaffected — sbt/coursier fetch the
+    non-timestamped `-SNAPSHOT` artifact directly — but do not reach for that file to check whether a publish
+    worked. Consumer-facing only in that snapshot coordinates finally resolve; no library behaviour changes.
 
 - **`sbt scalafmtSbt` no longer breaks the build definition** (#381). `.scalafmt.conf` pinned the Scala 2 dialect
   for `src/main`, `src/test` and `scala-2`, but build files fell through to the top-level `runner.dialect = scala3`

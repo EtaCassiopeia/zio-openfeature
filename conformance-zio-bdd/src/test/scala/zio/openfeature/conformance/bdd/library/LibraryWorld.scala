@@ -43,7 +43,7 @@ object LogSink {
   }
 }
 
-/** Per-scenario state for the post-1.0.0 library suites.
+/** Per-scenario state for the library suites.
   *
   * zio-bdd isolates this in a `FiberRef`, so it can hold opaque references (a live `FeatureFlags`, provider handles,
   * recorder `Ref`s) that have no `Schema` — it only needs a [[Default]] instance.

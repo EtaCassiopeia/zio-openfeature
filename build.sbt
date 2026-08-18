@@ -259,9 +259,8 @@ lazy val conformance = (project in file("conformance"))
   )
 
 lazy val conformanceZioBdd = (project in file("conformance-zio-bdd"))
-  // `extras` is here for the post-1.0.0 library suites only: they evaluate against the bundled config providers
-  // (`HoconProvider`, `EnvVarProvider`, whose absent-key behaviour changed in #370) and against
-  // `IntegerWideningLongProvider` (the documented remedy for a pre-SDK-1.22.0 provider, #333).
+  // `extras` for the library suites: they evaluate against `HoconProvider`, `EnvVarProvider` and
+  // `IntegerWideningLongProvider`.
   .dependsOn(core, testkit, extras)
   // "test->test" on optimizely additionally pulls its test classpath (not just main), so the
   // Optimizely flag-matrix suite below can reuse `RecommendationService`/`RecommendationResult`

@@ -4,7 +4,7 @@ import zio._
 import zio.bdd.core.Suite
 import zio.bdd.core.step.ZIOSteps
 
-/** Behavioural conformance for the library features added after 1.0.0.
+/** Behavioural conformance for this library's own API surface.
   *
   * ==Why this is a second suite and not more scenarios in `ConformanceSpec`==
   *
@@ -16,7 +16,7 @@ import zio.bdd.core.step.ZIOSteps
   *
   * ==Coverage==
   *
-  * One feature file per post-1.0.0 area, each naming the issue it pins:
+  * One feature file per area, each naming the issue it pins:
   *
   *   - `typed_flags.feature` — `FlagDef` (#357), `wireType` dispatch (#361), the encode/wireType diagnostic (#362),
   *     Mirror derivation (#366), decode-on-extract and hook wire-type filtering (#356)
@@ -30,7 +30,7 @@ import zio.bdd.core.step.ZIOSteps
   *   - `acquire_status.feature` — `verify` before the swap (#349/#376) and `AcquireStatus` (#352/#377)
   *   - `test_fixtures.feature` — typed `FlagOverride` fixtures (#351/#372) and `makeNamed` (#375)
   *
-  * Two post-1.0.0 additions are deliberately not here. `FlagTypeLaws` (#368) builds a `zio-test` `Spec`, which has no
+  * Two additions are deliberately not here. `FlagTypeLaws` (#368) builds a `zio-test` `Spec`, which has no
   * meaning inside a gherkin step — `testkit`'s own `FlagTypeLawsSpec` is its home; what a *scenario* can assert is the
   * law itself, which `test_fixtures.feature` does by seeding through `encode` and reading back through `decode`. MiMa
   * baselining (#330) and the gherkin drift checks (#334/#337/#343) are build/CI machinery with no runtime surface.

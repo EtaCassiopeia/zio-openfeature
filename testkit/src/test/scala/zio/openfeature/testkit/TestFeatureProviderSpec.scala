@@ -273,7 +273,7 @@ object TestFeatureProviderSpec extends ZIOSpecDefault {
       },
       test("scopedLayer with empty flags works") {
         val program = for {
-          result <- FeatureFlags.boolean("missing", default = true)
+          result <- FeatureFlags.booleanOrDefault("missing", default = true)
         } yield assertTrue(result == true)
 
         program.provide(TestFeatureProvider.scopedLayer)

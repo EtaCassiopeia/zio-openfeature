@@ -155,20 +155,24 @@ object AbsentKeyChainSpec extends ZIOSpecDefault {
           )
         }
       },
-      test("a key absent from every provider yields the caller's default with FLAG_NOT_FOUND through the client") {
+      test(
+        "a key absent from every provider is FLAG_NOT_FOUND through the client: typed tier fails, total tier serves the default"
+      ) {
         // Exercised through `FeatureFlags`, not the raw chain: when every provider reports FLAG_NOT_FOUND the chain
-        // has no value to give and answers null — substituting the caller's default is the SDK client's job. Asserting
-        // it here is what proves the change costs users nothing: no failure, same value, and now a truthful code.
+        // has no value to give and answers null — substituting the caller's default is the SDK client's job. Since #388
+        // the typed tier surfaces that code as a typed failure and the total tier serves the default with the code.
         ZIO.scoped {
           for {
             first <- TestFeatureProvider.make
             ff    <- chainOf(first, inMemory())
-            s     <- ff.stringDetails("nowhere", "fallback")
-            b     <- ff.boolean("nowhere", true)
+            s     <- ff.stringDetails("nowhere", "fallback").either
+            r     <- ff.resolveOrDefault[String]("nowhere", "fallback")
+            b     <- ff.booleanOrDefault("nowhere", true)
           } yield assertTrue(
-            s.value == "fallback",
-            s.errorCode.contains(ErrorCode.FlagNotFound),
-            s.reason == ResolutionReason.Error,
+            s == Left(FeatureFlagError.FlagNotFound("nowhere")),
+            r.value == "fallback",
+            r.errorCode.contains(ErrorCode.FlagNotFound),
+            r.reason == ResolutionReason.Error,
             b
           )
         }
@@ -194,11 +198,11 @@ object AbsentKeyChainSpec extends ZIOSpecDefault {
               .flatMap { ff =>
                 for {
                   present <- ff.boolean("present", default = false)
-                  missing <- ff.boolean("missing", default = false)
+                  missing <- ff.boolean("missing", default = false).either
                   seen    <- stages.get
                 } yield assertTrue(
                   present,
-                  !missing,
+                  missing == Left(FeatureFlagError.FlagNotFound("missing")),
                   seen == List("after:present", "error:missing:FlagNotFound")
                 )
               }

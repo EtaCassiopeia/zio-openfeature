@@ -177,9 +177,10 @@ given rolloutFlagType: FlagType[RolloutPlan] = FlagType.from(
 
 On this path the `encoder` matters even if you never read the encoded form yourself: it is what the caller's default
 is converted to before being handed to the provider, so a provider can serve that default on a miss. A missing flag
-comes back the same way it does for the built-in types — the caller's default with the provider's `FLAG_NOT_FOUND`
-error code, not a `TYPE_MISMATCH`. A `TYPE_MISMATCH` on this path means what it says: the provider returned a
-payload your `decoder` rejected.
+comes back the same way it does for the built-in types — the provider's `FLAG_NOT_FOUND`, which the typed tier
+surfaces as `FlagNotFound(key)` and the total tier as the caller's default with that error code — not a
+`TYPE_MISMATCH`. A `TYPE_MISMATCH` on this path means what it says: the provider returned a payload your `decoder`
+rejected.
 
 Note the numbers your decoder receives arrive as `Double` (they pass through the OpenFeature `Value` bridge), and
 null-valued fields are dropped rather than arriving as `null` — decode through `FlagType[Int]`/`FlagType[Long]`
@@ -415,7 +416,13 @@ See [Providers]({{ site.baseurl }}/providers) for complete lifecycle management,
 
 ## Error Handling
 
-The library uses `FeatureFlagError` for typed error handling:
+The library uses `FeatureFlagError` for typed error handling. The **typed tier** (`boolean`, `value`, every
+`*Details`, and the `FlagDef` overloads) fails with one of these whenever an evaluation cannot produce a real value —
+whether the provider *threw* or, as most providers do, answered with an **error code on the resolution**
+(`FLAG_NOT_FOUND`, `TYPE_MISMATCH`, `PARSE_ERROR`, …); the code is mapped to the matching error below. The **total
+tier** (`*OrDefault`, `resolveOrDefault`) is built on the same channel and never fails: it serves the default and
+reports the code on the returned `FlagResolution`. Hooks observe an error-coded resolution as the `error` stage on
+both tiers.
 
 | Error | Cause |
 |:------|:------|

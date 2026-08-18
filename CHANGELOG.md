@@ -9,6 +9,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The typed tier now fails on a provider-reported error *code*, not only on a thrown error** (#388). Most providers
+  report `FLAG_NOT_FOUND`, `TYPE_MISMATCH`, `PARSE_ERROR` and friends as a code on the resolution and never throw. Until
+  now `value` / `valueDetails` / every `*Details` method returned such a resolution as a *success* carrying the caller's
+  default plus the code — so the tier a caller reaches for precisely because a default would be wrong handed one back
+  anyway, with no signal, and a fail-closed gate written with `value` was silently fail-open. It was also internally
+  inconsistent: a decode-side `TYPE_MISMATCH` and the `PROVIDER_NOT_READY`/`PROVIDER_FATAL` codes already failed
+  typed. Now every code does, mapped as: `FLAG_NOT_FOUND` → `FlagNotFound(key)`, `TYPE_MISMATCH` →
+  `TypeMismatch(key, expected = the flag's type, actual = the provider's message)`, `PARSE_ERROR` → `ParseError`,
+  `TARGETING_KEY_MISSING` → `TargetingKeyMissing`, `INVALID_CONTEXT` → `InvalidContext`, `PROVIDER_NOT_READY` →
+  `ProviderNotReady`, `PROVIDER_FATAL` → `ProviderFatal`, anything else → `ProviderError`.
+  - **What did not change:** the total tier (`*OrDefault`, `resolveOrDefault`) still never fails and still serves the
+    default with `reason = Error` and the `errorCode`; hooks still see the `error` stage (not `after`) and a
+    `finallyAfter` with the details; a `MultiProvider` chain still advances on `FLAG_NOT_FOUND` internally.
+  - **Migration:** if you called `xDetails` and inspected `errorCode` on the result, call `resolveOrDefault` — that is
+    the resolution-with-code form, and it is what the total tier is for. If you relied on `value`/`boolean` returning the
+    default for a missing flag, `valueOrDefault`/`booleanOrDefault` is that contract. If you want the typed error, it is
+    now simply `value(...).either`. No config switch is provided: a mode in which the typed tier lies is not a mode worth
+    keeping, and both remedies are one-line renames.
+  - Two smaller consequences. `resolveOrDefault`'s `errorMessage` for a provider-coded fallback is now the library's
+    uniform `FeatureFlagError.message` (`Flag 'k' not found`) instead of the provider's text — the same text the
+    served-default warn line already used for thrown errors; only `FlagNotFound`/`TargetingKeyMissing` cannot carry the
+    provider's wording, the others do — and a `variant` or flag `metadata` a provider attaches to an *error* resolution
+    is likewise not carried by the typed error (hooks still see them in `finallyAfter`). And a transaction no longer
+    *serves* an error-coded evaluation from its cache: it
+    was recorded as a clean `CACHED` default on the second read, which would have turned a `FlagNotFound` on the first
+    read into a success on the second; the evaluation is still recorded, so `TransactionResult` keeps the audit entry.
+  - The `error` hook stage's `TypeMismatch` now names the flag's wire type as `expected` rather than `"unknown"`.
 - **`CachingProvider` now wraps any `FeatureProvider`, not only an `EventProvider`** (#382). Applies to the caching
   decorator exactly what #379 did for the circuit breaker: the delegate parameter and the `underlying` field are typed
   `FeatureProvider`, so a provider that implements only `FeatureProvider` can be cached. No adapter is interposed —

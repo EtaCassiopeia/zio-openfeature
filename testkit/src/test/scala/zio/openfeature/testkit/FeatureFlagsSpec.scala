@@ -19,12 +19,13 @@ object FeatureFlagsSpec extends ZIOSpecDefault {
           result <- FeatureFlags.boolean("dark-mode", default = false)
         } yield assertTrue(result == true)
       }.provide(testLayer(Map("dark-mode" -> true))),
-      test("boolean returns default when flag not found") {
-        // The value is the caller's default and the evaluation does not fail; the resolution behind it is
-        // FLAG_NOT_FOUND (see `stringDetails reports FLAG_NOT_FOUND when not found`).
+      test("boolean fails with FlagNotFound when the flag is absent; booleanOrDefault serves the default") {
+        // Since #388 the typed tier fails on the provider's FLAG_NOT_FOUND code; the total tier is where the caller's
+        // default is served (see `stringDetails reports FLAG_NOT_FOUND when not found`).
         for {
-          result <- FeatureFlags.boolean("missing-flag", default = false)
-        } yield assertTrue(result == false)
+          typed <- FeatureFlags.boolean("missing-flag", default = false).either
+          total <- FeatureFlags.booleanOrDefault("missing-flag", default = false)
+        } yield assertTrue(typed == Left(FeatureFlagError.FlagNotFound("missing-flag")), total == false)
       }.provide(testLayer()),
       test("string returns flag value") {
         for {
@@ -55,10 +56,12 @@ object FeatureFlagsSpec extends ZIOSpecDefault {
           assertTrue(resolution.flagKey == "feature-x") &&
           assertTrue(resolution.reason == ResolutionReason.TargetingMatch)
       }.provide(testLayer(Map("feature-x" -> true))),
-      test("stringDetails reports FLAG_NOT_FOUND when not found") {
+      test("stringDetails reports FLAG_NOT_FOUND when not found: typed failure, and the total tier's resolution") {
         for {
-          resolution <- FeatureFlags.stringDetails("missing", default = "default-value")
-        } yield assertTrue(resolution.value == "default-value") &&
+          typed      <- FeatureFlags.stringDetails("missing", default = "default-value").either
+          resolution <- FeatureFlags.resolveOrDefault[String]("missing", default = "default-value")
+        } yield assertTrue(typed == Left(FeatureFlagError.FlagNotFound("missing"))) &&
+          assertTrue(resolution.value == "default-value") &&
           assertTrue(resolution.reason == ResolutionReason.Error) &&
           assertTrue(resolution.errorCode.contains(ErrorCode.FlagNotFound)) &&
           assertTrue(resolution.errorMessage.exists(_.contains("missing")))
@@ -819,11 +822,12 @@ object FeatureFlagsSpec extends ZIOSpecDefault {
         } yield assertTrue(result("timeout") == 30.0) && // SDK converts numbers to Double
           assertTrue(result("retries") == 3.0)
       }.provide(testLayer(Map("config" -> Map("timeout" -> 30, "retries" -> 3)))),
-      test("obj returns default when flag not found") {
+      test("obj fails with FlagNotFound when the flag is absent; objOrDefault serves the default") {
         val default = Map("key" -> "default-value")
         for {
-          result <- FeatureFlags.obj("missing", default = default)
-        } yield assertTrue(result == default)
+          typed <- FeatureFlags.obj("missing", default = default).either
+          total <- FeatureFlags.objOrDefault("missing", default = default)
+        } yield assertTrue(typed == Left(FeatureFlagError.FlagNotFound("missing")), total == default)
       }.provide(testLayer()),
       test("obj with context works") {
         val ctx = EvaluationContext("user-1")

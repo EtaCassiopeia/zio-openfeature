@@ -19,6 +19,11 @@ Feature: Typed flag definitions and wire-type dispatch
     And the resolved error code is "FLAG_NOT_FOUND"
     And the resolved reason is "ERROR"
 
+  Scenario: A flag definition evaluated on the typed tier fails when the provider does not know the key
+    Given a test provider
+    When the flag "Plan" is evaluated
+    Then the evaluation fails with error code "FLAG_NOT_FOUND"
+
   Scenario: A value the derived codec cannot read is a type mismatch, not a silent default
     Given a test provider
     And the provider holds the string flag "user.plan" with value "platinum"

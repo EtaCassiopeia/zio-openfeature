@@ -76,12 +76,13 @@ A key that is present returns `STATIC` as the resolution reason, since the value
 
 ### Absent keys and provider chains
 
-A key the config does **not** contain resolves as `FLAG_NOT_FOUND`, carrying your default as the value. No
-evaluation fails and `*OrDefault` still gives you the default, but two things are observable: the resolution carries
-`reason = Error` with `errorCode = FlagNotFound`, and hooks see the **`error`** stage rather than `after` — so
-`Hook.logging()` reports an absent key at error level where it previously reported it at info. That is the
-spec-correct stage for an error-coded resolution, though if you use a provider as an opt-in source where most keys
-are deliberately absent, tune `logError`/`errorLevel` on your hooks.
+A key the config does **not** contain is reported as `FLAG_NOT_FOUND`. On the typed tier (`boolean`, `*Details`,
+`value`, …) that is a typed `FeatureFlagError.FlagNotFound(key)` failure; on the total tier (`*OrDefault`,
+`resolveOrDefault`) you still get your default as the value, with `reason = Error` and `errorCode = FlagNotFound` on
+the resolution. Either way hooks see the **`error`** stage rather than `after` — so `Hook.logging()` reports an absent
+key at error level where it previously reported it at info. That is the spec-correct stage for an error-coded
+resolution, though if you use a provider as an opt-in source where most keys are deliberately absent, evaluate through
+the total tier and tune `logError`/`errorLevel` on your hooks.
 
 Reporting not-found is what makes a chain work:
 
@@ -163,12 +164,11 @@ val layer = FeatureFlags.fromProvider(
 - **Double**: Parsed via `toDouble`
 - **String**: Raw env var value
 
-A variable that is **set but unparseable** surfaces as `errorCode = ParseError` on the resolution (and through the
-`error` hook stage) rather than quietly behaving like the default, so a typo in a deployed value is visible. The
-evaluation itself does not fail — you still get your default as the value.
+A variable that is **set but unparseable** is a `PARSE_ERROR` — a typed `ParseError` failure on the typed tier,
+`errorCode = ParseError` on the total tier's resolution, and the `error` hook stage on both — rather than quietly
+behaving like the default, so a typo in a deployed value is visible.
 
-A variable that is **not set** resolves as `FLAG_NOT_FOUND`, carrying your default as the value — the same
-behaviour, and for the same chaining reason, as
+A variable that is **not set** is `FLAG_NOT_FOUND` — the same two-tier behaviour, and for the same chaining reason, as
 [an absent HOCON key](#absent-keys-and-provider-chains).
 
 ### Testing
@@ -289,11 +289,11 @@ Evaluations fail with `ProviderNotReady` until the provider has fetched its init
 
 How a downstream failure shows up depends on where it originates:
 
-- **HTTP `4xx` / `5xx` from the OFREP endpoint**: the contrib provider catches the response and returns a successful `FlagResolution` with `errorCode` populated (typically `General`) and `errorMessage` set. The ZIO `FeatureFlags` layer hands this back to callers as a *successful* effect — operators are expected to alert on `resolution.errorCode.isDefined`.
+- **HTTP `4xx` / `5xx` from the OFREP endpoint**: the contrib provider catches the response and returns a `FlagResolution` with `errorCode` populated (typically `General`) and `errorMessage` set. The ZIO typed tier surfaces that code as a typed failure (`ProviderError` for `General`); the total tier hands back your default with the code on the resolution — operators alert on `resolution.errorCode.isDefined` there.
 - **Network-level failures** (DNS, `ConnectException`, connection reset): the contrib provider's HTTP client throws synchronously, the throw escapes `attemptBlocking`, and `FeatureFlagError.classify` maps it to a typed error — `Unreachable` for the known network exception types, `ProviderError` as the fallback. These arrive in the effect's error channel.
 - **Evaluation timeout** (via `FeatureFlagsConfig().withEvaluationTimeout(d)`): surfaces as `ProviderError` wrapping a `TimeoutException`.
 
-The `OFREPFailureModeSpec` in this module pins these behaviours so a contrib-provider upgrade doesn't silently shift them. If you build alerting on top of the OFREP integration, alert on both branches: `errorCode` on resolutions AND `Unreachable`/`ProviderError`/timeout in the error channel.
+The `OFREPFailureModeSpec` in this module pins these behaviours so a contrib-provider upgrade doesn't silently shift them. If you build alerting on top of the OFREP integration, alert on both branches: `errorCode` on the total tier's resolutions AND `Unreachable`/`ProviderError`/timeout in the typed tier's error channel.
 
 ### Transitive dependencies
 

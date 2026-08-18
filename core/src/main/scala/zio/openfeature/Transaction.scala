@@ -82,8 +82,15 @@ final private[openfeature] case class TransactionState(
   def getOverride(key: String): Option[Any] =
     overrides.get(key)
 
+  /** A usable cache hit. An error-CODED evaluation is RECORDED (so `TransactionResult` still shows the key was asked
+    * for and how it failed) but never SERVED: a cache hit is reported as a clean `CACHED` value with no error code, so
+    * serving one would turn a `FlagNotFound` on the first read into a successful default on the second (#388). The next
+    * read goes back to the provider, exactly as a read outside a transaction would. The predicate is `errorCode`,
+    * exactly the condition the typed tier fails on — a `reason = Error` resolution WITHOUT a code is served as a
+    * success there and stays cacheable here.
+    */
   def getCachedEvaluation(key: String): UIO[Option[TransactionState.Cached]] =
-    if (cacheEvaluations) evaluated.get.map(_.get(key))
+    if (cacheEvaluations) evaluated.get.map(_.get(key).filterNot(_.evaluation.resolution.errorCode.isDefined))
     else ZIO.none
 
   def getEvaluations: UIO[Map[String, FlagEvaluation[_]]] =

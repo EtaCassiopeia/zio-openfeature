@@ -159,11 +159,26 @@ details.map { resolution =>
 }
 ```
 
+### Two tiers: typed and total
+
+The methods above are the **typed tier**: they surface every evaluation error in a typed `FeatureFlagError` channel —
+including a provider that answers with an error *code* rather than by throwing (`FLAG_NOT_FOUND`, `TYPE_MISMATCH`,
+`PARSE_ERROR`, …), which is how most providers report problems. A missing flag fails with `FlagNotFound(key)`, a
+provider-side type problem with `TypeMismatch`, and so on. Reach for this tier when a default would be *wrong* — a
+fail-closed gate ("if I cannot read this flag, refuse the operation") must actually fail closed:
+
+```scala
+FeatureFlags.boolean("payments.enabled", default = false).either.flatMap {
+  case Right(enabled)                         => proceed(enabled)
+  case Left(FeatureFlagError.FlagNotFound(_)) => ZIO.fail(Misconfigured("payments.enabled is not defined"))
+  case Left(err)                              => ZIO.fail(FlagsUnavailable(err))
+}
+```
+
 ### Total Evaluation (never fails)
 
-The methods above surface evaluation errors in a typed error channel. When you would rather always get a value —
-falling back to the default on any error, per the OpenFeature spec's "total" evaluation (§1.4.10) — use the
-`*OrDefault` variants. They return `UIO`, so there is no error to handle:
+When you would rather always get a value — falling back to the default on any error, per the OpenFeature spec's
+"total" evaluation (§1.4.10) — use the `*OrDefault` variants. They return `UIO`, so there is no error to handle:
 
 ```scala
 val enabled: ZIO[FeatureFlags, Nothing, Boolean] =
@@ -183,7 +198,7 @@ FeatureFlags.resolveOrDefault[Boolean]("feature-toggle", default = false).map { 
 Both typed errors and unexpected defects are absorbed into the default; only fiber interruption still propagates.
 
 Every served-default fallback leaves a **warn** log line naming the flag, why it degraded and the value served —
-`Flag 'checkout-v2' fell back to its default false (FlagNotFound: flag not found)` — **rate-limited per flag key** so a
+`Flag 'checkout-v2' fell back to its default false (FlagNotFound: Flag 'checkout-v2' not found)` — **rate-limited per flag key** so a
 provider outage on a hot flag does not drown the one line that matters. By default one line per key per 60 seconds; the
 next line for that key carries `(suppressed 412 similar)`. Absorbed defects go through the same limiter but in their
 own per-key bucket, keep their cause, and are still logged under `Off` — a defect is a bug, not outage noise. Beyond

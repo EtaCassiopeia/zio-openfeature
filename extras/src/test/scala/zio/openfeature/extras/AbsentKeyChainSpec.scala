@@ -3,7 +3,7 @@ package zio.openfeature.extras
 import com.typesafe.config.ConfigFactory
 import dev.openfeature.sdk.{ErrorCode, ImmutableContext}
 import zio._
-import zio.openfeature.FeatureFlags
+import zio.openfeature.{FeatureFlagError, FeatureFlags}
 import zio.test._
 
 /** #355: `HoconProvider` and `EnvVarProvider` answered an absent key with `reason = DEFAULT` and no error code, which
@@ -108,18 +108,22 @@ object AbsentKeyChainSpec extends ZIOSpecDefault {
         val result = chain.getStringEvaluation("shadowed", "fallback", ctx)
         assertTrue(result.getValue == "from-first")
       },
-      test("a key absent from every provider still yields the caller's default through the client") {
+      test(
+        "a key absent from every provider is FLAG_NOT_FOUND through the client: typed tier fails, total tier serves the default"
+      ) {
         // Deliberately exercised through `FeatureFlags`, not the raw provider. When every provider reports
         // FLAG_NOT_FOUND the chain itself has no value to give and answers null — substituting the caller's default
-        // is the SDK client's job, not the provider's. Asserting this at the provider level would be asserting the
-        // wrong layer's contract; asserting it here is what proves the fix costs users nothing.
+        // is the SDK client's job, not the provider's. Since #388 the typed tier surfaces that code as a typed
+        // `FlagNotFound` and the total tier serves the caller's default; asserting both here is what proves the chain
+        // reports the code truthfully rather than ending in a DEFAULT-reason answer.
         val chain = FeatureFlags.multiProvider(List(hoconWithoutKey, envWithoutKeys))
         ZIO.scoped {
           FeatureFlags.fromProvider(chain).build.map(_.get[FeatureFlags]).flatMap { ff =>
             for {
-              s <- ff.string("nowhere", "fallback")
-              b <- ff.boolean("nowhere", true)
-            } yield assertTrue(s == "fallback", b)
+              typed <- ff.string("nowhere", "fallback").either
+              s     <- ff.stringOrDefault("nowhere", "fallback")
+              b     <- ff.booleanOrDefault("nowhere", true)
+            } yield assertTrue(typed == Left(FeatureFlagError.FlagNotFound("nowhere")), s == "fallback", b)
           }
         }
       }

@@ -72,7 +72,9 @@ object OFREPFailureModeSpec extends ZIOSpecDefault {
   }
 
   def spec = suite("OFREP failure-mode integration (WireMock)")(
-    test("[B1] 401 -> FlagResolution carries a non-empty errorCode (operator-actionable)") {
+    test(
+      "[B1] 401 -> typed failure on the typed tier; the total tier's FlagResolution carries a non-empty errorCode (operator-actionable)"
+    ) {
       withMockServer { server =>
         server.stubFor(
           post(urlEqualTo("/ofrep/v1/evaluate/flags/protected-flag"))
@@ -84,21 +86,25 @@ object OFREPFailureModeSpec extends ZIOSpecDefault {
             )
         )
         withFeatureFlags(server) { ff =>
-          val result = Unsafe.unsafe { implicit u =>
+          // Since #388 the typed tier surfaces the provider's error code as a typed failure; the total tier is where
+          // the operator-actionable resolution (default value + code) lives.
+          val (typed, total) = Unsafe.unsafe { implicit u =>
             Runtime.default.unsafe
-              .run(ff.booleanDetails("protected-flag", default = false).either.withClock(Clock.ClockLive))
+              .run(
+                ff.booleanDetails("protected-flag", default = false)
+                  .either
+                  .zip(ff.resolveOrDefault[Boolean]("protected-flag", default = false))
+                  .withClock(Clock.ClockLive)
+              )
               .getOrThrowFiberFailure()
           }
-          assertTrue(
-            result match {
-              case Right(resolution) => resolution.errorCode.isDefined && resolution.value == false
-              case _                 => false
-            }
-          )
+          assertTrue(typed.isLeft, total.errorCode.isDefined, total.value == false)
         }
       }
     },
-    test("[B1] 500 -> FlagResolution carries a non-empty errorCode (operator-actionable)") {
+    test(
+      "[B1] 500 -> typed failure on the typed tier; the total tier's FlagResolution carries a non-empty errorCode (operator-actionable)"
+    ) {
       withMockServer { server =>
         server.stubFor(
           post(urlEqualTo("/ofrep/v1/evaluate/flags/server-error-flag"))
@@ -110,17 +116,19 @@ object OFREPFailureModeSpec extends ZIOSpecDefault {
             )
         )
         withFeatureFlags(server) { ff =>
-          val result = Unsafe.unsafe { implicit u =>
+          // Since #388 the typed tier surfaces the provider's error code as a typed failure; the total tier is where
+          // the operator-actionable resolution (default value + code) lives.
+          val (typed, total) = Unsafe.unsafe { implicit u =>
             Runtime.default.unsafe
-              .run(ff.booleanDetails("server-error-flag", default = false).either.withClock(Clock.ClockLive))
+              .run(
+                ff.booleanDetails("server-error-flag", default = false)
+                  .either
+                  .zip(ff.resolveOrDefault[Boolean]("server-error-flag", default = false))
+                  .withClock(Clock.ClockLive)
+              )
               .getOrThrowFiberFailure()
           }
-          assertTrue(
-            result match {
-              case Right(resolution) => resolution.errorCode.isDefined && resolution.value == false
-              case _                 => false
-            }
-          )
+          assertTrue(typed.isLeft, total.errorCode.isDefined, total.value == false)
         }
       }
     },

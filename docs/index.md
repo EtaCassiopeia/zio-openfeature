@@ -47,11 +47,34 @@ object MyApp extends ZIOAppDefault:
   )
 ```
 
+## Two ways to read a flag
+
+The call above names the key, the type and the default at the use site. That is the direct style, and it is
+fully supported. If the same flag is read from more than one place, declaring it once is usually the simpler
+option — the key, type and default stop being repeated, and a second call site can no longer disagree about
+them:
+
+```scala
+object Flags:
+  val NewFeature = FlagDef("new-feature", false, "the new checkout flow")
+
+// anywhere
+FeatureFlags.value(Flags.NewFeature)           // ZIO[FeatureFlags, FeatureFlagError, Boolean]
+FeatureFlags.valueOrDefault(Flags.NewFeature)  // never fails — serves the definition's default
+```
+
+Both styles run through the same evaluation path — hooks, transactions, caching and error semantics are
+identical, and you can mix them in one codebase. See [Typed Flags]({{ site.baseurl }}/typed-flags).
+
 ## Documentation
+
+Start with **Getting Started**, then **Typed Flags** if you want the declare-once style. The rest are
+reference pages — read them when you reach the problem they solve.
 
 | Section | Description |
 |:--------|:------------|
 | [Getting Started]({{ site.baseurl }}/getting-started) | Installation and basic usage |
+| [Typed Flags]({{ site.baseurl }}/typed-flags) | Declare a flag once — key, type and default — and evaluate it by name |
 | [Architecture]({{ site.baseurl }}/architecture) | Core design and components |
 | [Providers]({{ site.baseurl }}/providers) | Using OpenFeature providers |
 | [Extras]({{ site.baseurl }}/extras) | HOCON, env var, and caching providers |
@@ -62,6 +85,23 @@ object MyApp extends ZIOAppDefault:
 | [Testkit]({{ site.baseurl }}/testkit) | Testing utilities |
 | [Testing Real Providers]({{ site.baseurl }}/testing-real-providers) | Fault-testing a real provider over TLS-MITM |
 | [Spec Compliance]({{ site.baseurl }}/spec-compliance) | OpenFeature specification compliance |
+
+## Added since 1.0.0
+
+Everything below is documented in the pages above; this table is a shortcut to the right section.
+
+| Feature | What it gives you | Where |
+|:--------|:------------------|:------|
+| `FlagDef[A]` | Declare a flag once and evaluate it by name | [Typed Flags]({{ site.baseurl }}/typed-flags) |
+| `derives FlagType` | Codecs for your own enums and case classes, no boilerplate | [Typed Flags]({{ site.baseurl }}/typed-flags#flags-that-are-not-boolean-string-or-a-number) |
+| `FlagType.wireType` | A domain type carried over the wire as a scalar resolves through that scalar's method, and hooks see it | [Architecture]({{ site.baseurl }}/architecture#scalar-backed-custom-types) |
+| Native 64-bit `Long` | `long`/`longDetails` resolve the full `Long` range exactly, instead of losing precision past 2^53 | [Extras]({{ site.baseurl }}/extras#integer-widening-long-provider) |
+| `ContextSource` | Pull ambient context (MDC, tracing, correlation id) into every evaluation | [Evaluation Context]({{ site.baseurl }}/context#context-source) |
+| `FallbackLogging` | A served default leaves a warn line, rate-limited per flag key | [Getting Started]({{ site.baseurl }}/getting-started#total-evaluation-never-fails) |
+| `verify` + `AcquireStatus` | Reject a real provider that constructed but cannot serve, and ask whether it is live yet | [Providers]({{ site.baseurl }}/providers#fallback-first-initialization-fromacquireasync) |
+| `FLAG_NOT_FOUND` for absent keys | A provider that does not hold a key lets a `MultiProvider` chain advance | [Extras]({{ site.baseurl }}/extras), [Testkit]({{ site.baseurl }}/testkit) |
+| Typed fixtures (`:=`) | Pin a test fixture through the flag's own codec | [Testkit]({{ site.baseurl }}/testkit#typed-fixtures-with-flagdef) |
+| `TestFeatureProvider.makeNamed` | Distinct metadata names, so a chain of test providers is really a chain | [Testkit]({{ site.baseurl }}/testkit) |
 
 ## Modules
 

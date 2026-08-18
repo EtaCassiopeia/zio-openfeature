@@ -271,7 +271,9 @@ lazy val conformance = (project in file("conformance"))
   )
 
 lazy val conformanceZioBdd = (project in file("conformance-zio-bdd"))
-  .dependsOn(core, testkit)
+  // `extras` for the library suites: they evaluate against `HoconProvider`, `EnvVarProvider` and
+  // `IntegerWideningLongProvider`.
+  .dependsOn(core, testkit, extras)
   // "test->test" on optimizely additionally pulls its test classpath (not just main), so the
   // Optimizely flag-matrix suite below can reuse `RecommendationService`/`RecommendationResult`
   // from optimizely's own test sources instead of duplicating that toy SUT here.

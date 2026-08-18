@@ -335,6 +335,23 @@ lazy val examplesOfrepInitTimeout = (project in file("examples/ofrep-init-timeou
     )
   )
 
+// Compiles the Typed Flags docs page's snippets against the real API, so a signature change to `FlagDef`, its
+// evaluation overloads, `FlagType.derived`/`mapped` or the typed testkit fixtures breaks the build instead of
+// silently staling the published page (#385).
+lazy val examplesTypedFlags = (project in file("examples/typed-flags"))
+  .dependsOn(core, testkit)
+  .settings(examplesCommon)
+  // The source lives in `scala-3/` because it is Scala-3-only (`enum`, `derives`) — and, less obviously, because
+  // `.scalafmt.conf` pins every `src/main/scala/**` file to the scala213 dialect (those directories are shared by the
+  // cross-built modules). A Scala 3 file under plain `scala/` therefore compiles but cannot be formatted.
+  .settings(crossVersionSourceDirs)
+  .settings(
+    name := "zio-openfeature-example-typed-flags",
+    libraryDependencies ++= Seq(
+      "dev.zio" %% "zio" % zioVersion
+    )
+  )
+
 lazy val examplesTestkitApp = (project in file("examples/testkit-app"))
   .dependsOn(core, testkit)
   .settings(examplesCommon)

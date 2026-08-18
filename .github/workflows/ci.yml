@@ -116,7 +116,7 @@ jobs:
       - name: Setup sbt
         uses: sbt/setup-sbt@v1
       - name: Compile and test examples
-        run: sbt "examplesOfrepInitTimeout/compile" "examplesTestkitApp/test"
+        run: sbt "examplesOfrepInitTimeout/compile" "examplesTestkitApp/test" "examplesTypedFlags/compile"
 
   # Conformance runs the vendored OpenFeature gherkin suite via Cucumber. It is Scala 3 only and not aggregated by
   # root (so `++2.13.16 test` doesn't try to compile it), hence its own job on the primary JDK / default Scala.

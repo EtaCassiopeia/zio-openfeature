@@ -940,8 +940,8 @@ init-time events today**, and that is deliberate — see below.
 |---|---|---|---|
 | `OptimizelyFeatureProvider` | `EventProvider` | none — blocking init; the SDK synthesizes | `READY`/`STALE` from the staleness watchdog, `CONFIGURATION_CHANGED` on a new datafile revision |
 | `TestFeatureProvider` (testkit) | `EventProvider` | none — the SDK synthesizes | full control surface: `READY`, `ERROR`, `STALE`, `CONFIGURATION_CHANGED` |
-| `CircuitBreakerProvider` (extras) | `EventProvider` | none | **emits its own** `READY`/`STALE` on breaker transitions, *and* forwards the delegate's events |
-| `CachingProvider` (extras) | `EventProvider` | none | forwards the delegate's events only |
+| `CircuitBreakerProvider` (extras) | `EventProvider` | none | **emits its own** `READY`/`STALE` on breaker transitions, *and* forwards the delegate's events — **only for an `EventProvider` delegate**; since #379 it accepts a plain `FeatureProvider`, whose (non-existent) events are naturally not forwarded |
+| `CachingProvider` (extras) | `EventProvider` | none | forwards the delegate's events only — **and only for an `EventProvider` delegate**; since #382 it accepts a plain `FeatureProvider`, and then nothing is forwarded and `PROVIDER_CONFIGURATION_CHANGED` never invalidates the cache |
 | `CachingReasonProvider` (testkit) | `EventProvider` | none | **none** — extends `EventProvider` but never attaches to the delegate, so the delegate's events are dropped (same limitation as `DeferredProvider`) |
 | `DeferredProvider` (extras) | `FeatureProvider` | none | none — documented limitation: wrapping an `EventProvider` does not forward its events |
 | `HoconProvider` (extras) | `FeatureProvider` | none | none — static config, no lifecycle to report |

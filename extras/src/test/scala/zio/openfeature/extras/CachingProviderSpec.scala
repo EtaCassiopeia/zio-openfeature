@@ -3,17 +3,22 @@ package zio.openfeature.extras
 import dev.openfeature.sdk.{
   EvaluationContext => OFEvaluationContext,
   EventProvider,
+  FeatureProvider,
+  Hook,
   ImmutableContext,
   ImmutableMetadata,
   Metadata,
+  MutableTrackingEventDetails,
   ProviderEvaluation,
   ProviderState,
+  TrackingEventDetails,
   Value
 }
 import dev.openfeature.sdk.exceptions.{FlagNotFoundError, GeneralError, OpenFeatureError}
 import zio.openfeature.internal.ProviderEvaluations
 import zio._
 import zio.test._
+import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicInteger
 
 object CachingProviderSpec extends ZIOSpecDefault {
@@ -161,6 +166,104 @@ object CachingProviderSpec extends ZIOSpecDefault {
     }
     override def getObjectEvaluation(k: String, d: Value, c: OFEvaluationContext): ProviderEvaluation[Value] = {
       evaluationCount.incrementAndGet(); ProviderEvaluations.of[Value](d, "DEFAULT")
+    }
+  }
+
+  /** A delegate that implements only `FeatureProvider`, never `EventProvider` — the shape #382 is about.
+    *
+    * Deliberately defines no `getLongEvaluation`: it stands in for a pre-1.22 third-party provider, so long resolution
+    * must fall through its own double-backed SDK default.
+    */
+  private class PlainCountingProvider(
+    flags: Map[String, Any],
+    domainScoped: Boolean = true,
+    delay: Option[Duration] = None
+  ) extends FeatureProvider {
+    val evaluationCount               = new AtomicInteger(0)
+    val doubleCount                   = new AtomicInteger(0)
+    val longCount                     = new AtomicInteger(0)
+    val initCount                     = new AtomicInteger(0)
+    val domainInitCount               = new AtomicInteger(0)
+    val shutdownCount                 = new AtomicInteger(0)
+    val tracked                       = new CopyOnWriteArrayList[String]()
+    private val providerHook: Hook[_] = new Hook[java.lang.Object] {}
+
+    @scala.annotation.nowarn("msg=deprecated")
+    override def getMetadata: Metadata = new Metadata { override def getName: String = "PlainCountingProvider" }
+
+    override def initialize(c: OFEvaluationContext): Unit                 = { initCount.incrementAndGet(); () }
+    override def initialize(c: OFEvaluationContext, domain: String): Unit = { domainInitCount.incrementAndGet(); () }
+    override def isDomainScoped(): Boolean                                = domainScoped
+    override def shutdown(): Unit                                         = { shutdownCount.incrementAndGet(); () }
+    override def getProviderHooks(): java.util.List[Hook[_]] = java.util.Collections.singletonList(providerHook)
+    override def track(eventName: String, c: OFEvaluationContext, d: TrackingEventDetails): Unit = {
+      tracked.add(eventName); ()
+    }
+
+    override def getBooleanEvaluation(
+      key: String,
+      defaultValue: java.lang.Boolean,
+      c: OFEvaluationContext
+    ): ProviderEvaluation[java.lang.Boolean] = {
+      evaluationCount.incrementAndGet()
+      delay.foreach(d => Thread.sleep(d.toMillis))
+      val v = flags.get(key).map(_.asInstanceOf[Boolean]).getOrElse(defaultValue.booleanValue())
+      ProviderEvaluations.of[java.lang.Boolean](v, "TARGETING_MATCH")
+    }
+
+    override def getStringEvaluation(
+      key: String,
+      defaultValue: String,
+      c: OFEvaluationContext
+    ): ProviderEvaluation[String] = {
+      evaluationCount.incrementAndGet()
+      val v = flags.get(key).map(_.toString).getOrElse(defaultValue)
+      ProviderEvaluations.of[String](v, "TARGETING_MATCH")
+    }
+
+    override def getIntegerEvaluation(
+      key: String,
+      defaultValue: java.lang.Integer,
+      c: OFEvaluationContext
+    ): ProviderEvaluation[java.lang.Integer] = {
+      evaluationCount.incrementAndGet()
+      val v = flags.get(key).map(_.asInstanceOf[Int]).getOrElse(defaultValue.intValue())
+      ProviderEvaluations.of[java.lang.Integer](v, "TARGETING_MATCH")
+    }
+
+    override def getDoubleEvaluation(
+      key: String,
+      defaultValue: java.lang.Double,
+      c: OFEvaluationContext
+    ): ProviderEvaluation[java.lang.Double] = {
+      evaluationCount.incrementAndGet()
+      doubleCount.incrementAndGet()
+      val v = flags.get(key).map(_.asInstanceOf[Double]).getOrElse(defaultValue.doubleValue())
+      ProviderEvaluations.of[java.lang.Double](v, "TARGETING_MATCH")
+    }
+
+    override def getObjectEvaluation(
+      key: String,
+      defaultValue: Value,
+      c: OFEvaluationContext
+    ): ProviderEvaluation[Value] = {
+      evaluationCount.incrementAndGet()
+      val v = flags.get(key).map(a => new Value(a.toString)).getOrElse(defaultValue)
+      ProviderEvaluations.of[Value](v, "TARGETING_MATCH")
+    }
+  }
+
+  /** A plain delegate that *does* define `getLongEvaluation`, returning a value its `getDoubleEvaluation` never
+    * produces — so a wrapper that drops the override and falls back to the SDK's double path is distinguishable.
+    */
+  private class LongAwarePlainProvider extends PlainCountingProvider(Map("n" -> 99.0)) {
+    override def getLongEvaluation(
+      key: String,
+      defaultValue: java.lang.Long,
+      c: OFEvaluationContext
+    ): ProviderEvaluation[java.lang.Long] = {
+      longCount.incrementAndGet()
+      ProviderEvaluations.of[java.lang.Long](java.lang.Long.valueOf(7L), "TARGETING_MATCH")
     }
   }
 
@@ -528,6 +631,138 @@ object CachingProviderSpec extends ZIOSpecDefault {
         // After shutdown + re-init, cache should be empty
         // (in practice provider would need re-initialization, but we test cache clearing)
         assertTrue(underlying.evaluationCount.get() == 1)
+      }
+    ),
+    suite("Plain FeatureProvider delegate (#382)")(
+      test("apply accepts a plain FeatureProvider and forwards evaluations") {
+        val underlying = new PlainCountingProvider(Map("flag" -> true))
+        val cached     = CachingProvider(underlying)
+        val result     = cached.getBooleanEvaluation("flag", false, ctx)
+        assertTrue(result.getValue == true, underlying.evaluationCount.get() == 1)
+      },
+      test("make accepts a plain FeatureProvider") {
+        val underlying = new PlainCountingProvider(Map("flag" -> true))
+        for {
+          cached <- CachingProvider.make(underlying, CachingConfig(ttl = 1.minute))
+          result <- ZIO.attempt(cached.getBooleanEvaluation("flag", false, ctx))
+        } yield assertTrue(result.getValue == true, underlying.evaluationCount.get() == 1)
+      },
+      test("caches a plain delegate's evaluations") {
+        val underlying = new PlainCountingProvider(Map("flag" -> true))
+        val cached     = CachingProvider(underlying, CachingConfig(ttl = 10.seconds))
+        cached.getBooleanEvaluation("flag", false, ctx)
+        cached.getBooleanEvaluation("flag", false, ctx)
+        cached.getBooleanEvaluation("flag", false, ctx)
+        // The whole point of the widening: a plain delegate gets the same caching an EventProvider does.
+        assertTrue(underlying.evaluationCount.get() == 1)
+      },
+      test("expired entries are re-evaluated for a plain delegate") {
+        val underlying = new PlainCountingProvider(Map("flag" -> true))
+        val cached     = CachingProvider(underlying, CachingConfig(ttl = 1.millisecond))
+        cached.getBooleanEvaluation("flag", false, ctx)
+        Thread.sleep(10)
+        cached.getBooleanEvaluation("flag", false, ctx)
+        // TTL is the only eviction path a plain delegate has, since it cannot emit
+        // PROVIDER_CONFIGURATION_CHANGED — so it has to work.
+        assertTrue(underlying.evaluationCount.get() == 2)
+      },
+      test("forwards every resolver to a plain delegate") {
+        val underlying =
+          new PlainCountingProvider(Map("b" -> true, "s" -> "hello", "i" -> 42, "d" -> 3.14, "o" -> "obj"))
+        val cached = CachingProvider(underlying)
+        assertTrue(
+          cached.getBooleanEvaluation("b", false, ctx).getValue == true,
+          cached.getStringEvaluation("s", "", ctx).getValue == "hello",
+          cached.getIntegerEvaluation("i", 0, ctx).getValue == 42,
+          cached.getDoubleEvaluation("d", 0.0, ctx).getValue == 3.14,
+          cached.getObjectEvaluation("o", new Value(), ctx).getValue.asString() == "obj",
+          underlying.evaluationCount.get() == 5
+        )
+      },
+      test("forwards getLongEvaluation to a plain delegate that defines it") {
+        val underlying = new LongAwarePlainProvider
+        val cached     = CachingProvider(underlying)
+        val result     = cached.getLongEvaluation("n", java.lang.Long.valueOf(0L), ctx)
+        // 7L comes only from the delegate's own override; the SDK's double-backed default gives 99L.
+        assertTrue(
+          result.getValue.longValue == 7L,
+          underlying.longCount.get() == 1,
+          underlying.doubleCount.get() == 0
+        )
+      },
+      test("routes long resolution through a pre-1.22 plain delegate's own double default") {
+        val underlying = new PlainCountingProvider(Map("n" -> 42.0))
+        val cached     = CachingProvider(underlying)
+        val result     = cached.getLongEvaluation("n", java.lang.Long.valueOf(0L), ctx)
+        assertTrue(result.getValue.longValue == 42L, underlying.doubleCount.get() == 1)
+      },
+      test("forwards initialize, initialize(domain), isDomainScoped and shutdown to a plain delegate") {
+        val underlying = new PlainCountingProvider(Map.empty)
+        val cached     = CachingProvider(underlying)
+        cached.initialize(ctx)
+        cached.initialize(ctx, "orders")
+        val domainScoped = cached.isDomainScoped()
+        cached.shutdown()
+        // Both values, because the SDK's own default is `false`: a delegate that only ever reported
+        // `false` would agree with a wrapper that had dropped the override entirely.
+        val notDomainScoped =
+          CachingProvider(new PlainCountingProvider(Map.empty, domainScoped = false)).isDomainScoped()
+        assertTrue(
+          underlying.initCount.get() == 1,
+          underlying.domainInitCount.get() == 1,
+          domainScoped,
+          !notDomainScoped,
+          underlying.shutdownCount.get() == 1
+        )
+      },
+      test("shutdown invalidates the cache for a plain delegate") {
+        val underlying = new PlainCountingProvider(Map("flag" -> true))
+        val cached     = CachingProvider(underlying, CachingConfig(ttl = 10.seconds))
+        cached.getBooleanEvaluation("flag", false, ctx)
+        cached.shutdown()
+        cached.getBooleanEvaluation("flag", false, ctx)
+        // A second delegate call proves the entry was dropped; without invalidation the 10s TTL
+        // would still be serving the cached value here.
+        assertTrue(underlying.evaluationCount.get() == 2)
+      },
+      test("forwards getProviderHooks and track to a plain delegate") {
+        val underlying = new PlainCountingProvider(Map.empty)
+        val cached     = CachingProvider(underlying)
+        cached.track("purchase", ctx, new MutableTrackingEventDetails())
+        assertTrue(cached.getProviderHooks.size == 1, underlying.tracked.contains("purchase"))
+      },
+      test("initialize does not disturb a plain delegate's cache") {
+        val underlying = new PlainCountingProvider(Map("flag" -> true))
+        val cached     = CachingProvider(underlying, CachingConfig(ttl = 10.seconds))
+        cached.getBooleanEvaluation("flag", false, ctx)
+        // `initialize` is the only path that would reach event wiring at all; for a plain delegate it
+        // must be inert with respect to the cache. Guards against a future edit invalidating
+        // unconditionally inside attachDelegate rather than gating on eventDelegate.
+        cached.initialize(ctx)
+        cached.getBooleanEvaluation("flag", false, ctx)
+        assertTrue(underlying.evaluationCount.get() == 1)
+      },
+      test("initializing a plain delegate twice is safe and re-runs delegate initialization") {
+        val underlying = new PlainCountingProvider(Map.empty)
+        val cached     = CachingProvider(underlying)
+        cached.initialize(ctx)
+        cached.initialize(ctx)
+        assertTrue(underlying.initCount.get() == 2)
+      },
+      test("concurrent evaluations of a plain delegate deduplicate onto one call") {
+        val underlying = new PlainCountingProvider(Map("flag" -> true), delay = Some(100.millis))
+        val cached     = CachingProvider(underlying, CachingConfig(ttl = 10.seconds))
+        for {
+          results <- ZIO.foreachPar(1 to 8)(_ => ZIO.attempt(cached.getBooleanEvaluation("flag", false, ctx)))
+          // zio-cache dedups by logical key, so the delegate runs once even for a plain provider.
+        } yield assertTrue(results.forall(_.getValue == true), underlying.evaluationCount.get() == 1)
+      } @@ TestAspect.withLiveClock,
+      test("names the wrapped plain delegate in its metadata and reports its state") {
+        val cached = CachingProvider(new PlainCountingProvider(Map.empty))
+        assertTrue(
+          cached.getMetadata.getName == "CachingProvider(PlainCountingProvider)",
+          cached.getState == ProviderState.READY
+        )
       }
     ),
     suite("make() factory")(

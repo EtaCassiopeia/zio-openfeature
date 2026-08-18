@@ -5,6 +5,7 @@ import dev.openfeature.sdk.{
   ProviderEvent => JavaProviderEvent,
   EventProvider,
   EventProviderBridge,
+  FeatureProvider,
   Metadata,
   ProviderEvaluation,
   ProviderEventDetails,
@@ -71,7 +72,17 @@ final private[extras] class CacheKey(
   * Events emitted by the wrapped provider are forwarded through this wrapper (so `FeatureFlags.events` subscribers
   * still see them), and a `PROVIDER_CONFIGURATION_CHANGED` emission automatically invalidates the cache. The wrapper
   * takes ownership of the delegate's event channel on `initialize`; do not register the same delegate instance directly
-  * with an `OpenFeatureAPI` while it is wrapped.
+  * with an `OpenFeatureAPI` while it is wrapped. This requires an `EventProvider` delegate — see below.
+  *
+  * '''Plain providers''': the delegate is a `FeatureProvider`, so a provider that does not extend `EventProvider` can
+  * be wrapped too (#382). Only the event integration needs the richer type; everything else — all six resolvers, both
+  * `initialize` overloads, `isDomainScoped`, `getProviderHooks`, `track`, `shutdown`, `getMetadata` and `getState` — is
+  * `FeatureProvider` surface and is forwarded unchanged. The delegate is held as given, with no adapter interposed.
+  *
+  * '''Know what you lose''': a plain delegate cannot emit `PROVIDER_CONFIGURATION_CHANGED`, so the automatic
+  * invalidation above never fires for one. TTL expiry (and `shutdown`) become the only ways an entry is dropped — a
+  * flag changed at the provider can therefore keep being served from cache for up to `ttl`. Size `ttl` for how stale
+  * you can afford to be, rather than relying on the provider to tell you.
   *
   * Failures are never served from cache: a delegate exception (and any evaluation that resolves with an error code)
   * invalidates its entry, so the next evaluation retries the delegate instead of replaying a transient error for the
@@ -85,7 +96,7 @@ final private[extras] class CacheKey(
   * concurrent-window sharing is inherent to dedup and cannot be prevented without keying on the default.
   */
 final class CachingProvider private (
-  val underlying: EventProvider,
+  val underlying: FeatureProvider,
   val config: CachingConfig,
   private val cache: Cache[CacheKey, Throwable, ProviderEvaluation[Any]],
   private val runtime: Runtime[Any]
@@ -108,6 +119,13 @@ final class CachingProvider private (
 
   private val delegateAttached = new AtomicBoolean(false)
 
+  // Event integration is derived from the delegate's type rather than stored as a separate flag, so
+  // "attached to something that cannot emit" is unrepresentable. Empty for a plain `FeatureProvider`.
+  private val eventDelegate: Option[EventProvider] = underlying match {
+    case ev: EventProvider => Some(ev)
+    case _                 => None
+  }
+
   // Forward delegate emissions upward (the delegate is never registered with an API, so without this its
   // events go nowhere) and invalidate the cache on configuration changes so stale values aren't served
   // for the remainder of the TTL.
@@ -121,8 +139,9 @@ final class CachingProvider private (
   }
 
   private def attachDelegate(): Unit =
-    if (delegateAttached.compareAndSet(false, true))
-      EventProviderBridge.attach(underlying, onDelegateEvent)
+    eventDelegate.foreach { ev =>
+      if (delegateAttached.compareAndSet(false, true)) EventProviderBridge.attach(ev, onDelegateEvent)
+    }
 
   override def initialize(context: OFEvaluationContext): Unit = {
     attachDelegate()
@@ -137,8 +156,9 @@ final class CachingProvider private (
   override def isDomainScoped(): Boolean = underlying.isDomainScoped()
 
   override def shutdown(): Unit = {
-    if (delegateAttached.compareAndSet(true, false))
-      scala.util.Try(EventProviderBridge.detach(underlying))
+    eventDelegate.foreach { ev =>
+      if (delegateAttached.compareAndSet(true, false)) scala.util.Try(EventProviderBridge.detach(ev))
+    }
     Unsafe.unsafe { implicit u =>
       runtime.unsafe.run(cache.invalidateAll).getOrThrowFiberFailure()
     }
@@ -275,7 +295,7 @@ object CachingProvider {
     *
     * Uses `zio-cache` for concurrent lookup deduplication, TTL expiration, and LRU eviction.
     */
-  def make(underlying: EventProvider, config: CachingConfig = CachingConfig()): UIO[CachingProvider] =
+  def make(underlying: FeatureProvider, config: CachingConfig = CachingConfig()): UIO[CachingProvider] =
     for {
       rt <- ZIO.runtime[Any]
       cache <- Cache.make(
@@ -288,7 +308,7 @@ object CachingProvider {
     } yield new CachingProvider(underlying, config, cache, rt)
 
   /** Create a CachingProvider (convenience, requires ZIO runtime). */
-  def apply(underlying: EventProvider, config: CachingConfig = CachingConfig()): CachingProvider = {
+  def apply(underlying: FeatureProvider, config: CachingConfig = CachingConfig()): CachingProvider = {
     val rt = Runtime.default
     Unsafe.unsafe { implicit u =>
       rt.unsafe.run(make(underlying, config)).getOrThrowFiberFailure()

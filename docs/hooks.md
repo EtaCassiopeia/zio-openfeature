@@ -260,6 +260,14 @@ Every `FeatureHook` stage returns `UIO`, so hooks are **infallible by constructi
 - Defects (unexpected `Throwable`s) still propagate as defects, so wrap untrusted third-party code (e.g. with `.catchAllDefect`) if it must not interfere with evaluation.
 - For hooks that should run **inside the Java SDK** (and participate in the SDK's own hook error model), register them with `addApiHook` instead of `addHook`.
 
+What the `error` stage receives: the `FeatureFlagError` the evaluation failed with, or — for a provider that answered
+with an error *code* on the resolution rather than throwing — the error reconstructed from that code
+(`FlagNotFound(key)`, `TypeMismatch(key, expected, actual)`, …). One detail worth knowing when a hook and a `catch`
+compare notes: the hook's `TypeMismatch` names the **wire** type as `expected` (what the provider was asked for, the
+same `HookContext.flagType`), while the failure the caller sees names the flag's **domain** type. `finallyAfter` still
+receives `Some(details)` for an error-coded resolution — the default value plus the code — which is also what the Java
+SDK hands `finally` on error.
+
 ### Hook Context
 
 The `HookContext` provides information about the current evaluation:

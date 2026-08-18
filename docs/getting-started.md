@@ -175,6 +175,13 @@ FeatureFlags.boolean("payments.enabled", default = false).either.flatMap {
 }
 ```
 
+{: .note }
+> **Upgrading from 1.0.0.** In 1.0.0 the typed tier returned a provider-reported error code as a *successful*
+> resolution carrying your default. If you called an `xDetails` method and inspected `errorCode` on the result, call
+> `resolveOrDefault` instead — that is the resolution-with-code form. If you relied on `value` / `boolean` returning
+> the default for a missing flag, `valueOrDefault` / `booleanOrDefault` is that contract. Both are one-line renames;
+> see the [CHANGELOG](https://github.com/EtaCassiopeia/zio-openfeature/blob/main/CHANGELOG.md) entry for #388.
+
 ### Total Evaluation (never fails)
 
 When you would rather always get a value — falling back to the default on any error, per the OpenFeature spec's

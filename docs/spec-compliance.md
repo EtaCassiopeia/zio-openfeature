@@ -63,7 +63,7 @@ The library is **fully compliant** with core OpenFeature functionality:
 | Detailed evaluation | ✅ | `*Details(key, default)`, `*Details(key, default, ctx)`, `*Details(key, default, ctx, options)` |
 | Context overload | ✅ | All methods accept optional `EvaluationContext` |
 | Options overload | ✅ | All detail methods accept `EvaluationOptions` |
-| No exceptions | ✅ | Returns ZIO effects with typed errors |
+| No exceptions (§1.4.10: always return the default) | ✅ | The total tier (`*OrDefault`, `resolveOrDefault`) never fails and serves the default with the error code on the resolution; the typed tier (`value`, `*Details`) instead fails with a typed `FeatureFlagError` — including for a provider-reported error code — as a ZIO-native addition |
 
 ### Evaluation Methods
 

@@ -285,11 +285,16 @@ trait FeatureFlags {
     * Error channel: on Scala 3, `Compat.OrError[E, FeatureFlagError]` is the union `E | FeatureFlagError`. Scala 2.13
     * has no union types, so there it erases to `Any`, which disables typed recovery. For a typed error channel on both
     * versions, use [[transactionEither]], whose `Either[E, FeatureFlagError]` this method is built on.
+    *
+    * `nested` decides what happens when this call is already inside a transaction — see [[NestedPolicy]]. The default,
+    * `Fail`, raises `NestedTransactionNotAllowed`; `Reuse` runs `zio` inside the enclosing transaction and '''ignores
+    * `overrides`, `context` and `cacheEvaluations`''' (the enclosing transaction is the one running).
     */
   def transaction[R, E, A](
     overrides: Map[String, Any] = Map.empty,
     context: EvaluationContext = EvaluationContext.empty,
-    cacheEvaluations: Boolean = true
+    cacheEvaluations: Boolean = true,
+    nested: NestedPolicy = NestedPolicy.Fail
   )(zio: ZIO[R, E, A]): ZIO[R, Compat.OrError[E, FeatureFlagError], TransactionResult[A]]
 
   /** Like [[transaction]], but with a uniform, cross-version typed error channel: `Either[E, FeatureFlagError]` on both
@@ -298,11 +303,16 @@ trait FeatureFlags {
     * [[transaction]]'s error channel erases to `Any` (no union types) and disables typed recovery. On both versions
     * this is the source-tagged form `transaction` is built on, so the two never disagree about which side an error came
     * from.
+    *
+    * `nested` decides what happens when this call is already inside a transaction — see [[NestedPolicy]]. Under `Reuse`
+    * the body runs inside the enclosing transaction, `overrides`/`context`/`cacheEvaluations` are '''ignored''', and
+    * the returned `TransactionResult` reflects the enclosing transaction as of the body's completion.
     */
   def transactionEither[R, E, A](
     overrides: Map[String, Any] = Map.empty,
     context: EvaluationContext = EvaluationContext.empty,
-    cacheEvaluations: Boolean = true
+    cacheEvaluations: Boolean = true,
+    nested: NestedPolicy = NestedPolicy.Fail
   )(zio: ZIO[R, E, A]): ZIO[R, Either[E, FeatureFlagError], TransactionResult[A]]
 
   def inTransaction: UIO[Boolean]
@@ -643,16 +653,18 @@ object FeatureFlags {
   def transaction[R, E, A](
     overrides: Map[String, Any] = Map.empty,
     context: EvaluationContext = EvaluationContext.empty,
-    cacheEvaluations: Boolean = true
+    cacheEvaluations: Boolean = true,
+    nested: NestedPolicy = NestedPolicy.Fail
   )(zio: ZIO[R, E, A]): ZIO[R with FeatureFlags, Compat.OrError[E, FeatureFlagError], TransactionResult[A]] =
-    ZIO.serviceWithZIO[FeatureFlags](_.transaction(overrides, context, cacheEvaluations)(zio))
+    ZIO.serviceWithZIO[FeatureFlags](_.transaction(overrides, context, cacheEvaluations, nested)(zio))
 
   def transactionEither[R, E, A](
     overrides: Map[String, Any] = Map.empty,
     context: EvaluationContext = EvaluationContext.empty,
-    cacheEvaluations: Boolean = true
+    cacheEvaluations: Boolean = true,
+    nested: NestedPolicy = NestedPolicy.Fail
   )(zio: ZIO[R, E, A]): ZIO[R with FeatureFlags, Either[E, FeatureFlagError], TransactionResult[A]] =
-    ZIO.serviceWithZIO[FeatureFlags](_.transactionEither(overrides, context, cacheEvaluations)(zio))
+    ZIO.serviceWithZIO[FeatureFlags](_.transactionEither(overrides, context, cacheEvaluations, nested)(zio))
 
   def inTransaction: ZIO[FeatureFlags, Nothing, Boolean] =
     ZIO.serviceWithZIO(_.inTransaction)

@@ -223,16 +223,59 @@ FeatureFlags.transaction(Map("feature-a" -> true)) {
 
 ## Nested Transactions
 
-Nested transactions are not allowed and will fail:
+By default, opening a transaction inside another one fails with `NestedTransactionNotAllowed` — before the inner
+body runs:
 
 ```scala
 FeatureFlags.transaction(Map("a" -> true)) {
-  // This will fail with NestedTransactionNotAllowed
+  // Fails with NestedTransactionNotAllowed (the default, NestedPolicy.Fail)
   FeatureFlags.transaction(Map("b" -> true)) {
     // ...
   }
 }
 ```
+
+That is the right default for code that deliberately opens two transactions. It is the wrong shape for the most
+common composition, though: a transaction used as **middleware**. A server wraps every request in one so a flag
+cannot change mid-request; a handler inside then wraps a sub-operation in its own, for the same reason. Neither
+knows about the other, and the result is a failed request. Pass `nested = NestedPolicy.Reuse` and the outermost
+transaction wins:
+
+```scala
+// The request wrapper — knows nothing about what handlers do inside.
+def withRequestTransaction[R, E, A](handler: ZIO[R, E, A]) =
+  FeatureFlags.transaction()(handler)
+
+// A handler that wants a sub-operation to see one consistent flag set — and works whether or not a request
+// transaction is already open around it.
+val checkout =
+  FeatureFlags.transaction(nested = NestedPolicy.Reuse) {
+    for
+      v2   <- FeatureFlags.boolean("checkout-v2", false)
+      step <- FeatureFlags.boolean("checkout-v2", false)   // same answer as `v2`, from the enclosing cache
+    yield (v2, step)
+  }
+```
+
+Under `Reuse`, an inner call that finds an enclosing transaction:
+
+- **runs its body inside that transaction** — evaluations are recorded there and served from its cache;
+- **ignores its own `overrides`, `context` and `cacheEvaluations`** — the enclosing transaction is the one running,
+  and it was configured by whoever opened it. This is the one surprising part, so it is worth saying plainly: an
+  inner `Map("b" -> true)` above would do nothing. If a nested caller genuinely needs its own overrides, it wants
+  `Fail` (to find out it is nested) and a redesign, not `Reuse`;
+- **returns a `TransactionResult` for the enclosing transaction** as of the body's completion — everything evaluated
+  so far, including before the inner call. It did not open anything of its own, so that is the only honest thing it
+  can report.
+
+When there is *no* enclosing transaction, `Reuse` opens a fresh one exactly as `Fail` would — the policy only decides
+what happens on the way in. It applies to a fiber forked from inside a transaction too, because the transaction is
+fiber-local and inherited.
+
+`NestedPolicy` is a parameter on both `transaction` and `transactionEither`, on the `FeatureFlags` trait and the
+companion accessors alike; the default is `Fail`, so nothing changes unless you pass it. Before it existed, wrappers
+had to hand-roll this guard with `inTransaction` — a guard whose two branches do not even return the same type
+(`A` on the "already inside" branch, `TransactionResult[A]` on the other), so every wrapper re-solved that too.
 
 ---
 

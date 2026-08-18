@@ -16,11 +16,12 @@ import zio.openfeature.ofrep.OFREPProvider
   *      `evaluationTimeout`. If the OFREP endpoint is unreachable, `providerStatus` transitions to `Fatal` after the
   *      init timeout so the app stops polling for ready.
   *
-  * '''Why no `CircuitBreakerProvider`?''' The breaker in `zio-openfeature-extras` requires an `EventProvider`
-  * (so it can emit `PROVIDER_*` events when it trips). The OFREP contrib provider extends `FeatureProvider`
-  * directly, not `EventProvider`, so wrapping it requires a small adapter not provided by the library. The
-  * Optimizely integration (`OptimizelyFeatureProvider`) does extend `EventProvider` — see `docs/optimizely.md`
-  * for a circuit-breaker composition example.
+  * '''On `CircuitBreakerProvider`:''' this used to say the breaker required an `EventProvider` and that wrapping
+  * the OFREP contrib provider — which extends `FeatureProvider` directly — needed a hand-rolled adapter. That is
+  * no longer true: since #379 the breaker (and since #382 `CachingProvider`) takes a plain `FeatureProvider`, so
+  * the OFREP provider can be wrapped directly and no adapter is needed. The only thing a plain delegate gives up
+  * is the event-driven trip; failure-count and state polling work unchanged. See `docs/optimizely.md` for a
+  * circuit-breaker composition example.
   *
   * Set `OFREP_BASE_URL` in the environment to point at your OFREP gateway. Run via:
   *

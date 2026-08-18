@@ -490,9 +490,36 @@ val cached = CachingProvider(remoteProvider, CachingConfig(
 | `Some(Set("plan"))` | Only the `plan` attribute is hashed — different users with the same plan share a cache entry |
 | `Some(Set.empty)` | Context ignored entirely — cache by flag key only (useful for flags that don't depend on context) |
 
+### Wrapping a plain `FeatureProvider`
+
+The delegate is a `FeatureProvider`, so a provider that does not extend `EventProvider` can be cached too — including third-party and in-house providers that implement only `FeatureProvider`. No adapter is needed and none is interposed: the cache holds your provider as you passed it. Everything is forwarded unchanged — all six resolvers (including `getLongEvaluation`), both `initialize` overloads, `isDomainScoped`, `getProviderHooks`, `track`, `shutdown`, `getMetadata` and `getState`.
+
+**Know what you lose.** A plain delegate has no event channel, so it cannot emit `PROVIDER_CONFIGURATION_CHANGED` — the automatic invalidation described below never fires for one. That removes the only *change-driven* eviction: TTL expiry, LRU eviction at `maxEntries`, `shutdown`, and an explicit `invalidateAll` still apply, but **a flag changed at the provider can keep being served from cache for up to `ttl`**. Size `ttl` for how stale you are willing to be rather than relying on the provider to tell you.
+
+This is inherent to the delegate having no way to signal anything; it is not specific to this wrapper. An `EventProvider` that simply never emits behaves identically.
+
+**Watch out for nesting.** The widening also makes these compile for the first time, and both silently lose invalidation even though the *innermost* provider can emit — `DeferredProvider` and `IntegerWideningLongProvider` are plain `FeatureProvider`s that do not forward a wrapped `EventProvider`'s events:
+
+```scala
+CachingProvider(DeferredProvider(someEventProvider))        // config-change invalidation lost
+CachingProvider(IntegerWideningLongProvider(someProvider))  // same
+```
+
+Put `CachingProvider` innermost (closest to the event-capable provider), or invalidate manually.
+
+**Invalidating manually without events.** The `onConfigurationChanged` snippet further down is driven by a provider event, so it is inert for a plain delegate. Drive it from something you control instead:
+
+```scala
+for
+  cached <- CachingProvider.make(myPlainProvider, CachingConfig(ttl = 5.minutes))
+  // your own refresh signal — a deploy hook, an admin endpoint, a poll
+  _      <- cached.invalidateAll.repeat(Schedule.fixed(1.minute)).forkDaemon
+yield cached
+```
+
 ### Invalidation
 
-The wrapper takes ownership of the delegate's event channel, so a `PROVIDER_CONFIGURATION_CHANGED` emitted by the wrapped provider **invalidates the whole cache automatically** — and the event is re-emitted through the wrapper, so `FeatureFlags.events` subscribers still see it. (A delegate supports exactly one attachment, so don't register the same wrapped instance directly with an `OpenFeatureAPI`.)
+The wrapper takes ownership of the delegate's event channel, so a `PROVIDER_CONFIGURATION_CHANGED` emitted by the wrapped provider **invalidates the whole cache automatically** — and the event is re-emitted through the wrapper, so `FeatureFlags.events` subscribers still see it. (A delegate supports exactly one attachment, so don't register the same wrapped instance directly with an `OpenFeatureAPI`.) This applies to `EventProvider` delegates only — see above for a plain `FeatureProvider`.
 
 You can still invalidate manually for changes the delegate doesn't signal:
 

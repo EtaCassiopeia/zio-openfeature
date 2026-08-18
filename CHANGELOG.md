@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`CachingProvider` now wraps any `FeatureProvider`, not only an `EventProvider`** (#382). Applies to the caching
+  decorator exactly what #379 did for the circuit breaker: the delegate parameter and the `underlying` field are typed
+  `FeatureProvider`, so a provider that implements only `FeatureProvider` can be cached. No adapter is interposed —
+  the delegate is held as given. All six resolvers including `getLongEvaluation`, both `initialize` overloads,
+  `isDomainScoped`, `getProviderHooks`, `track`, `shutdown`, `getMetadata` and `getState` are forwarded unchanged.
+  - **Know what you lose with a plain delegate.** It cannot emit `PROVIDER_CONFIGURATION_CHANGED`, so the automatic
+    cache invalidation that event triggers never fires. TTL expiry and `shutdown` become the only ways an entry is
+    dropped, so a flag changed at the provider can keep being served from cache for up to `ttl`. Size `ttl`
+    accordingly, or invalidate manually. An `EventProvider` that never emits has always behaved this way; the
+    widening just makes it reachable by construction.
+  - **Not binary-compatible**, same as #379: the widened types are new descriptors, so a caller compiled against
+    1.0.0 and *not* recompiled fails with a `NoSuchMethodError` on `CachingProvider.make`, `.apply` or `.underlying`.
+    Recompiling fixes it. The three symbols are whitelisted in `mimaBinaryIssueFilters`.
+  - **Source compatibility is one-directional.** Passing an `EventProvider` to `make`/`apply` still compiles
+    unchanged, because the parameter widened. But `underlying` widened in *result* position, so code that reads it at
+    the narrower type — `val ep: EventProvider = cached.underlying` — no longer compiles and needs a type test.
+
 - **`CircuitBreakerProvider` now wraps any `FeatureProvider`, not only an `EventProvider`** (#379). Its delegate
   parameter and its `underlying` field are typed `FeatureProvider`, so a provider that implements only
   `FeatureProvider` (plus perhaps `Tracking`) can be protected by the breaker. No adapter is interposed — the
@@ -18,12 +35,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Every other part of the delegate's surface — all six resolvers including `getLongEvaluation`, both `initialize`
   overloads, `isDomainScoped`, `getProviderHooks`, `track`, `shutdown`, `getMetadata` and `getState` — is forwarded
   unchanged.
-  - **Source-compatible, not binary-compatible.** `EventProvider` is a subclass of `FeatureProvider`, so every
-    existing call site compiles unchanged. But the widened types are new descriptors at the bytecode level, so a
+  - **Not binary-compatible.** The widened types are new descriptors at the bytecode level, so a
     caller compiled against 1.0.0 and *not* recompiled fails with a `NoSuchMethodError` on
     `CircuitBreakerProvider.make`, `.apply` or `.underlying`; recompiling against this release fixes it with no
     source edits. The three symbols are whitelisted in `mimaBinaryIssueFilters`.
-  - `CachingProvider` still requires an `EventProvider`; this change is scoped to the circuit breaker.
+  - **Source compatibility is one-directional**, as for `CachingProvider` above: passing an `EventProvider` to
+    `make`/`apply` still compiles, but `underlying` widened in *result* position, so
+    `val ep: EventProvider = cb.underlying` no longer compiles and needs a type test.
+  - `CachingProvider` gets the same treatment in #382, below.
 
 - **Hooks are now filtered on a flag's wire type, and a `null` string is an error** (#356). Two user-visible
   consequences of `FlagType.wireType` (above), both affecting custom flag types only:

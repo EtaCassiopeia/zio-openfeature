@@ -126,6 +126,20 @@ ThisBuild / mimaBinaryIssueFilters ++= Seq(
   ProblemFilters.exclude[IncompatibleResultTypeProblem]("zio.openfeature.extras.CircuitBreakerProvider.underlying")
 )
 
+// Intentional break, whitelisted per the note above (#382). `CachingProvider` now holds its delegate as a
+// `FeatureProvider` instead of an `EventProvider`, applying to the caching decorator exactly what #379 did for the
+// circuit breaker, so a provider that implements only `FeatureProvider` can be cached. Same compatibility shape as
+// #379: source-compatible (`EventProvider` is a subclass of `FeatureProvider`, so every existing call site still
+// compiles unchanged), but a widened parameter or result type is a new descriptor at the bytecode level, so a caller
+// compiled against 1.0.0 and NOT recompiled fails with a NoSuchMethodError on these three symbols. MiMa reports
+// five problems against three filters: the Scala static forwarder on the companion class duplicates each of
+// `make` and `apply` (2 x 2), plus the widened `underlying` accessor.
+ThisBuild / mimaBinaryIssueFilters ++= Seq(
+  ProblemFilters.exclude[IncompatibleMethTypeProblem]("zio.openfeature.extras.CachingProvider.make"),
+  ProblemFilters.exclude[IncompatibleMethTypeProblem]("zio.openfeature.extras.CachingProvider.apply"),
+  ProblemFilters.exclude[IncompatibleResultTypeProblem]("zio.openfeature.extras.CachingProvider.underlying")
+)
+
 // Intentional break, whitelisted per the note above (#386). `transaction` and `transactionEither` gain a trailing
 // defaulted `nested: NestedPolicy` parameter on the `FeatureFlags` trait and its companion. Source-compatible for
 // every caller (the default fills it in), but a new parameter is a new descriptor at the bytecode level: the old

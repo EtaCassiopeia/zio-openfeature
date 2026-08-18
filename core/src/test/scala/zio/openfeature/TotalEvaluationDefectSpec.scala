@@ -28,10 +28,10 @@ object TotalEvaluationDefectSpec extends ZIOSpecDefault {
     override def setClientContext(ctx: EvaluationContext): UIO[Unit]                           = ???
     override def clientContext: UIO[EvaluationContext]                                         = ???
     override def withContext[R, E, A](ctx: EvaluationContext)(zio: ZIO[R, E, A]): ZIO[R, E, A] = ???
-    override def transaction[R, E, A](o: Map[String, Any], c: EvaluationContext, ce: Boolean)(
+    override def transaction[R, E, A](o: Map[String, Any], c: EvaluationContext, ce: Boolean, n: NestedPolicy)(
       zio: ZIO[R, E, A]
     ): ZIO[R, Compat.OrError[E, FeatureFlagError], TransactionResult[A]] = ???
-    override def transactionEither[R, E, A](o: Map[String, Any], c: EvaluationContext, ce: Boolean)(
+    override def transactionEither[R, E, A](o: Map[String, Any], c: EvaluationContext, ce: Boolean, n: NestedPolicy)(
       zio: ZIO[R, E, A]
     ): ZIO[R, Either[E, FeatureFlagError], TransactionResult[A]] = ???
     override def inTransaction: UIO[Boolean]                                                             = ???

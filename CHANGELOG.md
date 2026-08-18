@@ -75,6 +75,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Re-entrant transactions: `NestedPolicy` on `transaction` / `transactionEither`** (#386). Opening a transaction
+  inside another one has always failed with `NestedTransactionNotAllowed` — a sound default for code that means to open
+  two, but the wrong shape for a transaction used as *middleware*: a per-request wrapper and a handler that wraps a
+  sub-operation in its own transaction neither know about each other, and the result was a failed request. Every such
+  wrapper had to hand-roll an `inTransaction` guard whose two branches do not even return the same type (`A` vs
+  `TransactionResult[A]`). Both methods — on the
+  `FeatureFlags` trait and the companion accessors — gain a trailing `nested: NestedPolicy = NestedPolicy.Fail`:
+  - `Fail` (default) — today's behaviour, unchanged: `NestedTransactionNotAllowed` before the inner body runs.
+  - `Reuse` — the outermost transaction wins: the inner body runs inside the enclosing transaction (evaluations
+    recorded there, served from its cache), and the returned `TransactionResult` reflects that transaction as of the
+    body's completion. **The inner call's `overrides`, `context` and `cacheEvaluations` are ignored** — the enclosing
+    transaction is the one running. Stated loudly here, in the scaladoc and in `docs/transactions.md`, since silently
+    dropping an argument is the one surprising part.
+
+  With no enclosing transaction the policy is irrelevant and either value opens a fresh one exactly as before. It
+  applies to fibers forked from inside a transaction too (the transaction is fiber-local and inherited).
+  Source-compatible for every caller (defaulted parameter); binary-incompatible on the four `transaction*` descriptors —
+  same remedy as #353: recompile — covered by new MiMa filters. An **external implementor** of the `FeatureFlags` trait
+  must add the parameter to its two overrides.
 - **Served-default fallbacks are logged at warn, rate-limited per flag key** (#350). The total tier
   (`*OrDefault` / `resolveOrDefault`) previously logged only absorbed *defects* — every occurrence, unthrottled — and
   said nothing when a provider-reported problem (`FLAG_NOT_FOUND`, `PROVIDER_NOT_READY`, a timeout, …) made it serve

@@ -140,6 +140,20 @@ ThisBuild / mimaBinaryIssueFilters ++= Seq(
   ProblemFilters.exclude[IncompatibleResultTypeProblem]("zio.openfeature.extras.CachingProvider.underlying")
 )
 
+// Intentional break, whitelisted per the note above (#386). `transaction` and `transactionEither` gain a trailing
+// defaulted `nested: NestedPolicy` parameter on the `FeatureFlags` trait and its companion. Source-compatible for
+// every caller (the default fills it in), but a new parameter is a new descriptor at the bytecode level: the old
+// four-arg abstract methods are gone (`DirectMissingMethodProblem`) and the five-arg ones are new abstract members
+// (`ReversedMissingMethodProblem`) — so a caller compiled against 1.0.0 and NOT recompiled fails with a
+// NoSuchMethodError, and an external implementor of the trait must add the parameter. Recompiling fixes callers with
+// no source edits. Same shape as the #353 entries above.
+ThisBuild / mimaBinaryIssueFilters ++= Seq(
+  ProblemFilters.exclude[DirectMissingMethodProblem]("zio.openfeature.FeatureFlags.transaction"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("zio.openfeature.FeatureFlags.transactionEither"),
+  ProblemFilters.exclude[ReversedMissingMethodProblem]("zio.openfeature.FeatureFlags.transaction"),
+  ProblemFilters.exclude[ReversedMissingMethodProblem]("zio.openfeature.FeatureFlags.transactionEither")
+)
+
 // Version-specific source directories
 lazy val crossVersionSourceDirs = Seq(
   Compile / unmanagedSourceDirectories ++= {

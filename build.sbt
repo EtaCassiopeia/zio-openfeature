@@ -114,6 +114,18 @@ ThisBuild / mimaBinaryIssueFilters ++= Seq(
   ProblemFilters.exclude[MissingTypesProblem]("zio.openfeature.FeatureFlagsConfig$")
 )
 
+// Intentional break, whitelisted per the note above (#379). `CircuitBreakerProvider` now holds its delegate as a
+// `FeatureProvider` instead of an `EventProvider`, so a provider that implements only `FeatureProvider` can be
+// wrapped. `EventProvider` is a subclass of `FeatureProvider`, so every existing call site still compiles unchanged
+// — but a widened parameter or result type is a new descriptor at the bytecode level, so a caller compiled against
+// 1.0.0 and NOT recompiled fails with a NoSuchMethodError on these three symbols; recompiling fixes it with no
+// source edits. `make` and `apply` each cover their two-arg and three-arg (Ticker) forms.
+ThisBuild / mimaBinaryIssueFilters ++= Seq(
+  ProblemFilters.exclude[IncompatibleMethTypeProblem]("zio.openfeature.extras.CircuitBreakerProvider.make"),
+  ProblemFilters.exclude[IncompatibleMethTypeProblem]("zio.openfeature.extras.CircuitBreakerProvider.apply"),
+  ProblemFilters.exclude[IncompatibleResultTypeProblem]("zio.openfeature.extras.CircuitBreakerProvider.underlying")
+)
+
 // Version-specific source directories
 lazy val crossVersionSourceDirs = Seq(
   Compile / unmanagedSourceDirectories ++= {

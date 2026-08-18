@@ -323,7 +323,18 @@ The circuit breaker has three states:
 
 1. **Failure-count**: After `failureThreshold` consecutive evaluation failures (including timeouts), the circuit opens.
 2. **State-driven**: The delegate's state is polled at most once per `stateCheckInterval` (default `1.second`) rather than on every call, keeping the hot path cheap. If the observed state is `ERROR` or `FATAL`, the circuit opens immediately — no failed evaluations needed. When the delegate recovers to `READY`, the circuit closes automatically. Set `stateCheckInterval` to `Duration.Zero` to poll the delegate state on every evaluation.
-3. **Event-driven**: The wrapper takes ownership of the delegate's event channel, so delegate events trip the breaker as soon as they are emitted — a `PROVIDER_ERROR` opens the circuit, a `PROVIDER_READY` resets an externally-opened circuit, and a `PROVIDER_STALE` applies the configured `stalePolicy`. This detects an unhealthy delegate without waiting for the next state poll or a failed evaluation.
+3. **Event-driven**: The wrapper takes ownership of the delegate's event channel, so delegate events trip the breaker as soon as they are emitted — a `PROVIDER_ERROR` opens the circuit, a `PROVIDER_READY` resets an externally-opened circuit, and a `PROVIDER_STALE` applies the configured `stalePolicy`. This detects an unhealthy delegate without waiting for the next state poll or a failed evaluation. This is the one mechanism that needs an `EventProvider` delegate — see below.
+
+### Wrapping a plain `FeatureProvider`
+
+The delegate is a `FeatureProvider`, so a provider that does not extend `EventProvider` can be wrapped too — including third-party and in-house providers that implement only `FeatureProvider` (and perhaps `Tracking`). No adapter is needed and none is interposed: the breaker holds your provider as you passed it.
+
+Only mechanism 3 needs the richer type, and it degrades cleanly: no event channel is attached, no delegate events arrive, and the breaker relies on the failure-count and state-driven mechanisms — exactly as it already does for an `EventProvider` that never emits. Two things follow:
+
+- A plain delegate that does not override the SDK's deprecated `getState()` reports `READY` by default, so mechanism 2 never trips for it. Mechanism 1 is unaffected and still opens the circuit on `failureThreshold` consecutive failures.
+- Recovery still works: after `resetTimeout` the half-open probe closes the circuit on success, without needing a `PROVIDER_READY` event.
+
+Everything else is forwarded unchanged — all six resolvers (including `getLongEvaluation`), both `initialize` overloads, `isDomainScoped`, `getProviderHooks`, `track`, `shutdown`, `getMetadata` and `getState`.
 
 ### Usage
 

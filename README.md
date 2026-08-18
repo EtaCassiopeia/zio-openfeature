@@ -22,6 +22,7 @@ ZIO OpenFeature provides a type-safe, functional interface for feature flag eval
 
 | ZIO OpenFeature | OpenFeature Spec | OpenFeature Java SDK |
 |:----------------|:-----------------|:---------------------|
+| `main` (unreleased) | [v0.9.0](https://github.com/open-feature/spec/releases/tag/v0.9.0) | 1.22.0 |
 | 1.0.0 (latest published) | [v0.8.0](https://github.com/open-feature/spec/releases/tag/v0.8.0) | 1.21.0 |
 | 1.0.0-RC2 | [v0.8.0](https://github.com/open-feature/spec/releases/tag/v0.8.0) | 1.20.2 |
 
@@ -88,6 +89,25 @@ object MyApp extends ZIOAppDefault:
     TestFeatureProvider.scopedLayer(Map("my-feature" -> true))
   )
 ```
+
+### Declaring flags once
+
+The call above names the key, the type and the default at the use site. If a flag is read from more than one
+place, declare it once with a `FlagDef` and refer to the definition — no second call site can then disagree
+about its type or default:
+
+```scala
+object Flags:
+  val MyFeature = FlagDef("my-feature", false, "the new checkout flow")
+
+FeatureFlags.value(Flags.MyFeature)           // ZIO[FeatureFlags, FeatureFlagError, Boolean]
+FeatureFlags.valueOrDefault(Flags.MyFeature)  // never fails — serves the definition's default
+```
+
+Both styles run through the same evaluation path — hooks, transactions, caching and error semantics are
+identical, and you can mix them freely. Definitions also work with your own enums and case classes
+(`derives FlagType`) and double as type-checked test fixtures. See
+[Typed Flags](https://etacassiopeia.github.io/zio-openfeature/typed-flags).
 
 ## Using OpenFeature Providers
 
@@ -264,6 +284,7 @@ FeatureFlags.onConfigurationChanged { (flags, _) =>
 Full documentation: https://etacassiopeia.github.io/zio-openfeature/
 
 - [Getting Started](https://etacassiopeia.github.io/zio-openfeature/getting-started) - Installation and basic usage
+- [Typed Flags](https://etacassiopeia.github.io/zio-openfeature/typed-flags) - Declare a flag once and evaluate it by name
 - [Architecture](https://etacassiopeia.github.io/zio-openfeature/architecture) - Design and components
 - [Providers](https://etacassiopeia.github.io/zio-openfeature/providers) - Using OpenFeature providers
 - [Evaluation Context](https://etacassiopeia.github.io/zio-openfeature/context) - Targeting and context hierarchy

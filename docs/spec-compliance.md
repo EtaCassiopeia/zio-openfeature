@@ -1,7 +1,7 @@
 ---
 layout: default
 title: OpenFeature Spec Compliance
-nav_order: 9
+nav_order: 13
 ---
 
 # OpenFeature Specification Compliance
@@ -14,11 +14,24 @@ ZIO OpenFeature wraps the [OpenFeature Java SDK](https://openfeature.dev/docs/re
 
 | Component | Version | Notes |
 |:----------|:--------|:------|
-| **OpenFeature Spec** | v0.8.0 | [Specification](https://github.com/open-feature/spec) |
-| **OpenFeature Java SDK** | 1.20.2 | [Java SDK](https://github.com/open-feature/java-sdk) |
+| **OpenFeature Spec** | v0.9.0 on `main`, v0.8.0 as of 1.0.0 | [Specification](https://github.com/open-feature/spec) |
+| **OpenFeature Java SDK** | 1.22.0 on `main`, 1.21.0 as of 1.0.0 | [Java SDK](https://github.com/open-feature/java-sdk) |
 | **ZIO OpenFeature** | [![Maven Central](https://img.shields.io/maven-central/v/io.github.etacassiopeia/zio-openfeature-core_3.svg)](https://search.maven.org/search?q=g:io.github.etacassiopeia%20AND%20a:zio-openfeature-core_3) | This library |
 
 This library targets the **dynamic-context paradigm** (server-side) of the OpenFeature specification.
+
+### How compliance is verified
+
+The claims on this page are executable, not assertions. The specification's own gherkin suites are vendored
+verbatim from [`open-feature/spec`](https://github.com/open-feature/spec) at the pinned tag above and run on
+every build, twice — once under Cucumber (`conformance`) and once under
+[zio-bdd](https://github.com/EtaCassiopeia/zio-bdd) (`conformance-zio-bdd`). A scheduled job compares the
+vendored copies against upstream and files an issue if they drift, so a new or changed upstream scenario
+surfaces as work rather than silently going unrun.
+
+The same zio-bdd module carries a second suite for this library's *own* API — the ZIO-specific features
+below, which the spec has no opinion about — in its own repo-owned feature directory, so the vendored spec
+files stay byte-identical to upstream.
 
 ---
 
@@ -255,10 +268,15 @@ Beyond the OpenFeature spec, ZIO OpenFeature provides:
 | Transactions | Scoped overrides with evaluation caching and tracking |
 | Fiber-local context | `withContext` scopes context to a code block via FiberRef |
 | Type-safe evaluation | `FlagType` type class for compile-time safety |
+| Typed flag definitions | `FlagDef[A]` states a flag's key, type and default once — see [Typed Flags]({{ site.baseurl }}/typed-flags) |
+| Derived flag codecs | `derives FlagType` for your own enums and case classes (Scala 3) |
+| Ambient context | `ContextSource` pulls request identity into every evaluation from outside the ZIO environment |
 | Effect-based hooks | Hooks return `UIO` instead of callbacks |
 | Resource management | Automatic lifecycle via ZIO Scope |
 | Event streaming | Provider events as ZStream |
 | Multi-provider | Combine multiple providers with configurable strategies |
+| Verified hot-swap | `fromAcquireAsync` serves a fallback, verifies the real provider before swapping it in, and reports `AcquireStatus` |
+| Served-default logging | A default served after a failure leaves a warn line, rate-limited per flag key |
 
 ---
 

@@ -92,6 +92,10 @@ Everything below is documented in the pages above; this table is a shortcut to t
 
 | Feature | What it gives you | Where |
 |:--------|:------------------|:------|
+| Typed tier fails on error codes | `value` / `*Details` fail with a typed `FlagNotFound`, `TypeMismatch`, … when the provider reports an error code — a fail-closed gate stays closed; the total tier still serves the default | [Getting Started]({{ site.baseurl }}/getting-started#two-tiers-typed-and-total) |
+| `NestedPolicy.Reuse` | An inner transaction runs inside the enclosing one instead of failing — a per-request transaction is safe as middleware | [Transactions]({{ site.baseurl }}/transactions#nested-transactions) |
+| `transactionEvaluations` | `None` outside a transaction, `Some(...)` inside — an audit read can no longer mistake "no transaction" for "nothing evaluated" | [Transactions]({{ site.baseurl }}/transactions#checking-transaction-state) |
+| Wrappers take any `FeatureProvider` | `CircuitBreakerProvider` and `CachingProvider` no longer require an `EventProvider` | [Extras]({{ site.baseurl }}/extras#circuit-breaker-provider) |
 | `FlagDef[A]` | Declare a flag once and evaluate it by name | [Typed Flags]({{ site.baseurl }}/typed-flags) |
 | `derives FlagType` | Codecs for your own enums and case classes, no boilerplate | [Typed Flags]({{ site.baseurl }}/typed-flags#flags-that-are-not-boolean-string-or-a-number) |
 | `FlagType.wireType` | A domain type carried over the wire as a scalar resolves through that scalar's method, and hooks see it | [Architecture]({{ site.baseurl }}/architecture#scalar-backed-custom-types) |

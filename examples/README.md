@@ -34,6 +34,27 @@ Run the spec:
 sbt 'examplesTestkitApp/test'
 ```
 
+## `typed-flags/`
+
+The snippets from the [Typed Flags](https://etacassiopeia.github.io/zio-openfeature/typed-flags) docs page (and the
+`FlagDef` snippet in the top-level README) as real, compiled code — a flag catalog built from `FlagDef`, an
+`enum … derives FlagType`, a case class `derives FlagType`, a `FlagType.mapped` newtype, all four `FlagDef`
+evaluation forms, and a `TestFeatureProvider.layer(Flag := value)` fixture.
+
+Unlike the other two, this module exists to be *compiled* rather than to demonstrate a deployment pattern: every
+documented result type is ascribed explicitly, so a change to `FlagDef`, to its evaluation overloads, to
+`FlagType.derived`/`mapped`, or to the typed testkit fixtures fails the build instead of silently leaving the
+published page showing code that no longer compiles (#385).
+
+**Keep it a mirror of `docs/typed-flags.md`.** When you change one, change the other — an example that drifts into its
+own shape stops testing the docs. Do not replace an ascription with inference: the ascriptions are the assertion.
+
+It is self-contained — no provider, no network, no environment variables — so it also runs:
+
+```sh
+sbt 'examplesTypedFlags/run'
+```
+
 ## Adding a new example
 
 Examples must (a) compile against the published modules, (b) be runnable or testable from sbt with no manual setup

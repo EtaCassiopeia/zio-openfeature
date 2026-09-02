@@ -523,6 +523,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Dependencies
 
+- WireMock 3.10.0 → 3.13.2 in `ofrep` and `optimizely` (test-only, #403). Declared once as `wiremockVersion`
+  rather than as two independent literals that are meant to agree — the same drift shape that produced the
+  Jackson skew fixed in #402.
+
+  WireMock is the largest single source of test-scope advisories in this build, and the bump raises its
+  transitive stack: `commons-io` 2.11.0 → 2.19.0, `json-smart` 2.5.0 → 2.6.0, `commons-fileupload` 1.5 → 1.6.0,
+  `httpclient5` 5.4.1 → 5.5.1, `httpcore5` 5.3.1 → 5.3.6, jetty 11.0.24 → 11.0.26. That closes five open
+  advisories outright (commons-io, json-smart, commons-fileupload, httpclient5, http2-common).
+
+  Nine advisories in this tree remain open and **cannot** be closed from here: jetty needs 11.0.29/11.0.31 and
+  3.13.2 pins 11.0.26; `handlebars` is still 4.3.1 against a 4.5.2 fix; `httpcore5` and `httpclient5` sit short
+  of their 5.4.3 and 5.6.3 floors. 3.13.2 is the newest 3.x, so these wait on WireMock itself. None of them are
+  published — WireMock is `% Test` in both modules, so nothing here reaches a consumer's classpath.
+
 - OpenFeature Java SDK 1.21.0 → 1.22.1
   - 1.22.1 fixes a miss in the SDK's own 64-bit support: `Value` gained a `Long` constructor in 1.22.0, but
     `Structure.convertValue` was never taught the matching branch, so a `Long`-backed `Value` fell through every

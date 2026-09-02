@@ -7,6 +7,11 @@ val zioVersion            = "2.1.14"
 val zioBddVersion         = "1.4.4"
 val openFeatureSdkVersion = "1.22.1"
 
+// Test-only HTTP stubbing for the ofrep and optimizely provider suites. Declared once rather than per module:
+// the two had drifted apart before, and a WireMock bump is the single cheapest lever on this build's advisory
+// count — it drags in the jetty / httpclient5 / handlebars / commons-* stack that most test-scope alerts sit in.
+val wiremockVersion = "3.13.2"
+
 // Jackson reaches us only through the OFREP contrib provider; see `jacksonPins` above the `ofrep` module.
 // `jackson-annotations` is versioned WITHOUT a patch component from 2.20 onwards (jackson-bom 2.21.6 pins it
 // to `2.21`), so it cannot share `jacksonVersion` — `2.21.6` does not exist for that artifact.
@@ -266,7 +271,7 @@ lazy val ofrep = (project in file("ofrep"))
     libraryDependencies ++= Seq(
       "dev.zio"                          %% "zio"      % zioVersion,
       "dev.openfeature.contrib.providers" % "ofrep"    % "0.0.1",
-      "org.wiremock"                      % "wiremock" % "3.10.0" % Test
+      "org.wiremock"                      % "wiremock" % wiremockVersion % Test
     ),
     // The OFREP contrib provider (0.0.1) pulls jackson-databind 2.19.2, which carries five open advisories, plus
     // an async-parser DoS on its jackson-core line (GHSA-r7wm-3cxj-wff9). jsr310 has no advisories of its own —
@@ -293,7 +298,7 @@ lazy val optimizely = (project in file("optimizely"))
       // `getHttpClient()` (the staleness fetch-observation seam for #267). A version bump breaks it at compile time.
       "com.optimizely.ab" % "core-api"             % "4.2.2",
       "com.optimizely.ab" % "core-httpclient-impl" % "4.2.2",
-      "org.wiremock"      % "wiremock"             % "3.10.0" % Test
+      "org.wiremock"      % "wiremock"             % wiremockVersion % Test
     )
   )
 

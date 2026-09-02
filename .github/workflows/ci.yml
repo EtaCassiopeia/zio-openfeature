@@ -105,6 +105,57 @@ jobs:
       - name: Check binary compatibility
         run: sbt +mimaReportBinaryIssues
 
+  # A `dependencyOverrides` pin is resolution-only and never reaches the published POM, so a version pinned only that
+  # way protects this build and no consumer — #402, where a `jackson-core` security pin reached zero of them. The
+  # weekly dependency-check job cannot see this: it reads each module's *resolved* classpath, which is post-override,
+  # so it is green in exactly the broken state. This job reads the POM sbt would publish, and gates PRs rather than
+  # running on a schedule, because the failure mode is a build-definition edit that would otherwise ship before the
+  # next Monday scan (#405).
+  published-pom:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - name: Set up JDK 21
+        uses: actions/setup-java@v6
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: sbt
+      - name: Setup sbt
+        uses: sbt/setup-sbt@v1
+      - name: Every override reaches the published POM
+        run: sbt +checkPublishedPins
+      # A guard never seen to fail is not known to guard anything — the same gap that let #402's silent pin and its
+      # green-on-a-partial-corpus scan both survive. Recreate the pre-#402 shape (override kept, `libraryDependencies`
+      # entry dropped) and require the guard to reject it, checking the DIAGNOSIS and not just the exit code: an sbt
+      # that failed to load the build would also "fail", and a self-test that cannot tell those apart proves nothing.
+      - name: Guard self-test — an overrides-only pin must be rejected
+        run: |
+          if sbt 'set ofrep / libraryDependencies ~= (_.filterNot(m => m.organization == "com.fasterxml.jackson.core" && m.name == "jackson-core"))' ofrep/checkPublishedPins > /tmp/selftest.log 2>&1; then
+            echo "::error::checkPublishedPins passed with jackson-core dropped from libraryDependencies"
+            tail -30 /tmp/selftest.log
+            exit 1
+          fi
+          grep -q 'jackson-core:.*overrides-only' /tmp/selftest.log || {
+            echo "::error::checkPublishedPins failed, but not with the overrides-only diagnosis"
+            tail -30 /tmp/selftest.log
+            exit 1
+          }
+          echo "Guard rejected the overrides-only pin, as it must"
+      # The other half of the guard: a pin the POM declares at a scope no consumer inherits is legitimate — it
+      # governs this build alone — and must NOT be reported, or a future test-only CVE pin (#403's shape) would be
+      # blocked with no correct remedy. `zio-test` is `%%`-cross-versioned and `% Test`, so this one case exercises
+      # both the artifact-suffix computation and the not-inherited branch; either regressing turns this step red.
+      - name: Guard self-test — a cross-versioned test-scope pin must be accepted
+        run: |
+          if ! sbt 'set ofrep / dependencyOverrides += "dev.zio" %% "zio-test" % "2.1.14"' ofrep/checkPublishedPins > /tmp/scoped.log 2>&1; then
+            echo "::error::checkPublishedPins rejected a test-scope pin the POM does declare"
+            tail -30 /tmp/scoped.log
+            exit 1
+          fi
+          echo "Guard accepted the test-scope pin, as it must"
+
   # Examples are not published artifacts but must compile so the README snippets and `examples/` reference code stay
   # honest. The testkit example additionally runs its spec (UserServiceSpec) — the canonical demonstration of the
   # testing story — so a public API change that breaks the documented usage fails CI instead of rotting silently.
@@ -166,7 +217,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    needs: [format, build-matrix, mima, examples, conformance, conformance-zio-bdd]
+    needs: [format, build-matrix, mima, published-pom, examples, conformance, conformance-zio-bdd]
     if: always()
     steps:
       - name: Fail if any required check failed
@@ -175,4 +226,4 @@ jobs:
           echo "One or more required checks did not succeed: ${{ toJson(needs) }}" >&2
           exit 1
       - name: All required checks passed
-        run: echo "format, build-matrix, mima, examples, conformance, conformance-zio-bdd all succeeded"
+        run: echo "format, build-matrix, mima, published-pom, examples, conformance, conformance-zio-bdd all succeeded"

@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **CI now guards that every dependency pin actually reaches the published POM** (#405). An sbt `dependencyOverrides`
+  entry is resolution-only — it is never written into the POM — so a version pinned only that way protects this build
+  and no consumer of the artifact. That is exactly how #402's `jackson-core` security pin reached zero consumers, and
+  nothing could observe it: the weekly OWASP scan reads each module's *resolved* classpath, which is post-override, so
+  it stays green in precisely the state that is broken, and it runs on a schedule rather than on PRs. The new
+  `checkPublishedPins` task (`sbt +checkPublishedPins`) parses each published module's `makePom` output and fails,
+  listing every violation, when an override is absent from that POM — the #402 shape, an override on a coordinate
+  that only arrives transitively — or is declared there at a different version; entries in `test`/`provided` scope or
+  marked `optional` do not count, since a consumer does not inherit them. It runs in a
+  new PR-gating `published-pom` CI job, which also **self-tests the guard**: it recreates the pre-#402 shape, drops a
+  pin from `libraryDependencies`, and requires the guard to reject it with the right diagnosis — a guard never seen to
+  fail is not known to guard anything. That self-test is also what catches the *other* direction: deleting an override
+  deletes the expectation with it, so the task alone would go quietly green. The expectation is derived from
+  `dependencyOverrides` rather than a hand-maintained list of "security pins", so it covers every module the root
+  project aggregates without anyone having to keep a list current.
+
 ### Changed
 
 - **`FallbackLogging.Off` now throttles the absorbed-defect breadcrumb** (#401). Under `Off` the served-default line

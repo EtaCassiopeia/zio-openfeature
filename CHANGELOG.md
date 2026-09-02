@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The targeted OpenFeature specification moved from v0.8.0 to v0.9.0** (#331, #332). The vendored gherkin suites
+  were re-synced to the [v0.9.0](https://github.com/open-feature/spec/releases/tag/v0.9.0) tag (commit `d5b0a73`) and
+  a scheduled drift check now files an issue when the vendored copies diverge from upstream, so a new or changed
+  upstream scenario surfaces as work rather than silently going unrun. On the library side (#332), the stale
+  `1.7.6`/`1.7.7` provider-status citations were reframed as deliberate library policy — v0.9.0 renumbered them to
+  `2.2.7` and no longer *requires* the NOT_READY/FATAL short-circuit, but this library keeps it — the bundled
+  providers were audited for event ownership, and duplicate-event behaviour was pinned by tests.
+  - **Not yet compliant:** spec v0.9.0 requires a provider to emit its own `PROVIDER_READY` / `PROVIDER_ERROR` /
+    `PROVIDER_CONTEXT_CHANGED` (requirements 2.8.1–2.8.4). The bundled providers still rely on the SDK synthesizing
+    them, because doing otherwise before the Java SDK ships its opt-in marker would deliver duplicate events to user
+    handlers. Tracked in #340 and blocked upstream on
+    [java-sdk#1999](https://github.com/open-feature/java-sdk/issues/1999).
 - **The typed tier now fails on a provider-reported error *code*, not only on a thrown error** (#388). Most providers
   report `FLAG_NOT_FOUND`, `TYPE_MISMATCH`, `PARSE_ERROR` and friends as a code on the resolution and never throw. Until
   now `value` / `valueDetails` / every `*Details` method returned such a resolution as a *success* carrying the caller's
@@ -334,6 +346,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The object path now sends the caller's default to the provider, and no longer relabels `FLAG_NOT_FOUND` as
+  `TYPE_MISMATCH`** (#364). Two defects on the object-backed custom-type evaluation path. `getObjectDetails` was
+  called with an empty `Value()` instead of `flagType.encode(default)`, so a provider could not serve the caller's
+  default for a custom type the way it does for the built-in scalars. Separately, anything that failed to extract
+  became a type error, so a plain missing flag surfaced as `TypeMismatch` and looked like a codec bug; a
+  provider-reported `FLAG_NOT_FOUND` is now preserved as `FlagNotFound`.
 - **Snapshots are actually published now** (#397). `Publish Snapshot` has run green on every `main` commit since it
   was added and never uploaded a single artifact: sbt-ci-release 1.9.2 routes snapshots through sbt-sonatype, which
   answers `sonatypeCentralHost` with "Sonatype Central does not accept snapshots, only official releases. Aborting

@@ -22,7 +22,7 @@ ZIO OpenFeature provides a type-safe, functional interface for feature flag eval
 
 | ZIO OpenFeature | OpenFeature Spec | OpenFeature Java SDK |
 |:----------------|:-----------------|:---------------------|
-| `main` (unreleased) | [v0.9.0](https://github.com/open-feature/spec/releases/tag/v0.9.0) | 1.22.0 |
+| `main` (unreleased) | [v0.9.0](https://github.com/open-feature/spec/releases/tag/v0.9.0) | 1.22.1 |
 | 1.0.0 (latest published) | [v0.8.0](https://github.com/open-feature/spec/releases/tag/v0.8.0) | 1.21.0 |
 | 1.0.0-RC2 | [v0.8.0](https://github.com/open-feature/spec/releases/tag/v0.8.0) | 1.20.2 |
 

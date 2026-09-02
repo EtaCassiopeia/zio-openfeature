@@ -86,7 +86,7 @@ reference pages — read them when you reach the problem they solve.
 | [Testing Real Providers]({{ site.baseurl }}/testing-real-providers) | Fault-testing a real provider over TLS-MITM |
 | [Spec Compliance]({{ site.baseurl }}/spec-compliance) | OpenFeature specification compliance |
 
-## Added since 1.0.0
+## Added in 1.1.0
 
 Everything below is documented in the pages above; this table is a shortcut to the right section.
 

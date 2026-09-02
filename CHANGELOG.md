@@ -334,6 +334,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The weekly OWASP dependency-check job now scans every published module** (#402). It collected JARs from
+  `core` and `testkit` only — the two modules with almost no third-party surface — so `extras`, `ofrep` and
+  `optimizely`, which carry the transitive HTTP stacks, were never scanned; it could not see any Jackson
+  artifact at all. It also masked its own failures: the step piped `sbt` into `grep`, and a pipeline's exit
+  status is its *last* command's, so an sbt failure part-way through the module list left the earlier
+  modules' JARs in place and scanned green over a partial corpus. The step now runs under
+  `set -eo pipefail` with `sbt` writing to a file, fails loudly on an empty JAR list, no longer swallows
+  `cp` errors, and reports the count that actually reached the scan directory rather than the count it
+  intended to.
+
+  Scope note: this scan reads each module's *resolved* classpath, so it would **not** by itself have caught
+  the published-POM gap described under Security — a scanner that only sees the resolved build cannot see
+  what the POM does or does not declare. The widening closes a real and separate blind spot; it is not a
+  regression guard for that bug.
+
 - **Snapshots are actually published now** (#397). `Publish Snapshot` has run green on every `main` commit since it
   was added and never uploaded a single artifact: sbt-ci-release 1.9.2 routes snapshots through sbt-sonatype, which
   answers `sonatypeCentralHost` with "Sonatype Central does not accept snapshots, only official releases. Aborting
@@ -474,6 +489,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `initialize(ctx, domain)` dropped the bound domain, and `isDomainScoped` hid a wrapped provider's scoping from
   the SDK. All three are now forwarded, and a reflection-based completeness spec fails when a future SDK method
   goes unforwarded.
+
+### Security
+
+- **`zio-openfeature-ofrep` now pins a patched, aligned Jackson family — and actually ships it to consumers**
+  (#402). The OFREP contrib provider pulls `jackson-databind` 2.19.2, which carries five open advisories
+  including two `PolymorphicTypeValidator` bypasses (CVE-2026-54513, CVE-2026-54512 — CVSS 8.1 each), an
+  `InetSocketAddress` SSRF (CVE-2026-54514) and a `@JsonIgnore` bypass on records (CVE-2026-59888); its
+  `jackson-core` line adds an async-parser DoS (GHSA-r7wm-3cxj-wff9). The family is now pinned to 2.21.6
+  (`jackson-annotations` 2.21, which drops the patch component from 2.20 onwards).
+
+  `jackson-datatype-jsr310` moves to 2.21.6 with them. It has no advisories of its own — it is pinned
+  because a Jackson data-format module must track `databind` or the family splits again.
+
+  The important half of this fix is *how* it is pinned. The module previously carried
+  `dependencyOverrides += jackson-core 2.21.2`, but an sbt override is resolution-only and is never written
+  into the published POM — so it pinned this build and left every downstream consumer resolving the
+  provider's vulnerable versions untouched. The patched versions are now declared as `libraryDependencies`
+  as well, which *are* published, so a consumer picks them up by nearest-wins (Maven) and newest-wins
+  (coursier/Gradle). This imposes a version *floor*: a Maven consumer can still take a different Jackson
+  via `<dependencyManagement>`, but under Gradle/coursier merely declaring an older version is not enough —
+  that needs a `constraint`, `force`, or `resolutionStrategy`.
+
+  The same override had also produced the split family it was written to prevent — `jackson-core` 2.21.2
+  against `jackson-databind` 2.19.2, two minors apart — because its premise (that the provider pulled
+  databind 2.21.2) was never true. This particular skew was the benign direction (a newer `core` under an
+  older `databind` is additive in practice); the breaking direction is the opposite, and nothing prevented
+  the next provider bump from landing there. It was an unsupported mixed-version combination, not an
+  observed failure.
+
+  Not affected: `core`, `extras` and `testkit` carry no Jackson at all, and `optimizely` carries only
+  `jackson-annotations`, which has no advisories.
 
 ### Dependencies
 

@@ -186,6 +186,18 @@ lazy val crossVersionSourceDirs = Seq(
   }
 )
 
+// A `dependencyOverrides` entry is resolution-only: sbt never writes it into the published POM, so a version pinned
+// only that way protects this build and no consumer of the artifact (#402, where a `jackson-core` security pin
+// reached zero consumers). Nothing could observe that — the weekly OWASP scan reads each module's *resolved*
+// classpath, which is post-override, so it is green in exactly the state that is broken, and it is scheduled rather
+// than PR-gating. This task reads the POM sbt would actually publish and asserts every override is declared in it.
+// Deriving the expectation from `dependencyOverrides` rather than a hand-maintained "security pins" list is
+// deliberate: an override that does not reach the POM has this bug's shape whatever its motive, and a list that must
+// be maintained is a list that goes stale. See the `published-pom` CI job (#405).
+val checkPublishedPins = taskKey[Unit](
+  "Fail unless every dependencyOverrides entry is declared in this module's published POM"
+)
+
 lazy val commonSettings = Seq(
   testFrameworks += new TestFramework("zio.test.sbt.ZTestFramework"),
   // Run tests in a forked JVM. A forked test run is a child process that sbt force-terminates when the `test` task
@@ -200,16 +212,72 @@ lazy val commonSettings = Seq(
   ),
   // Baseline against each module's last release (see the ThisBuild MiMa note above). Bump `"1.0.0"` to the previous
   // release version when cutting a new one, per `RELEASING.md`.
-  mimaPreviousArtifacts := Set(organization.value %% moduleName.value % "1.0.0")
+  mimaPreviousArtifacts := Set(organization.value %% moduleName.value % "1.0.0"),
+  checkPublishedPins    := checkPublishedPinsTask.value
 ) ++ crossVersionSourceDirs
+
+// Shared body for `checkPublishedPins`, so the published modules and the aggregating root cannot drift.
+// `Def.taskIf`, not `Def.task`: a `.value` is a dependency declaration rather than a call, so under `Def.task`
+// both branches' inputs are forced and an unpublished project would still build a POM nobody reads.
+lazy val checkPublishedPinsTask = Def.taskIf {
+  if ((publish / skip).value)
+    streams.value.log.info(s"${name.value}: not published, no POM to check")
+  else {
+    val log       = streams.value.log
+    val module    = name.value
+    val overrides = dependencyOverrides.value
+    // Path-scoped, not a descendant search: a `<dependencyManagement>` entry is not a dependency a consumer
+    // inherits, and must never be read as satisfying a pin.
+    val declared = (scala.xml.XML.loadFile(makePom.value) \ "dependencies" \ "dependency").map { d =>
+      val scope = (d \ "scope").text.trim
+      // Absent scope means `compile`. `inherited` is the only thing that matters here: whether a consumer of
+      // this artifact resolves this coordinate through us.
+      val inherited = (d \ "optional").text.trim != "true" && scope != "test" && scope != "provided"
+      ((d \ "groupId").text.trim, (d \ "artifactId").text.trim) -> ((d \ "version").text.trim, inherited)
+    }.toMap
+    val (sv, sbv) = (scalaVersion.value, scalaBinaryVersion.value)
+    val problems = overrides.flatMap { m =>
+      val artifact = CrossVersion(m.crossVersion, sv, sbv).fold(m.name)(rename => rename(m.name))
+      declared.get((m.organization, artifact)) match {
+        // Declared at a scope no consumer inherits. The pin then governs this build alone and there is nothing
+        // downstream left resolving the old version — pinning a CVE out of the test-only HTTP stack is exactly
+        // this shape, and "fixing" it by publishing a test dependency would be strictly worse.
+        case Some((_, false))                                => None
+        case Some((published, _)) if published == m.revision => None
+        // Defence in depth, not the case that bites: sbt rewrites a declared dependency's version with its
+        // override before writing the POM, so today this arm is unreachable for anything `libraryDependencies`
+        // declares. It is the arm that would catch that behaviour changing.
+        case Some((published, _)) =>
+          Some(s"${m.organization}:$artifact is pinned to ${m.revision} but the POM declares $published")
+        // The real #402 shape: an override on a coordinate that only arrives transitively writes nothing to the
+        // POM at all, so the consumer resolves the vulnerable version this build never used.
+        case None =>
+          Some(s"${m.organization}:$artifact:${m.revision} is overrides-only — it is absent from the POM")
+      }
+    }
+    // Report every violation: a first-failure-only report turns one bad edit into a fix-one-rerun loop.
+    if (problems.nonEmpty)
+      sys.error(
+        s"$module: ${problems.size} dependencyOverrides pin(s) do not reach the published POM. An override is " +
+          s"resolution-only. Declare the same version in libraryDependencies too (see `jacksonPins`) — or, if the " +
+          s"pin is only needed for this build's own test classpath, declare it there at `% Test`, which the POM " +
+          s"records without publishing it to consumers:" +
+          problems.mkString("\n  - ", "\n  - ", "")
+      )
+    log.info(s"$module: ${overrides.size} dependencyOverrides pin(s), all reach the published POM")
+  }
+}
 
 lazy val root = (project in file("."))
   // `conformance` is intentionally NOT aggregated: it is Scala 3 only, so aggregating it would make `++2.13.16 test`
   // try (and fail) to compile it. CI runs it explicitly on Scala 3 (see ci.yml), the same way `examples` are handled.
   .aggregate(core, testkit, extras, ofrep, optimizely)
   .settings(
-    name                           := "zio-openfeature",
-    publish / skip                 := true,
+    name           := "zio-openfeature",
+    publish / skip := true,
+    // Root does not take `commonSettings`, so it needs the key defined here for the bare aggregate invocation
+    // (`sbt +checkPublishedPins`) to resolve; `publish / skip` above makes it a no-op on root itself.
+    checkPublishedPins             := checkPublishedPinsTask.value,
     dependencyCheckFailBuildOnCVSS := 7,
     dependencyCheckNvdApi          := NvdApiSettings(apiKey = sys.env.getOrElse("NVD_API_KEY", "")),
     dependencyCheckDataDirectory   := Some(new File(Path.userHome.absolutePath, ".dependency-check/data"))
@@ -253,6 +321,9 @@ lazy val extras = (project in file("extras"))
 // MAINTENANCE: an override forces in BOTH directions, so these versions are a floor that must be raised when
 // the OFREP provider bumps its own Jackson — otherwise a newer transitive Jackson is silently pulled back down
 // to whatever is written here, visible only as an `(evicted by:)` line in a dependency tree nobody reads.
+// Dropping the `libraryDependencies` half is caught by `checkPublishedPins`. Dropping the *override* half is not —
+// that empties the expectation along with the pin — so the `published-pom` CI job's self-test re-adds the pre-#402
+// shape on every run and requires the guard to reject it, which fails if either half has gone missing.
 val jacksonPins = Seq(
   "com.fasterxml.jackson.core"     % "jackson-core"            % jacksonVersion,
   "com.fasterxml.jackson.core"     % "jackson-databind"        % jacksonVersion,

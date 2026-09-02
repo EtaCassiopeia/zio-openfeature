@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`FallbackLogging.Off` now throttles the absorbed-defect breadcrumb** (#401). Under `Off` the served-default line
+  was already silent, but the absorbed-*defect* line — still written, because a defect is a bug rather than outage
+  noise — was written on every occurrence, making `Off` the noisiest policy for a defect on a hot flag. It now goes
+  through the same per-key limiter at the default 60 s window: first occurrence immediately, then one line per key per
+  minute with `(suppressed N similar)`. `Always` and `Throttled(w)` are unchanged. Alongside, the served-default warn
+  line is now recorded in `docs/spec-compliance.md` as a deliberate, configurable deviation from spec §1.4.11
+  ("client operations SHOULD NOT write log messages"): the default stays `Throttled(60.seconds)`, and `Off` is the
+  conformant setting.
 - **The typed tier now fails on a provider-reported error *code*, not only on a thrown error** (#388). Most providers
   report `FLAG_NOT_FOUND`, `TYPE_MISMATCH`, `PARSE_ERROR` and friends as a code on the resolution and never throw. Until
   now `value` / `valueDetails` / every `*Details` method returned such a resolution as a *success* carrying the caller's

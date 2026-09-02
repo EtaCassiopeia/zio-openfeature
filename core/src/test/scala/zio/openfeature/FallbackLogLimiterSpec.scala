@@ -143,15 +143,27 @@ object FallbackLogLimiterSpec extends ZIOSpecDefault {
           warns(2).cause.dieOption.exists(_.getMessage == "boom")
         )
       },
-      test("Off logs no served-default line but still logs absorbed defects") {
+      test("Off throttles absorbed defects at the default window and never logs a served-default line") {
+        val boom = Cause.die(new RuntimeException("boom"))
         for {
           base <- baseline
           l    <- FallbackLogLimiter.make(FallbackLogging.Off)
-          _    <- l.log("k", resolution("k"), None)
-          _    <- l.log("k", resolution("k"), Some(Cause.die(new RuntimeException("boom"))))
-          _    <- l.log("k", resolution("k"), Some(Cause.die(new RuntimeException("boom"))))
+          _    <- l.log("k", resolution("k"), None)       // served-default line: silent under Off
+          _    <- l.log("k", resolution("k"), Some(boom)) // first defect for k: emitted
+          _    <- l.log("k", resolution("k"), Some(boom)) // within the default window: suppressed, not silenced
+          _    <- l.log("j", resolution("j"), Some(boom)) // another key gets its own first line
+          _    <- TestClock.adjust(60.seconds)
+          _    <- l.log("k", resolution("k"), None)       // still silent after the window
+          _    <- l.log("k", resolution("k"), Some(boom)) // re-admitted, carrying the suppressed count
           logs <- warnings(base)
-        } yield assertTrue(logs.length == 2, logs.forall(_.contains("absorbed a defect")))
+        } yield assertTrue(
+          logs.length == 3,
+          logs.forall(_.contains("absorbed a defect")),
+          logs(0).startsWith("Total evaluation of 'k' absorbed a defect"),
+          !logs(0).contains("suppressed"),
+          logs(1).startsWith("Total evaluation of 'j' absorbed a defect"),
+          logs(2).contains("(suppressed 1 similar)")
+        )
       },
       test("Throttled(Duration.Infinity) logs the first event per key only") {
         for {
@@ -180,6 +192,19 @@ object FallbackLogLimiterSpec extends ZIOSpecDefault {
           _    <- ZIO.foreach(1 to 3)(_ => l.log("k", resolution("k"), None))
           logs <- warnings(base)
         } yield assertTrue(logs.length == 3, logs.forall(!_.contains("suppressed")))
+      },
+      test("Always logs every absorbed defect without a suppressed suffix") {
+        val boom = Cause.die(new RuntimeException("boom"))
+        for {
+          base <- baseline
+          l    <- FallbackLogLimiter.make(FallbackLogging.Always)
+          _    <- ZIO.foreach(1 to 3)(_ => l.log("k", resolution("k"), Some(boom)))
+          logs <- warnings(base)
+        } yield assertTrue(
+          logs.length == 3,
+          logs.forall(_.startsWith("Total evaluation of 'k' absorbed a defect")),
+          logs.forall(!_.contains("suppressed"))
+        )
       }
     ) @@ TestAspect.sequential
   )

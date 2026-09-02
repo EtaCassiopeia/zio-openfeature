@@ -208,10 +208,16 @@ Every served-default fallback leaves a **warn** log line naming the flag, why it
 `Flag 'checkout-v2' fell back to its default false (FlagNotFound: Flag 'checkout-v2' not found)` — **rate-limited per flag key** so a
 provider outage on a hot flag does not drown the one line that matters. By default one line per key per 60 seconds; the
 next line for that key carries `(suppressed 412 similar)`. Absorbed defects go through the same limiter but in their
-own per-key bucket, keep their cause, and are still logged under `Off` — a defect is a bug, not outage noise. Beyond
-1024 distinct keys, further keys share one throttled overflow bucket rather than going unlimited. Hooks and metrics
-still see every evaluation; only this log line is limited. A flag that is *permanently* absent from the provider is a
-permanent (throttled) warn source — define it, or evaluate it through the typed API. Tune or silence it per instance:
+own per-key bucket, keep their cause, and are still logged under `Off` (throttled at the default window) — a defect is
+a bug, not outage noise. Beyond 1024 distinct keys, further keys share one throttled overflow bucket rather than going
+unlimited. Hooks and metrics still see every evaluation; only this log line is limited. A flag that is *permanently*
+absent from the provider is a permanent (throttled) warn source — define it, or evaluate it through the typed API.
+
+This line is a deliberate deviation from spec §1.4.11 (client operations *should not* write log messages), recorded in
+[Spec Compliance]({{ site.baseurl }}/spec-compliance#flag-evaluation-spec-13-14): the throttle bounds the volume the
+spec worries about, and a silently served default is the signal most worth having. `FallbackLogging.Off` — optionally
+with `FeatureHook.logging` for per-evaluation logs, the spec's own mechanism — is the conformant configuration. Tune or
+silence it per instance:
 
 ```scala
 FeatureFlagsConfig().withFallbackLogging(FallbackLogging.Throttled(5.minutes)) // or Off, or Always

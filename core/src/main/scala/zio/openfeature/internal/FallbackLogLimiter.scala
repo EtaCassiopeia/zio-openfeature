@@ -8,7 +8,8 @@ import scala.util.Try
   *
   * Absorbed defects get their own bucket per key (`key + DefectSuffix`), so a routine `FLAG_NOT_FOUND` line can never
   * consume the slot a bug's breadcrumb needed — and they are never silenced by `Off`, which governs served-default
-  * lines only: a defect is a bug, not outage noise, and this line is the only place it surfaces.
+  * lines only: a defect is a bug, not outage noise, and this line is the only place it surfaces. `Off` still bounds
+  * that breadcrumb, at [[FallbackLogging.Default]]'s window, so a defect on a hot flag cannot storm the log either.
   *
   * The per-key map is bounded at [[FallbackLogLimiter.MaxTrackedKeys]] so an unbounded key space (per-user keys) cannot
   * leak: when full and a new key arrives, entries whose window has elapsed are pruned; if it is still full the key is
@@ -23,8 +24,10 @@ final private[openfeature] class FallbackLogLimiter private (
   import FallbackLogLimiter.{DefectSuffix, Entry, OverflowKey}
 
   /** `Some(n)` — emit now, `n` events for this bucket were suppressed since the previous emit; `None` — suppress. */
-  def admit(key: String): UIO[Option[Int]] =
-    policy match {
+  def admit(key: String): UIO[Option[Int]] = admit(policy, key)
+
+  private def admit(under: FallbackLogging, key: String): UIO[Option[Int]] =
+    under match {
       case FallbackLogging.Off               => ZIO.none
       case FallbackLogging.Always            => ZIO.some(0)
       case FallbackLogging.Throttled(window) => throttle(key, window)
@@ -52,8 +55,9 @@ final private[openfeature] class FallbackLogLimiter private (
   }
 
   /** The total tier's fallback line for `key`, subject to `admit`. `defect` selects the absorbed-defect wording (with
-    * the cause attached, its own bucket, and no `Off`); otherwise the resolution's error code and message are reported.
-    * Either way the served value is named, and a non-zero suppressed count is appended.
+    * the cause attached, its own bucket, and `Off` downgraded to `Default` rather than silence); otherwise the
+    * resolution's error code and message are reported. Either way the served value is named, and a non-zero suppressed
+    * count is appended.
     */
   def log[A](key: String, resolution: FlagResolution[A], defect: Option[Cause[Nothing]]): UIO[Unit] = {
     // A custom FlagType's value may have a throwing `toString`; a breadcrumb must never fail the never-fails tier.
@@ -61,11 +65,12 @@ final private[openfeature] class FallbackLogLimiter private (
     def suffix(suppressed: Int) = if (suppressed > 0) s" (suppressed $suppressed similar)" else ""
     defect match {
       case Some(cause) =>
-        val admitted = policy match {
-          case FallbackLogging.Off => ZIO.some(0)
-          case _                   => admit(key + DefectSuffix)
+        // `Default` is `Throttled`, so a defect under `Off` is bounded, never silenced.
+        val defectPolicy = policy match {
+          case FallbackLogging.Off => FallbackLogging.Default
+          case p                   => p
         }
-        admitted.flatMap {
+        admit(defectPolicy, key + DefectSuffix).flatMap {
           case None => ZIO.unit
           case Some(n) =>
             ZIO.logWarningCause(s"${FallbackLogLimiter.absorbedDefectMessage(key)} $served${suffix(n)}", cause)

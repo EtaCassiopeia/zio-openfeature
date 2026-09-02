@@ -477,7 +477,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Dependencies
 
-- OpenFeature Java SDK 1.21.0 → 1.22.0
+- OpenFeature Java SDK 1.21.0 → 1.22.1
+  - 1.22.1 fixes a miss in the SDK's own 64-bit support: `Value` gained a `Long` constructor in 1.22.0, but
+    `Structure.convertValue` was never taught the matching branch, so a `Long`-backed `Value` fell through every
+    case and threw `ValueNotConvertableError`. That reached us on the object path — `ValueBridge.anyToValue`
+    maps a Scala `Long` to `new Value(l)`, and anything that then walked the structure back out through
+    `convertValue` / `asObjectMap()` (notably `ContextTransformer` in the Optimizely provider) hit the throw.
+    No workaround was needed on our side and none is removed: `ContextConverter` already narrows a `LongValue`
+    to `Integer`/`Double` before it reaches the SDK, so the context path was never affected.
 - zio-bdd 1.4.2 → 1.4.4 (test-only)
 - sbt 1.10.6 → 1.12.15 (build-only; required for Central Portal publishing, #397)
 - sbt-ci-release 1.9.2 → 1.12.0 (build-only, #397)

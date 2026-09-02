@@ -5,28 +5,43 @@ All notable changes to **zio-openfeature** are documented in this file.
 The format follows [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.1.0] — 2026-09-02
 
-### Added
+**Contains a security fix.** If you use `zio-openfeature-ofrep`, upgrade: it now pins a patched, aligned Jackson
+family (2.21.6) and, unlike the previous resolution-only override, actually publishes those versions so consumers
+inherit them. Details under **Security** below.
 
-- **CI now guards that every dependency pin actually reaches the published POM** (#405). An sbt `dependencyOverrides`
-  entry is resolution-only — it is never written into the POM — so a version pinned only that way protects this build
-  and no consumer of the artifact. That is exactly how #402's `jackson-core` security pin reached zero consumers, and
-  nothing could observe it: the weekly OWASP scan reads each module's *resolved* classpath, which is post-override, so
-  it stays green in precisely the state that is broken, and it runs on a schedule rather than on PRs. The new
-  `checkPublishedPins` task (`sbt +checkPublishedPins`) parses each published module's `makePom` output and fails,
-  listing every violation, when an override is absent from that POM — the #402 shape, an override on a coordinate
-  that only arrives transitively — or is declared there at a different version; entries in `test`/`provided` scope or
-  marked `optional` do not count, since a consumer does not inherit them. It runs in a
-  new PR-gating `published-pom` CI job, which also **self-tests the guard**: it recreates the pre-#402 shape, drops a
-  pin from `libraryDependencies`, and requires the guard to reject it with the right diagnosis — a guard never seen to
-  fail is not known to guard anything. That self-test is also what catches the *other* direction: deleting an override
-  deletes the expectation with it, so the task alone would go quietly green. The expectation is derived from
-  `dependencyOverrides` rather than a hand-maintained list of "security pins", so it covers every module the root
-  project aggregates without anyone having to keep a list current.
+**Upgrading from 1.0.0 — recompile, don't just bump the version.** Every change below is *source*-compatible:
+your call sites compile unchanged. Several are not *binary*-compatible, so a caller that was compiled against
+1.0.0 and is **not** recompiled will fail at runtime with a `NoSuchMethodError`. Recompiling against 1.1.0 fixes
+this with no source edits. The affected symbols are whitelisted, with per-symbol rationale, in `build.sbt`:
+`FeatureFlagsConfig.apply`/`this`/`copy` and `FeatureFlags.build`/`buildAsync`/`fromAcquireAsync` (#353),
+`CircuitBreakerProvider.make`/`apply`/`underlying` (#379), `CachingProvider.make`/`apply`/`underlying` (#382),
+and `FeatureFlags.transaction`/`transactionEither` (#386).
+
+Two changes need more than a recompile:
+
+- **If you implement the `FeatureFlags` trait yourself**, `transaction` and `transactionEither` gained a trailing
+  `nested: NestedPolicy` parameter (#386). New abstract members, so your implementation must add it. Callers are
+  unaffected — the default fills it in.
+- **If you rely on the typed tier returning your default for an error-coded resolution**, it now fails instead
+  (#388). This is a deliberate contract change with a one-line remedy per call site; the full migration is in the
+  `#388` entry below. Read it before upgrading a fail-closed gate.
 
 ### Changed
 
+- **The targeted OpenFeature specification moved from v0.8.0 to v0.9.0** (#331, #332). The vendored gherkin suites
+  were re-synced to the [v0.9.0](https://github.com/open-feature/spec/releases/tag/v0.9.0) tag (commit `d5b0a73`) and
+  a scheduled drift check now files an issue when the vendored copies diverge from upstream, so a new or changed
+  upstream scenario surfaces as work rather than silently going unrun. On the library side (#332), the stale
+  `1.7.6`/`1.7.7` provider-status citations were reframed as deliberate library policy — v0.9.0 renumbered them to
+  `2.2.7` and no longer *requires* the NOT_READY/FATAL short-circuit, but this library keeps it — the bundled
+  providers were audited for event ownership, and duplicate-event behaviour was pinned by tests.
+  - **Not yet compliant:** spec v0.9.0 requires a provider to emit its own `PROVIDER_READY` / `PROVIDER_ERROR` /
+    `PROVIDER_CONTEXT_CHANGED` (requirements 2.8.1–2.8.4). The bundled providers still rely on the SDK synthesizing
+    them, because doing otherwise before the Java SDK ships its opt-in marker would deliver duplicate events to user
+    handlers. Tracked in #340 and blocked upstream on
+    [java-sdk#1999](https://github.com/open-feature/java-sdk/issues/1999).
 - **`FallbackLogging.Off` now throttles the absorbed-defect breadcrumb** (#401). Under `Off` the served-default line
   was already silent, but the absorbed-*defect* line — still written, because a defect is a bug rather than outage
   noise — was written on every occurrence, making `Off` the noisiest policy for a defect on a hot flag. It now goes
@@ -127,6 +142,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   being widened to `Double` (#333) — the same silent precision loss, on the tracking path.
 
 ### Added
+
+- **CI now guards that every dependency pin actually reaches the published POM** (#405). An sbt `dependencyOverrides`
+  entry is resolution-only — it is never written into the POM — so a version pinned only that way protects this build
+  and no consumer of the artifact. That is exactly how #402's `jackson-core` security pin reached zero consumers, and
+  nothing could observe it: the weekly OWASP scan reads each module's *resolved* classpath, which is post-override, so
+  it stays green in precisely the state that is broken, and it runs on a schedule rather than on PRs. The new
+  `checkPublishedPins` task (`sbt +checkPublishedPins`) parses each published module's `makePom` output and fails,
+  listing every violation, when an override is absent from that POM — the #402 shape, an override on a coordinate
+  that only arrives transitively — or is declared there at a different version; entries in `test`/`provided` scope or
+  marked `optional` do not count, since a consumer does not inherit them. It runs in a
+  new PR-gating `published-pom` CI job, which also **self-tests the guard**: it recreates the pre-#402 shape, drops a
+  pin from `libraryDependencies`, and requires the guard to reject it with the right diagnosis — a guard never seen to
+  fail is not known to guard anything. That self-test is also what catches the *other* direction: deleting an override
+  deletes the expectation with it, so the task alone would go quietly green. The expectation is derived from
+  `dependencyOverrides` rather than a hand-maintained list of "security pins", so it covers every module the root
+  project aggregates without anyone having to keep a list current.
 
 - **`transactionEvaluations` — "not in a transaction" is now distinguishable from "in one that read nothing"**
   (#387). `currentEvaluatedFlags` answers `Map.empty` in both situations, which is the wrong shape for what the read
@@ -360,6 +391,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The object path now sends the caller's default to the provider, and no longer relabels `FLAG_NOT_FOUND` as
+  `TYPE_MISMATCH`** (#364). Two defects on the object-backed custom-type evaluation path. `getObjectDetails` was
+  called with an empty `Value()` instead of `flagType.encode(default)`, so a provider could not serve the caller's
+  default for a custom type the way it does for the built-in scalars. Separately, anything that failed to extract
+  became a type error, so a plain missing flag surfaced as `TypeMismatch` and looked like a codec bug; a
+  provider-reported `FLAG_NOT_FOUND` is now preserved as `FlagNotFound`.
 - **The weekly OWASP dependency-check job now scans every published module** (#402). It collected JARs from
   `core` and `testkit` only — the two modules with almost no third-party surface — so `extras`, `ofrep` and
   `optimizely`, which carry the transitive HTTP stacks, were never scanned; it could not see any Jackson
@@ -1134,7 +1171,7 @@ promotes `[Unreleased]` to the new version section when a release tag is cut.
 
 Internal refactors that don't change behaviour or surface area don't need a CHANGELOG entry. When in doubt: write one.
 
-[Unreleased]: https://github.com/EtaCassiopeia/zio-openfeature/compare/v1.0.0...HEAD
+[1.1.0]: https://github.com/EtaCassiopeia/zio-openfeature/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/EtaCassiopeia/zio-openfeature/compare/v0.9.1...v1.0.0
 [0.9.1]: https://github.com/EtaCassiopeia/zio-openfeature/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/EtaCassiopeia/zio-openfeature/releases/tag/v0.9.0

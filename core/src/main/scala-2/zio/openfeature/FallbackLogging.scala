@@ -13,9 +13,13 @@ import zio.durationInt
   *     carries `(suppressed N similar)`. `Throttled(Duration.Zero)` behaves like `Always`;
   *     `Throttled(Duration.Infinity)` logs the first fallback per key only.
   *
-  * An absorbed *defect* is a bug, not outage noise: its line has its own per-key bucket under `Throttled` and is
-  * still emitted under `Off` — this breadcrumb is the only place a swallowed bug surfaces from the value-only
-  * `*OrDefault` variants.
+  * An absorbed *defect* is a bug, not outage noise: its line has its own per-key bucket under `Throttled` — and
+  * under `Off`, at `Default`'s window — and is never silenced; this breadcrumb is the only place a swallowed bug
+  * surfaces from the value-only `*OrDefault` variants.
+  *
+  * Spec §1.4.11 says client operations SHOULD NOT write log messages; the default deviates deliberately — the
+  * throttle bounds the volume the spec worries about, and a silently served default is the signal most worth having.
+  * `Off` is the conformant setting. Recorded in `docs/spec-compliance.md`.
   */
 sealed trait FallbackLogging extends Product with Serializable
 

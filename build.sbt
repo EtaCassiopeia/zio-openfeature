@@ -8,7 +8,7 @@ val zioBddVersion         = "1.4.4"
 val openFeatureSdkVersion = "1.22.1"
 
 // OpenFeature Specification Compatibility
-// Spec version: v0.8.0 (https://github.com/open-feature/spec)
+// Spec version: v0.9.0 (https://github.com/open-feature/spec)
 // This library implements the dynamic-context (server-side) paradigm
 
 ThisBuild / scalaVersion       := scala3Version

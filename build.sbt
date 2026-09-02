@@ -7,6 +7,12 @@ val zioVersion            = "2.1.14"
 val zioBddVersion         = "1.4.4"
 val openFeatureSdkVersion = "1.22.1"
 
+// Jackson reaches us only through the OFREP contrib provider; see `jacksonPins` above the `ofrep` module.
+// `jackson-annotations` is versioned WITHOUT a patch component from 2.20 onwards (jackson-bom 2.21.6 pins it
+// to `2.21`), so it cannot share `jacksonVersion` — `2.21.6` does not exist for that artifact.
+val jacksonVersion            = "2.21.6"
+val jacksonAnnotationsVersion = "2.21"
+
 // OpenFeature Specification Compatibility
 // Spec version: v0.9.0 (https://github.com/open-feature/spec)
 // This library implements the dynamic-context (server-side) paradigm
@@ -229,6 +235,26 @@ lazy val extras = (project in file("extras"))
     )
   )
 
+// Patched, aligned Jackson family for the OFREP provider's transitive HTTP stack. Applied to `ofrep` both as
+// `libraryDependencies` and as `dependencyOverrides` — the two do different jobs and only the pair is a fix:
+//   - `dependencyOverrides` is resolution-only. sbt never writes it into the published POM, so on its own it
+//     pins this build and leaves every consumer of `zio-openfeature-ofrep` resolving the provider's versions.
+//   - `libraryDependencies` IS published, so consumers get the patched versions by nearest-wins (Maven; our
+//     declaration outranks the provider's deeper one) and newest-wins (coursier/Gradle).
+// Keeping the overrides as well guarantees no split family inside this build: Jackson supports only an aligned
+// core/databind/jsr310 trio, and the previous core-only pin had produced exactly the skew it meant to prevent
+// (core 2.21.2 against databind 2.19.2).
+//
+// MAINTENANCE: an override forces in BOTH directions, so these versions are a floor that must be raised when
+// the OFREP provider bumps its own Jackson — otherwise a newer transitive Jackson is silently pulled back down
+// to whatever is written here, visible only as an `(evicted by:)` line in a dependency tree nobody reads.
+val jacksonPins = Seq(
+  "com.fasterxml.jackson.core"     % "jackson-core"            % jacksonVersion,
+  "com.fasterxml.jackson.core"     % "jackson-databind"        % jacksonVersion,
+  "com.fasterxml.jackson.core"     % "jackson-annotations"     % jacksonAnnotationsVersion,
+  "com.fasterxml.jackson.datatype" % "jackson-datatype-jsr310" % jacksonVersion
+)
+
 // OFREP module - OpenFeature Remote Evaluation Protocol provider.
 // Kept separate from `extras` so callers who only want HOCON/env vars don't pull in the OFREP contrib provider's
 // transitive HTTP-client stack (Jackson, Guava, Commons Validator, SLF4J).
@@ -242,10 +268,13 @@ lazy val ofrep = (project in file("ofrep"))
       "dev.openfeature.contrib.providers" % "ofrep"    % "0.0.1",
       "org.wiremock"                      % "wiremock" % "3.10.0" % Test
     ),
-    // GHSA-72hv-8253-57qq (jackson-core <2.18.0) is patched in 2.18+; the OFREP contrib provider pulls 2.21.2, so we
-    // override jackson-core to that version to avoid a split Jackson family (core 2.18 / databind 2.21 → runtime
-    // NoSuchMethodError). Scoped to this module so other modules aren't dragged into Jackson alignment they don't need.
-    dependencyOverrides += "com.fasterxml.jackson.core" % "jackson-core" % "2.21.2"
+    // The OFREP contrib provider (0.0.1) pulls jackson-databind 2.19.2, which carries five open advisories, plus
+    // an async-parser DoS on its jackson-core line (GHSA-r7wm-3cxj-wff9). jsr310 has no advisories of its own —
+    // it is pinned only because a data-format module must track databind or the family splits again.
+    // See `jacksonPins` for why both settings are needed. Scoped to this module: core/extras/testkit carry no
+    // Jackson at all, and optimizely only jackson-annotations.
+    libraryDependencies ++= jacksonPins,
+    dependencyOverrides ++= jacksonPins
   )
 
 // Optimizely module - direct OpenFeature provider on top of the Optimizely Java SDK.

@@ -25,10 +25,30 @@ jobs:
 
       - name: Collect dependency JARs
         run: |
+          set -eo pipefail
+          # Every published module, not just core/testkit. The two that were scanned carry almost no
+          # third-party surface (ZIO + the OpenFeature SDK), while extras/ofrep/optimizely carry the
+          # transitive HTTP stacks — so this job was structurally unable to see the Jackson advisories
+          # in ofrep and stayed green through all of them (#402).
+          #
+          # sbt writes to a file instead of straight into a pipe. A pipeline's exit status is its LAST
+          # command's, so piping sbt into grep discards sbt's failure — and because sbt's batch mode
+          # stops at the first failing `show` while everything printed before it is already through the
+          # pipe, a failure on `ofrep` would leave a non-empty list of the earlier modules' jars and
+          # scan green having skipped the very module this widening exists to cover.
           sbt 'show core/managedClasspath' 'show testkit/managedClasspath' \
-            | grep -oP '/.+?\.jar' | sort -u > /tmp/dep-jars.txt
+              'show extras/managedClasspath' 'show ofrep/managedClasspath' \
+              'show optimizely/managedClasspath' > /tmp/sbt-classpaths.txt
+          grep -oP '/.+?\.jar' /tmp/sbt-classpaths.txt | sort -u > /tmp/dep-jars.txt || true
+          # A silently empty list would make the scan below vacuously green — the exact failure mode
+          # this widening exists to remove. Fail loudly instead.
+          test -s /tmp/dep-jars.txt || { echo "::error::no dependency JARs resolved"; exit 1; }
           mkdir -p build/deps
-          while read jar; do cp "$jar" build/deps/ 2>/dev/null; done < /tmp/dep-jars.txt
+          # No `2>/dev/null` here: a jar the scanner cannot copy is a jar it will not scan, and this
+          # job must not report green on a partial corpus.
+          while read jar; do cp "$jar" build/deps/; done < /tmp/dep-jars.txt
+          # Count what actually landed, not what was listed — the two differ precisely when it matters.
+          echo "Collected $(find build/deps -name '*.jar' | wc -l) dependency JARs"
 
       - name: Cache NVD database
         uses: actions/cache@v6

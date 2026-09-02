@@ -64,6 +64,7 @@ The library is **fully compliant** with core OpenFeature functionality:
 | Context overload | ✅ | All methods accept optional `EvaluationContext` |
 | Options overload | ✅ | All detail methods accept `EvaluationOptions` |
 | No exceptions (§1.4.10: always return the default) | ✅ | The total tier (`*OrDefault`, `resolveOrDefault`) never fails and serves the default with the error code on the resolution; the typed tier (`value`, `*Details`) instead fails with a typed `FeatureFlagError` — including for a provider-reported error code — as a ZIO-native addition |
+| No client-side logging (§1.4.11: SHOULD NOT write log messages) | ⚠️ Deviates by default | The total tier writes one **warn** line per flag key per 60 s when it serves a default (`FallbackLogging.Default`). Deliberate: the throttle bounds the volume §1.4.11 warns about, and a silently served default is the highest-value signal the client has. `FallbackLogging.Off` restores conformance for served defaults — only the absorbed-*defect* breadcrumb (a bug, not outage noise) is still written, throttled to one line per key per minute. Per-evaluation logging belongs in a hook (`FeatureHook.logging`), as the spec recommends. |
 
 ### Evaluation Methods
 
@@ -277,7 +278,7 @@ Beyond the OpenFeature spec, ZIO OpenFeature provides:
 | Event streaming | Provider events as ZStream |
 | Multi-provider | Combine multiple providers with configurable strategies |
 | Verified hot-swap | `fromAcquireAsync` serves a fallback, verifies the real provider before swapping it in, and reports `AcquireStatus` |
-| Served-default logging | A default served after a failure leaves a warn line, rate-limited per flag key |
+| Served-default logging | A default served after a failure leaves a warn line, rate-limited per flag key — a documented §1.4.11 deviation; `FallbackLogging.Off` opts out |
 
 ---
 

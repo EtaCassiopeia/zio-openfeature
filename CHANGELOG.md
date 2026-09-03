@@ -5,7 +5,16 @@ All notable changes to **zio-openfeature** are documented in this file.
 The format follows [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.1.1] — 2026-09-03
+
+**A dependency-only patch. `zio-openfeature-ofrep` is the sole artifact that changes for consumers**, and only in
+what it resolves: the OFREP contrib provider moves 0.0.1 → 0.0.2 and the published Jackson pins move to the 2.22.2
+family. No API changed and no bytecode of ours changed — MiMa is green against 1.1.0 — so unlike the 1.0.0 → 1.1.0
+upgrade this needs **no recompile**: bumping the version is enough. Everything else below is test-scope or CI-only
+and reaches no consumer classpath.
+
+Also of note: this release takes the repository to **zero open Dependabot alerts**. The fourteen that were open all
+resolved as *fixed* rather than dismissed, meaning the vulnerable coordinates genuinely left the dependency graph.
 
 ### Security
 
@@ -1227,7 +1236,7 @@ promotes `[Unreleased]` to the new version section when a release tag is cut.
 
 Internal refactors that don't change behaviour or surface area don't need a CHANGELOG entry. When in doubt: write one.
 
-[Unreleased]: https://github.com/EtaCassiopeia/zio-openfeature/compare/v1.1.0...HEAD
+[1.1.1]: https://github.com/EtaCassiopeia/zio-openfeature/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/EtaCassiopeia/zio-openfeature/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/EtaCassiopeia/zio-openfeature/compare/v0.9.1...v1.0.0
 [0.9.1]: https://github.com/EtaCassiopeia/zio-openfeature/compare/v0.9.0...v0.9.1

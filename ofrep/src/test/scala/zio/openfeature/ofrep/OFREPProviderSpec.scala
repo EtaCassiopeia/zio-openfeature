@@ -10,7 +10,7 @@ import java.time.Duration
 
 object OFREPProviderSpec extends ZIOSpecDefault {
 
-  // The contrib provider 0.0.1 still exposes `getState` (deprecated) rather than the newer `getStatus`. Scope the
+  // The contrib provider 0.0.2 still exposes `getState` (deprecated) rather than the newer `getStatus`. Scope the
   // suppression here so any other deprecation that appears in this spec stays visible.
   private def stateOf(p: OfrepProvider): ProviderState = {
     @scala.annotation.nowarn("msg=deprecated")

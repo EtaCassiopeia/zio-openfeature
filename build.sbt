@@ -13,10 +13,10 @@ val openFeatureSdkVersion = "1.22.1"
 val wiremockVersion = "3.13.2"
 
 // Jackson reaches us only through the OFREP contrib provider; see `jacksonPins` above the `ofrep` module.
-// `jackson-annotations` is versioned WITHOUT a patch component from 2.20 onwards (jackson-bom 2.21.6 pins it
-// to `2.21`), so it cannot share `jacksonVersion` — `2.21.6` does not exist for that artifact.
-val jacksonVersion            = "2.21.6"
-val jacksonAnnotationsVersion = "2.21"
+// `jackson-annotations` is versioned WITHOUT a patch component from 2.20 onwards (jackson-bom 2.22.2 pins it
+// to `2.22`), so it cannot share `jacksonVersion` — `2.22.2` does not exist for that artifact.
+val jacksonVersion            = "2.22.2"
+val jacksonAnnotationsVersion = "2.22"
 
 // OpenFeature Specification Compatibility
 // Spec version: v0.9.0 (https://github.com/open-feature/spec)
@@ -283,14 +283,15 @@ lazy val ofrep = (project in file("ofrep"))
     commonSettings,
     libraryDependencies ++= Seq(
       "dev.zio"                          %% "zio"      % zioVersion,
-      "dev.openfeature.contrib.providers" % "ofrep"    % "0.0.1",
+      "dev.openfeature.contrib.providers" % "ofrep"    % "0.0.2",
       "org.wiremock"                      % "wiremock" % wiremockVersion % Test
     ),
-    // The OFREP contrib provider (0.0.1) pulls jackson-databind 2.19.2, which carries five open advisories, plus
-    // an async-parser DoS on its jackson-core line (GHSA-r7wm-3cxj-wff9). jsr310 has no advisories of its own —
-    // it is pinned only because a data-format module must track databind or the family splits again.
-    // See `jacksonPins` for why both settings are needed. Scoped to this module: core/extras/testkit carry no
-    // Jackson at all, and optimizely only jackson-annotations.
+    // The pins predate contrib 0.0.2: 0.0.1 pulled jackson-databind 2.19.2, which carried five open advisories
+    // plus an async-parser DoS on its jackson-core line (GHSA-r7wm-3cxj-wff9). 0.0.2 declares the 2.22.0 family,
+    // which is outside that window — so these are no longer the fix for an advisory, and they stay for the other
+    // two reasons: they hold the core/databind/jsr310 trio aligned (the skew `jacksonPins` documents), and the
+    // `published-pom` guard is built on them. They remain a FLOOR, not a target — see `jacksonPins`.
+    // Scoped to this module: core/extras/testkit carry no Jackson at all, and optimizely only jackson-annotations.
     libraryDependencies ++= jacksonPins,
     dependencyOverrides ++= jacksonPins
   )

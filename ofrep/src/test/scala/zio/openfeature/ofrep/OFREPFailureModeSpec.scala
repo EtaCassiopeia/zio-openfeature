@@ -24,7 +24,7 @@ import zio.test.TestAspect.{sequential, timeout, withLiveClock}
   *   - Slow responses: when an evaluation timeout is configured on the `FeatureFlags` layer, slow responses surface as
   *     `ProviderError(TimeoutException)`.
   *
-  * Tests run sequentially because the contrib provider 0.0.1 has order-sensitive internal executor handling.
+  * Tests run sequentially because the contrib provider 0.0.2 has order-sensitive internal executor handling.
   */
 object OFREPFailureModeSpec extends ZIOSpecDefault {
 

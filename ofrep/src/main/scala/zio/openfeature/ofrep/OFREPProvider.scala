@@ -47,7 +47,7 @@ final case class OFREPProviderConfig(
   * `fromOptions`) are kept for backwards compatibility but flagged deprecated — they accept any `baseUrl` string and
   * surface configuration mistakes only at the first evaluation, as opaque `ProviderError(MalformedURLException)`.
   *
-  * '''Experimental:''' the underlying contrib provider artifact is at version 0.0.1. The OFREP protocol itself is
+  * '''Experimental:''' the underlying contrib provider artifact is at version 0.0.2. The OFREP protocol itself is
   * pre-1.0; both the wire format and this Scala facade may evolve in breaking ways. Pin the dependency deliberately.
   *
   * @see
@@ -57,7 +57,7 @@ final case class OFREPProviderConfig(
   */
 object OFREPProvider {
 
-  // The ofrep contrib 0.0.1 Executor default (`OfrepProviderOptions.$default$executor()` = `Executors
+  // The ofrep contrib 0.0.2 Executor default (`OfrepProviderOptions.$default$executor()` = `Executors
   // .newFixedThreadPool(5)`) uses the JDK default ThreadFactory, which produces NON-daemon threads (named
   // `pool-N-thread-K`). Non-daemon threads block JVM exit, and `OfrepProviderOptions.builder().build()` spawns that
   // pool eagerly — so any path that builds options but never constructs/shuts down a provider (e.g. a validation
@@ -75,7 +75,7 @@ object OFREPProvider {
   /** A fresh `OfrepProviderOptions.Builder` pre-configured with a daemon `ExecutorService`.
     *
     * Use this instead of `OfrepProviderOptions.builder()` when configuring options (custom timeouts, proxy, auth
-    * headers, etc.) outside the standard [[make]] / [[layer]] factories. The contrib provider 0.0.1 default executor is
+    * headers, etc.) outside the standard [[make]] / [[layer]] factories. The contrib provider 0.0.2 default executor is
     * `Executors.newFixedThreadPool(5)` with the JDK default `ThreadFactory` (non-daemon threads), which blocks JVM exit
     * if the pool is never shut down. This helper wires in a daemon-thread pool up front so that can't happen. Pass the
     * resulting `OfrepProviderOptions` to

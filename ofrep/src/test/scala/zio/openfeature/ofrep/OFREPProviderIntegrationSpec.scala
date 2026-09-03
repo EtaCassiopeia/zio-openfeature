@@ -12,7 +12,7 @@ import zio.test._
   * the OFREP protocol and that responses round-trip correctly through `OFREPProvider`'s factories.
   *
   * Each test owns its own WireMock instance for isolation; the small per-test startup cost is paid back in
-  * test-independence. Tests run sequentially (`TestAspect.sequential`) because the contrib provider 0.0.1's internal
+  * test-independence. Tests run sequentially (`TestAspect.sequential`) because the contrib provider 0.0.2's internal
   * executor handling is order-sensitive — see PR #119 review notes.
   */
 object OFREPProviderIntegrationSpec extends ZIOSpecDefault {

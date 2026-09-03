@@ -291,7 +291,9 @@ lazy val ofrep = (project in file("ofrep"))
     // which is outside that window — so these are no longer the fix for an advisory, and they stay for the other
     // two reasons: they hold the core/databind/jsr310 trio aligned (the skew `jacksonPins` documents), and the
     // `published-pom` guard is built on them. They remain a FLOOR, not a target — see `jacksonPins`.
-    // Scoped to this module: core/extras/testkit carry no Jackson at all, and optimizely only jackson-annotations.
+    // Here they are declared at compile scope because a consumer of this artifact resolves Jackson through us;
+    // `optimizely` and `conformance-zio-bdd` repeat the pin for their own test classpaths only (see there).
+    // `core`/`extras`/`testkit` carry no Jackson at all.
     libraryDependencies ++= jacksonPins,
     dependencyOverrides ++= jacksonPins
   )
@@ -313,7 +315,15 @@ lazy val optimizely = (project in file("optimizely"))
       "com.optimizely.ab" % "core-api"             % "4.2.2",
       "com.optimizely.ab" % "core-httpclient-impl" % "4.2.2",
       "org.wiremock"      % "wiremock"             % wiremockVersion % Test
-    )
+    ),
+    // WireMock pulls the Jackson 2.20.1 family (core / databind / jsr310, via its own JSON handling and
+    // `json-schema-validator`), which sits inside the still-open `[2.19.0, 2.21.4)` window of
+    // GHSA-r7wm-3cxj-wff9, GHSA-j3rv-43j4-c7qm, GHSA-rmj7-2vxq-3g9f and GHSA-hgj6-7826-r7m5. It reaches
+    // this module by `% Test` only, so unlike `ofrep` there is no consumer to protect and the pin is
+    // declared at `% Test`: `checkPublishedPins` accepts a test-scoped declaration (the POM records it
+    // without a consumer inheriting it) and refuses an overrides-only pin, which would be invisible.
+    libraryDependencies ++= jacksonPins.map(_ % Test),
+    dependencyOverrides ++= jacksonPins
   )
 
 // Testkit module - testing utilities
@@ -370,6 +380,11 @@ lazy val conformanceZioBdd = (project in file("conformance-zio-bdd"))
       "dev.zio"                 %% "zio-schema"                    % "1.6.6"       % Test,
       "dev.zio"                 %% "zio-schema-derivation"         % "1.6.6"       % Test
     ),
+    // The `optimizely % "test->test"` edge above pulls WireMock's Jackson onto this module's test
+    // classpath, and an override does not cross a project dependency — it governs the module it is
+    // declared in — so the pin has to be repeated here. Nothing is published from this module, so
+    // `libraryDependencies` has no POM to reach and `checkPublishedPins` is a no-op.
+    dependencyOverrides ++= jacksonPins,
     // Run tests in a forked JVM, like every module that uses `commonSettings`. This module doesn't
     // (it deliberately uses only the zio-bdd framework, not zio-test), so it was missing the fork —
     // and its Optimizely suites leaked non-daemon threads that, in-process, hung the sbt JVM after

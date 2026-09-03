@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **Closed the remaining fourteen Dependabot alerts, all of them in Jackson and none of them reachable by a
+  consumer** (#414). They came from two places, and only one of them was a real gap in this build's pins.
+  Neither was `ofrep`: its Jackson was already above every one of these advisories' patch floors before #412
+  raised it further, so that module has never been the source of these fourteen.
+
+  **WireMock's Jackson 2.20.1 (`optimizely`, `conformance-zio-bdd`; test scope).** The 3.13.2 bump in #403
+  pulled a Jackson family — `core`, `databind`, `datatype-jsr310`, partly through
+  `com.networknt:json-schema-validator` — that sits inside the still-open `[2.19.0, 2.21.4)` window of
+  GHSA-r7wm-3cxj-wff9 (async-parser DoS), GHSA-j3rv-43j4-c7qm and GHSA-rmj7-2vxq-3g9f (both
+  `PolymorphicTypeValidator` bypasses) and GHSA-hgj6-7826-r7m5 (`InetSocketAddress` SSRF). That bump landed in
+  the same release as #402's Jackson pin, whose scope note — "`optimizely` carries only `jackson-annotations`" —
+  it silently invalidated. Both modules now pin the same 2.22.2 family `ofrep` does. In `optimizely` the pin is
+  declared at `% Test`: the coordinates reach it through `wiremock % Test` only, so there is no consumer to
+  protect, and a test-scoped declaration is what `checkPublishedPins` (#405) asks for — the POM records it
+  without a consumer inheriting it, and an overrides-only pin is still rejected. `conformance-zio-bdd` needs its
+  own copy because an override governs the module it is declared in and does not cross the
+  `optimizely % "test->test"` edge.
+
+  **Scaladoc's Jackson 2.15.1 (every module; not a dependency at all).** The other seven alerts were reported
+  against `core`, `extras`, `testkit` and the examples — modules that carry no Jackson — because the dependency
+  submission included the `scala-doc-tool` configuration, which is sbt's classpath for the Scaladoc *generator*
+  and reaches no compile, test or runtime classpath and nothing published. `org.scala-lang:scaladoc_3` vendors
+  `nl.big-o:liqp` 0.8.2 and `jackson-dataformat-yaml` 2.15.1, and that is unfixable from here: every Scala 3.3.x
+  LTS release through 3.3.7 pins the same versions. The submission workflow now passes
+  `configs-ignore: scala-doc-tool`, the action's own documented remedy. Nothing that was scanned before goes
+  unscanned: the weekly `dependency-check` job reads each published module's `managedClasspath`, which never
+  contained the doc tool.
+
+  Not fixed, because nothing reports it: `jackson-dataformat-yaml` 2.18.3 stays on the `ofrep` and `optimizely`
+  test classpaths (via `json-schema-validator`) against a 2.22.2 core. It carries no advisories, and this
+  particular skew — a newer `core` under an older data-format module — is the benign direction.
+
 ### Dependencies
 
 - **OFREP contrib provider 0.0.1 → 0.0.2, with the Jackson pins raised in the same commit** (#412). The upstream

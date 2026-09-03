@@ -21,3 +21,13 @@ jobs:
           distribution: 'temurin'
       - uses: sbt/setup-sbt@v1
       - uses: scalacenter/sbt-dependency-submission@v3
+        with:
+          # `scala-doc-tool` is sbt's classpath for the Scaladoc *generator*, not a dependency of this
+          # build's code: nothing in it is on any module's compile, test or runtime classpath, and none
+          # of it is published. Submitting it made every module report `scaladoc_3`'s vendored Jackson
+          # 2.15.1 (via `nl.big-o:liqp`) as a repository dependency, which is where seven of the open
+          # Dependabot alerts came from — unfixable here, since every Scala 3.3.x LTS release pins the
+          # same liqp 0.8.2 / jackson-dataformat-yaml 2.15.1. Excluding it is the action's own documented
+          # remedy. This hides nothing that is scanned elsewhere: the weekly `dependency-check` job reads
+          # each published module's `managedClasspath`, which never contained the doc tool either.
+          configs-ignore: scala-doc-tool

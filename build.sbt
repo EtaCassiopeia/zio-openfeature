@@ -99,72 +99,18 @@ ThisBuild / scalacOptions ++= {
 ThisBuild / coverageEnabled := false
 
 // Binary-compatibility check via sbt-mima. The API is frozen as of `1.0.0`, so each module baselines against its
-// own `1.0.0` artifact (see `mimaPreviousArtifacts` in `commonSettings`): `sbt mimaReportBinaryIssues` catches
+// own most recent release — currently `1.1.0` (see `mimaPreviousArtifacts` in `commonSettings`):
+// `sbt mimaReportBinaryIssues` catches
 // accidental breaking changes on every PR, and an intentional break is whitelisted with a `mimaBinaryIssueFilters`
 // rule scoped to the specific symbol — see https://github.com/lightbend/mima for the filter API. Bump the baseline
-// to the previous release when cutting each subsequent version, per `RELEASING.md`.
+// to the previous release when cutting each subsequent version, per `RELEASING.md`, and delete the filters that
+// existed only to excuse breaks the new baseline now contains: a filter kept past its release stops excusing
+// anything and instead silently pre-authorises a future accidental break on the same symbol.
 ThisBuild / mimaFailOnNoPrevious := false
 
-// Intentional break, whitelisted per the note above (#353). `ContextSource` adds a defaulted `contextSource` to
-// `FeatureFlagsConfig` and a trailing defaulted parameter to the three factories that build a client. Both are
-// source-compatible — every existing call site still compiles unchanged — but neither is binary-compatible: adding a
-// field to a case class regenerates `apply`/`copy`/`<init>` with a new descriptor, and a defaulted parameter is still
-// a new signature at the bytecode level. So a caller that compiled against 1.0.0 and is NOT recompiled will fail with
-// a NoSuchMethodError on these five symbols; recompiling against the new release fixes it with no source edits.
-// Scoped to the specific symbols rather than the classes, so an unrelated break in either still fails the gate.
-ThisBuild / mimaBinaryIssueFilters ++= Seq(
-  ProblemFilters.exclude[DirectMissingMethodProblem]("zio.openfeature.FeatureFlagsConfig.apply"),
-  ProblemFilters.exclude[DirectMissingMethodProblem]("zio.openfeature.FeatureFlagsConfig.this"),
-  ProblemFilters.exclude[DirectMissingMethodProblem]("zio.openfeature.FeatureFlagsConfig.copy"),
-  ProblemFilters.exclude[DirectMissingMethodProblem]("zio.openfeature.FeatureFlags.build"),
-  ProblemFilters.exclude[DirectMissingMethodProblem]("zio.openfeature.FeatureFlags.buildAsync"),
-  ProblemFilters.exclude[DirectMissingMethodProblem]("zio.openfeature.FeatureFlags.fromAcquireAsync"),
-  // Scala 2.13 only, and consequently invisible to a Scala-3-only MiMa run: 2.13 makes a case class's companion
-  // extend `AbstractFunctionN` for its arity, so a 7-field config growing an 8th changes the companion's parent
-  // from `AbstractFunction7` to `AbstractFunction8`. Scala 3 emits no such parent. Same root cause as the entries
-  // above — nothing extra is broken by it.
-  ProblemFilters.exclude[MissingTypesProblem]("zio.openfeature.FeatureFlagsConfig$")
-)
 
-// Intentional break, whitelisted per the note above (#379). `CircuitBreakerProvider` now holds its delegate as a
-// `FeatureProvider` instead of an `EventProvider`, so a provider that implements only `FeatureProvider` can be
-// wrapped. `EventProvider` is a subclass of `FeatureProvider`, so every existing call site still compiles unchanged
-// — but a widened parameter or result type is a new descriptor at the bytecode level, so a caller compiled against
-// 1.0.0 and NOT recompiled fails with a NoSuchMethodError on these three symbols; recompiling fixes it with no
-// source edits. `make` and `apply` each cover their two-arg and three-arg (Ticker) forms.
-ThisBuild / mimaBinaryIssueFilters ++= Seq(
-  ProblemFilters.exclude[IncompatibleMethTypeProblem]("zio.openfeature.extras.CircuitBreakerProvider.make"),
-  ProblemFilters.exclude[IncompatibleMethTypeProblem]("zio.openfeature.extras.CircuitBreakerProvider.apply"),
-  ProblemFilters.exclude[IncompatibleResultTypeProblem]("zio.openfeature.extras.CircuitBreakerProvider.underlying")
-)
 
-// Intentional break, whitelisted per the note above (#382). `CachingProvider` now holds its delegate as a
-// `FeatureProvider` instead of an `EventProvider`, applying to the caching decorator exactly what #379 did for the
-// circuit breaker, so a provider that implements only `FeatureProvider` can be cached. Same compatibility shape as
-// #379: source-compatible (`EventProvider` is a subclass of `FeatureProvider`, so every existing call site still
-// compiles unchanged), but a widened parameter or result type is a new descriptor at the bytecode level, so a caller
-// compiled against 1.0.0 and NOT recompiled fails with a NoSuchMethodError on these three symbols. MiMa reports
-// five problems against three filters: the Scala static forwarder on the companion class duplicates each of
-// `make` and `apply` (2 x 2), plus the widened `underlying` accessor.
-ThisBuild / mimaBinaryIssueFilters ++= Seq(
-  ProblemFilters.exclude[IncompatibleMethTypeProblem]("zio.openfeature.extras.CachingProvider.make"),
-  ProblemFilters.exclude[IncompatibleMethTypeProblem]("zio.openfeature.extras.CachingProvider.apply"),
-  ProblemFilters.exclude[IncompatibleResultTypeProblem]("zio.openfeature.extras.CachingProvider.underlying")
-)
 
-// Intentional break, whitelisted per the note above (#386). `transaction` and `transactionEither` gain a trailing
-// defaulted `nested: NestedPolicy` parameter on the `FeatureFlags` trait and its companion. Source-compatible for
-// every caller (the default fills it in), but a new parameter is a new descriptor at the bytecode level: the old
-// four-arg abstract methods are gone (`DirectMissingMethodProblem`) and the five-arg ones are new abstract members
-// (`ReversedMissingMethodProblem`) — so a caller compiled against 1.0.0 and NOT recompiled fails with a
-// NoSuchMethodError, and an external implementor of the trait must add the parameter. Recompiling fixes callers with
-// no source edits. Same shape as the #353 entries above.
-ThisBuild / mimaBinaryIssueFilters ++= Seq(
-  ProblemFilters.exclude[DirectMissingMethodProblem]("zio.openfeature.FeatureFlags.transaction"),
-  ProblemFilters.exclude[DirectMissingMethodProblem]("zio.openfeature.FeatureFlags.transactionEither"),
-  ProblemFilters.exclude[ReversedMissingMethodProblem]("zio.openfeature.FeatureFlags.transaction"),
-  ProblemFilters.exclude[ReversedMissingMethodProblem]("zio.openfeature.FeatureFlags.transactionEither")
-)
 
 // Version-specific source directories
 lazy val crossVersionSourceDirs = Seq(
@@ -212,7 +158,7 @@ lazy val commonSettings = Seq(
   ),
   // Baseline against each module's last release (see the ThisBuild MiMa note above). Bump `"1.0.0"` to the previous
   // release version when cutting a new one, per `RELEASING.md`.
-  mimaPreviousArtifacts := Set(organization.value %% moduleName.value % "1.0.0"),
+  mimaPreviousArtifacts := Set(organization.value %% moduleName.value % "1.1.0"),
   checkPublishedPins    := checkPublishedPinsTask.value
 ) ++ crossVersionSourceDirs
 

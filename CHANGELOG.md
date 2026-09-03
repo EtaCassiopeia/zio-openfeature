@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Dependencies
+
+- **OFREP contrib provider 0.0.1 → 0.0.2, with the Jackson pins raised in the same commit** (#412). The upstream
+  bump is a pure dependency refresh: all eight class files in `dev.openfeature.contrib.providers:ofrep:0.0.2` are
+  byte-identical (SHA-1) to `0.0.1`, and the public API of `OfrepProvider`, `OfrepProviderOptions` and its
+  `Builder` is unchanged — so no behaviour moved and nothing in the OFREP facade needed adapting. What moved is
+  what the provider declares: Jackson 2.19.2 → 2.22.0, `jackson-annotations` 2.19.2 → 2.22, Guava 33.4.0-jre →
+  33.4.8-jre, `commons-validator` 1.10.0 → 1.10.1.
+- **`jacksonVersion` 2.21.6 → 2.22.2 and `jacksonAnnotationsVersion` 2.21 → 2.22** (#412). These had to move with
+  the provider, not after it. `jacksonPins` is applied to `ofrep` as `dependencyOverrides` as well as
+  `libraryDependencies`, and an override forces in **both** directions — so bumping the provider alone would have
+  silently pulled its new Jackson 2.22.0 back down to 2.21.6, visible only as an `(evicted by:)` line. This is the
+  exact hazard the MAINTENANCE note above `jacksonPins` warns about; the pins are a floor to raise, not a target.
+  `jackson-annotations` stays patch-less (`2.22`, not `2.22.2`) — from 2.20 onwards jackson-bom versions it without
+  a patch component, and `2.22.2` does not exist for that artifact.
+- The pins are no longer an advisory fix. 0.0.1's `jackson-databind` 2.19.2 sat inside the still-open
+  `[2.19.0, 2.21.4)` window; 0.0.2's 2.22.0 family is outside it, so `zio-openfeature-ofrep` would have carried a
+  patched Jackson either way. They stay for the two reasons that outlive the advisory: holding the
+  core/databind/jsr310 trio aligned, and backing the `published-pom` guard (#409).
+
 ## [1.1.0] — 2026-09-02
 
 **Contains a security fix.** If you use `zio-openfeature-ofrep`, upgrade: it now pins a patched, aligned Jackson

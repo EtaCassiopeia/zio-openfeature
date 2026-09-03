@@ -212,7 +212,7 @@ Evaluates flags via the [OpenFeature Remote Evaluation Protocol](https://github.
 
 `OFREPProvider` is a small Scala-friendly factory over the OpenFeature Java SDK's `dev.openfeature.contrib.providers.ofrep.OfrepProvider`. The Java provider handles HTTP requests, polling, caching, and state transitions; the Scala factory just sugars the construction.
 
-> **Note:** The underlying contrib provider is at version `0.0.1` — the API may evolve as OFREP itself matures. Pin the dependency deliberately.
+> **Note:** The underlying contrib provider is at version `0.0.2` — the API may evolve as OFREP itself matures. Pin the dependency deliberately.
 
 ### Dependency
 

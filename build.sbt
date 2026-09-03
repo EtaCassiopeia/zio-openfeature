@@ -108,10 +108,6 @@ ThisBuild / coverageEnabled := false
 // anything and instead silently pre-authorises a future accidental break on the same symbol.
 ThisBuild / mimaFailOnNoPrevious := false
 
-
-
-
-
 // Version-specific source directories
 lazy val crossVersionSourceDirs = Seq(
   Compile / unmanagedSourceDirectories ++= {

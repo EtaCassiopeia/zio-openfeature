@@ -55,6 +55,7 @@ object InterceptHarness {
   def layerForDatafile(name: String): ZLayer[Any, Throwable, FeatureFlags] =
     ZLayer.scoped {
       for {
+        _ <- EmbeddedRift.requireAvailable.mapError(e => new RuntimeException(s"embedded Rift unavailable: $e"))
         mc <- (Provisioning.live >>> EmbeddedRift.layer(EmbeddedRift.InterceptConfig())).build
                 .map(_.get[MockControl])
                 .mapError(e => new RuntimeException(s"intercept engine init failed: $e"))
@@ -62,7 +63,7 @@ object InterceptHarness {
         _ <- icept
                .respondWith(
                  CdnHost,
-                 InterceptStub(200, Map("Content-Type" -> "application/json"), Some(loadDatafile(name)))
+                 InterceptStub(200, Headers("Content-Type" -> "application/json"), Some(loadDatafile(name)))
                )
                .mapError(e => new RuntimeException(s"intercept respondWith failed: $e"))
         endpoint <- icept.proxyEndpoint.mapError(e => new RuntimeException(s"proxyEndpoint failed: $e"))

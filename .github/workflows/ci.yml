@@ -195,15 +195,16 @@ jobs:
 
   # The same OpenFeature gherkin suite run via zio-bdd (experimental dog-food). Scala 3 only and not aggregated by
   # root, so it gets its own job like `conformance`. Blocking gate: a zio-bdd RC bump that breaks the suite fails CI.
+  # JDK 25: the embedded Rift engine behind zio-bdd-rift needs stable FFM (JDK 22+).
   conformance-zio-bdd:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
-      - name: Set up JDK 21
+      - name: Set up JDK 25
         uses: actions/setup-java@v6
         with:
-          java-version: '21'
+          java-version: '25'
           distribution: 'temurin'
           cache: sbt
       - name: Setup sbt

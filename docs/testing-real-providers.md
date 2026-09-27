@@ -40,21 +40,17 @@ default CI matrix. This library ships **no** rift dependency in any published mo
 
 ## Requirements
 
-{: .warning }
-> **The fixtures used on this page are not in a published rift-scala release yet.** They landed in
-> [rift-scala#145](https://github.com/achird-labs/rift-scala/issues/145) after `v0.1.4`, which is
-> the latest release at the time of writing and contains neither `rift.zio.testkit.intercept` nor
-> the `sbt-rift` plugin. Pin the first release **after `0.1.4`** that includes them; the version
-> below is a placeholder until then.
+The fixtures used on this page (`rift.zio.testkit.intercept` and the `sbt-rift` plugin) ship in
+rift-scala **0.3.0** and later ([rift-scala#145](https://github.com/achird-labs/rift-scala/issues/145)).
 
 ```scala
 // build.sbt — test scope only, in a module you gate locally
-libraryDependencies += "io.github.achird-labs" %% "rift-scala-zio-testkit" % riftVersion % Test
+libraryDependencies += "io.github.achird-labs" %% "rift-scala-zio-testkit" % "0.3.0" % Test
 ```
 
 ```scala
 // project/plugins.sbt — only needed for the truststore wiring described below
-addSbtPlugin("io.github.achird-labs" % "sbt-rift" % riftVersion)
+addSbtPlugin("io.github.achird-labs" % "sbt-rift" % "0.3.0")
 ```
 
 The embedded engine also needs the rift platform natives on the test classpath and a JDK that can
@@ -62,12 +58,13 @@ bind them through the Foreign Function & Memory API:
 
 | JDK | What you need |
 |:----|:--------------|
-| 21 | the JDK-21 FFM artifact plus `--enable-preview --enable-native-access=ALL-UNNAMED` on the forked test JVM (`sbt-rift` sets the preview flag via `riftTlsEnablePreview := true`) |
-| 22+ | no flags — FFM is final |
+| 21 | `rift-java-embedded-jdk21` plus `--enable-preview --enable-native-access=ALL-UNNAMED` on the forked test JVM (`sbt-rift` sets the preview flag via `riftTlsEnablePreview := true`) |
+| 22+ | `rift-java-embedded` plus `--enable-native-access=ALL-UNNAMED` — FFM is final |
 
 This repo already runs exactly that configuration for its own conformance suites: see the
-`conformance-zio-bdd` module in `build.sbt`, which pins the JDK-21 embedded engine, forks the test
-JVM with both flags, and runs its suites sequentially because they share one in-process engine.
+`conformance-zio-bdd` module in `build.sbt`, which adds `rift-java-embedded` and the host's
+`rift-java-natives` classifier (through zio-bdd-rift), runs on JDK 25, forks the test JVM with
+`--enable-native-access`, and runs its suites sequentially because they share one in-process engine.
 It is the working precedent to copy.
 
 Where the engine cannot load, `Rift.isEmbeddedAvailable` is `false` and `riftAspects.embeddedOnly`

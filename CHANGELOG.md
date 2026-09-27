@@ -5,6 +5,18 @@ All notable changes to **zio-openfeature** are documented in this file.
 The format follows [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **`conformance-zio-bdd` moves to zio-bdd 1.5.0** (from 1.4.4; test scope only, nothing reaches a consumer
+  classpath). Its embedded Rift engine is now Rift 0.18.0, through `zio-bdd-rift` plus `rift-java-embedded` /
+  `rift-java-natives` 0.3.2. This picks up the release's intercept and TLS fixes. The retired
+  `zio-bdd-rift-embedded-*` artifacts are gone, and with them the netty that `zio-http` pulled onto the test
+  classpath. The engine now uses stable FFM, so the module's tests run on **JDK 25** in CI instead of JDK 21
+  with `--enable-preview`. The harnesses call `EmbeddedRift.requireAvailable`, so a wrong JDK or missing natives
+  fails loudly instead of skipping.
+
 ## [1.1.1] — 2026-09-03
 
 **A dependency-only patch. `zio-openfeature-ofrep` is the sole artifact that changes for consumers**, and only in

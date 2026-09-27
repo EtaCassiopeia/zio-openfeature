@@ -1,10 +1,12 @@
 import net.nmoncho.sbt.dependencycheck.settings._
 import com.typesafe.tools.mima.core._
 
-val scala213Version       = "2.13.16"
-val scala3Version         = "3.3.4"
-val zioVersion            = "2.1.14"
-val zioBddVersion         = "1.4.4"
+val scala213Version = "2.13.16"
+val scala3Version   = "3.3.4"
+val zioVersion      = "2.1.14"
+val zioBddVersion   = "1.5.0"
+// The embedded Rift engine zio-bdd-rift drives (Rift 0.18.0). Keep in step with zio-bdd-rift's own rift-java pin.
+val riftJavaVersion       = "0.3.2"
 val openFeatureSdkVersion = "1.22.1"
 
 // Test-only HTTP stubbing for the ofrep and optimizely provider suites. Declared once rather than per module:
@@ -357,6 +359,22 @@ lazy val conformance = (project in file("conformance"))
     )
   )
 
+// The `rift-java-natives` classifier for the JVM running the build. `None` on a host with no published natives
+// (e.g. Windows): the dependency is then omitted and `EmbeddedRift.requireAvailable` fails the suites loudly.
+lazy val riftNativesClassifier: Option[String] = {
+  val os = System.getProperty("os.name").toLowerCase
+  val arch = System.getProperty("os.arch").toLowerCase match {
+    case "arm64"         => "aarch64"
+    case "amd64" | "x64" => "x86_64"
+    case other           => other
+  }
+  val platform =
+    if (os.contains("mac") || os.contains("darwin")) Some("darwin")
+    else if (os.contains("linux")) Some("linux")
+    else None
+  platform.filter(_ => arch == "aarch64" || arch == "x86_64").map(p => s"$p-$arch")
+}
+
 lazy val conformanceZioBdd = (project in file("conformance-zio-bdd"))
   // `extras` for the library suites: they evaluate against `HoconProvider`, `EnvVarProvider` and
   // `IntegerWideningLongProvider`.
@@ -373,13 +391,14 @@ lazy val conformanceZioBdd = (project in file("conformance-zio-bdd"))
       "dev.openfeature"          % "sdk"     % openFeatureSdkVersion % Test,
       "io.github.etacassiopeia" %% "zio-bdd" % zioBddVersion         % Test,
       // Rift's in-process HTTP mock engine (native, no Docker) replaces the WireMock + mitmproxy
-      // container the matrix suites used to fake the Optimizely CDN. `-natives` bundles the engine
-      // binaries; `-jdk21` is the JDK21 FFM binding (CI runs conformance on JDK 21).
-      "io.github.etacassiopeia" %% "zio-bdd-rift-embedded-jdk21"   % zioBddVersion % Test,
-      "io.github.etacassiopeia"  % "zio-bdd-rift-embedded-natives" % zioBddVersion % Test,
-      "dev.zio"                 %% "zio-schema"                    % "1.6.6"       % Test,
-      "dev.zio"                 %% "zio-schema-derivation"         % "1.6.6"       % Test
-    ),
+      // container the matrix suites used to fake the Optimizely CDN. `zio-bdd-rift` holds the adapter;
+      // the engine (`rift-java-embedded`) and its per-platform natives are runtime ServiceLoader deps.
+      "io.github.etacassiopeia" %% "zio-bdd-rift"          % zioBddVersion   % Test,
+      "io.github.achird-labs"    % "rift-java-embedded"    % riftJavaVersion % Test,
+      "dev.zio"                 %% "zio-schema"            % "1.6.6"         % Test,
+      "dev.zio"                 %% "zio-schema-derivation" % "1.6.6"         % Test
+    ) ++ riftNativesClassifier
+      .map(c => ("io.github.achird-labs" % "rift-java-natives" % riftJavaVersion % Test).classifier(c)),
     // The `optimizely % "test->test"` edge above pulls WireMock's Jackson onto this module's test
     // classpath, and an override does not cross a project dependency — it governs the module it is
     // declared in — so the pin has to be repeated here. Nothing is published from this module, so
@@ -396,10 +415,10 @@ lazy val conformanceZioBdd = (project in file("conformance-zio-bdd"))
     // this module's baseDirectory, so the feature files wouldn't resolve and every suite would run
     // zero scenarios — pin the fork's working directory back to the build root.
     Test / baseDirectory := (LocalRootProject / baseDirectory).value,
-    // Rift's embedded native engine uses the JDK 21 Foreign Function & Memory API (a preview feature
-    // in 21), so this module's tests require JDK 21 and these flags. CI runs conformance on JDK 21;
-    // run local tests (and the pre-push gate) on JDK 21 too.
-    Test / javaOptions ++= Seq("--enable-preview", "--enable-native-access=ALL-UNNAMED"),
+    // Rift's embedded engine uses the stable Foreign Function & Memory API, so this module's tests
+    // require JDK 22+ (CI and the pre-push gate run them on JDK 25). On an older JDK the harnesses fail
+    // loudly via `EmbeddedRift.requireAvailable` rather than skipping.
+    Test / javaOptions += "--enable-native-access=ALL-UNNAMED",
     // Run the suites sequentially. They share one in-process Rift engine (RiftEngine); letting sbt
     // run the suite classes concurrently races them to initialise that native engine, which on a CI
     // runner surfaces as an immediate "Interrupted" (intra-suite scenario parallelism is unaffected).

@@ -21,6 +21,8 @@ object RiftEngine {
       Runtime.default.unsafe
         .run(
           for {
+            // Fail loudly (wrong JDK, missing natives) instead of an opaque layer-build error.
+            _     <- EmbeddedRift.requireAvailable
             scope <- Scope.make
             mc <- (Provisioning.live >>> EmbeddedRift.layer).build
                     .provideEnvironment(ZEnvironment[Scope](scope))

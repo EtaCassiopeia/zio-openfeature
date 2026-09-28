@@ -17,13 +17,18 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-java@v6
         with:
+          java-version: '21'
+          distribution: 'temurin'
+      - uses: sbt/setup-sbt@v1
+      - uses: scalacenter/sbt-dependency-submission@v3
+        with:
           # Two of sbt's tooling configurations are excluded. Neither is a dependency of this build's code:
           # nothing in them is on any module's compile, test or runtime classpath, and none of it is
           # published. Submitting them made every module report the toolchain's own transitive jars as
           # repository dependencies, and both alert sources are unfixable at the version level: every Scala 3.3.x
           # LTS release through 3.3.8 ships them below the patch floors. Excluding them is the action's own
-          # documented remedy. This hides nothing that is scanned elsewhere: the weekly `dependency-check` job reads each
-          # published module's `managedClasspath`, which never contained either tool.
+          # documented remedy. This hides nothing that is scanned elsewhere: the weekly `dependency-check` job reads
+          # each published module's `managedClasspath`, which never contained either tool.
           #   - `scala-doc-tool` is the classpath of the Scaladoc *generator*. It carried `scaladoc_3`'s vendored
           #     Jackson 2.15.1 (via `nl.big-o:liqp`), the source of seven alerts (#415).
           #   - `scala-tool` is the classpath of the *compiler* itself. `scala3-compiler_3` carries JLine 3.25.1

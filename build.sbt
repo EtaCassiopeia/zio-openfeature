@@ -101,7 +101,7 @@ ThisBuild / scalacOptions ++= {
 ThisBuild / coverageEnabled := false
 
 // Binary-compatibility check via sbt-mima. The API is frozen as of `1.0.0`, so each module baselines against its
-// own most recent release — currently `1.1.0` (see `mimaPreviousArtifacts` in `commonSettings`):
+// own most recent release — currently `1.1.1` (see `mimaPreviousArtifacts` in `commonSettings`):
 // `sbt mimaReportBinaryIssues` catches
 // accidental breaking changes on every PR, and an intentional break is whitelisted with a `mimaBinaryIssueFilters`
 // rule scoped to the specific symbol — see https://github.com/lightbend/mima for the filter API. Bump the baseline
@@ -156,7 +156,7 @@ lazy val commonSettings = Seq(
   ),
   // Baseline against each module's last release (see the ThisBuild MiMa note above). Bump `"1.0.0"` to the previous
   // release version when cutting a new one, per `RELEASING.md`.
-  mimaPreviousArtifacts := Set(organization.value %% moduleName.value % "1.1.0"),
+  mimaPreviousArtifacts := Set(organization.value %% moduleName.value % "1.1.1"),
   checkPublishedPins    := checkPublishedPinsTask.value
 ) ++ crossVersionSourceDirs
 

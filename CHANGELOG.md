@@ -10,7 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Security
 
 - **Closed Dependabot alert #65, `org.jline:jline-reader` 3.25.1 (GHSA-5q95-hrpc-m3w3, a ReDoS through the
-  `HISTORY_IGNORE` setting). Not reachable by a consumer, nor by a test** (#418). Traced through the submitted SBOM's
+  `HISTORY_IGNORE` setting). Not reachable by a consumer, nor by a test** (#418; #419 restored the workflow steps
+  that #418's edit had clobbered, so the exclusion took effect only from #419). Traced through the submitted SBOM's
   edges rather than guessed from the alert's `build.sbt` manifest: the only edge into `jline-reader` comes from
   `org.scala-lang:scala3-compiler_3:3.3.4`, which is sbt's `scala-tool` configuration, the compiler jar that builds
   this code. It is on no compile, test or runtime classpath and in no published POM, and the JLine inside it backs

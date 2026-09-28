@@ -5,6 +5,8 @@ All notable changes to **zio-openfeature** are documented in this file.
 The format follows [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
 ## [1.1.2] — 2026-09-27
 
 **A build-hygiene patch. Nothing changes for consumers.** Every published artifact is bytecode-identical to 1.1.1 and
@@ -1268,6 +1270,7 @@ promotes `[Unreleased]` to the new version section when a release tag is cut.
 
 Internal refactors that don't change behaviour or surface area don't need a CHANGELOG entry. When in doubt: write one.
 
+[Unreleased]: https://github.com/EtaCassiopeia/zio-openfeature/compare/v1.1.2...HEAD
 [1.1.2]: https://github.com/EtaCassiopeia/zio-openfeature/compare/v1.1.1...v1.1.2
 [1.1.1]: https://github.com/EtaCassiopeia/zio-openfeature/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/EtaCassiopeia/zio-openfeature/compare/v1.0.0...v1.1.0

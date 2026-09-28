@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **Closed Dependabot alert #65, `org.jline:jline-reader` 3.25.1 (GHSA-5q95-hrpc-m3w3, a ReDoS through the
+  `HISTORY_IGNORE` setting). Not reachable by a consumer, nor by a test** (#418). Traced through the submitted SBOM's
+  edges rather than guessed from the alert's `build.sbt` manifest: the only edge into `jline-reader` comes from
+  `org.scala-lang:scala3-compiler_3:3.3.4`, which is sbt's `scala-tool` configuration, the compiler jar that builds
+  this code. It is on no compile, test or runtime classpath and in no published POM, and the JLine inside it backs
+  the compiler's REPL, which the build never starts. There is no fix at the version level: every Scala 3.3.x LTS
+  release through 3.3.8 ships a JLine below the 3.30.15 patch floor (3.3.7 and 3.3.8 carry 3.29.0). A `dependencyOverrides` pin is not one either,
+  because a pin that reaches no POM is precisely what `checkPublishedPins` (#405) refuses. So the dependency
+  submission now ignores `scala-tool` alongside `scala-doc-tool` (#415), the action's own documented remedy. Nothing
+  scanned elsewhere is hidden: the weekly `dependency-check` job reads each published module's `managedClasspath`,
+  which never contained the compiler.
+
 ### Changed
 
 - **`conformance-zio-bdd` moves to zio-bdd 1.5.0** (from 1.4.4; test scope only, nothing reaches a consumer

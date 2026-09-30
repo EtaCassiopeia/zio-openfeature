@@ -284,7 +284,91 @@ object CircuitBreakerProviderSpec extends ZIOSpecDefault {
         val cb         = CircuitBreakerProvider(underlying, config)
         val result     = cb.getBooleanEvaluation("flag", false, ctx)
         assertTrue(result.getValue == true)
-      } @@ TestAspect.withLiveClock
+      } @@ TestAspect.withLiveClock,
+      test("an infinite timeout evaluates the delegate on the calling thread (#427)") {
+        val seen = new AtomicReference[Thread]()
+        val underlying = new FailableProvider(Map("flag" -> true)) {
+          override def getBooleanEvaluation(
+            key: String,
+            defaultValue: java.lang.Boolean,
+            c: OFEvaluationContext
+          ): ProviderEvaluation[java.lang.Boolean] = {
+            seen.set(Thread.currentThread())
+            super.getBooleanEvaluation(key, defaultValue, c)
+          }
+        }
+        val cb = CircuitBreakerProvider(underlying, CircuitBreakerProviderConfig(evaluationTimeout = Duration.Infinity))
+        for {
+          caller <- ZIO.attemptBlocking { cb.getBooleanEvaluation("flag", false, ctx); Thread.currentThread() }
+        } yield assertTrue(seen.get() == caller)
+      },
+      test("a finite timeout evaluates the delegate off the calling thread, so it can time out") {
+        val seen = new AtomicReference[Thread]()
+        val underlying = new FailableProvider(Map("flag" -> true)) {
+          override def getBooleanEvaluation(
+            key: String,
+            defaultValue: java.lang.Boolean,
+            c: OFEvaluationContext
+          ): ProviderEvaluation[java.lang.Boolean] = {
+            seen.set(Thread.currentThread())
+            super.getBooleanEvaluation(key, defaultValue, c)
+          }
+        }
+        val cb = CircuitBreakerProvider(underlying, CircuitBreakerProviderConfig(evaluationTimeout = 1.second))
+        for {
+          caller <- ZIO.attemptBlocking { cb.getBooleanEvaluation("flag", false, ctx); Thread.currentThread() }
+        } yield assertTrue(seen.get() != null, seen.get() != caller)
+      } @@ TestAspect.withLiveClock,
+      test("with an infinite timeout, delegate failures still count and open the circuit") {
+        val underlying = new FailableProvider(Map("flag" -> true))
+        underlying.setFailing(true)
+        val config = CircuitBreakerProviderConfig(evaluationTimeout = Duration.Infinity, failureThreshold = 2)
+        val cb     = CircuitBreakerProvider(underlying, config)
+        val first  = scala.util.Try(cb.getBooleanEvaluation("flag", false, ctx))
+        val second = scala.util.Try(cb.getBooleanEvaluation("flag", false, ctx))
+        val third  = scala.util.Try(cb.getBooleanEvaluation("flag", false, ctx))
+        assertTrue(
+          first.failed.toOption.map(_.getMessage) == Some("Circuit breaker: delegate failed: Provider failure"),
+          first.failed.toOption.map(_.getCause.getClass) == Some(classOf[RuntimeException]),
+          second.isFailure,
+          third.failed.toOption.exists(_.getMessage.startsWith("Circuit breaker rejected")),
+          underlying.evaluationCount.get() == 2
+        )
+      },
+      test("with an infinite timeout, a probe after the reset timeout closes the circuit") {
+        val underlying = new FailableProvider(Map("flag" -> true))
+        val clock      = new TestClock()
+        val config =
+          CircuitBreakerProviderConfig(
+            evaluationTimeout = Duration.Infinity,
+            failureThreshold = 2,
+            resetTimeout = 1.second
+          )
+        val cb = CircuitBreakerProvider(underlying, config, clock)
+        underlying.setFailing(true)
+        (1 to 2).foreach(_ => scala.util.Try(cb.getBooleanEvaluation("flag", false, ctx)))
+        val stateWhileOpen = cb.getState
+        clock.advance(2.seconds)
+        underlying.setFailing(false)
+        val probe = cb.getBooleanEvaluation("flag", false, ctx)
+        assertTrue(stateWhileOpen == ProviderState.ERROR, probe.getValue == true, cb.getState == ProviderState.READY)
+      },
+      test("with an infinite timeout, an in-flight probe is never stolen") {
+        val clock = new TestClock()
+        val config =
+          CircuitBreakerProviderConfig(
+            evaluationTimeout = Duration.Infinity,
+            failureThreshold = 1,
+            resetTimeout = 1.second
+          )
+        val breaker = CircuitBreaker(config.toCircuitBreakerConfig, clock)
+        breaker.recordFailure()
+        clock.advance(2.seconds)
+        val probe = breaker.tryAcquire
+        clock.advance(3650.days)
+        val second = breaker.tryAcquire
+        assertTrue(probe == GateResult.Allowed, second == GateResult.Rejected)
+      }
     ),
     suite("Failure counting and opening")(
       test("opens after failureThreshold consecutive failures") {

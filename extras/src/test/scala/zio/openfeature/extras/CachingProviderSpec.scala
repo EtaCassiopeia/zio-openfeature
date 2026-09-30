@@ -19,7 +19,7 @@ import zio.openfeature.internal.ProviderEvaluations
 import zio._
 import zio.test._
 import java.util.concurrent.CopyOnWriteArrayList
-import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.{AtomicInteger, AtomicReference}
 
 object CachingProviderSpec extends ZIOSpecDefault {
 
@@ -825,6 +825,25 @@ object CachingProviderSpec extends ZIOSpecDefault {
           err.isInstanceOf[OpenFeatureError],
           !err.isInstanceOf[zio.FiberFailure]
         )
+      }
+    ),
+    suite("calling thread (#427)")(
+      test("a miss evaluates the delegate on the calling thread") {
+        val seen = new AtomicReference[Thread]()
+        val underlying = new CountingProvider(Map("flag" -> true)) {
+          override def getBooleanEvaluation(
+            key: String,
+            defaultValue: java.lang.Boolean,
+            c: OFEvaluationContext
+          ): ProviderEvaluation[java.lang.Boolean] = {
+            seen.set(Thread.currentThread())
+            super.getBooleanEvaluation(key, defaultValue, c)
+          }
+        }
+        val cached = CachingProvider(underlying)
+        for {
+          caller <- ZIO.attemptBlocking { cached.getBooleanEvaluation("flag", false, ctx); Thread.currentThread() }
+        } yield assertTrue(seen.get() == caller, underlying.evaluationCount.get() == 1)
       }
     )
   ) @@ TestAspect.withLiveClock

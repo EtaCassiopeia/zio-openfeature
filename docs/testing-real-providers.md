@@ -346,9 +346,9 @@ FeatureFlags
 ```
 
 {: .note }
-> `fromAcquireAsync` composes real and fallback with `MultiProvider` + `FirstSuccessfulStrategy`,
-> which keys children by **provider metadata name and silently drops duplicates**. If your real
-> provider and fallback report the same name, one of them disappears — rename one.
+> `fromAcquireAsync` composes real and fallback with `MultiProvider` + `FirstSuccessfulStrategy`.
+> Since Java SDK 1.23.0 both stay in the chain even if they report the same metadata name; with
+> earlier SDKs the real provider disappeared in that case.
 
 ---
 

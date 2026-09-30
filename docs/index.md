@@ -105,7 +105,7 @@ Everything below is documented in the pages above; this table is a shortcut to t
 | `verify` + `AcquireStatus` | Reject a real provider that constructed but cannot serve, and ask whether it is live yet | [Providers]({{ site.baseurl }}/providers#fallback-first-initialization-fromacquireasync) |
 | `FLAG_NOT_FOUND` for absent keys | A provider that does not hold a key lets a `MultiProvider` chain advance | [Extras]({{ site.baseurl }}/extras), [Testkit]({{ site.baseurl }}/testkit) |
 | Typed fixtures (`:=`) | Pin a test fixture through the flag's own codec | [Testkit]({{ site.baseurl }}/testkit#typed-fixtures-with-flagdef) |
-| `TestFeatureProvider.makeNamed` | Distinct metadata names, so a chain of test providers is really a chain | [Testkit]({{ site.baseurl }}/testkit) |
+| `TestFeatureProvider.makeNamed` | Distinct metadata names, so `setProvider` swaps and chain diagnostics can tell test providers apart | [Testkit]({{ site.baseurl }}/testkit) |
 
 ## Modules
 

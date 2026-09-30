@@ -23,8 +23,7 @@ import java.util.concurrent.atomic.AtomicReference
   * [[zio.openfeature.FeatureFlags.fromAcquireAsync]] instead when a fallback must answer during the init window (inside
   * a `MultiProvider`, `DeferredProvider` still gates overall readiness, since the SDK awaits all children).
   *
-  *   - Metadata name is stable (`name`) before and after construction, so the event bridge and `MultiProvider` keying
-  *     see a single identity.
+  *   - Metadata name is stable (`name`) before and after construction, so the event bridge sees a single identity.
   *   - Evaluations before construction completes return a typed `ProviderEvaluation` with
   *     `ErrorCode.PROVIDER_NOT_READY` — never an NPE on the null delegate.
   *   - `shutdown()` racing an in-flight `initialize()` shuts the delegate down once construction completes, instead of

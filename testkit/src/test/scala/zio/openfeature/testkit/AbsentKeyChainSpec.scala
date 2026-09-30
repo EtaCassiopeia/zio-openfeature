@@ -18,10 +18,10 @@ import scala.jdk.CollectionConverters._
   * the `error` stage rather than `after`).
   *
   * The SECOND provider in each chain is the SDK's own `InMemoryProvider`, deliberately not another
-  * `TestFeatureProvider`: the Java SDK keys a chain's providers by metadata name and silently keeps only the last of
-  * two same-named instances, so a chain of two test providers is a chain of one and the precedence test would pass for
-  * the wrong reason (#371). Distinct names keep both providers in the chain, so the ordering assertions mean what they
-  * say. Shared test source dir → compiles on 2.13 and 3: braces only, no `given`/`using`, no `enum`.
+  * `TestFeatureProvider`: up to Java SDK 1.22.x a chain kept only the last of two same-named instances, so the
+  * precedence test would have passed for the wrong reason (#371). SDK 1.23.0 keeps both (#423); distinct names stay so
+  * the spec does not depend on that. Shared test source dir → compiles on 2.13 and 3: braces only, no `given`/`using`,
+  * no `enum`.
   */
 object AbsentKeyChainSpec extends ZIOSpecDefault {
 

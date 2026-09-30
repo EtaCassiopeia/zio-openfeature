@@ -526,7 +526,7 @@ val layer = FeatureFlags.fromProvider(
 )
 ```
 
-`MultiProviderStrategy.firstMatch` and `MultiProviderStrategy.firstSuccessful` are the two built-ins. For a custom strategy, implement the `MultiProviderStrategy.Strategy` interface (an alias for the Java SDK's `Strategy`) and pass an instance the same way. Because `multiProvider` just returns an `OFFeatureProvider`, it composes with every other `FeatureFlagsConfig` field — e.g. `FeatureFlags.fromProvider(FeatureFlags.multiProvider(ps), FeatureFlagsConfig().withDomain("checkout"))`, which the old `fromMultiProvider` factory could not express.
+`MultiProviderStrategy.firstMatch` and `MultiProviderStrategy.firstSuccessful` are the two built-ins. For a custom strategy, implement the `MultiProviderStrategy.Strategy` interface (an alias for the Java SDK's `Strategy`) and pass an instance the same way. Since Java SDK 1.23.0 its `evaluate` receives the chain as a `List[FeatureProvider]`, in order, instead of a name-keyed `Map`. Because `multiProvider` just returns an `OFFeatureProvider`, it composes with every other `FeatureFlagsConfig` field — e.g. `FeatureFlags.fromProvider(FeatureFlags.multiProvider(ps), FeatureFlagsConfig().withDomain("checkout"))`, which the old `fromMultiProvider` factory could not express.
 
 ### Initialization Timeout
 

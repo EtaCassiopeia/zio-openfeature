@@ -96,10 +96,13 @@ result carrying `reason = DEFAULT` is treated as an answer and ends the chain �
 be reported as not-found rather than as a default. It also means an operator can tell "configured to this value"
 from "not configured here", which a `DEFAULT` answer hides.
 
-> **Each provider in a chain needs a distinct metadata name.** The SDK keys providers by `getMetadata.getName`, so
-> two `HoconProvider`s over different configs collapse into one — and the survivor is the **last** one, not the
-> first, whatever the strategy is called. The SDK logs `duplicated provider name` at INFO, so it is easy to miss
-> unless SDK info logging is on. Chain different provider *types*, or wrap one in a provider reporting another name.
+> **Same-named providers stay in the chain.** Since Java SDK 1.23.0 a `MultiProvider` keeps every provider in order,
+> so two `HoconProvider`s over different configs both take part. Earlier SDKs kept only the **last** of a name.
+>
+> The provider hooks of each chain member the strategy consults run too, but they see the caller's client metadata
+> only when the chain is evaluated on the calling thread. `CachingProvider` and `CircuitBreakerProvider` evaluate
+> their delegate on the blocking pool, so hooks of a chain wrapped in either see the domain `"multiprovider"` instead;
+> behind a `CachingProvider`, a cache hit runs no chain member and so no hooks.
 
 ### Manual reload
 
@@ -197,7 +200,7 @@ val layer = FeatureFlags.fromProviderAsync(deferred)
 
 Behaviour:
 
-- **Stable metadata** — `getMetadata` returns the given name before and after construction, so the event bridge and `MultiProvider` keying see one identity.
+- **Stable metadata** — `getMetadata` returns the given name before and after construction, so the event bridge sees one identity.
 - **No NPE before ready** — evaluations before construction completes return a typed `ProviderEvaluation` with `ErrorCode.PROVIDER_NOT_READY`.
 - **Clean shutdown race** — `shutdown()` racing an in-flight `initialize()` shuts the delegate down once construction finishes, instead of leaking its poller/HTTP client.
 - **Hooks forwarded** — `getProviderHooks` delegates once active.

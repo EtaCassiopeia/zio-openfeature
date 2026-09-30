@@ -69,6 +69,9 @@ final private[extras] class CacheKey(
   *
   * Cached evaluations return `CACHED` as the resolution reason.
   *
+  * A miss evaluates the delegate on the calling thread, so the members of a wrapped `MultiProvider` chain see the
+  * caller's client metadata in their provider hooks. A hit runs no chain member, and so none of their hooks.
+  *
   * Events emitted by the wrapped provider are forwarded through this wrapper (so `FeatureFlags.events` subscribers
   * still see them), and a `PROVIDER_CONFIGURATION_CHANGED` emission automatically invalidates the cache. The wrapper
   * takes ownership of the delegate's event channel on `initialize`; do not register the same delegate instance directly
@@ -302,8 +305,10 @@ object CachingProvider {
         config.maxEntries,
         config.ttl,
         // The key carries the delegate call for this evaluation; zio-cache deduplicates concurrent
-        // lookups for the same logical key, so the delegate runs once per miss.
-        Lookup[CacheKey, Any, Throwable, ProviderEvaluation[Any]](ck => ZIO.attemptBlocking(ck.evaluate()))
+        // lookups for the same logical key, so the delegate runs once per miss. The lookup stays on the
+        // calling thread (no blocking-pool hop): the SDK's MultiProvider hands hook context to its
+        // resolvers through a thread-local, which another thread cannot see (#427).
+        Lookup[CacheKey, Any, Throwable, ProviderEvaluation[Any]](ck => ZIO.attempt(ck.evaluate()))
       )
     } yield new CachingProvider(underlying, config, cache, rt)
 

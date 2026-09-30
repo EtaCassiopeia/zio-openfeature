@@ -33,6 +33,10 @@ object StalePolicy {
   * @param evaluationTimeout
   *   Maximum time to wait for a single delegate evaluation call. Timed-out calls count as infrastructure failures. Set
   *   this higher than your provider's typical response time but low enough to fail fast during outages.
+  *   `Duration.Infinity` disables the timeout and evaluates the delegate on the calling thread, which lets the members
+  *   of a wrapped `MultiProvider` chain see the caller's client metadata in their provider hooks. Any finite value
+  *   needs the delegate on another thread, where that context is out of reach. Without a timeout a hanging delegate
+  *   blocks the caller and is never counted as a failure.
   * @param halfOpenMaxCalls
   *   Number of successful probes in half-open state required to close the circuit
   * @param stalePolicy
@@ -250,17 +254,20 @@ final class CircuitBreakerProvider private (
 
   private def executeWithTimeout[A](evaluate: () => ProviderEvaluation[A]): ProviderEvaluation[A] =
     try {
+      val guarded = config.evaluationTimeout match {
+        case Duration.Finite(_) =>
+          ZIO
+            // attemptBlockingInterrupt (not attemptBlocking) so the timeout delivers Thread.interrupt to the
+            // blocking-pool thread instead of leaking it while the delegate call runs on unbounded.
+            .attemptBlockingInterrupt(evaluate())
+            .disconnect // detach so timeout completes without waiting for the blocking call
+            .timeoutFail(new java.util.concurrent.TimeoutException("Evaluation timed out"))(config.evaluationTimeout)
+        // No timeout to enforce, so stay on the calling thread: the SDK's MultiProvider hands hook context to its
+        // resolvers through a thread-local, which another thread cannot see (#427).
+        case _ => ZIO.attempt(evaluate())
+      }
       val result = Unsafe.unsafe { implicit u =>
-        runtime.unsafe
-          .run(
-            ZIO
-              // attemptBlockingInterrupt (not attemptBlocking) so the timeout delivers Thread.interrupt to the
-              // blocking-pool thread instead of leaking it while the delegate call runs on unbounded.
-              .attemptBlockingInterrupt(evaluate())
-              .disconnect // detach so timeout completes without waiting for the blocking call
-              .timeoutFail(new java.util.concurrent.TimeoutException("Evaluation timed out"))(config.evaluationTimeout)
-          )
-          .getOrThrowFiberFailure()
+        runtime.unsafe.run(guarded).getOrThrowFiberFailure()
       }
       if (breaker.recordSuccess()) safeEmitReady()
       result

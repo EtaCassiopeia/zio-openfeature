@@ -21,10 +21,10 @@ import scala.jdk.CollectionConverters._
 
 /** A wrapper forwards a `MultiProvider`'s `getProviderHooks`, and since Java SDK 1.23.0 those hooks carry the caller's
   * client metadata to the chain members' own hooks through a thread-local (#423). The members' hooks run once either
-  * way; whether they see the caller's domain depends on whether the wrapper evaluates on the calling thread.
-  * `DeferredProvider` does. `CachingProvider` (a cache miss runs on the blocking pool) and `CircuitBreakerProvider`
-  * (the timeout runs the call on the blocking pool) do not, so the members' hooks see the SDK's fallback domain,
-  * "multiprovider". Pinned so a change to either wrapper's threading shows up here.
+  * way; whether they see the caller's domain depends on whether the wrapper evaluates on the calling thread (#427).
+  * `DeferredProvider` and `CachingProvider` always do. `CircuitBreakerProvider` does only when `evaluationTimeout` is
+  * not finite: a finite timeout needs the delegate on another thread, so the members' hooks see the SDK's fallback
+  * domain, "multiprovider".
   *
   * Shared test source dir → compiles on 2.13 and 3: braces only, no `given`/`using`, no `enum`.
   */
@@ -98,18 +98,29 @@ object MultiProviderWrapperHookSpec extends ZIOSpecDefault {
         }
       }
     },
-    test("through CachingProvider, chain members' hooks see the fallback domain, and a cache hit runs none") {
+    test("through CachingProvider, chain members' hooks see the caller's domain, and a cache hit runs none") {
       ZIO.scoped {
         evaluateThrough(chain => CachingProvider(chain)).map { case (vs, stages, domains) =>
-          // Intentional pin of the fallback domain: update it if the wrapper ever evaluates on the calling thread.
-          assertTrue(vs == List(true, true), stages == List("before", "finally"), domains == List("multiprovider"))
+          assertTrue(vs == List(true, true), stages == List("before", "finally"), domains == List("checkout"))
+        }
+      }
+    },
+    test("through CircuitBreakerProvider with infinite timeout, chain members' hooks see the caller's domain") {
+      ZIO.scoped {
+        val config = CircuitBreakerProviderConfig(evaluationTimeout = Duration.Infinity)
+        evaluateThrough(chain => CircuitBreakerProvider(chain, config)).map { case (vs, stages, domains) =>
+          assertTrue(
+            vs == List(true, true),
+            stages == List("before", "finally", "before", "finally"),
+            domains == List("checkout", "checkout")
+          )
         }
       }
     },
     test("through CircuitBreakerProvider, chain members' hooks run once per evaluation but see the fallback domain") {
       ZIO.scoped {
         evaluateThrough(chain => CircuitBreakerProvider(chain)).map { case (vs, stages, domains) =>
-          // Intentional pin of the fallback domain: update it if the wrapper ever evaluates on the calling thread.
+          // The default finite timeout evaluates on another thread, so the SDK's thread-local context is out of reach.
           assertTrue(
             vs == List(true, true),
             stages == List("before", "finally", "before", "finally"),

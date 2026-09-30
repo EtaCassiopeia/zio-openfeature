@@ -100,9 +100,12 @@ from "not configured here", which a `DEFAULT` answer hides.
 > so two `HoconProvider`s over different configs both take part. Earlier SDKs kept only the **last** of a name.
 >
 > The provider hooks of each chain member the strategy consults run too, but they see the caller's client metadata
-> only when the chain is evaluated on the calling thread. `CachingProvider` and `CircuitBreakerProvider` evaluate
-> their delegate on the blocking pool, so hooks of a chain wrapped in either see the domain `"multiprovider"` instead;
-> behind a `CachingProvider`, a cache hit runs no chain member and so no hooks.
+> only when the chain is evaluated on the calling thread. `DeferredProvider` and `CachingProvider` (on a miss) do
+> that; behind a `CachingProvider`, a cache hit runs no chain member and so no hooks. `CircuitBreakerProvider` does it
+> only with `evaluationTimeout = Duration.Infinity`: a finite timeout (the default) needs the chain on another thread,
+> so its members' hooks see the domain `"multiprovider"` instead. `Infinity` also gives up hang protection: a delegate
+> that never returns blocks the caller and is never counted as a failure. To keep a timeout and the caller's metadata, wrap
+> each chain member in its own `CircuitBreakerProvider` rather than the whole chain.
 
 ### Manual reload
 
@@ -385,7 +388,7 @@ yield layer
 |:----------|:--------|:------------|
 | `failureThreshold` | `5` | Consecutive failures before the circuit opens |
 | `resetTimeout` | `30.seconds` | Time in open state before allowing a probe |
-| `evaluationTimeout` | `500.millis` | Max duration for a single delegate evaluation |
+| `evaluationTimeout` | `500.millis` | Max duration for a single delegate evaluation. `Duration.Infinity` disables the timeout and evaluates on the calling thread; a hanging delegate then blocks callers and is never counted as a failure |
 | `halfOpenMaxCalls` | `1` | Successful probes required to close the circuit |
 | `stalePolicy` | `StalePolicy.Open` | Behavior when delegate reports `STALE` state |
 | `stateCheckInterval` | `1.second` | Minimum interval between delegate state polls (`Duration.Zero` polls on every call) |

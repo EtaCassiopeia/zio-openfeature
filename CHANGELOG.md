@@ -13,8 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **A `MultiProvider` keeps same-named providers.** Two chain members reporting the same metadata name both take
     part, in order; earlier SDKs kept only the last. Chains that relied on the collapse now consult every member.
   - **Chain members' own provider hooks run**, once for each member the strategy consults. They see the caller's
-    client metadata, except behind a `CachingProvider` or `CircuitBreakerProvider` wrapped around the whole chain:
-    those evaluate on the blocking pool, so the hooks see the SDK's fallback domain `"multiprovider"`.
+    client metadata, except behind a `CircuitBreakerProvider` with a finite `evaluationTimeout` wrapped around the
+    whole chain: the timeout evaluates on another thread, so the hooks see the SDK's fallback domain
+    `"multiprovider"` (see #427 under Fixed).
   - **Provider-emitted error events carry their error code.** `ProviderEvent.Error` now has the code, and a provider
     emitting `PROVIDER_FATAL` moves the status to `Fatal`, which stops further evaluations; earlier SDKs dropped the
     code, so it read as a recoverable `Error`.
@@ -28,6 +29,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`CachingProvider` evaluates a cache miss on the calling thread**, and **`CircuitBreakerProvider` does too when
+  `evaluationTimeout = Duration.Infinity`** (#427). Members of a wrapped `MultiProvider` chain now see the caller's
+  client metadata and hook hints in their provider hooks, which the SDK passes through a thread-local. A finite
+  timeout (the default, `500.millis`) still evaluates on the blocking pool so it can be enforced, and keeps the
+  fallback domain `"multiprovider"`. The caching miss also no longer hops threads for nothing.
 - **`docs/spec-compliance.md` no longer says the library ships Java SDK 1.20.2** (#423).
 - **A defect in an `after` hook now runs the `error` stage, and `finallyAfter` receives the default-valued details**
   (#422; spec §4.4.5, and §4.4.8 from spec `main`). Before, the pipeline skipped `error` and handed `finallyAfter`

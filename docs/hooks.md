@@ -268,6 +268,13 @@ same `HookContext.flagType`), while the failure the caller sees names the flag's
 receives `Some(details)` for an error-coded resolution — the default value plus the code — which is also what the Java
 SDK hands `finally` on error.
 
+A defect in an `after` hook is abnormal execution too (spec §4.4.5/§4.4.8), handled like a defect in `before`: the
+remaining `after` hooks are skipped, the `error` stage runs, and `finallyAfter` receives `Some(details)` carrying the
+default value, no variant, reason `Error` and `ErrorCode.General` — exactly what `resolveOrDefault` serves for the same
+evaluation. The defect then propagates, so the typed tier (`booleanDetails`, …) still dies with it and the total tier
+still serves the default. An *interruption* of `after` is cancellation, not a hook failure: `error` does not run, and
+`finallyAfter` still does.
+
 ### Hook Context
 
 The `HookContext` provides information about the current evaluation:

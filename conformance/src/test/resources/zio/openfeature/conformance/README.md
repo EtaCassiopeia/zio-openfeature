@@ -20,6 +20,14 @@ The same four files are vendored a second time under
 `conformance-zio-bdd/src/test/resources/features/openfeature/`, where the zio-bdd runner executes
 them. The two copies must stay byte-identical to each other.
 
+## Ahead of the pin
+
+`hooks.feature` is vendored from `open-feature/spec` `main` @ `42fc47d` (spec PR #428), ahead of the v0.9.0 pin: it
+adds the `@spec-4.4.8` "Error in after hook" scenario, which is not in any tagged spec release yet (#422). The pin line
+above deliberately stays at v0.9.0, so `check-gherkin-drift.sh upstream` *without* a ref reports `hooks.feature` as
+drifted until the next tag; `upstream main` (what the scheduled job runs) is clean. Remove this section and move the
+pin at the next tagged re-sync.
+
 ## Drift detection
 
 Both invariants are checked by `.github/scripts/check-gherkin-drift.sh`, split because they have

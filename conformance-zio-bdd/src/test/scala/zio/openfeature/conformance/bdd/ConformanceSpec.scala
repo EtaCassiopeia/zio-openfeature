@@ -140,7 +140,11 @@ object ConformanceSpec extends ZIOSteps[Any, World] {
     options: EvaluationOptions = EvaluationOptions.empty
   ): ZIO[Any, Nothing, FlagResolution[Any]] = {
     def br[A](io: IO[FeatureFlagError, FlagResolution[A]], default: A): ZIO[Any, Nothing, FlagResolution[Any]] =
-      io.catchAll(e => ZIO.succeed(bridge(w.flagKey, e, default))).map(_.asInstanceOf[FlagResolution[Any]])
+      io.catchAll(e => ZIO.succeed(bridge(w.flagKey, e, default)))
+        // A hook defect (a failing `after` hook, spec 4.4.8) dies on the typed tier; bridge it to the default with
+        // ERROR/GENERAL like the total tier does — same outcome the gherkin asserts, different channel.
+        .catchAllDefect(t => ZIO.succeed(FlagResolution.error(w.flagKey, default, ErrorCode.General, t.toString)))
+        .map(_.asInstanceOf[FlagResolution[Any]])
     w.flagType match {
       case "boolean" => br(ff.booleanDetails(w.flagKey, w.defaultRaw.toBoolean, w.ctx, options), w.defaultRaw.toBoolean)
       case "string"  => br(ff.stringDetails(w.flagKey, w.defaultRaw, w.ctx, options), w.defaultRaw)
@@ -267,12 +271,17 @@ object ConformanceSpec extends ZIOSteps[Any, World] {
 
   // Hooks ----------------------------------------------------------------------------------------
 
-  private def recordingHook(stages: Ref[Chunk[String]], details: Ref[Option[FlagResolution[Any]]]): OFFeatureHook =
+  private def recordingHook(
+    stages: Ref[Chunk[String]],
+    details: Ref[Option[FlagResolution[Any]]],
+    failing: Ref[Set[String]]
+  ): OFFeatureHook =
     new OFFeatureHook {
       override def before(c: HookContext, h: HookHints): UIO[Option[EvaluationContext]] =
         stages.update(_ :+ "before").as(None)
       override def after[A](c: HookContext, d: FlagResolution[A], h: HookHints): UIO[Unit] =
-        stages.update(_ :+ "after") *> details.set(Some(d.asInstanceOf[FlagResolution[Any]]))
+        stages.update(_ :+ "after") *> details.set(Some(d.asInstanceOf[FlagResolution[Any]])) *>
+          failing.get.flatMap(f => ZIO.when(f.contains("after"))(ZIO.die(new RuntimeException("after hook error")))).unit
       override def error(c: HookContext, e: FeatureFlagError, h: HookHints): UIO[Unit] =
         stages.update(_ :+ "error").unit
       override def finallyAfter(c: HookContext, d: Option[FlagResolution[_]], h: HookHints): UIO[Unit] =
@@ -283,10 +292,21 @@ object ConformanceSpec extends ZIOSteps[Any, World] {
     for {
       stages  <- Ref.make(Chunk.empty[String])
       details <- Ref.make(Option.empty[FlagResolution[Any]])
+      failing <- Ref.make(Set.empty[String])
       w       <- ScenarioContext.get
-      _       <- w.flags.get.addHook(recordingHook(stages, details))
-      _       <- ScenarioContext.update(_.copy(hookStages = Some(stages), hookDetails = Some(details)))
+      _       <- w.flags.get.addHook(recordingHook(stages, details, failing))
+      _ <- ScenarioContext.update(
+             _.copy(hookStages = Some(stages), hookDetails = Some(details), failingHookStages = Some(failing))
+           )
     } yield ()
+  }
+
+  // Only `after` is exercised upstream so far; any other stage dies loudly so a new upstream scenario for it fails here
+  // instead of silently passing against a hook that never fails.
+  Given("the " / string / " hook returns an error") { (stage: String) =>
+    if (stage != "after")
+      ZIO.die(new IllegalArgumentException(s"failing hook stage '$stage' is not supported by these step definitions"))
+    else ScenarioContext.get.flatMap(w => w.failingHookStages.get.update(_ + stage))
   }
 
   Then("the " / string / " hook should have been executed") { (stage: String) =>

@@ -134,6 +134,8 @@ FeatureFlags.booleanDetails("flag", false, context, options)
 | Requirement | Status | Implementation |
 |:------------|:-------|:---------------|
 | Hook stages | ✅ | before, after, error, finallyAfter |
+| Error in hook runs `error` stage (4.4.5) | ✅ | A defect in `before` or `after` runs `error`, then `finallyAfter` |
+| Error in `after` hook returns the default (4.4.8) | ✅ | Total tier serves the default with `Error`/`General`; `finallyAfter` receives the same details. Unreleased upstream (spec #428) |
 | Hook context | ✅ | flagKey, flagType, defaultValue, context, clientMetadata, providerMetadata |
 | Hook hints | ✅ | `HookHints` for passing data between stages |
 | Hook data (4.6.1) | ✅ | `HookData` per-hook mutable state across stages |

@@ -28,6 +28,8 @@ final case class World(
   // hooks
   hookStages: Option[Ref[Chunk[String]]] = None,
   hookDetails: Option[Ref[Option[FlagResolution[Any]]]] = None,
+  // stages the recording hook fails in; read when the hook runs, since the gherkin marks it failing after adding it
+  failingHookStages: Option[Ref[Set[String]]] = None,
   // per-invocation hooks supplied via EvaluationOptions (spec 1.5.1)
   evalOptions: Option[EvaluationOptions] = None,
   optionHookLog: Option[Ref[Chunk[String]]] = None,

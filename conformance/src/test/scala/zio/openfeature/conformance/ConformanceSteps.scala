@@ -41,6 +41,9 @@ class ConformanceSteps extends ScalaDsl with EN {
   // Hook state
   private val hookStages                       = new java.util.concurrent.ConcurrentLinkedQueue[String]()
   private var hookDetails: FlagResolution[Any] = null
+  // Stages the recording hook fails in. Read when the hook RUNS, not when it is built: the gherkin registers the hook
+  // first and marks it failing second (spec 4.4.8 "Error in after hook").
+  private val failingHookStages = java.util.concurrent.ConcurrentHashMap.newKeySet[String]()
 
   // Context-merging state
   private var apiCtx: EvaluationContext                = EvaluationContext.empty
@@ -155,8 +158,13 @@ class ConformanceSteps extends ScalaDsl with EN {
       Some(e.message)
     )
 
+  // A hook defect (e.g. a failing `after` hook, spec 4.4.8) dies on the typed tier; the gherkin asserts the default
+  // value with ERROR/GENERAL, so bridge it like the total tier does — same outcome, different channel.
   private def evalDetails[A](io: IO[FeatureFlagError, FlagResolution[A]], default: A): FlagResolution[A] =
-    run(io.catchAll(e => ZIO.succeed(bridge(e, default))))
+    run(
+      io.catchAll(e => ZIO.succeed(bridge(e, default)))
+        .catchAllDefect(t => ZIO.succeed(FlagResolution.error(flagKey, default, ErrorCode.General, t.toString)))
+    )
 
   private def evaluate(options: EvaluationOptions): FlagResolution[Any] =
     (flagType match {
@@ -267,7 +275,8 @@ class ConformanceSteps extends ScalaDsl with EN {
     override def before(c: HookContext, h: HookHints): UIO[Option[EvaluationContext]] =
       ZIO.succeed(hookStages.add("before")).as(None)
     override def after[A](c: HookContext, d: FlagResolution[A], h: HookHints): UIO[Unit] =
-      ZIO.succeed { hookStages.add("after"); hookDetails = d.asInstanceOf[FlagResolution[Any]] }
+      ZIO.succeed { hookStages.add("after"); hookDetails = d.asInstanceOf[FlagResolution[Any]] } *>
+        ZIO.when(failingHookStages.contains("after"))(ZIO.die(new RuntimeException("after hook error"))).unit
     override def error(c: HookContext, e: FeatureFlagError, h: HookHints): UIO[Unit] =
       ZIO.succeed(hookStages.add("error")).unit
     override def finallyAfter(c: HookContext, d: Option[FlagResolution[_]], h: HookHints): UIO[Unit] =
@@ -276,6 +285,14 @@ class ConformanceSteps extends ScalaDsl with EN {
 
   Given("""^a client with added hook$""") { () =>
     run(flags.addHook(recordingHook))
+  }
+
+  Given("""^the "([^"]*)" hook returns an error$""") { (stage: String) =>
+    // Only `after` is exercised upstream so far; reject anything else loudly so a new upstream scenario for another
+    // stage fails here instead of silently passing against a hook that never fails.
+    require(stage == "after", s"failing hook stage '$stage' is not supported by these step definitions")
+    failingHookStages.add(stage)
+    ()
   }
 
   Then("""^the "([^"]*)" hook should have been executed$""") { (stage: String) =>

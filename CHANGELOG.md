@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A defect in an `after` hook now runs the `error` stage and hands `finallyAfter` the served-default details**
+  (#422, spec §4.4.5/§4.4.8). Previously the `error` stage was skipped and `finallyAfter` received `None`. Now the
+  `error` stage runs and `finallyAfter` receives `Some` resolution with the default value, reason `Error` and
+  `ErrorCode.General`, identical to what `resolveOrDefault` serves. Only hooks observe the change: caller-visible
+  results are unchanged on both tiers (the typed tier still dies with the defect, the total tier still serves the
+  default). Surfaced by re-vendoring upstream's new `@spec-4.4.8` "Error in after hook" gherkin scenario.
+
 ## [1.1.2] — 2026-09-27
 
 **A build-hygiene patch. Nothing changes for consumers.** Every published artifact is bytecode-identical to 1.1.1 and

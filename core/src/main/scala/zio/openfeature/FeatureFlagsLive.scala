@@ -335,8 +335,9 @@ final private[openfeature] class FeatureFlagsLive(
     // when `before` is interrupted before that branch's effect is even entered). Per spec §4.3.5-4.3.8 the finally
     // stage must observe the context as modified by the before hooks; that modified `(ctx, hints)` is recorded in a Ref
     // once `before` succeeds, so the outer finalizer uses it, falling back to the original context when `before` never
-    // completed.
-    Ref.make((hookCtx, initialHints)).flatMap { finallyCtxRef =>
+    // completed. The third slot records the abnormal resolution handed to `finallyAfter` when `after` defects (spec
+    // §4.4.5/§4.4.8); every other failed exit leaves it `None`.
+    Ref.make((hookCtx, initialHints, Option.empty[FlagResolution[_]])).flatMap { finallyCtxRef =>
       composedHook
         .before(hookCtx, initialHints)
         .foldCauseZIO(
@@ -359,7 +360,7 @@ final private[openfeature] class FeatureFlagsLive(
             val effectiveCtx = beforeResult.getOrElse(context)
             val hints        = initialHints
             val stageCtx     = hookCtx.copy(evaluationContext = effectiveCtx)
-            finallyCtxRef.set((stageCtx, hints)) *>
+            finallyCtxRef.set((stageCtx, hints, None)) *>
               evaluate(effectiveCtx)
                 .tapBoth(
                   err => composedHook.error(stageCtx, err, hints),
@@ -376,14 +377,33 @@ final private[openfeature] class FeatureFlagsLive(
                           hints
                         )
                       case None =>
-                        composedHook.after(stageCtx, res, hints)
+                        // A defect in `after` is abnormal execution (spec §4.4.5/§4.4.8), mirroring the `before`
+                        // branch: run `error`, hand `finallyAfter` a default-valued ERROR/GENERAL resolution (the same
+                        // one the total tier serves for an absorbed defect), then re-fail the original cause so the
+                        // typed tier still dies. An interruption is cancellation, not a hook failure: no `error` stage.
+                        composedHook.after(stageCtx, res, hints).catchAllCause { afterCause =>
+                          afterCause.dieOption match {
+                            case Some(defect) =>
+                              val abnormal: FlagResolution[_] =
+                                FlagResolution
+                                  .error(res.flagKey, hookCtx.defaultValue, ErrorCode.General, defect.toString)
+                              finallyCtxRef.set((stageCtx, hints, Some(abnormal))) *>
+                                composedHook
+                                  .error(stageCtx, FeatureFlagError.ProviderError(defect), hints)
+                                  .foldCauseZIO(
+                                    errCause => ZIO.refailCause(afterCause ++ errCause),
+                                    _ => ZIO.refailCause(afterCause)
+                                  )
+                            case None => ZIO.refailCause(afterCause)
+                          }
+                        }
                     }
                 )
           }
         )
         .onExit { exit =>
-          finallyCtxRef.get.flatMap { case (ctx, hints) =>
-            val details: Option[FlagResolution[_]] = exit.foldExit(_ => None, res => Some(res))
+          finallyCtxRef.get.flatMap { case (ctx, hints, abnormal) =>
+            val details: Option[FlagResolution[_]] = exit.foldExit(_ => abnormal, res => Some(res))
             composedHook.finallyAfter(ctx, details, hints)
           }
         }

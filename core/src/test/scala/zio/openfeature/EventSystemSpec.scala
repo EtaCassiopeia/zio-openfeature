@@ -50,6 +50,9 @@ object EventSystemSpec extends ZIOSpecDefault {
           .build()
       )
 
+    def fireFatal(): Unit =
+      emitProviderError(ProviderEventDetails.builder().errorCode(JErrorCode.PROVIDER_FATAL).message("dead").build())
+
     def fireConfigChanged(flags: List[String]): Unit =
       emitProviderConfigurationChanged(ProviderEventDetails.builder().flagsChanged(flags.asJava).build())
 
@@ -89,16 +92,52 @@ object EventSystemSpec extends ZIOSpecDefault {
           ev <- received.await
         } yield ev match {
           // The old generic `on` rebuilt Error as `Error(e, m)`, dropping the errorMessage field and eventMetadata; the
-          // fix passes the original event, so both survive. (errorCode is not carried by the SDK's emit path, so it is
-          // not asserted here.)
-          case ProviderEvent.Error(err, _, _, msg, em) =>
+          // fix passes the original event, so both survive. The error code survives too since SDK 1.23.0, whose emit
+          // path stopped dropping it (java-sdk #2015, #423).
+          case ProviderEvent.Error(err, _, code, msg, em) =>
             assertTrue(
               err.getMessage == "boom",
+              code == Some(ErrorCode.General),
               msg == Some("boom"),
               em.getString("origin").contains("provider")
             )
           case _ => assertTrue(false)
         }
+      }
+    },
+    test("a provider-emitted PROVIDER_FATAL error code moves the status to Fatal and stops evaluations") {
+      // Up to SDK 1.22.x the emit path dropped the code, so this read Error and the provider kept being called (#423).
+      ZIO.scoped {
+        for {
+          received <- Promise.make[Nothing, ProviderEvent]
+          provider = new EmittingProvider
+          ff     <- buildFF(provider)
+          _      <- ff.on(ProviderEventType.Error, e => received.succeed(e).unit)
+          _      <- ZIO.attempt(provider.fireFatal())
+          ev     <- received.await.timeoutFail("no Error event")(10.seconds)
+          status <- ff.providerStatus
+          result <- ff.boolean("flag", default = false).either
+        } yield assertTrue(
+          status == ProviderStatus.Fatal,
+          (ev match {
+            case ProviderEvent.Error(_, _, code, _, _) => code
+            case _                                     => None
+          }) == Some(ErrorCode.ProviderFatal),
+          result == Left(FeatureFlagError.ProviderFatal)
+        )
+      }
+    },
+    test("a provider-emitted non-fatal error code leaves the status at Error, not Fatal") {
+      ZIO.scoped {
+        for {
+          received <- Promise.make[Nothing, Unit]
+          provider = new EmittingProvider
+          ff     <- buildFF(provider)
+          _      <- ff.on(ProviderEventType.Error, _ => received.succeed(()).unit)
+          _      <- ZIO.attempt(provider.fireError())
+          _      <- received.await.timeoutFail("no Error event")(10.seconds)
+          status <- ff.providerStatus
+        } yield assertTrue(status == ProviderStatus.Error)
       }
     },
     test("a handler that defects on one event keeps its subscription and receives the next event (spec 5.2.5)") {

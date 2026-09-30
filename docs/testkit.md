@@ -95,8 +95,8 @@ yield ()
 
 ### Naming a Provider
 
-Every provider reports a metadata name, and two things key providers by it — so two test providers that share a name
-cannot be told apart. `makeNamed` gives each one its own:
+Every provider reports a metadata name, and the `setProvider` event-identity guard keys providers by it — so two test
+providers that share a name cannot be told apart across a swap. `makeNamed` gives each one its own:
 
 ```scala
 for
@@ -105,14 +105,12 @@ for
 yield (primary, fallback)
 ```
 
-You need it in exactly two situations:
+You need it when **swapping providers**: `FeatureFlags.setProvider` compares the old and new provider's names to decide
+which provider an incoming event came from, so a swap between two same-named providers is invisible to that guard.
 
-- **Chaining two test providers.** The Java SDK keys a `MultiProvider`'s providers by metadata name and keeps only the
-  **last** of a given name (logging the collision at INFO), so a chain of two default-named test providers is really a
-  chain of one — and a test of fall-through or precedence between them passes or fails for the wrong reason. See
-  [Absent keys and provider chains](#absent-keys-and-provider-chains) for what makes a chain fall through at all.
-- **Swapping providers.** `FeatureFlags.setProvider` compares the old and new provider's names to decide which
-  provider an incoming event came from, so a swap between two same-named providers is invisible to that guard.
+Chains no longer need it. Since Java SDK 1.23.0 a `MultiProvider` keeps two default-named test providers as two
+members; earlier SDKs kept only the last of a name. Naming them still makes a failing chain test easier to read. See
+[Absent keys and provider chains](#absent-keys-and-provider-chains) for what makes a chain fall through at all.
 
 There are deliberately no named twins of `layer` / `scopedLayer` / `asyncLayer`: a chain is built from raw
 providers, and a single named provider becomes a `FeatureFlags` layer through `layerFrom(provider)`, which preserves
@@ -200,9 +198,9 @@ val chain = FeatureFlags.multiProvider(List(testProvider, realProvider))
 ```
 
 `MultiProviderStrategy.firstMatch` advances to the next provider only when a provider reports `FLAG_NOT_FOUND`; a
-result carrying `reason = DEFAULT` is treated as an answer and ends the chain. One caveat when chaining two test
-providers: the Java SDK keys a chain's providers by metadata name and silently keeps only the last of two same-named
-instances — give each one its own name with [`makeNamed`](#naming-a-provider).
+result carrying `reason = DEFAULT` is treated as an answer and ends the chain. Two default-named test providers both
+stay in the chain (Java SDK 1.23.0; earlier SDKs kept only the last), but naming them with
+[`makeNamed`](#naming-a-provider) makes a failing chain test easier to read.
 
 ---
 

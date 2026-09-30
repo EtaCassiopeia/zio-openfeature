@@ -7,8 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **OpenFeature Java SDK 1.23.0** (from 1.22.1, #423). Three behaviour changes reach this library:
+  - **A `MultiProvider` keeps same-named providers.** Two chain members reporting the same metadata name both take
+    part, in order; earlier SDKs kept only the last. Chains that relied on the collapse now consult every member.
+  - **Chain members' own provider hooks run**, once for each member the strategy consults. They see the caller's
+    client metadata, except behind a `CachingProvider` or `CircuitBreakerProvider` wrapped around the whole chain:
+    those evaluate on the blocking pool, so the hooks see the SDK's fallback domain `"multiprovider"`.
+  - **Provider-emitted error events carry their error code.** `ProviderEvent.Error` now has the code, and a provider
+    emitting `PROVIDER_FATAL` moves the status to `Fatal`, which stops further evaluations; earlier SDKs dropped the
+    code, so it read as a recoverable `Error`.
+- **Breaking for custom `MultiProviderStrategy.Strategy` implementations.** The alias re-exports the SDK interface,
+  whose `evaluate` now takes a `List[FeatureProvider]` instead of a name-keyed `Map`, and
+  `MultiProviderMetadata.getOriginalMetadata` returns a `List`. Implementations must be updated and recompiled. This
+  library's own bytecode is unchanged (MiMa green); the built-in `firstMatch` / `firstSuccessful` are unaffected.
+
 ### Fixed
 
+- **`docs/spec-compliance.md` no longer says the library ships Java SDK 1.20.2** (#423).
 - **A defect in an `after` hook now runs the `error` stage, and `finallyAfter` receives the default-valued details**
   (#422; spec §4.4.5, and §4.4.8 from spec `main`). Before, the pipeline skipped `error` and handed `finallyAfter`
   `None`, which a `before`-hook defect never did. `finallyAfter` now receives the default value with reason `ERROR`

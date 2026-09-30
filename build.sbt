@@ -7,7 +7,7 @@ val zioVersion      = "2.1.14"
 val zioBddVersion   = "1.5.0"
 // The embedded Rift engine zio-bdd-rift drives (Rift 0.18.0). Keep in step with zio-bdd-rift's own rift-java pin.
 val riftJavaVersion       = "0.3.2"
-val openFeatureSdkVersion = "1.22.1"
+val openFeatureSdkVersion = "1.23.0"
 
 // Test-only HTTP stubbing for the ofrep and optimizely provider suites. Declared once rather than per module:
 // the two had drifted apart before, and a WireMock bump is the single cheapest lever on this build's advisory

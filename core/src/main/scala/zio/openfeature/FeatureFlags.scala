@@ -997,11 +997,9 @@ object FeatureFlags {
     * not, e.g. multi-provider + domain: `fromProvider(multiProvider(ps), FeatureFlagsConfig(domain =
     * Some("checkout")))`.
     *
-    * '''Each provider in the chain needs a distinct metadata name.''' The SDK's `MultiProvider` keys its providers by
-    * `getMetadata.getName`, so two instances of the same provider type — two `HoconProvider`s over different configs,
-    * say — collapse into one, and the survivor is the '''last''' of them regardless of the strategy. The SDK logs
-    * `duplicated provider name` at INFO and otherwise carries on, so this is easy to miss. Wrap one of them in a
-    * provider that reports a different name if you need both.
+    * Every provider stays in the chain, in order, even when two report the same metadata name (Java SDK 1.23.0; earlier
+    * SDKs kept only the last of a name). The `getProviderHooks` of each provider the strategy consults run too; see
+    * docs/extras.md for when they see this client's metadata.
     *
     * For the chain to advance past a provider, that provider must report `FLAG_NOT_FOUND` for a key it does not hold;
     * see [[MultiProviderStrategy.firstMatch]] for what does and does not cause fall-through.
@@ -1307,9 +1305,8 @@ object FeatureFlags {
     fromProvider(multiProvider(providers, strategy), FeatureFlagsConfig(initMode = InitMode.Async))
 
   /** Default `compose` for [[fromAcquireAsync]]: layer the real provider over the fallback with a first-successful
-    * strategy, so a sick real provider transparently falls through to the fallback. `MultiProvider` keys children by
-    * their metadata name and silently drops duplicates — the real and fallback providers must therefore have distinct
-    * names (rename one if they collide).
+    * strategy, so a sick real provider transparently falls through to the fallback. Both stay in the chain even if they
+    * report the same metadata name (Java SDK 1.23.0; earlier SDKs dropped the real provider in that case).
     */
   def defaultAcquireCompose(real: OFFeatureProvider, fallback: OFFeatureProvider): OFFeatureProvider = {
     import scala.jdk.CollectionConverters._

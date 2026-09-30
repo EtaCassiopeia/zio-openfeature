@@ -521,12 +521,9 @@ object TestFeatureProvider {
 
   /** Like [[make]], but the provider reports `name` as its metadata name instead of [[DefaultName]].
     *
-    * Two things key providers by that name, so two identically-named instances cannot be told apart:
-    *   - a `MultiProvider` chain keeps only the '''last''' provider of a given name (the SDK logs the collision at INFO
-    *     and moves on), so a chain of two default-named test providers is a chain of one;
-    *   - the event-identity guard behind `FeatureFlags.setProvider` compares the old and new provider's names.
-    *
-    * Give each one a distinct name when a test depends on either:
+    * The event-identity guard behind `FeatureFlags.setProvider` compares the old and new provider's names, so a swap
+    * between two identically-named instances is invisible to it. A `MultiProvider` keeps same-named providers since
+    * Java SDK 1.23.0 (earlier SDKs kept only the last of a name). Give each one a distinct name when swapping:
     *
     * {{{
     * for {

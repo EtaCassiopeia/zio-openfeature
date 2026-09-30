@@ -31,11 +31,10 @@ object AbsentKeyChainSpec extends ZIOSpecDefault {
 
   /** The SECOND provider in each chain is deliberately a different provider TYPE.
     *
-    * The Java SDK's `MultiProvider` keys its providers by metadata name, so two instances of the same provider type
-    * collapse into one and the chain silently consults only the survivor. A first draft of this spec used two
-    * `HoconProvider`s and was worthless: the fall-through test passed before the fix (because the "first" provider had
-    * been discarded, not because fall-through worked) while the precedence test failed against correct code. Distinct
-    * names keep both providers in the chain, so the ordering assertions mean what they say.
+    * Up to Java SDK 1.22.x a `MultiProvider` kept only the last of two same-named providers, so a first draft of this
+    * spec that used two `HoconProvider`s was worthless: the fall-through test passed before the fix (because the
+    * "first" provider had been discarded, not because fall-through worked). SDK 1.23.0 keeps both (#423); distinct
+    * types stay so the spec does not depend on that.
     *
     * `EnvVarProvider` maps a flag key to `FF_` + uppercase-with-underscores, hence the `FF_`-prefixed lookup keys.
     */

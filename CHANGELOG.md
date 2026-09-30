@@ -22,6 +22,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   whose `evaluate` now takes a `List[FeatureProvider]` instead of a name-keyed `Map`, and
   `MultiProviderMetadata.getOriginalMetadata` returns a `List`. Implementations must be updated and recompiled. This
   library's own bytecode is unchanged (MiMa green); the built-in `firstMatch` / `firstSuccessful` are unaffected.
+- **CI tests every published module on JDK 25** as well as 17 and 21, on both Scala versions (#424). JDK 25 was green before;
+  it was just untested outside the zio-bdd conformance job. On Scala 3 it prints a `sun.misc.Unsafe` deprecation
+  warning from the Scala 3.3 standard library (`scala.runtime.LazyVals`), not from this library.
 
 ### Fixed
 

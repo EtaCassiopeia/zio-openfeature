@@ -18,6 +18,9 @@ import scala.jdk.CollectionConverters._
   * `InMemoryProvider` for value/variant/reason/metadata scenarios; the testkit `TestFeatureProvider` for
   * context-merging (it records the merged context the wrapper passes down) and provider-status scenarios.
   */
+/** The defect a scenario's deliberately failing hook stage dies with, so the evaluation bridge can tell it apart. */
+final class HookStageFailure(stage: String) extends RuntimeException(s"$stage hook error")
+
 class ConformanceSteps extends ScalaDsl with EN {
 
   private val runtime = Runtime.default
@@ -41,6 +44,7 @@ class ConformanceSteps extends ScalaDsl with EN {
   // Hook state
   private val hookStages                       = new java.util.concurrent.ConcurrentLinkedQueue[String]()
   private var hookDetails: FlagResolution[Any] = null
+  private val failingHookStages                = java.util.concurrent.ConcurrentHashMap.newKeySet[String]()
 
   // Context-merging state
   private var apiCtx: EvaluationContext                = EvaluationContext.empty
@@ -156,7 +160,12 @@ class ConformanceSteps extends ScalaDsl with EN {
     )
 
   private def evalDetails[A](io: IO[FeatureFlagError, FlagResolution[A]], default: A): FlagResolution[A] =
-    run(io.catchAll(e => ZIO.succeed(bridge(e, default))))
+    run(
+      io.catchAll(e => ZIO.succeed(bridge(e, default)))
+        // A hook stage has no error channel (`UIO`), so the scenario's failing hook is a defect. Bridge only that one:
+        // any other defect is a real bug and must fail the scenario.
+        .catchSomeDefect { case t: HookStageFailure => ZIO.succeed(bridge(FeatureFlagError.ProviderError(t), default)) }
+    )
 
   private def evaluate(options: EvaluationOptions): FlagResolution[Any] =
     (flagType match {
@@ -267,7 +276,8 @@ class ConformanceSteps extends ScalaDsl with EN {
     override def before(c: HookContext, h: HookHints): UIO[Option[EvaluationContext]] =
       ZIO.succeed(hookStages.add("before")).as(None)
     override def after[A](c: HookContext, d: FlagResolution[A], h: HookHints): UIO[Unit] =
-      ZIO.succeed { hookStages.add("after"); hookDetails = d.asInstanceOf[FlagResolution[Any]] }
+      ZIO.succeed { hookStages.add("after"); hookDetails = d.asInstanceOf[FlagResolution[Any]] } *>
+        ZIO.when(failingHookStages.contains("after"))(ZIO.die(new HookStageFailure("after"))).unit
     override def error(c: HookContext, e: FeatureFlagError, h: HookHints): UIO[Unit] =
       ZIO.succeed(hookStages.add("error")).unit
     override def finallyAfter(c: HookContext, d: Option[FlagResolution[_]], h: HookHints): UIO[Unit] =
@@ -276,6 +286,12 @@ class ConformanceSteps extends ScalaDsl with EN {
 
   Given("""^a client with added hook$""") { () =>
     run(flags.addHook(recordingHook))
+  }
+
+  // The hook is registered by the step above, before this one runs, so it reads the failing stages when it executes.
+  Given("""^the "([^"]*)" hook returns an error$""") { (stage: String) =>
+    check(stage == "after", s"only a failing 'after' stage is supported, got '$stage'")
+    failingHookStages.add(stage)
   }
 
   Then("""^the "([^"]*)" hook should have been executed$""") { (stage: String) =>

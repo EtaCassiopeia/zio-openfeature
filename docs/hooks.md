@@ -258,6 +258,7 @@ Every `FeatureHook` stage returns `UIO`, so hooks are **infallible by constructi
 
 - Handle expected failures **inside** the hook (e.g. `.catchAll`/`.ignore` on effects that can fail) — there is no typed error channel to surface them.
 - Defects (unexpected `Throwable`s) still propagate as defects, so wrap untrusted third-party code (e.g. with `.catchAllDefect`) if it must not interfere with evaluation.
+- A defect in a `before` or `after` hook runs the `error` stage (§4.4.5) and skips the remaining hooks of that stage (§4.4.6). An `after` defect also replaces the resolution with the default (§4.4.8): `finallyAfter` receives `Some(details)` with the default value, reason `ERROR` and code `GENERAL`, the same details the total tier (`*OrDefault` / `resolveOrDefault`) serves. The typed tier still fails with the defect.
 - For hooks that should run **inside the Java SDK** (and participate in the SDK's own hook error model), register them with `addApiHook` instead of `addHook`.
 
 What the `error` stage receives: the `FeatureFlagError` the evaluation failed with, or — for a provider that answered

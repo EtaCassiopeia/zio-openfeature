@@ -20,6 +20,17 @@ The same four files are vendored a second time under
 `conformance-zio-bdd/src/test/resources/features/openfeature/`, where the zio-bdd runner executes
 them. The two copies must stay byte-identical to each other.
 
+## Ahead of the pin
+
+`hooks.feature` is taken from upstream `main` at commit `42fc47d` (spec PR #428, which adds requirement 4.4.8 and
+its `@spec-4.4.8` "Error in after hook" scenario), because no spec release carries it yet (#422). The pin line above
+stays on the last tag. Until the next tag, `check-gherkin-drift.sh upstream` with no ref reports `hooks.feature` as
+drifted from the pin; that is expected, and CI never runs that form. Remove this section at the next tagged re-sync.
+
+The scenario's `the "after" hook returns an error` step makes the recording hook's `after` stage die. Hook stages
+return `UIO`, so a failing hook is a defect; both runners bridge that defect into the resolution shape the gherkin
+asserts, as they already do for provider-status failures below.
+
 ## Drift detection
 
 Both invariants are checked by `.github/scripts/check-gherkin-drift.sh`, split because they have

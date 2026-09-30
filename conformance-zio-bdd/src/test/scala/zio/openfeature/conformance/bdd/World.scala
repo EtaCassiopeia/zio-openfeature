@@ -28,6 +28,7 @@ final case class World(
   // hooks
   hookStages: Option[Ref[Chunk[String]]] = None,
   hookDetails: Option[Ref[Option[FlagResolution[Any]]]] = None,
+  failingHookStages: Option[Ref[Set[String]]] = None,
   // per-invocation hooks supplied via EvaluationOptions (spec 1.5.1)
   evalOptions: Option[EvaluationOptions] = None,
   optionHookLog: Option[Ref[Chunk[String]]] = None,

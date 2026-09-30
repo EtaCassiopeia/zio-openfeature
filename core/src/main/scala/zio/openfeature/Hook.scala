@@ -122,8 +122,10 @@ object HookHints {
   * '''Error stage and error-code resolutions''' (spec §4.3.6/§4.4.6): the `error` stage runs both when an evaluation
   * fails through the typed error channel (`ProviderNotReady`/`ProviderFatal`) and when it returns a `FlagResolution`
   * carrying an error code (`FLAG_NOT_FOUND`, `TYPE_MISMATCH`, ...). An error-code resolution is abnormal execution, so
-  * it runs `error`, NOT `after` — `after` runs only for a clean resolution. A defect in a `before` hook also runs
-  * `error` (and never skips it). `finallyAfter` always runs last, on every exit.
+  * it runs `error`, NOT `after` — `after` runs only for a clean resolution. A defect in a `before` or `after` hook also
+  * runs `error` (spec §4.4.5), and the remaining hooks of that stage are skipped. `finallyAfter` always runs last, on
+  * every exit; after an `after`-hook defect it receives the default value with reason `ERROR` and code `GENERAL` (spec
+  * §4.4.8) — what the total tier serves — rather than the resolution `after` rejected.
   *
   * Provider-level hooks are not modeled here: they run inside the Java SDK evaluation call, per the OpenFeature
   * architecture (see #167). Java `dev.openfeature.sdk.Hook` instances can be registered at the Java API level via

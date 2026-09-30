@@ -142,6 +142,8 @@ FeatureFlags.booleanDetails("flag", false, context, options)
 | Invocation-level hooks | ✅ | Via `EvaluationOptions` |
 | Provider-level hooks | ✅ | Automatically included from `provider.getProviderHooks()` |
 | Execution order | ✅ | API → Client → Invocation → Provider (reversed for after/error/finally) |
+| Error in before/after runs `error` (4.4.5) | ✅ | A defect in either stage runs the `error` stage; the remaining hooks of that stage are skipped (4.4.6) |
+| Error in after returns the default (4.4.8, spec `main`) | ✅ | Total tier serves the default with `ERROR`/`GENERAL`, and `finallyAfter` receives those details; the typed tier fails with the defect, as for 1.4.10 |
 
 ### Invocation-Level Hooks Example
 

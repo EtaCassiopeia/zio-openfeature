@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A defect in an `after` hook now runs the `error` stage, and `finallyAfter` receives the default-valued details**
+  (#422; spec §4.4.5, and §4.4.8 from spec `main`). Before, the pipeline skipped `error` and handed `finallyAfter`
+  `None`, which a `before`-hook defect never did. `finallyAfter` now receives the default value with reason `ERROR`
+  and code `GENERAL`, the same details the total tier serves. Only hooks observe the change: `*OrDefault` /
+  `resolveOrDefault` still serve the default, and the typed tier still fails with the defect.
+- **Vendored upstream's new `@spec-4.4.8` gherkin scenario** into both conformance runners, ahead of the spec tag that
+  will carry it (the conformance README records the exception).
+
 ## [1.1.2] — 2026-09-27
 
 **A build-hygiene patch. Nothing changes for consumers.** Every published artifact is bytecode-identical to 1.1.1 and

@@ -19,6 +19,9 @@ object MetaRow { given Schema[MetaRow] = DeriveSchema.gen[MetaRow] }
 final case class HookRow(data_type: String, key: String, value: String)
 object HookRow { given Schema[HookRow] = DeriveSchema.gen[HookRow] }
 
+/** The defect a scenario's deliberately failing hook stage dies with, so the evaluation bridge can tell it apart. */
+final class HookStageFailure(stage: String) extends RuntimeException(s"$stage hook error")
+
 /** The OpenFeature gherkin conformance suite run via zio-bdd (experimental dog-food of zio-bdd). Mirrors the Cucumber
   * suite in `conformance/` but with native ZIO step bodies — no `Unsafe.run` bridge.
   */
@@ -140,7 +143,13 @@ object ConformanceSpec extends ZIOSteps[Any, World] {
     options: EvaluationOptions = EvaluationOptions.empty
   ): ZIO[Any, Nothing, FlagResolution[Any]] = {
     def br[A](io: IO[FeatureFlagError, FlagResolution[A]], default: A): ZIO[Any, Nothing, FlagResolution[Any]] =
-      io.catchAll(e => ZIO.succeed(bridge(w.flagKey, e, default))).map(_.asInstanceOf[FlagResolution[Any]])
+      io.catchAll(e => ZIO.succeed(bridge(w.flagKey, e, default)))
+        // A hook stage has no error channel (`UIO`), so the scenario's failing hook is a defect. Bridge only that one:
+        // any other defect is a real bug and must fail the scenario.
+        .catchSomeDefect { case t: HookStageFailure =>
+          ZIO.succeed(bridge(w.flagKey, FeatureFlagError.ProviderError(t), default))
+        }
+        .map(_.asInstanceOf[FlagResolution[Any]])
     w.flagType match {
       case "boolean" => br(ff.booleanDetails(w.flagKey, w.defaultRaw.toBoolean, w.ctx, options), w.defaultRaw.toBoolean)
       case "string"  => br(ff.stringDetails(w.flagKey, w.defaultRaw, w.ctx, options), w.defaultRaw)
@@ -267,12 +276,17 @@ object ConformanceSpec extends ZIOSteps[Any, World] {
 
   // Hooks ----------------------------------------------------------------------------------------
 
-  private def recordingHook(stages: Ref[Chunk[String]], details: Ref[Option[FlagResolution[Any]]]): OFFeatureHook =
+  private def recordingHook(
+    stages: Ref[Chunk[String]],
+    details: Ref[Option[FlagResolution[Any]]],
+    failing: Ref[Set[String]]
+  ): OFFeatureHook =
     new OFFeatureHook {
       override def before(c: HookContext, h: HookHints): UIO[Option[EvaluationContext]] =
         stages.update(_ :+ "before").as(None)
       override def after[A](c: HookContext, d: FlagResolution[A], h: HookHints): UIO[Unit] =
-        stages.update(_ :+ "after") *> details.set(Some(d.asInstanceOf[FlagResolution[Any]]))
+        stages.update(_ :+ "after") *> details.set(Some(d.asInstanceOf[FlagResolution[Any]])) *>
+          ZIO.whenZIO(failing.get.map(_.contains("after")))(ZIO.die(new HookStageFailure("after"))).unit
       override def error(c: HookContext, e: FeatureFlagError, h: HookHints): UIO[Unit] =
         stages.update(_ :+ "error").unit
       override def finallyAfter(c: HookContext, d: Option[FlagResolution[_]], h: HookHints): UIO[Unit] =
@@ -283,10 +297,21 @@ object ConformanceSpec extends ZIOSteps[Any, World] {
     for {
       stages  <- Ref.make(Chunk.empty[String])
       details <- Ref.make(Option.empty[FlagResolution[Any]])
+      failing <- Ref.make(Set.empty[String])
       w       <- ScenarioContext.get
-      _       <- w.flags.get.addHook(recordingHook(stages, details))
-      _       <- ScenarioContext.update(_.copy(hookStages = Some(stages), hookDetails = Some(details)))
+      _       <- w.flags.get.addHook(recordingHook(stages, details, failing))
+      _ <- ScenarioContext.update(
+        _.copy(hookStages = Some(stages), hookDetails = Some(details), failingHookStages = Some(failing))
+      )
     } yield ()
+  }
+
+  // The hook is registered by the step above, before this one runs, so it reads the failing stages when it executes.
+  Given("the " / string / " hook returns an error") { (stage: String) =>
+    ScenarioContext.get.flatMap(w =>
+      assertTrue(stage == "after", s"only a failing 'after' stage is supported, got '$stage'") *>
+        w.failingHookStages.get.update(_ + stage)
+    )
   }
 
   Then("the " / string / " hook should have been executed") { (stage: String) =>

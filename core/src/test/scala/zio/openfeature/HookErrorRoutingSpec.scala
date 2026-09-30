@@ -15,10 +15,11 @@ import dev.openfeature.sdk.{
   Value
 }
 
-/** Verifies the hook-stage routing required by spec §4.3.6/§4.4.6 and §4.3.8/§4.4.7:
+/** Verifies the hook-stage routing required by spec §4.3.6/§4.4.6, §4.3.8/§4.4.7 and §4.4.5/§4.4.8:
   *   - an error-code resolution (FLAG_NOT_FOUND, ...) runs the `error` stage, NOT `after`;
   *   - a clean resolution runs `after`, NOT `error`;
-  *   - a defect in a `before` hook still runs `error` and `finallyAfter` (never skipped).
+  *   - a defect in a `before` hook still runs `error` and `finallyAfter` (never skipped);
+  *   - a defect in an `after` hook runs `error`, and `finallyAfter` receives the default-valued ERROR details.
   */
 object HookErrorRoutingSpec extends ZIOSpecDefault {
 
@@ -65,6 +66,27 @@ object HookErrorRoutingSpec extends ZIOSpecDefault {
       log.update(_ :+ "error")
     override def finallyAfter(ctx: HookContext, details: Option[FlagResolution[_]], hints: HookHints): UIO[Unit] =
       log.update(_ :+ "finallyAfter")
+  }
+
+  /** after() records then dies (optionally so does error()); records every stage and what `finallyAfter` received. */
+  private def afterDiesHook(
+    log: Ref[List[String]],
+    finallyDetails: Ref[Option[Option[FlagResolution[_]]]],
+    errorAlsoDies: Boolean = false
+  ): FeatureHook = new FeatureHook {
+    override def before(ctx: HookContext, hints: HookHints): UIO[Option[EvaluationContext]] =
+      log.update(_ :+ "before").as(None)
+    override def after[A](ctx: HookContext, details: FlagResolution[A], hints: HookHints): UIO[Unit] =
+      log.update(_ :+ "after") *> ZIO.die(new RuntimeException("defect in after"))
+    override def error(ctx: HookContext, err: FeatureFlagError, hints: HookHints): UIO[Unit] =
+      log.update(_ :+ "error") *> ZIO.when(errorAlsoDies)(ZIO.die(new RuntimeException("defect in error"))).unit
+    override def finallyAfter(ctx: HookContext, details: Option[FlagResolution[_]], hints: HookHints): UIO[Unit] =
+      log.update(_ :+ "finallyAfter") *> finallyDetails.set(Some(details))
+  }
+
+  private def afterRecorder(log: Ref[List[String]], name: String): FeatureHook = new FeatureHook {
+    override def after[A](ctx: HookContext, details: FlagResolution[A], hints: HookHints): UIO[Unit] =
+      log.update(_ :+ name)
   }
 
   private def buildFF(hooks: List[FeatureHook]): ZIO[Scope, Throwable, FeatureFlags] = {
@@ -129,6 +151,126 @@ object HookErrorRoutingSpec extends ZIOSpecDefault {
           !calls.contains("after"), // a before-defect never reaches the success/after branch
           calls.contains("finallyAfter")
         )
+      }
+    },
+    test("a defect in an after hook runs `error` and `finallyAfter`, and still dies on the typed tier (spec §4.4.5)") {
+      ZIO.scoped {
+        for {
+          log    <- Ref.make[List[String]](Nil)
+          fin    <- Ref.make[Option[Option[FlagResolution[_]]]](None)
+          ff     <- buildFF(List(afterDiesHook(log, fin)))
+          result <- ff.booleanDetails("ok", default = false).sandbox.either
+          calls  <- log.get
+        } yield assertTrue(
+          result.left.exists(_.dieOption.map(_.getMessage).contains("defect in after")),
+          calls == List("before", "after", "error", "finallyAfter")
+        )
+      }
+    },
+    test("after an after-hook defect, `finallyAfter` receives the default value with ERROR/GENERAL (spec §4.4.8)") {
+      ZIO.scoped {
+        for {
+          log <- Ref.make[List[String]](Nil)
+          fin <- Ref.make[Option[Option[FlagResolution[_]]]](None)
+          ff  <- buildFF(List(afterDiesHook(log, fin)))
+          _   <- ff.booleanDetails("ok", default = false).sandbox.either
+          got <- fin.get
+        } yield assertTrue(
+          got.flatten.exists(d =>
+            d.flagKey == "ok" && d.value == false && d.variant.isEmpty && d.reason == ResolutionReason.Error &&
+              d.errorCode.contains(zio.openfeature.ErrorCode.General) && d.errorMessage.exists(
+                _.contains("defect in after")
+              )
+          )
+        )
+      }
+    },
+    test("the details `finallyAfter` receives match what the total tier serves for the same after-hook defect") {
+      ZIO.scoped {
+        for {
+          log    <- Ref.make[List[String]](Nil)
+          fin    <- Ref.make[Option[Option[FlagResolution[_]]]](None)
+          ff     <- buildFF(List(afterDiesHook(log, fin)))
+          served <- ff.resolveOrDefault[Boolean]("ok", true)
+          got    <- fin.get
+        } yield assertTrue(
+          served.value,
+          served.errorCode.contains(zio.openfeature.ErrorCode.General),
+          got.flatten.exists(d =>
+            d.value == served.value && d.variant == served.variant && d.reason == served.reason &&
+              d.errorCode == served.errorCode && d.errorMessage == served.errorMessage && d.flagKey == served.flagKey
+          )
+        )
+      }
+    },
+    test("once an after hook dies, the remaining after hooks do not run (spec §4.4.6)") {
+      ZIO.scoped {
+        for {
+          log <- Ref.make[List[String]](Nil)
+          fin <- Ref.make[Option[Option[FlagResolution[_]]]](None)
+          // `after` runs in reverse registration order, so the dying hook (registered last) runs first.
+          ff    <- buildFF(List(afterRecorder(log, "remaining-after"), afterDiesHook(log, fin)))
+          _     <- ff.booleanDetails("ok", default = false).sandbox.either
+          calls <- log.get
+        } yield assertTrue(calls.contains("after"), !calls.contains("remaining-after"), calls.contains("error"))
+      }
+    },
+    test("a defect in the error stage is combined with the after-hook defect, never replaces it") {
+      ZIO.scoped {
+        for {
+          log    <- Ref.make[List[String]](Nil)
+          fin    <- Ref.make[Option[Option[FlagResolution[_]]]](None)
+          ff     <- buildFF(List(afterDiesHook(log, fin, errorAlsoDies = true)))
+          result <- ff.booleanDetails("ok", default = false).sandbox.either
+          calls  <- log.get
+          got    <- fin.get
+        } yield assertTrue(
+          result.left.exists(_.defects.map(_.getMessage).toSet == Set("defect in after", "defect in error")),
+          calls.contains("finallyAfter"),
+          got.flatten.exists(d => d.value == false && d.reason == ResolutionReason.Error)
+        )
+      }
+    },
+    test("an interruption during after does not run `error`, but `finallyAfter` still runs") {
+      ZIO.scoped {
+        for {
+          log  <- Ref.make[List[String]](Nil)
+          fin  <- Ref.make[Option[Option[FlagResolution[_]]]](None)
+          gate <- Promise.make[Nothing, Unit]
+          blockingHook = new FeatureHook {
+            override def after[A](ctx: HookContext, details: FlagResolution[A], hints: HookHints): UIO[Unit] =
+              log.update(_ :+ "after") *> gate.await
+            override def error(ctx: HookContext, err: FeatureFlagError, hints: HookHints): UIO[Unit] =
+              log.update(_ :+ "error")
+            override def finallyAfter(ctx: HookContext, details: Option[FlagResolution[_]], hints: HookHints)
+              : UIO[Unit] =
+              log.update(_ :+ "finallyAfter") *> fin.set(Some(details))
+          }
+          ff    <- buildFF(List(blockingHook))
+          fiber <- ff.booleanDetails("ok", default = false).fork
+          _     <- log.get.repeatUntil(_.contains("after"))
+          _     <- fiber.interrupt
+          calls <- log.get
+          got   <- fin.get
+        } yield assertTrue(!calls.contains("error"), calls.contains("finallyAfter"), got.contains(None))
+      }
+    },
+    test("a defect in a before hook still hands `finallyAfter` no details (settled in #19)") {
+      ZIO.scoped {
+        for {
+          log <- Ref.make[List[String]](Nil)
+          fin <- Ref.make[Option[Option[FlagResolution[_]]]](None)
+          hook = new FeatureHook {
+            override def before(ctx: HookContext, hints: HookHints): UIO[Option[EvaluationContext]] =
+              ZIO.die(new RuntimeException("defect in before"))
+            override def finallyAfter(ctx: HookContext, details: Option[FlagResolution[_]], hints: HookHints)
+              : UIO[Unit] =
+              fin.set(Some(details))
+          }
+          ff  <- buildFF(List(hook))
+          _   <- ff.booleanDetails("ok", default = false).sandbox.either
+          got <- fin.get
+        } yield assertTrue(got.contains(None))
       }
     },
     test("an interruption during before does not run `error`, but `finallyAfter` still runs") {

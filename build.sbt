@@ -101,7 +101,7 @@ ThisBuild / scalacOptions ++= {
 ThisBuild / coverageEnabled := false
 
 // Binary-compatibility check via sbt-mima. The API is frozen as of `1.0.0`, so each module baselines against its
-// own most recent release — currently `1.1.1` (see `mimaPreviousArtifacts` in `commonSettings`):
+// own most recent release — currently `1.1.2` (see `mimaPreviousArtifacts` in `commonSettings`):
 // `sbt mimaReportBinaryIssues` catches
 // accidental breaking changes on every PR, and an intentional break is whitelisted with a `mimaBinaryIssueFilters`
 // rule scoped to the specific symbol — see https://github.com/lightbend/mima for the filter API. Bump the baseline
@@ -154,9 +154,9 @@ lazy val commonSettings = Seq(
     "dev.zio" %% "zio-test"     % zioVersion % Test,
     "dev.zio" %% "zio-test-sbt" % zioVersion % Test
   ),
-  // Baseline against each module's last release (see the ThisBuild MiMa note above). Bump `"1.0.0"` to the previous
+  // Baseline against each module's last release (see the ThisBuild MiMa note above). Bump the version to the previous
   // release version when cutting a new one, per `RELEASING.md`.
-  mimaPreviousArtifacts := Set(organization.value %% moduleName.value % "1.1.1"),
+  mimaPreviousArtifacts := Set(organization.value %% moduleName.value % "1.1.2"),
   checkPublishedPins    := checkPublishedPinsTask.value
 ) ++ crossVersionSourceDirs
 
@@ -211,6 +211,15 @@ lazy val checkPublishedPinsTask = Def.taskIf {
     log.info(s"$module: ${overrides.size} dependencyOverrides pin(s), all reach the published POM")
   }
 }
+
+// The Optimizely SDK picks a JSON parser at runtime (gson, then jackson-databind, then org.json, then json-simple) and
+// declares none of them, so a consumer that adds only `zio-openfeature-optimizely` gets no parser at all — the first
+// datafile poll then dies with an unlogged `ExceptionInInitializerError` on the SDK's poller thread (#431). The module's
+// own tests cannot see that: WireMock brings Jackson onto the Test classpath. So this reads the POM a consumer
+// resolves, the only place the gap is visible. See the `published-pom` CI job.
+val checkOptimizelyJsonParser = taskKey[Unit](
+  "Fail unless the published optimizely POM gives consumers a JSON parser the Optimizely SDK can use"
+)
 
 lazy val root = (project in file("."))
   // `conformance` is intentionally NOT aggregated: it is Scala 3 only, so aggregating it would make `++2.13.16 test`
@@ -294,7 +303,8 @@ lazy val ofrep = (project in file("ofrep"))
     // two reasons: they hold the core/databind/jsr310 trio aligned (the skew `jacksonPins` documents), and the
     // `published-pom` guard is built on them. They remain a FLOOR, not a target — see `jacksonPins`.
     // Here they are declared at compile scope because a consumer of this artifact resolves Jackson through us;
-    // `optimizely` and `conformance-zio-bdd` repeat the pin for their own test classpaths only (see there).
+    // `optimizely` ships it too, for the Optimizely SDK's JSON parser (#431); `conformance-zio-bdd` repeats the
+    // pin for its own test classpath only (see there).
     // `core`/`extras`/`testkit` carry no Jackson at all.
     libraryDependencies ++= jacksonPins,
     dependencyOverrides ++= jacksonPins
@@ -318,14 +328,41 @@ lazy val optimizely = (project in file("optimizely"))
       "com.optimizely.ab" % "core-httpclient-impl" % "4.2.2",
       "org.wiremock"      % "wiremock"             % wiremockVersion % Test
     ),
-    // WireMock pulls the Jackson 2.20.1 family (core / databind / jsr310, via its own JSON handling and
-    // `json-schema-validator`), which sits inside the still-open `[2.19.0, 2.21.4)` window of
-    // GHSA-r7wm-3cxj-wff9, GHSA-j3rv-43j4-c7qm, GHSA-rmj7-2vxq-3g9f and GHSA-hgj6-7826-r7m5. It reaches
-    // this module by `% Test` only, so unlike `ofrep` there is no consumer to protect and the pin is
-    // declared at `% Test`: `checkPublishedPins` accepts a test-scoped declaration (the POM records it
-    // without a consumer inheriting it) and refuses an overrides-only pin, which would be invisible.
-    libraryDependencies ++= jacksonPins.map(_ % Test),
-    dependencyOverrides ++= jacksonPins
+    // The Optimizely SDK needs a JSON parser it does not declare (see `checkOptimizelyJsonParser`), so this module
+    // ships jackson-databind at compile scope (#431). Jackson rather than gson because it is the family this build
+    // already pins, scans and ships through `ofrep`, so a consumer of both modules resolves one JSON stack. A
+    // consumer that also has gson gets gson (the SDK prefers it); `-Doptimizely.default_parser=` overrides either way.
+    // The pins also hold WireMock's test-only Jackson 2.20.1 (inside the `[2.19.0, 2.21.4)` window of
+    // GHSA-r7wm-3cxj-wff9 and siblings) at the patched family, the job they did alone before #431.
+    libraryDependencies ++= jacksonPins,
+    dependencyOverrides ++= jacksonPins,
+    checkOptimizelyJsonParser := {
+      val parsers = Set(
+        "com.google.code.gson"       -> "gson",
+        "com.fasterxml.jackson.core" -> "jackson-databind",
+        "org.json"                   -> "json",
+        "com.googlecode.json-simple" -> "json-simple"
+      )
+      // Same inherited-scope reading as `checkPublishedPinsTask`: a test, provided or optional declaration is in
+      // the POM but no consumer resolves it, which is exactly the pre-#431 shape. Direct dependencies only — a
+      // parser that merely arrives transitively is one upstream exclusion away from vanishing.
+      val inherited = (scala.xml.XML.loadFile(makePom.value) \ "dependencies" \ "dependency").collect {
+        case d
+            if (d \ "optional").text.trim != "true" &&
+              !Set("test", "provided").contains((d \ "scope").text.trim) =>
+          (d \ "groupId").text.trim -> (d \ "artifactId").text.trim
+      }.toSet
+      val found = parsers.intersect(inherited)
+      if (found.isEmpty)
+        sys.error(
+          s"${name.value}: the published POM gives consumers no JSON parser for the Optimizely SDK. It needs one of " +
+            parsers.map { case (g, a) => s"$g:$a" }.toSeq.sorted.mkString(", ") +
+            " at compile or runtime scope; without it the first datafile poll dies silently (#431)."
+        )
+      streams.value.log.info(
+        s"${name.value}: consumers resolve a JSON parser via ${found.map { case (g, a) => s"$g:$a" }.mkString(", ")}"
+      )
+    }
   )
 
 // Testkit module - testing utilities

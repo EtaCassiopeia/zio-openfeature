@@ -2,6 +2,7 @@ package zio.openfeature.optimizely
 
 import com.optimizely.ab.Optimizely
 import com.optimizely.ab.config.HttpProjectConfigManager
+import com.optimizely.ab.config.parser.{ConfigParser, DefaultConfigParser}
 import zio._
 import zio.openfeature.FeatureFlagError
 import java.util.concurrent.TimeUnit
@@ -47,8 +48,9 @@ import java.util.concurrent.TimeUnit
   *   - Construction itself (this object's `make`) does NOT make network calls — it only validates inputs and builds the
   *     Optimizely client object. The actual HTTP fetch happens inside `initialize()`.
   *
-  * Construction validates the SDK key (and URL, where applicable) before touching the Optimizely SDK; failures surface
-  * as `FeatureFlagError.InvalidConfiguration` at layer build time, not at first evaluation.
+  * Construction validates the SDK key (and URL, where applicable) before touching the Optimizely SDK, and checks that
+  * the SDK can find a JSON parser to read datafiles with; failures surface as `FeatureFlagError.InvalidConfiguration`
+  * at layer build time, not at first evaluation.
   */
 /** Configuration for a factory-built Optimizely provider.
   *
@@ -129,6 +131,14 @@ object OptimizelyProvider {
     config: OptimizelyProviderConfig,
     httpClient: Option[com.optimizely.ab.OptimizelyHttpClient]
   ): IO[FeatureFlagError.InvalidConfiguration, OptimizelyFeatureProvider] =
+    makeWithParserProbe(config, httpClient, DefaultConfigParser.getInstance())
+
+  /** Test seam: [[make]] with the JSON-parser lookup injected, so a missing parser can be simulated (#431). */
+  private[optimizely] def makeWithParserProbe(
+    config: OptimizelyProviderConfig,
+    httpClient: Option[com.optimizely.ab.OptimizelyHttpClient],
+    parserProbe: => ConfigParser
+  ): IO[FeatureFlagError.InvalidConfiguration, OptimizelyFeatureProvider] =
     for {
       validKey <- validateSdkKey(config.sdkKey)
       validUrl <- config.datafileUrl match {
@@ -138,6 +148,7 @@ object OptimizelyProvider {
       _ <- validatePositive("pollingInterval", config.pollingInterval)
       _ <- validatePositive("blockingTimeout", config.blockingTimeout)
       _ <- validatePositive("staleAfter", config.staleAfter)
+      _ <- requireJsonParser(parserProbe)
       // The watchdog observes datafile fetches, so it only makes sense when datafile polling is enabled. When it is,
       // the fetch-success signal is shared between the observing HTTP client (below) and the provider's watchdog.
       staleness = stalenessConfig(config)
@@ -172,6 +183,28 @@ object OptimizelyProvider {
         java.time.Duration.ofMillis(checkMs)
       )
     }
+
+  /** Fail construction when the Optimizely SDK has no JSON parser to read a datafile with (#431).
+    *
+    * The SDK resolves its parser once, in a lazy holder's static initialiser, so a missing parser surfaces as a
+    * `LinkageError` — `ExceptionInInitializerError` on the first lookup, `NoClassDefFoundError` after — rather than an
+    * `Exception`. Left to the SDK's poller thread, that error escapes its `catch (Exception)`, kills the scheduled poll
+    * unlogged, and `initialize()` later times out blaming the SDK key or network. Probing here, before any poller
+    * thread exists, reports the real cause. `ZIO.attempt` catches `LinkageError`; `NonFatal` would not.
+    */
+  private[optimizely] def requireJsonParser(probe: => ConfigParser): IO[FeatureFlagError.InvalidConfiguration, Unit] =
+    ZIO
+      .attempt(probe)
+      .unit
+      .mapError(t =>
+        FeatureFlagError.InvalidConfiguration(
+          "Optimizely SDK could not initialise a JSON parser (it needs gson, jackson-databind, org.json or " +
+            "json-simple on the classpath). zio-openfeature-optimizely depends on jackson-databind, so check for a " +
+            "dependency exclusion or a Jackson version the SDK cannot link against. " +
+            // The holder's ExceptionInInitializerError carries no message of its own; the cause says what failed.
+            s"Cause: ${Option(t.getCause).getOrElse(t)}"
+        )
+      )
 
   /** [[make]] with scope-managed shutdown: when the surrounding `Scope` closes, the provider is shut down (bounded),
     * stopping datafile polling and closing the SDK's HTTP client — even if the provider was never registered with a

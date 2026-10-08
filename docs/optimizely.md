@@ -47,6 +47,12 @@ The SDK key is a short alphanumeric token like `abcd1234efgh5678`. The library's
 libraryDependencies += "io.github.etacassiopeia" %% "zio-openfeature-optimizely" % "<version>"
 ```
 
+The Optimizely SDK needs a JSON parser to read datafiles but does not declare one, so this module brings
+`jackson-databind` (the same pinned 2.22.x family as `zio-openfeature-ofrep`). gson, org.json and json-simple work
+too: the SDK prefers gson when it is on the classpath, and `-Doptimizely.default_parser=` selects one explicitly. If
+you exclude Jackson without adding another parser, `OptimizelyProvider.make` fails with `InvalidConfiguration` saying
+no JSON parser was found.
+
 ```scala
 import zio.*
 import zio.openfeature.*

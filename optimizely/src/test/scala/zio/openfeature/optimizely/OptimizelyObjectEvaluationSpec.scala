@@ -67,8 +67,9 @@ object OptimizelyObjectEvaluationSpec extends ZIOSpecDefault {
     provider
   }
 
-  // Optimizely parses JSON numbers into either Integer or Double depending on the JSON library on the classpath, so
-  // accept both representations of `10`.
+  // Optimizely parses JSON numbers into either Integer or Double depending on which parser it picks: Jackson here
+  // (the module ships it, #431), but a consumer with gson on the classpath gets gson. Accept both representations
+  // of `10`.
   private def numericEquals(v: Value, expected: Int): Boolean =
     Option(v.asInteger).exists(_.intValue == expected) ||
       Option(v.asDouble).exists(_.doubleValue == expected.toDouble)

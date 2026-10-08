@@ -1,5 +1,6 @@
 package zio.openfeature.optimizely
 
+import com.optimizely.ab.config.parser.{DefaultConfigParser, JacksonConfigParser, MissingJsonParserException}
 import zio._
 import zio.openfeature.FeatureFlagError
 import zio.test._
@@ -31,7 +32,7 @@ object OptimizelyProviderSpec extends ZIOSpecDefault {
       .unit
       .catchAll(e => ZIO.fail(e))
 
-  def spec = suite("OptimizelyProvider.make — input validation")(
+  def spec: Spec[TestEnvironment & Scope, Any] = suite("OptimizelyProvider.make — input validation")(
     suite("sdkKey")(
       test("rejects null") {
         expectInvalid(OptimizelyProvider.make(null: String), "null")
@@ -87,6 +88,67 @@ object OptimizelyProviderSpec extends ZIOSpecDefault {
           result.isLeft,
           result.left.exists(_.message.toLowerCase.contains("sdkkey"))
         )
+      }
+    ),
+    // #431: core-api picks a JSON parser at runtime and declares none. Without one, `DefaultConfigParser`'s lazy
+    // holder fails to initialise, which surfaces as a LinkageError — not an Exception — on first and later calls.
+    suite("JSON parser probe (#431)")(
+      test("maps ExceptionInInitializerError (first failed lookup) to InvalidConfiguration with the root cause") {
+        for {
+          result <- OptimizelyProvider
+            .requireJsonParser(
+              throw new ExceptionInInitializerError(new MissingJsonParserException("unable to locate a JSON parser"))
+            )
+            .either
+        } yield assertTrue(
+          result.left.exists(_.message.contains("could not initialise a JSON parser")),
+          result.left.exists(_.message.contains("jackson-databind")),
+          result.left.exists(_.message.contains("MissingJsonParserException: unable to locate a JSON parser"))
+        )
+      },
+      test("maps NoClassDefFoundError (every later lookup) to InvalidConfiguration") {
+        for {
+          result <- OptimizelyProvider
+            .requireJsonParser(throw new NoClassDefFoundError("DefaultConfigParser$LazyHolder"))
+            .either
+        } yield assertTrue(
+          result.left.exists(_.message.contains("could not initialise a JSON parser")),
+          result.left.exists(_.message.contains("java.lang.NoClassDefFoundError: DefaultConfigParser$LazyHolder"))
+        )
+      },
+      test("succeeds when a parser is available") {
+        for {
+          result <- OptimizelyProvider.requireJsonParser(new JacksonConfigParser()).either
+        } yield assertTrue(result == Right(()))
+      },
+      // Not the #431 gate — WireMock puts Jackson on the Test classpath either way; `checkOptimizelyJsonParser`
+      // owns what consumers resolve. This pins which parser these specs run against.
+      test("the Test classpath's parser is Jackson") {
+        // Hoisted: Scala 2.13's assertTrue macro cannot type a Java static call inline.
+        val parser = DefaultConfigParser.getInstance()
+        assertTrue(parser.isInstanceOf[JacksonConfigParser])
+      },
+      test("make fails with the parser error when the probe fails") {
+        for {
+          result <- OptimizelyProvider
+            .makeWithParserProbe(
+              OptimizelyProviderConfig("valid-sdk-key-123"),
+              Some(TestHttpClient.failFast()),
+              throw new NoClassDefFoundError("DefaultConfigParser$LazyHolder")
+            )
+            .either
+        } yield assertTrue(result.left.exists(_.message.contains("could not initialise a JSON parser")))
+      },
+      test("make validates its inputs before probing for a parser") {
+        for {
+          result <- OptimizelyProvider
+            .makeWithParserProbe(
+              OptimizelyProviderConfig(""),
+              Some(TestHttpClient.failFast()),
+              throw new NoClassDefFoundError("DefaultConfigParser$LazyHolder")
+            )
+            .either
+        } yield assertTrue(result.left.exists(_.message.toLowerCase.contains("sdkkey")))
       }
     )
   )

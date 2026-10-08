@@ -155,6 +155,25 @@ jobs:
             exit 1
           fi
           echo "Guard accepted the test-scope pin, as it must"
+      # The Optimizely SDK declares no JSON parser, and WireMock hides that from every test by putting Jackson on the
+      # Test classpath — so the published POM is the only place a consumer's missing parser is visible (#431).
+      - name: The optimizely POM gives consumers a JSON parser
+        run: sbt +optimizely/checkOptimizelyJsonParser
+      # Recreate the pre-#431 shape (Jackson declared, but only at test scope) and require the check to reject it on
+      # its own diagnosis, not on an sbt that failed to load.
+      - name: Guard self-test — a test-scoped parser must be rejected
+        run: |
+          if sbt 'set optimizely / libraryDependencies ~= (_.map(m => if (m.organization == "com.fasterxml.jackson.core") m.withConfigurations(Some("test")) else m))' optimizely/checkOptimizelyJsonParser > /tmp/parser.log 2>&1; then
+            echo "::error::checkOptimizelyJsonParser passed with Jackson at test scope only"
+            tail -30 /tmp/parser.log
+            exit 1
+          fi
+          grep -q 'gives consumers no JSON parser' /tmp/parser.log || {
+            echo "::error::checkOptimizelyJsonParser failed, but not with the missing-parser diagnosis"
+            tail -30 /tmp/parser.log
+            exit 1
+          }
+          echo "Guard rejected the test-scoped parser, as it must"
 
   # Examples are not published artifacts but must compile so the README snippets and `examples/` reference code stay
   # honest. The testkit example additionally runs its spec (UserServiceSpec) — the canonical demonstration of the

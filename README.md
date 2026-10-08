@@ -46,6 +46,7 @@ libraryDependencies += "io.github.etacassiopeia" %% "zio-openfeature-extras" % "
 libraryDependencies += "io.github.etacassiopeia" %% "zio-openfeature-ofrep" % "<version>"
 
 // Optimizely Feature Experimentation — direct integration on top of the Optimizely Java SDK
+// (brings jackson-databind, the JSON parser the SDK needs but does not declare)
 libraryDependencies += "io.github.etacassiopeia" %% "zio-openfeature-optimizely" % "<version>"
 
 // For testing

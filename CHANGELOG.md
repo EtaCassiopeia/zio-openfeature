@@ -29,6 +29,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`zio-openfeature-optimizely` now depends on `jackson-databind` at compile scope** (#431). The Optimizely SDK
+  needs a JSON parser and declares none, and this module shipped Jackson only to its own tests, so a consumer that
+  added just this module had no parser. The SDK's first datafile fetch then died on its poller thread with an
+  unlogged `ExceptionInInitializerError` (the SDK catches `Exception`, not `Error`), polling stopped, and
+  `initialize()` timed out blaming the SDK key or network. `OptimizelyProvider.make` now also fails with
+  `InvalidConfiguration` naming the missing parser if one is excluded, and CI checks the published POM for a parser.
 - **`CachingProvider` evaluates a cache miss on the calling thread**, and **`CircuitBreakerProvider` does too when
   `evaluationTimeout = Duration.Infinity`** (#427). Members of a wrapped `MultiProvider` chain now see the caller's
   client metadata and hook hints in their provider hooks, which the SDK passes through a thread-local. A finite

@@ -17,7 +17,7 @@ val wiremockVersion = "3.13.2"
 // Jackson reaches us only through the OFREP contrib provider; see `jacksonPins` above the `ofrep` module.
 // `jackson-annotations` is versioned WITHOUT a patch component from 2.20 onwards (jackson-bom 2.22.2 pins it
 // to `2.22`), so it cannot share `jacksonVersion` — `2.22.2` does not exist for that artifact.
-val jacksonVersion            = "2.22.2"
+val jacksonVersion            = "2.22.3"
 val jacksonAnnotationsVersion = "2.22"
 
 // OpenFeature Specification Compatibility

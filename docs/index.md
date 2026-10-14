@@ -85,6 +85,7 @@ reference pages — read them when you reach the problem they solve.
 | [Testkit]({{ site.baseurl }}/testkit) | Testing utilities |
 | [Testing Real Providers]({{ site.baseurl }}/testing-real-providers) | Fault-testing a real provider over TLS-MITM |
 | [Spec Compliance]({{ site.baseurl }}/spec-compliance) | OpenFeature specification compliance |
+| [Formal Methods]({{ site.baseurl }}/formal-methods) | Machine-checked specs for concurrency-sensitive subsystems |
 
 ## Added in 1.1.0
 

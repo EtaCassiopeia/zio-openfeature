@@ -96,7 +96,9 @@ final case class CircuitBreakerProviderConfig(
   * '''Error classification''': Only infrastructure errors (timeouts, connection failures, `GeneralError`,
   * `ProviderNotReadyError`, `FatalError`) count toward the failure threshold. Application-level errors
   * (`FlagNotFoundError`, `TypeMismatchError`, `ParseError`, `TargetingKeyMissingError`, `InvalidContextError`) indicate
-  * the provider is reachable — they reset the failure counter and pass through without tripping the circuit.
+  * the provider is reachable — they reset the failure counter and pass through without tripping the circuit. A delegate
+  * that returns an evaluation carrying an error code, instead of throwing, is classified by that code in the same way,
+  * and the evaluation is returned unchanged.
   */
 final class CircuitBreakerProvider private (
   val underlying: FeatureProvider,
@@ -269,7 +271,14 @@ final class CircuitBreakerProvider private (
       val result = Unsafe.unsafe { implicit u =>
         runtime.unsafe.run(guarded).getOrThrowFiberFailure()
       }
-      if (breaker.recordSuccess()) safeEmitReady()
+      // A provider may report failure by returning an error code instead of throwing (the contrib OFREP resolver does
+      // for network errors), so a returned evaluation is classified exactly like a thrown error (#446). It is passed
+      // back unchanged either way.
+      classify(result.getErrorCode) match {
+        case Outcome.Success   => if (breaker.recordSuccess()) safeEmitReady()
+        case Outcome.Reachable => breaker.recordReachable()
+        case Outcome.Failure   => if (breaker.recordFailure()) safeEmitStale("Circuit breaker opened")
+      }
       result
     } catch {
       case e: Throwable if isApplicationError(e) =>
@@ -303,11 +312,24 @@ final class CircuitBreakerProvider private (
     dev.openfeature.sdk.ErrorCode.INVALID_CONTEXT
   )
 
+  sealed private trait Outcome
+  private object Outcome {
+    case object Success   extends Outcome
+    case object Reachable extends Outcome
+    case object Failure   extends Outcome
+  }
+
+  // One table for returned and thrown errors. Fails closed: any code that is not a known application error counts as
+  // an infrastructure failure.
+  private def classify(code: dev.openfeature.sdk.ErrorCode): Outcome =
+    if (code == null) Outcome.Success
+    else if (applicationErrorCodes.contains(code)) Outcome.Reachable
+    else Outcome.Failure
+
   private def isApplicationError(e: Throwable): Boolean =
     FiberFailures.unwrap(e) match {
-      case ofe: dev.openfeature.sdk.exceptions.OpenFeatureError =>
-        applicationErrorCodes.contains(ofe.getErrorCode)
-      case _ => false
+      case ofe: dev.openfeature.sdk.exceptions.OpenFeatureError => classify(ofe.getErrorCode) == Outcome.Reachable
+      case _                                                    => false
     }
 
   // --- Delegate state integration ---

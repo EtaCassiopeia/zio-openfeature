@@ -38,7 +38,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`DeferredProvider` forwards `track` and refuses to start after `shutdown`** (#448). `track` fell through to the
   SDK's no-op default, so tracking events never reached the wrapped provider; and `initialize` on a shut-down instance
   returned normally, so the SDK reported it ready while it answered `PROVIDER_NOT_READY` forever. It now throws
-  `FatalError`. The wrapper-completeness test could not see the missing `track`, because Scala emits a synthetic
+  `FatalError`, as it does after a failed start or when `shutdown` overtakes the construction. The wrapper-completeness test could not see the missing `track`, because Scala emits a synthetic
   forwarder for every inherited Java default method; it now ignores those.
 - **Hooks inside `FeatureHook.compose` no longer share `HookData` across evaluations** (#438, spec 4.3.2). A
   composite kept one `HookData` per inner hook for its whole lifetime, so a composite registered once (for example

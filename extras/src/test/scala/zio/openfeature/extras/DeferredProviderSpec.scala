@@ -53,6 +53,20 @@ object DeferredProviderSpec extends ZIOSpecDefault {
       val thrown = scala.util.Try(dp.initialize(ctx)).failed.toOption
       assertTrue(thrown.exists(_.isInstanceOf[dev.openfeature.sdk.exceptions.FatalError]))
     },
+    test("initialize after a failed start fails with FatalError (#448)") {
+      val attempts = new AtomicInteger(0)
+      val dp = DeferredProvider("d") { () =>
+        attempts.incrementAndGet()
+        throw new RuntimeException("construction boom")
+      }
+      val first  = scala.util.Try(dp.initialize(ctx)).failed.toOption
+      val second = scala.util.Try(dp.initialize(ctx)).failed.toOption
+      assertTrue(
+        first.exists(_.getMessage == "construction boom"),
+        second.exists(_.isInstanceOf[dev.openfeature.sdk.exceptions.FatalError]),
+        attempts.get() == 1
+      )
+    },
     test("a second initialize while active is still a no-op") {
       val inits = new AtomicInteger(0)
       val dp    = DeferredProvider("d") { () => inits.incrementAndGet(); new RecordingProvider(true) }
@@ -92,10 +106,15 @@ object DeferredProviderSpec extends ZIOSpecDefault {
         _     <- ZIO.attemptBlocking(constructing.await())
         _     <- ZIO.succeed(dp.shutdown())
         _     <- ZIO.succeed(release.countDown())
-        _     <- fiber.join
+        init  <- fiber.join.either
         sd    <- ZIO.succeed(delegate.shutdownCount)
         st    <- ZIO.succeed(dp.getState)
-      } yield assertTrue(sd == 1, st == ProviderState.NOT_READY)
+      } yield assertTrue(
+        sd == 1,
+        st == ProviderState.NOT_READY,
+        // The overtaken initialize must not report success, or the SDK would mark the provider ready (#448).
+        init.left.toOption.exists(_.isInstanceOf[dev.openfeature.sdk.exceptions.FatalError])
+      )
     } @@ TestAspect.withLiveClock,
     // AC5: delegate.initialize throwing shuts the delegate down once and does not wedge in Constructing
     test("delegate.initialize throwing shuts the delegate down and reports not-ready") {

@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   build. Locally, `core/stryker`; see the development guide.
 - **Concurrency property tests** (#465) for hook-data isolation (#438), circuit-breaker epochs (#447) and cache
   invalidation (#449), plus a generated swap/evaluate schedule in the hot-swap stress spec. Test-only.
+- Hostile-input property sweeps (Long beyond 2^53, NaN/Infinity/-0.0, emoji and control-character keys, nulls, deep and large structures) through value/context conversion, tracking conversion, OFREP response decoding and the Optimizely context transformer (#469).
 
 ### Changed
 
@@ -107,6 +108,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and lossless: an absent variable still serves the default (`DEFAULT`), a present one of another type fails on the
   typed tier with `TypeMismatch` (the total tier still serves the default), and integers widen exactly to `long` and
   `double`.
+- **A `-0.0` context attribute keeps its sign** (#469). Converting a context back from the OpenFeature SDK treated
+  `-0.0` as the whole number `0` and returned `IntValue(0)`. Found by the new hostile-input sweeps.
 - **`CachingProvider` and `CircuitBreakerProvider` release their event plumbing properly** (#450). Their `shutdown`
   never called `EventProvider.shutdown`, so each wrapper's event emitter kept running and could still dispatch
   afterwards. And a wrapper whose attach to the delegate failed (the delegate already belonged to another wrapper)

@@ -88,10 +88,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `OptimizelyProvider.DefaultInitWait` drops from 30 s to 25 s so it fires before the 30 s `initTimeout`. The redundant
   `start()` that logged a WARN on every init is gone, and the docs no longer claim construction makes no network
   calls: the SDK starts fetching the datafile then.
-- **Teardown no longer strands waiters** (#435). Closing the layer's scope now shuts the event hub, so `events`
-  consumers and event-handler fibers end with it instead of waiting forever; `awaitReady()` returns at once on an
-  instance that is shutting down or shut down; and an interrupted `shutdown` still runs to the terminal `NotReady`
-  instead of leaving `ShuttingDown` and a half torn-down API.
 - **`CachingProvider` and `CircuitBreakerProvider` release their event plumbing properly** (#450). Their `shutdown`
   never called `EventProvider.shutdown`, so each wrapper's event emitter kept running and could still dispatch
   afterwards. And a wrapper whose attach to the delegate failed (the delegate already belonged to another wrapper)
@@ -115,6 +111,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   An exception with a `getStatusCode`/`statusCode` accessor is now classified by its status (401/403 → `Unauthorized`,
   anything else → `ProviderError`). `Unauthorized` produced by `classify` now keeps the original exception as its
   `cause` (new `FeatureFlagError.unauthorized(reason, cause)`; `Unauthorized(reason)` patterns are unchanged).
+- **Teardown no longer strands waiters** (#435). Closing the layer's scope now shuts the event hub, so `events`
+  consumers and event-handler fibers end with it instead of waiting forever; `awaitReady()` returns at once on an
+  instance that is shutting down or shut down; and an interrupted `shutdown` still runs to the terminal `NotReady`
+  instead of leaving `ShuttingDown` and a half torn-down API.
 ||||||| a0a5a5b
 - **Tracking attributes are sent by type, and an unsupported one fails `track`** (#441). An `AttributeValue` attribute
   (and any type the converter did not know, including one nested in a `List`/`Map`) was sent as its `toString`, so

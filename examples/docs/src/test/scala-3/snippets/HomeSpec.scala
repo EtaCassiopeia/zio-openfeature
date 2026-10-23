@@ -16,6 +16,6 @@ object HomeSpec extends ZIOSpecDefault:
       yield assertTrue(result == "checkout=new limit=20 banner=spring-sale")
     }.provide(TestFeatureProvider.scopedLayer(Map.empty[String, Any])),
     test("quick start runs") {
-      Home.MyApp.program.as(assertCompletes).provide(TestFeatureProvider.scopedLayer(Map("my-feature" -> true)))
+      Home.inTests.as(assertCompletes)
     }
   )

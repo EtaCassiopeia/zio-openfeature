@@ -141,11 +141,11 @@ object OFREPProvider {
         .mapError(t => FeatureFlagError.InvalidConfiguration(s"OFREP provider construction failed: ${t.getMessage}"))
     }
 
-  /** Upper bound on provider teardown. `OfrepProvider.shutdown()` terminates the options executor and closes the
-    * HttpClient; the bound exists so a pathological close cannot hang scope teardown. When the executor is the daemon
-    * pool this wrapper installs, the JVM can exit regardless — but a caller-supplied non-daemon executor (via
-    * [[make(options:dev\.openfeature\.contrib\.providers\.ofrep\.OfrepProviderOptions)*]]) is only released by this
-    * shutdown, so the finalizer matters.
+  /** Upper bound on provider teardown. `OfrepProvider.shutdown()` terminates the options executor (contrib 0.0.2 does
+    * not close its `HttpClient`); the bound exists so a pathological close cannot hang scope teardown. When the
+    * executor is the daemon pool this wrapper installs, the JVM can exit regardless — but a caller-supplied non-daemon
+    * executor (via [[make(options:dev\.openfeature\.contrib\.providers\.ofrep\.OfrepProviderOptions)*]]) is only
+    * released by this shutdown, so the finalizer matters.
     */
   private val ShutdownTimeout: zio.Duration = 5.seconds
 

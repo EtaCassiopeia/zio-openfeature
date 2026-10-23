@@ -2,6 +2,7 @@ package snippets
 
 import zio.*
 import zio.openfeature.*
+import zio.openfeature.extras.EnvVarProvider
 import zio.openfeature.testkit.*
 
 /** The code shown on the documentation site. It is compiled with the build so that the docs cannot drift from the API.
@@ -27,12 +28,19 @@ object Home:
   // --8<-- [start:quick-start]
   object MyApp extends ZIOAppDefault:
 
-    val program: ZIO[FeatureFlags, FeatureFlagError, Unit] =
+    val program: ZIO[FeatureFlags, Nothing, Unit] =
       for
-        enabled <- FeatureFlags.boolean("my-feature", default = false)
+        // never fails: serves false if the flag is missing or the provider is down
+        enabled <- FeatureFlags.booleanOrDefault("my-feature", default = false)
         _       <- ZIO.when(enabled)(ZIO.logInfo("my-feature is on"))
       yield ()
 
-    // An in-memory provider; swap in any OpenFeature provider for production
-    def run = program.provide(TestFeatureProvider.scopedLayer(Map("my-feature" -> true)))
+    // Flags from environment variables (FF_MY_FEATURE=true); swap in any OpenFeature provider
+    def run = program.provide(Scope.default >>> FeatureFlags.fromProvider(EnvVarProvider()))
   // --8<-- [end:quick-start]
+
+  // --8<-- [start:quick-start-test]
+  // In tests, the in-memory provider from the testkit
+  val inTests: ZIO[Any, Throwable, Unit] =
+    MyApp.program.provide(TestFeatureProvider.scopedLayer(Map("my-feature" -> true)))
+  // --8<-- [end:quick-start-test]

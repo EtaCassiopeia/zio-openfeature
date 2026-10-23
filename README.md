@@ -23,6 +23,7 @@ errors, layered targeting context, ZIO hooks, transactions and provider events a
 ```scala
 libraryDependencies ++= Seq(
   "io.github.etacassiopeia" %% "zio-openfeature-core"    % "<version>",
+  "io.github.etacassiopeia" %% "zio-openfeature-extras"  % "<version>", // EnvVarProvider, below
   "io.github.etacassiopeia" %% "zio-openfeature-testkit" % "<version>" % Test
 )
 ```
@@ -30,18 +31,23 @@ libraryDependencies ++= Seq(
 ```scala
 object MyApp extends ZIOAppDefault:
 
-  val program: ZIO[FeatureFlags, FeatureFlagError, Unit] =
+  val program: ZIO[FeatureFlags, Nothing, Unit] =
     for
-      enabled <- FeatureFlags.boolean("my-feature", default = false)
+      // never fails: serves false if the flag is missing or the provider is down
+      enabled <- FeatureFlags.booleanOrDefault("my-feature", default = false)
       _       <- ZIO.when(enabled)(ZIO.logInfo("my-feature is on"))
     yield ()
 
-  // An in-memory provider; swap in any OpenFeature provider for production
-  def run = program.provide(TestFeatureProvider.scopedLayer(Map("my-feature" -> true)))
+  // Flags from environment variables (FF_MY_FEATURE=true); swap in any OpenFeature provider
+  def run = program.provide(Scope.default >>> FeatureFlags.fromProvider(EnvVarProvider()))
+
+// In tests, the in-memory provider from the testkit
+MyApp.program.provide(TestFeatureProvider.scopedLayer(Map("my-feature" -> true)))
 ```
 
-`boolean` fails with a `FeatureFlagError` when the flag cannot be read; `booleanOrDefault` never fails and serves the
-default instead. Declare a flag once with `FlagDef` and read enums and case classes with `derives FlagType`.
+`booleanOrDefault` never fails and serves the default instead; `boolean` fails with a `FeatureFlagError` when the flag
+cannot be read, for gates that must fail closed. Declare a flag once with `FlagDef` and read enums and case classes
+with `derives FlagType`.
 
 | Module | What it holds |
 |---|---|

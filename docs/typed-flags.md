@@ -62,6 +62,12 @@ A `FlagDef[A]` needs a `FlagType[A]`, the codec between `A` and what the provide
 `Boolean`, `String`, `Int`, `Long`, `Float`, `Double`, `Map[String, Any]` (an object flag), and `Option` and `List` of
 any type that has one.
 
+!!! note "`Option` and `List` read an object"
+    `Option[A]` and `List[A]` are fetched with the provider's object resolver, even when `A` is a scalar, so a flag
+    stored as a plain boolean or string may come back `TYPE_MISMATCH`. To read an optional scalar, read the scalar
+    itself with the [total tier](evaluating.md#two-tiers). Routing them through the inner type's resolver is tracked in
+    [#439](https://github.com/EtaCassiopeia/zio-openfeature/issues/439).
+
 ### Derive it (Scala 3)
 
 ```scala

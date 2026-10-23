@@ -50,6 +50,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   half-open circuit. Returned codes are now classified like thrown errors: `GENERAL`, `PROVIDER_NOT_READY` and
   `PROVIDER_FATAL` count as failures, application codes only prove the provider is reachable. The evaluation itself is
   still returned unchanged.
+- **`DeferredProvider` forwards `track` and refuses to start after `shutdown`** (#448). `track` fell through to the
+  SDK's no-op default, so tracking events never reached the wrapped provider; and `initialize` on a shut-down instance
+  returned normally, so the SDK reported it ready while it answered `PROVIDER_NOT_READY` forever. It now throws
+  `FatalError`, as it does after a failed start or when `shutdown` overtakes the construction. The wrapper-completeness test could not see the missing `track`, because Scala emits a synthetic
+  forwarder for every inherited Java default method; it now ignores those.
+||||||| 14311fc
+- **`CachingProvider` no longer re-caches a stale value after invalidation** (#449). zio-cache stores a finished lookup
+  unconditionally, so an evaluation already in flight when `invalidateAll` ran — or when the delegate reported a
+  configuration change — wrote the pre-change value back, and it was served as `CACHED` for the rest of the TTL.
+  Cache keys now carry an invalidation epoch, so such a late write lands under a key no later evaluation reads.
+||||||| 0bde390
 - **Hooks inside `FeatureHook.compose` no longer share `HookData` across evaluations** (#438, spec 4.3.2). A
   composite kept one `HookData` per inner hook for its whole lifetime, so a composite registered once (for example
   `addHook(compose(List(logging, metrics)))`) let concurrent evaluations overwrite each other's data, which made the

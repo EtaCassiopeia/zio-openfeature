@@ -193,6 +193,10 @@ jobs:
         uses: sbt/setup-sbt@v1
       - name: Compile and test examples
         run: sbt "examplesOfrepInitTimeout/compile" "examplesTestkitApp/test" "examplesDocs/test"
+      # Compile only, never run: the provider fault tests are a local-only check (#470). Their tests need JDK 22+ and
+      # rift's native engine, and no CI job runs them or holds a secret for them.
+      - name: Compile the provider fault tests
+        run: sbt "providerFaultTests/Test/compile"
 
   # Conformance runs the vendored OpenFeature gherkin suite via Cucumber. It is Scala 3 only and not aggregated by
   # root (so `++2.13.18 test` doesn't try to compile it), hence its own job on the primary JDK / default Scala.

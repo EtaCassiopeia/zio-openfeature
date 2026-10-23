@@ -15,9 +15,9 @@ These are integration tests. They start a native engine, change JVM-wide proxy a
 JDK. Keep them in a separate test module that you run locally, not in the default CI build. No published module of
 this library depends on rift.
 
-!!! note
-    The rift code on this page uses rift-scala's API, which this repository does not build against, so it is not
-    compiled with the docs. The `FeatureFlags` code is.
+This repository does exactly that: its `provider-fault-tests` module runs the real OFREP and Optimizely providers
+through the proxy, and the code on this page is that module's code, compiled with the docs. CI compiles the module and
+never runs it; see [Development](development.md#provider-fault-tests).
 
 ## Setup
 
@@ -38,8 +38,8 @@ The embedded engine also needs rift's platform natives on the test classpath and
 | 22 or later | `rift-java-embedded`, and `--enable-native-access=ALL-UNNAMED` |
 | 21 | `rift-java-embedded-jdk21`, and `--enable-preview --enable-native-access=ALL-UNNAMED` (with sbt-rift: `riftTlsEnablePreview := true`) |
 
-This repository's `conformance-zio-bdd` module runs this setup on JDK 25: see its settings in `build.sbt`.
-Where the engine cannot load, `rift.zio.Rift.isEmbeddedAvailable` is `false`.
+This repository's `provider-fault-tests` module uses the JDK 22 setup: see its settings in `build.sbt`. Where the
+engine cannot load, `rift.zio.Rift.isEmbeddedAvailable` is `false`.
 
 ## Pointing the provider at the proxy
 
@@ -60,7 +60,11 @@ lazy val providerFaultTests = (project in file("provider-fault-tests")).enablePl
 ```
 
 `intercept.caFromBuildProps()` then loads that CA, so the proxy signs its certificates with a CA the JVM trusts. It
-fails if the plugin is not enabled.
+fails if the plugin is not enabled. The plugin is opt-in (`noTrigger`) and its settings are per project, so enabling it
+on the fault-test module changes no other module's test JVM.
+
+Give the provider a host with a real-looking top-level domain, such as `example.com`. The OFREP provider validates its
+base URL and rejects `.test`.
 
 ## The `FeatureFlags` side
 
@@ -79,7 +83,7 @@ fault would still pass.
 | Scenario | Rule | Expect |
 |:---------|:-----|:-------|
 | healthy | serve a valid payload | the provider becomes ready; its values are served |
-| slow endpoint | redirect to an imposter that waits ~30 s | start-up does not wait; the fallback's value is served at once |
+| slow endpoint | redirect to an imposter that waits ~30 s | a provider that fetches at start-up (Optimizely): start-up does not wait, the fallback's value is served at once. A provider that fetches per evaluation (OFREP): the evaluation timeout ends the call with a typed `ProviderError(TimeoutException)`, in bounded time |
 | rejected credentials | serve a `401` | never ready; the fallback answers; no evaluation fails |
 | connection reset | redirect to an imposter with a TCP fault | the same |
 | malformed payload | serve a non-JSON body marked `application/json` | the same |
@@ -100,55 +104,21 @@ So waits and faults always go through an imposter.
 The rift side of the fixture keeps the engine in the environment, so tests can create imposters:
 
 ```scala
-import rift.bridge.InterceptConfig
-import rift.zio.{InterceptHandle, Rift}
-import rift.zio.testkit.intercept as riftIntercept
+--8<-- "RiftFixture.scala:fixture-imports"
 
-val riftFixture: ZLayer[Any, rift.RiftError, Rift & InterceptHandle] =
-  ZLayer.scopedEnvironment {
-    for
-      engine <- Rift.embedded.build.map(_.get[Rift])
-      ca     <- riftIntercept.caFromBuildProps()
-      handle <- engine.intercept(InterceptConfig(ca = Some(ca)))
-      _      <- riftIntercept.systemProxyProps(handle)
-    yield ZEnvironment(engine, handle)
-  }
+--8<-- "RiftFixture.scala:fixture"
 ```
 
 When every scenario is a plain `serve`, `riftIntercept.tlsIntercept` is enough: one layer that yields just the
 `InterceptHandle`.
 
-Each test installs its rules, then evaluates through `flagsLayer`:
+Each test installs its rules, then evaluates through `flagsLayer`. Here the provider is Optimizely's, pointed at
+`cdn.example.com`:
 
 ```scala
-import rift.dsl.*
-import rift.zio.testkit.aspects as riftAspects
-import scala.concurrent.duration.{FiniteDuration, SECONDS}
+--8<-- "RealProviderFaultSpec.scala:suite-imports"
 
-object RealProviderFaultSpec extends ZIOSpecDefault:
-
-  def spec = suite("real provider under network faults")(
-    test("stalled fetch: the fallback answers at once") {
-      for
-        engine <- ZIO.service[Rift]
-        handle <- ZIO.service[InterceptHandle]
-        _      <- handle.clearRules
-        slow   <- engine.create(
-                    imposter("slow-cdn").stub(get("/datafile.json").reply(ok.json(datafile).after(FiniteDuration(30, SECONDS))))
-                  )
-        _      <- handle.rule("cdn.example.com").redirectTo(slow)
-        result <- bootDidNotBlock.provideSome[Scope](flagsLayer(ZIO.attemptBlocking(newVendorProvider())))
-      yield result
-    },
-    test("rejected credentials: evaluation never fails") {
-      for
-        handle <- ZIO.service[InterceptHandle]
-        _      <- handle.clearRules
-        _      <- handle.rule("cdn.example.com").serve(status(401).json("""{"error":"unauthorized"}"""))
-        result <- neverFails.provideSome[Scope](flagsLayer(ZIO.attemptBlocking(newVendorProvider())))
-      yield result
-    }
-  ).provideShared(riftFixture) @@ TestAspect.sequential @@ TestAspect.withLiveClock @@ riftAspects.embeddedOnly
+--8<-- "RealProviderFaultSpec.scala:suite"
 ```
 
 The suite settings all matter:
@@ -186,3 +156,18 @@ For the healthy scenario, wait for the swap through `AcquireStatus`, which `from
 ```
 
 Wrap it in a `timeout` if the provider might never become ready.
+
+## What this repository asserts
+
+`provider-fault-tests` runs every fault above (plus `403`, `503`, `429`, a truncated body and a stalled response)
+against both providers, each through `FeatureFlags.fromProvider` and `FeatureFlags.fromAcquireAsync`. In every case the
+call returns within a bound, and closing the scope does too.
+
+| Provider | Through | Outcome |
+|:---------|:--------|:--------|
+| OFREP | `fromProvider` | rejection, `503`, `429` and a timeout are provider errors; a truncated or non-JSON body is a `ParseError`; the total tier answers the default |
+| OFREP | `fromAcquireAsync` | error answers fall through to the fallback; a stalled call ends in a typed timeout at the evaluation timeout |
+| Optimizely | `fromProvider` | the layer fails with the provider's "datafile did not load" error, within its init wait |
+| Optimizely | `fromAcquireAsync` | the fallback answers at once; `AcquireStatus` ends in `Failed`; nothing fails |
+
+Each healthy case checks the opposite: the real provider's value is served, not the fallback's.

@@ -41,8 +41,9 @@ jobs:
           cache-dependency-path: requirements-docs.txt
       - run: pip install -r requirements-docs.txt
       # The pages include their code from examples/docs, so compile it and run its checks before publishing it
+      # The rift code on the real-providers page lives in provider-fault-tests: compile it here, never run it (#470)
       - name: Compile and test the documented code
-        run: sbt examplesDocs/test
+        run: sbt examplesDocs/test providerFaultTests/Test/compile
       - name: Check the animations are up to date
         run: |
           python3 scripts/visuals/build.py

@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`provider-fault-tests`, a local-only chaos suite for the real providers** (#470). The OFREP and Optimizely
+  providers run through rift-scala's in-process TLS intercept proxy while the network rejects credentials, answers
+  `503`/`429`, resets the connection, stalls, or returns a truncated or non-JSON body, and the suite asserts the
+  library's outcome: a typed error or the fallback's answer, in bounded time, with a bounded shutdown. Run it with
+  `sbt providerFaultTests/test` on JDK 22+. It is not in the root aggregate and CI only compiles it. The rift code on
+  the "Testing real providers" page now comes from this module, so it is compiled with the docs.
+
 ### Changed
 
 - **Optimizely SDK 4.6.0** (from 4.2.2, #474), with CMAB support. Factory-built providers now wire Optimizely's CMAB

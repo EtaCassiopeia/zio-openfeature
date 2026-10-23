@@ -8,6 +8,10 @@ val zioBddVersion   = "1.5.0"
 // The embedded Rift engine zio-bdd-rift drives (Rift 0.18.0). Keep in step with zio-bdd-rift's own rift-java pin.
 val riftJavaVersion       = "0.3.2"
 val openFeatureSdkVersion = "1.23.0"
+// `providerFaultTests` drives rift's TLS intercept proxy through rift-scala, which pins its own rift-java (0.3.7); the
+// embedded engine and natives must match that, so this is separate from `riftJavaVersion` (zio-bdd-rift's pin).
+val riftScalaVersion         = "0.4.0"
+val riftJavaInterceptVersion = "0.3.7"
 
 // Test-only HTTP stubbing for the ofrep and optimizely provider suites. Declared once rather than per module:
 // the two had drifted apart before, and a WireMock bump is the single cheapest lever on this build's advisory
@@ -461,6 +465,57 @@ lazy val conformanceZioBdd = (project in file("conformance-zio-bdd"))
     // runner surfaces as an immediate "Interrupted" (intra-suite scenario parallelism is unaffected).
     Test / parallelExecution := false,
     Test / testFrameworks += new TestFramework("zio.bdd.ZIOBDDFramework")
+  )
+
+// Real-provider fault tests (#470): the real OFREP and Optimizely providers run through rift-scala's in-process TLS
+// intercept proxy while the "network" refuses, stalls, truncates and resets. Local only, by project policy:
+//   - NOT in the root `.aggregate(...)`, so `sbt test` and `sbt +test` never run it;
+//   - CI only COMPILES it (`providerFaultTests/Test/compile`, the `examples` job) — no test step, secret or schedule;
+//   - run it on a dev machine with JDK 22+: `sbt providerFaultTests/test` (see docs/development.md).
+// On a host where rift's embedded engine cannot load, the suites report as ignored rather than failed.
+//
+// `RiftTlsPlugin` (sbt-rift) is enabled here and nowhere else: it is `noTrigger`, and its settings are all
+// project-scoped. It generates a throwaway CA + truststore under this module's `target/rift`, forks the test JVM and
+// points `javax.net.ssl.trustStore` at it — which Optimizely's Apache HttpClient needs, since it reads the truststore
+// once at first use.
+// The embedded engine and its natives, only when the JVM running the build can load them (JDK 22+). Its classes are
+// Java 22 bytecode, so with them on an older JDK's test classpath even `Rift.isEmbeddedAvailable` throws
+// `UnsupportedClassVersionError` instead of answering `false`; leaving them off is what lets `embeddedOnly` ignore the
+// suites there. The test JVM is the build JVM (no `Test / javaHome`), so this is the right JVM to ask.
+lazy val riftEngineDependencies: Seq[ModuleID] = {
+  val spec  = System.getProperty("java.specification.version")
+  val major = scala.util.Try(spec.stripPrefix("1.").takeWhile(_.isDigit).toInt).getOrElse(0)
+  if (major >= 22)
+    ("io.github.achird-labs" % "rift-java-embedded" % riftJavaInterceptVersion % Test) +:
+      riftNativesClassifier.toSeq.map(c =>
+        ("io.github.achird-labs" % "rift-java-natives" % riftJavaInterceptVersion % Test).classifier(c)
+      )
+  else Seq.empty
+}
+
+lazy val providerFaultTests = (project in file("provider-fault-tests"))
+  .enablePlugins(RiftTlsPlugin)
+  .dependsOn(core, extras, ofrep, optimizely)
+  // Scala 3 only, and the sources live in `scala-3/` because `.scalafmt.conf` pins `src/test/scala/**` to the scala213
+  // dialect (shared by the cross-built modules).
+  .settings(crossVersionSourceDirs)
+  .settings(
+    name               := "zio-openfeature-provider-fault-tests",
+    publish / skip     := true,
+    crossScalaVersions := Seq(scala3Version),
+    testFrameworks += new TestFramework("zio.test.sbt.ZTestFramework"),
+    libraryDependencies ++= Seq(
+      "dev.zio"               %% "zio-test"               % zioVersion       % Test,
+      "dev.zio"               %% "zio-test-sbt"           % zioVersion       % Test,
+      "io.github.achird-labs" %% "rift-scala-zio-testkit" % riftScalaVersion % Test
+    ) ++ riftEngineDependencies,
+    // OFREP and Optimizely pull Jackson; hold it at the family the published modules pin (see `jacksonPins`).
+    dependencyOverrides ++= jacksonPins,
+    // The plugin already forks the test JVM and, on JDK 21+, passes `--enable-native-access=ALL-UNNAMED` (it must not
+    // pass it on older JDKs, where the flag stops the JVM from starting). The embedded engine itself needs JDK 22+.
+    Test / fork := true,
+    // The rift intercept proxy rewrites JVM-wide proxy and TLS settings: one suite class at a time.
+    Test / parallelExecution := false
   )
 
 // Reference applications. Not published; their value is staying compilable so the README and `examples/README.md`

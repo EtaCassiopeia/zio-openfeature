@@ -62,7 +62,7 @@ exactly `fromProvider(provider)`.
 | Field | Default | Setter | What it does |
 |:--|:--|:--|:--|
 | `domain` | none | `withDomain(d)` | Binds the client to a named [domain](#domains). |
-| `version` | none | `withVersion(v)` | Client version, reported by `clientMetadata`. Only used together with a domain. |
+| `version` | none | `withVersion(v)` | Client version, reported by `clientMetadata` and passed to the SDK client. |
 | `initialHooks` | none | `withHooks(list)`, `withHook(h)` | Client-level [hooks](hooks.md) installed from the start. |
 | `evaluationTimeout` | 1 second | `withEvaluationTimeout(d)`, `withoutEvaluationTimeout` | Bounds each evaluation. On timeout the call fails with `ProviderError` wrapping a `TimeoutException`; the provider call keeps running in the background. Per-call override: see [Evaluating flags](evaluating.md). |
 | `initTimeout` | 30 seconds | `withInitTimeout(d)` | Bounds initialization, see [Sync or async start](#sync-or-async-start). |

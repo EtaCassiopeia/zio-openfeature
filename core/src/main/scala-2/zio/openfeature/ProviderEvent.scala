@@ -48,6 +48,7 @@ object ProviderEventType {
   case object Error                extends ProviderEventType
   case object Stale                extends ProviderEventType
   case object ConfigurationChanged extends ProviderEventType
+  /** Reserved: the OpenFeature Java SDK never emits a reconnecting event, so `on(Reconnecting, …)` never fires. */
   case object Reconnecting         extends ProviderEventType
 }
 
@@ -82,6 +83,7 @@ object ProviderEvent {
     providerMetadata: ProviderMetadata,
     eventMetadata: FlagMetadata = FlagMetadata.empty
   ) extends ProviderEvent
+  /** Reserved: the OpenFeature Java SDK never emits a reconnecting event, so this is never published. */
   final case class Reconnecting(providerMetadata: ProviderMetadata, eventMetadata: FlagMetadata = FlagMetadata.empty)
       extends ProviderEvent
 

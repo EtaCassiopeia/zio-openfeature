@@ -1,9 +1,9 @@
 import net.nmoncho.sbt.dependencycheck.settings._
 import com.typesafe.tools.mima.core._
 
-val scala213Version = "2.13.16"
-val scala3Version   = "3.3.4"
-val zioVersion      = "2.1.14"
+val scala213Version = "2.13.18"
+val scala3Version   = "3.3.8"
+val zioVersion      = "2.1.27"
 val zioBddVersion   = "1.5.0"
 // The embedded Rift engine zio-bdd-rift drives (Rift 0.18.0). Keep in step with zio-bdd-rift's own rift-java pin.
 val riftJavaVersion       = "0.3.2"
@@ -222,7 +222,7 @@ val checkOptimizelyJsonParser = taskKey[Unit](
 )
 
 lazy val root = (project in file("."))
-  // `conformance` is intentionally NOT aggregated: it is Scala 3 only, so aggregating it would make `++2.13.16 test`
+  // `conformance` is intentionally NOT aggregated: it is Scala 3 only, so aggregating it would make `++2.13.18 test`
   // try (and fail) to compile it. CI runs it explicitly on Scala 3 (see ci.yml), the same way `examples` are handled.
   .aggregate(core, testkit, extras, ofrep, optimizely)
   .settings(
@@ -256,7 +256,7 @@ lazy val extras = (project in file("extras"))
     commonSettings,
     libraryDependencies ++= Seq(
       "dev.zio"     %% "zio"       % zioVersion,
-      "dev.zio"     %% "zio-cache" % "0.2.3",
+      "dev.zio"     %% "zio-cache" % "0.2.8",
       "com.typesafe" % "config"    % "1.4.3"
     )
   )

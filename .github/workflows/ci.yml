@@ -64,7 +64,7 @@ jobs:
       fail-fast: false
       matrix:
         java-version: ['17', '21', '25']
-        scala-version: ['2.13.16', '3.3.4']
+        scala-version: ['2.13.18', '3.3.8']
     steps:
       - uses: actions/checkout@v7
       - name: Set up JDK ${{ matrix.java-version }}
@@ -149,7 +149,7 @@ jobs:
       # both the artifact-suffix computation and the not-inherited branch; either regressing turns this step red.
       - name: Guard self-test — a cross-versioned test-scope pin must be accepted
         run: |
-          if ! sbt 'set ofrep / dependencyOverrides += "dev.zio" %% "zio-test" % "2.1.14"' ofrep/checkPublishedPins > /tmp/scoped.log 2>&1; then
+          if ! sbt 'set ofrep / dependencyOverrides += "dev.zio" %% "zio-test" % "2.1.27"' ofrep/checkPublishedPins > /tmp/scoped.log 2>&1; then
             echo "::error::checkPublishedPins rejected a test-scope pin the POM does declare"
             tail -30 /tmp/scoped.log
             exit 1
@@ -195,7 +195,7 @@ jobs:
         run: sbt "examplesOfrepInitTimeout/compile" "examplesTestkitApp/test" "examplesDocs/test"
 
   # Conformance runs the vendored OpenFeature gherkin suite via Cucumber. It is Scala 3 only and not aggregated by
-  # root (so `++2.13.16 test` doesn't try to compile it), hence its own job on the primary JDK / default Scala.
+  # root (so `++2.13.18 test` doesn't try to compile it), hence its own job on the primary JDK / default Scala.
   conformance:
     runs-on: ubuntu-latest
     timeout-minutes: 15

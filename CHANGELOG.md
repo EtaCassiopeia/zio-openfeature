@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **ZIO 2.1.27, Scala 3.3.8 / 2.13.18, zio-cache 0.2.8** (from 2.1.14, 3.3.4 / 2.13.16, 0.2.3; #475). These are now
+  the minimum versions consumers resolve to. The bump brings upstream fixes on paths this library runs on every
+  evaluation: a hang when an interrupt hits `raceFibersWith` (behind `timeoutFail`), `Queue#take` losing items on
+  interrupt (event-hub consumers), and zio-cache's concurrent-`get` deadlock and expired-entry hits. zio-cache stays on
+  the 0.2 line: 0.3.0 is built with a Scala 3 compiler a 3.3 build cannot read and ships Java 17 bytecode.
 - **Layers no longer ask for a `Scope`** (#443). Every `FeatureFlags` factory, `FeatureFlagRegistry.fromProvider` and
   the testkit layers were typed `ZLayer[Scope, …]`, although they build with `ZLayer.scoped`, which owns the layer's
   scope; so callers had to supply `Scope.default` for nothing. They are now `ZLayer[Any, …]` (`URLayer[Any, …]` for

@@ -476,6 +476,9 @@ final class TestFeatureProvider private (
 
 object TestFeatureProvider {
 
+  /** The default `initDelay` of `asyncReadyLayer`. */
+  val DefaultInitDelay: Duration = 100.millis
+
   private def fromOpenFeatureTracking(details: OFTracking): TrackingEventDetails =
     TrackingEventDetails(
       value = if (details.getValue.isPresent) Some(details.getValue.get.doubleValue) else None,
@@ -816,7 +819,7 @@ object TestFeatureProvider {
     */
   def asyncReadyLayer(
     flags: Map[String, Any] = Map.empty,
-    initDelay: Duration = 100.millis
+    initDelay: Duration = TestFeatureProvider.DefaultInitDelay
   ): ZLayer[Any, Throwable, TestFeatureProvider with FeatureFlags] =
     ZLayer
       .scoped {

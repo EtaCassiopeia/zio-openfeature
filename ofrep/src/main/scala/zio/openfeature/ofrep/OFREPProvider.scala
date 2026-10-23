@@ -145,7 +145,8 @@ object OFREPProvider {
     * not close its `HttpClient`); the bound exists so a pathological close cannot hang scope teardown. When the
     * executor is the daemon pool this wrapper installs, the JVM can exit regardless — but a caller-supplied non-daemon
     * executor (via [[make(options:dev\.openfeature\.contrib\.providers\.ofrep\.OfrepProviderOptions)*]]) is only
-    * released by this shutdown, so the finalizer matters.
+    * released by this shutdown, so the finalizer matters. It is shorter than the Optimizely provider's bound because
+    * there is nothing to flush: only an executor stops.
     */
   private val ShutdownTimeout: zio.Duration = 5.seconds
 

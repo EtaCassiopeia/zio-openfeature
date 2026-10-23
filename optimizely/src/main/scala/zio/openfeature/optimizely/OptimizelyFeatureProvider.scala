@@ -262,7 +262,7 @@ final class OptimizelyFeatureProvider private[optimizely] (
     // Only one watchdog runs at a time. A re-init while one is already running keeps the existing one (CAS fails, and
     // we discard the freshly-created executor); shutdown()/failInitialize null the ref so the next init starts fresh.
     if (watchdogRef.compareAndSet(null, exec)) {
-      val periodMs = math.max(1L, cfg.checkInterval.toMillis)
+      val periodMs = math.max(OptimizelyProvider.MinCheckIntervalMs, cfg.checkInterval.toMillis)
       // scheduleWithFixedDelay (not fixedRate) so ticks never pile up if one is slow; each tick is trivial anyway.
       exec.scheduleWithFixedDelay(() => watchdogTick(cfg), periodMs, periodMs, TimeUnit.MILLISECONDS)
       ()

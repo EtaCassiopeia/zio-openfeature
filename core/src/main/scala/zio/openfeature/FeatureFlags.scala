@@ -970,6 +970,15 @@ object FeatureFlags {
     */
   private[openfeature] val DefaultInitTimeout: Duration = 30.seconds
 
+  private[openfeature] val DefaultConstructionRetries: Int      = 3
+  private[openfeature] val DefaultConstructionBackoff: Duration = 1.second
+
+  /** The default `constructionRetry` of `fromAcquireAsync`: up to three retries with jittered exponential backoff from
+    * one second.
+    */
+  val DefaultConstructionRetry: Schedule[Any, Throwable, Any] =
+    Schedule.recurs(DefaultConstructionRetries) && Schedule.exponential(DefaultConstructionBackoff).jittered
+
   /** Fallback provider name stamped when a provider exposes no metadata/name at registration time. The event-bridge
     * identity guard (`FeatureFlagsLive.fromCurrentProvider`) treats this as an indeterminate identity and fails open,
     * so a provider whose real name only appears after `initialize()` (e.g. the SDK's MultiProvider) still drives its
@@ -1580,7 +1589,7 @@ object FeatureFlags {
     acquire: RIO[Scope, OFFeatureProvider],
     fallback: URIO[Scope, OFFeatureProvider],
     compose: (OFFeatureProvider, OFFeatureProvider) => OFFeatureProvider = defaultAcquireCompose,
-    constructionRetry: Schedule[Any, Throwable, Any] = Schedule.recurs(3) && Schedule.exponential(1.second).jittered,
+    constructionRetry: Schedule[Any, Throwable, Any] = DefaultConstructionRetry,
     constructionTimeout: Duration = DefaultInitTimeout,
     onConstructionError: Throwable => UIO[Unit] = _ => ZIO.unit,
     evaluationTimeout: Duration = DefaultEvaluationTimeout,

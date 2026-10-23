@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Weekly mutation testing of core** (#468): stryker4s via the new `Mutation testing` workflow (scheduled and
+  manual), with its report as a build artifact. Informational only: never runs on a pull request and never fails the
+  build. Locally, `core/stryker`; see the development guide.
+
 ### Changed
 
 - **Optimizely SDK 4.6.0** (from 4.2.2, #474), with CMAB support. Factory-built providers now wire Optimizely's CMAB

@@ -1,0 +1,116 @@
+{
+  "version": "4",
+  "accountId": "1",
+  "projectId": "1",
+  "revision": "1",
+  "anonymizeIP": false,
+  "botFiltering": false,
+  "sendFlagDecisions": true,
+  "experiments": [],
+  "featureFlags": [
+    {
+      "id": "100",
+      "key": "typed_flag",
+      "rolloutId": "200",
+      "experimentIds": [],
+      "variables": [
+        {
+          "id": "501",
+          "key": "s",
+          "type": "string",
+          "defaultValue": "x"
+        },
+        {
+          "id": "502",
+          "key": "n",
+          "type": "string",
+          "defaultValue": "0"
+        },
+        {
+          "id": "503",
+          "key": "i",
+          "type": "integer",
+          "defaultValue": "0"
+        },
+        {
+          "id": "504",
+          "key": "big",
+          "type": "integer",
+          "defaultValue": "0"
+        },
+        {
+          "id": "505",
+          "key": "d",
+          "type": "double",
+          "defaultValue": "0"
+        },
+        {
+          "id": "506",
+          "key": "j",
+          "type": "json",
+          "defaultValue": "{}"
+        }
+      ]
+    }
+  ],
+  "rollouts": [
+    {
+      "id": "200",
+      "experiments": [
+        {
+          "id": "300",
+          "key": "rollout-200",
+          "status": "Running",
+          "layerId": "200",
+          "audienceIds": [],
+          "forcedVariations": {},
+          "trafficAllocation": [
+            {
+              "entityId": "400",
+              "endOfRange": 10000
+            }
+          ],
+          "variations": [
+            {
+              "id": "400",
+              "key": "on",
+              "featureEnabled": true,
+              "variables": [
+                {
+                  "id": "501",
+                  "value": "abc"
+                },
+                {
+                  "id": "502",
+                  "value": "42"
+                },
+                {
+                  "id": "503",
+                  "value": "7"
+                },
+                {
+                  "id": "504",
+                  "value": "5000000000"
+                },
+                {
+                  "id": "505",
+                  "value": "1.5"
+                },
+                {
+                  "id": "506",
+                  "value": "{\"k\":1}"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "audiences": [],
+  "typedAudiences": [],
+  "groups": [],
+  "attributes": [],
+  "variables": [],
+  "events": []
+}

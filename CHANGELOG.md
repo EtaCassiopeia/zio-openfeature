@@ -71,6 +71,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Optimizely: a variable of the wrong type is a `TYPE_MISMATCH`, not your default** (#456). Reading a string
+  variable as `int` returned the default with reason `DEFAULT`, a double read as `int` was truncated, the string
+  `"42"` was parsed, and an integer beyond `int` range could not be read as `long` at all. Conversions are now strict
+  and lossless: an absent variable still serves the default (`DEFAULT`), a present one of another type fails on the
+  typed tier with `TypeMismatch` (the total tier still serves the default), and integers widen exactly to `long` and
+  `double`.
 - **`CachingProvider` and `CircuitBreakerProvider` release their event plumbing properly** (#450). Their `shutdown`
   never called `EventProvider.shutdown`, so each wrapper's event emitter kept running and could still dispatch
   afterwards. And a wrapper whose attach to the delegate failed (the delegate already belonged to another wrapper)

@@ -6,6 +6,10 @@ repo_name: EtaCassiopeia/zio-openfeature
 edit_uri: edit/main/docs/
 copyright: Apache License 2.0
 strict: true
+validation:
+  links:
+    anchors: warn
+    unrecognized_links: warn
 
 theme:
   name: material

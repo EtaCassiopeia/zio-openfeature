@@ -483,28 +483,13 @@ lazy val examplesOfrepInitTimeout = (project in file("examples/ofrep-init-timeou
     )
   )
 
-// Compiles the Typed Flags docs page's snippets against the real API, so a signature change to `FlagDef`, its
-// evaluation overloads, `FlagType.derived`/`mapped` or the typed testkit fixtures breaks the build instead of
-// silently staling the published page (#385).
-lazy val examplesTypedFlags = (project in file("examples/typed-flags"))
-  .dependsOn(core, testkit)
-  .settings(examplesCommon)
-  // The source lives in `scala-3/` because it is Scala-3-only (`enum`, `derives`) — and, less obviously, because
-  // `.scalafmt.conf` pins every `src/main/scala/**` file to the scala213 dialect (those directories are shared by the
-  // cross-built modules). A Scala 3 file under plain `scala/` therefore compiles but cannot be formatted.
-  .settings(crossVersionSourceDirs)
-  .settings(
-    name := "zio-openfeature-example-typed-flags",
-    libraryDependencies ++= Seq(
-      "dev.zio" %% "zio" % zioVersion
-    )
-  )
-
 // The documentation site's code. `mkdocs.yml` includes its `--8<--` sections into the pages, so every snippet on the
 // site is compiled here, and its tests run the ones that can run on their own and check what the page says they do.
 lazy val examplesDocs = (project in file("examples/docs"))
   .dependsOn(core, testkit, extras, ofrep, optimizely)
   .settings(examplesCommon)
+  // The sources live in `scala-3/` because they are Scala 3 only, and because `.scalafmt.conf` pins every
+  // `src/main/scala/**` file to the scala213 dialect (those directories are shared by the cross-built modules).
   .settings(crossVersionSourceDirs)
   .settings(
     name := "zio-openfeature-example-docs",
@@ -517,6 +502,9 @@ lazy val examplesDocs = (project in file("examples/docs"))
     dependencyOverrides ++= jacksonPins,
     // Forked for the reason `commonSettings` gives: a leaked non-daemon thread cannot then hang sbt after the tests.
     Test / fork := true,
+    // Several pages show `fromProvider` without a domain, which registers on the JVM-wide `OpenFeatureAPI`; run the
+    // spec classes one at a time so their providers cannot replace each other mid-test.
+    Test / parallelExecution := false,
     testFrameworks += new TestFramework("zio.test.sbt.ZTestFramework")
   )
 

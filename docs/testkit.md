@@ -1,784 +1,246 @@
----
-layout: default
-title: Testkit
-nav_order: 11
----
-
 # Testkit
-{: .no_toc }
 
-## Table of contents
-{: .no_toc .text-delta }
-
-1. TOC
-{:toc}
-
----
-
-## Overview
-
-The testkit module provides `TestFeatureProvider`, an in-memory OpenFeature provider designed for testing. It allows you to:
-
-- Pre-configure flag values
-- Dynamically update flags during tests
-- Track which flags were evaluated
-- Verify evaluation counts and contexts
-
-The `TestFeatureProvider` implements the OpenFeature `FeatureProvider` interface, so it works seamlessly with the ZIO OpenFeature layer system.
-
----
-
-## Installation
-
-[![Maven Central](https://img.shields.io/maven-central/v/io.github.etacassiopeia/zio-openfeature-core_3.svg)](https://search.maven.org/search?q=g:io.github.etacassiopeia%20AND%20a:zio-openfeature-core_3)
+`zio-openfeature-testkit` gives you `TestFeatureProvider`: an in-memory OpenFeature provider you control from your
+tests. Set flags, flip the provider's status, emit events, inject failures, and check which flags your code read.
+It runs the same evaluation path as production — hooks, context, transactions and error handling included.
 
 ```scala
 libraryDependencies += "io.github.etacassiopeia" %% "zio-openfeature-testkit" % "<version>" % Test
 ```
 
----
+## Your first test
 
-## Choosing a Layer
-
-| Layer | Provider starts as | Use when |
-|:------|:-------------------|:---------|
-| `layer(flags)` | `Ready` | Most tests — flags work immediately |
-| `scopedLayer(flags)` | `Ready` | Same, self-contained scope |
-| `asyncLayer(flags)` | `NotReady` | Testing startup/initialization behavior — requires manual `setStatus` |
-| `asyncReadyLayer(flags, delay)` | `NotReady` → `Ready` | Simulating real async init without manual status management |
-
-**Rule of thumb:** Use `layer` unless you specifically need to test how your code handles a provider that isn't ready yet.
-
----
-
-## Basic Usage
-
-### Creating a Test Layer
-
-The simplest way to use the testkit is with `TestFeatureProvider.layer`:
+Say your service reads a flag:
 
 ```scala
-import zio.*
-import zio.test.*
-import zio.openfeature.*
-import zio.openfeature.testkit.*
-
-// Create layer with initial flags
-val testLayer = TestFeatureProvider.layer(Map(
-  "feature-a" -> true,
-  "feature-b" -> "variant-1",
-  "max-items" -> 100
-))
-
-// Use in tests
-val test = for
-  result <- FeatureFlags.boolean("feature-a", false)
-yield assertTrue(result == true)
-
-test.provide(Scope.default >>> testLayer)
+--8<-- "TestkitSpec.scala:service"
 ```
 
-### Creating a Provider Directly
-
-For more control, create the provider directly:
+Provide `TestFeatureProvider.scopedLayer` in place of the real `FeatureFlags` layer. It provides both `FeatureFlags`
+and the `TestFeatureProvider` itself, so a test can set flags and then run the code under test:
 
 ```scala
-for
-  provider <- TestFeatureProvider.make(Map(
-    "feature" -> true,
-    "variant" -> "control"
-  ))
-  // Use provider methods directly
-  _ <- provider.setFlag("new-flag", "value")
-yield ()
+--8<-- "TestkitSpec.scala:first-test"
 ```
 
-### Naming a Provider
+Each test gets its own provider and its own isolated OpenFeature API instance, so tests can run in parallel.
 
-Every provider reports a metadata name, and the `setProvider` event-identity guard keys providers by it — so two test
-providers that share a name cannot be told apart across a swap. `makeNamed` gives each one its own:
+## Choosing a layer
+
+Every layer provides `TestFeatureProvider & FeatureFlags`.
+
+| Layer | Provider starts | Use it when |
+|:------|:----------------|:------------|
+| `scopedLayer`, `scopedLayer(flags)` | `Ready` | most tests; it brings its own `Scope` |
+| `layer`, `layer(flags)` | `Ready` | you already have a `Scope` to provide |
+| `asyncLayer(flags)`, `scopedAsyncLayer(flags)` | `NotReady`, until you call `setStatus(Ready)` | testing how your code behaves while the provider starts up |
+| `asyncReadyLayer(flags, initDelay)` | `NotReady`, then `Ready` after `initDelay` (default 100 ms) | a provider that becomes ready on its own |
+| `layerFrom(provider)` | as the provider is | you built the provider yourself with `make` / `makeNamed` |
+
+`flags` is a `Map[String, Any]`, or typed overrides (`Flag := value`, see below). `providerLayer` provides just a
+`TestFeatureProvider`, without `FeatureFlags`.
+
+To build a provider without a layer, use `TestFeatureProvider.make(flags)`, or `makeNamed(name, flags)` to give it
+its own metadata name. A name matters when you swap providers with `FeatureFlags.setProvider`, which tells the old
+and new provider apart by name. Every other factory names the provider `TestFeatureProvider.DefaultName`.
+
+## Typed fixtures
+
+A fixture keyed by string accepts any value, so a typo such as `"premum"` passes the test and fails in production.
+Build the fixture from your [`FlagDef`s](typed-flags.md) instead, and the compiler checks the value's type:
 
 ```scala
-for
-  primary  <- TestFeatureProvider.makeNamed("primary")
-  fallback <- TestFeatureProvider.makeNamed("fallback", Map("flag" -> true))
-yield (primary, fallback)
+--8<-- "TestkitSpec.scala:typed-fixture"
 ```
 
-You need it when **swapping providers**: `FeatureFlags.setProvider` compares the old and new provider's names to decide
-which provider an incoming event came from, so a swap between two same-named providers is invisible to that guard.
+`:=` stores the value the way a provider would carry it (`flagType.encode(value)`), so the test reads it back through
+the same decoding as production. It also checks that the codec can decode its own encoding, and throws at fixture
+construction if it cannot.
 
-Chains no longer need it. Since Java SDK 1.23.0 a `MultiProvider` keeps two default-named test providers as two
-members; earlier SDKs kept only the last of a name. Naming them still makes a failing chain test easier to read. See
-[Absent keys and provider chains](#absent-keys-and-provider-chains) for what makes a chain fall through at all.
+Every factory that takes flags (`make`, `layer`, `scopedLayer`, `asyncLayer`, `scopedAsyncLayer`, `providerLayer`)
+also takes `FlagOverride*`. For `asyncReadyLayer` the delay comes first: `asyncReadyLayer(100.millis, Flag := v)`.
 
-There are deliberately no named twins of `layer` / `scopedLayer` / `asyncLayer`: a chain is built from raw
-providers, and a single named provider becomes a `FeatureFlags` layer through `layerFrom(provider)`, which preserves
-its name. Every provider-creating factory other than `makeNamed` reports `TestFeatureProvider.DefaultName`.
+!!! note
+    Name the type parameter when the default is a case object: `FlagDef("k", Tier.Free)` infers `Tier.Free.type`
+    and finds no `FlagType` for it. Write `FlagDef[Tier]("k", Tier.Free)`.
 
----
-
-## Managing Flags
-
-### Setting Flags
+## Changing flags during a test
 
 ```scala
-for
-  provider <- TestFeatureProvider.make
-  _        <- provider.setFlag("new-flag", true)
-  _        <- provider.setFlag("count", 42)
-  _        <- provider.setFlag("name", "test")
-yield ()
+--8<-- "TestkitSpec.scala:managing-flags"
 ```
 
-### Setting Multiple Flags
-
-`setFlags` **merges** into the existing flags — flags seeded via `make(Map(...))` / `layer(Map(...))` or set earlier
-are kept, and a key present in the new map overwrites its previous value:
-
-```scala
-provider.setFlags(Map(
-  "flag-1" -> true,
-  "flag-2" -> "value"
-))
-// Existing flags are kept; flag-1 / flag-2 are added or overwritten
-```
-
-Use `replaceFlags` to discard every existing flag first:
-
-```scala
-provider.replaceFlags(Map(
-  "flag-1" -> true
-))
-// All previous flags are removed; only flag-1 remains
-```
-
-### Removing Flags
-
-```scala
-// Remove single flag
-provider.removeFlag("flag-to-remove")
-
-// Clear all flags
-provider.clearFlags
-```
-
-### Absent keys and provider chains
-
-A key that has **not** been set (never set, removed, or cleared) is reported as `FLAG_NOT_FOUND` — what every real
-provider shipped here reports for an absent key. How that surfaces depends on the tier you evaluate through:
-
-- the **typed tier** (`boolean` / `booleanDetails` / `value` / …) **fails** with `FeatureFlagError.FlagNotFound(key)`
-  — the tier you reach for precisely because a default would be wrong does not hand one back silently;
-- the **total tier** (`booleanOrDefault` / `resolveOrDefault` / …) serves your default, and the resolution carries
-  `reason = Error` with `errorCode = FlagNotFound`;
-- hooks see the **`error`** stage rather than `after` either way — so `Hook.logging()` reports an unset key at error
-  level, the spec-correct stage for an error-coded resolution.
-
-```scala
-for
-  typed      <- FeatureFlags.boolean("never-set", default = false).either
-  resolution <- FeatureFlags.resolveOrDefault[Boolean]("never-set", default = false)
-yield assertTrue(
-  typed == Left(FeatureFlagError.FlagNotFound("never-set")),
-  resolution.value == false,                              // your default
-  resolution.reason == ResolutionReason.Error,
-  resolution.errorCode.contains(ErrorCode.FlagNotFound)
-)
-```
-
-So a test that means "this flag is **off**" should set it to `false` rather than leave it unset — an unset key is
-"this provider has no such flag", which is a different state.
-
-Reporting not-found is what lets the test provider take part in a chain:
-
-```scala
-// The test provider has no "checkout.v2", so the chain moves on to the next provider.
-val chain = FeatureFlags.multiProvider(List(testProvider, realProvider))
-```
-
-`MultiProviderStrategy.firstMatch` advances to the next provider only when a provider reports `FLAG_NOT_FOUND`; a
-result carrying `reason = DEFAULT` is treated as an answer and ends the chain. Two default-named test providers both
-stay in the chain (Java SDK 1.23.0; earlier SDKs kept only the last), but naming them with
-[`makeNamed`](#naming-a-provider) makes a failing chain test easier to read.
-
----
-
-## Tracking Evaluations
-
-### Check If Flag Was Evaluated
-
-```scala
-for
-  provider <- TestFeatureProvider.make(Map("feature" -> true))
-  layer     = TestFeatureProvider.layerFrom(provider)
-  _        <- FeatureFlags.boolean("feature", false).provide(Scope.default >>> layer)
-  was      <- provider.wasEvaluated("feature")
-  wasNot   <- provider.wasEvaluated("other-flag")
-yield assertTrue(was) && assertTrue(!wasNot)
-```
-
-### Count Evaluations
-
-```scala
-for
-  provider <- TestFeatureProvider.make(Map("feature" -> true))
-  layer     = TestFeatureProvider.layerFrom(provider)
-  _        <- FeatureFlags.boolean("feature", false).provide(Scope.default >>> layer)
-  _        <- FeatureFlags.boolean("feature", false).provide(Scope.default >>> layer)
-  _        <- FeatureFlags.boolean("feature", false).provide(Scope.default >>> layer)
-  count    <- provider.evaluationCount("feature")
-yield assertTrue(count == 3)
-```
-
-### Get All Evaluations
-
-```scala
-for
-  provider <- TestFeatureProvider.make(Map("flag-a" -> true, "flag-b" -> "value"))
-  layer     = TestFeatureProvider.layerFrom(provider)
-  _        <- FeatureFlags.boolean("flag-a", false, EvaluationContext("user-1"))
-               .provide(Scope.default >>> layer)
-  _        <- FeatureFlags.string("flag-b", "", EvaluationContext("user-2"))
-               .provide(Scope.default >>> layer)
-  evals    <- provider.getEvaluations
-yield
-  // evals is List[(String, zio.openfeature.EvaluationContext)] — the library's own context type,
-  // so you can assert on evals.head._2.targetingKey / .getString(...) directly.
-  // Need the raw dev.openfeature.sdk.EvaluationContext instead? Use provider.getRawEvaluations.
-  assertTrue(evals.length == 2)
-```
-
-### Clear Evaluation History
-
-```scala
-provider.clearEvaluations
-```
-
----
-
-## Provider Status
-
-### Managing Status
-
-When using `TestFeatureProvider.layer`, the provider starts in `Ready` status. You can change the status for testing different scenarios:
-
-```scala
-for
-  provider <- ZIO.service[TestFeatureProvider]
-  initial  <- provider.status                    // Ready (after layer creation)
-  _        <- provider.setStatus(ProviderStatus.Error)
-  error    <- provider.status
-  _        <- provider.setStatus(ProviderStatus.Stale)
-  stale    <- provider.status
-yield
-  assertTrue(initial == ProviderStatus.Ready) &&
-  assertTrue(error == ProviderStatus.Error) &&
-  assertTrue(stale == ProviderStatus.Stale)
-```
-
-The `setStatus` method updates both the ZIO status and the underlying OpenFeature provider state.
-
-### Emitting Events
-
-```scala
-// Simple event
-provider.emitEvent(ProviderEvent.ConfigurationChanged(
-  Set("flag-1", "flag-2"),
-  provider.metadata
-))
-
-// Event with metadata
-provider.emitEvent(ProviderEvent.ConfigurationChanged(
-  Set("flag-1"),
-  provider.metadata,
-  FlagMetadata.fromStrings("source" -> "webhook")
-))
-```
-
----
-
-## Behavior Controls
-
-Simulate real-world failure modes like slow responses, intermittent failures, and specific error types. Useful for testing timeouts, circuit breakers, and fallback logic.
-
-### Imperative API
-
-```scala
-for
-  tp <- ZIO.service[TestFeatureProvider]
-  // Simulate network latency
-  _  <- tp.setDelay(200.millis)
-  // Make all evaluations fail
-  _  <- tp.setFailing(true)
-  // Simulate specific error types
-  _  <- tp.setErrorMode(TestFeatureProvider.ErrorMode.FlagNotFound)
-  // Simulate flaky service (30% failure rate)
-  _  <- tp.setFailureProbability(0.3)
-  // Reset everything
-  _  <- tp.clearBehavior
-yield ()
-```
-
-Available error modes: `FlagNotFound`, `ParseError`, `TypeMismatch`, `ProviderNotReady`, `General`.
-
-An error mode applies to **every** evaluation while it is set. `ErrorMode.FlagNotFound` behaves exactly like a
-genuinely absent key (see [Absent keys and provider chains](#absent-keys-and-provider-chains)) but for all keys at
-once; to model "this key is absent, that one is present", just leave the key unset.
-
-Provider exceptions are caught by the Java SDK and come back as an error code on the resolution. The typed tier turns
-that code into the matching typed failure; the total tier serves your default and keeps the code on the resolution.
-Pick the one your test wants to assert:
-
-```scala
-tp.setErrorMode(TestFeatureProvider.ErrorMode.FlagNotFound)
-
-typed      <- FeatureFlags.booleanDetails("flag", default = false).either
-// typed == Left(FeatureFlagError.FlagNotFound("flag"))
-
-resolution <- FeatureFlags.resolveOrDefault[Boolean]("flag", default = false)
-// resolution.errorCode == Some(ErrorCode.FlagNotFound)
-// resolution.value == false (the default)
-```
-
-### TestAspect API
-
-For cleaner test setup/teardown, use ZIO test aspects. Behavior is set before the test and cleaned up after:
-
-```scala
-test("handles slow provider") {
-  for
-    result <- FeatureFlags.boolean("flag", false).timeout(100.millis)
-  yield assertTrue(result.isEmpty)
-} @@ TestFeatureProvider.withDelay(500.millis)
-
-test("handles provider failures") {
-  for
-    typed      <- FeatureFlags.booleanDetails("flag", default = false).either
-    resolution <- FeatureFlags.resolveOrDefault[Boolean]("flag", default = false)
-  yield assertTrue(typed.isLeft, resolution.errorCode.isDefined)
-} @@ TestFeatureProvider.withFailures
-```
-
-Available aspects:
-
-| Aspect | Effect |
+| Method | Effect |
 |:-------|:-------|
-| `TestFeatureProvider.withDelay(d)` | Adds delay before each evaluation |
-| `TestFeatureProvider.withFailures` | All evaluations fail with a general error |
-| `TestFeatureProvider.withErrorMode(mode)` | All evaluations fail with a specific error |
-| `TestFeatureProvider.withFailureProbability(p)` | Evaluations fail randomly (0.0 to 1.0) |
+| `setFlag(key, value)`, `setFlag(flagDef, value)` | set one flag |
+| `setFlags(map)`, `setFlags(overrides*)` | set several, keeping the others |
+| `replaceFlags(map)`, `replaceFlags(overrides*)` | drop every flag, then set these |
+| `removeFlag(key)`, `removeFlag(flagDef)` | remove one flag |
+| `clearFlags` | remove every flag |
 
-Aspects require `TestFeatureProvider` in the environment. Apply `.provide(testLayer)` at the suite level when using aspects on individual tests.
+### Unset flags
 
----
-
-## Testing Patterns
-
-### Simple Flag Testing
+A key the provider does not hold resolves as `FLAG_NOT_FOUND`, as it does with real providers:
 
 ```scala
-import zio.test.*
-import zio.openfeature.*
-import zio.openfeature.testkit.*
-
-object MyServiceSpec extends ZIOSpecDefault:
-  def spec = suite("MyService")(
-    test("shows premium content for premium users") {
-      val testLayer = TestFeatureProvider.layer(Map(
-        "premium-content" -> true
-      ))
-
-      for
-        result <- MyService.getContent("user-123")
-      yield assertTrue(result.hasPremiumContent)
-    }.provide(
-      MyService.live,
-      Scope.default >>> testLayer
-    )
-  )
+--8<-- "TestkitSpec.scala:absent-keys"
 ```
 
-### Testing Multiple Scenarios
+Hooks see the `error` stage for it, not `after`. So when a test means "this flag is off", set it to `false` instead
+of leaving it unset.
+
+Reporting `FLAG_NOT_FOUND` is also what lets a test provider sit in a [provider chain](#provider-chains).
+
+A value of the wrong type is an error too. The typed tier fails and the total tier serves your default; neither
+silently returns the default as if the flag were fine:
 
 ```scala
-def testWithFlags[R, E, A](flags: Map[String, Any])(
-  test: ZIO[R & FeatureFlags, E, A]
-): ZIO[R, E, A] =
-  test.provide(Scope.default >>> TestFeatureProvider.layer(flags))
-
-suite("Feature variations")(
-  test("enabled") {
-    testWithFlags(Map("feature" -> true)) {
-      for result <- myLogic yield assertTrue(result.featureEnabled)
-    }
-  },
-  test("disabled") {
-    testWithFlags(Map("feature" -> false)) {
-      for result <- myLogic yield assertTrue(!result.featureEnabled)
-    }
-  }
-)
+--8<-- "TestkitSpec.scala:wrong-type"
 ```
 
-### Verifying Flag Usage
+## Checking which flags were read
+
+The provider records every evaluation that reaches it, with the context it received:
 
 ```scala
-test("service evaluates expected flags") {
-  for
-    provider <- TestFeatureProvider.make(Map(
-      "feature-a" -> true,
-      "feature-b" -> "variant"
-    ))
-    layer     = TestFeatureProvider.layerFrom(provider)
-    _        <- MyService.doSomething.provide(Scope.default >>> layer)
-    wasA     <- provider.wasEvaluated("feature-a")
-    wasB     <- provider.wasEvaluated("feature-b")
-    wasC     <- provider.wasEvaluated("feature-c")
-  yield
-    assertTrue(wasA) &&
-    assertTrue(wasB) &&
-    assertTrue(!wasC)  // Should not evaluate feature-c
-}
+--8<-- "TestkitSpec.scala:recorded"
 ```
 
-### Testing Context Propagation
+| Method | Returns |
+|:-------|:--------|
+| `wasEvaluated(key)`, `wasEvaluated(flagDef)` | whether the flag was read |
+| `evaluationCount(key)`, `evaluationCount(flagDef)` | how many times |
+| `getEvaluations` | every `(key, EvaluationContext)`, oldest first |
+| `getRawEvaluations` | the same, with the Java SDK's `EvaluationContext` |
+| `clearEvaluations` | forgets them |
+| `boundDomain` | the domain the provider was registered under, if any |
 
-The `getEvaluations` method returns each captured context as the library's own `EvaluationContext`, so you can assert
-on context propagation with the Scala API — no Java SDK types required:
+Evaluations answered without the provider, by a [transaction](transactions.md) override or cache, are not recorded.
+
+## Provider status
+
+`setStatus` changes what the provider reports. While it is `NotReady` or `Fatal`, evaluations fail fast:
 
 ```scala
-test("context is passed to provider") {
-  val ctx = EvaluationContext("user-123")
-    .withAttribute("plan", "premium")
-
-  for
-    provider <- TestFeatureProvider.make(Map("feature" -> true))
-    layer     = TestFeatureProvider.layerFrom(provider)
-    _        <- FeatureFlags.boolean("feature", false, ctx)
-                 .provide(Scope.default >>> layer)
-    evals    <- provider.getEvaluations
-    (_, captured) = evals.head
-  yield
-    // captured is zio.openfeature.EvaluationContext (the library type)
-    assertTrue(captured.targetingKey.contains("user-123")) &&
-    assertTrue(captured.getString("plan").contains("premium"))
-}
+--8<-- "TestkitSpec.scala:status"
 ```
 
-If you specifically need the raw `dev.openfeature.sdk.EvaluationContext` (e.g. to assert on the SDK type), use
-`getRawEvaluations` instead, which returns `List[(String, dev.openfeature.sdk.EvaluationContext)]`.
+`getStatus` (or `status`) reads the current status.
 
-### Using Transactions for Override Testing
+### Startup
 
-Combine testkit with transactions for fine-grained control:
+`asyncLayer` builds at once, with the provider still `NotReady`, as `FeatureFlags.fromProviderAsync` does with a slow
+provider. Evaluations fail with `ProviderNotReady` until you call `setStatus(ProviderStatus.Ready)`:
 
 ```scala
-test("feature logic with overrides") {
-  val baseLayer = TestFeatureProvider.layer(Map(
-    "feature-a" -> true,
-    "feature-b" -> false
-  ))
-
-  // Test with base values
-  val baseTest = for
-    a <- FeatureFlags.boolean("feature-a", false)
-    b <- FeatureFlags.boolean("feature-b", false)
-  yield assertTrue(a == true) && assertTrue(b == false)
-
-  // Test with overrides
-  val overrideTest = FeatureFlags.transaction(Map("feature-b" -> true)) {
-    for
-      a <- FeatureFlags.boolean("feature-a", false)
-      b <- FeatureFlags.boolean("feature-b", false)
-    yield assertTrue(a == true) && assertTrue(b == true)
-  }
-
-  (baseTest *> overrideTest.map(_.result)).provide(Scope.default >>> baseLayer)
-}
+--8<-- "TestkitSpec.scala:async-layer"
 ```
 
-### Testing Async Initialization
-
-Use `TestFeatureProvider.asyncLayer` to test how your code handles a provider that isn't ready yet:
+`asyncReadyLayer` becomes ready on its own after `initDelay`. The delay runs on the test clock, so advance it:
 
 ```scala
-test("service handles provider not ready") {
-  for
-    result <- MyService.getFeature.either
-  yield assertTrue(result.isLeft)  // Fails with ProviderNotReady
-}.provide(Scope.default >>> TestFeatureProvider.asyncLayer(Map("feature" -> true)))
-
-test("service works after provider becomes ready") {
-  for
-    tp     <- ZIO.service[TestFeatureProvider]
-    _      <- tp.setStatus(ProviderStatus.Ready)
-    result <- MyService.getFeature
-  yield assertTrue(result == true)
-}.provide(Scope.default >>> TestFeatureProvider.asyncLayer(Map("feature" -> true)))
+--8<-- "TestkitSpec.scala:async-ready-layer"
 ```
 
-The `asyncLayer` creates a provider that starts in `NotReady` state. Call `setStatus(ProviderStatus.Ready)` to simulate the provider becoming ready. This is useful for testing graceful degradation and startup behavior.
+## Events
 
-### Simulating Real Async Init
-
-If you don't need to test the `NotReady` state directly, use `asyncReadyLayer` which auto-transitions to `Ready` after a configurable delay:
+`emitEvent` sends a provider event through the OpenFeature SDK, so it reaches `FeatureFlags.events` and the
+`on*` handlers as a real provider's event would:
 
 ```scala
-test("service works with async provider") {
-  for
-    _      <- ZIO.sleep(200.millis) // Wait for auto-init
-    result <- MyService.getFeature
-  yield assertTrue(result == true)
-}.provide(Scope.default >>> TestFeatureProvider.asyncReadyLayer(
-  Map("feature" -> true),
-  initDelay = 100.millis
-))
+--8<-- "TestkitSpec.scala:events"
 ```
 
-This simulates a real provider (e.g., Optimizely connecting to its server) without requiring manual `setStatus` calls in every test.
+Use `ProviderEvent.Ready`, `Error`, `Stale` or `ConfigurationChanged`, with `provider.metadata` as the provider's
+metadata. `Reconnecting` has no OpenFeature SDK equivalent, so it does not reach `FeatureFlags`. The provider's own
+`events` stream sees every event you emit.
 
----
-
-## Test Isolation
-
-### Automatic Isolation
-
-`TestFeatureProvider.layer`, `asyncLayer`, and `layerFrom` each create an **isolated `OpenFeatureAPI` instance** with its own provider repository and event support. This means tests using these layers can run in parallel without cross-test contamination — no extra configuration needed.
+## Simulating failures
 
 ```scala
-// These tests run in parallel safely — each gets its own isolated API instance
-test("test 1") {
-  for result <- FeatureFlags.boolean("flag", false)
-  yield assertTrue(result == true)
-}.provide(Scope.default >>> TestFeatureProvider.layer(Map("flag" -> true)))
-
-test("test 2") {
-  for result <- FeatureFlags.boolean("flag", false)
-  yield assertTrue(result == false)
-}.provide(Scope.default >>> TestFeatureProvider.layer(Map("flag" -> false)))
+--8<-- "TestkitSpec.scala:failures"
 ```
 
-If you need to access both the provider and the `FeatureFlags` service (e.g. to track evaluations or emit events), use `layerFrom`:
+| Control | Effect |
+|:--------|:-------|
+| `setErrorMode(mode)` | every evaluation fails with `mode`: `FlagNotFound`, `ParseError`, `TypeMismatch`, `ProviderNotReady` or `General` |
+| `setFailing(true)` | same as `setErrorMode(ErrorMode.General)`; `setFailing(false)` clears it |
+| `setFailureProbability(p)` | each evaluation fails with probability `p` (clamped to 0–1) |
+| `setDelay(d)` | each evaluation sleeps `d` first, on the real clock |
+| `clearErrorMode`, `clearDelay`, `clearBehavior` | undo the above |
+
+Each control has a test aspect that sets it before the test and resets it after: `TestFeatureProvider.withErrorMode(mode)`,
+`withFailures`, `withFailureProbability(p)` and `withDelay(d)`. They need `TestFeatureProvider` in the environment.
+
+An error mode applies to every key. To make one key missing, leave it unset.
+
+## Transactions
+
+[Transactions](transactions.md) work on top of the test provider, so you can override a flag for one block:
 
 ```scala
-test("tracks evaluations") {
-  for
-    provider <- TestFeatureProvider.make(Map("flag" -> true))
-    layer     = TestFeatureProvider.layerFrom(provider)
-    _        <- FeatureFlags.boolean("flag", false).provide(Scope.default >>> layer)
-    was      <- provider.wasEvaluated("flag")
-  yield assertTrue(was)
-}
+--8<-- "TestkitSpec.scala:transactions"
 ```
 
-> **Note:** The public factory methods (`FeatureFlags.fromProvider`, `fromProvider(provider, config)`, etc.)
-> use the global `OpenFeatureAPI` singleton and are **not** isolated. If you test with these
-> directly, use `@@ TestAspect.sequential` to prevent conflicts.
+## Provider chains
 
----
-
-## Behavior-Matrix Testing with zio-bdd
-
-This pattern works with any `FeatureFlags` layer — `TestFeatureProvider`, `OptimizelyProvider`, OFREP, or your own provider. It's a feature of the [`zio-bdd`](https://github.com/EtaCassiopeia/zio-bdd) test framework's layer-injection hooks, not something specific to this testkit module, so it's documented here rather than on a provider-specific page.
-
-### The layer-injection hook tiers
-
-A `zio-bdd` suite (`object MySpec extends ZIOSteps[R, S]`) builds its environment through four overridable hooks, each one tier more specific than the last. Override exactly one — the others delegate down to it by default:
-
-| Hook | Called | Default |
-|:-----|:-------|:--------|
-| `applicationLayer` | Once per test run | — |
-| `featureLayer(meta)` | Once per `.feature` file | delegates to `applicationLayer` |
-| `scenarioLayer(meta)` | Once per scenario | delegates to `featureLayer` |
-| `flagLayer(meta, flags)` | Once per `@flags(...)` tag occurrence on a scenario | delegates to `scenarioLayer` |
+A test provider reports `FLAG_NOT_FOUND` for keys it does not hold, so a `MultiProvider` chain moves on to the next
+provider:
 
 ```scala
-override def scenarioLayer(meta: ScenarioMetadata): ZLayer[Any, Throwable, R] =
-  if (meta.tags.contains("use-mock")) mockHttpLayer else realHttpLayer
+--8<-- "TestkitSpec.scala:chain"
 ```
 
-### `@flags(...)` tags
+!!! warning
+    `FeatureFlags.fromProvider` and the other public factories use the global OpenFeature API, so tests that use
+    them directly must not run in parallel. Add `@@ TestAspect.sequential`. The testkit's own layers are isolated and
+    need nothing.
 
-`flagLayer` is the hook to override when a scenario needs different flag values per run. Tag a scenario with `@flags(key=value, ...)`, and the framework parses the tag into a `Map[String, String]` before calling `flagLayer(meta, flags)`:
+## Checking a custom `FlagType`
+
+If you write a `FlagType` by hand, check it with `FlagTypeLaws`. Give it a `Gen` for your type:
+
+```scala
+--8<-- "TestkitSpec.scala:laws"
+```
+
+`celsiusLaws` is a `Spec`; put it in a suite. `all` runs two laws:
+
+| Law | Checks |
+|:----|:-------|
+| `roundTrip` | `decode(encode(a)) == Right(a)` |
+| `throughValueBridge` | the same, after a trip through the OpenFeature SDK's `Value` type |
+
+The second one finds the real problems: the SDK turns every number into a `Double`, so a `Long` above 2^53 does not
+survive, and it drops structure members it cannot represent. It matters most for object-backed types, which always
+take that path. Both laws work on Scala 2.13 too.
+
+## `CachingReasonProvider`
+
+`CachingReasonProvider` wraps any OpenFeature provider and reports the `CACHED` reason from the second evaluation of
+a key on. It always calls the wrapped provider; only the reason changes. This repository uses it to run the
+OpenFeature spec's `CACHED` scenario. It does not cache values: for that, see
+[`CachingProvider`](extras.md).
+
+```scala
+--8<-- "TestkitSpec.scala:caching-reason"
+```
+
+## Scenario matrices with zio-bdd
+
+To run one scenario against several flag configurations, the
+[zio-bdd](https://github.com/EtaCassiopeia/zio-bdd) framework can build a `FeatureFlags` layer per `@flags(...)` tag.
+Override `flagLayer` in your `ZIOSteps` suite. Tag values arrive as strings, so turn them into flag values of the
+right type:
 
 ```scala
 override def flagLayer(meta: ScenarioMetadata, flags: Map[String, String]): ZLayer[Any, Throwable, FeatureFlags] =
-  environment >>> FlagConfig.layer(flags)
+  TestFeatureProvider.scopedLayer(Map("new-greeting" -> flags.get("greeting").contains("new")))
 ```
 
-Two things to know about how tags expand into runs:
+`@flags(greeting=new, plan=pro)` runs the scenario once, with both keys in `flags`. Two `@flags(...)` tags on separate lines run it
+twice, once per tag. The hook also has coarser siblings: `scenarioLayer`, `featureLayer` and `applicationLayer`.
+This repository's `conformance-zio-bdd` module has working matrix suites (`FlagMatrixSpec`) that drive the
+Optimizely provider this way.
 
-- **One tag, multiple keys → one run.** `@flags(datafile=X, plan=Y)` parses to a single `Map("datafile" -> "X", "plan" -> "Y")` and calls `flagLayer` once, with both keys present together.
-- **Multiple tags → multiple runs.** Two separate tag occurrences on the same scenario — written on consecutive lines:
-  ```gherkin
-  @flags(datafile=X)
-  @flags(datafile=Y)
-  Scenario: ...
-  ```
-  expand into two independent runs, each calling `flagLayer` once with only that tag's own map (not merged) — the scenario body executes twice, against two separately-built environments.
-
-A blank line between or around `@flags(...)` tags is fine. A blank line inside the free-text description directly under `Feature:` is not — it silently drops the whole feature instead of raising a parse error; see [zio-bdd#87](https://github.com/EtaCassiopeia/zio-bdd/issues/87).
-
-See [Optimizely → Testing your app]({{ site.baseurl }}/optimizely) for a worked example applying this to a real provider, with datafile fixtures driving the `@flags(datafile=...)` values.
-
----
-
-## Typed fixtures with FlagDef
-
-`setFlag("user.tier", "premum")` compiles. The typo ships, the test passes, and production fails with
-`TYPE_MISMATCH`. Building the fixture from a [`FlagDef`]({{ site.baseurl }}/architecture#typed-flag-definitions)
-instead makes the value type-checked against the flag's declared type:
-
-```scala
-import zio.openfeature.testkit.FlagOverride.Ops   // brings `:=` into scope
-
-val UserPlan = FlagDef[Tier]("user.tier", Tier.Free)
-
-val layer = TestFeatureProvider.layer(UserPlan := Tier.Premium)   // compiles
-// TestFeatureProvider.layer(UserPlan := "premium")               // does not
-```
-
-The value is stored as `flagType.encode(value)` — the wire form a real provider would carry — so the test reads it
-back through the same decode path production uses. `:=` additionally checks that the encoding round-trips back
-through `decode`, and fails at fixture-construction if it cannot: a codec that cannot read its own output would
-otherwise hand you a fixture your test believes in and production cannot read.
-
-Every flag-seeding factory has a typed twin, so switching factories does not send you back to `Map[String, Any]`:
-
-```scala
-TestFeatureProvider.make(UserPlan := Tier.Premium)
-TestFeatureProvider.layer(UserPlan := Tier.Premium)
-TestFeatureProvider.scopedLayer(UserPlan := Tier.Premium)
-TestFeatureProvider.asyncLayer(UserPlan := Tier.Premium)
-TestFeatureProvider.asyncReadyLayer(100.millis, UserPlan := Tier.Premium)
-```
-
-`asyncReadyLayer` takes its delay explicitly here, because its untyped form defaults both parameters and a plain
-varargs overload would make a bare `asyncReadyLayer()` ambiguous.
-
-The same helpers accept a `FlagDef` wherever they took a key — `setFlag`, `setFlags`, `replaceFlags`, `removeFlag`,
-`wasEvaluated`, `evaluationCount`.
-
-> The key-based API is unchanged and is still the right tool for the cases a `FlagDef` cannot express: an
-> undeclared key, a key belonging to another system, or a negative case such as `FLAG_NOT_FOUND`.
-
-One inference trap worth knowing: `FlagDef("k", Tier.Free)` where `Tier.Free` is a `case object` infers the type as
-`Tier.Free.type` and then cannot find a `FlagType` for it. Name the type — `FlagDef[Tier]("k", Tier.Free)`. A Scala 3
-`enum`'s *parameterless* cases are typed as the enum itself and are unaffected.
-
----
-
-## Law-checking a custom FlagType
-
-If you hand-write a `FlagType[A]`, `FlagTypeLaws` holds it to the same contract the library's own instances meet.
-Pass a `Gen` for your type:
-
-```scala
-import zio.openfeature.testkit.FlagTypeLaws
-
-object CelsiusCodecSpec extends ZIOSpecDefault {
-  def spec = suite("Celsius")(
-    FlagTypeLaws.all(Gen.int(-100, 100).map(Celsius(_)))
-  )
-}
-```
-
-There are two laws, and the difference between them is the point:
-
-| Law | Checks | Catches |
-|:----|:-------|:--------|
-| `roundTrip` | `decode(encode(a)) == Right(a)` in memory | an encoder and decoder that disagree |
-| `throughValueBridge` | the same, but after crossing the OpenFeature `Value` conversion | a *lossy* encoding |
-
-`roundTrip` is the law as `FlagType` states it, and it passes trivially for every built-in instance because their
-`encode` is the identity. `throughValueBridge` is the one that finds real problems, because that conversion is
-lossy in two ways worth knowing about:
-
-- **every number comes back as a `Double`**, so a `Long` beyond 2^53 does not survive an object-path round trip;
-- a structure member the bridge cannot represent is **dropped**, so its key reads back as absent (which is exactly
-  how an `Option` field decodes to `None`).
-
-`all` runs both. Reach for `throughValueBridge` in particular when your type is object-backed — when its
-`wireType` is not one of the scalars — since that is the path it will actually be evaluated on.
-
-The laws live in the shared source tree, so they are available on Scala 2.13 as well as 3. (Only
-`FlagType.derived` is Scala 3 only.)
-
----
-
-## Best Practices
-
-### 1. Use Descriptive Flag Names
-
-```scala
-val testLayer = TestFeatureProvider.layer(Map(
-  "premium-feature-enabled" -> true,
-  "max-upload-size-mb" -> 100,
-  "checkout-variant" -> "new"
-))
-```
-
-### 2. Create Test Fixtures
-
-```scala
-object TestFixtures:
-  val premiumUser = TestFeatureProvider.layer(Map(
-    "premium" -> true,
-    "max-items" -> 1000
-  ))
-
-  val freeUser = TestFeatureProvider.layer(Map(
-    "premium" -> false,
-    "max-items" -> 10
-  ))
-
-// Usage
-test("premium user behavior") {
-  myTest.provide(Scope.default >>> TestFixtures.premiumUser)
-}
-```
-
-### 3. Verify Expected Evaluations
-
-Use `wasEvaluated` for cleaner flag usage assertions:
-
-```scala
-test("service only evaluates necessary flags") {
-  for
-    provider <- TestFeatureProvider.make(Map(
-      "needed-flag" -> true,
-      "unneeded-flag" -> true
-    ))
-    layer     = TestFeatureProvider.layerFrom(provider)
-    _        <- myService.provide(Scope.default >>> layer)
-    wasNeeded   <- provider.wasEvaluated("needed-flag")
-    wasUnneeded <- provider.wasEvaluated("unneeded-flag")
-  yield
-    assertTrue(wasNeeded) &&
-    assertTrue(!wasUnneeded)
-}
-```
-
-### 4. Test Edge Cases
-
-```scala
-suite("edge cases")(
-  test("handles missing flag") {
-    val layer = TestFeatureProvider.layer
-
-    // A missing key is FLAG_NOT_FOUND: the typed tier fails, the total tier serves the default.
-    FeatureFlags.booleanOrDefault("missing", false)
-      .map(result => assertTrue(result == false))
-      .provide(Scope.default >>> layer)
-  },
-  test("handles type mismatch") {
-    val layer = TestFeatureProvider.layer(Map("flag" -> "string"))
-
-    FeatureFlags.boolean("flag", false)
-      .map(result => assertTrue(result == false))  // Uses default
-      .provide(Scope.default >>> layer)
-  }
-)
-```
-
+To test a real provider's network code rather than its states, see [Testing real providers](testing-real-providers.md).

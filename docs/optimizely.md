@@ -1,363 +1,179 @@
----
-layout: default
-title: Optimizely
-nav_order: 7
----
-
 # Optimizely
-{: .no_toc }
 
-## Table of contents
-{: .no_toc .text-delta }
-
-1. TOC
-{:toc}
-
----
-
-## Overview
-
-`zio-openfeature-optimizely` integrates with [Optimizely Feature Experimentation](https://www.optimizely.com/products/feature-experimentation/) directly on top of the official **Optimizely Java SDK** (`com.optimizely.ab:core-api` and `core-httpclient-impl`). The library does NOT depend on `dev.openfeature.contrib.providers:optimizely` — at the time of writing that artifact is not published to Maven Central.
-
-You get:
-
-- A Scala-friendly factory (`OptimizelyProvider.make(sdkKey)`) that validates inputs and returns a typed
-  `FeatureFlagError.InvalidConfiguration` on bad config.
-- An `OpenFeature`-compatible provider (`OptimizelyFeatureProvider extends EventProvider`) that emits
-  `PROVIDER_CONFIGURATION_CHANGED` when Optimizely's datafile poller picks up a new revision.
-- The same `FeatureFlags.fromProvider*` factories you use with any other provider, including the 30-second
-  `initTimeout` default added in workstream A.
-
----
-
-## 1. Getting an SDK key
-
-1. Log in to [app.optimizely.com](https://app.optimizely.com).
-2. Pick the project you want to drive flags from.
-3. Open **Settings → Environments**.
-4. Copy the **SDK Key** for the environment (Development / Staging / Production). Each environment has its own key — never reuse a Production key in Development apps.
-
-The SDK key is a short alphanumeric token like `abcd1234efgh5678`. The library's validator accepts `[A-Za-z0-9_-]+` between 6 and 128 chars and rejects obvious placeholders (`YOUR_SDK_KEY`, `<sdk-key>`, `changeme`, …) up front.
-
----
-
-## 2. Quick start
+`zio-openfeature-optimizely` serves flags from
+[Optimizely Feature Experimentation](https://www.optimizely.com/products/feature-experimentation/). It is built
+directly on the official Optimizely Java SDK, which downloads your project's datafile and makes every decision
+locally, in your process.
 
 ```scala
 libraryDependencies += "io.github.etacassiopeia" %% "zio-openfeature-optimizely" % "<version>"
 ```
 
-The Optimizely SDK needs a JSON parser to read datafiles but does not declare one, so this module brings
-`jackson-databind` (the same pinned 2.22.x family as `zio-openfeature-ofrep`). gson, org.json and json-simple work
-too: the SDK prefers gson when it is on the classpath, and `-Doptimizely.default_parser=` selects one explicitly. If
-you exclude Jackson without adding another parser, `OptimizelyProvider.make` fails with `InvalidConfiguration` saying
-no JSON parser was found.
+The Optimizely SDK needs a JSON parser but does not declare one, so this module brings `jackson-databind`. If gson is
+also on your classpath, the SDK prefers it; `-Doptimizely.default_parser=` picks one explicitly. If no parser can be
+found, `OptimizelyProvider.make` fails with `InvalidConfiguration` and says so.
+
+## Quick start
+
+You need an SDK key: in [app.optimizely.com](https://app.optimizely.com), open your project's
+**Settings → Environments** and copy the key for the environment. Each environment has its own key.
 
 ```scala
-import zio.*
-import zio.openfeature.*
-import zio.openfeature.optimizely.OptimizelyProvider
-
-object MyApp extends ZIOAppDefault:
-
-  def run: ZIO[Any, Throwable, Unit] = ZIO.scoped {
-    for
-      sdkKey   <- ZIO.attempt(sys.env("OPTIMIZELY_SDK_KEY"))
-      provider <- OptimizelyProvider.make(sdkKey).mapError(e => new RuntimeException(e.message))
-      env      <- FeatureFlags.fromProviderAsync(provider).build
-      ff        = env.get[FeatureFlags]
-      enabled  <- ff.boolean("new-checkout", default = false).mapError(e => new RuntimeException(e.message))
-      _        <- ZIO.logInfo(s"new-checkout = $enabled")
-    yield ()
-  }
+--8<-- "Optimizely.scala:quick-start"
 ```
 
-What this does on startup:
+!!! warning "Every evaluation needs a targeting key"
+    Optimizely decides per user, so it needs a user id. The provider uses the context's targeting key. Without one,
+    every evaluation answers `TARGETING_KEY_MISSING`: the typed tier fails with `TargetingKeyMissing`, and the total
+    tier serves your default. Set it per call, or once with [`withContext` or the global context](context.md).
 
-1. `OptimizelyProvider.make(sdkKey)` validates the key shape (non-empty, allowed characters, not a placeholder) and constructs an `Optimizely` client wired to the public CDN at `https://cdn.optimizely.com/datafiles/<sdkKey>.json`. Construction performs no network activity and starts no background polling — the datafile poller runs only between `initialize()` and `shutdown()`. A provider you build owns a polling executor and an HTTP client, so pair `make` with something that shuts it down (a `FeatureFlags` layer does), or use `OptimizelyProvider.scoped` / `OptimizelyProvider.layer`, which release it when the surrounding scope closes. `OptimizelyProviderConfig` exposes `pollingInterval` and `blockingTimeout` when the SDK defaults (5 min / 10 s) don't fit.
-2. `FeatureFlags.fromProviderAsync(provider)` starts the provider in the background, watches for the first datafile load, and uses the default **30 s `initTimeout`** as an upper bound. If the datafile never arrives, `providerStatus` transitions to `Fatal` — your evaluations stop hanging.
-3. On every subsequent datafile revision (typically every 30 s for the SDK's default polling interval), the provider emits `ProviderEvent.ConfigurationChanged` — call `FeatureFlags.onConfigurationChanged(handler)` if you want to react.
+## What happens at startup
 
----
+1. `OptimizelyProvider.make(sdkKey)` checks the key, builds the Optimizely client, and the client starts fetching the
+   datafile from `https://cdn.optimizely.com/datafiles/<sdkKey>.json`.
+2. When the provider is initialized, it waits up to `initWait` (30 s) for the datafile. Once it has one, the provider
+   is `READY`.
+3. `FeatureFlags.fromProviderAsync` does not wait for that. Until the provider is ready, evaluations fail with
+   `ProviderNotReady`. If it is not ready within `initTimeout` (30 s by default), the status becomes `Fatal` and the
+   provider is shut down. `Fatal` is final: install a new provider with `setProvider`, or rebuild the layer.
 
-## 3. Configuring init timeout
+The key must be 6 to 128 characters of `A-Z`, `a-z`, `0-9`, `_` or `-`, with no whitespace, and not an obvious
+placeholder such as `YOUR_SDK_KEY` or `changeme`. Anything else fails with `InvalidConfiguration` before the SDK is
+touched.
 
-The 30-second default is friendly for most apps. You'll want to tune it in three cases:
+The provider owns a polling thread and an HTTP client. Registering it with a `FeatureFlags` layer hands those over:
+the layer shuts the provider down when it closes. If the provider might never reach a layer, create it with
+`OptimizelyProvider.scoped` or `OptimizelyProvider.layer`, which shut it down with their scope.
 
-- **Tests** — drop it to 1–2 seconds so a forgotten WireMock stub fails fast.
-- **Cold start on a constrained network** — raise it if your CI runners or first production deploys regularly need >30 s for the initial datafile fetch.
-- **Run-anywhere CLIs** — set it lower (5–10 s) so users on flaky networks get a clear startup error instead of waiting half a minute.
+## Fail fast instead
 
-Override via `FeatureFlagsConfig`:
+If some flags guard money or safety, serving defaults while Optimizely starts may be wrong. Initialize synchronously:
+the layer build then waits for the datafile, and fails if it does not arrive within `initTimeout`.
 
 ```scala
-FeatureFlags.fromProvider(
-  provider,
-  FeatureFlagsConfig(initMode = InitMode.Async).withEvaluationTimeout(500.millis).withInitTimeout(5.seconds)
-)
+--8<-- "Optimizely.scala:fail-fast"
 ```
 
-When `initTimeout` elapses without the datafile ever arriving, the layer's watchdog flips `providerStatus` to `Fatal` and shuts the provider down. This `Fatal` is terminal (the provider is stopped, so a late datafile cannot resurrect it — install a new provider via `setProvider` or rebuild the layer to recover). Application code that polls `providerStatus` (or registers `onProviderReady` / `onProviderError`) sees this immediately and can fail loud:
+With async initialization, keep traffic away until the provider is ready by wiring its status into your readiness
+check:
 
 ```scala
-val ready = for
-  ff     <- ZIO.service[FeatureFlags]
-  status <- ff.providerStatus
-  _      <- ZIO.fail(new RuntimeException(s"Optimizely never became ready: $status"))
-              .when(status == ProviderStatus.Fatal)
-yield ()
+--8<-- "Optimizely.scala:readiness"
 ```
 
----
+## How flags are read
 
-## 4. Self-hosted Optimizely Agent
+| You ask for | You get |
+|---|---|
+| `boolean` | whether the flag is enabled for this user |
+| `string` | the flag variable named `value`; if there is none, the variation key; otherwise your default |
+| `int`, `long`, `double`, `obj` | the flag variable named `value` (a JSON variable for `obj`); otherwise your default |
 
-When you run [Optimizely Agent](https://docs.developers.optimizely.com/feature-experimentation/docs/agent) inside your network (e.g., for FedRAMP / data-residency requirements), pass the agent's URL explicitly:
+A long is read from an integer variable, since Optimizely has no 64-bit one. To read a variable with another name,
+put its name in the context attribute `openfeature.variableKey`
+(`OptimizelyFeatureProvider.VariableKeyAttribute`):
 
 ```scala
-val provider = OptimizelyProvider.make(
-  sdkKey      = sys.env("OPTIMIZELY_SDK_KEY"),
-  datafileUrl = "https://flags.internal.example.com/datafile.json"
-)
+--8<-- "Optimizely.scala:variables"
 ```
 
-The URL is validated alongside the SDK key: parseable as a URI, scheme `http` or `https`, non-empty host. A malformed URL fails layer build with `FeatureFlagError.InvalidConfiguration("malformed datafileUrl …")` before any network call.
+The reason is `TargetingMatch` when the user got a variation and `Default` otherwise, and the variation key is the
+variant. The resolution's metadata carries `optimizely.flagKey` and `optimizely.ruleKey`.
 
----
+| Error code | When |
+|---|---|
+| `TargetingKeyMissing` | the context has no targeting key |
+| `FlagNotFound` | the datafile has no flag with this key |
+| `ProviderNotReady` | the datafile has not loaded yet, or the provider was shut down |
+| `General` | the Optimizely SDK failed to decide |
 
-## 5. Production resilience — composing with `CircuitBreakerProvider`
+Context attributes go to Optimizely as audience attributes. Strings, booleans and numbers pass as they are, and an
+`Instant` becomes its ISO-8601 string. Lists and structures are left out, because no audience condition can match
+them.
 
-`OptimizelyFeatureProvider` extends `EventProvider`, so it composes cleanly with the breaker from `zio-openfeature-extras`. A degraded Optimizely CDN trips the breaker; while open, evaluations fail fast (sub-millisecond) without contacting Optimizely.
+## Configuration
 
 ```scala
-import zio.openfeature.extras.{CircuitBreakerProvider, CircuitBreakerProviderConfig}
-
-val breakerConfig = CircuitBreakerProviderConfig(
-  failureThreshold = 5,
-  resetTimeout     = 30.seconds
-)
-
-val program = ZIO.scoped {
-  for
-    sdkKey   <- ZIO.attempt(sys.env("OPTIMIZELY_SDK_KEY"))
-    inner    <- OptimizelyProvider.make(sdkKey).mapError(e => new RuntimeException(e.message))
-    wrapped  <- CircuitBreakerProvider.make(inner, breakerConfig)
-    env      <- FeatureFlags.fromProvider(wrapped, FeatureFlagsConfig(initMode = InitMode.Async).withEvaluationTimeout(500.millis)).build
-    ff        = env.get[FeatureFlags]
-    enabled  <- ff.boolean("flag", default = false).mapError(e => new RuntimeException(e.message))
-  yield enabled
-}
+--8<-- "Optimizely.scala:config"
 ```
 
-The breaker counts *infrastructure* errors (timeouts, connection failures, `GeneralError`, `ProviderNotReadyError`) toward the failure threshold. Application-level errors (`FlagNotFoundError`, type mismatches, etc.) don't trip the breaker — those indicate the provider is reachable. See [Extras → CircuitBreakerProvider]({{ site.baseurl }}/extras) for the full classification.
+| `OptimizelyProviderConfig` field | Default | Meaning |
+|---|---|---|
+| `sdkKey` | required | your environment's SDK key |
+| `datafileUrl` | the Optimizely CDN | where to fetch the datafile, such as a self-hosted Agent |
+| `initWait` | 30 s | how long initialization waits for the first datafile |
+| `pollingInterval` | the SDK's, 5 min | how often the datafile is fetched again; setting it also turns on the staleness watchdog |
+| `blockingTimeout` | the SDK's, 10 s | longest the SDK blocks waiting for a config |
+| `staleAfter` | 3 × `pollingInterval` | with the watchdog on, how long without a successful fetch before the provider is `STALE` |
 
----
+`OptimizelyProvider.make(sdkKey, datafileUrl, initWait)` is a shortcut for the first three.
 
-## 6. Testing your app
+### Self-hosted Optimizely Agent
 
-Three patterns, all supported:
-
-### Unit-testing application code without touching Optimizely
-
-Use `TestFeatureProvider` from `zio-openfeature-testkit` — there's a worked example under [`examples/testkit-app/`](https://github.com/EtaCassiopeia/zio-openfeature/tree/main/examples/testkit-app):
+If you run [Optimizely Agent](https://docs.developers.optimizely.com/feature-experimentation/docs/agent) inside your
+network, fetch the datafile from it:
 
 ```scala
-import zio.openfeature.testkit.TestFeatureProvider
-
-val spec = test("UserService returns the new greeting when the flag is ON") {
-  for
-    provider <- ZIO.service[TestFeatureProvider]
-    _        <- provider.setFlag("new-greeting-copy", true)
-    svc      <- ZIO.service[UserService]
-    greeting <- svc.welcome("alice")
-  yield assertTrue(greeting.contains("Hey alice"))
-}.provide(TestFeatureProvider.scopedLayer >>> UserService.live)
+--8<-- "Optimizely.scala:agent"
 ```
 
-This is what your app developers should use day-to-day. Nothing in this test path requires a real Optimizely SDK key or network access.
+The URL is checked like the key: it must parse, use `http` or `https`, and name a host.
 
-### Integration-testing the Optimizely wiring itself
+## Datafile updates
 
-The library's own integration suite (`OptimizelyProviderIntegrationSpec`) drives a WireMock server impersonating the Optimizely CDN, with short `blockingTimeout` and `pollingInterval` knobs to keep tests fast. If you want to replicate that pattern in your own repo (e.g., to confirm a custom datafile schema), copy the per-test `WireMockServer` setup and use `OptimizelyFeatureProvider`'s package-private constructor through the `fromOptimizelyClient` escape hatch:
+The SDK fetches the datafile again every `pollingInterval`. When a new revision arrives, the provider emits
+`ConfigurationChanged`. Its set of changed flags is empty, because the SDK does not say which flags changed: use it as
+a signal, and read the flags again.
 
 ```scala
-val opt = Optimizely.builder()
-  .withConfigManager(
-    HttpProjectConfigManager.builder()
-      .withSdkKey("test-sdk-key")
-      .withUrl(wireMockBaseUrl)
-      .withBlockingTimeout(1L, TimeUnit.SECONDS)
-      .withPollingInterval(1L, TimeUnit.HOURS)  // effectively disable polling for the test
-      .build()
-  )
-  .build()
-
-val provider = Unsafe.unsafe { implicit u =>
-  Runtime.default.unsafe.run(OptimizelyProvider.fromOptimizelyClient(opt)).getOrThrow()
-}
+--8<-- "Optimizely.scala:config-changed"
 ```
 
-### Running the same SUT against a matrix of datafiles
+A fetch that fails leaves the last datafile in use, and nothing tells you about it unless the staleness watchdog is on.
+It runs only when you set `pollingInterval`. It marks the provider `STALE` once fetches have failed for `staleAfter`,
+and `READY` again when a fetch succeeds. A stale provider keeps answering from the last datafile.
 
-When you want to verify application behavior (not just provider wiring) across several rollout configurations — kill-switch on/off, a string variant changing, an audience rule gating a variable — the library's own test suites give two worked examples of doing that without hand-rolling stub-swap logic:
+## With a circuit breaker
 
-- **`RecommendationServiceSpec`** (`optimizely/src/test/scala/.../matrix/`) is plain `zio-test`. Each `test(...)` block spins up its own `WireMockServer` stubbing the Optimizely CDN endpoint with a named datafile fixture (`optimizely/src/test/resources/datafiles/*.json`), builds a real `OptimizelyProvider` against it, and asserts on a toy `RecommendationService` reading multiple flags.
-- **`FlagMatrixSpec`** (`conformance-zio-bdd/src/test/scala/.../matrix/`) does the same thing as a `zio-bdd` Gherkin suite, tagging scenarios with `@flags(datafile=<name>)`. See [Testkit → Behavior-Matrix Testing with zio-bdd]({{ site.baseurl }}/testkit) for how the `@flags(...)` tag / `flagLayer` mechanism works in general — this section covers only what's Optimizely-specific.
-
-The Optimizely-specific piece is `MatrixHarness.layerForDatafile`, the `flagLayer` implementation used by `FlagMatrixSpec`:
+Decisions are local, so a slow Optimizely CDN does not slow evaluations down once the datafile is loaded. The
+provider's own state is what matters. `CircuitBreakerProvider` from [Extras](extras.md#circuit-breaker-provider) reads
+it, and opens while the provider reports `ERROR` or `FATAL`, or, by default, `STALE`. Put a fallback behind it for the
+flags that must have a sensible value during an outage:
 
 ```scala
-override def flagLayer(meta: ScenarioMetadata, flags: Map[String, String]): ZLayer[Any, Throwable, FeatureFlags] = {
-  val datafile = flags.getOrElse("datafile", "empty")
-  MatrixHarness.layerForDatafile(datafile, plan = flags.get("plan"))
-}
+--8<-- "Optimizely.scala:circuit-breaker"
 ```
 
-It builds a fresh `WireMockServer` + `OptimizelyProvider` per call, scoped so both are torn down when the scenario ends — no stub-swap between scenarios, no polling wait, and `scenarioParallelism > 1` is safe since nothing is shared:
+The fallback hides Optimizely outages from your callers, so watch Optimizely separately: a flag that falls back looks
+like any other answer.
 
-```gherkin
-@flags(datafile=kill-switch-off)
-Scenario: Kill-switch is off and variant is alpha — full recommendation
-  Then the recommendation service returns kind "alpha"
+## Choosing a setup
 
-@flags(datafile=audience-premium, plan=premium)
-Scenario: Datafile and plan overrides combined in a single @flags tag
-  When a recommendation is requested
-  Then the recommendation kind is "alpha"
-  And the rate limit is 100
-```
-
-`plan` is seeded via `FeatureFlags.setGlobalContext` before the scenario starts, relying on the spec's automatic global-context merge rather than a "with plan" step. See `flag_matrix.feature` for the full set of scenarios this pattern covers.
-
----
-
-## 7. Operating Optimizely-backed apps
-
-### What to alert on
-
-| Signal                                           | Likely cause                                        | Suggested action                         |
-|--------------------------------------------------|-----------------------------------------------------|------------------------------------------|
-| `FeatureFlagError.Unauthorized`                  | Wrong / revoked SDK key, expired access token       | Page on-call; check key rotation status  |
-| `FeatureFlagError.Unreachable`                   | DNS / network failure reaching `cdn.optimizely.com` | Check network egress; consider self-hosting via Optimizely Agent |
-| `providerStatus = Fatal` after startup           | Datafile never loaded (SDK key invalid, CDN unreachable, network ACL) | Restart with corrected config; alert on >1 occurrence |
-| `FlagResolution.errorCode` populated repeatedly | Misconfigured flag, missing rollout                 | Application-side issue, not a transport one — check Optimizely UI |
-
-`Unauthorized` and `Unreachable` come from the typed-error classifier (`FeatureFlagError.classify`); see the [error types]({{ site.baseurl }}/architecture) doc for the full ADT.
-
-### `ProviderEvent.ConfigurationChanged` events
-
-The Optimizely SDK polls its datafile URL on a background thread (default ~30 s interval). Whenever a new revision is fetched and parsed, `OptimizelyFeatureProvider` emits OpenFeature's `PROVIDER_CONFIGURATION_CHANGED` event. Hook into it for log lines, cache invalidation, or metrics:
-
-```scala
-ff.onConfigurationChanged { (flagsChanged, meta) =>
-  ZIO.logInfo(s"Optimizely datafile updated; affected flags: $flagsChanged")
-}
-```
-
-The library doesn't pass through the *list* of changed flags from Optimizely (the underlying notification doesn't expose them in this version of the SDK) — the `flagsChanged` set will be empty. Use the event as a trigger; check the actual flag values via fresh evaluations.
-
-### Detecting `Fatal` status from a healthcheck
-
-After `initTimeout` elapses with the provider still un-ready, the async watchdog flips status to `Fatal`. This is recoverable (a later `PROVIDER_READY` event transitions `Fatal → Ready`), but during the gap every evaluation fails — so don't route traffic to the pod. The standard pattern:
-
-```scala
-val readinessCheck: URIO[FeatureFlags, Boolean] =
-  ZIO.serviceWithZIO[FeatureFlags](_.providerStatus).map {
-    case ProviderStatus.Ready | ProviderStatus.Stale => true
-    case _                                            => false
-  }
-```
-
-Wire `readinessCheck` into your readiness endpoint. Kubernetes / ECS / Nomad won't direct traffic to the pod until `Ready`. The cold-start window — and any post-`Fatal` recovery window — becomes invisible to users. Without this, your app advertises healthy while every flag silently returns its OF default.
-
----
-
-## 8. Choosing a topology
-
-The patterns below differ in **when defaults are served** and **whether the app refuses to start on a misconfiguration**. See [Providers → Choosing a strategy]({{ site.baseurl }}/providers#choosing-a-strategy--sync-vs-async-with-vs-without-fallback) for the full decision matrix; the Optimizely-specific guidance is below.
-
-### Pattern A — Optimizely-only with the async watchdog (default)
-
-Highest availability after boot, but during the cold-start window every flag returns its OF default until Optimizely's first datafile arrives. Use this when:
-
-- Most of your flags are non-correctness-bearing (UI variations, feature gates, experiments).
-- You wire `providerStatus` into your readiness check (so the cold-start defaults don't reach users).
-- You can tolerate a 30-second window where new pods are not-routed.
-
-```scala
-ZIO.scoped {
-  for
-    provider <- OptimizelyProvider.make(sys.env("OPTIMIZELY_SDK_KEY"))
-    env      <- FeatureFlags.fromProvider(provider, FeatureFlagsConfig(initMode = InitMode.Async).withEvaluationTimeout(500.millis)).build
-    // initTimeout uses the library default (30 s); override via .withInitTimeout(...)
-  yield env.get[FeatureFlags]
-}
-```
-
-### Pattern B — Optimizely-only with fail-fast boot
-
-Boot blocks until Optimizely is `READY` or `initTimeout` elapses; on failure the layer build throws and the orchestrator restarts the pod. Use this when:
-
-- Some of your flags gate correctness (financial logic, fraud checks, billing rules).
-- "All flags default" is unsafe even for a few seconds.
-- You'd rather fail loud at boot than serve traffic in a degraded state.
-
-```scala
-ZIO.scoped {
-  for
-    provider <- OptimizelyProvider.make(sys.env("OPTIMIZELY_SDK_KEY"))
-    env      <- FeatureFlags.fromProvider(
-                  provider,
-                  FeatureFlagsConfig()
-                    .withEvaluationTimeout(500.millis)
-                    .withInitTimeout(15.seconds)   // tight — fail fast on misconfig
-                ).build
-  yield env.get[FeatureFlags]
-}
-```
-
-If Optimizely doesn't reach `READY` in 15 s, the layer build fails with `TimeoutException` or `IllegalStateException`. Your pod doesn't go live; the orchestrator restarts it. There's no half-initialised state and no window of all-defaults.
-
-### Pattern C — Optimizely + `EnvVarProvider` for critical flags only
-
-Hybrid: Optimizely serves the bulk of flags; a small `EnvVarProvider` is the second provider in a `MultiProvider`, holding only the flags whose default-value matters under outage. Use this when:
-
-- A small subset of flags is correctness-bearing; the rest is fine to default during an outage.
-- You want the highest availability (multi-provider is always `Ready` via EnvVar) without sacrificing safety on the critical few.
-
-```scala
-import zio.openfeature.extras.EnvVarProvider
-import zio.openfeature.MultiProviderStrategy
-
-val critical = Map(
-  "FF_MAINTENANCE_MODE"    -> "false",
-  "FF_FRAUD_CHECK_ENABLED" -> "true"
-)
-
-ZIO.scoped {
-  for
-    optimizely <- OptimizelyProvider.make(sys.env("OPTIMIZELY_SDK_KEY"))
-    envProvider = EnvVarProvider.withLookup(critical.get)
-    env        <- FeatureFlags.fromProvider(
-                    FeatureFlags.multiProvider(List(optimizely, envProvider), MultiProviderStrategy.firstSuccessful),
-                    FeatureFlagsConfig(initMode = InitMode.Async)
-                  ).build
-  yield env.get[FeatureFlags]
-}
-```
-
-`MultiProviderStrategy.firstSuccessful` tries Optimizely first; if it fails or is unready, falls through to `EnvVarProvider`. Because `EnvVarProvider` is instantly `Ready`, the `MultiProvider`'s aggregate state is `Ready` immediately and the 30-second watchdog never fires — meaning Optimizely-specific failures are no longer visible at the `FeatureFlags` layer. If you want to alert on Optimizely-side problems anyway, poll the underlying client's `isValid` from a side healthcheck or hook into `onProviderError`.
-
-One consequence of `EnvVarProvider` reporting `FLAG_NOT_FOUND` for an unset variable, which is worth knowing for exactly this pattern: `firstSuccessful` treats a provider as successful only when it returns no error code. So when Optimizely is failing **and** the key is not among the few you set as env-var overrides, the chain now surfaces `errorCode = General` carrying the aggregated per-provider errors, rather than a silent default. On the typed tier that is a `ProviderError` failure; on the total tier you still get your default as the value with the code on the resolution. That is largely the point — it is what makes the invisibility described above visible — but it means an absent-everywhere key is now an error, not a quiet default, and hooks see the `error` stage for it.
-
-### Picking between A, B, and C
-
-| Question | Pattern A (Optimizely, async) | Pattern B (Optimizely, sync) | Pattern C (Optimizely + EnvVar) |
+| | Async (quick start) | Sync (fail fast) | With a fallback |
 |---|---|---|---|
-| Can the app start while Optimizely is down? | yes, but readiness blocks until `Ready` | no — boot fails | yes, always |
-| What happens during a 60-second Optimizely outage at runtime? | flags return OF defaults until recovery | n/a (app refuses to start) | flags served from EnvVar where defined; OF defaults otherwise |
-| Operational visibility on Optimizely failures | high — `providerStatus` reports `Fatal` | very high — boot fails loudly | low — `MultiProvider` masks it; needs separate monitoring |
-| Right for correctness-critical workloads | only if you wire readiness | **yes — preferred** | yes for the EnvVar-covered flags only |
-| Right for experiments / UI gates / dashboards | **yes — preferred** | overkill | overkill |
+| Starts while Optimizely is down | yes; evaluations fail until it is ready | no, the build fails | yes; the fallback answers |
+| During an outage after startup | the last datafile keeps answering | the last datafile keeps answering | the last datafile, or the fallback while the breaker is open |
+| Good for | experiments, UI changes | flags that guard money or safety | a few flags whose default would be wrong |
 
-If in doubt: start with B for any service handling money or user-trust decisions; start with A for everything else; pull in C only when a specific outage exposed a flag whose default was wrong.
+## What to watch
+
+| Signal | Likely cause |
+|---|---|
+| status `Fatal` soon after start, or the sync build fails | wrong SDK key, or the datafile URL is unreachable |
+| status `Stale` (watchdog on) | datafile fetches have been failing for `staleAfter` |
+| resolutions with `TargetingKeyMissing` | a code path evaluates without a user id |
+| resolutions with `FlagNotFound` | the flag key is misspelled, or the flag is missing from this environment |
+
+## Bring your own client
+
+If you already build and manage an `Optimizely` client, wrap it. The provider then never closes the client:
+
+```scala
+--8<-- "Optimizely.scala:own-client"
+```
+
+## Testing
+
+Test your application's flag logic against `TestFeatureProvider`, with no Optimizely key or network; see
+[Testkit](testkit.md). To check the Optimizely wiring itself, point `datafileUrl` at a local HTTP stub that serves a
+datafile; [Testing real providers](testing-real-providers.md) covers fault-testing a real provider.

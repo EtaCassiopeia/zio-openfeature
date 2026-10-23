@@ -16,11 +16,11 @@ object Home:
     val MaxItems    = FlagDef("cart-max-items", 20)
 
   val checkout: ZIO[FeatureFlags, FeatureFlagError, String] =
+    val user = EvaluationContext("user-42").withAttribute("plan", "pro")
     for
-      enabled <- FeatureFlags.value(Flags.NewCheckout)                  // fails if the flag cannot be read
-      limit   <- FeatureFlags.valueOrDefault(Flags.MaxItems)            // never fails: serves 20 instead
-      user     = EvaluationContext("user-42").withAttribute("plan", "pro")
-      banner  <- FeatureFlags.stringOrDefault("banner", "none", user)   // targeted at one user
+      enabled <- FeatureFlags.value(Flags.NewCheckout)                // fails if the flag cannot be read
+      limit   <- FeatureFlags.valueOrDefault(Flags.MaxItems)          // never fails: serves 20 instead
+      banner  <- FeatureFlags.stringOrDefault("banner", "none", user) // targeted at one user
     yield s"checkout=${if enabled then "new" else "old"} limit=$limit banner=$banner"
   // --8<-- [end:at-a-glance]
 

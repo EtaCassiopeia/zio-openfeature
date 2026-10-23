@@ -159,6 +159,8 @@ final class CircuitBreakerProvider private (
       runDelegateInit
       checkDelegateState()
     } catch {
+      // An External trip: a failed initialize is not undone by the next getState() poll, which for most providers is
+      // the SDK's READY default (#447). It recovers through the reset-timeout probe or an event READY.
       case e: Exception =>
         breaker.trip()
         throw e

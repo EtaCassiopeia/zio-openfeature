@@ -171,7 +171,9 @@ Three things open the circuit:
 - **The provider's state:** at most once per `stateCheckInterval`, the breaker asks the provider for its state. `ERROR`
   or `FATAL` opens the circuit at once, and `READY` closes a circuit opened this way.
 - **The provider's events:** `PROVIDER_ERROR` opens the circuit and `PROVIDER_READY` closes one opened by state or
-  events. This needs an `EventProvider`; any other provider relies on the first two.
+  events. A circuit opened by an event, or by a failed `initialize`, stays open through a polled `READY`, since most
+  providers report `READY` by default when polled; it closes on an event `READY` or after `resetTimeout` and a
+  successful probe. This needs an `EventProvider`; any other provider relies on the first two.
 
 Only failures that say the provider is unhealthy count. A `FLAG_NOT_FOUND`, type mismatch, parse error, missing
 targeting key or invalid context proves the provider answered, so it resets the failure count instead.

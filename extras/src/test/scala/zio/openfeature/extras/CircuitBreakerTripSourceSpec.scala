@@ -91,6 +91,17 @@ object CircuitBreakerTripSourceSpec extends ZIOSpecDefault {
       ticker.advance(2.minutes)
       assertTrue(!rejected(cb), cb.breaker.isClosed)
     },
+    test("a trip from a failed initialize is not undone by a polled READY") {
+      val delegate = new EventOnlyProvider {
+        override def initialize(ctx: OFEvaluationContext): Unit = throw new RuntimeException("init failed")
+      }
+      val ticker = new ManualTicker
+      val cb     = CircuitBreakerProvider(delegate, config, ticker)
+      val failed = scala.util.Try(cb.initialize(ctx)).isFailure
+      ticker.advance(2.seconds) // past stateCheckInterval: the next evaluation polls the SDK-default READY
+      val before = delegate.evaluations.get()
+      assertTrue(failed, rejected(cb), delegate.evaluations.get() == before)
+    },
     test("a poll-driven trip is still reset by a later polled READY") {
       val delegate = new PolledProvider
       val ticker   = new ManualTicker

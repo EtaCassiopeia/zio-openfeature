@@ -42,7 +42,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `CircuitBreakerProvider` reset a circuit that a delegate's `PROVIDER_ERROR` event had opened as soon as its next
     `getState()` poll said `READY`, and since SDK 1.22 that poll says `READY` unless the provider overrides it. A
     polled `READY` now only closes a circuit that a poll opened; an event-driven trip closes on an event `READY` or
-    after `resetTimeout` and a successful probe.
+    after `resetTimeout` and a successful probe. The same now holds for the trip a failed `initialize` causes, which
+    the next poll used to undo.
 - **`CircuitBreakerProvider` now trips on providers that return error codes instead of throwing** (#446). Any returned
   evaluation counted as a success, so a delegate that reports network failures as `errorCode = GENERAL` — the OFREP
   provider does — kept the circuit closed through a full outage, and a returned `FLAG_NOT_FOUND` could close a

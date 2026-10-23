@@ -73,7 +73,9 @@ private[extras] object GateResult {
   case object Rejected extends GateResult
 }
 
-/** A standalone circuit breaker state machine with three states: Closed, Open, and Half-Open.
+/** The state machine behind [[CircuitBreakerProvider]]: three states, Closed, Open and Half-Open. It is an internal
+  * engine — use [[CircuitBreakerProvider]]; standalone construction is deprecated, since the shape of its gate result
+  * is internal and still changing.
   *
   * This class manages only the state transitions and failure counting. It has no knowledge of OpenFeature, providers,
   * or ZIO effects — it is a pure concurrency-safe state machine backed by `AtomicReference` with CAS.
@@ -328,6 +330,7 @@ object CircuitBreaker {
   /** Proof that a call was admitted, tied to the circuit state that admitted it (#447). */
   final private[extras] case class Permit(epoch: Long)
 
+  @deprecated("Use CircuitBreakerProvider; the standalone breaker's gate result is internal", "1.2.0")
   def apply(
     config: CircuitBreakerConfig = CircuitBreakerConfig()
   ): CircuitBreaker =

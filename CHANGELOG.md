@@ -69,6 +69,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`FeatureFlagError.EmptyFlagVariables`** (#444). No module has ever raised it; it stays for binary compatibility.
 - **`FeatureFlags.trackedEvents`, in favour of `TestFeatureProvider.trackedEvents`** (#442). It is empty on production
   instances.
+- **Standalone `CircuitBreaker(config)`** (#461). It is the engine behind `CircuitBreakerProvider`, whose gate
+  result is internal and still changing; use `CircuitBreakerProvider`. Also documented, without code changes: the
+  `Reconnecting` event type is reserved (the Java SDK never emits it, so `on(Reconnecting, …)` never fires), and
+  `FlagValueType` mirrors the provider resolver called, so a hook scoped to `Double` also sees `Float` flags. A client
+  `version` set without a domain is now passed to the SDK client too, through a single `getClient` call.
 
 - **`FeatureFlagError.isRecoverable`, in favour of `isFlagError`** (#440). It is true for flag-scoped evaluation errors
   (missing flag, wrong type, unparsable value, bad context), which has nothing to do with retrying or with

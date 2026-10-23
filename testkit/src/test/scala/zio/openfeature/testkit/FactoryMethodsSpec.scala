@@ -56,6 +56,42 @@ object FactoryMethodsSpec extends ZIOSpecDefault {
               }
           }
         } yield result
+      },
+      // #461: a version without a domain is passed to the SDK client and reported, in both init modes.
+      test("version without a domain is reported in clientMetadata (sync)") {
+        for {
+          provider <- TestFeatureProvider.make(Map("flag" -> true))
+          result <- ZIO.scoped {
+            FeatureFlags
+              .fromProvider(provider, FeatureFlagsConfig().withVersion("2.0.0"))
+              .build
+              .flatMap { env =>
+                val ff = env.get[FeatureFlags]
+                for {
+                  meta <- ff.clientMetadata
+                  flag <- ff.boolean("flag", default = false)
+                } yield assertTrue(meta == ClientMetadata(None, Some("2.0.0")), flag)
+              }
+          }
+        } yield result
+      },
+      test("version without a domain is reported in clientMetadata (async)") {
+        for {
+          provider <- TestFeatureProvider.make(Map("flag" -> true))
+          result <- ZIO.scoped {
+            FeatureFlags
+              .fromProvider(provider, FeatureFlagsConfig(initMode = InitMode.Async).withVersion("2.0.0"))
+              .build
+              .flatMap { env =>
+                val ff = env.get[FeatureFlags]
+                for {
+                  _    <- ff.providerStatus.repeatUntil(_ == ProviderStatus.Ready).timeout(2.seconds)
+                  meta <- ff.clientMetadata
+                  flag <- ff.boolean("flag", default = false)
+                } yield assertTrue(meta == ClientMetadata(None, Some("2.0.0")), flag)
+              }
+          }
+        } yield result
       }
     ),
     suite("fromProvider with FeatureFlags.multiProvider")(

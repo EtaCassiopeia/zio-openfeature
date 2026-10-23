@@ -1305,8 +1305,12 @@ final private[openfeature] class FeatureFlagsLive(
         //    immediate visibility.
         _ <- applySignal(Signal.SwapSucceeded)
       } yield ()
+      // The swap runs to its outcome even if the caller is interrupted (#434): an interrupt mid-registration would skip
+      // both the success signal and the rollback, leaving status NotReady with the refs on a provider that may or may not
+      // end up bound. The region is bounded — registration and rollback each wait at most `initTimeout` (#433) — and
+      // waiting for `swapLock` above stays interruptible.
       // The gate must drop on every exit (success, failure, interruption) or bridge events would be suppressed forever.
-      swap
+      swap.uninterruptible
         .ensuring(ZIO.succeed(swapInProgress.set(false)))
         .tapError {
           // A READY that landed between the timeout and the gate dropping was suppressed; pick it up now.

@@ -1,411 +1,133 @@
----
-layout: default
-title: Evaluation Context
-nav_order: 8
----
+# Evaluation context
 
-# Evaluation Context
-{: .no_toc }
+An `EvaluationContext` tells the provider who or what a flag is being evaluated for: a **targeting key** (usually a
+user or entity id) and **attributes** such as a plan or a country. Providers use it for targeting rules and percentage
+rollouts.
 
-## Table of contents
-{: .no_toc .text-delta }
+You can set context at several levels, from the whole application down to a single call. Before each evaluation, the
+levels are merged into one context, and that is what the provider sees.
 
-1. TOC
-{:toc}
+![Six context levels merge into the one context the provider sees: each level adds its attributes, a higher level replaces the plan set by a lower one, and a before hook's addition lands last.](assets/context.svg)
 
----
-
-## Overview
-
-Evaluation context provides information about the current evaluation environment. This includes user information, application state, and any other data that might influence flag evaluation. The context is converted to OpenFeature SDK format and passed to the underlying provider.
-
-ZIO OpenFeature supports a hierarchical context system. Five levels are the spec-defined push-based ones — the caller sets them:
-
-1. **Global context** - API-level, shared across all evaluations, set via `setGlobalContext`
-2. **Transaction context** - Applied within a transaction block
-3. **Client context** - Client-level, persisted on the FeatureFlags instance, set via `setClientContext`
-4. **Scoped context** - Applied to a block of code via `withContext` (fiber-local)
-5. **Invocation context** - Passed directly to evaluation methods
-
-Contexts are merged in order, with later contexts taking precedence.
-
-One further level is pull-based: a [context source](#context-source) sits between client and scoped
-context, and is consulted by the library on every evaluation rather than set by the caller.
-
----
-
-## Creating Context
-
-### Basic Context
+## Creating a context
 
 ```scala
-import zio.openfeature.*
-
-// Empty context
-val empty = EvaluationContext.empty
-
-// Context with targeting key (user ID)
-val userCtx = EvaluationContext("user-123")
-
-// Context with attributes
-val richCtx = EvaluationContext("user-123")
-  .withAttribute("plan", "premium")
-  .withAttribute("country", "US")
-  .withAttribute("age", 25)
-  .withAttribute("beta", true)
+--8<-- "Context.scala:create"
 ```
 
-### Using the Builder
+`withAttribute` accepts plain `Boolean`, `String`, `Int`, `Long`, `Double` and `java.time.Instant` values. Other
+helpers: `withTargetingKey`, `withAttributes(...)`, `withoutAttribute(key)`, and `EvaluationContext.empty`.
+
+### Attribute types
+
+| `AttributeValue` | Helper | Scala value |
+|---|---|---|
+| `BoolValue` | `AttributeValue.bool` | `Boolean` |
+| `StringValue` | `AttributeValue.string` | `String` |
+| `IntValue` | `AttributeValue.int` | `Int` |
+| `LongValue` | `AttributeValue.long` | `Long` |
+| `DoubleValue` | `AttributeValue.double` | `Double` |
+| `InstantValue` | `AttributeValue.instant` | `java.time.Instant` |
+| `ListValue` | `AttributeValue.list` | a list of attribute values |
+| `StructValue` | `AttributeValue.struct` | a map of named attribute values |
 
 ```scala
-val ctx = EvaluationContext.builder
-  .targetingKey("user-456")
-  .attribute("role", "admin")
-  .attribute("beta", true)
-  .attribute("score", 95.5)
-  .build
+--8<-- "Context.scala:attribute-types"
 ```
 
----
+!!! note "Large longs"
+    The OpenFeature Java SDK carries every number as a `Double`, so a `Long` above 2^53 loses precision on its way to
+    the provider. Pass IDs that large as strings.
 
-## Context Hierarchy
-
-### Global Context
-
-Global context is shared across all fibers and persists for the lifetime of the service. Use it for attributes that apply to all evaluations, such as application version or environment.
+### Reading attributes back
 
 ```scala
-import zio.*
-import zio.openfeature.*
-
-val program = for
-  _ <- FeatureFlags.setGlobalContext(
-         EvaluationContext("app")
-           .withAttribute("environment", "production")
-           .withAttribute("version", "1.0.0")
-           .withAttribute("datacenter", "us-east")
-       )
-  // All evaluations will include these attributes
-  enabled <- FeatureFlags.boolean("feature", false)
-yield enabled
+--8<-- "Context.scala:read"
 ```
 
-### Client Context
+`getBoolean`, `getLong` and `getDouble` work the same way. Each `AttributeValue` also has `asString`, `asInt`,
+`asList`, `asStruct` and so on.
 
-Client context is persisted on the `FeatureFlags` instance and applies to all evaluations made through that client. Per the OpenFeature spec, client context is merged after global context but before scoped/transaction context.
+## The targeting key
+
+The targeting key identifies the subject of the evaluation. Providers typically hash it for percentage rollouts, so
+the same key always lands in the same bucket. Use a stable id: a user id, an account id, a device id. Avoid values that change, such as a
+session id, unless you want a user to move between buckets.
+
+## Context levels
+
+| Level | Set with | Applies to |
+|---|---|---|
+| Global | `FeatureFlags.setGlobalContext(ctx)` | every evaluation of every client |
+| Transaction | `FeatureFlags.transaction(context = ctx)` | evaluations inside the [transaction](transactions.md) |
+| Client | `FeatureFlags.setClientContext(ctx)` | evaluations of this `FeatureFlags` instance |
+| Context source | `FeatureFlagsConfig().withContextSource(source)` | every evaluation, pulled when it runs |
+| Scoped | `FeatureFlags.withContext(ctx) { ... }` | the block, on this fiber and the fibers it forks |
+| Invocation | the `ctx` argument of a call | that call |
 
 ```scala
-// Set client-level context
-FeatureFlags.setClientContext(
-  EvaluationContext.empty
-    .withAttribute("service", "checkout-api")
-    .withAttribute("region", "us-east-1")
-)
-
-// Get client context
-val clientCtx = FeatureFlags.clientContext
-
-// Client context is separate from global context
-for
-  _ <- FeatureFlags.setGlobalContext(EvaluationContext("app"))
-  _ <- FeatureFlags.setClientContext(EvaluationContext("client"))
-  global <- FeatureFlags.globalContext  // "app"
-  client <- FeatureFlags.clientContext  // "client"
-yield (global, client)
+--8<-- "Context.scala:levels"
 ```
 
-### Scoped Context
+`globalContext` and `clientContext` read the current values back. A `withContext` inside another merges with the
+outer one, so the inner block keeps the outer attributes it does not replace.
 
-Use `withContext` to set context for a specific scope of code. This is useful for request handling where you want all evaluations in a request to share the same user context.
+## How levels merge
+
+Levels are merged from the lowest to the highest:
+
+**global → transaction → client → context source → scoped → invocation**
+
+A higher level wins on every attribute both set, and on the targeting key if it sets one. Attributes only one level
+sets are kept. When both sides hold a struct under the same key, the structs merge field by field:
 
 ```scala
-val userCtx = EvaluationContext("user-123")
-  .withAttribute("session_id", "abc-xyz")
-  .withAttribute("user_agent", request.headers.userAgent)
-
-val handleRequest = FeatureFlags.withContext(userCtx) {
-  for
-    // All evaluations in this block use userCtx
-    showNewUI    <- FeatureFlags.boolean("new-ui", false)
-    maxItems     <- FeatureFlags.int("max-items", 10)
-    buttonColor  <- FeatureFlags.string("button-color", "blue")
-  yield Response(showNewUI, maxItems, buttonColor)
-}
+--8<-- "Context.scala:merge"
 ```
 
-### Invocation Context
+Finally, a [hook](hooks.md)'s `before` stage may return extra context. That is merged on top of the result, so it wins
+over every level, including the invocation.
 
-Pass context directly to individual evaluation methods. This is useful for one-off attributes or when you need to override context for a specific evaluation.
+## Context sources
+
+A `ContextSource` is an effect that is run on every evaluation (and on every `track` call) to pull in context the
+application already holds somewhere else: log annotations, an MDC, a tracing baggage item. Nobody has to pass it
+along by hand.
 
 ```scala
-val baseCtx = EvaluationContext("user-789")
-  .withAttribute("feature-group", "beta")
-
-// Evaluate with invocation context
-val result = FeatureFlags.boolean("new-feature", false, baseCtx)
-
-// Override for a specific evaluation
-val specialCtx = baseCtx.withAttribute("override", true)
-val special = FeatureFlags.boolean("special-feature", false, specialCtx)
+--8<-- "Context.scala:context-source"
 ```
 
----
+- It sits between the client and the scoped levels: ambient identity beats static client and global context, while an
+  explicit `withContext` or a call's own context still wins over it.
+- `current` returns a `UIO`, so a source cannot fail an evaluation. Return `EvaluationContext.empty` when there is
+  nothing to add.
+- It runs on every evaluation, so keep it cheap: read a `FiberRef` or a thread local, never call a remote service.
+- `a ++ b` combines two sources; `b` wins on a key both set. `ContextSource.empty` adds nothing.
 
-## Attribute Types
+A `before` hook cannot do this job: its addition always lands on top of everything, so it would override the context
+the caller passed explicitly.
 
-Context attributes support various types:
+## Example: per-request context
 
 ```scala
-import java.time.Instant
-
-val ctx = EvaluationContext("user")
-  .withAttribute("active", true)                    // Boolean
-  .withAttribute("name", "John")                    // String
-  .withAttribute("age", 30)                         // Int
-  .withAttribute("balance", 1000L)                  // Long
-  .withAttribute("score", 95.5)                     // Double
-  .withAttribute("created", Instant.now())          // Instant
+--8<-- "Context.scala:request-handler"
 ```
 
-### Complex Attributes
+Everything inside the block, including fibers it forks, is evaluated for that user.
 
-```scala
-// List attribute
-val tags = AttributeValue.list(
-  AttributeValue.string("premium"),
-  AttributeValue.string("beta")
-)
+## Reference
 
-// Struct attribute (nested object)
-val address = AttributeValue.struct(
-  "city" -> AttributeValue.string("NYC"),
-  "zip" -> AttributeValue.string("10001"),
-  "country" -> AttributeValue.string("US")
-)
-
-val ctx = EvaluationContext("user")
-  .withAttribute("tags", tags)
-  .withAttribute("address", address)
-```
-
----
-
-## Context Merging
-
-When multiple contexts are present, they are merged with later contexts taking precedence:
-
-```scala
-// Global context (lowest precedence)
-FeatureFlags.setGlobalContext(
-  EvaluationContext.empty
-    .withAttribute("env", "prod")
-    .withAttribute("version", "1.0")
-)
-
-// Scoped context (overrides global)
-val scopedCtx = EvaluationContext("user-123")
-  .withAttribute("version", "2.0")  // Overrides global version
-
-FeatureFlags.withContext(scopedCtx) {
-  // Invocation context (highest precedence)
-  val invCtx = EvaluationContext.empty
-    .withAttribute("experiment", "A")
-
-  // Final merged context for this evaluation:
-  // - targetingKey: "user-123" (from scoped)
-  // - env: "prod" (from global)
-  // - version: "2.0" (from scoped, overrides global)
-  // - experiment: "A" (from invocation)
-  FeatureFlags.boolean("feature", false, invCtx)
-}
-```
-
-### Recursive Struct Merging
-
-Per the OpenFeature specification (section 3.2.3), nested objects are merged recursively rather than replaced entirely. When both the base and overriding context have a `StructValue` attribute with the same key, their fields are merged:
-
-```scala
-val ctx1 = EvaluationContext.empty.withAttribute("user",
-  AttributeValue.struct("name" -> AttributeValue.string("Alice"), "role" -> AttributeValue.string("admin")))
-
-val ctx2 = EvaluationContext.empty.withAttribute("user",
-  AttributeValue.struct("name" -> AttributeValue.string("Bob")))
-
-val merged = ctx1.merge(ctx2)
-// user = {name: "Bob", role: "admin"}  — "role" is preserved from ctx1
-```
-
-Non-struct values still replace entirely, even if the base attribute was a struct.
-
-### Merge Order
-
-Contexts are merged in this order (lowest to highest precedence). The five spec-defined levels keep their
-specified relative order; the pull-based context source is inserted between client and scoped context:
-
-```
-                     ┌─────────────────────┐
-                     │  Final Merged Ctx   │
-                     └──────────▲──────────┘
-                                │
-  Invocation      (highest) ────┤   passed to the evaluation call
-  Scoped                   ─────┤   withContext (fiber-local)
-  ContextSource            ─────┤   pulled by the library, per evaluation
-  Client                   ─────┤   setClientContext
-  Transaction              ─────┤   transaction block
-  Global          (lowest)  ────┘   setGlobalContext
-```
-
----
-
-## Context Source
-
-Every level above is **push-based**: the caller sets the context, and the library reads what was set. A
-`ContextSource` is the **pull-based** counterpart — an effect the library consults on every evaluation:
-
-```scala
-val fromMdc = ContextSource(ZIO.succeed(EvaluationContext(Mdc.get("userId"))))
-
-val flags = FeatureFlags.fromProvider(
-  provider,
-  FeatureFlagsConfig().withContextSource(fromMdc)
-)
-```
-
-Use it when the request identity your flags need to target on lives somewhere the ZIO environment cannot
-see — an MDC-style map, a tracing/tag manager, a correlation-id carrier — so there is no natural place to
-call `withContext`.
-
-### Precedence, and why this is not a hook
-
-The source is merged between client and scoped context:
-
-```
-Invocation > Scoped > ContextSource > Client > Transaction > Global
-```
-
-So ambient request identity **overrides** static client and global context, while an explicit `withContext`
-or a per-call context at the call site still **wins** over it — the call site is the more specific
-statement of intent.
-
-That slot is the whole reason this is library machinery rather than a `before` hook. A hook's context
-contribution is merged on top of the already-finished effective context, so it can only ever occupy the
-highest-precedence slot — it would override `withContext` and per-call context, which is backwards. Nor can
-a hook reconstruct the ordering itself: `HookContext` exposes a single flattened context with no record of
-which attribute came from the client, the fiber, or the call site.
-
-### Composition and cost
-
-```scala
-// Right-hand side wins on key collisions, matching merge everywhere else.
-val combined = fromMdc ++ fromTracing
-
-// ContextSource.empty contributes nothing and is the identity of `++`. It is also the default,
-// so a client with no configured source behaves exactly as before.
-```
-
-Two properties worth knowing:
-
-- **`current` returns `UIO`**, so a source can never fail an evaluation. Anything fallible must be handled
-  inside the source; a source with nothing to contribute returns `EvaluationContext.empty`, which merges to
-  a no-op.
-- **It is consulted on every evaluation and on `track`.** Keep it cheap — read a `FiberRef` or a
-  `ThreadLocal`; do not call a network service. The effect is by-name, so it is genuinely re-evaluated per
-  call rather than captured once.
-
----
-
-## Targeting Key
-
-The targeting key is a unique identifier for the evaluation subject (typically a user ID). It's used by providers to ensure consistent flag values for the same user.
-
-```scala
-// Create context with targeting key
-val ctx = EvaluationContext("user-12345")
-
-// Or set via builder
-val ctx2 = EvaluationContext.builder
-  .targetingKey("session-abc123")
-  .attribute("role", "admin")
-  .build
-```
-
-### Best Practices for Targeting Key
-
-1. **Use stable identifiers**: User IDs, account IDs, or device IDs work well
-2. **Be consistent**: Use the same ID format across your application
-3. **Consider privacy**: Avoid PII in targeting keys; use hashed values if needed
-4. **Anonymous users**: Generate a consistent session-based ID for anonymous users
-
----
-
-## Practical Examples
-
-### HTTP Request Handler
-
-```scala
-def handleRequest(req: Request) = {
-  val ctx = EvaluationContext(req.userId.getOrElse("anonymous"))
-    .withAttribute("path", req.path)
-    .withAttribute("method", req.method)
-    .withAttribute("ip_country", geolocate(req.ip))
-
-  FeatureFlags.withContext(ctx) {
-    for
-      enabled <- FeatureFlags.boolean("new-api", false)
-      response <- if enabled then newApiHandler(req) else legacyHandler(req)
-    yield response
-  }
-}
-```
-
-### Multi-Tenant Application
-
-```scala
-val tenantCtx = EvaluationContext(tenantId)
-  .withAttribute("plan", tenant.plan)
-  .withAttribute("seats", tenant.seatCount)
-  .withAttribute("region", tenant.region)
-
-FeatureFlags.withContext(tenantCtx) {
-  // All evaluations scoped to this tenant
-  for
-    maxUsers <- FeatureFlags.int("max-users", 10)
-    features <- FeatureFlags.obj("features", Map.empty)
-  yield TenantConfig(maxUsers, features)
-}
-```
-
-### A/B Testing
-
-```scala
-val experimentCtx = EvaluationContext(userId)
-  .withAttribute("experiment_group", determineGroup(userId))
-  .withAttribute("cohort", userCohort)
-
-val variant = FeatureFlags.string("checkout-flow", "control", experimentCtx)
-```
-
----
-
-## OpenFeature SDK Conversion
-
-ZIO OpenFeature contexts are automatically converted to OpenFeature SDK `EvaluationContext` format when passed to the underlying provider. The conversion:
-
-1. Maps `targetingKey` to OpenFeature's targeting key field
-2. Converts all attributes to OpenFeature `Value` types
-3. Preserves nested structures and lists
-
-This conversion happens internally — you work only with ZIO OpenFeature's `EvaluationContext` type.
-
-### Numeric conversion is mediated through `Double`
-
-The OpenFeature Java SDK has only one numeric `Value` type (`Double`), so `IntValue` and `LongValue` are mediated through `Double` on the way out and decoded back to the smallest fitting case on the way in. Practical consequences:
-
-- `BoolValue` and `StringValue` round-trip exactly.
-- `IntValue(n)` round-trips as `IntValue(n)` (always fits in `Double`'s 53-bit mantissa).
-- `LongValue(n)` with `n` in the `Int` range comes back as `IntValue(n)` — same numeric value, different concrete case. `LongValue(n)` outside the `Int` range but in `[Int.MaxValue + 1, 2^53)` round-trips as `LongValue`. `LongValue(Long.MaxValue)` comes back as `DoubleValue` because the conversion would otherwise saturate.
-- `DoubleValue(n)` with a fractional component round-trips as `DoubleValue`. Whole-number doubles in the `Long`/`Int` range come back as `LongValue` / `IntValue`.
-- `DoubleValue(Double.NaN)` survives as a NaN double (verify via `.isNaN`, not `==`).
-
-If you need to preserve the exact numeric case across the boundary, read values via the typed accessors (`asInt`, `asLong`, `asDouble`) rather than pattern-matching on the concrete `AttributeValue` subtype. The property-based round-trip spec (`ValueRoundTripSpec`) pins this contract.
-
+| Method | Description |
+|---|---|
+| `EvaluationContext(key)` | a context with a targeting key |
+| `EvaluationContext.empty` | no key, no attributes |
+| `EvaluationContext.builder` | `.targetingKey(...)`, `.attribute(...)`, `.attributes(...)`, `.build` |
+| `EvaluationContext.forEntity(id, type = "user")` | key `id`, plus `entityId` and `entityType` attributes |
+| `EvaluationContext.withAttributes(pairs*)` | attributes, no key |
+| `ctx.merge(other)` | `other` wins on conflicts; structs merge recursively |
+| `ctx.isEmpty` / `ctx.nonEmpty` | no key and no attributes |
+| `FeatureFlags.setGlobalContext` / `globalContext` | write / read the global level |
+| `FeatureFlags.setClientContext` / `clientContext` | write / read the client level |
+| `FeatureFlags.withContext(ctx)(zio)` | the scoped level, for `zio` |
+| `ContextSource(effect)`, `++`, `ContextSource.empty` | the pulled level |

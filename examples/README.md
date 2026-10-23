@@ -1,19 +1,27 @@
 # Examples
 
-Reference applications showing the recommended patterns for using **zio-openfeature** in production.
-The code in this directory is not published as an artifact, but it compiles against the same source the library
-publishes, so the README and docs snippets stay honest as the public API evolves.
+Code that uses **zio-openfeature** the way its documentation says to. None of it is published, but CI compiles all of
+it against the current source, so the documented usage cannot rot.
+
+## `docs/`
+
+Every code sample on the [documentation site](https://etacassiopeia.github.io/zio-openfeature/). The pages include
+the sections between `// --8<-- [start:name]` and `// --8<-- [end:name]` markers in
+`src/main/scala-3/snippets/`, and the specs in `src/test/scala-3/snippets/` run the samples that can run on their own
+and check what the pages say about them. To change a sample, change it here; the page picks it up.
+
+```sh
+sbt examplesDocs/test
+```
 
 ## `ofrep-init-timeout/`
 
-End-to-end wiring for an OFREP-backed app combining:
+An OFREP-backed app wired for production:
 
-- `OFREPProvider.make(baseUrl)` for validated construction (bad URL fails at startup, not at first evaluation).
-- `FeatureFlags.fromProviderAsync` with the default 30 s `initTimeout` so a misconfigured endpoint can't hang the app
-  startup forever.
-- `CircuitBreakerProvider` from `zio-openfeature-extras` so a degraded OFREP CDN doesn't take the app down.
-
-Run it:
+- `OFREPProvider.make(baseUrl)` validates the URL, so a bad one fails at start-up, not at the first evaluation;
+- `FeatureFlags.fromProviderAsync` with the default 30 s `initTimeout`, so a misconfigured endpoint cannot hang
+  start-up;
+- `CircuitBreakerProvider` from `zio-openfeature-extras`, so a degraded OFREP endpoint does not take the app down.
 
 ```sh
 OFREP_BASE_URL=https://flags.example.com sbt 'examplesOfrepInitTimeout/run'
@@ -21,42 +29,18 @@ OFREP_BASE_URL=https://flags.example.com sbt 'examplesOfrepInitTimeout/run'
 
 ## `testkit-app/`
 
-A trivial `UserService` gated by a feature flag, plus the spec that tests it against `TestFeatureProvider`. Shows the
-intended pattern for unit-testing flag-driven application code without touching a real provider:
+A `UserService` gated by a flag, and the spec that tests it against `TestFeatureProvider`:
 
-- `TestFeatureProvider.scopedLayer` wires the test FeatureFlags service.
-- `provider.setFlag("…", value)` drives evaluations.
+- `TestFeatureProvider.scopedLayer` wires the test `FeatureFlags`;
+- `provider.setFlag("…", value)` drives evaluations;
 - `provider.setStatus(ProviderStatus.Error)` exercises the failure path.
-
-Run the spec:
 
 ```sh
 sbt 'examplesTestkitApp/test'
 ```
 
-## `typed-flags/`
+## Adding an example
 
-The snippets from the [Typed Flags](https://etacassiopeia.github.io/zio-openfeature/typed-flags) docs page (and the
-`FlagDef` snippet in the top-level README) as real, compiled code — a flag catalog built from `FlagDef`, an
-`enum … derives FlagType`, a case class `derives FlagType`, a `FlagType.mapped` newtype, all four `FlagDef`
-evaluation forms, and a `TestFeatureProvider.layer(Flag := value)` fixture.
-
-Unlike the other two, this module exists to be *compiled* rather than to demonstrate a deployment pattern: every
-documented result type is ascribed explicitly, so a change to `FlagDef`, to its evaluation overloads, to
-`FlagType.derived`/`mapped`, or to the typed testkit fixtures fails the build instead of silently leaving the
-published page showing code that no longer compiles (#385).
-
-**Keep it a mirror of `docs/typed-flags.md`.** When you change one, change the other — an example that drifts into its
-own shape stops testing the docs. Do not replace an ascription with inference: the ascriptions are the assertion.
-
-It is self-contained — no provider, no network, no environment variables — so it also runs:
-
-```sh
-sbt 'examplesTypedFlags/run'
-```
-
-## Adding a new example
-
-Examples must (a) compile against the published modules, (b) be runnable or testable from sbt with no manual setup
-beyond environment variables, and (c) document the production pattern they illustrate. Add the new sub-project to
-`build.sbt`, the CI workflow's `examples` job, and this README in the same PR.
+An example must compile against the published modules, run or test from sbt with nothing but environment variables,
+and say which production pattern it shows. Add it to `build.sbt`, to the CI workflow's `examples` job and to this
+file in the same change.

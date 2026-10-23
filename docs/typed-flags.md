@@ -1,240 +1,163 @@
----
-layout: default
-title: Typed Flags
-nav_order: 3
----
+# Typed flags
 
-# Typed Flags
-{: .no_toc }
-
-Declare each flag once — key, type and default together — and evaluate it by name.
-{: .fs-6 .fw-300 }
-
-## Table of contents
-{: .no_toc .text-delta }
-
-1. TOC
-{:toc}
-
----
+Declare each flag once, with its key, type and default, and read it by name. Use your own enums and case classes as
+flag values.
 
 ## Why
 
-The string-key API is complete, and it stays. But it restates three things at every call site:
+The key-based API restates three things at every call site, and nothing checks that they agree:
 
 ```scala
-// module A
-FeatureFlags.boolean("checkout-v2", default = false)
-
-// module B — same flag, different default. Nothing catches this.
-FeatureFlags.boolean("checkout-v2", default = true)
-
-// module C — same flag, read at the wrong type. Nothing catches this either.
-FeatureFlags.string("checkout-v2", default = "off")
+--8<-- "TypedFlags.scala:drift"
 ```
 
-Every one of those is legal Scala, and the disagreement only shows up in production. A `FlagDef[A]` states
-the key, the type and the default **once**, and every use site refers to the definition:
+A `FlagDef[A]` states the key, the type and the default once. Every call site refers to the definition, so there is no
+second default to disagree with and no way to read the flag at another type.
+
+## Define your flags
+
+A plain object of `FlagDef`s is your flag catalog:
 
 ```scala
-import zio.openfeature.*
-
-object Flags:
-  val CheckoutV2 = FlagDef("checkout-v2", false, "new checkout flow")
-
-// everywhere else
-FeatureFlags.value(Flags.CheckoutV2)        // ZIO[FeatureFlags, FeatureFlagError, Boolean]
+--8<-- "TypedFlags.scala:catalog"
 ```
 
-The two disagreements above are now a compile error and a nonsense expression respectively — there is no
-second place to state a default, and `value` returns the definition's `A`.
+The third argument is an optional description. It is documentation only and never sent to the provider.
 
-{: .note }
-> This is **additive and complementary**, not a replacement. `FlagDef` overloads delegate to exactly the same
-> generic evaluation tier as the string-key calls, so hooks, transactions, caching, timeouts, provider
-> selection and error semantics are all identical. Mix both freely — see
-> [when to keep using string keys](#when-to-keep-using-string-keys).
-
----
-
-## Define your flags once
-
-A plain object holding `FlagDef` values is the whole pattern — it becomes your application's flag catalog,
-and `grep` for a key finds one line instead of a dozen:
-
-```scala
-import zio.openfeature.*
-
-object Flags:
-  val CheckoutV2  = FlagDef("checkout-v2", false, "new checkout flow")
-  val Banner      = FlagDef("homepage-banner", "none")
-  val MaxItems    = FlagDef("cart-max-items", 100)
-  val MonthlyCap  = FlagDef("billing-cap-cents", 0L)
-```
-
-The third argument is an optional description, carried for documentation only — it is never sent to the
-provider.
-
-{: .warning }
-> **Name the type when the default is a `case object`.** `FlagDef("k", Tier.Free)` infers `A` as
-> `Tier.Free.type`, then looks for a `FlagType[Tier.Free.type]` that does not exist. Write
-> `FlagDef[Tier]("k", Tier.Free)`. A Scala 3 `enum`'s *parameterless* cases are typed as the enum itself, so
-> they are unaffected.
-
----
+!!! warning "Name the type when the default is a case object"
+    `FlagDef("k", Tier.Free)` with a `case object Free` infers the type `Tier.Free.type`, which has no `FlagType`.
+    Write `FlagDef[Tier]("k", Tier.Free)`. The parameterless cases of a Scala 3 `enum` are typed as the enum itself,
+    so they are not affected, but naming the type does no harm.
 
 ## Evaluate by definition
 
-Four methods take a `FlagDef` in place of the `(key, default)` pair — on the `FeatureFlags` trait and on its
-companion accessors alike, with the same context/options arities as the key-based forms:
+`value`, `valueOrDefault`, `valueDetails` and `resolveOrDefault` take a `FlagDef` in place of the key and default:
 
 ```scala
-FeatureFlags.value(Flags.CheckoutV2)                    // ZIO[FeatureFlags, FeatureFlagError, Boolean]
-FeatureFlags.valueOrDefault(Flags.CheckoutV2)           // ZIO[FeatureFlags, Nothing, Boolean] — never fails
-FeatureFlags.valueDetails(Flags.CheckoutV2)             // ZIO[FeatureFlags, …, FlagResolution[Boolean]]
-FeatureFlags.resolveOrDefault(Flags.CheckoutV2)         // ZIO[FeatureFlags, Nothing, FlagResolution[Boolean]]
-
-FeatureFlags.value(Flags.CheckoutV2, ctx)               // with a targeting context
-FeatureFlags.valueDetails(Flags.CheckoutV2, ctx, opts)  // + per-invocation hooks / timeout
+--8<-- "TypedFlags.scala:evaluate"
 ```
-
-Which one to reach for:
 
 | Method | Returns | Use when |
-|:-------|:--------|:---------|
-| `value` | `IO[FeatureFlagError, A]` | you want a missing flag or a provider problem to *fail* the effect (typed `FlagNotFound`, `TypeMismatch`, …) |
-| `valueOrDefault` | `UIO[A]` | the flag must never take down the request — serves `FlagDef.default` |
-| `valueDetails` | `IO[…, FlagResolution[A]]` | you need the reason, variant or metadata |
-| `resolveOrDefault` | `UIO[FlagResolution[A]]` | both of the above: full resolution, never fails |
+|---|---|---|
+| `value` | the value, or a `FeatureFlagError` | a missing or broken flag should fail the call |
+| `valueOrDefault` | the value, never failing | the flag must never take the request down |
+| `valueDetails` | the [resolution](evaluating.md#the-resolution), or a `FeatureFlagError` | you need the reason, variant or metadata |
+| `resolveOrDefault` | the resolution, never failing | both |
 
-Result types above are as declared on the `FeatureFlags` **trait**. The `FeatureFlags` companion accessors
-used in the snippets have the same names and arities but carry the service in the environment, so
-`IO[E, A]` reads `ZIO[FeatureFlags, E, A]` and `UIO[A]` reads `ZIO[FeatureFlags, Nothing, A]`.
+These run exactly the same evaluation as the key-based methods: hooks, transactions, timeouts and errors all behave the
+same. See [Evaluating flags](evaluating.md#two-tiers) for the two tiers.
 
-The `*OrDefault` pair serve `FlagDef.default` on a miss or error, and log a rate-limited warning naming the
-flag and why it degraded — see
-[Total evaluation]({{ site.baseurl }}/getting-started#total-evaluation-never-fails).
+**The `FlagDef`'s default is the one served** when the flag is missing or broken. A `FlagType` has a `defaultValue`
+too, but evaluation never uses it.
 
-{: .note }
-> **Which default is used.** `FlagType[A]` also carries a `defaultValue`, so a `FlagDef` looks like it holds
-> two defaults. It does not in any way that matters: **`FlagDef.default` is always the value served**.
-> `FlagType.defaultValue` is a type-level zero needed internally by `FlagType.from`/`mapped` and is never
-> consulted when evaluating.
-
-### Comparing definitions
-
-Equality is structural over key, default and description, so two definitions for the same key with
-**different** defaults are deliberately *not* equal — they are genuinely different definitions. Compare by key
-alone, across differing type parameters, with `sameKey`:
+Two definitions are equal only if key, default and description all match. Compare keys alone with `sameKey`:
 
 ```scala
-Flags.CheckoutV2.sameKey(FlagDef("checkout-v2", true))  // true
+--8<-- "TypedFlags.scala:same-key"
 ```
 
----
+## Your own types
 
-## Flags that are not `Boolean`, `String` or a number
+A `FlagDef[A]` needs a `FlagType[A]`, the codec between `A` and what the provider stores. Built-in instances cover
+`Boolean`, `String`, `Int`, `Long`, `Float`, `Double`, `Map[String, Any]` (an object flag), and `Option` and `List` of
+any type that has one.
 
-A `FlagDef[A]` needs a `FlagType[A]`. The built-ins cover `Boolean`, `String`, `Int`, `Long`, `Float`,
-`Double`, `Map[String, Any]`, plus `Option` and `List` of any of those. For your own domain types, Scala 3
-derives the instance:
+!!! note "`Option` and `List` read an object"
+    `Option[A]` and `List[A]` are fetched with the provider's object resolver, even when `A` is a scalar, so a flag
+    stored as a plain boolean or string may come back `TYPE_MISMATCH`. To read an optional scalar, read the scalar
+    itself with the [total tier](evaluating.md#two-tiers). Routing them through the inner type's resolver is tracked in
+    [#439](https://github.com/EtaCassiopeia/zio-openfeature/issues/439).
+
+### Derive it (Scala 3)
 
 ```scala
-// A parameterless enum derives a STRING codec over the case labels.
-enum Tier derives FlagType:
-  case Free, Premium, Enterprise
-
-// A case class derives a Map[String, Any] codec, field by field.
-final case class Rollout(tier: String, pct: Int = 10, note: Option[String] = None) derives FlagType
-
-object Flags:
-  val Plan    = FlagDef[Tier]("user-plan", Tier.Free)
-  val Staging = FlagDef("rollout", Rollout("stable"))
+--8<-- "TypedFlags.scala:derived"
 ```
 
-Now `FeatureFlags.value(Flags.Plan)` returns a `Tier`, and a provider serving the string `"premium"` decodes
-to `Tier.Premium` (matching is case-insensitive; encoding emits the label as declared). An unknown variant is
-a typed `TypeMismatch`, not a silent fall back to the default.
+An **enum** whose cases take no parameters is stored as a **string** holding the case's name. Reading matches the name
+ignoring case, so `"premium"` reads as `Tier.Premium`. An unknown name fails with `TypeMismatch` rather than quietly
+serving the default. A case with parameters does not compile; write that type with `from` or `mapped`.
 
-For a newtype over a scalar, `FlagType.mapped` derives the codec from the underlying instance:
+A **case class** is stored as an **object**, each field through its own `FlagType`, so nested case classes, `Option`
+and `List` fields work too. Keys the class does not know are ignored. A missing key takes the field's Scala default if
+it has one (`pct = 10`), otherwise `None` for an `Option`, and otherwise fails naming the field.
+
+`FlagType.derived` is not a `given`, so it never competes with the built-in instances. Use a `derives` clause, or write
+`given FlagType[X] = FlagType.derived[X]`.
+
+### Map it from another type
+
+`FlagType.mapped` builds a codec from an existing one and two functions. The flag is stored as the underlying type:
 
 ```scala
-final case class Level(n: Int)
-object Level:
-  given FlagType[Level] = FlagType.mapped[Level, Int]("Level", Level(0))(Level.apply, _.n)
+--8<-- "TypedFlags.scala:mapped"
 ```
 
-### Wire type vs domain type
+### Write the decoder yourself
 
-A `FlagType` has a **domain** type (what your code sees) and a **wire** type (what the provider is asked
-for). For the built-ins they coincide. For a derived enum or a `mapped` newtype they differ, and `wireType`
-is what evaluation dispatches on — so a string-backed enum is resolved through the provider's *string*
-method and then decoded, rather than being asked for as an object the provider does not have.
+`FlagType.from` takes a decoder and an encoder. The flag is stored as an **object**:
 
-Two consequences worth knowing:
+```scala
+--8<-- "TypedFlags.scala:from"
+```
 
-- **Hooks filter on the wire type.** A hook scoped to `FlagValueType.String` fires for a string-backed
-  custom flag. In `HookContext`, `flagType` is the **wire** type while `defaultValue` and
-  `FlagResolution.value` carry **domain** values — do not cast the latter based on the former.
-- **A hand-rolled instance must keep the two consistent.** If you override `wireType` to a scalar, `encode`
-  must produce the matching boxed type. A mismatch fails with a diagnostic `TypeMismatch` naming the domain
-  type, the declared `wireType` and what `encode` actually produced — rather than an opaque
-  `ClassCastException` from inside the SDK bridge. `FlagType.mapped` gets the pairing right by construction,
-  so prefer it where it fits.
+Values inside an object flag pass through the OpenFeature SDK on the way, so numbers arrive as `Double` and `null`
+fields are dropped. Decode numbers through `FlagType[Int]` or `FlagType[Long]` rather than casting, and model optional
+fields as `Option`. The encoder matters even if you never read its output: your default is encoded and handed to the
+provider.
 
-See [Architecture → Type-Safe Flag Evaluation]({{ site.baseurl }}/architecture#type-safe-flag-evaluation) for
-the full `FlagType` contract, including `from`, `mapped` and the round-trip law.
+`mapped` and `from` work on Scala 2.13 as well. Only derivation is Scala 3 only.
 
----
+### Wire type and domain type
+
+A `FlagType` has a domain type, `typeName`, which your code sees, and a **wire type**, `wireType`, which the provider is
+asked for. Evaluation picks the provider method from the wire type: `"Boolean"`, `"String"`, `"Int"`, `"Long"`,
+`"Float"` or `"Double"` select that type's method, and anything else is read as an object.
+
+| Built with | Wire type |
+|---|---|
+| built-in instances | the type itself |
+| `derives` on an enum | `String` |
+| `derives` on a case class | object |
+| `mapped[A, B]` | `B`'s wire type |
+| `from` | object |
+
+!!! warning "Do not use `from` for a value stored as a string"
+    `from` asks the provider for an object. If the flag actually holds a string, the provider answers
+    `TYPE_MISMATCH`. Use a derived enum or `mapped` instead.
+
+To store a scalar but reject values you do not recognise (which a total `mapped` function cannot do), write the instance
+by hand. Override `wireType` and `encode` together: `encode` must return the boxed type the wire type names (`String`,
+`java.lang.Integer`, …), or evaluation fails with a `TypeMismatch` naming both.
+
+```scala
+--8<-- "TypedFlags.scala:fallible"
+```
+
+[Hooks](hooks.md) filter by the wire type, so a hook scoped to `FlagValueType.String` sees this flag. In a hook, the
+flag's type is the wire type, while the default and the resolved value are domain values.
 
 ## Test with the same definitions
 
-The definitions you evaluate in production are the ones you pin in tests, so a fixture cannot hold a value
-production could never decode:
+The testkit takes `FlagDef := value` pairs, checked against the flag's type and stored through its codec. The test
+reads the value back the same way production does:
 
 ```scala
-import zio.openfeature.testkit.*
-import zio.openfeature.testkit.FlagOverride.Ops   // brings `:=` into scope
-
-val layer = TestFeatureProvider.layer(
-  Flags.Plan       := Tier.Premium,
-  Flags.CheckoutV2 := true
-)
-
-TestFeatureProvider.layer(Flags.Plan := "premium")   // does not compile
+--8<-- "TypedFlags.scala:fixture"
 ```
 
-`:=` type-checks the value against the flag's declared type and stores it through `flagType.encode`, so the
-test reads it back through the same decode path production uses. Two overrides for the same key are rejected
-rather than silently merged last-wins.
+Two values for the same key are rejected rather than silently merged. See [Testkit](testkit.md) for the other typed
+fixtures.
 
-See [Testkit → Typed fixtures with FlagDef]({{ site.baseurl }}/testkit#typed-fixtures-with-flagdef) for the
-full set of typed factories, and
-[Law-checking a custom FlagType]({{ site.baseurl }}/testkit#law-checking-a-custom-flagtype) for verifying a
-hand-written codec round-trips.
+Check a hand-written `FlagType` with `FlagTypeLaws` from the testkit. `roundTrip` checks that
+`decode(encode(a)) == Right(a)`; `throughValueBridge` also passes the value through the SDK's conversion, which is where
+object-backed codecs usually break; `all` runs both:
 
----
+```scala
+--8<-- "TypedFlagsSpec.scala:laws"
+```
 
 ## When to keep using string keys
 
-`FlagDef` is additive; the key-based API is not deprecated and is still the right tool for:
-
-- **A key you do not own** — a foreign or third-party flag you read but do not declare.
-- **A dynamic key** — one computed at runtime, where there is no definition to point at.
-- **Negative tests** — asserting `FLAG_NOT_FOUND` for a key that deliberately has no definition.
-- **Scala 2.13 call sites** where naming the type parameter is more ceremony than the guarantee is worth.
-
-Both styles can address the same flag in the same codebase; they are two front doors onto one evaluation
-path.
-
----
-
-## Next steps
-
-| Go to | For |
-|:------|:----|
-| [Getting Started]({{ site.baseurl }}/getting-started) | installation and your first evaluation |
-| [Architecture]({{ site.baseurl }}/architecture#type-safe-flag-evaluation) | the `FlagType` contract, custom and derived instances |
-| [Evaluation Context]({{ site.baseurl }}/context) | targeting, the context hierarchy, and ambient context |
-| [Testkit]({{ site.baseurl }}/testkit) | typed fixtures, law-checking, test layers |
-| [Transactions]({{ site.baseurl }}/transactions) | scoped overrides — which accept domain *or* wire values |
+`FlagDef` adds to the key-based API; it does not replace it. Keys are still the right tool for a flag you read but do not
+own, a key computed at runtime, or a test that a key is *not* defined. Both styles can read the same flag.

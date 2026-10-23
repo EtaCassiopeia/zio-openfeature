@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The documentation site moved to MkDocs Material and was rewritten.** Every page was checked against the code and
+  simplified, new pages cover evaluation, provider lifecycle and events, and OFREP, and animations show how an
+  evaluation, context, hooks, transactions and providers work. Every code sample on the site is now compiled and,
+  where it can run on its own, tested by the new `examplesDocs` project, which replaces `examplesTypedFlags`. Page
+  URLs are unchanged.
+
 - **OpenFeature Java SDK 1.23.0** (from 1.22.1, #423). Three behaviour changes reach this library:
   - **A `MultiProvider` keeps same-named providers.** Two chain members reporting the same metadata name both take
     part, in order; earlier SDKs kept only the last. Chains that relied on the collapse now consult every member.

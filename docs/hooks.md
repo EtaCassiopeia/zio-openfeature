@@ -1,586 +1,161 @@
----
-layout: default
-title: Hooks
-nav_order: 9
----
-
 # Hooks
-{: .no_toc }
 
-## Table of contents
-{: .no_toc .text-delta }
+A hook runs your code around every flag evaluation: to log it, time it, audit it, or add context to it. Hooks are
+plain ZIO values, written once and registered where they should apply.
 
-1. TOC
-{:toc}
+![One evaluation through three hooks: before runs api, client, invocation in order; the provider is called; after and finallyAfter run in reverse order. On the error path, the error stage runs instead of after.](assets/hooks.svg)
 
----
+## Writing a hook
 
-## Overview
-
-Hooks provide a mechanism to add cross-cutting concerns to flag evaluation. They can execute code before, after, on error, and finally after each evaluation. ZIO OpenFeature hooks are ZIO-native, meaning all hook methods return ZIO effects.
-
----
-
-## Hook Lifecycle
-
-Each hook can implement four stages:
-
-1. **before** - Runs before flag evaluation, can modify context
-2. **after** - Runs after successful evaluation
-3. **error** - Runs when evaluation fails — including when the provider answers with an error *code*
-   (`FLAG_NOT_FOUND`, `TYPE_MISMATCH`, …) rather than by throwing; the typed tier surfaces that as a typed failure and
-   the total tier as a served default, but hooks see the `error` stage on both
-4. **finallyAfter** - Always runs, regardless of success or failure
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                      Evaluation Request                      │
-└─────────────────────────────────────────────────────────────┘
-                            │
-                            ▼
-┌─────────────────────────────────────────────────────────────┐
-│                    BEFORE hooks (in order)                   │
-│  - Can modify evaluation context                             │
-│  - Can pass hints to later stages                            │
-└─────────────────────────────────────────────────────────────┘
-                            │
-                            ▼
-┌─────────────────────────────────────────────────────────────┐
-│                     Flag Resolution                          │
-└─────────────────────────────────────────────────────────────┘
-                            │
-            ┌───────────────┴───────────────┐
-            │ Success                       │ Failure
-            ▼                               ▼
-┌───────────────────────┐       ┌───────────────────────┐
-│  AFTER hooks          │       │  ERROR hooks          │
-│  (reverse order)      │       │  (reverse order)      │
-└───────────────────────┘       └───────────────────────┘
-            │                               │
-            └───────────────┬───────────────┘
-                            ▼
-┌─────────────────────────────────────────────────────────────┐
-│                 FINALLY hooks (reverse order)                │
-└─────────────────────────────────────────────────────────────┘
-```
-
----
-
-## Built-in Hooks
-
-### Logging Hook
-
-Logs flag evaluations to ZIO's logging system:
+Extend `FeatureHook` and override the stages you need. Every stage has a no-op default.
 
 ```scala
-import zio.*
-import zio.openfeature.*
-
-val loggingHook = FeatureHook.logging(
-  logBefore = false,
-  logAfter = true,
-  logError = true
-)
-
-// Add to service
-FeatureFlags.addHook(loggingHook)
+--8<-- "Hooks.scala:custom"
 ```
 
-### Structured Logging Hook
+| Stage | Runs | Receives |
+|---|---|---|
+| `before` | before the provider is called | the context so far; may return extra context |
+| `after` | when the provider answered with a value and no error code | the `FlagResolution` |
+| `error` | when the evaluation failed or the provider answered with an error code | the `FeatureFlagError` |
+| `finallyAfter` | always, last | `Some(resolution)` if the provider answered, otherwise `None` |
 
-A richer logging hook that adds machine-readable annotations to log output via `ZIO.logAnnotate`. Unlike the basic `logging()` hook which produces plain text messages, structured logging attaches typed fields that are preserved by `zio-logging` backends (JSON, SLF4J MDC, OpenTelemetry, etc.).
+Every stage also receives the `HookContext` (below) and the evaluation's `HookHints`.
+
+## Registering hooks
 
 ```scala
-val hook = FeatureHook.structuredLogging(
-  beforeLevel = Some(LogLevel.Debug),   // None to disable
-  afterLevel = Some(LogLevel.Debug),
-  errorLevel = Some(LogLevel.Warning),
-  logContext = false,                    // include evaluation context in annotations
-  redactKeys = Set("email", "ip")       // redact sensitive context attributes
-)
-
-FeatureFlags.addHook(hook)
+--8<-- "Hooks.scala:register"
 ```
 
-**Log annotations added:**
+| Level | Register with | Applies to |
+|---|---|---|
+| ZIO API | `addZioApiHook`, `addZioApiHooks` | every evaluation of this instance, ahead of client hooks; a [`FeatureFlagRegistry`](providers.md) copies them to all its clients |
+| Client | `addHook`, `addHooks`, `FeatureFlagsConfig().withHook(...)` / `withHooks(...)` | every evaluation of this instance |
+| Invocation | `EvaluationOptions(hooks*)`, `.withHook`, `.withHooks` | one call, through its `*Details` method |
+| Java API | `addApiHook(javaHook)` | a `dev.openfeature.sdk.Hook`, run by the Java SDK |
+| Provider | the provider itself | run by the Java SDK |
 
-| Annotation | Stage | Example |
-|:-----------|:------|:--------|
-| `flag.key` | all | `"dark-mode"` |
-| `flag.type` | all | `"Boolean"` |
-| `flag.provider` | all | `"OptimizelyProvider"` |
-| `flag.domain` | all (if set) | `"my-service"` |
-| `flag.value` | after | `"true"` |
-| `flag.reason` | after | `"TargetingMatch"` |
-| `flag.variant` | after (if present) | `"treatment-a"` |
-| `flag.duration_ms` | after, error | `"12"` |
-| `flag.error` | error | `"Flag 'x' not found"` |
-| `flag.error.type` | error | `"FlagNotFound"` |
-| `flag.context.targetingKey` | before, after, error (if `logContext`) | `"user-123"` |
-| `flag.context.<attr>` | before, after, error (if `logContext`) | `"premium"` |
-
-**Context logging and redaction:**
-
-When `logContext = true`, the hook includes the evaluation context (targeting key + attributes) in log annotations. The `redactKeys` parameter specifies which attribute keys should have their values replaced with `"[REDACTED]"` — the key is still logged so you know the attribute was present, but the value is hidden.
+`FeatureFlags.hooks` and `zioApiHooks` list what is registered; `clearHooks`, `clearZioApiHooks` and `clearApiHooks`
+remove it.
 
 ```scala
-val hook = FeatureHook.structuredLogging(
-  logContext = true,
-  redactKeys = Set("email", "ssn")
-)
-
-// With context: targetingKey="user-123", email="john@example.com", plan="premium"
-// Produces annotations:
-//   flag.context.targetingKey = "user-123"     ← not redacted
-//   flag.context.email        = "[REDACTED]"   ← value hidden
-//   flag.context.plan         = "premium"      ← not redacted
+--8<-- "Hooks.scala:manage"
 ```
 
-When `logContext = false` (default), no context attributes are logged and `redactKeys` has no effect.
+### Hooks written for the Java SDK
 
-Note: `redactKeys` only applies to context attributes, not to the targeting key. The targeting key is always logged as-is when `logContext` is enabled.
-
-**Example JSON output** (with `zio-logging` JSON backend):
-
-```json
-{
-  "level": "DEBUG",
-  "message": "Flag 'dark-mode' = true (TargetingMatch, 3ms)",
-  "flag.key": "dark-mode",
-  "flag.type": "Boolean",
-  "flag.provider": "OptimizelyProvider",
-  "flag.value": "true",
-  "flag.reason": "TargetingMatch",
-  "flag.variant": "treatment-a",
-  "flag.duration_ms": "3"
-}
-```
-
-### Metrics Hook
-
-Records evaluation metrics:
+Hooks from the Java ecosystem can be reused. They run inside the SDK call, together with the provider's own hooks, so
+from the ZIO hooks' point of view they are part of "calling the provider".
 
 ```scala
-val metricsHook = FeatureHook.metrics { (flagKey, duration, success) =>
-  ZIO.succeed {
-    println(s"Flag '$flagKey' evaluated in ${duration.toMillis}ms (success=$success)")
-    // Record to your metrics system
-  }
-}
-
-FeatureFlags.addHook(metricsHook)
+--8<-- "Hooks.scala:java-hook"
 ```
 
-### Detailed Metrics Hook
+## Order
 
-A richer metrics hook that provides full evaluation context for building proper metric tags. Unlike `metrics()` which only gives you the flag key and a boolean, this hook passes the complete `HookContext` and `FlagResolution`/`FeatureFlagError` to your callbacks.
+- `before` runs ZIO API hooks, then client hooks, then invocation hooks, each in the order they were added.
+- The provider is called. Java API hooks and provider hooks run here, inside the SDK.
+- `after`, `error` and `finallyAfter` run in the **reverse** order: invocation, client, ZIO API.
+
+So the first hook to see an evaluation is the last to see its outcome, like nested `try` / `finally` blocks.
+
+## When each stage runs
+
+- A clean answer runs `after`, then `finallyAfter`.
+- An answer that carries an error code (`FLAG_NOT_FOUND`, `TYPE_MISMATCH`, ...) runs `error`, not `after`. This holds
+  for both the typed and the total [tier](evaluating.md): `booleanOrDefault` still serves your default, and the hooks
+  still see the error.
+- A failure without an answer (provider not ready, timeout, exception) runs `error`, and `finallyAfter` gets `None`.
+- Hooks run before the provider status is checked, so an evaluation that fails because the provider is not ready still
+  runs `before`, `error` and `finallyAfter`.
+- Hooks also run for values served by a [transaction](transactions.md) override or its cache.
+
+Stages return `UIO`: a hook cannot fail an evaluation, and a misbehaving logger never takes your flags down. Handle
+anything that may fail inside the hook:
 
 ```scala
-val hook = FeatureHook.metricsDetailed(
-  onSuccess = (ctx, details, duration) =>
-    metricsTracker.recordResponseTime("flag.evaluation", duration, Map(
-      "flag.key"      -> ctx.flagKey,
-      "flag.type"     -> ctx.flagType.name,
-      "flag.provider" -> ctx.providerMetadata.name,
-      "flag.reason"   -> details.reason.toString,
-      "flag.variant"  -> details.variant.getOrElse("none")
-    )),
-  onError = (ctx, err, duration) =>
-    metricsTracker.recordResponseTime("flag.evaluation.error", duration, Map(
-      "flag.key"   -> ctx.flagKey,
-      "flag.error" -> err.getClass.getSimpleName
-    ))
-)
-
-FeatureFlags.addHook(hook)
+--8<-- "Hooks.scala:safe"
 ```
 
-**Available context in callbacks:**
+A defect (a thrown exception) is different. A defect in `before` or `after` skips the rest of that stage, runs `error`
+with a `ProviderError`, runs `finallyAfter`, and then fails the evaluation with that defect. After an `after` defect,
+`finallyAfter` receives your default with reason `Error` and code `General`.
 
-| From `HookContext` | Description |
-|:-------------------|:------------|
-| `ctx.flagKey` | Flag key being evaluated |
-| `ctx.flagType` | Type (Boolean, String, Int, etc.) |
-| `ctx.providerMetadata.name` | Provider name |
-| `ctx.clientMetadata.domain` | Client domain (if set) |
-| `ctx.evaluationContext` | Full evaluation context |
+## Adding context in `before`
 
-| From `FlagResolution` (success only) | Description |
-|:--------------------------------------|:------------|
-| `details.value` | Evaluated value |
-| `details.reason` | Resolution reason (TargetingMatch, Split, Static, etc.) |
-| `details.variant` | Variant name (if applicable) |
-
-| From `FeatureFlagError` (error only) | Description |
-|:--------------------------------------|:------------|
-| `err.message` | Error message |
-| `err.getClass.getSimpleName` | Error type (FlagNotFound, TypeMismatch, etc.) |
-
-### Context Validator Hook
-
-Validates evaluation context before evaluation:
+`before` may return extra context. It is merged on top of the evaluation's context, so it wins over every
+[context level](context.md). Each later hook sees the context as changed by the earlier ones.
 
 ```scala
-val validatorHook = FeatureHook.contextValidator(
-  requireTargetingKey = true,
-  requiredAttributes = List("userId", "sessionId")
-)
-
-FeatureFlags.addHook(validatorHook)
+--8<-- "Hooks.scala:enrich"
 ```
 
----
+To add context from somewhere the application already holds it, without letting it override what callers pass
+explicitly, use a [context source](context.md#context-sources) instead.
 
-## Custom Hooks
+## Passing data between stages
 
-### Creating a Custom Hook
+`HookData` is a small store private to one hook during one evaluation. Write in `before`, read in a later stage. Use a
+`TypedKey` to keep the value's type.
 
-Implement the `FeatureHook` trait:
+!!! warning "Hooks combined with `FeatureHook.compose`"
+    The hooks inside one `compose` currently share a single `HookData` across evaluations, so do not rely on it
+    there. Register them separately until
+    [#438](https://github.com/EtaCassiopeia/zio-openfeature/issues/438) is fixed.
 
 ```scala
-val customHook = new FeatureHook:
-  override def before(ctx: HookContext, hints: HookHints): UIO[Option[(EvaluationContext, HookHints)]] =
-    ZIO.logDebug(s"Evaluating ${ctx.flagKey}").as(None)
-
-  override def after[A](ctx: HookContext, details: FlagResolution[A], hints: HookHints): UIO[Unit] =
-    ZIO.logDebug(s"${ctx.flagKey} = ${details.value}")
-
-  override def error(ctx: HookContext, error: FeatureFlagError, hints: HookHints): UIO[Unit] =
-    ZIO.logError(s"Error evaluating ${ctx.flagKey}: ${error.message}")
-
-  override def finallyAfter(ctx: HookContext, details: Option[FlagResolution[_]], hints: HookHints): UIO[Unit] =
-    ZIO.unit
+--8<-- "Hooks.scala:hook-data"
 ```
 
-### Error semantics
-
-Every `FeatureHook` stage returns `UIO`, so hooks are **infallible by construction and cannot abort an evaluation**. This is an intentional deviation from spec §4.4.6: a misbehaving observer (logging, metrics, validation) must never take flag evaluation down. The consequences:
-
-- Handle expected failures **inside** the hook (e.g. `.catchAll`/`.ignore` on effects that can fail) — there is no typed error channel to surface them.
-- Defects (unexpected `Throwable`s) still propagate as defects, so wrap untrusted third-party code (e.g. with `.catchAllDefect`) if it must not interfere with evaluation.
-- A defect in a `before` or `after` hook runs the `error` stage (§4.4.5) and skips the remaining hooks of that stage (§4.4.6). An `after` defect also replaces the resolution with the default (§4.4.8): `finallyAfter` receives `Some(details)` with the default value, reason `ERROR` and code `GENERAL`, the same details the total tier (`*OrDefault` / `resolveOrDefault`) serves. The typed tier still fails with the defect.
-- For hooks that should run **inside the Java SDK** (and participate in the SDK's own hook error model), register them with `addApiHook` instead of `addHook`.
-
-What the `error` stage receives: the `FeatureFlagError` the evaluation failed with, or — for a provider that answered
-with an error *code* on the resolution rather than throwing — the error reconstructed from that code
-(`FlagNotFound(key)`, `TypeMismatch(key, expected, actual)`, …). One detail worth knowing when a hook and a `catch`
-compare notes: the hook's `TypeMismatch` names the **wire** type as `expected` (what the provider was asked for, the
-same `HookContext.flagType`), while the failure the caller sees names the flag's **domain** type. `finallyAfter` still
-receives `Some(details)` for an error-coded resolution — the default value plus the code — which is also what the Java
-SDK hands `finally` on error.
-
-### Hook Context
-
-The `HookContext` provides information about the current evaluation:
+`HookHints` are read-only values the caller hands to every hook of one evaluation, through `EvaluationOptions`:
 
 ```scala
-final case class HookContext(
-  flagKey: String,                     // The flag being evaluated
-  flagType: FlagValueType,             // Boolean, String, Int, Double, or Object
-  defaultValue: Any,                   // The default value
-  evaluationContext: EvaluationContext, // The evaluation context
-  clientMetadata: ClientMetadata,      // Client information (spec 4.1.2)
-  providerMetadata: ProviderMetadata,  // Provider information
-  hookData: HookData                   // Per-hook mutable state (spec 4.6.1)
-)
+--8<-- "Hooks.scala:hints"
 ```
 
-### Hook Data (Spec 4.6.1)
+Pass them with `EvaluationOptions(...).withHint("requestId", "r-17")`, as in the registration example above.
 
-Each hook has its own `HookData` instance that persists across all stages of a single evaluation. Unlike `HookHints` (which are shared and read-only after `before`), `HookData` is mutable and scoped to an individual hook instance:
+## Filtering by flag type
+
+A hook runs only for evaluations whose type is in its `supportedFlagTypes` (all types by default). The type is the
+one the provider is asked for, so a string-backed enum counts as `String`.
 
 ```scala
-val spanHook = new FeatureHook:
-  override def before(ctx: HookContext, hints: HookHints): UIO[Option[(EvaluationContext, HookHints)]] =
-    ZIO.succeed {
-      ctx.hookData.set("spanId", generateSpanId())
-      None
-    }
-
-  override def after[A](ctx: HookContext, details: FlagResolution[A], hints: HookHints): UIO[Unit] =
-    ZIO.succeed {
-      val spanId = ctx.hookData.get[String]("spanId").getOrElse("unknown")
-      recordSpan(spanId, details)
-    }
-
-  override def finallyAfter(ctx: HookContext, details: Option[FlagResolution[_]], hints: HookHints): UIO[Unit] =
-    ZIO.succeed {
-      ctx.hookData.clear()
-    }
+--8<-- "Hooks.scala:flag-types"
 ```
 
-When hooks are composed via `FeatureHook.compose`, each hook receives its own isolated `HookData` instance, so hooks cannot interfere with each other's state.
+`FlagValueType` has `Boolean`, `String`, `Int`, `Long`, `Double` and `Object`.
 
-### Hook Hints
-
-Hooks can pass data between stages using `HookHints`. Return `Some((modifiedContext, newHints))` from `before` to modify context or pass hints:
+## Built-in hooks
 
 ```scala
-val timingHook = new FeatureHook:
-  private val startTimeKey = "timing.start"
-
-  override def before(ctx: HookContext, hints: HookHints): UIO[Option[(EvaluationContext, HookHints)]] =
-    Clock.nanoTime.map { start =>
-      // Store start time in hints for later stages
-      Some((ctx.evaluationContext, hints + (startTimeKey -> start)))
-    }
-
-  override def after[A](ctx: HookContext, details: FlagResolution[A], hints: HookHints): UIO[Unit] =
-    for
-      end <- Clock.nanoTime
-      start = hints.getOrElse[Long](startTimeKey, end)
-      _ <- ZIO.logInfo(s"Evaluation took ${(end - start) / 1_000_000}ms")
-    yield ()
-
-  override def error(ctx: HookContext, error: FeatureFlagError, hints: HookHints): UIO[Unit] =
-    ZIO.unit
-
-  override def finallyAfter(ctx: HookContext, details: Option[FlagResolution[_]], hints: HookHints): UIO[Unit] =
-    ZIO.unit
+--8<-- "Hooks.scala:builtins"
 ```
 
----
-
-## Composing Hooks
-
-### Combining Multiple Hooks
-
-```scala
-val hook1 = FeatureHook.logging()
-val hook2 = FeatureHook.metrics((k, d, s) => ZIO.unit)
-
-// Compose hooks - both will run
-val combined = FeatureHook.compose(List(hook1, hook2))
-
-FeatureFlags.addHook(combined)
-```
-
-### Hook Execution Order
-
-Hooks are executed in the order they were added:
-
-```scala
-// Hooks run in registration order (first added = first to run in `before`)
-FeatureFlags.addHooks(List(loggingHook, metricsHook, validatorHook))
-```
-
-For the `before` stage, hooks run in order. For `after`, `error`, and `finallyAfter`, they run in reverse order.
-
----
-
-## Hook Registration Levels
-
-Per the OpenFeature specification, hooks can be registered at four levels:
-
-### API-Level Hooks
-
-API-level hooks apply to all clients and use the OpenFeature SDK's Hook interface:
-
-```scala
-import dev.openfeature.sdk.Hook
-
-// Add API-level hook (uses OpenFeature SDK Hook interface)
-FeatureFlags.addApiHook(myOpenFeatureHook)
-
-// Clear all API-level hooks
-FeatureFlags.clearApiHooks
-```
-
-### Client-Level Hooks
-
-Client-level hooks apply to a specific FeatureFlags instance:
-
-```scala
-// Add a single hook at runtime
-FeatureFlags.addHook(myHook)
-
-// Add multiple hooks atomically
-FeatureFlags.addHooks(List(loggingHook, metricsHook, validatorHook))
-
-// Create layer with initial hooks
-val hooks = List(
-  FeatureHook.logging(),
-  FeatureHook.metrics((k, d, s) => ZIO.unit)
-)
-
-val layer = FeatureFlags.fromProvider(provider, FeatureFlagsConfig().withHooks(hooks))
-
-// Remove all client hooks
-FeatureFlags.clearHooks
-
-// Get current client hooks
-val currentHooks: ZIO[FeatureFlags, Nothing, List[FeatureHook]] =
-  FeatureFlags.hooks
-```
-
-### Invocation-Level Hooks
-
-Invocation-level hooks apply to a single evaluation call:
-
-```scala
-import zio.openfeature.*
-
-// Create hook for this evaluation
-val auditHook = new FeatureHook:
-  override def after[A](ctx: HookContext, details: FlagResolution[A], hints: HookHints): UIO[Unit] =
-    ZIO.logInfo(s"Evaluated ${ctx.flagKey} = ${details.value}")
-
-// Use EvaluationOptions to pass invocation hooks
-val options = EvaluationOptions(
-  hooks = List(auditHook),
-  hookHints = HookHints("audit-id" -> "12345")
-)
-
-// Evaluate with invocation hooks
-FeatureFlags.booleanDetails("feature", false, EvaluationContext.empty, options)
-```
-
-### Provider-Level Hooks
-
-Provider hooks are automatically retrieved from the underlying provider via `provider.getProviderHooks()` and included in the hook pipeline. You don't need to register them manually.
-
-### Hook Execution Order
-
-Per OpenFeature spec, hooks execute in this order:
-
-**Before stage:** API → Client → Invocation → Provider (in addition order within each level)
-
-**After/Error/Finally stages:** Provider → Invocation → Client → API (reverse order)
-
----
-
-## Use Cases
-
-### Audit Logging
-
-Track all flag evaluations for compliance:
-
-```scala
-val auditHook = new FeatureHook:
-  override def before(ctx: HookContext, hints: HookHints): UIO[Option[(EvaluationContext, HookHints)]] =
-    ZIO.none
-
-  override def after[A](ctx: HookContext, details: FlagResolution[A], hints: HookHints): UIO[Unit] =
-    ZIO.logInfo(
-      s"AUDIT: User ${ctx.evaluationContext.targetingKey.getOrElse("anonymous")} " +
-      s"evaluated ${ctx.flagKey} = ${details.value}"
-    )
-
-  override def error(ctx: HookContext, error: FeatureFlagError, hints: HookHints): UIO[Unit] =
-    ZIO.logError(s"AUDIT: Flag evaluation failed: ${error.message}")
-
-  override def finallyAfter(ctx: HookContext, details: Option[FlagResolution[_]], hints: HookHints): UIO[Unit] =
-    ZIO.unit
-```
-
-### Feature Flag Analytics
-
-Send evaluation data to your analytics platform:
-
-```scala
-val analyticsHook = FeatureHook.metrics { (flagKey, duration, success) =>
-  for
-    _ <- analyticsClient.recordEvaluation(flagKey, success)
-    _ <- analyticsClient.recordLatency(flagKey, duration)
-  yield ()
-}
-```
-
-### Context Enrichment
-
-Automatically add attributes to evaluation context:
-
-```scala
-val enrichmentHook = new FeatureHook:
-  override def before(ctx: HookContext, hints: HookHints): UIO[Option[(EvaluationContext, HookHints)]] =
-    for
-      now <- Clock.instant
-      enrichedCtx = ctx.evaluationContext
-        .withAttribute("timestamp", now.toString)
-        .withAttribute("region", currentRegion)
-    yield Some((enrichedCtx, hints))
-
-  override def after[A](ctx: HookContext, details: FlagResolution[A], hints: HookHints): UIO[Unit] =
-    ZIO.unit
-
-  override def error(ctx: HookContext, error: FeatureFlagError, hints: HookHints): UIO[Unit] =
-    ZIO.unit
-
-  override def finallyAfter(ctx: HookContext, details: Option[FlagResolution[_]], hints: HookHints): UIO[Unit] =
-    ZIO.unit
-```
-
-### Error Alerting
-
-Send alerts when flag evaluations fail:
-
-```scala
-val alertingHook = new FeatureHook:
-  override def before(ctx: HookContext, hints: HookHints): UIO[Option[(EvaluationContext, HookHints)]] =
-    ZIO.none
-
-  override def after[A](ctx: HookContext, details: FlagResolution[A], hints: HookHints): UIO[Unit] =
-    ZIO.unit
-
-  override def error(ctx: HookContext, error: FeatureFlagError, hints: HookHints): UIO[Unit] =
-    alertService.sendAlert(
-      level = AlertLevel.Warning,
-      message = s"Flag evaluation failed: ${ctx.flagKey}",
-      details = Map("error" -> error.message)
-    ).ignore
-
-  override def finallyAfter(ctx: HookContext, details: Option[FlagResolution[_]], hints: HookHints): UIO[Unit] =
-    ZIO.unit
-```
-
----
-
-## Best Practices
-
-### 1. Keep Hooks Fast
-
-Hooks run synchronously for each evaluation. Avoid slow operations:
-
-```scala
-// Good: Fast, in-memory operation
-override def after[A](...): UIO[Unit] =
-  ZIO.succeed(counter.increment())
-
-// Consider: Fork slow operations
-override def after[A](...): UIO[Unit] =
-  sendToAnalytics(details).forkDaemon.unit
-```
-
-### 2. Handle Errors Gracefully
-
-Hooks should not throw exceptions:
-
-```scala
-override def after[A](ctx: HookContext, details: FlagResolution[A], hints: HookHints): UIO[Unit] =
-  riskyOperation.catchAll { error =>
-    ZIO.logError(s"Hook error: $error")
-  }
-```
-
-### 3. Use Hints for Inter-Stage Communication
-
-Pass data between hook stages using hints:
-
-```scala
-override def before(...): UIO[Option[(EvaluationContext, HookHints)]] =
-  ZIO.some((ctx.evaluationContext, hints + ("key" -> value)))
-
-override def after[A](...): UIO[Unit] =
-  val storedValue = hints.get[String]("key")
-  // Use the stored value
-```
-
-### 4. Order Hooks Appropriately
-
-Consider hook order for dependencies:
-
-```scala
-// Order matters: validation → enrichment → logging
-FeatureFlags.addHooks(List(validatorHook, enrichmentHook, loggingHook))
-```
-
+| Hook | What it does |
+|---|---|
+| `FeatureHook.logging(logBefore, logAfter, logError)` | plain log lines: `before` at debug (off by default), `after` at info, `error` at error |
+| `FeatureHook.structuredLogging(beforeLevel, afterLevel, errorLevel, logContext, redactKeys)` | log lines with annotations: `flag.key`, `flag.type`, `flag.provider`, `flag.domain`, `flag.value`, `flag.reason`, `flag.variant`, `flag.duration_ms`, `flag.error`, and with `logContext` the context, minus `redactKeys` |
+| `FeatureHook.metrics((key, duration, success) => ...)` | calls you once per evaluation with its duration |
+| `FeatureHook.metricsDetailed(onSuccess, onError)` | the same, with the full `HookContext` and resolution or error, to build metric tags |
+| `FeatureHook.contextValidator(requireTargetingKey, requiredAttributes)` | logs a warning when the targeting key or an attribute is missing; never fails the evaluation |
+| `FeatureHook.noop` | does nothing |
+| `FeatureHook.compose(hooks)` | one hook that runs several, in the order above |
+
+## `HookContext`
+
+| Field | Meaning |
+|---|---|
+| `flagKey` | the flag being evaluated |
+| `flagType` | the `FlagValueType` the provider is asked for |
+| `defaultValue` | the caller's default, as the caller's type (a custom type, not its wire value) |
+| `evaluationContext` | the merged context, including earlier `before` additions |
+| `clientMetadata` | the client's `domain` and `version` |
+| `providerMetadata` | the provider's `name` and `version` |
+| `hookData` | this hook's `HookData` for this evaluation |
+
+## Keep hooks fast
+
+Hooks run on the calling fiber, in sequence, on every evaluation. Keep them in memory; fork slow work (such as sending
+analytics) with `.forkDaemon`. An evaluation with no applicable hooks skips the hook machinery entirely.

@@ -25,10 +25,12 @@ import scala.jdk.CollectionConverters._
   * @param ttl
   *   Time-to-live for cached entries
   * @param contextKeys
-  *   If set, only these context attribute keys (plus the targeting key) are included in the cache key hash. Use this
-  *   when contexts contain high-cardinality fields (e.g., per-request UUIDs) that would defeat caching. For example,
-  *   `contextKeys = Some(Set("plan", "region"))` caches by plan and region, ignoring `userId`. If `None` (default), the
-  *   full context is hashed.
+  *   If set, only these context attribute keys are included in the cache key hash — the targeting key is NOT included
+  *   unless you list `"targetingKey"` yourself. Use this when contexts contain high-cardinality fields (e.g.,
+  *   per-request UUIDs) that would defeat caching. For example, `contextKeys = Some(Set("plan", "region"))` caches by
+  *   plan and region, ignoring `userId` and the targeting key — so every user shares one entry, which breaks percentage
+  *   rollouts; add `"targetingKey"` when the flag targets individual users. If `None` (default), the full context,
+  *   targeting key included, is hashed.
   */
 final case class CachingConfig(
   maxEntries: Int = 1000,

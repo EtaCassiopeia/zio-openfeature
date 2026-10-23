@@ -423,7 +423,8 @@ trait FeatureFlags {
   /** Semantically block until the provider reaches an evaluable state (`canEvaluate` — Ready/Stale), returns early on
     * `Fatal`, or `within` elapses — returning the status at that moment in every case. Backed by the status change
     * stream (no polling), and safe for many concurrent waiters. Ideal for `/ready` probes:
-    * `ff.awaitReady(5.seconds).map(_.canEvaluate)`.
+    * `ff.awaitReady(5.seconds).map(_.canEvaluate)`. On an instance that is shutting down or shut down it returns at
+    * once with that status (`ShuttingDown` / `NotReady`), since it will never become evaluable again.
     */
   def awaitReady(within: Duration = Duration.Infinity): UIO[ProviderStatus]
 

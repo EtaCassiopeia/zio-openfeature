@@ -65,6 +65,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Teardown no longer strands waiters** (#435). Closing the layer's scope now shuts the event hub, so `events`
+  consumers and event-handler fibers end with it instead of waiting forever; `awaitReady()` returns at once on an
+  instance that is shutting down or shut down; and an interrupted `shutdown` still runs to the terminal `NotReady`
+  instead of leaving `ShuttingDown` and a half torn-down API.
 - **`CachingProvider` and `CircuitBreakerProvider` release their event plumbing properly** (#450). Their `shutdown`
   never called `EventProvider.shutdown`, so each wrapper's event emitter kept running and could still dispatch
   afterwards. And a wrapper whose attach to the delegate failed (the delegate already belonged to another wrapper)

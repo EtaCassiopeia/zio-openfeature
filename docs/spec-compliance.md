@@ -86,7 +86,7 @@ its error contract does not change. Transaction overrides and cached transaction
 | Stages: before, after, error, finally | `FeatureHook`: `before`, `after`, `error`, `finallyAfter` |
 | Hook context | `HookContext`: flag key, flag type, default value, evaluation context, client and provider metadata |
 | Hook hints | `HookHints`, passed through `EvaluationOptions` |
-| Hook data (§4.6) | `HookData`, per hook, shared across its stages |
+| Hook data (§4.6) | `HookData`, per hook and per evaluation, shared across its stages |
 | API, client, invocation and provider hooks | `addZioApiHook`; `addHook`; `EvaluationOptions(hooks = ...)`; the provider's own `getProviderHooks`. Java SDK hooks can be added with `addApiHook`. |
 | Order | before: API → client → invocation, then, inside the SDK call, Java SDK API hooks → provider hooks; after, error and finally run in reverse |
 | A failing `before` or `after` runs `error` (§4.4.5–4.4.6) | yes; the rest of that stage is skipped |

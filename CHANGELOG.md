@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Optimizely SDK 4.6.0** (from 4.2.2, #474), with CMAB support. Factory-built providers now wire Optimizely's CMAB
+  service: without it, a CMAB experiment served a placeholder `"$"` variation reported as `TARGETING_MATCH`, and
+  every client build logged a WARN. A CMAB decision that cannot be fetched is now an `ERROR` evaluation (`GENERAL`)
+  rather than a silent default. On a cache miss a CMAB decision is a blocking network call (10s, one retry by default).
+  The bump also removes a latent crash: 4.2.2's event serializer reads a Jackson field that the jackson-databind this
+  module ships no longer has, which would have failed the first real event dispatch.
 - **Production instances no longer keep tracked events** (#442). Every instance recorded the last 1000 `track` calls
   with their fully merged evaluation contexts — often personal data — for `FeatureFlags.trackedEvents`, a test
   helper. Only testkit-built instances record now. Assert on tracking with the new `TestFeatureProvider.trackedEvents`
@@ -20,6 +26,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Scope.default >>> layer` still works. One catch: `provide(Scope.default, FeatureFlags.fromProvider(p))`, when
   nothing else needs the `Scope`, now draws ZIO's "unused layer" warning, which fails builds that use `-Werror` — drop
   the `Scope.default`. Binary compatible.
+- **API tidy-ups** (#444):
+  - `EvaluationOptions` (per-call hooks, hints, timeout) can now be passed to every `*OrDefault`, `valueOrDefault` and
+    `value`, including the `FlagDef` forms, not only to `*Details` and `resolveOrDefault`.
+  - `EvaluationContext.builder` takes `Long` and `java.time.Instant` attributes.
+  - An `on(...)` registration reports the provider that is current when it runs, not when the effect was built.
+  - Unreadable provider event metadata is logged instead of silently dropped (the event is still delivered).
+  - A typed error built from a provider-reported code (`PARSE_ERROR`, `GENERAL`) carries the provider's message in a
+    stackless cause instead of a stack trace pointing into this library.
+||||||| fca038a
 - **The documentation site moved to MkDocs Material and was rewritten.** Every page was checked against the code and
   simplified, new pages cover evaluation, provider lifecycle and events, and OFREP, and animations show how an
   evaluation, context, hooks, transactions and providers work. Every code sample on the site is now compiled and,
@@ -46,6 +61,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Deprecated
 
+- **`FeatureFlagError.EmptyFlagVariables`** (#444). No module has ever raised it; it stays for binary compatibility.
 - **`FeatureFlags.trackedEvents`, in favour of `TestFeatureProvider.trackedEvents`** (#442). It is empty on production
   instances.
 
@@ -55,6 +71,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`CachingProvider` and `CircuitBreakerProvider` release their event plumbing properly** (#450). Their `shutdown`
+  never called `EventProvider.shutdown`, so each wrapper's event emitter kept running and could still dispatch
+  afterwards. And a wrapper whose attach to the delegate failed (the delegate already belonged to another wrapper)
+  still detached the delegate on `shutdown`, cutting off the wrapper that owned it. Both now share one event-channel
+  helper that records an attachment only once it succeeds, and `shutdown` ends with `EventProvider.shutdown`.
 - **Circuit breaker: stale outcomes and polled `READY` no longer reset the circuit** (#447).
   - A call admitted in one circuit state could record its outcome in a later one: a slow call admitted while closed
     could close a half-open circuit while the real probe was still running, or free the probe slot so two probes ran

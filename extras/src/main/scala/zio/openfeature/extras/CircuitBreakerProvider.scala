@@ -4,7 +4,6 @@ import dev.openfeature.sdk.{
   EvaluationContext => OFEvaluationContext,
   ProviderEvent => JavaProviderEvent,
   EventProvider,
-  EventProviderBridge,
   FeatureProvider,
   Metadata,
   ProviderEvaluation,
@@ -123,14 +122,7 @@ final class CircuitBreakerProvider private (
     case _: CircuitState.HalfOpen => ProviderState.STALE
   }
 
-  private val delegateAttached = new java.util.concurrent.atomic.AtomicBoolean(false)
-
-  // Event integration is derived from the delegate's type rather than stored as a separate flag, so
-  // "attached to something that cannot emit" is unrepresentable. Empty for a plain `FeatureProvider`.
-  private val eventDelegate: Option[EventProvider] = underlying match {
-    case ev: EventProvider => Some(ev)
-    case _                 => None
-  }
+  private val channel = new DelegateEventChannel(underlying, onDelegateEvent)
 
   // Forward delegate emissions upward (the delegate is never registered with an API, so without this its
   // events go nowhere) and feed them into the breaker so an unhealthy delegate is detected as soon as it
@@ -153,9 +145,7 @@ final class CircuitBreakerProvider private (
 
   private def doInitialize(runDelegateInit: => Unit): Unit =
     try {
-      eventDelegate.foreach { ev =>
-        if (delegateAttached.compareAndSet(false, true)) EventProviderBridge.attach(ev, onDelegateEvent)
-      }
+      channel.attach()
       runDelegateInit
       checkDelegateState()
     } catch {
@@ -174,11 +164,12 @@ final class CircuitBreakerProvider private (
 
   override def isDomainScoped(): Boolean = underlying.isDomainScoped()
 
+  // `super.shutdown()` (EventProvider's) last: it is what stops this wrapper's own event emitter (#450). It waits up to
+  // a few seconds for in-flight emissions to drain.
   override def shutdown(): Unit = {
-    eventDelegate.foreach { ev =>
-      if (delegateAttached.compareAndSet(true, false)) scala.util.Try(EventProviderBridge.detach(ev))
-    }
-    underlying.shutdown()
+    channel.detach()
+    try underlying.shutdown()
+    finally super.shutdown()
   }
 
   // Forward the delegate's provider hooks and tracking so wrapping a provider in a circuit breaker doesn't silently

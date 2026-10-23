@@ -40,6 +40,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `addHook(compose(List(logging, metrics)))`) let concurrent evaluations overwrite each other's data, which made the
   timing hooks report wrong durations. The same hook instance listed twice, in a composite or via two `addHook` calls,
   also shared one `HookData`. Each inner hook now gets its own `HookData` per evaluation, keyed by its position.
+- **Event handlers no longer inherit the registering fiber's transaction or context** (#436). A handler registered
+  inside `transaction(...)` kept applying that transaction's overrides on every later event, and kept recording into
+  its long-finished state; one registered inside `withContext(...)` kept that context. Handlers, including the
+  immediate call for a provider already in the event's state, now run without either. Other `FiberRef`s, such as log
+  annotations, are still inherited.
+||||||| 28fdacf
 - **`zio-openfeature-optimizely` now depends on `jackson-databind` at compile scope** (#431). The Optimizely SDK
   needs a JSON parser and declares none, and this module shipped Jackson only to its own tests, so a consumer that
   added just this module had no parser. The SDK's first datafile fetch then died on its poller thread with an

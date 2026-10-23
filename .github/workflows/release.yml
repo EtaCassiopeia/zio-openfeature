@@ -39,10 +39,10 @@ jobs:
       # never hits. This mirrors that proven-reliable per-version isolation. The released commit is already gated by the
       # full build-matrix on `main`, so this is a pre-publish backstop, not the primary gate.
       - name: Run tests (Scala 2.13)
-        run: sbt "++2.13.16 test"
+        run: sbt "++2.13.18 test"
 
       - name: Run tests (Scala 3)
-        run: sbt "++3.3.4 test"
+        run: sbt "++3.3.8 test"
 
       - name: Publish to Maven Central
         run: sbt ci-release

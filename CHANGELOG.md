@@ -15,6 +15,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rather than a silent default. On a cache miss a CMAB decision is a blocking network call (10s, one retry by default).
   The bump also removes a latent crash: 4.2.2's event serializer reads a Jackson field that the jackson-databind this
   module ships no longer has, which would have failed the first real event dispatch.
+- **Production instances no longer keep tracked events** (#442). Every instance recorded the last 1000 `track` calls
+  with their fully merged evaluation contexts — often personal data — for `FeatureFlags.trackedEvents`, a test
+  helper. Only testkit-built instances record now. Assert on tracking with the new `TestFeatureProvider.trackedEvents`
+  (and `clearTrackedEvents`), which lists what the provider actually received.
+- **ZIO 2.1.27, Scala 3.3.8 / 2.13.18, zio-cache 0.2.8** (from 2.1.14, 3.3.4 / 2.13.16, 0.2.3; #475). These are now
+  the minimum versions consumers resolve to. The bump brings upstream fixes on paths this library runs on every
+  evaluation: a hang when an interrupt hits `raceFibersWith` (behind `timeoutFail`), `Queue#take` losing items on
+  interrupt (event-hub consumers), and zio-cache's concurrent-`get` deadlock and expired-entry hits. zio-cache stays on
+  the 0.2 line: 0.3.0 is built with a Scala 3 compiler a 3.3 build cannot read and ships Java 17 bytecode.
 - **Layers no longer ask for a `Scope`** (#443). Every `FeatureFlags` factory, `FeatureFlagRegistry.fromProvider` and
   the testkit layers were typed `ZLayer[Scope, …]`, although they build with `ZLayer.scoped`, which owns the layer's
   scope; so callers had to supply `Scope.default` for nothing. They are now `ZLayer[Any, …]` (`URLayer[Any, …]` for
@@ -58,6 +67,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Deprecated
 
 - **`FeatureFlagError.EmptyFlagVariables`** (#444). No module has ever raised it; it stays for binary compatibility.
+- **`FeatureFlags.trackedEvents`, in favour of `TestFeatureProvider.trackedEvents`** (#442). It is empty on production
+  instances.
 
 - **`FeatureFlagError.isRecoverable`, in favour of `isFlagError`** (#440). It is true for flag-scoped evaluation errors
   (missing flag, wrong type, unparsable value, bad context), which has nothing to do with retrying or with
@@ -131,6 +142,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   immediate call for a provider already in the event's state, now run without either. Other `FiberRef`s, such as log
   annotations, are still inherited.
 ||||||| 28fdacf
+- **A provider whose `initialize()` never returns no longer wedges the layer** (#433). Registration used the Java
+  SDK's `setProviderAndWait`, which holds the API write lock for the whole of `initialize()`:
+  - `setProvider` had no time limit at all, so a hanging provider kept the swap — and status `NotReady` — forever.
+    It is now bounded by the layer's `initTimeout`; on timeout it fails with `ProviderInitializationFailed`
+    (wrapping a `TimeoutException`) and status becomes `Error`. A timed-out swap is not rolled back: the new provider
+    stays registered and status recovers to `Ready` if it finishes initializing later. The previous provider is not
+    restored, because the SDK would shut it down if the new one became ready later. A swap whose `initialize()`
+    throws still rolls back as before. `fromAcquireAsync`, whose real provider initializes inside that swap, recovers
+    from a timeout by swapping in a fresh fallback.
+  - The sync layer build did time out, but closing its scope then blocked in `api.shutdown()` on the lock still held
+    by the stuck `initialize()`, hanging application shutdown.
+
+  Providers are now registered with the non-blocking `setProvider` and their outcome awaited with a bound, so the lock
+  is never held across `initialize()`. The scope-close `api.shutdown()` is itself bounded (15s, then a warning). One
+  visible difference: an init failure now carries the provider's message in a `GeneralError` (or `FatalError` for a
+  FATAL outcome) rather than the original exception instance, because the SDK's non-blocking path reports only the
+  message.
 - **`zio-openfeature-optimizely` now depends on `jackson-databind` at compile scope** (#431). The Optimizely SDK
   needs a JSON parser and declares none, and this module shipped Jackson only to its own tests, so a consumer that
   added just this module had no parser. The SDK's first datafile fetch then died on its poller thread with an

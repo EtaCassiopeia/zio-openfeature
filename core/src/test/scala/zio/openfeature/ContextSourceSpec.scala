@@ -23,6 +23,7 @@ import dev.openfeature.sdk.{
   *
   * Shared test dir → compiles on 2.13 and 3: braces only, no `given`/`using`, no `enum`.
   */
+@scala.annotation.nowarn("cat=deprecation")
 object ContextSourceSpec extends ZIOSpecDefault {
 
   /** Echoes back the targeting key and a chosen attribute, so a test can see exactly which context won. */
@@ -52,7 +53,7 @@ object ContextSourceSpec extends ZIOSpecDefault {
   }
 
   private def build(source: ContextSource, tag: String): ZIO[Scope, Throwable, FeatureFlags] =
-    FeatureFlags.build(
+    FeatureFlags.buildWithTracking(
       new ContextEchoProvider,
       domain = Some(s"ctxsrc-$tag-${java.util.UUID.randomUUID()}"),
       version = None,
@@ -61,7 +62,8 @@ object ContextSourceSpec extends ZIOSpecDefault {
       addShutdownFinalizer = true,
       apiOverride = Some(OpenFeatureAPI.createIsolated()),
       evaluationTimeout = Some(5.seconds),
-      contextSource = source
+      contextSource = source,
+      recordTracking = true // this spec reads FeatureFlags.trackedEvents (#442)
     )
 
   private def attr(k: String, v: String): EvaluationContext =

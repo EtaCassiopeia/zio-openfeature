@@ -2,7 +2,7 @@ package zio.openfeature
 
 import zio._
 import zio.stream._
-import zio.openfeature.internal.{FallbackLogLimiter, FeatureFlagsState}
+import zio.openfeature.internal.{FallbackLogLimiter, FeatureFlagsState, ProviderRegistration}
 import dev.openfeature.sdk.{FeatureProvider => OFFeatureProvider, OpenFeatureAPI, ProviderState}
 import dev.openfeature.sdk.multiprovider.{MultiProvider, Strategy, FirstMatchStrategy, FirstSuccessfulStrategy}
 import java.util.concurrent.TimeoutException
@@ -478,9 +478,16 @@ trait FeatureFlags {
 
   /** Replace the underlying provider at runtime.
     *
-    * The old provider is shut down, the new provider is initialized, and the status transitions through `NotReady`
-    * during the swap. Hooks, context, and event handlers are preserved. Evaluations that start during the swap fail
-    * with `ProviderNotReady`.
+    * The new provider is initialized — bounded by the layer's init timeout — and, once it is ready, the old provider is
+    * shut down; the status transitions through `NotReady` during the swap. Hooks, context, and event handlers are
+    * preserved. Evaluations that start during the swap fail with `ProviderNotReady`.
+    *
+    * If the new provider's `initialize()` fails, the effect fails with `ProviderInitializationFailed` and the previous
+    * provider is registered again. If it does not finish within the init timeout, the effect fails with
+    * `ProviderInitializationFailed` wrapping a `TimeoutException` and status becomes `Error`, but the swap is not
+    * rolled back: the new provider stays registered (status recovers to `Ready` if it finishes initializing later), and
+    * the previous provider is not restored, because the SDK would shut it down if the new one later became ready. Call
+    * `setProvider` again with another provider to recover.
     */
   def setProvider(provider: OFFeatureProvider): IO[FeatureFlagError, Unit]
 
@@ -510,12 +517,12 @@ trait FeatureFlags {
   def track(eventName: String, details: TrackingEventDetails): IO[FeatureFlagError, Unit]
   def track(eventName: String, context: EvaluationContext, details: TrackingEventDetails): IO[FeatureFlagError, Unit]
 
-  /** The most recent tracking events recorded by this instance, oldest first.
-    *
-    * The recorder is a bounded test/debug affordance: only the last 1000 events are retained; older events are dropped.
-    * It is not a delivery guarantee mechanism — providers receive every `track` call regardless.
+  /** The most recent tracking events recorded by this instance, oldest first — only for instances built by the testkit.
+    * Production instances retain nothing (the merged contexts would routinely hold PII), so this is empty for them.
+    * Testkit-built instances keep the last 1000 events.
     */
-  def trackedEvents: UIO[List[(String, EvaluationContext, Option[TrackingEventDetails])]]
+  @deprecated("Use TestFeatureProvider.trackedEvents, which records what the provider received", "1.2.0")
+  def trackedEvents: UIO[List[(String, EvaluationContext, Option[TrackingEventDetails])]] = ZIO.succeed(Nil)
 }
 
 object FeatureFlags {
@@ -944,6 +951,7 @@ object FeatureFlags {
   ): ZIO[FeatureFlags, FeatureFlagError, Unit] =
     ZIO.serviceWithZIO(_.track(eventName, context, details))
 
+  @deprecated("Use TestFeatureProvider.trackedEvents, which records what the provider received", "1.2.0")
   def trackedEvents: ZIO[FeatureFlags, Nothing, List[(String, EvaluationContext, Option[TrackingEventDetails])]] =
     ZIO.serviceWithZIO(_.trackedEvents)
 
@@ -1003,23 +1011,50 @@ object FeatureFlags {
     contextSource: ContextSource = ContextSource.empty,
     fallbackLogging: FallbackLogging = FallbackLogging.Default
   ): ZIO[Scope, Throwable, FeatureFlagsLive] =
+    buildWithTracking(
+      provider = provider,
+      domain = domain,
+      version = version,
+      initialHooks = initialHooks,
+      statusRef = statusRef,
+      addShutdownFinalizer = addShutdownFinalizer,
+      apiOverride = apiOverride,
+      evaluationTimeout = evaluationTimeout,
+      initTimeout = initTimeout,
+      onReady = onReady,
+      contextSource = contextSource,
+      fallbackLogging = fallbackLogging,
+      recordTracking = false
+    )
+
+  /** [[build]], optionally keeping tracked events for `trackedEvents` (testkit only, #442). */
+  private[openfeature] def buildWithTracking(
+    provider: OFFeatureProvider,
+    domain: Option[String],
+    version: Option[String],
+    initialHooks: List[FeatureHook],
+    statusRef: Option[SubscriptionRef[ProviderStatus]],
+    addShutdownFinalizer: Boolean,
+    apiOverride: Option[OpenFeatureAPI] = None,
+    evaluationTimeout: Option[Duration] = Some(DefaultEvaluationTimeout),
+    initTimeout: Duration = DefaultInitTimeout,
+    onReady: Option[java.util.concurrent.CountDownLatch] = None,
+    contextSource: ContextSource = ContextSource.empty,
+    fallbackLogging: FallbackLogging = FallbackLogging.Default,
+    recordTracking: Boolean = false
+  ): ZIO[Scope, Throwable, FeatureFlagsLive] =
     for {
       api <- ZIO.succeed(apiOverride.getOrElse(OpenFeatureAPI.getInstance()))
       // Register the API shutdown finalizer BEFORE initiating provider registration. If init times out,
       // the provider reports a bad state, or getClient fails, the scope close still tears down whatever
-      // the (possibly still-running, disconnected) setProviderAndWait managed to register.
-      _ <- ZIO.when(addShutdownFinalizer)(ZIO.addFinalizer(ZIO.attemptBlocking(api.shutdown()).ignore))
-      setAndWait = domain match {
-        case Some(d) => ZIO.attemptBlocking(api.setProviderAndWait(d, provider))
-        case None    => ZIO.attemptBlocking(api.setProviderAndWait(provider))
-      }
-      // Bound the blocking init. `.disconnect` ensures the timeout returns promptly even though
-      // `attemptBlocking` runs on the blocking pool; the underlying call may still run to completion
-      // in the background. On any init failure the provider itself is shut down (best-effort) so it
-      // doesn't keep threads/connections alive — this also covers the domain/registry paths where no
-      // API finalizer is registered.
-      verified <- (setAndWait.disconnect
-        .timeoutFail(new TimeoutException(s"Provider initialization exceeded $initTimeout"))(initTimeout) *>
+      // the registration managed to bind.
+      _ <- ZIO.when(addShutdownFinalizer)(ZIO.addFinalizer(ProviderRegistration.boundedApiShutdown(api)))
+      // Non-blocking registration plus a bounded wait (#433): `setProviderAndWait` would hold the SDK's API write
+      // lock across `initialize()`, so after a timeout the finalizer's `api.shutdown()` would block on that lock for
+      // as long as `initialize()` hangs. On any init failure the provider itself is shut down (best-effort) so it
+      // doesn't keep threads/connections alive — this also covers the domain/registry paths where no API finalizer
+      // is registered.
+      verified <- (ProviderRegistration.registerAndAwait(api, domain, provider, initTimeout) *>
         verifyInitState(provider))
         .tapError(_ => ZIO.attemptBlocking(provider.shutdown()).ignore)
       client <- (domain, version) match {
@@ -1050,7 +1085,9 @@ object FeatureFlags {
         fallbackLogLimiter,
         onReady,
         evaluationTimeout,
-        contextSource
+        contextSource,
+        initTimeout,
+        recordTracking
       )
       // Only seed status when the caller didn't hand us a shared ref (testkit shares one). Routed through
       // `seedStatus` so the machine's `everReady` flag records a Ready/Stale seed.
@@ -1147,7 +1184,7 @@ object FeatureFlags {
 
   /** Create a FeatureFlags layer from any OpenFeature provider.
     *
-    * Initialization is bounded by the default 30s init timeout: if `setProviderAndWait` takes longer, or the provider
+    * Initialization is bounded by the default 30s init timeout: if the provider's `initialize()` takes longer, or it
     * reports `ERROR`/`FATAL`/`NOT_READY` afterwards, the layer build fails with a `TimeoutException` or
     * `IllegalStateException` wrapped at the layer boundary. Use `fromProvider(provider, FeatureFlagsConfig())` with
     * `.withInitTimeout(...)` to override.
@@ -1167,7 +1204,7 @@ object FeatureFlags {
 
   /** Create a FeatureFlags layer with explicit evaluation and initialization timeouts.
     *
-    * `initTimeout` bounds the sync init: if `setProviderAndWait` takes longer, the layer build fails with a
+    * `initTimeout` bounds the sync init: if the provider's `initialize()` takes longer, the layer build fails with a
     * `TimeoutException`. After init, if the provider reports `ERROR`/`FATAL`/`NOT_READY`, the build also fails so
     * misconfiguration surfaces at startup rather than at first evaluation. Pass a very large duration to effectively
     * disable the init timeout.
@@ -1206,7 +1243,7 @@ object FeatureFlags {
     onReady: Option[java.util.concurrent.CountDownLatch] = None
   ): ZLayer[Any, Throwable, FeatureFlags] =
     ZLayer.scoped(
-      build(
+      buildWithTracking(
         provider,
         domain = Some(domain),
         version = None,
@@ -1214,7 +1251,9 @@ object FeatureFlags {
         statusRef = Some(statusRef),
         addShutdownFinalizer = false,
         apiOverride = api,
-        onReady = onReady
+        onReady = onReady,
+        // These overloads exist for the testkit, whose instances keep tracked events for assertions (#442).
+        recordTracking = true
       )
     )
 
@@ -1262,11 +1301,43 @@ object FeatureFlags {
     contextSource: ContextSource = ContextSource.empty,
     fallbackLogging: FallbackLogging = FallbackLogging.Default
   ): ZIO[Scope, Throwable, FeatureFlagsLive] =
+    buildAsyncWithTracking(
+      provider = provider,
+      domain = domain,
+      version = version,
+      initialHooks = initialHooks,
+      statusRef = statusRef,
+      addShutdownFinalizer = addShutdownFinalizer,
+      apiOverride = apiOverride,
+      onReady = onReady,
+      evaluationTimeout = evaluationTimeout,
+      initTimeout = initTimeout,
+      contextSource = contextSource,
+      fallbackLogging = fallbackLogging,
+      recordTracking = false
+    )
+
+  /** [[buildAsync]], optionally keeping tracked events for `trackedEvents` (testkit only, #442). */
+  private[openfeature] def buildAsyncWithTracking(
+    provider: OFFeatureProvider,
+    domain: Option[String],
+    version: Option[String],
+    initialHooks: List[FeatureHook],
+    statusRef: Option[SubscriptionRef[ProviderStatus]],
+    addShutdownFinalizer: Boolean,
+    apiOverride: Option[OpenFeatureAPI] = None,
+    onReady: Option[java.util.concurrent.CountDownLatch] = None,
+    evaluationTimeout: Option[Duration] = Some(DefaultEvaluationTimeout),
+    initTimeout: Duration = DefaultInitTimeout,
+    contextSource: ContextSource = ContextSource.empty,
+    fallbackLogging: FallbackLogging = FallbackLogging.Default,
+    recordTracking: Boolean = false
+  ): ZIO[Scope, Throwable, FeatureFlagsLive] =
     for {
       api <- ZIO.succeed(apiOverride.getOrElse(OpenFeatureAPI.getInstance()))
       // Register the API shutdown finalizer BEFORE the provider, so a failure later in the build
       // (e.g. getClient) still tears down the registered provider when the scope closes.
-      _ <- ZIO.when(addShutdownFinalizer)(ZIO.addFinalizer(ZIO.attemptBlocking(api.shutdown()).ignore))
+      _ <- ZIO.when(addShutdownFinalizer)(ZIO.addFinalizer(ProviderRegistration.boundedApiShutdown(api)))
       // Register provider FIRST so the client binds to it (not the NoOp default). Use `ZIO.attempt` (not
       // `ZIO.succeed`) so a synchronous throw from registration — a null provider, or a provider whose
       // `getMetadata` throws while the SDK reads its name — surfaces in the typed Throwable channel instead of
@@ -1275,7 +1346,7 @@ object FeatureFlags {
       // `ZIO.attempt` (not `attemptBlocking`): `setProvider` is the non-blocking registration call — it submits
       // `initialize()` to the SDK's background executor and returns after cheap bookkeeping, so there is no
       // blocking I/O to move off the compute pool. (The sync `build` path uses `attemptBlocking` because
-      // `setProviderAndWait` genuinely blocks the thread for the whole initialization.)
+      // `ProviderRegistration` blocks a thread polling for the init outcome.)
       _ <- domain match {
         case Some(d) => ZIO.attempt(api.setProvider(d, provider))
         case None    => ZIO.attempt(api.setProvider(provider))
@@ -1310,7 +1381,9 @@ object FeatureFlags {
         fallbackLogLimiter,
         onReady,
         evaluationTimeout,
-        contextSource
+        contextSource,
+        initTimeout,
+        recordTracking
       )
       // Start event bridge — if provider is already ready, replay fires immediately
       _ <- ff.startEventBridge
@@ -1398,7 +1471,7 @@ object FeatureFlags {
     onReady: Option[java.util.concurrent.CountDownLatch] = None
   ): ZLayer[Any, Throwable, FeatureFlags] =
     ZLayer.scoped(
-      buildAsync(
+      buildAsyncWithTracking(
         provider,
         domain = Some(domain),
         version = None,
@@ -1406,7 +1479,9 @@ object FeatureFlags {
         statusRef = Some(statusRef),
         addShutdownFinalizer = false,
         apiOverride = api,
-        onReady = onReady
+        onReady = onReady,
+        // These overloads exist for the testkit, whose instances keep tracked events for assertions (#442).
+        recordTracking = true
       )
     )
 
@@ -1584,6 +1659,27 @@ object FeatureFlags {
             // The rollback leaves the SDK on the fallback, so a candidate whose swap failed is dead: release it now
             // rather than at layer close. `Scope.close` is idempotent, so the layer-scope finalizer is then a no-op.
             .tapError(e => accepted._1.close(Exit.fail(e)))
+            // A timed-out swap is not rolled back (see `setProvider`), so the slot still holds the hung composite.
+            // Restore fallback service with a FRESH fallback instance: a new identity is safe to register even if the
+            // composite finishes initializing later, whereas re-registering the first fallback would not be.
+            .tapError {
+              case ProviderSwapFailed(FeatureFlagError.ProviderInitializationFailed(_: TimeoutException)) =>
+                fallback
+                  .flatMap(ff.setProvider)
+                  // The SDK shuts the first fallback down only from the stuck composite's own init task, which may
+                  // never finish; it is unbound now, so release it here rather than leak it.
+                  .zipRight(
+                    ZIO
+                      .attemptBlocking(firstFallback.shutdown())
+                      .catchAllCause(c =>
+                        ZIO.logWarningCause("fromAcquireAsync: shutting down the replaced fallback failed", c)
+                      )
+                  )
+                  .catchAll(e =>
+                    ZIO.logError(s"fromAcquireAsync: could not restore a fallback after a timed-out swap: $e")
+                  )
+              case _ => ZIO.unit
+            }
           // State flips before the callback so a probe reading `AcquireStatus.get` from inside it already sees Live.
           _ <- state.set(AcquireState.Live) *> onSwapped
         } yield ()

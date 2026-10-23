@@ -63,5 +63,5 @@ with `derives FlagType`.
 | 1.1.x | [v0.9.0](https://github.com/open-feature/spec/releases/tag/v0.9.0) | 1.22.1 |
 | 1.0.0 | [v0.8.0](https://github.com/open-feature/spec/releases/tag/v0.8.0) | 1.21.0 |
 
-Scala 3.3+ and 2.13, ZIO 2.1, JDK 11+. Server-side (dynamic context) paradigm of the OpenFeature specification;
+Scala 3.3.8+ and 2.13.18+, ZIO 2.1.27+, JDK 11+. Server-side (dynamic context) paradigm of the OpenFeature specification;
 see [spec compliance](https://etacassiopeia.github.io/zio-openfeature/spec-compliance/). Apache 2.0.

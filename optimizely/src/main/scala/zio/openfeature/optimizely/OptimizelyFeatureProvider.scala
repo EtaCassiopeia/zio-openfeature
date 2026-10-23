@@ -2,6 +2,7 @@ package zio.openfeature.optimizely
 
 import com.optimizely.ab.Optimizely
 import com.optimizely.ab.optimizelydecision.OptimizelyDecision
+import dev.openfeature.sdk.exceptions.{GeneralError, ProviderNotReadyError, TargetingKeyMissingError}
 import dev.openfeature.sdk.{
   EvaluationContext => OFEvaluationContext,
   EventProvider,
@@ -461,6 +462,28 @@ final class OptimizelyFeatureProvider private[optimizely] (
   //      HTTP client, which is closed by then, and throw — bug observed by OptimizelyProviderLifecycleSpec.
   //   2. Targeting key — caller-supplied context error; only meaningful once the provider is actually usable.
   //   3. `optimizely.isValid` — defence-in-depth in case state says READY but the SDK silently went invalid.
+  /** Sends the call to Optimizely as a conversion for the context's user (#454). Fails — so `FeatureFlags.track` fails
+    * with a `FeatureFlagError` — when the provider is not ready, when the context has no targeting key (Optimizely
+    * would record user ""), or when the datafile has no event with this key (Optimizely would drop it with an INFO
+    * log). A factory-built provider only delivers conversions once its client has an event dispatcher (#453).
+    */
+  override def track(
+    eventName: String,
+    ctx: OFEvaluationContext,
+    details: dev.openfeature.sdk.TrackingEventDetails
+  ): Unit = {
+    val state  = stateRef.get()
+    val userId = ContextTransformer.userId(ctx)
+    if (state != ProviderState.READY && state != ProviderState.STALE)
+      throw new ProviderNotReadyError(s"Optimizely provider is not ready ($state)")
+    if (userId.isEmpty) throw new TargetingKeyMissingError("Optimizely tracking needs a targeting key")
+    if (!optimizely.getProjectConfig.getEventNameMapping.containsKey(eventName))
+      throw new GeneralError(s"Optimizely event '$eventName' is not in the datafile")
+    optimizely
+      .createUserContext(userId, ContextTransformer.attributes(ctx))
+      .trackEvent(eventName, ContextTransformer.eventTags(details))
+  }
+
   private def decide(key: String, ctx: OFEvaluationContext): Either[String, OptimizelyDecision] = {
     // Extract only the targeting key up front — cheap — and gate on it before normalizing attributes, so the
     // NOT_READY / missing-key / invalid short-circuits don't pay for a full attribute conversion whose result is

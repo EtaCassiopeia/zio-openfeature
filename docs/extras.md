@@ -161,7 +161,7 @@ The circuit has three states:
 |---|---|
 | Closed | It goes to the provider. Consecutive failures are counted. |
 | Open | It fails at once, without calling the provider. After `resetTimeout`, the next call becomes a probe. |
-| Half-open | One probe goes to the provider at a time. `halfOpenMaxCalls` successful probes close the circuit; a failed one opens it again. |
+| Half-open | One probe goes to the provider at a time. `halfOpenMaxCalls` successful probes close the circuit; a failed one opens it again. A slow call let through earlier, before the circuit opened, does not count. |
 
 Three things open the circuit:
 

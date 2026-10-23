@@ -34,9 +34,14 @@ object OptimizelyTrackSpec extends ZIOSpecDefault {
     server.start()
     try {
       server.stubFor(get(urlEqualTo(DatafilePath)).willReturn(okJson(readResource("/datafiles/track.json"))))
+      // One NotificationCenter for manager and client, as production buildClient wires it: the datafile-update
+      // notification is what drives initialize(), instead of a single blocking isValid window that a slow fetch
+      // under load can miss.
+      val center = new com.optimizely.ab.notification.NotificationCenter()
       val manager = HttpProjectConfigManager
         .builder()
         .withSdkKey("track-key")
+        .withNotificationCenter(center)
         .withUrl(s"http://localhost:${server.port()}$DatafilePath")
         .withBlockingTimeout(2000, TimeUnit.MILLISECONDS)
         .withPollingInterval(3600, TimeUnit.SECONDS)
@@ -46,6 +51,7 @@ object OptimizelyTrackSpec extends ZIOSpecDefault {
       val client = Optimizely
         .builder()
         .withConfigManager(manager)
+        .withNotificationCenter(center)
         .withEventProcessor(new ForwardingEventProcessor(events, null))
         .build()
       val provider = new OptimizelyFeatureProvider(client, java.time.Duration.ofSeconds(3), closeOnShutdown = true)

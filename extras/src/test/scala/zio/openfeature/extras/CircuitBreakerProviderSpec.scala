@@ -586,8 +586,8 @@ object CircuitBreakerProviderSpec extends ZIOSpecDefault {
     ),
     suite("Delegate event propagation (#176)")(
       test("delegate PROVIDER_ERROR event trips the circuit without an evaluation failure") {
-        // Asserts on the breaker directly: evaluating would re-poll the delegate's (READY) state,
-        // which legitimately resets an externally-opened circuit.
+        // Asserts on the breaker directly rather than through an evaluation (which would also poll the delegate's state;
+        // since #447 a polled READY no longer resets an event-driven trip, see CircuitBreakerTripSourceSpec).
         class EmittingProvider extends FailableProvider(Map("flag" -> true)) {
           def fireError(): Unit = {
             emitProviderError(dev.openfeature.sdk.ProviderEventDetails.builder().message("boom").build())

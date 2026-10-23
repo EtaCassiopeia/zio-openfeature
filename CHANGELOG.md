@@ -65,6 +65,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Interrupting `setProvider` mid-swap no longer leaves the status stuck at `NotReady`** (#434). An interrupt that
+  arrived while the new provider was initializing skipped both the success signal and the rollback: the new provider
+  could end up bound and ready while every typed evaluation failed. A started swap now runs to its outcome (success,
+  or rollback, or the timed-out `Error` of #433) before the interrupt takes effect — bounded by the init timeout.
+  Waiting for an earlier swap to finish stays interruptible.
 - **`CachingProvider` and `CircuitBreakerProvider` release their event plumbing properly** (#450). Their `shutdown`
   never called `EventProvider.shutdown`, so each wrapper's event emitter kept running and could still dispatch
   afterwards. And a wrapper whose attach to the delegate failed (the delegate already belonged to another wrapper)

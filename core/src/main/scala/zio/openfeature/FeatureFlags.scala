@@ -488,6 +488,10 @@ trait FeatureFlags {
     * rolled back: the new provider stays registered (status recovers to `Ready` if it finishes initializing later), and
     * the previous provider is not restored, because the SDK would shut it down if the new one later became ready. Call
     * `setProvider` again with another provider to recover.
+    *
+    * Once the swap has started it runs to one of those outcomes even if the calling fiber is interrupted, so
+    * `setProvider(p).timeout(d)` with `d` shorter than the init timeout returns only when the swap has settled (at most
+    * about twice the init timeout). Waiting for an earlier swap to finish can still be interrupted.
     */
   def setProvider(provider: OFFeatureProvider): IO[FeatureFlagError, Unit]
 

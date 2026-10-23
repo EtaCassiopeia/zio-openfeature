@@ -142,6 +142,39 @@ object TrackingAttributesSpec extends ZIOSpecDefault {
         )
       }
     },
+    test("null and None list elements keep their positions") {
+      ZIO.scoped(trackAndCapture(TrackingEventDetails(Map("xs" -> List("a", null, None, "d"))))).map { d =>
+        val xs = d.getValue("xs").asList.asScala.toList
+        assertTrue(xs.size == 4, xs.head.asString == "a", xs(1).isNull, xs(2).isNull, xs(3).asString == "d")
+      }
+    },
+    test("an unsupported value nested in a collection fails track and names the attribute") {
+      ZIO.scoped {
+        for {
+          provider <- ZIO.succeed(new CapturingProvider)
+          ff       <- buildFF(provider)
+          nested   <- ff.track("p", TrackingEventDetails(Map("deep" -> Map("k" -> List(NotAnAttribute(1)))))).either
+          badKey   <- ff.track("p", TrackingEventDetails(Map("keys" -> Map(1 -> "one")))).either
+        } yield assertTrue(
+          nested.left.toOption.exists(_.message.contains("deep")),
+          badKey.left.toOption.exists(_.message.contains("keys")),
+          provider.captured.get().isEmpty
+        )
+      }
+    },
+    test("Float, Some, None and an SDK Value at the top level convert") {
+      val details = TrackingEventDetails(
+        Map("f" -> 1.5f, "some" -> Some(2), "none" -> None, "raw" -> new Value("v"))
+      )
+      ZIO.scoped(trackAndCapture(details)).map { d =>
+        assertTrue(
+          d.getValue("f").asDouble == 1.5,
+          d.getValue("some").asInteger == 2,
+          d.getValue("none") == null,
+          d.getValue("raw").asString == "v"
+        )
+      }
+    },
     test("a null attribute is dropped and the others are still sent") {
       ZIO.scoped(trackAndCapture(TrackingEventDetails(Map("gone" -> null, "kept" -> "yes")))).map { d =>
         assertTrue(d.getValue("gone") == null, d.getValue("kept").asString == "yes")

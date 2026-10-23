@@ -40,7 +40,9 @@ private[openfeature] object TrackingConverter {
     case f: Float                   => Right(Some(new Value(java.lang.Double.valueOf(f.toDouble))))
     case instant: java.time.Instant => Right(Some(new Value(instant)))
     case attr: AttributeValue       => Right(Some(attributeValue(attr)))
-    case list: List[_]              => sequence(list.map(toValue)).map(vs => Some(new Value(vs.flatten.asJava)))
+    // A null/None element keeps its position as an empty Value: dropping it would shift every later element.
+    case list: List[_] =>
+      sequence(list.map(toValue)).map(vs => Some(new Value(vs.map(_.getOrElse(new Value())).asJava)))
     case map: Map[_, _] =>
       val entries = map.toList.map {
         case (k: String, v) => toValue(v).map(_.map(k -> _))

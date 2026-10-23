@@ -39,7 +39,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (and any type the converter did not know, including one nested in a `List`/`Map`) was sent as its `toString`, so
   `withAttribute("plan", AttributeValue.string("pro"))` arrived as `"StringValue(pro)"`. `AttributeValue`s, `Option`s
   and SDK `Value`s now convert properly, longs beyond `Int` range keep full precision, and any other type makes `track`
-  fail with `FeatureFlagError.InvalidContext` naming the attribute — nothing is sent or recorded.
+  fail with `FeatureFlagError.InvalidContext` naming the attribute — nothing is sent or recorded. **Behaviour change:**
+  types that used to be sent as their `toString` now fail, among them `Short`, `Byte`, `BigDecimal`, `UUID` and
+  collections other than `List`/`Map` (`Vector`, `Seq`, `Set`, Java collections); convert them before tracking. A long
+  inside a `List`/`Map` that fits in an `Int` is now sent as an integer, as a top-level one already was.
 - **`CircuitBreakerProvider` now trips on providers that return error codes instead of throwing** (#446). Any returned
   evaluation counted as a success, so a delegate that reports network failures as `errorCode = GENERAL` — the OFREP
   provider does — kept the circuit closed through a full outage, and a returned `FLAG_NOT_FOUND` could close a

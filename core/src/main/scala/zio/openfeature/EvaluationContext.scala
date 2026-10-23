@@ -87,8 +87,11 @@ object EvaluationContext {
     def attribute(key: String, value: String): Builder         = attribute(key, AttributeValue.StringValue(value))
     def attribute(key: String, value: Boolean): Builder        = attribute(key, AttributeValue.BoolValue(value))
     def attribute(key: String, value: Int): Builder            = attribute(key, AttributeValue.IntValue(value))
-    def attribute(key: String, value: Double): Builder         = attribute(key, AttributeValue.DoubleValue(value))
-    def attributes(attrs: (String, AttributeValue)*): Builder  = copy(attributes = attributes ++ attrs)
-    def build: EvaluationContext                               = EvaluationContext(targetingKey, attributes)
+    def attribute(key: String, value: Long): Builder           = attribute(key, AttributeValue.LongValue(value))
+    def attribute(key: String, value: java.time.Instant): Builder =
+      attribute(key, AttributeValue.InstantValue(value))
+    def attribute(key: String, value: Double): Builder        = attribute(key, AttributeValue.DoubleValue(value))
+    def attributes(attrs: (String, AttributeValue)*): Builder = copy(attributes = attributes ++ attrs)
+    def build: EvaluationContext                              = EvaluationContext(targetingKey, attributes)
   }
 }

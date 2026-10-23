@@ -123,6 +123,15 @@ trait FeatureFlags {
   def value[A: FlagType](key: String, default: A, ctx: EvaluationContext): IO[FeatureFlagError, A] =
     valueDetails(key, default, ctx).map(_.value)
 
+  /** [[value]] with per-call [[EvaluationOptions]] (invocation hooks, hints, a timeout). */
+  def value[A: FlagType](
+    key: String,
+    default: A,
+    ctx: EvaluationContext,
+    options: EvaluationOptions
+  ): IO[FeatureFlagError, A] =
+    valueDetails(key, default, ctx, options).map(_.value)
+
   // Total (never-fails) evaluation variants (spec §1.4.10 / §1.1.7: evaluation "MUST NOT throw ... always return the
   // default value"). Any evaluation error is absorbed into the supplied default: `*OrDefault` returns the value,
   // `resolveOrDefault` returns the full `FlagResolution` with `reason = Error` and `errorCode`/`errorMessage` populated
@@ -154,6 +163,40 @@ trait FeatureFlags {
 
   def valueOrDefault[A: FlagType](key: String, default: A, ctx: EvaluationContext = EvaluationContext.empty): UIO[A] =
     totalResolution(valueDetails(key, default, ctx), key, default).map(_.value)
+
+  // The same, with per-call EvaluationOptions (#444). Spelled without defaults: the overloads above already carry the
+  // `ctx` default, and Scala allows default arguments on only one overload of a method.
+
+  def booleanOrDefault(
+    key: String,
+    default: Boolean,
+    ctx: EvaluationContext,
+    options: EvaluationOptions
+  ): UIO[Boolean] =
+    totalResolution(booleanDetails(key, default, ctx, options), key, default).map(_.value)
+
+  def stringOrDefault(key: String, default: String, ctx: EvaluationContext, options: EvaluationOptions): UIO[String] =
+    totalResolution(stringDetails(key, default, ctx, options), key, default).map(_.value)
+
+  def intOrDefault(key: String, default: Int, ctx: EvaluationContext, options: EvaluationOptions): UIO[Int] =
+    totalResolution(intDetails(key, default, ctx, options), key, default).map(_.value)
+
+  def longOrDefault(key: String, default: Long, ctx: EvaluationContext, options: EvaluationOptions): UIO[Long] =
+    totalResolution(longDetails(key, default, ctx, options), key, default).map(_.value)
+
+  def doubleOrDefault(key: String, default: Double, ctx: EvaluationContext, options: EvaluationOptions): UIO[Double] =
+    totalResolution(doubleDetails(key, default, ctx, options), key, default).map(_.value)
+
+  def objOrDefault(
+    key: String,
+    default: Map[String, Any],
+    ctx: EvaluationContext,
+    options: EvaluationOptions
+  ): UIO[Map[String, Any]] =
+    totalResolution(objDetails(key, default, ctx, options), key, default).map(_.value)
+
+  def valueOrDefault[A: FlagType](key: String, default: A, ctx: EvaluationContext, options: EvaluationOptions): UIO[A] =
+    totalResolution(valueDetails(key, default, ctx, options), key, default).map(_.value)
 
   /** Total details variant: like [[valueDetails]] but never fails — an evaluation error yields a `FlagResolution` whose
     * `reason` is `Error`, `value` is `default`, and `errorCode`/`errorMessage` describe the failure (spec §1.4.10).
@@ -198,6 +241,16 @@ trait FeatureFlags {
   def valueOrDefault[A](flag: FlagDef[A], ctx: EvaluationContext): UIO[A] = {
     implicit val ft: FlagType[A] = flag.flagType
     valueOrDefault(flag.key, flag.default, ctx)
+  }
+
+  def value[A](flag: FlagDef[A], ctx: EvaluationContext, options: EvaluationOptions): IO[FeatureFlagError, A] = {
+    implicit val ft: FlagType[A] = flag.flagType
+    value(flag.key, flag.default, ctx, options)
+  }
+
+  def valueOrDefault[A](flag: FlagDef[A], ctx: EvaluationContext, options: EvaluationOptions): UIO[A] = {
+    implicit val ft: FlagType[A] = flag.flagType
+    valueOrDefault(flag.key, flag.default, ctx, options)
   }
 
   def resolveOrDefault[A](flag: FlagDef[A]): UIO[FlagResolution[A]] = {
@@ -512,6 +565,14 @@ object FeatureFlags {
   def value[A: FlagType](key: String, default: A): ZIO[FeatureFlags, FeatureFlagError, A] =
     ZIO.serviceWithZIO(_.value(key, default))
 
+  def value[A: FlagType](
+    key: String,
+    default: A,
+    ctx: EvaluationContext,
+    options: EvaluationOptions
+  ): ZIO[FeatureFlags, FeatureFlagError, A] =
+    ZIO.serviceWithZIO(_.value(key, default, ctx, options))
+
   def value[A: FlagType](key: String, default: A, ctx: EvaluationContext): ZIO[FeatureFlags, FeatureFlagError, A] =
     ZIO.serviceWithZIO(_.value(key, default, ctx))
 
@@ -565,6 +626,62 @@ object FeatureFlags {
     ctx: EvaluationContext = EvaluationContext.empty
   ): ZIO[FeatureFlags, Nothing, A] =
     ZIO.serviceWithZIO(_.valueOrDefault(key, default, ctx))
+
+  def booleanOrDefault(
+    key: String,
+    default: Boolean,
+    ctx: EvaluationContext,
+    options: EvaluationOptions
+  ): ZIO[FeatureFlags, Nothing, Boolean] =
+    ZIO.serviceWithZIO(_.booleanOrDefault(key, default, ctx, options))
+
+  def stringOrDefault(
+    key: String,
+    default: String,
+    ctx: EvaluationContext,
+    options: EvaluationOptions
+  ): ZIO[FeatureFlags, Nothing, String] =
+    ZIO.serviceWithZIO(_.stringOrDefault(key, default, ctx, options))
+
+  def intOrDefault(
+    key: String,
+    default: Int,
+    ctx: EvaluationContext,
+    options: EvaluationOptions
+  ): ZIO[FeatureFlags, Nothing, Int] =
+    ZIO.serviceWithZIO(_.intOrDefault(key, default, ctx, options))
+
+  def longOrDefault(
+    key: String,
+    default: Long,
+    ctx: EvaluationContext,
+    options: EvaluationOptions
+  ): ZIO[FeatureFlags, Nothing, Long] =
+    ZIO.serviceWithZIO(_.longOrDefault(key, default, ctx, options))
+
+  def doubleOrDefault(
+    key: String,
+    default: Double,
+    ctx: EvaluationContext,
+    options: EvaluationOptions
+  ): ZIO[FeatureFlags, Nothing, Double] =
+    ZIO.serviceWithZIO(_.doubleOrDefault(key, default, ctx, options))
+
+  def objOrDefault(
+    key: String,
+    default: Map[String, Any],
+    ctx: EvaluationContext,
+    options: EvaluationOptions
+  ): ZIO[FeatureFlags, Nothing, Map[String, Any]] =
+    ZIO.serviceWithZIO(_.objOrDefault(key, default, ctx, options))
+
+  def valueOrDefault[A: FlagType](
+    key: String,
+    default: A,
+    ctx: EvaluationContext,
+    options: EvaluationOptions
+  ): ZIO[FeatureFlags, Nothing, A] =
+    ZIO.serviceWithZIO(_.valueOrDefault(key, default, ctx, options))
 
   def resolveOrDefault[A: FlagType](
     key: String,
@@ -648,6 +765,20 @@ object FeatureFlags {
 
   def valueOrDefault[A](flag: FlagDef[A], ctx: EvaluationContext): ZIO[FeatureFlags, Nothing, A] =
     ZIO.serviceWithZIO(_.valueOrDefault(flag, ctx))
+
+  def value[A](
+    flag: FlagDef[A],
+    ctx: EvaluationContext,
+    options: EvaluationOptions
+  ): ZIO[FeatureFlags, FeatureFlagError, A] =
+    ZIO.serviceWithZIO(_.value(flag, ctx, options))
+
+  def valueOrDefault[A](
+    flag: FlagDef[A],
+    ctx: EvaluationContext,
+    options: EvaluationOptions
+  ): ZIO[FeatureFlags, Nothing, A] =
+    ZIO.serviceWithZIO(_.valueOrDefault(flag, ctx, options))
 
   def resolveOrDefault[A](flag: FlagDef[A]): ZIO[FeatureFlags, Nothing, FlagResolution[A]] =
     ZIO.serviceWithZIO(_.resolveOrDefault(flag))

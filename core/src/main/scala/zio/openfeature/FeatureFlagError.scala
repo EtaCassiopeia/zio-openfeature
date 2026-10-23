@@ -5,6 +5,8 @@ sealed trait FeatureFlagError extends Product with Serializable {
   def cause: Option[Throwable] = None
 }
 
+// The deprecated EmptyFlagVariables case is still part of this ADT, so the compiler's generated members reference it.
+@scala.annotation.nowarn("cat=deprecation")
 object FeatureFlagError {
   final case class FlagNotFound(key: String) extends FeatureFlagError {
     def message: String = s"Flag '$key' not found"
@@ -19,6 +21,7 @@ object FeatureFlagError {
     override def cause: Option[Throwable] = Some(underlying)
   }
 
+  @deprecated("Never raised by any module; kept for binary compatibility", "1.2.0")
   final case class EmptyFlagVariables(key: String) extends FeatureFlagError {
     def message: String = s"Flag '$key' has no variables but non-boolean type requested"
   }
@@ -95,6 +98,7 @@ object FeatureFlagError {
     * the provider or this library. Unrelated to [[ProviderStatus.isRecoverable]], and says nothing about whether a
     * retry would help.
     */
+  @scala.annotation.nowarn("cat=deprecation")
   def isFlagError(error: FeatureFlagError): Boolean = error match {
     case _: FlagNotFound        => true
     case _: TypeMismatch        => true
@@ -122,6 +126,7 @@ object FeatureFlagError {
     case _                               => false
   }
 
+  @scala.annotation.nowarn("cat=deprecation")
   def toErrorCode(error: FeatureFlagError): ErrorCode = error match {
     case _: FlagNotFound                 => ErrorCode.FlagNotFound
     case _: TypeMismatch                 => ErrorCode.TypeMismatch

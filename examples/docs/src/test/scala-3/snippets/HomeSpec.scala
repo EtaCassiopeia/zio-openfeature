@@ -14,7 +14,7 @@ object HomeSpec extends ZIOSpecDefault:
         _        <- provider.setFlags(Map("new-checkout" -> true, "banner" -> "spring-sale"))
         result   <- Home.checkout
       yield assertTrue(result == "checkout=new limit=20 banner=spring-sale")
-    }.provide(TestFeatureProvider.scopedLayer(Map.empty[String, Any])),
+    }.provide(TestFeatureProvider.layer(Map.empty[String, Any])),
     test("quick start runs") {
       Home.inTests.as(assertCompletes)
     }

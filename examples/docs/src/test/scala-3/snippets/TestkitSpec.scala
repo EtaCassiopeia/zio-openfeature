@@ -43,7 +43,7 @@ object TestkitSpec extends ZIOSpecDefault:
         greeting <- ZIO.serviceWithZIO[Greeter](_.greet("bob"))
       yield assertTrue(greeting == "Hey bob!")
     }
-  ).provide(TestFeatureProvider.scopedLayer, Greeter.live)
+  ).provide(TestFeatureProvider.layer, Greeter.live)
   // --8<-- [end:first-test]
 
   // --8<-- [start:typed-fixture]
@@ -57,7 +57,7 @@ object TestkitSpec extends ZIOSpecDefault:
   val typedFixture = test("typed fixture") {
     for plan <- FeatureFlags.value(Flags.Plan)
     yield assertTrue(plan == Tier.Premium)
-  }.provide(TestFeatureProvider.scopedLayer(Flags.Plan := Tier.Premium, Flags.NewGreeting := true))
+  }.provide(TestFeatureProvider.layer(Flags.Plan := Tier.Premium, Flags.NewGreeting := true))
   // Flags.Plan := "premium" does not compile
   // --8<-- [end:typed-fixture]
 
@@ -72,7 +72,7 @@ object TestkitSpec extends ZIOSpecDefault:
       c        <- FeatureFlags.int("c", 0)
       a        <- FeatureFlags.booleanOrDefault("a", default = false)
     yield assertTrue(c == 3, !a)
-  }.provide(TestFeatureProvider.scopedLayer(Map("a" -> false)))
+  }.provide(TestFeatureProvider.layer(Map("a" -> false)))
   // --8<-- [end:managing-flags]
 
   // --8<-- [start:absent-keys]
@@ -86,14 +86,14 @@ object TestkitSpec extends ZIOSpecDefault:
       total.reason == ResolutionReason.Error,                    // ...and says why
       total.errorCode.contains(ErrorCode.FlagNotFound)
     )
-  }.provide(TestFeatureProvider.scopedLayer)
+  }.provide(TestFeatureProvider.layer)
   // --8<-- [end:absent-keys]
 
   // --8<-- [start:wrong-type]
   val wrongType = test("a value of the wrong type is an error, not the default") {
     for typed <- FeatureFlags.boolean("flag", default = false).either
     yield assertTrue(typed.isLeft)
-  }.provide(TestFeatureProvider.scopedLayer(Map("flag" -> "not a boolean")))
+  }.provide(TestFeatureProvider.layer(Map("flag" -> "not a boolean")))
   // --8<-- [end:wrong-type]
 
   // --8<-- [start:recorded]
@@ -113,7 +113,7 @@ object TestkitSpec extends ZIOSpecDefault:
       evals.map(_._2.targetingKey) == List(Some("alice"), Some("bob")),
       after == 0
     )
-  }.provide(TestFeatureProvider.scopedLayer(Map("new-greeting" -> true)), Greeter.live)
+  }.provide(TestFeatureProvider.layer(Map("new-greeting" -> true)), Greeter.live)
   // --8<-- [end:recorded]
 
   // --8<-- [start:status]
@@ -128,7 +128,7 @@ object TestkitSpec extends ZIOSpecDefault:
       down == Left(FeatureFlagError.ProviderNotReady(ProviderStatus.NotReady)),
       up == "Hey carol!"
     )
-  }.provide(TestFeatureProvider.scopedLayer(Map("new-greeting" -> true)), Greeter.live)
+  }.provide(TestFeatureProvider.layer(Map("new-greeting" -> true)), Greeter.live)
   // --8<-- [end:status]
 
   // --8<-- [start:async-layer]
@@ -139,7 +139,7 @@ object TestkitSpec extends ZIOSpecDefault:
       _        <- provider.setStatus(ProviderStatus.Ready) // simulate the provider finishing init
       after    <- FeatureFlags.boolean("feature", default = false)
     yield assertTrue(before.isLeft, after)
-  }.provide(TestFeatureProvider.scopedAsyncLayer(Map("feature" -> true)))
+  }.provide(TestFeatureProvider.asyncLayer(Map("feature" -> true)))
   // --8<-- [end:async-layer]
 
   // --8<-- [start:async-ready-layer]
@@ -149,7 +149,7 @@ object TestkitSpec extends ZIOSpecDefault:
       status <- FeatureFlags.awaitReady()
       on     <- FeatureFlags.boolean("feature", default = false)
     yield assertTrue(status == ProviderStatus.Ready, on)
-  }.provide(Scope.default >>> TestFeatureProvider.asyncReadyLayer(Map("feature" -> true), initDelay = 100.millis))
+  }.provide(TestFeatureProvider.asyncReadyLayer(Map("feature" -> true), initDelay = 100.millis))
   // --8<-- [end:async-ready-layer]
 
   // --8<-- [start:events]
@@ -161,7 +161,7 @@ object TestkitSpec extends ZIOSpecDefault:
       _        <- provider.emitEvent(ProviderEvent.ConfigurationChanged(Set("banner"), provider.metadata))
       keys     <- changed.await
     yield assertTrue(keys == Set("banner"))
-  }.provide(TestFeatureProvider.scopedLayer)
+  }.provide(TestFeatureProvider.layer)
   // --8<-- [end:events]
 
   // --8<-- [start:failures]
@@ -178,7 +178,7 @@ object TestkitSpec extends ZIOSpecDefault:
       for resolution <- FeatureFlags.resolveOrDefault[Boolean]("flag", default = true)
       yield assertTrue(resolution.value, resolution.errorCode.contains(ErrorCode.General))
     } @@ TestFeatureProvider.withFailures
-  ).provide(TestFeatureProvider.scopedLayer(Map("flag" -> false))) @@ TestAspect.sequential
+  ).provide(TestFeatureProvider.layer(Map("flag" -> false))) @@ TestAspect.sequential
   // --8<-- [end:failures]
 
   // --8<-- [start:transactions]
@@ -189,7 +189,7 @@ object TestkitSpec extends ZIOSpecDefault:
         FeatureFlags.boolean("new-greeting", default = false)
       }
     yield assertTrue(!base, tx.result)
-  }.provide(TestFeatureProvider.scopedLayer(Map("new-greeting" -> false)))
+  }.provide(TestFeatureProvider.layer(Map("new-greeting" -> false)))
   // --8<-- [end:transactions]
 
   // --8<-- [start:chain]
@@ -200,7 +200,7 @@ object TestkitSpec extends ZIOSpecDefault:
       chained = FeatureFlags.multiProvider(List(primary, fallback))
       value <- FeatureFlags
         .boolean("flag", default = false)
-        .provide(Scope.default >>> FeatureFlags.fromProvider(chained))
+        .provide(FeatureFlags.fromProvider(chained))
       asked <- primary.wasEvaluated("flag")
     yield assertTrue(value, asked) // the primary was asked, said FLAG_NOT_FOUND, and the chain moved on
   }
@@ -221,7 +221,7 @@ object TestkitSpec extends ZIOSpecDefault:
       layer = FeatureFlags.fromProvider(new CachingReasonProvider(provider))
       reasons <- (FeatureFlags.booleanDetails("flag", false) *> FeatureFlags.booleanDetails("flag", false))
         .map(_.reason)
-        .provide(Scope.default >>> layer)
+        .provide(layer)
     yield assertTrue(reasons == ResolutionReason.Cached)
   }
   // --8<-- [end:caching-reason]

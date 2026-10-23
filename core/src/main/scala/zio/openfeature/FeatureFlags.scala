@@ -123,6 +123,15 @@ trait FeatureFlags {
   def value[A: FlagType](key: String, default: A, ctx: EvaluationContext): IO[FeatureFlagError, A] =
     valueDetails(key, default, ctx).map(_.value)
 
+  /** [[value]] with per-call [[EvaluationOptions]] (invocation hooks, hints, a timeout). */
+  def value[A: FlagType](
+    key: String,
+    default: A,
+    ctx: EvaluationContext,
+    options: EvaluationOptions
+  ): IO[FeatureFlagError, A] =
+    valueDetails(key, default, ctx, options).map(_.value)
+
   // Total (never-fails) evaluation variants (spec §1.4.10 / §1.1.7: evaluation "MUST NOT throw ... always return the
   // default value"). Any evaluation error is absorbed into the supplied default: `*OrDefault` returns the value,
   // `resolveOrDefault` returns the full `FlagResolution` with `reason = Error` and `errorCode`/`errorMessage` populated
@@ -154,6 +163,40 @@ trait FeatureFlags {
 
   def valueOrDefault[A: FlagType](key: String, default: A, ctx: EvaluationContext = EvaluationContext.empty): UIO[A] =
     totalResolution(valueDetails(key, default, ctx), key, default).map(_.value)
+
+  // The same, with per-call EvaluationOptions (#444). Spelled without defaults: the overloads above already carry the
+  // `ctx` default, and Scala allows default arguments on only one overload of a method.
+
+  def booleanOrDefault(
+    key: String,
+    default: Boolean,
+    ctx: EvaluationContext,
+    options: EvaluationOptions
+  ): UIO[Boolean] =
+    totalResolution(booleanDetails(key, default, ctx, options), key, default).map(_.value)
+
+  def stringOrDefault(key: String, default: String, ctx: EvaluationContext, options: EvaluationOptions): UIO[String] =
+    totalResolution(stringDetails(key, default, ctx, options), key, default).map(_.value)
+
+  def intOrDefault(key: String, default: Int, ctx: EvaluationContext, options: EvaluationOptions): UIO[Int] =
+    totalResolution(intDetails(key, default, ctx, options), key, default).map(_.value)
+
+  def longOrDefault(key: String, default: Long, ctx: EvaluationContext, options: EvaluationOptions): UIO[Long] =
+    totalResolution(longDetails(key, default, ctx, options), key, default).map(_.value)
+
+  def doubleOrDefault(key: String, default: Double, ctx: EvaluationContext, options: EvaluationOptions): UIO[Double] =
+    totalResolution(doubleDetails(key, default, ctx, options), key, default).map(_.value)
+
+  def objOrDefault(
+    key: String,
+    default: Map[String, Any],
+    ctx: EvaluationContext,
+    options: EvaluationOptions
+  ): UIO[Map[String, Any]] =
+    totalResolution(objDetails(key, default, ctx, options), key, default).map(_.value)
+
+  def valueOrDefault[A: FlagType](key: String, default: A, ctx: EvaluationContext, options: EvaluationOptions): UIO[A] =
+    totalResolution(valueDetails(key, default, ctx, options), key, default).map(_.value)
 
   /** Total details variant: like [[valueDetails]] but never fails — an evaluation error yields a `FlagResolution` whose
     * `reason` is `Error`, `value` is `default`, and `errorCode`/`errorMessage` describe the failure (spec §1.4.10).
@@ -198,6 +241,16 @@ trait FeatureFlags {
   def valueOrDefault[A](flag: FlagDef[A], ctx: EvaluationContext): UIO[A] = {
     implicit val ft: FlagType[A] = flag.flagType
     valueOrDefault(flag.key, flag.default, ctx)
+  }
+
+  def value[A](flag: FlagDef[A], ctx: EvaluationContext, options: EvaluationOptions): IO[FeatureFlagError, A] = {
+    implicit val ft: FlagType[A] = flag.flagType
+    value(flag.key, flag.default, ctx, options)
+  }
+
+  def valueOrDefault[A](flag: FlagDef[A], ctx: EvaluationContext, options: EvaluationOptions): UIO[A] = {
+    implicit val ft: FlagType[A] = flag.flagType
+    valueOrDefault(flag.key, flag.default, ctx, options)
   }
 
   def resolveOrDefault[A](flag: FlagDef[A]): UIO[FlagResolution[A]] = {
@@ -512,6 +565,14 @@ object FeatureFlags {
   def value[A: FlagType](key: String, default: A): ZIO[FeatureFlags, FeatureFlagError, A] =
     ZIO.serviceWithZIO(_.value(key, default))
 
+  def value[A: FlagType](
+    key: String,
+    default: A,
+    ctx: EvaluationContext,
+    options: EvaluationOptions
+  ): ZIO[FeatureFlags, FeatureFlagError, A] =
+    ZIO.serviceWithZIO(_.value(key, default, ctx, options))
+
   def value[A: FlagType](key: String, default: A, ctx: EvaluationContext): ZIO[FeatureFlags, FeatureFlagError, A] =
     ZIO.serviceWithZIO(_.value(key, default, ctx))
 
@@ -565,6 +626,62 @@ object FeatureFlags {
     ctx: EvaluationContext = EvaluationContext.empty
   ): ZIO[FeatureFlags, Nothing, A] =
     ZIO.serviceWithZIO(_.valueOrDefault(key, default, ctx))
+
+  def booleanOrDefault(
+    key: String,
+    default: Boolean,
+    ctx: EvaluationContext,
+    options: EvaluationOptions
+  ): ZIO[FeatureFlags, Nothing, Boolean] =
+    ZIO.serviceWithZIO(_.booleanOrDefault(key, default, ctx, options))
+
+  def stringOrDefault(
+    key: String,
+    default: String,
+    ctx: EvaluationContext,
+    options: EvaluationOptions
+  ): ZIO[FeatureFlags, Nothing, String] =
+    ZIO.serviceWithZIO(_.stringOrDefault(key, default, ctx, options))
+
+  def intOrDefault(
+    key: String,
+    default: Int,
+    ctx: EvaluationContext,
+    options: EvaluationOptions
+  ): ZIO[FeatureFlags, Nothing, Int] =
+    ZIO.serviceWithZIO(_.intOrDefault(key, default, ctx, options))
+
+  def longOrDefault(
+    key: String,
+    default: Long,
+    ctx: EvaluationContext,
+    options: EvaluationOptions
+  ): ZIO[FeatureFlags, Nothing, Long] =
+    ZIO.serviceWithZIO(_.longOrDefault(key, default, ctx, options))
+
+  def doubleOrDefault(
+    key: String,
+    default: Double,
+    ctx: EvaluationContext,
+    options: EvaluationOptions
+  ): ZIO[FeatureFlags, Nothing, Double] =
+    ZIO.serviceWithZIO(_.doubleOrDefault(key, default, ctx, options))
+
+  def objOrDefault(
+    key: String,
+    default: Map[String, Any],
+    ctx: EvaluationContext,
+    options: EvaluationOptions
+  ): ZIO[FeatureFlags, Nothing, Map[String, Any]] =
+    ZIO.serviceWithZIO(_.objOrDefault(key, default, ctx, options))
+
+  def valueOrDefault[A: FlagType](
+    key: String,
+    default: A,
+    ctx: EvaluationContext,
+    options: EvaluationOptions
+  ): ZIO[FeatureFlags, Nothing, A] =
+    ZIO.serviceWithZIO(_.valueOrDefault(key, default, ctx, options))
 
   def resolveOrDefault[A: FlagType](
     key: String,
@@ -648,6 +765,20 @@ object FeatureFlags {
 
   def valueOrDefault[A](flag: FlagDef[A], ctx: EvaluationContext): ZIO[FeatureFlags, Nothing, A] =
     ZIO.serviceWithZIO(_.valueOrDefault(flag, ctx))
+
+  def value[A](
+    flag: FlagDef[A],
+    ctx: EvaluationContext,
+    options: EvaluationOptions
+  ): ZIO[FeatureFlags, FeatureFlagError, A] =
+    ZIO.serviceWithZIO(_.value(flag, ctx, options))
+
+  def valueOrDefault[A](
+    flag: FlagDef[A],
+    ctx: EvaluationContext,
+    options: EvaluationOptions
+  ): ZIO[FeatureFlags, Nothing, A] =
+    ZIO.serviceWithZIO(_.valueOrDefault(flag, ctx, options))
 
   def resolveOrDefault[A](flag: FlagDef[A]): ZIO[FeatureFlags, Nothing, FlagResolution[A]] =
     ZIO.serviceWithZIO(_.resolveOrDefault(flag))
@@ -933,7 +1064,7 @@ object FeatureFlags {
     * `FeatureFlagsConfig()` reproduces `fromProvider(provider)` exactly (sync init, no domain, `Owned` API — the `Auto`
     * truth table's `domain.isEmpty` branch).
     */
-  def fromProvider(provider: OFFeatureProvider, config: FeatureFlagsConfig): ZLayer[Scope, Throwable, FeatureFlags] =
+  def fromProvider(provider: OFFeatureProvider, config: FeatureFlagsConfig): ZLayer[Any, Throwable, FeatureFlags] =
     fromProvider(provider, config, statusRef = None)
 
   /** `private[openfeature]` variant of [[fromProvider(OFFeatureProvider, FeatureFlagsConfig)]] that additionally
@@ -948,7 +1079,7 @@ object FeatureFlags {
     statusRef: Option[SubscriptionRef[ProviderStatus]],
     apiOverride: Option[OpenFeatureAPI] = None,
     onReady: Option[java.util.concurrent.CountDownLatch] = None
-  ): ZLayer[Scope, Throwable, FeatureFlags] =
+  ): ZLayer[Any, Throwable, FeatureFlags] =
     ZLayer.scoped {
       val evalTimeout = config.evaluationTimeout match {
         case EvaluationTimeout.Default  => Some(DefaultEvaluationTimeout)
@@ -1021,7 +1152,7 @@ object FeatureFlags {
     * `IllegalStateException` wrapped at the layer boundary. Use `fromProvider(provider, FeatureFlagsConfig())` with
     * `.withInitTimeout(...)` to override.
     */
-  def fromProvider(provider: OFFeatureProvider): ZLayer[Scope, Throwable, FeatureFlags] =
+  def fromProvider(provider: OFFeatureProvider): ZLayer[Any, Throwable, FeatureFlags] =
     fromProvider(provider, FeatureFlagsConfig())
 
   /** Create a FeatureFlags layer with a global evaluation timeout.
@@ -1031,7 +1162,7 @@ object FeatureFlags {
     * `EvaluationOptions.timeout` override this global default. Initialization uses the default 30s init timeout.
     */
   @deprecated("Use fromProvider(p, FeatureFlagsConfig().withEvaluationTimeout(evalTimeout))", "0.2.0")
-  def fromProvider(provider: OFFeatureProvider, evaluationTimeout: Duration): ZLayer[Scope, Throwable, FeatureFlags] =
+  def fromProvider(provider: OFFeatureProvider, evaluationTimeout: Duration): ZLayer[Any, Throwable, FeatureFlags] =
     fromProvider(provider, FeatureFlagsConfig().withEvaluationTimeout(evaluationTimeout))
 
   /** Create a FeatureFlags layer with explicit evaluation and initialization timeouts.
@@ -1049,12 +1180,12 @@ object FeatureFlags {
     provider: OFFeatureProvider,
     evaluationTimeout: Duration,
     initTimeout: Duration
-  ): ZLayer[Scope, Throwable, FeatureFlags] =
+  ): ZLayer[Any, Throwable, FeatureFlags] =
     fromProvider(provider, FeatureFlagsConfig().withEvaluationTimeout(evaluationTimeout).withInitTimeout(initTimeout))
 
   /** Create a FeatureFlags layer with a named domain/client. */
   @deprecated("Use fromProvider(p, FeatureFlagsConfig().withDomain(d))", "0.2.0")
-  def fromProviderWithDomain(provider: OFFeatureProvider, domain: String): ZLayer[Scope, Throwable, FeatureFlags] =
+  def fromProviderWithDomain(provider: OFFeatureProvider, domain: String): ZLayer[Any, Throwable, FeatureFlags] =
     fromProvider(provider, FeatureFlagsConfig().withDomain(domain))
 
   /** Create a FeatureFlags layer with a named domain/client and version. */
@@ -1063,7 +1194,7 @@ object FeatureFlags {
     provider: OFFeatureProvider,
     domain: String,
     version: String
-  ): ZLayer[Scope, Throwable, FeatureFlags] =
+  ): ZLayer[Any, Throwable, FeatureFlags] =
     fromProvider(provider, FeatureFlagsConfig().withDomain(domain).withVersion(version))
 
   /** Create a FeatureFlags layer with a named domain/client and a shared status ref. */
@@ -1073,7 +1204,7 @@ object FeatureFlags {
     statusRef: SubscriptionRef[ProviderStatus],
     api: Option[OpenFeatureAPI] = None,
     onReady: Option[java.util.concurrent.CountDownLatch] = None
-  ): ZLayer[Scope, Throwable, FeatureFlags] =
+  ): ZLayer[Any, Throwable, FeatureFlags] =
     ZLayer.scoped(
       build(
         provider,
@@ -1089,7 +1220,7 @@ object FeatureFlags {
 
   /** Create a FeatureFlags layer from multiple providers using the first-match strategy. */
   @deprecated("Use fromProvider(FeatureFlags.multiProvider(ps), FeatureFlagsConfig())", "0.2.0")
-  def fromMultiProvider(providers: List[OFFeatureProvider]): ZLayer[Scope, Throwable, FeatureFlags] =
+  def fromMultiProvider(providers: List[OFFeatureProvider]): ZLayer[Any, Throwable, FeatureFlags] =
     fromProvider(multiProvider(providers), FeatureFlagsConfig())
 
   /** Create a FeatureFlags layer from multiple providers with a custom strategy. */
@@ -1097,7 +1228,7 @@ object FeatureFlags {
   def fromMultiProvider(
     providers: List[OFFeatureProvider],
     strategy: Strategy
-  ): ZLayer[Scope, Throwable, FeatureFlags] =
+  ): ZLayer[Any, Throwable, FeatureFlags] =
     fromProvider(multiProvider(providers, strategy), FeatureFlagsConfig())
 
   /** Create a FeatureFlags layer with initial hooks. */
@@ -1105,7 +1236,7 @@ object FeatureFlags {
   def fromProviderWithHooks(
     provider: OFFeatureProvider,
     initialHooks: List[FeatureHook]
-  ): ZLayer[Scope, Throwable, FeatureFlags] =
+  ): ZLayer[Any, Throwable, FeatureFlags] =
     fromProvider(provider, FeatureFlagsConfig().withHooks(initialHooks))
 
   // Async Factory Methods (non-blocking provider initialization)
@@ -1198,7 +1329,7 @@ object FeatureFlags {
     * `providerStatus` stop waiting. Use `fromProvider(provider, FeatureFlagsConfig(initMode = InitMode.Async))` with
     * `.withInitTimeout(...)` to override.
     */
-  def fromProviderAsync(provider: OFFeatureProvider): ZLayer[Scope, Throwable, FeatureFlags] =
+  def fromProviderAsync(provider: OFFeatureProvider): ZLayer[Any, Throwable, FeatureFlags] =
     fromProvider(provider, FeatureFlagsConfig(initMode = InitMode.Async))
 
   /** Create a FeatureFlags layer with a global evaluation timeout (non-blocking).
@@ -1214,7 +1345,7 @@ object FeatureFlags {
   def fromProviderAsync(
     provider: OFFeatureProvider,
     evaluationTimeout: Duration
-  ): ZLayer[Scope, Throwable, FeatureFlags] =
+  ): ZLayer[Any, Throwable, FeatureFlags] =
     fromProvider(provider, FeatureFlagsConfig(initMode = InitMode.Async).withEvaluationTimeout(evaluationTimeout))
 
   /** Create a FeatureFlags layer with explicit evaluation and initialization timeouts (non-blocking).
@@ -1230,7 +1361,7 @@ object FeatureFlags {
     provider: OFFeatureProvider,
     evaluationTimeout: Duration,
     initTimeout: Duration
-  ): ZLayer[Scope, Throwable, FeatureFlags] =
+  ): ZLayer[Any, Throwable, FeatureFlags] =
     fromProvider(
       provider,
       FeatureFlagsConfig(initMode = InitMode.Async)
@@ -1243,7 +1374,7 @@ object FeatureFlags {
   def fromProviderWithDomainAsync(
     provider: OFFeatureProvider,
     domain: String
-  ): ZLayer[Scope, Throwable, FeatureFlags] =
+  ): ZLayer[Any, Throwable, FeatureFlags] =
     fromProvider(provider, FeatureFlagsConfig(initMode = InitMode.Async).withDomain(domain))
 
   /** Create a FeatureFlags layer with a named domain and version (non-blocking). */
@@ -1255,7 +1386,7 @@ object FeatureFlags {
     provider: OFFeatureProvider,
     domain: String,
     version: String
-  ): ZLayer[Scope, Throwable, FeatureFlags] =
+  ): ZLayer[Any, Throwable, FeatureFlags] =
     fromProvider(provider, FeatureFlagsConfig(initMode = InitMode.Async).withDomain(domain).withVersion(version))
 
   /** Create a FeatureFlags layer with a named domain and shared status ref (non-blocking). */
@@ -1265,7 +1396,7 @@ object FeatureFlags {
     statusRef: SubscriptionRef[ProviderStatus],
     api: Option[OpenFeatureAPI] = None,
     onReady: Option[java.util.concurrent.CountDownLatch] = None
-  ): ZLayer[Scope, Throwable, FeatureFlags] =
+  ): ZLayer[Any, Throwable, FeatureFlags] =
     ZLayer.scoped(
       buildAsync(
         provider,
@@ -1284,7 +1415,7 @@ object FeatureFlags {
   def fromProviderWithHooksAsync(
     provider: OFFeatureProvider,
     initialHooks: List[FeatureHook]
-  ): ZLayer[Scope, Throwable, FeatureFlags] =
+  ): ZLayer[Any, Throwable, FeatureFlags] =
     fromProvider(provider, FeatureFlagsConfig(initMode = InitMode.Async).withHooks(initialHooks))
 
   /** Create a FeatureFlags layer from multiple providers (non-blocking, first-match strategy). */
@@ -1292,7 +1423,7 @@ object FeatureFlags {
     "Use fromProvider(FeatureFlags.multiProvider(ps), FeatureFlagsConfig(initMode = InitMode.Async))",
     "0.2.0"
   )
-  def fromMultiProviderAsync(providers: List[OFFeatureProvider]): ZLayer[Scope, Throwable, FeatureFlags] =
+  def fromMultiProviderAsync(providers: List[OFFeatureProvider]): ZLayer[Any, Throwable, FeatureFlags] =
     fromProvider(multiProvider(providers), FeatureFlagsConfig(initMode = InitMode.Async))
 
   /** Create a FeatureFlags layer from multiple providers with a custom strategy (non-blocking). */
@@ -1303,7 +1434,7 @@ object FeatureFlags {
   def fromMultiProviderAsync(
     providers: List[OFFeatureProvider],
     strategy: Strategy
-  ): ZLayer[Scope, Throwable, FeatureFlags] =
+  ): ZLayer[Any, Throwable, FeatureFlags] =
     fromProvider(multiProvider(providers, strategy), FeatureFlagsConfig(initMode = InitMode.Async))
 
   /** Default `compose` for [[fromAcquireAsync]]: layer the real provider over the fallback with a first-successful
@@ -1392,7 +1523,7 @@ object FeatureFlags {
     // Its own parameter, not a config field: this factory bypasses `FeatureFlagsConfig`, and it is exactly the
     // fallback-first path where a served-default log storm during an outage matters most (#350).
     fallbackLogging: FallbackLogging = FallbackLogging.Default
-  ): URLayer[Scope, FeatureFlags with AcquireStatus] =
+  ): URLayer[Any, FeatureFlags with AcquireStatus] =
     // `scopedEnvironment` rather than `scoped`: the layer emits two services, and only an explicit ZEnvironment can
     // carry an intersection.
     ZLayer.scopedEnvironment {

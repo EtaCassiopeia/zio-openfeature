@@ -16,7 +16,7 @@ Say your service reads a flag:
 --8<-- "TestkitSpec.scala:service"
 ```
 
-Provide `TestFeatureProvider.scopedLayer` in place of the real `FeatureFlags` layer. It provides both `FeatureFlags`
+Provide `TestFeatureProvider.layer` in place of the real `FeatureFlags` layer. It provides both `FeatureFlags`
 and the `TestFeatureProvider` itself, so a test can set flags and then run the code under test:
 
 ```scala
@@ -31,11 +31,13 @@ Every layer provides `TestFeatureProvider & FeatureFlags`.
 
 | Layer | Provider starts | Use it when |
 |:------|:----------------|:------------|
-| `scopedLayer`, `scopedLayer(flags)` | `Ready` | most tests; it brings its own `Scope` |
-| `layer`, `layer(flags)` | `Ready` | you already have a `Scope` to provide |
-| `asyncLayer(flags)`, `scopedAsyncLayer(flags)` | `NotReady`, until you call `setStatus(Ready)` | testing how your code behaves while the provider starts up |
+| `layer`, `layer(flags)` | `Ready` | most tests |
+| `asyncLayer`, `asyncLayer(flags)` | `NotReady`, until you call `setStatus(Ready)` | testing how your code behaves while the provider starts up |
 | `asyncReadyLayer(flags, initDelay)` | `NotReady`, then `Ready` after `initDelay` (default 100 ms) | a provider that becomes ready on its own |
 | `layerFrom(provider)` | as the provider is | you built the provider yourself with `make` / `makeNamed` |
+
+None of these needs a `Scope`: each layer owns its own and shuts the provider down when it is released.
+`scopedLayer` and `scopedAsyncLayer` are deprecated aliases of `layer` and `asyncLayer` from when layers did need one.
 
 `flags` is a `Map[String, Any]`, or typed overrides (`Flag := value`, see below). `providerLayer` provides just a
 `TestFeatureProvider`, without `FeatureFlags`.
@@ -57,7 +59,7 @@ Build the fixture from your [`FlagDef`s](typed-flags.md) instead, and the compil
 the same decoding as production. It also checks that the codec can decode its own encoding, and throws at fixture
 construction if it cannot.
 
-Every factory that takes flags (`make`, `layer`, `scopedLayer`, `asyncLayer`, `scopedAsyncLayer`, `providerLayer`)
+Every factory that takes flags (`make`, `layer`, `layer`, `asyncLayer`, `asyncLayer`, `providerLayer`)
 also takes `FlagOverride*`. For `asyncReadyLayer` the delay comes first: `asyncReadyLayer(100.millis, Flag := v)`.
 
 !!! note
@@ -235,7 +237,7 @@ right type:
 
 ```scala
 override def flagLayer(meta: ScenarioMetadata, flags: Map[String, String]): ZLayer[Any, Throwable, FeatureFlags] =
-  TestFeatureProvider.scopedLayer(Map("new-greeting" -> flags.get("greeting").contains("new")))
+  TestFeatureProvider.layer(Map("new-greeting" -> flags.get("greeting").contains("new")))
 ```
 
 `@flags(greeting=new, plan=pro)` runs the scenario once, with both keys in `flags`. Two `@flags(...)` tags on separate lines run it

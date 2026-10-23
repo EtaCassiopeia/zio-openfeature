@@ -106,7 +106,7 @@ object TypedFlags:
   // --8<-- [start:fixture]
   import zio.openfeature.testkit.FlagOverride.Ops // brings := into scope
 
-  val fixture: ZLayer[Scope, Throwable, TestFeatureProvider & FeatureFlags] =
+  val fixture: ZLayer[Any, Throwable, TestFeatureProvider & FeatureFlags] =
     TestFeatureProvider.layer(
       Flags.Plan       := Tier.Premium,
       Flags.CheckoutV2 := true

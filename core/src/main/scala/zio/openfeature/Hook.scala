@@ -53,6 +53,15 @@ final class HookData {
     data.updateAndGet(_ - key.name)
     ()
   }
+
+  /** The value stored under `key`, storing `create` first if absent. Atomic: concurrent callers get the same value. */
+  private[openfeature] def getOrElseUpdate[A](key: TypedKey[A], create: => A): A = {
+    lazy val fresh = create
+    data
+      .updateAndGet(m => if (m.contains(key.name)) m else m + (key.name -> fresh))
+      .apply(key.name)
+      .asInstanceOf[A]
+  }
 }
 
 object HookData {
@@ -66,6 +75,9 @@ object HookData {
   *   do not assume `defaultValue` has the class `flagType` names; casting it on that assumption throws.
   * @param defaultValue
   *   the caller's default, as the domain type
+  * @param hookData
+  *   this hook's private store for one evaluation. Pass the same instance to every stage of that evaluation; a
+  *   composite (`FeatureHook.compose`) keeps its inner hooks' data inside it.
   */
 final case class HookContext(
   flagKey: String,
@@ -155,41 +167,68 @@ object FeatureHook {
 
   val noop: FeatureHook = new FeatureHook {}
 
+  /** Per-evaluation timing for the timing hooks (#444): `start` in `before`, `elapsed` in a later stage. Kept in the
+    * hook's own HookData, so it never leaks between hooks or evaluations.
+    */
+  final private class Stopwatch(name: String) {
+    private val startKey = TypedKey[Long](s"$name.startTime")
+
+    def start(ctx: HookContext): UIO[Unit] = Clock.nanoTime.flatMap(now => ZIO.succeed(ctx.hookData.set(startKey, now)))
+
+    def elapsed(ctx: HookContext): UIO[Duration] =
+      Clock.nanoTime.map(end => Duration.fromNanos(end - ctx.hookData.get(startKey).getOrElse(end)))
+  }
+
+  private val composeIds = new java.util.concurrent.atomic.AtomicLong(0L)
+
+  /** Run `hooks` as one hook: `before` in order, the other stages in reverse.
+    *
+    * Each inner hook gets its own [[HookData]] per evaluation (spec 4.3.2), even when the composite is registered once
+    * and shared, and even when the same hook instance appears twice. The per-hook data lives inside the `hookData` of
+    * the context the composite receives, so callers that invoke a composite's stages directly must pass the same
+    * `ctx.hookData` to every stage of one evaluation, as the evaluation pipeline does.
+    */
   def compose(hooks: List[FeatureHook]): FeatureHook = new FeatureHook {
-    // Each hook gets its own HookData instance (spec 4.6.1 - scoped to individual hook)
-    private lazy val hookDataMap: Map[FeatureHook, HookData] =
-      hooks.map(h => h -> HookData.empty).toMap
+    private val indexed = hooks.zipWithIndex
 
-    private def ctxForHook(ctx: HookContext, hook: FeatureHook): HookContext =
-      ctx.copy(hookData = hookDataMap.getOrElse(hook, HookData.empty))
+    // One HookData per position (not per hook instance, so duplicates stay apart), created on first use in this
+    // evaluation and stored in the HookData this composite was given for it.
+    // The key is unique to this composite, so two composites handed the same HookData never read each other's slots.
+    private val slotsKey = TypedKey[Vector[HookData]](s"zio.openfeature.compose.slots.${composeIds.incrementAndGet()}")
 
-    // Filter hooks to those that support the given flag type (spec 4.4.2.1)
-    private def applicableHooks(flagType: FlagValueType): List[FeatureHook] =
-      hooks.filter(_.supportedFlagTypes.contains(flagType))
+    private def slots(ctx: HookContext): Vector[HookData] =
+      ctx.hookData.getOrElseUpdate(slotsKey, Vector.fill(hooks.size)(HookData.empty))
+
+    // Filter hooks to those that support the given flag type (spec 4.4.2.1), keeping each one's position
+    private def applicable(ctx: HookContext): List[(FeatureHook, HookData)] = {
+      val data = slots(ctx)
+      indexed.collect { case (hook, i) if hook.supportedFlagTypes.contains(ctx.flagType) => (hook, data(i)) }
+    }
 
     override def before(ctx: HookContext, hints: HookHints): UIO[Option[EvaluationContext]] =
       ZIO
-        .foldLeft(applicableHooks(ctx.flagType))((ctx.evaluationContext, false)) {
-          case ((currentCtx, modified), hook) =>
-            hook.before(ctxForHook(ctx.copy(evaluationContext = currentCtx), hook), hints).map {
-              case Some(newCtx) => (currentCtx.merge(newCtx), true)
-              case None         => (currentCtx, modified)
-            }
+        .foldLeft(applicable(ctx))((ctx.evaluationContext, false)) { case ((currentCtx, modified), (hook, data)) =>
+          hook.before(ctx.copy(evaluationContext = currentCtx, hookData = data), hints).map {
+            case Some(newCtx) => (currentCtx.merge(newCtx), true)
+            case None         => (currentCtx, modified)
+          }
         }
         .map { case (finalCtx, wasModified) => if (wasModified) Some(finalCtx) else None }
 
     override def after[A](ctx: HookContext, details: FlagResolution[A], hints: HookHints): UIO[Unit] =
-      ZIO.foreachDiscard(applicableHooks(ctx.flagType).reverse)(hook =>
-        hook.after(ctxForHook(ctx, hook), details, hints)
-      )
+      ZIO.foreachDiscard(applicable(ctx).reverse) { case (hook, data) =>
+        hook.after(ctx.copy(hookData = data), details, hints)
+      }
 
     override def error(ctx: HookContext, err: FeatureFlagError, hints: HookHints): UIO[Unit] =
-      ZIO.foreachDiscard(applicableHooks(ctx.flagType).reverse)(hook => hook.error(ctxForHook(ctx, hook), err, hints))
+      ZIO.foreachDiscard(applicable(ctx).reverse) { case (hook, data) =>
+        hook.error(ctx.copy(hookData = data), err, hints)
+      }
 
     override def finallyAfter(ctx: HookContext, details: Option[FlagResolution[_]], hints: HookHints): UIO[Unit] =
-      ZIO.foreachDiscard(applicableHooks(ctx.flagType).reverse)(hook =>
-        hook.finallyAfter(ctxForHook(ctx, hook), details, hints)
-      )
+      ZIO.foreachDiscard(applicable(ctx).reverse) { case (hook, data) =>
+        hook.finallyAfter(ctx.copy(hookData = data), details, hints)
+      }
   }
 
   def logging(
@@ -244,7 +283,7 @@ object FeatureHook {
     logContext: Boolean = false,
     redactKeys: Set[String] = Set.empty
   ): FeatureHook = new FeatureHook {
-    private val startTimeKey = TypedKey[Long]("structuredLogging.startTime")
+    private val stopwatch = new Stopwatch("structuredLogging")
 
     private def annotate(annotations: Set[zio.LogAnnotation])(effect: UIO[Unit]): UIO[Unit] =
       ZIO.logAnnotate(annotations)(effect)
@@ -296,8 +335,7 @@ object FeatureHook {
     // context-modified tracking.
     override def before(ctx: HookContext, hints: HookHints): UIO[Option[EvaluationContext]] =
       for {
-        now <- Clock.nanoTime
-        _   <- ZIO.succeed(ctx.hookData.set(startTimeKey, now))
+        _ <- stopwatch.start(ctx)
         _ <- beforeLevel match {
           case Some(level) =>
             annotate(baseAnnotations(ctx) ++ contextAnnotations(ctx))(
@@ -307,11 +345,7 @@ object FeatureHook {
         }
       } yield None
 
-    private def elapsed(ctx: HookContext): UIO[Duration] =
-      Clock.nanoTime.map { end =>
-        val start = ctx.hookData.get(startTimeKey).getOrElse(end)
-        Duration.fromNanos(end - start)
-      }
+    private def elapsed(ctx: HookContext): UIO[Duration] = stopwatch.elapsed(ctx)
 
     override def after[A](ctx: HookContext, details: FlagResolution[A], hints: HookHints): UIO[Unit] =
       afterLevel match {
@@ -348,26 +382,16 @@ object FeatureHook {
 
   def metrics(onEvaluation: (String, Duration, Boolean) => UIO[Unit]): FeatureHook =
     new FeatureHook {
-      private val startTimeKey = TypedKey[Long]("metrics.startTime")
+      private val stopwatch = new Stopwatch("metrics")
 
       override def before(ctx: HookContext, hints: HookHints): UIO[Option[EvaluationContext]] =
-        Clock.nanoTime.flatMap(now => ZIO.succeed(ctx.hookData.set(startTimeKey, now))).as(None)
+        stopwatch.start(ctx).as(None)
 
       override def after[A](ctx: HookContext, details: FlagResolution[A], hints: HookHints): UIO[Unit] =
-        for {
-          end <- Clock.nanoTime
-          start    = ctx.hookData.get(startTimeKey).getOrElse(end)
-          duration = Duration.fromNanos(end - start)
-          _ <- onEvaluation(ctx.flagKey, duration, true)
-        } yield ()
+        stopwatch.elapsed(ctx).flatMap(onEvaluation(ctx.flagKey, _, true))
 
       override def error(ctx: HookContext, err: FeatureFlagError, hints: HookHints): UIO[Unit] =
-        for {
-          end <- Clock.nanoTime
-          start    = ctx.hookData.get(startTimeKey).getOrElse(end)
-          duration = Duration.fromNanos(end - start)
-          _ <- onEvaluation(ctx.flagKey, duration, false)
-        } yield ()
+        stopwatch.elapsed(ctx).flatMap(onEvaluation(ctx.flagKey, _, false))
     }
 
   /** A detailed metrics hook that provides full evaluation context for building rich metric tags.
@@ -386,29 +410,21 @@ object FeatureHook {
     onSuccess: (HookContext, FlagResolution[_], Duration) => UIO[Unit],
     onError: (HookContext, FeatureFlagError, Duration) => UIO[Unit]
   ): FeatureHook = new FeatureHook {
-    private val startTimeKey = TypedKey[Long]("metricsDetailed.startTime")
+    private val stopwatch = new Stopwatch("metricsDetailed")
 
     override def before(ctx: HookContext, hints: HookHints): UIO[Option[EvaluationContext]] =
-      for {
-        now <- Clock.nanoTime
-        _   <- ZIO.succeed(ctx.hookData.set(startTimeKey, now))
-      } yield None
+      stopwatch.start(ctx).as(None)
 
     override def after[A](ctx: HookContext, details: FlagResolution[A], hints: HookHints): UIO[Unit] =
-      Clock.nanoTime.flatMap { end =>
-        val start    = ctx.hookData.get(startTimeKey).getOrElse(end)
-        val duration = Duration.fromNanos(end - start)
-        onSuccess(ctx, details, duration)
-      }
+      stopwatch.elapsed(ctx).flatMap(onSuccess(ctx, details, _))
 
     override def error(ctx: HookContext, err: FeatureFlagError, hints: HookHints): UIO[Unit] =
-      Clock.nanoTime.flatMap { end =>
-        val start    = ctx.hookData.get(startTimeKey).getOrElse(end)
-        val duration = Duration.fromNanos(end - start)
-        onError(ctx, err, duration)
-      }
+      stopwatch.elapsed(ctx).flatMap(onError(ctx, err, _))
   }
 
+  /** Logs a warning when an evaluation's context lacks the targeting key or attributes you require. It does not reject
+    * the evaluation: hooks cannot abort one (see the hook error semantics on [[FeatureHook]]).
+    */
   def contextValidator(
     requireTargetingKey: Boolean = false,
     requiredAttributes: List[String] = Nil

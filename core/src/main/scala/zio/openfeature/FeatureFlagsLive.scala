@@ -8,7 +8,9 @@ import zio.openfeature.internal.{
   ErrorCodeConverter,
   FallbackLogLimiter,
   FeatureFlagsState,
+  ProviderReportedError,
   ProviderStatusMachine,
+  TrackingConverter,
   ValueBridge
 }
 import zio.openfeature.internal.ProviderStatusMachine.Signal
@@ -19,7 +21,6 @@ import dev.openfeature.sdk.{
   EventDetails,
   EventProviderAccess,
   FlagEvaluationDetails,
-  MutableTrackingEventDetails,
   OpenFeatureAPI
 }
 
@@ -129,60 +130,68 @@ final private[openfeature] class FeatureFlagsLive(
     ProviderMetadata(if (name == null) providerNameRef.get() else name)
   }
 
-  private def extractEventMetadata(details: EventDetails): FlagMetadata =
-    try {
-      val javaMeta = details.getEventMetadata
-      if (javaMeta == null || javaMeta.isEmpty) FlagMetadata.empty
-      else convertImmutableMetadata(javaMeta)
-    } catch {
-      case _: Exception => FlagMetadata.empty
-    }
+  // Event metadata is optional, so a payload that cannot be read must not drop the event: it is published with empty
+  // metadata — but the failure is logged rather than vanishing (#444).
+  private def extractEventMetadata(details: EventDetails): UIO[FlagMetadata] =
+    ZIO
+      .attempt {
+        val javaMeta = details.getEventMetadata
+        if (javaMeta == null || javaMeta.isEmpty) FlagMetadata.empty
+        else convertImmutableMetadata(javaMeta)
+      }
+      .catchAllCause(c =>
+        ZIO
+          .logWarningCause("event bridge: unreadable provider event metadata; publishing the event without it", c)
+          .as(FlagMetadata.empty)
+      )
 
   // Bridge event bodies as pure effects (#244), so tests can drive them directly with a builder-constructed
   // EventDetails. The Java-side Consumers registered in startEventBridge are thin wrappers that run these via
   // `runHandler`. Events are ALWAYS published for observers; identity/machine gating applies only to the status
   // transition and the onReady latch.
 
-  private[openfeature] def onReadyEvent(details: EventDetails): UIO[Unit] = {
-    val em      = extractEventMetadata(details)
-    val current = fromCurrentProvider(details)
-    // Refresh a still-"unknown" provider name from the event's stamped name when the READY is from the current
-    // provider. A lazy-metadata provider (notably the SDK's MultiProvider) only builds its metadata name inside
-    // initialize(), so the async build captured the "unknown" fallback; the provider's own READY carries the real
-    // name. Refreshing restores accurate providerMetadata and re-enables the event-identity guard for such providers
-    // (#297). `compareAndSet` from the fallback only: it never clobbers a real name set by a concurrent swap.
-    val refreshName = ZIO.succeed {
-      val eventName = details.getProviderName
-      if (current && eventName != null)
-        providerNameRef.compareAndSet(FeatureFlags.UnknownProviderName, eventName)
-      ()
-    }
-    refreshName *>
-      (if (current) applySignal(Signal.EventReady) else ZIO.none) *>
-      state.eventHub.publish(ProviderEvent.Ready(eventProviderMetadata(details), em)).unit *>
-      ZIO.succeed(if (current) onReady.foreach(_.countDown()))
+  private[openfeature] def onReadyEvent(details: EventDetails): UIO[Unit] = extractEventMetadata(details).flatMap {
+    em =>
+      val current = fromCurrentProvider(details)
+      // Refresh a still-"unknown" provider name from the event's stamped name when the READY is from the current
+      // provider. A lazy-metadata provider (notably the SDK's MultiProvider) only builds its metadata name inside
+      // initialize(), so the async build captured the "unknown" fallback; the provider's own READY carries the real
+      // name. Refreshing restores accurate providerMetadata and re-enables the event-identity guard for such providers
+      // (#297). `compareAndSet` from the fallback only: it never clobbers a real name set by a concurrent swap.
+      val refreshName = ZIO.succeed {
+        val eventName = details.getProviderName
+        if (current && eventName != null)
+          providerNameRef.compareAndSet(FeatureFlags.UnknownProviderName, eventName)
+        ()
+      }
+      refreshName *>
+        (if (current) applySignal(Signal.EventReady) else ZIO.none) *>
+        state.eventHub.publish(ProviderEvent.Ready(eventProviderMetadata(details), em)).unit *>
+        ZIO.succeed(if (current) onReady.foreach(_.countDown()))
   }
 
-  private[openfeature] def onErrorEvent(details: EventDetails): UIO[Unit] = {
-    val error     = new RuntimeException(Option(details.getMessage).getOrElse("Provider error"))
-    val errorCode = Option(details.getErrorCode).map(ErrorCodeConverter.fromJava)
-    val em        = extractEventMetadata(details)
-    val fatal     = errorCode.contains(ErrorCode.ProviderFatal)
-    (if (fromCurrentProvider(details)) applySignal(Signal.EventError(fatal)) else ZIO.none).flatMap { transitioned =>
-      // A Fatal transition must release latch waiters (registry handshake, awaitReady seeds) so they observe Fatal
-      // instead of stalling the full timeout.
-      ZIO.succeed(onReady.foreach(_.countDown())).when(transitioned.contains(ProviderStatus.Fatal))
-    } *>
-      state.eventHub
-        .publish(ProviderEvent.Error(error, eventProviderMetadata(details), errorCode, Option(details.getMessage), em))
-        .unit
+  private[openfeature] def onErrorEvent(details: EventDetails): UIO[Unit] = extractEventMetadata(details).flatMap {
+    em =>
+      val error     = new RuntimeException(Option(details.getMessage).getOrElse("Provider error"))
+      val errorCode = Option(details.getErrorCode).map(ErrorCodeConverter.fromJava)
+      val fatal     = errorCode.contains(ErrorCode.ProviderFatal)
+      (if (fromCurrentProvider(details)) applySignal(Signal.EventError(fatal)) else ZIO.none).flatMap { transitioned =>
+        // A Fatal transition must release latch waiters (registry handshake, awaitReady seeds) so they observe Fatal
+        // instead of stalling the full timeout.
+        ZIO.succeed(onReady.foreach(_.countDown())).when(transitioned.contains(ProviderStatus.Fatal))
+      } *>
+        state.eventHub
+          .publish(
+            ProviderEvent.Error(error, eventProviderMetadata(details), errorCode, Option(details.getMessage), em)
+          )
+          .unit
   }
 
-  private[openfeature] def onStaleEvent(details: EventDetails): UIO[Unit] = {
-    val reason = Option(details.getMessage).getOrElse("Provider stale")
-    val em     = extractEventMetadata(details)
-    (if (fromCurrentProvider(details)) applySignal(Signal.EventStale) else ZIO.none) *>
-      state.eventHub.publish(ProviderEvent.Stale(reason, eventProviderMetadata(details), em)).unit
+  private[openfeature] def onStaleEvent(details: EventDetails): UIO[Unit] = extractEventMetadata(details).flatMap {
+    em =>
+      val reason = Option(details.getMessage).getOrElse("Provider stale")
+      (if (fromCurrentProvider(details)) applySignal(Signal.EventStale) else ZIO.none) *>
+        state.eventHub.publish(ProviderEvent.Stale(reason, eventProviderMetadata(details), em)).unit
   }
 
   // Cache the Scala->Java context conversion by object identity. In the common case every per-call context layer
@@ -234,10 +243,11 @@ final private[openfeature] class FeatureFlagsLive(
             val flags = Option(details.getFlagsChanged)
               .map(_.asScala.toSet)
               .getOrElse(Set.empty[String])
-            val em = extractEventMetadata(details)
-            state.eventHub
-              .publish(ProviderEvent.ConfigurationChanged(flags, eventProviderMetadata(details), em))
-              .unit
+            extractEventMetadata(details).flatMap { em =>
+              state.eventHub
+                .publish(ProviderEvent.ConfigurationChanged(flags, eventProviderMetadata(details), em))
+                .unit
+            }
           }
         )
 
@@ -427,12 +437,13 @@ final private[openfeature] class FeatureFlagsLive(
       case ErrorCode.FlagNotFound => FeatureFlagError.FlagNotFound(key)
       case ErrorCode.TypeMismatch => FeatureFlagError.TypeMismatch(key, expected, message.getOrElse("unknown"))
       case ErrorCode.ParseError =>
-        FeatureFlagError.ParseError(key, new RuntimeException(message.getOrElse("parse error")))
+        FeatureFlagError.ParseError(key, new ProviderReportedError(message.getOrElse("parse error")))
       case ErrorCode.TargetingKeyMissing => FeatureFlagError.TargetingKeyMissing(key)
       case ErrorCode.InvalidContext      => FeatureFlagError.InvalidContext(message.getOrElse("invalid context"))
       case ErrorCode.ProviderNotReady    => FeatureFlagError.ProviderNotReady(ProviderStatus.NotReady)
       case ErrorCode.ProviderFatal       => FeatureFlagError.ProviderFatal
-      case ErrorCode.General => FeatureFlagError.ProviderError(new RuntimeException(message.getOrElse("general error")))
+      case ErrorCode.General =>
+        FeatureFlagError.ProviderError(new ProviderReportedError(message.getOrElse("general error")))
     }
 
   private def checkProviderStatus: IO[FeatureFlagError, Unit] =
@@ -1054,6 +1065,14 @@ final private[openfeature] class FeatureFlagsLive(
 
   // Event Handlers - return cancellation effects per OpenFeature spec 5.2.7
 
+  /** Runs `zio` with this library's FiberRefs reset (#436). A handler outlives the call that registered it, so it must
+    * not carry that call's transaction (whose overrides it would keep applying, and whose finished state it would keep
+    * recording into) or its fiber-local context. Other FiberRefs — log annotations, ones a ContextSource reads — are
+    * still inherited.
+    */
+  private def detached[R, E, A](zio: ZIO[R, E, A]): ZIO[R, E, A] =
+    state.transactionRef.locally(None)(state.fiberContextRef.locally(EvaluationContext.empty)(zio))
+
   /** Fork a daemon fiber consuming hub events, guaranteeing the hub subscription is established before this method
     * returns. Without the handshake, events published between handler registration and the forked stream's first pull
     * would be silently lost. The returned effect cancels the subscription.
@@ -1061,11 +1080,12 @@ final private[openfeature] class FeatureFlagsLive(
   private def consumeEvents(consume: ZStream[Any, Nothing, ProviderEvent] => UIO[Unit]): UIO[UIO[Unit]] =
     for {
       subscribed <- Promise.make[Nothing, Unit]
-      fiber <- ZIO.scoped {
+      // Forked inside `detached`, so the fork copies the reset FiberRefs rather than the registering fiber's.
+      fiber <- detached(ZIO.scoped {
         state.eventHub.subscribe.flatMap { queue =>
           subscribed.succeed(()) *> consume(ZStream.fromQueue(queue))
         }
-      }.forkDaemon
+      }.forkDaemon)
       _ <- subscribed.await
     } yield fiber.interrupt.unit
 
@@ -1099,7 +1119,7 @@ final private[openfeature] class FeatureFlagsLive(
     for {
       cancel <- consumeEvents(_.collect(collect).foreach(safe))
       status <- providerStatus
-      _      <- ZIO.when(immediateCondition(status))(safe(immediatePayload))
+      _      <- ZIO.when(immediateCondition(status))(detached(safe(immediatePayload)))
     } yield cancel
   }
 
@@ -1146,36 +1166,38 @@ final private[openfeature] class FeatureFlagsLive(
   // errorMessage, eventMetadata, ...), not a narrowed reconstruction. Associated-state events (Ready/Error/Stale) still
   // fire immediately when the provider is already in that state (spec 5.3.3), using a synthetic event that reflects the
   // current state (there is no original event to replay for an already-reached state). All invocations are isolated.
-  override def on(eventType: ProviderEventType, handler: ProviderEvent => UIO[Unit]): UIO[UIO[Unit]] = {
-    val metadata = ProviderMetadata(providerNameRef.get())
-    eventType match {
-      case ProviderEventType.Ready =>
-        subscribeToEvent[ProviderEvent](
-          _ == ProviderStatus.Ready,
-          ProviderEvent.Ready(metadata),
-          { case e: ProviderEvent.Ready => e },
-          handler
-        )
-      case ProviderEventType.Error =>
-        subscribeToEvent[ProviderEvent](
-          s => s == ProviderStatus.Error || s == ProviderStatus.Fatal,
-          ProviderEvent.Error(new RuntimeException("Provider in error state"), metadata),
-          { case e: ProviderEvent.Error => e },
-          handler
-        )
-      case ProviderEventType.Stale =>
-        subscribeToEvent[ProviderEvent](
-          _ == ProviderStatus.Stale,
-          ProviderEvent.Stale("Provider in stale state", metadata),
-          { case e: ProviderEvent.Stale => e },
-          handler
-        )
-      case ProviderEventType.ConfigurationChanged =>
-        consumeEvents(_.filter(_.eventType == ProviderEventType.ConfigurationChanged).foreach(isolate(handler)))
-      case ProviderEventType.Reconnecting =>
-        consumeEvents(_.filter(_.eventType == ProviderEventType.Reconnecting).foreach(isolate(handler)))
+  // Suspended so the provider name is read when the registration runs, not when the effect is built (#444).
+  override def on(eventType: ProviderEventType, handler: ProviderEvent => UIO[Unit]): UIO[UIO[Unit]] =
+    ZIO.suspendSucceed {
+      val metadata = ProviderMetadata(providerNameRef.get())
+      eventType match {
+        case ProviderEventType.Ready =>
+          subscribeToEvent[ProviderEvent](
+            _ == ProviderStatus.Ready,
+            ProviderEvent.Ready(metadata),
+            { case e: ProviderEvent.Ready => e },
+            handler
+          )
+        case ProviderEventType.Error =>
+          subscribeToEvent[ProviderEvent](
+            s => s == ProviderStatus.Error || s == ProviderStatus.Fatal,
+            ProviderEvent.Error(new RuntimeException("Provider in error state"), metadata),
+            { case e: ProviderEvent.Error => e },
+            handler
+          )
+        case ProviderEventType.Stale =>
+          subscribeToEvent[ProviderEvent](
+            _ == ProviderStatus.Stale,
+            ProviderEvent.Stale("Provider in stale state", metadata),
+            { case e: ProviderEvent.Stale => e },
+            handler
+          )
+        case ProviderEventType.ConfigurationChanged =>
+          consumeEvents(_.filter(_.eventType == ProviderEventType.ConfigurationChanged).foreach(isolate(handler)))
+        case ProviderEventType.Reconnecting =>
+          consumeEvents(_.filter(_.eventType == ProviderEventType.Reconnecting).foreach(isolate(handler)))
+      }
     }
-  }
 
   override def addHook(hook: FeatureHook): UIO[Unit] =
     state.hooksRef.update(_ :+ hook)
@@ -1319,18 +1341,26 @@ final private[openfeature] class FeatureFlagsLive(
     context: EvaluationContext,
     details: Option[TrackingEventDetails]
   ): IO[FeatureFlagError, Unit] =
-    effectiveContext(context).flatMap { merged =>
-      recordTrack(eventName, merged, details) *>
-        ZIO
-          .attemptBlocking {
-            val ofContext = toJavaContext(merged)
-            details match {
-              case Some(d) => client.track(eventName, ofContext, toOpenFeatureDetails(d))
-              case None    => client.track(eventName, ofContext)
-            }
-          }
-          .mapError(e => FeatureFlagError.classify(e))
-    }
+    // Convert before anything is recorded or sent: an attribute the SDK cannot represent is a caller mistake, so it
+    // fails here as InvalidContext rather than inside the SDK call, where `classify` would blame the provider (#441).
+    ZIO
+      .foreach(details)(d =>
+        ZIO.fromEither(TrackingConverter.toOpenFeature(d)).mapError(FeatureFlagError.InvalidContext(_))
+      )
+      .flatMap { ofDetails =>
+        effectiveContext(context).flatMap { merged =>
+          recordTrack(eventName, merged, details) *>
+            ZIO
+              .attemptBlocking {
+                val ofContext = toJavaContext(merged)
+                ofDetails match {
+                  case Some(d) => client.track(eventName, ofContext, d)
+                  case None    => client.track(eventName, ofContext)
+                }
+              }
+              .mapError(e => FeatureFlagError.classify(e))
+        }
+      }
 
   // The recorder is bounded: when full, the oldest entries are dropped so long-running apps that
   // call `track` per request don't accumulate events (and their merged contexts) without limit.
@@ -1348,40 +1378,4 @@ final private[openfeature] class FeatureFlagsLive(
   override def trackedEvents: UIO[List[(String, EvaluationContext, Option[TrackingEventDetails])]] =
     state.trackRecorder.get.map(_.toList)
 
-  private def toOpenFeatureDetails(details: TrackingEventDetails): MutableTrackingEventDetails = {
-    val result = details.value match {
-      case Some(v) => new MutableTrackingEventDetails(v)
-      case None    => new MutableTrackingEventDetails()
-    }
-    details.attributes.foreach { case (k, v) =>
-      addAttributeToDetails(result, k, v)
-    }
-    result
-  }
-
-  private def addAttributeToDetails(details: MutableTrackingEventDetails, key: String, value: Any): Unit =
-    value match {
-      case b: Boolean => details.add(key, b)
-      case s: String  => details.add(key, s)
-      case i: Int     => details.add(key, Integer.valueOf(i))
-      // int-range long → Integer (no precision loss, and matches integer targeting); anything larger goes through
-      // `Value`'s native Long support (SDK 1.22.0) rather than the old Double fallback, which was silently lossy
-      // beyond 2^53.
-      case l: Long =>
-        if (l.isValidInt) details.add(key, Integer.valueOf(l.toInt))
-        else details.add(key, new dev.openfeature.sdk.Value(java.lang.Long.valueOf(l)))
-      case d: Double                  => details.add(key, d)
-      case f: Float                   => details.add(key, java.lang.Double.valueOf(f.toDouble))
-      case instant: java.time.Instant => details.add(key, instant)
-      case list: List[_] =>
-        val values = list.map(v => new dev.openfeature.sdk.Value(anyToObject(v))).asJava
-        details.add(key, values)
-      case map: Map[_, _] =>
-        val structure = dev.openfeature.sdk.Structure.mapToStructure(
-          map.asInstanceOf[Map[String, Any]].map { case (k, v) => k -> anyToObject(v) }.asJava
-        )
-        details.add(key, structure)
-      case null  => () // Skip null values
-      case other => details.add(key, other.toString)
-    }
 }

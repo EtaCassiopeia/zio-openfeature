@@ -4,7 +4,6 @@ import dev.openfeature.sdk.{
   EvaluationContext => OFEvaluationContext,
   ProviderEvent => JavaProviderEvent,
   EventProvider,
-  EventProviderBridge,
   FeatureProvider,
   Metadata,
   ProviderEvaluation,
@@ -75,7 +74,9 @@ final case class CircuitBreakerProviderConfig(
   * State transitions happen via three mechanisms:
   *   - '''Failure-count''': after `failureThreshold` consecutive evaluation failures, the circuit opens.
   *   - '''State-driven''': before an evaluation (rate-limited by `stateCheckInterval`), the delegate's `getState()` is
-  *     checked. If `ERROR` or `FATAL`, the circuit opens immediately without waiting for failures.
+  *     checked. If `ERROR` or `FATAL`, the circuit opens immediately without waiting for failures; a later polled
+  *     `READY` closes only a circuit a poll opened, since a delegate that reports health by event usually polls as the
+  *     SDK's `READY` default.
   *   - '''Event-driven''': events emitted by the delegate feed the breaker directly — `PROVIDER_ERROR` trips it,
   *     `PROVIDER_READY` resets an externally-opened circuit, `PROVIDER_STALE` applies `stalePolicy`. Delegate events
   *     are also re-emitted through this wrapper so downstream subscribers still see them. The wrapper takes ownership
@@ -96,7 +97,9 @@ final case class CircuitBreakerProviderConfig(
   * '''Error classification''': Only infrastructure errors (timeouts, connection failures, `GeneralError`,
   * `ProviderNotReadyError`, `FatalError`) count toward the failure threshold. Application-level errors
   * (`FlagNotFoundError`, `TypeMismatchError`, `ParseError`, `TargetingKeyMissingError`, `InvalidContextError`) indicate
-  * the provider is reachable — they reset the failure counter and pass through without tripping the circuit.
+  * the provider is reachable — they reset the failure counter and pass through without tripping the circuit. A delegate
+  * that returns an evaluation carrying an error code, instead of throwing, is classified by that code in the same way,
+  * and the evaluation is returned unchanged.
   */
 final class CircuitBreakerProvider private (
   val underlying: FeatureProvider,
@@ -119,14 +122,7 @@ final class CircuitBreakerProvider private (
     case _: CircuitState.HalfOpen => ProviderState.STALE
   }
 
-  private val delegateAttached = new java.util.concurrent.atomic.AtomicBoolean(false)
-
-  // Event integration is derived from the delegate's type rather than stored as a separate flag, so
-  // "attached to something that cannot emit" is unrepresentable. Empty for a plain `FeatureProvider`.
-  private val eventDelegate: Option[EventProvider] = underlying match {
-    case ev: EventProvider => Some(ev)
-    case _                 => None
-  }
+  private val channel = new DelegateEventChannel(underlying, onDelegateEvent)
 
   // Forward delegate emissions upward (the delegate is never registered with an API, so without this its
   // events go nowhere) and feed them into the breaker so an unhealthy delegate is detected as soon as it
@@ -149,12 +145,12 @@ final class CircuitBreakerProvider private (
 
   private def doInitialize(runDelegateInit: => Unit): Unit =
     try {
-      eventDelegate.foreach { ev =>
-        if (delegateAttached.compareAndSet(false, true)) EventProviderBridge.attach(ev, onDelegateEvent)
-      }
+      channel.attach()
       runDelegateInit
       checkDelegateState()
     } catch {
+      // An External trip: a failed initialize is not undone by the next getState() poll, which for most providers is
+      // the SDK's READY default (#447). It recovers through the reset-timeout probe or an event READY.
       case e: Exception =>
         breaker.trip()
         throw e
@@ -168,11 +164,12 @@ final class CircuitBreakerProvider private (
 
   override def isDomainScoped(): Boolean = underlying.isDomainScoped()
 
+  // `super.shutdown()` (EventProvider's) last: it is what stops this wrapper's own event emitter (#450). It waits up to
+  // a few seconds for in-flight emissions to drain.
   override def shutdown(): Unit = {
-    eventDelegate.foreach { ev =>
-      if (delegateAttached.compareAndSet(true, false)) scala.util.Try(EventProviderBridge.detach(ev))
-    }
-    underlying.shutdown()
+    channel.detach()
+    try underlying.shutdown()
+    finally super.shutdown()
   }
 
   // Forward the delegate's provider hooks and tracking so wrapping a provider in a circuit breaker doesn't silently
@@ -227,22 +224,23 @@ final class CircuitBreakerProvider private (
 
   // --- Provider-specific logic ---
 
-  // Note: checkDelegateState and tryAcquire are separate calls, so there is a
+  // Note: checkDelegateState and acquire are separate calls, so there is a
   // small race window between them under concurrent access. This is an accepted
   // tradeoff — the consequence is at most one extra call leaking through, which
   // is acceptable for a best-effort circuit breaker.
   private def protect[A](evaluate: () => ProviderEvaluation[A]): ProviderEvaluation[A] = {
     checkDelegateState()
 
-    breaker.tryAcquire match {
-      case GateResult.Allowed => executeWithTimeout(evaluate)
-      case GateResult.Rejected =>
+    breaker.acquire() match {
+      case Some(permit) => executeWithTimeout(permit, evaluate)
+      case None =>
         val detail = breaker.currentState match {
           case CircuitState.Open(sinceNanos, reason) =>
             val ago = (breaker.ticker.nanos() - sinceNanos) / 1000000
             val cause = reason match {
               case OpenReason.Failures => "consecutive failures"
               case OpenReason.External => "delegate reported unhealthy state"
+              case OpenReason.Polled   => "delegate state poll reported unhealthy"
             }
             s"open for ${ago}ms due to $cause, resets after ${config.resetTimeout.toMillis}ms"
           case CircuitState.HalfOpen(_, _, _) => "half-open, probe in progress"
@@ -252,7 +250,12 @@ final class CircuitBreakerProvider private (
     }
   }
 
-  private def executeWithTimeout[A](evaluate: () => ProviderEvaluation[A]): ProviderEvaluation[A] =
+  // Every outcome is recorded against the permit the call was admitted under, so a slow call admitted in an earlier
+  // circuit state cannot close, re-open or free the probe slot of the current one (#447).
+  private def executeWithTimeout[A](
+    permit: CircuitBreaker.Permit,
+    evaluate: () => ProviderEvaluation[A]
+  ): ProviderEvaluation[A] =
     try {
       val guarded = config.evaluationTimeout match {
         case Duration.Finite(_) =>
@@ -269,23 +272,30 @@ final class CircuitBreakerProvider private (
       val result = Unsafe.unsafe { implicit u =>
         runtime.unsafe.run(guarded).getOrThrowFiberFailure()
       }
-      if (breaker.recordSuccess()) safeEmitReady()
+      // A provider may report failure by returning an error code instead of throwing (the contrib OFREP resolver does
+      // for network errors), so a returned evaluation is classified exactly like a thrown error (#446). It is passed
+      // back unchanged either way.
+      classify(result.getErrorCode) match {
+        case Outcome.Success   => if (breaker.recordSuccess(permit)) safeEmitReady()
+        case Outcome.Reachable => breaker.recordReachable(permit)
+        case Outcome.Failure   => if (breaker.recordFailure(permit)) safeEmitStale("Circuit breaker opened")
+      }
       result
     } catch {
       case e: Throwable if isApplicationError(e) =>
         // Application-level errors (flag not found, type mismatch, etc.) prove the provider is reachable
         // but are not real successes. `recordReachable` resets the failure counter in Closed state and
         // frees the probe slot in Half-Open, without advancing toward closing the circuit on app errors alone.
-        breaker.recordReachable()
+        breaker.recordReachable(permit)
         throw FiberFailures.unwrap(e)
       // Record the failure before re-throwing: a probe dying with e.g. OOM after winning the half-open CAS must
       // re-open the circuit, not leave it wedged "half-open, probe in progress".
-      case e: VirtualMachineError => breaker.recordFailure(); throw e
+      case e: VirtualMachineError => breaker.recordFailure(permit); throw e
       case e: LinkageError =>
-        breaker.recordFailure()
+        breaker.recordFailure(permit)
         throw e
       case e: Throwable =>
-        val didOpen = breaker.recordFailure()
+        val didOpen = breaker.recordFailure(permit)
         if (didOpen) safeEmitStale("Circuit breaker opened")
         val unwrapped = FiberFailures.unwrap(e)
         val error     = new GeneralError(s"Circuit breaker: delegate failed: ${unwrapped.getMessage}")
@@ -303,11 +313,24 @@ final class CircuitBreakerProvider private (
     dev.openfeature.sdk.ErrorCode.INVALID_CONTEXT
   )
 
+  sealed private trait Outcome
+  private object Outcome {
+    case object Success   extends Outcome
+    case object Reachable extends Outcome
+    case object Failure   extends Outcome
+  }
+
+  // One table for returned and thrown errors. Fails closed: any code that is not a known application error counts as
+  // an infrastructure failure.
+  private def classify(code: dev.openfeature.sdk.ErrorCode): Outcome =
+    if (code == null) Outcome.Success
+    else if (applicationErrorCodes.contains(code)) Outcome.Reachable
+    else Outcome.Failure
+
   private def isApplicationError(e: Throwable): Boolean =
     FiberFailures.unwrap(e) match {
-      case ofe: dev.openfeature.sdk.exceptions.OpenFeatureError =>
-        applicationErrorCodes.contains(ofe.getErrorCode)
-      case _ => false
+      case ofe: dev.openfeature.sdk.exceptions.OpenFeatureError => classify(ofe.getErrorCode) == Outcome.Reachable
+      case _                                                    => false
     }
 
   // --- Delegate state integration ---
@@ -340,17 +363,20 @@ final class CircuitBreakerProvider private (
     }
   }
 
+  // A poll trips with OpenReason.Polled, and a polled READY clears only such a trip: since SDK 1.22 `getState()`
+  // defaults to READY, so a delegate that reports health only by event would otherwise have its event-driven trip
+  // undone by the next poll (#447).
   private def doCheckDelegateState(): Unit =
     scala.util.Try(delegateState()).toOption match {
-      case None => breaker.trip()
+      case None => breaker.trip(OpenReason.Polled)
       case Some(state) =>
-        if (state == ProviderState.ERROR || state == ProviderState.FATAL) breaker.trip()
+        if (state == ProviderState.ERROR || state == ProviderState.FATAL) breaker.trip(OpenReason.Polled)
         else if (state == ProviderState.STALE) config.stalePolicy match {
-          case StalePolicy.Open     => breaker.trip()
+          case StalePolicy.Open     => breaker.trip(OpenReason.Polled)
           case StalePolicy.HalfOpen => breaker.transitionToHalfOpen()
           case StalePolicy.Ignore   => ()
         }
-        else if (state == ProviderState.READY) breaker.reset()
+        else if (state == ProviderState.READY) breaker.resetIfOpenedBy(OpenReason.Polled)
     }
 
   // --- Event emission ---

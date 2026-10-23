@@ -130,11 +130,11 @@ object TypedOverrideSpec extends ZIOSpecDefault {
           result   <- ZIO.succeed(provider.getStringEvaluation("user.tier", "unset", new ImmutableContext()))
         } yield assertTrue(result.getValue == "paid")
       },
-      test("scopedLayer(overrides*) works without an outer Scope") {
+      test("layer(overrides*) works without an outer Scope") {
         ZIO
           .serviceWithZIO[FeatureFlags](_.value(TierFlag))
           .map(t => assertTrue(t == Tier.Paid))
-          .provide(TestFeatureProvider.scopedLayer(TierFlag := Tier.Paid))
+          .provide(TestFeatureProvider.layer(TierFlag := Tier.Paid))
       },
       test("the untyped factories still work unchanged") {
         // The typed surface is additive: the key-based API remains the way to test an undeclared or foreign key.
@@ -144,7 +144,7 @@ object TypedOverrideSpec extends ZIOSpecDefault {
           }
         }
       },
-      test("providerLayer and scopedAsyncLayer also have typed twins") {
+      test("providerLayer and asyncLayer also have typed twins") {
         // The whole point of covering every factory: switching factory must not send you back to Map[String, Any].
         ZIO
           .serviceWithZIO[TestFeatureProvider](_.wasEvaluated(TierFlag))

@@ -31,6 +31,20 @@ private[optimizely] object ContextTransformer {
   def attributes(ctx: OFEvaluationContext): java.util.Map[String, Object] =
     normalize(Option(ctx).map(_.asObjectMap()).getOrElse(java.util.Collections.emptyMap[String, AnyRef]()))
 
+  /** Event tags for an Optimizely conversion (#454): the tracking details' fields, normalized like attributes, plus
+    * `value` from `details.getValue` (written last, so it wins over a `value` field). `revenue` passes through as is —
+    * Optimizely reads it as integer cents, which a generic number cannot promise, so it is never derived from `value`.
+    * Null details give no tags.
+    */
+  def eventTags(details: dev.openfeature.sdk.TrackingEventDetails): java.util.Map[String, Object] =
+    Option(details) match {
+      case None => new java.util.HashMap[String, Object]()
+      case Some(d) =>
+        val tags = normalize(d.asObjectMap())
+        if (d.getValue.isPresent) tags.put("value", java.lang.Double.valueOf(d.getValue.get.doubleValue))
+        tags
+    }
+
   /** Normalize OpenFeature `Value`-wrapped attributes into the Java types Optimizely's audience evaluator can actually
     * match: `String`, `Boolean`, and `Number` (`Integer`/`Double`). Anything else evaluates every audience condition to
     * UNKNOWN (silently dead targeting, one WARN log per evaluation), so:

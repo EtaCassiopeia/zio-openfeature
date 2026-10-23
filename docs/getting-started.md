@@ -18,7 +18,8 @@ libraryDependencies += "io.github.etacassiopeia" %% "zio-openfeature-optimizely"
 libraryDependencies += "io.github.etacassiopeia" %% "zio-openfeature-testkit" % "<version>" % Test
 ```
 
-The library is published for Scala 3.3+ and Scala 2.13, needs ZIO 2.1 and Java 11 or later. The examples on this site
+The library is published for Scala 3.3 (3.3.8 or later) and Scala 2.13 (2.13.18 or later), needs ZIO 2.1.27 or
+later and Java 11 or later. The examples on this site
 use Scala 3 syntax.
 
 ??? note "Trying unreleased changes"

@@ -31,7 +31,9 @@ You need an SDK key: in [app.optimizely.com](https://app.optimizely.com), open y
 
 1. `OptimizelyProvider.make(sdkKey)` checks the key, builds the Optimizely client, and the client starts fetching the
    datafile from `https://cdn.optimizely.com/datafiles/<sdkKey>.json`.
-2. When the provider is initialized, it waits up to `initWait` (30 s) for the datafile. Once it has one, the provider
+2. When the provider is initialized, it waits up to `initWait` (25 s) for the datafile. That is shorter than
+   `initTimeout`, so a datafile that never loads is reported with the provider's own error rather than a generic
+   timeout. Once it has one, the provider
    is `READY`.
 3. `FeatureFlags.fromProviderAsync` does not wait for that. Until the provider is ready, evaluations fail with
    `ProviderNotReady`. If it is not ready within `initTimeout` (30 s by default), the status becomes `Fatal` and the
@@ -96,6 +98,16 @@ Context attributes go to Optimizely as audience attributes. Strings, booleans an
 `Instant` becomes its ISO-8601 string. Lists and structures are left out, because no audience condition can match
 them.
 
+## Tracking
+
+`FeatureFlags.track` sends a conversion to Optimizely for the context's targeting key, with the context's attributes.
+The tracking details' attributes become event tags (normalized like audience attributes), and the details' `value`
+becomes the `value` tag. Optimizely's `revenue` metric expects integer cents: pass it as an integer attribute named
+`revenue`; it is never derived from `value`.
+
+`track` fails with a `FeatureFlagError` when the provider is not ready, when the context has no targeting key, or when
+the datafile defines no event with that key (Optimizely itself would drop it with only an INFO log).
+
 ## Configuration
 
 ```scala
@@ -106,7 +118,7 @@ them.
 |---|---|---|
 | `sdkKey` | required | your environment's SDK key |
 | `datafileUrl` | the Optimizely CDN | where to fetch the datafile, such as a self-hosted Agent |
-| `initWait` | 30 s | how long initialization waits for the first datafile |
+| `initWait` | 25 s | how long initialization waits for the first datafile; keep it below `initTimeout` |
 | `pollingInterval` | the SDK's, 5 min | how often the datafile is fetched again; setting it also turns on the staleness watchdog |
 | `blockingTimeout` | the SDK's, 10 s | longest the SDK blocks waiting for a config |
 | `staleAfter` | 3 × `pollingInterval` | with the watchdog on, how long without a successful fetch before the provider is `STALE` |

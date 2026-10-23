@@ -53,6 +53,15 @@ final class HookData {
     data.updateAndGet(_ - key.name)
     ()
   }
+
+  /** The value stored under `key`, storing `create` first if absent. Atomic: concurrent callers get the same value. */
+  private[openfeature] def getOrElseUpdate[A](key: TypedKey[A], create: => A): A = {
+    lazy val fresh = create
+    data
+      .updateAndGet(m => if (m.contains(key.name)) m else m + (key.name -> fresh))
+      .apply(key.name)
+      .asInstanceOf[A]
+  }
 }
 
 object HookData {
@@ -66,6 +75,9 @@ object HookData {
   *   do not assume `defaultValue` has the class `flagType` names; casting it on that assumption throws.
   * @param defaultValue
   *   the caller's default, as the domain type
+  * @param hookData
+  *   this hook's private store for one evaluation. Pass the same instance to every stage of that evaluation; a
+  *   composite (`FeatureHook.compose`) keeps its inner hooks' data inside it.
   */
 final case class HookContext(
   flagKey: String,
@@ -155,41 +167,56 @@ object FeatureHook {
 
   val noop: FeatureHook = new FeatureHook {}
 
+  private val composeIds = new java.util.concurrent.atomic.AtomicLong(0L)
+
+  /** Run `hooks` as one hook: `before` in order, the other stages in reverse.
+    *
+    * Each inner hook gets its own [[HookData]] per evaluation (spec 4.3.2), even when the composite is registered once
+    * and shared, and even when the same hook instance appears twice. The per-hook data lives inside the `hookData` of
+    * the context the composite receives, so callers that invoke a composite's stages directly must pass the same
+    * `ctx.hookData` to every stage of one evaluation, as the evaluation pipeline does.
+    */
   def compose(hooks: List[FeatureHook]): FeatureHook = new FeatureHook {
-    // Each hook gets its own HookData instance (spec 4.6.1 - scoped to individual hook)
-    private lazy val hookDataMap: Map[FeatureHook, HookData] =
-      hooks.map(h => h -> HookData.empty).toMap
+    private val indexed = hooks.zipWithIndex
 
-    private def ctxForHook(ctx: HookContext, hook: FeatureHook): HookContext =
-      ctx.copy(hookData = hookDataMap.getOrElse(hook, HookData.empty))
+    // One HookData per position (not per hook instance, so duplicates stay apart), created on first use in this
+    // evaluation and stored in the HookData this composite was given for it.
+    // The key is unique to this composite, so two composites handed the same HookData never read each other's slots.
+    private val slotsKey = TypedKey[Vector[HookData]](s"zio.openfeature.compose.slots.${composeIds.incrementAndGet()}")
 
-    // Filter hooks to those that support the given flag type (spec 4.4.2.1)
-    private def applicableHooks(flagType: FlagValueType): List[FeatureHook] =
-      hooks.filter(_.supportedFlagTypes.contains(flagType))
+    private def slots(ctx: HookContext): Vector[HookData] =
+      ctx.hookData.getOrElseUpdate(slotsKey, Vector.fill(hooks.size)(HookData.empty))
+
+    // Filter hooks to those that support the given flag type (spec 4.4.2.1), keeping each one's position
+    private def applicable(ctx: HookContext): List[(FeatureHook, HookData)] = {
+      val data = slots(ctx)
+      indexed.collect { case (hook, i) if hook.supportedFlagTypes.contains(ctx.flagType) => (hook, data(i)) }
+    }
 
     override def before(ctx: HookContext, hints: HookHints): UIO[Option[EvaluationContext]] =
       ZIO
-        .foldLeft(applicableHooks(ctx.flagType))((ctx.evaluationContext, false)) {
-          case ((currentCtx, modified), hook) =>
-            hook.before(ctxForHook(ctx.copy(evaluationContext = currentCtx), hook), hints).map {
-              case Some(newCtx) => (currentCtx.merge(newCtx), true)
-              case None         => (currentCtx, modified)
-            }
+        .foldLeft(applicable(ctx))((ctx.evaluationContext, false)) { case ((currentCtx, modified), (hook, data)) =>
+          hook.before(ctx.copy(evaluationContext = currentCtx, hookData = data), hints).map {
+            case Some(newCtx) => (currentCtx.merge(newCtx), true)
+            case None         => (currentCtx, modified)
+          }
         }
         .map { case (finalCtx, wasModified) => if (wasModified) Some(finalCtx) else None }
 
     override def after[A](ctx: HookContext, details: FlagResolution[A], hints: HookHints): UIO[Unit] =
-      ZIO.foreachDiscard(applicableHooks(ctx.flagType).reverse)(hook =>
-        hook.after(ctxForHook(ctx, hook), details, hints)
-      )
+      ZIO.foreachDiscard(applicable(ctx).reverse) { case (hook, data) =>
+        hook.after(ctx.copy(hookData = data), details, hints)
+      }
 
     override def error(ctx: HookContext, err: FeatureFlagError, hints: HookHints): UIO[Unit] =
-      ZIO.foreachDiscard(applicableHooks(ctx.flagType).reverse)(hook => hook.error(ctxForHook(ctx, hook), err, hints))
+      ZIO.foreachDiscard(applicable(ctx).reverse) { case (hook, data) =>
+        hook.error(ctx.copy(hookData = data), err, hints)
+      }
 
     override def finallyAfter(ctx: HookContext, details: Option[FlagResolution[_]], hints: HookHints): UIO[Unit] =
-      ZIO.foreachDiscard(applicableHooks(ctx.flagType).reverse)(hook =>
-        hook.finallyAfter(ctxForHook(ctx, hook), details, hints)
-      )
+      ZIO.foreachDiscard(applicable(ctx).reverse) { case (hook, data) =>
+        hook.finallyAfter(ctx.copy(hookData = data), details, hints)
+      }
   }
 
   def logging(

@@ -97,12 +97,8 @@ explicitly, use a [context source](context.md#context-sources) instead.
 ## Passing data between stages
 
 `HookData` is a small store private to one hook during one evaluation. Write in `before`, read in a later stage. Use a
-`TypedKey` to keep the value's type.
-
-!!! warning "Hooks combined with `FeatureHook.compose`"
-    The hooks inside one `compose` currently share a single `HookData` across evaluations, so do not rely on it
-    there. Register them separately until
-    [#438](https://github.com/EtaCassiopeia/zio-openfeature/issues/438) is fixed.
+`TypedKey` to keep the value's type. This holds inside `FeatureHook.compose` too: each hook in a composite gets its own
+`HookData` per evaluation, even when the composite is registered once and shared, or lists the same hook twice.
 
 ```scala
 --8<-- "Hooks.scala:hook-data"

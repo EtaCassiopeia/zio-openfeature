@@ -35,6 +35,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Hooks inside `FeatureHook.compose` no longer share `HookData` across evaluations** (#438, spec 4.3.2). A
+  composite kept one `HookData` per inner hook for its whole lifetime, so a composite registered once (for example
+  `addHook(compose(List(logging, metrics)))`) let concurrent evaluations overwrite each other's data, which made the
+  timing hooks report wrong durations. The same hook instance listed twice, in a composite or via two `addHook` calls,
+  also shared one `HookData`. Each inner hook now gets its own `HookData` per evaluation, keyed by its position.
 - **`zio-openfeature-optimizely` now depends on `jackson-databind` at compile scope** (#431). The Optimizely SDK
   needs a JSON parser and declares none, and this module shipped Jackson only to its own tests, so a consumer that
   added just this module had no parser. The SDK's first datafile fetch then died on its poller thread with an

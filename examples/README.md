@@ -31,7 +31,7 @@ OFREP_BASE_URL=https://flags.example.com sbt 'examplesOfrepInitTimeout/run'
 
 A `UserService` gated by a flag, and the spec that tests it against `TestFeatureProvider`:
 
-- `TestFeatureProvider.scopedLayer` wires the test `FeatureFlags`;
+- `TestFeatureProvider.layer` wires the test `FeatureFlags`;
 - `provider.setFlag("…", value)` drives evaluations;
 - `provider.setStatus(ProviderStatus.Error)` exercises the failure path.
 

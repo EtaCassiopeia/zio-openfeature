@@ -12,7 +12,7 @@ object GettingStartedSpec extends ZIOSpecDefault:
     test("the first flag reads true from the in-memory provider") {
       FirstFlag.program
         .map(m => assertTrue(m == "new checkout"))
-        .provide(TestFeatureProvider.scopedLayer(Map("new-checkout" -> true)))
+        .provide(TestFeatureProvider.layer(Map("new-checkout" -> true)))
     },
     test("a real provider is wired the same way") {
       for
@@ -25,8 +25,8 @@ object GettingStartedSpec extends ZIOSpecDefault:
         s <- strict.either
         l <- lenient
       yield assertTrue(s.isLeft, !l)
-    }.provide(TestFeatureProvider.scopedLayer(Map.empty[String, Any])),
+    }.provide(TestFeatureProvider.layer(Map.empty[String, Any])),
     test("FlagDef") {
-      enabled.map(e => assertTrue(e)).provide(TestFeatureProvider.scopedLayer(Map("new-checkout" -> true)))
+      enabled.map(e => assertTrue(e)).provide(TestFeatureProvider.layer(Map("new-checkout" -> true)))
     }
   )

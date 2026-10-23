@@ -88,5 +88,5 @@ object ConcurrentEvaluationSpec extends ZIOSpecDefault {
         finalStatus == ProviderStatus.Ready
       )
     } @@ withLiveClock @@ timeout(20.seconds)
-  ).provide(TestFeatureProvider.scopedLayer)
+  ).provide(TestFeatureProvider.layer)
 }

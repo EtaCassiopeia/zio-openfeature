@@ -15,21 +15,21 @@ object Providers:
   // Any OpenFeature Java provider, e.g. `new FlagdProvider()` from
   // "dev.openfeature.contrib.providers" % "flagd"
   def run(provider: FeatureProvider): ZIO[Any, Throwable | FeatureFlagError, Boolean] =
-    program.provide(Scope.default, FeatureFlags.fromProvider(provider))
+    program.provide(FeatureFlags.fromProvider(provider))
   // --8<-- [end:any-provider]
 
   // --8<-- [start:shorthands]
   // Waits for the provider to be ready; a provider that cannot start fails the layer
-  def blocking(provider: FeatureProvider): ZLayer[Scope, Throwable, FeatureFlags] =
+  def blocking(provider: FeatureProvider): ZLayer[Any, Throwable, FeatureFlags] =
     FeatureFlags.fromProvider(provider)
 
   // Returns at once; evaluations fail with ProviderNotReady until the provider is ready
-  def nonBlocking(provider: FeatureProvider): ZLayer[Scope, Throwable, FeatureFlags] =
+  def nonBlocking(provider: FeatureProvider): ZLayer[Any, Throwable, FeatureFlags] =
     FeatureFlags.fromProviderAsync(provider)
   // --8<-- [end:shorthands]
 
   // --8<-- [start:config]
-  def configured(provider: FeatureProvider): ZLayer[Scope, Throwable, FeatureFlags] =
+  def configured(provider: FeatureProvider): ZLayer[Any, Throwable, FeatureFlags] =
     FeatureFlags.fromProvider(
       provider,
       FeatureFlagsConfig()
@@ -45,7 +45,7 @@ object Providers:
 
   // --8<-- [start:multi-provider]
   // Ask `overrides` first; a flag it does not hold falls through to `remote`
-  def layered(overrides: FeatureProvider, remote: FeatureProvider): ZLayer[Scope, Throwable, FeatureFlags] =
+  def layered(overrides: FeatureProvider, remote: FeatureProvider): ZLayer[Any, Throwable, FeatureFlags] =
     FeatureFlags.fromProvider(
       FeatureFlags.multiProvider(List(overrides, remote)), // MultiProviderStrategy.firstMatch by default
       FeatureFlagsConfig()
@@ -61,7 +61,7 @@ object Providers:
   // --8<-- [start:acquire]
   def fallbackFirst(
     buildRealProvider: () => FeatureProvider // e.g. a constructor that downloads a datafile
-  ): URLayer[Scope, FeatureFlags & AcquireStatus] =
+  ): URLayer[Any, FeatureFlags & AcquireStatus] =
     FeatureFlags.fromAcquireAsync(
       acquire = ZIO.attemptBlocking(buildRealProvider()),
       fallback = ZIO.succeed(EnvVarProvider()), // a fresh instance each time it runs
@@ -93,7 +93,7 @@ object Providers:
     billingProvider: FeatureProvider
   ): ZIO[Any, Throwable | FeatureFlagError, Boolean] =
     (FeatureFlagRegistry.setProvider("billing", billingProvider) *> billingFlag)
-      .provide(Scope.default, FeatureFlagRegistry.fromProvider(defaultProvider))
+      .provide(FeatureFlagRegistry.fromProvider(defaultProvider))
   // --8<-- [end:registry]
 
   // --8<-- [start:hot-swap]

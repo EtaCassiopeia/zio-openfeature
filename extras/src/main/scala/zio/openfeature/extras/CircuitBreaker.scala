@@ -36,11 +36,16 @@ final case class CircuitBreakerConfig(
   probeTimeout: Duration = 1.second
 )
 
-/** Why the circuit was opened — determines whether external recovery applies. */
+/** Why the circuit was opened — determines which recovery applies. */
 sealed private[extras] trait OpenReason extends Product with Serializable
 private[extras] object OpenReason {
   case object Failures extends OpenReason
+
+  /** The delegate said it is unhealthy by event. Cleared by an event READY, or the reset-timeout probe. */
   case object External extends OpenReason
+
+  /** A poll of the delegate's `getState()` said it is unhealthy. Also cleared by a later polled READY (#447). */
+  case object Polled extends OpenReason
 }
 
 sealed private[extras] trait CircuitState extends Product with Serializable
@@ -51,9 +56,14 @@ private[extras] object CircuitState {
   final case class HalfOpen(successes: Int, probing: Boolean, probeStartNanos: Long) extends CircuitState
 }
 
+/** @param epoch
+  *   bumped on every circuit transition (not on Closed failure-count changes), so an outcome recorded against a
+  *   [[CircuitBreaker.Permit]] from an earlier state can be recognised as stale and ignored (#447).
+  */
 final private[extras] case class CircuitBreakerState(
   circuit: CircuitState,
-  consecutiveFailures: Int
+  consecutiveFailures: Int,
+  epoch: Long = 0L
 )
 
 /** Result of a circuit breaker gate check. */
@@ -77,7 +87,11 @@ private[extras] object GateResult {
   *   - '''Half-Open → Closed''': after `halfOpenMaxCalls` successful probes
   *   - '''Half-Open → Open''': on any probe failure
   *   - '''Any → Open''': via `trip()` (external signal)
-  *   - '''Open(External) → Closed''': via `reset()` (external recovery)
+  *   - '''Open(External or Polled) → Closed''': via `reset()` (external recovery)
+  *
+  * Every transition starts a new epoch. Outcomes recorded with the [[CircuitBreaker.Permit]] a call was admitted under
+  * only count while the circuit is still in that epoch, so a slow call admitted earlier cannot close, re-open or free
+  * the probe slot of a later state.
   */
 final class CircuitBreaker private[extras] (
   val config: CircuitBreakerConfig,
@@ -92,48 +106,46 @@ final class CircuitBreaker private[extras] (
     * Returns `Allowed` if the circuit is closed, or if the circuit is half-open/open-past-timeout and this thread won
     * the CAS to become the probe. Returns `Rejected` if the circuit is open or a probe is already in progress.
     */
-  def tryAcquire: GateResult = {
+  def tryAcquire: GateResult = if (acquire().isDefined) GateResult.Allowed else GateResult.Rejected
+
+  /** Like [[tryAcquire]], but returns the permit the call was admitted under. Record the call's outcome with that
+    * permit, so it only counts if the circuit is still in the state that admitted it.
+    */
+  private[extras] def acquire(): Option[CircuitBreaker.Permit] = {
     val state = stateRef.get()
     state.circuit match {
-      case Closed => GateResult.Allowed
+      case Closed => Some(CircuitBreaker.Permit(state.epoch))
 
       case open: Open =>
-        val elapsed = ticker.nanos() - open.sinceNanos
-        if (elapsed >= config.resetTimeout.toNanos) {
-          val halfOpen =
-            CircuitBreakerState(
-              HalfOpen(successes = 0, probing = true, probeStartNanos = ticker.nanos()),
-              state.consecutiveFailures
-            )
-          if (stateRef.compareAndSet(state, halfOpen)) GateResult.Allowed
-          else GateResult.Rejected
-        } else {
-          GateResult.Rejected
-        }
+        if (ticker.nanos() - open.sinceNanos >= config.resetTimeout.toNanos) startProbe(state, successes = 0)
+        else None
 
       case ho: HalfOpen =>
-        if (!ho.probing) {
-          val probing =
-            CircuitBreakerState(
-              HalfOpen(ho.successes, probing = true, probeStartNanos = ticker.nanos()),
-              state.consecutiveFailures
-            )
-          if (stateRef.compareAndSet(state, probing)) GateResult.Allowed
-          else GateResult.Rejected
-        } else if (ticker.nanos() - ho.probeStartNanos >= config.probeTimeout.toNanos) {
-          // Steal a wedged probe slot: a probe that won the CAS but died without recording an outcome would
-          // otherwise pin the circuit half-open forever. After probeTimeout, let a fresh caller take the slot.
-          val stolen =
-            CircuitBreakerState(
-              HalfOpen(ho.successes, probing = true, probeStartNanos = ticker.nanos()),
-              state.consecutiveFailures
-            )
-          if (stateRef.compareAndSet(state, stolen)) GateResult.Allowed
-          else GateResult.Rejected
-        } else {
-          GateResult.Rejected
-        }
+        if (!ho.probing) startProbe(state, ho.successes)
+        // Steal a wedged probe slot: a probe that won the CAS but died without recording an outcome would otherwise
+        // pin the circuit half-open forever. After probeTimeout, let a fresh caller take the slot; the new epoch makes
+        // the abandoned probe's late outcome stale.
+        else if (ticker.nanos() - ho.probeStartNanos >= config.probeTimeout.toNanos) startProbe(state, ho.successes)
+        else None
     }
+  }
+
+  private def startProbe(state: CircuitBreakerState, successes: Int): Option[CircuitBreaker.Permit] = {
+    val next = transition(state, HalfOpen(successes, probing = true, probeStartNanos = ticker.nanos()))
+    if (stateRef.compareAndSet(state, next)) Some(CircuitBreaker.Permit(next.epoch)) else None
+  }
+
+  private def transition(
+    from: CircuitBreakerState,
+    to: CircuitState,
+    failures: Int = -1
+  ): CircuitBreakerState =
+    CircuitBreakerState(to, if (failures < 0) from.consecutiveFailures else failures, from.epoch + 1)
+
+  // `permit = None` is the permit-less public API: the outcome applies to whatever the current state is.
+  private def current(permit: Option[CircuitBreaker.Permit]): Option[CircuitBreakerState] = {
+    val state = stateRef.get()
+    if (permit.forall(_.epoch == state.epoch)) Some(state) else None
   }
 
   /** Record a successful call. Resets consecutive failures in Closed state. In Half-Open state, increments the success
@@ -142,35 +154,37 @@ final class CircuitBreaker private[extras] (
     * @return
     *   true if this call caused the circuit to close (transition from Half-Open to Closed)
     */
-  def recordSuccess(): Boolean = {
+  def recordSuccess(): Boolean = recordSuccess(None)
+
+  /** [[recordSuccess()]] for a call admitted under `permit`; a no-op if the circuit has moved on since. */
+  private[extras] def recordSuccess(permit: CircuitBreaker.Permit): Boolean = recordSuccess(Some(permit))
+
+  private def recordSuccess(permit: Option[CircuitBreaker.Permit]): Boolean = {
     var done     = false
     var didClose = false
-    while (!done) {
-      val current = stateRef.get()
-      current.circuit match {
-        case Closed =>
-          if (current.consecutiveFailures == 0) {
-            done = true
-          } else {
-            val next = CircuitBreakerState(Closed, consecutiveFailures = 0)
-            done = stateRef.compareAndSet(current, next)
-          }
+    while (!done)
+      current(permit) match {
+        case None => done = true
+        case Some(state) =>
+          state.circuit match {
+            case Closed =>
+              done = state.consecutiveFailures == 0 ||
+                stateRef.compareAndSet(state, state.copy(consecutiveFailures = 0))
 
-        case ho: HalfOpen =>
-          val newSuccesses = ho.successes + 1
-          if (newSuccesses >= config.halfOpenMaxCalls) {
-            val next = CircuitBreakerState(Closed, consecutiveFailures = 0)
-            done = stateRef.compareAndSet(current, next)
-            if (done) didClose = true
-          } else {
-            val next = CircuitBreakerState(HalfOpen(newSuccesses, probing = false, probeStartNanos = 0L), 0)
-            done = stateRef.compareAndSet(current, next)
-          }
+            case ho: HalfOpen =>
+              val newSuccesses = ho.successes + 1
+              if (newSuccesses >= config.halfOpenMaxCalls) {
+                done = stateRef.compareAndSet(state, transition(state, Closed, failures = 0))
+                if (done) didClose = true
+              } else
+                done = stateRef.compareAndSet(
+                  state,
+                  transition(state, HalfOpen(newSuccesses, probing = false, probeStartNanos = 0L), failures = 0)
+                )
 
-        case _: Open =>
-          done = true
+            case _: Open => done = true
+          }
       }
-    }
     didClose
   }
 
@@ -178,35 +192,29 @@ final class CircuitBreaker private[extras] (
     * in Closed state, and in Half-Open clears the `probing` flag so the next caller can probe — but does NOT increment
     * the success counter, since reachability is not the same as a successful evaluation.
     */
-  def recordReachable(): Unit = {
+  def recordReachable(): Unit = recordReachable(None)
+
+  /** [[recordReachable()]] for a call admitted under `permit`; a no-op if the circuit has moved on since. */
+  private[extras] def recordReachable(permit: CircuitBreaker.Permit): Unit = recordReachable(Some(permit))
+
+  private def recordReachable(permit: Option[CircuitBreaker.Permit]): Unit = {
     var done = false
-    while (!done) {
-      val current = stateRef.get()
-      current.circuit match {
-        case Closed =>
-          if (current.consecutiveFailures == 0) {
-            done = true
-          } else {
-            val next = CircuitBreakerState(Closed, consecutiveFailures = 0)
-            done = stateRef.compareAndSet(current, next)
-          }
+    while (!done)
+      current(permit) match {
+        case None => done = true
+        case Some(state) =>
+          state.circuit match {
+            case Closed =>
+              done = state.consecutiveFailures == 0 ||
+                stateRef.compareAndSet(state, state.copy(consecutiveFailures = 0))
 
-        case ho: HalfOpen =>
-          if (!ho.probing) {
-            done = true
-          } else {
-            val next =
-              CircuitBreakerState(
-                HalfOpen(ho.successes, probing = false, probeStartNanos = 0L),
-                current.consecutiveFailures
-              )
-            done = stateRef.compareAndSet(current, next)
-          }
+            case ho: HalfOpen =>
+              done = !ho.probing ||
+                stateRef.compareAndSet(state, transition(state, HalfOpen(ho.successes, probing = false, 0L)))
 
-        case _: Open =>
-          done = true
+            case _: Open => done = true
+          }
       }
-    }
   }
 
   /** Record a failed call. Increments consecutive failures and opens the circuit when `failureThreshold` is reached.
@@ -214,63 +222,72 @@ final class CircuitBreaker private[extras] (
     * @return
     *   true if this call caused the circuit to open
     */
-  def recordFailure(): Boolean = {
+  def recordFailure(): Boolean = recordFailure(None)
+
+  /** [[recordFailure()]] for a call admitted under `permit`; a no-op if the circuit has moved on since. */
+  private[extras] def recordFailure(permit: CircuitBreaker.Permit): Boolean = recordFailure(Some(permit))
+
+  private def recordFailure(permit: Option[CircuitBreaker.Permit]): Boolean = {
     var done    = false
     var didOpen = false
-    while (!done) {
-      val current     = stateRef.get()
-      val newFailures = current.consecutiveFailures + 1
-      current.circuit match {
-        case Closed =>
-          if (newFailures >= config.failureThreshold) {
-            val next = CircuitBreakerState(Open(ticker.nanos(), OpenReason.Failures), newFailures)
-            done = stateRef.compareAndSet(current, next)
-            if (done) didOpen = true
-          } else {
-            val next = CircuitBreakerState(Closed, newFailures)
-            done = stateRef.compareAndSet(current, next)
+    while (!done)
+      current(permit) match {
+        case None => done = true
+        case Some(state) =>
+          val newFailures = state.consecutiveFailures + 1
+          state.circuit match {
+            case Closed if newFailures < config.failureThreshold =>
+              done = stateRef.compareAndSet(state, state.copy(consecutiveFailures = newFailures))
+
+            case Closed | _: HalfOpen =>
+              done = stateRef.compareAndSet(
+                state,
+                transition(state, Open(ticker.nanos(), OpenReason.Failures), failures = newFailures)
+              )
+              if (done) didOpen = true
+
+            case _: Open => done = true
           }
-
-        case _: HalfOpen =>
-          val next = CircuitBreakerState(Open(ticker.nanos(), OpenReason.Failures), newFailures)
-          done = stateRef.compareAndSet(current, next)
-          if (done) didOpen = true
-
-        case _: Open =>
-          done = true
       }
-    }
     didOpen
   }
 
   /** Force the circuit open (external signal, e.g., delegate provider reported ERROR). */
-  def trip(): Unit = {
+  def trip(): Unit = trip(OpenReason.External)
+
+  /** Open the circuit for `reason`. An event trip also takes over an open circuit a poll had tripped, so a later polled
+    * READY cannot undo what the delegate said by event.
+    */
+  private[extras] def trip(reason: OpenReason): Unit = {
     var done = false
     while (!done) {
-      val current = stateRef.get()
-      current.circuit match {
+      val state = stateRef.get()
+      state.circuit match {
+        case Open(since, OpenReason.Polled) if reason == OpenReason.External =>
+          done = stateRef.compareAndSet(state, transition(state, Open(since, OpenReason.External)))
         case _: Open => done = true
         case _ =>
-          val next = CircuitBreakerState(Open(ticker.nanos(), OpenReason.External), current.consecutiveFailures)
-          done = stateRef.compareAndSet(current, next)
+          done = stateRef.compareAndSet(state, transition(state, Open(ticker.nanos(), reason)))
       }
     }
   }
 
-  /** Reset the circuit if it was opened externally. Failure-count opens recover through the half-open probe mechanism
-    * instead.
+  /** Reset the circuit if it was opened by the delegate's own signal (event or poll). Failure-count opens recover
+    * through the half-open probe mechanism instead.
     */
-  def reset(): Unit = {
+  def reset(): Unit = resetIf(r => r == OpenReason.External || r == OpenReason.Polled)
+
+  /** Reset only a circuit that `reason` opened (#447: a polled READY must not undo an event-driven trip). */
+  private[extras] def resetIfOpenedBy(reason: OpenReason): Unit = resetIf(_ == reason)
+
+  private def resetIf(opener: OpenReason => Boolean): Unit = {
     var done = false
     while (!done) {
-      val current = stateRef.get()
-      current.circuit match {
-        case Closed if current.consecutiveFailures == 0 => done = true
-        case Open(_, OpenReason.External) =>
-          val next = CircuitBreakerState(Closed, consecutiveFailures = 0)
-          done = stateRef.compareAndSet(current, next)
-        case _ =>
-          done = true
+      val state = stateRef.get()
+      state.circuit match {
+        case Open(_, reason) if opener(reason) =>
+          done = stateRef.compareAndSet(state, transition(state, Closed, failures = 0))
+        case _ => done = true
       }
     }
   }
@@ -281,17 +298,14 @@ final class CircuitBreaker private[extras] (
   def transitionToHalfOpen(): Unit = {
     var done = false
     while (!done) {
-      val current = stateRef.get()
-      current.circuit match {
-        case _: HalfOpen => done = true
-        case Closed      => done = true
+      val state = stateRef.get()
+      state.circuit match {
         case _: Open =>
-          val next =
-            CircuitBreakerState(
-              HalfOpen(successes = 0, probing = false, probeStartNanos = 0L),
-              current.consecutiveFailures
-            )
-          done = stateRef.compareAndSet(current, next)
+          done = stateRef.compareAndSet(
+            state,
+            transition(state, HalfOpen(successes = 0, probing = false, probeStartNanos = 0L))
+          )
+        case _ => done = true
       }
     }
   }
@@ -310,6 +324,9 @@ final class CircuitBreaker private[extras] (
 }
 
 object CircuitBreaker {
+
+  /** Proof that a call was admitted, tied to the circuit state that admitted it (#447). */
+  final private[extras] case class Permit(epoch: Long)
 
   def apply(
     config: CircuitBreakerConfig = CircuitBreakerConfig()

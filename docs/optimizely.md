@@ -96,6 +96,16 @@ Context attributes go to Optimizely as audience attributes. Strings, booleans an
 `Instant` becomes its ISO-8601 string. Lists and structures are left out, because no audience condition can match
 them.
 
+## Tracking
+
+`FeatureFlags.track` sends a conversion to Optimizely for the context's targeting key, with the context's attributes.
+The tracking details' attributes become event tags (normalized like audience attributes), and the details' `value`
+becomes the `value` tag. Optimizely's `revenue` metric expects integer cents: pass it as an integer attribute named
+`revenue`; it is never derived from `value`.
+
+`track` fails with a `FeatureFlagError` when the provider is not ready, when the context has no targeting key, or when
+the datafile defines no event with that key (Optimizely itself would drop it with only an INFO log).
+
 ## Configuration
 
 ```scala

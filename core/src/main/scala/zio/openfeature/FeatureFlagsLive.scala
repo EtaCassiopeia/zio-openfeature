@@ -1058,14 +1058,23 @@ final private[openfeature] class FeatureFlagsLive(
     * returns. Without the handshake, events published between handler registration and the forked stream's first pull
     * would be silently lost. The returned effect cancels the subscription.
     */
+  /** Runs `zio` with this library's FiberRefs reset (#436). A handler outlives the call that registered it, so it must
+    * not carry that call's transaction (whose overrides it would keep applying, and whose finished state it would keep
+    * recording into) or its fiber-local context. Other FiberRefs — log annotations, ones a ContextSource reads — are
+    * still inherited.
+    */
+  private def detached[R, E, A](zio: ZIO[R, E, A]): ZIO[R, E, A] =
+    state.transactionRef.locally(None)(state.fiberContextRef.locally(EvaluationContext.empty)(zio))
+
   private def consumeEvents(consume: ZStream[Any, Nothing, ProviderEvent] => UIO[Unit]): UIO[UIO[Unit]] =
     for {
       subscribed <- Promise.make[Nothing, Unit]
-      fiber <- ZIO.scoped {
+      // Forked inside `detached`, so the fork copies the reset FiberRefs rather than the registering fiber's.
+      fiber <- detached(ZIO.scoped {
         state.eventHub.subscribe.flatMap { queue =>
           subscribed.succeed(()) *> consume(ZStream.fromQueue(queue))
         }
-      }.forkDaemon
+      }.forkDaemon)
       _ <- subscribed.await
     } yield fiber.interrupt.unit
 
@@ -1099,7 +1108,7 @@ final private[openfeature] class FeatureFlagsLive(
     for {
       cancel <- consumeEvents(_.collect(collect).foreach(safe))
       status <- providerStatus
-      _      <- ZIO.when(immediateCondition(status))(safe(immediatePayload))
+      _      <- ZIO.when(immediateCondition(status))(detached(safe(immediatePayload)))
     } yield cancel
   }
 

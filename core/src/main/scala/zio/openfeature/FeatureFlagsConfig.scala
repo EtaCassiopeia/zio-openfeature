@@ -39,9 +39,9 @@ final case class FeatureFlagsConfig(
 
 /** How the provider is initialized.
   *
-  *   - [[InitMode.Sync]] — `setProviderAndWait`. The layer build blocks until the provider reaches `READY`/`STALE` or
-  *     `initTimeout` elapses; misconfiguration (a bad SDK key, an unreachable endpoint) fails the layer build itself,
-  *     so it surfaces at startup rather than at first evaluation.
+  *   - [[InitMode.Sync]] — the layer build blocks until the provider reaches `READY`/`STALE` or `initTimeout` elapses;
+  *     misconfiguration (a bad SDK key, an unreachable endpoint) fails the layer build itself, so it surfaces at
+  *     startup rather than at first evaluation.
   *   - [[InitMode.Async]] — `setProvider`. The layer builds immediately; evaluations fail with `ProviderNotReady` until
   *     the provider becomes `Ready`. The `initTimeout` watchdog still runs in the background and flips status to
   *     `Fatal` if the provider never becomes usable within that window.

@@ -29,7 +29,7 @@ false only for `Fatal`.
 | The provider reports `ERROR` | `NotReady`, `Ready` or `Stale` → `Error` |
 | The provider reports `ERROR` with code `ProviderFatal` | any status except `ShuttingDown` → `Fatal` |
 | Async start: `initTimeout` passes before the provider was ever ready | `NotReady` or `Error` → `Fatal` |
-| [`setProvider`](providers.md#replace-the-provider-at-runtime) | any → `NotReady` while it runs, then `Ready` (`Error` if neither the new nor the old provider can serve) |
+| [`setProvider`](providers.md#replace-the-provider-at-runtime) | any → `NotReady` while it runs, then `Ready` (`Error` if neither the new nor the old provider can serve, or if the new provider is still initializing at `initTimeout`) |
 | `shutdown` | any → `ShuttingDown` → `NotReady` |
 
 `Fatal` stays until `setProvider` installs a new provider. Events that arrive during a swap, or after a shutdown, do

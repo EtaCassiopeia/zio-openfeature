@@ -210,6 +210,8 @@ provider. With async initialization, that is on the SDK's own thread, so your st
 - It reports the name you give it, before and after the real provider exists.
 - Until the real provider is built, evaluations answer `PROVIDER_NOT_READY` with your default.
 - A shutdown during construction shuts the new provider down as soon as it is built.
+- Once the real provider exists, provider hooks and `track` calls go to it.
+- A `DeferredProvider` that was shut down cannot be started again; build a new one.
 - It does not pass on the wrapped provider's events.
 
 Use `FeatureFlags.fromAcquireAsync` instead if a fallback should answer while the real provider starts; see

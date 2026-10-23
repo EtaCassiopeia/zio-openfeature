@@ -46,6 +46,26 @@ object DeferredProviderSpec extends ZIOSpecDefault {
   }
 
   def spec = suite("DeferredProviderSpec")(
+    test("initialize after shutdown fails with FatalError instead of silently reporting ready (#448)") {
+      val dp = DeferredProvider("d")(() => new RecordingProvider(true))
+      dp.initialize(ctx)
+      dp.shutdown()
+      val thrown = scala.util.Try(dp.initialize(ctx)).failed.toOption
+      assertTrue(thrown.exists(_.isInstanceOf[dev.openfeature.sdk.exceptions.FatalError]))
+    },
+    test("a second initialize while active is still a no-op") {
+      val inits = new AtomicInteger(0)
+      val dp    = DeferredProvider("d") { () => inits.incrementAndGet(); new RecordingProvider(true) }
+      dp.initialize(ctx)
+      dp.initialize(ctx)
+      assertTrue(inits.get() == 1, dp.getBooleanEvaluation("flag", false, ctx).getValue.booleanValue())
+    },
+    test("re-registering a shut-down DeferredProvider does not leave the layer Ready (#448)") {
+      val dp = DeferredProvider("d")(() => new RecordingProvider(true))
+      dp.initialize(ctx)
+      dp.shutdown()
+      ZIO.scoped(FeatureFlags.fromProvider(dp, FeatureFlagsConfig()).build).either.map(r => assertTrue(r.isLeft))
+    },
     // AC5: no NPE pre-construction; typed PROVIDER_NOT_READY
     test("pre-construction evaluation returns a typed PROVIDER_NOT_READY, not an NPE") {
       val dp   = DeferredProvider("d")(() => new RecordingProvider(true))

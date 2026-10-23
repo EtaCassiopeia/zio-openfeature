@@ -73,6 +73,19 @@ object ProviderDelegationSpec extends ZIOSpecDefault {
         cb.getProviderHooks.size == 1,
         delegate.tracked.contains("purchase")
       )
+    },
+    test("DeferredProvider forwards track to the delegate once initialized (#448)") {
+      val delegate = new HookedTrackingProvider
+      val deferred = DeferredProvider("deferred")(() => delegate)
+      deferred.initialize(ctx)
+      deferred.track("purchase", ctx, details)
+      assertTrue(delegate.tracked.contains("purchase"))
+    },
+    test("DeferredProvider.track before initialize is a no-op (#448)") {
+      val delegate = new HookedTrackingProvider
+      val deferred = DeferredProvider("deferred")(() => delegate)
+      deferred.track("purchase", ctx, details)
+      assertTrue(delegate.tracked.isEmpty)
     }
   )
 }

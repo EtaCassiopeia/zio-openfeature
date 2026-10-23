@@ -8,6 +8,7 @@ import dev.openfeature.sdk.{
   Metadata,
   ProviderEvaluation,
   ProviderState,
+  TrackingEventDetails,
   Value
 }
 import zio.openfeature.internal.ProviderEvaluations
@@ -28,7 +29,9 @@ import java.util.concurrent.atomic.AtomicReference
   *     `ErrorCode.PROVIDER_NOT_READY` — never an NPE on the null delegate.
   *   - `shutdown()` racing an in-flight `initialize()` shuts the delegate down once construction completes, instead of
   *     leaking its poller / HTTP client.
-  *   - `getProviderHooks` forwards to the delegate once active.
+  *   - `getProviderHooks` and `track` forward to the delegate once active; before that they are no-ops.
+  *   - `initialize` after `shutdown` fails with `FatalError`, so the SDK does not report a provider that can never
+  *     serve as ready. A second `initialize` while active is a no-op.
   *
   * Limitation: wrapping an `EventProvider` does not forward its events — `DeferredProvider` is a plain
   * `FeatureProvider`, which matches the typical constructor-blocking provider.
@@ -55,10 +58,13 @@ final class DeferredProvider(name: String)(construct: () => FeatureProvider) ext
       case _                      => ProviderState.NOT_READY
     }
 
-  // Only the first initialize() constructs; a second call (or one after shutdown) is a no-op. `runDelegateInit`
-  // carries the ctx-only vs ctx+domain choice so both `initialize` overloads share the construction/teardown logic.
+  // Only the first initialize() constructs; a second call while constructing or active is a no-op, and one after
+  // shutdown fails (the SDK would otherwise mark a provider that answers PROVIDER_NOT_READY forever as ready).
+  // `runDelegateInit` carries the ctx-only vs ctx+domain choice so both `initialize` overloads share the logic.
   private def doInitialize(runDelegateInit: FeatureProvider => Unit): Unit =
-    if (stateRef.compareAndSet(State.NotStarted, State.Constructing)) {
+    if (stateRef.get() == State.Shutdown)
+      throw new dev.openfeature.sdk.exceptions.FatalError(s"DeferredProvider '$name' was shut down")
+    else if (stateRef.compareAndSet(State.NotStarted, State.Constructing)) {
       // If construction throws, don't wedge in Constructing (which would report NOT_READY forever and no-op shutdown):
       // move to Shutdown and rethrow so the SDK marks the provider errored.
       val delegate =
@@ -99,6 +105,12 @@ final class DeferredProvider(name: String)(construct: () => FeatureProvider) ext
       // Constructing: initialize() will observe the Shutdown state and shut the delegate down once it finishes
       // constructing. NotStarted / Shutdown: nothing to release.
       case _ => ()
+    }
+
+  override def track(eventName: String, context: OFEvaluationContext, details: TrackingEventDetails): Unit =
+    stateRef.get() match {
+      case State.Active(delegate) => delegate.track(eventName, context, details)
+      case _                      => ()
     }
 
   override def getProviderHooks: java.util.List[Hook[_]] =

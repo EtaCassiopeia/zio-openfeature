@@ -1054,10 +1054,6 @@ final private[openfeature] class FeatureFlagsLive(
 
   // Event Handlers - return cancellation effects per OpenFeature spec 5.2.7
 
-  /** Fork a daemon fiber consuming hub events, guaranteeing the hub subscription is established before this method
-    * returns. Without the handshake, events published between handler registration and the forked stream's first pull
-    * would be silently lost. The returned effect cancels the subscription.
-    */
   /** Runs `zio` with this library's FiberRefs reset (#436). A handler outlives the call that registered it, so it must
     * not carry that call's transaction (whose overrides it would keep applying, and whose finished state it would keep
     * recording into) or its fiber-local context. Other FiberRefs — log annotations, ones a ContextSource reads — are
@@ -1066,6 +1062,10 @@ final private[openfeature] class FeatureFlagsLive(
   private def detached[R, E, A](zio: ZIO[R, E, A]): ZIO[R, E, A] =
     state.transactionRef.locally(None)(state.fiberContextRef.locally(EvaluationContext.empty)(zio))
 
+  /** Fork a daemon fiber consuming hub events, guaranteeing the hub subscription is established before this method
+    * returns. Without the handshake, events published between handler registration and the forked stream's first pull
+    * would be silently lost. The returned effect cancels the subscription.
+    */
   private def consumeEvents(consume: ZStream[Any, Nothing, ProviderEvent] => UIO[Unit]): UIO[UIO[Unit]] =
     for {
       subscribed <- Promise.make[Nothing, Unit]

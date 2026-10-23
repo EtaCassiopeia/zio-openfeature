@@ -15,6 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rather than a silent default. On a cache miss a CMAB decision is a blocking network call (10s, one retry by default).
   The bump also removes a latent crash: 4.2.2's event serializer reads a Jackson field that the jackson-databind this
   module ships no longer has, which would have failed the first real event dispatch.
+- **Production instances no longer keep tracked events** (#442). Every instance recorded the last 1000 `track` calls
+  with their fully merged evaluation contexts — often personal data — for `FeatureFlags.trackedEvents`, a test
+  helper. Only testkit-built instances record now. Assert on tracking with the new `TestFeatureProvider.trackedEvents`
+  (and `clearTrackedEvents`), which lists what the provider actually received.
 - **Layers no longer ask for a `Scope`** (#443). Every `FeatureFlags` factory, `FeatureFlagRegistry.fromProvider` and
   the testkit layers were typed `ZLayer[Scope, …]`, although they build with `ZLayer.scoped`, which owns the layer's
   scope; so callers had to supply `Scope.default` for nothing. They are now `ZLayer[Any, …]` (`URLayer[Any, …]` for
@@ -58,6 +62,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Deprecated
 
 - **`FeatureFlagError.EmptyFlagVariables`** (#444). No module has ever raised it; it stays for binary compatibility.
+- **`FeatureFlags.trackedEvents`, in favour of `TestFeatureProvider.trackedEvents`** (#442). It is empty on production
+  instances.
 
 - **`FeatureFlagError.isRecoverable`, in favour of `isFlagError`** (#440). It is true for flag-scoped evaluation errors
   (missing flag, wrong type, unparsable value, bad context), which has nothing to do with retrying or with

@@ -5,6 +5,7 @@ import zio.test._
 import zio.test.Assertion._
 import zio.openfeature._
 
+@scala.annotation.nowarn("cat=deprecation")
 object FeatureFlagsSpec extends ZIOSpecDefault {
 
   private def testLayer(

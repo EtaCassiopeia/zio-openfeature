@@ -3,7 +3,13 @@ package zio.openfeature.testkit
 import zio._
 import zio.stream._
 import zio.openfeature._
-import zio.openfeature.internal.{ContextConverter, ErrorCodeConverter, ProviderEvaluations}
+import zio.openfeature.internal.{
+  ContextConverter,
+  ErrorCodeConverter,
+  FeatureFlagsState,
+  ProviderEvaluations,
+  ValueBridge
+}
 import dev.openfeature.sdk.{
   ErrorCode => OFErrorCode,
   EvaluationContext => OFEvaluationContext,
@@ -15,7 +21,8 @@ import dev.openfeature.sdk.{
   ProviderEventDetails,
   ProviderState,
   Value,
-  Structure
+  Structure,
+  TrackingEventDetails => OFTracking
 }
 import dev.openfeature.sdk.exceptions._
 import zio.test.TestAspect
@@ -52,6 +59,29 @@ final class TestFeatureProvider private (
   // SDK 1.22.0 hands the bound domain to `initialize(ctx, domain)` (null for the default provider). Recorded so
   // tests can assert what a domain-registered client actually delivered — there is no other observation point.
   private val boundDomainRef: AtomicReference[Option[String]] = new AtomicReference(None)
+
+  // What `track` delivered, after the SDK merged the context (#442). Bounded, so a long test run that tracks per request
+  // cannot grow it without limit.
+  private val tracked =
+    new java.util.concurrent.ConcurrentLinkedDeque[(String, OFEvaluationContext, Option[OFTracking])]()
+
+  override def track(eventName: String, context: OFEvaluationContext, details: OFTracking): Unit = {
+    tracked.addLast((eventName, context, Option(details)))
+    while (tracked.size > FeatureFlagsState.MaxTrackedEvents) tracked.pollFirst()
+    ()
+  }
+
+  /** The tracking events this provider received, oldest first (the last 1000), each with the context the SDK merged and
+    * the details converted back to [[zio.openfeature.TrackingEventDetails]]. This is what a real provider would have
+    * seen, so it is the place to assert on tracking.
+    */
+  def trackedEvents: UIO[List[(String, EvaluationContext, Option[TrackingEventDetails])]] =
+    ZIO.succeed(tracked.asScala.toList.map { case (name, ctx, details) =>
+      (name, ContextConverter.fromOpenFeature(ctx), details.map(TestFeatureProvider.fromOpenFeatureTracking))
+    })
+
+  /** Clear the tracking history. */
+  def clearTrackedEvents: UIO[Unit] = ZIO.succeed(tracked.clear())
 
   private def applyBehavior(): Unit = {
     val config = behaviorRef.get()
@@ -445,6 +475,12 @@ final class TestFeatureProvider private (
 }
 
 object TestFeatureProvider {
+
+  private def fromOpenFeatureTracking(details: OFTracking): TrackingEventDetails =
+    TrackingEventDetails(
+      value = if (details.getValue.isPresent) Some(details.getValue.get.doubleValue) else None,
+      attributes = details.asMap.asScala.toMap.flatMap { case (k, v) => ValueBridge.valueToAny(v).map(k -> _) }
+    )
 
   /** Upper bound on waits for Java SDK event delivery. Generous — the SDK dispatch is normally milliseconds — but
     * bounded so a missing event fails the test quickly and descriptively instead of hanging the suite.

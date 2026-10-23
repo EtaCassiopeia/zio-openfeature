@@ -99,6 +99,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   afterwards. And a wrapper whose attach to the delegate failed (the delegate already belonged to another wrapper)
   still detached the delegate on `shutdown`, cutting off the wrapper that owned it. Both now share one event-channel
   helper that records an attachment only once it succeeds, and `shutdown` ends with `EventProvider.shutdown`.
+- **Interrupting `setProvider` mid-swap no longer leaves the status stuck at `NotReady`** (#434). An interrupt that
+  arrived while the new provider was initializing skipped both the success signal and the rollback: the new provider
+  could end up bound and ready while every typed evaluation failed. A started swap now runs to its outcome (success,
+  or rollback, or the timed-out `Error` of #433) before the interrupt takes effect — bounded by the init timeout.
+  Waiting for an earlier swap to finish stays interruptible.
 - **Circuit breaker: stale outcomes and polled `READY` no longer reset the circuit** (#447).
   - A call admitted in one circuit state could record its outcome in a later one: a slow call admitted while closed
     could close a half-open circuit while the real probe was still running, or free the probe slot so two probes ran

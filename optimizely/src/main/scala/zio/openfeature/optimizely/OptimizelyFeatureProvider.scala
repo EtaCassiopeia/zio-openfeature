@@ -309,43 +309,22 @@ final class OptimizelyFeatureProvider private[optimizely] (
     ctx: OFEvaluationContext
   ): ProviderEvaluation[java.lang.Boolean] =
     decide(key, ctx) match {
-      case Right(d) =>
-        // Builder calls are split across statements (not chained) because the SDK's SuperBuilder-style
-        // self-type confuses Scala 2.13's existential resolution past the second fluent call.
-        val builder = ProviderEvaluation.builder[java.lang.Boolean]()
-        builder.value(java.lang.Boolean.valueOf(d.getEnabled))
-        builder.variant(d.getVariationKey)
-        builder.reason(deriveReason(d))
-        builder.flagMetadata(metadataFrom(d))
-        builder.build().asInstanceOf[ProviderEvaluation[java.lang.Boolean]]
+      case Right(d)  => success(d, java.lang.Boolean.valueOf(d.getEnabled), usedDefault = false)
       case Left(err) => failingEvaluation(defaultValue, err)
     }
 
+  // Fallback order: typed variable → variation key (still a meaningful Optimizely-driven answer) → OF default. The
+  // variation-key fallback applies only to an ABSENT variable; one of another type is a TYPE_MISMATCH (#456).
   override def getStringEvaluation(
     key: String,
     defaultValue: String,
     ctx: OFEvaluationContext
   ): ProviderEvaluation[String] =
-    decide(key, ctx) match {
-      case Right(d) =>
-        val variableKey = OptimizelyFeatureProvider.variableKey(ctx)
-        val variable    = readVariable[String](d, variableKey, classOf[String])
-        // Fallback order: typed variable → variation key (still a meaningful Optimizely-driven answer) → OF default.
-        val (value, usedDefault) = variable match {
-          case Some(v) => (v, false)
-          case None =>
-            Option(d.getVariationKey) match {
-              case Some(vk) => (vk, false)
-              case None     => (defaultValue, true)
-            }
-        }
-        val builder = ProviderEvaluation.builder[String]()
-        builder.value(value)
-        builder.variant(d.getVariationKey)
-        builder.reason(if (usedDefault) Reason.DEFAULT.name() else deriveReason(d))
-        builder.flagMetadata(metadataFrom(d))
-        builder.build().asInstanceOf[ProviderEvaluation[String]]
-      case Left(err) => failingEvaluation(defaultValue, err)
+    variableEvaluation(key, defaultValue, ctx, "String") { case s: String => s } { d =>
+      Option(d.getVariationKey) match {
+        case Some(vk) => success(d, vk, usedDefault = false)
+        case None     => success(d, defaultValue, usedDefault = true)
+      }
     }
 
   override def getIntegerEvaluation(
@@ -353,106 +332,93 @@ final class OptimizelyFeatureProvider private[optimizely] (
     defaultValue: java.lang.Integer,
     ctx: OFEvaluationContext
   ): ProviderEvaluation[java.lang.Integer] =
-    typedEvaluation[java.lang.Integer](key, defaultValue, ctx, classOf[java.lang.Integer])
+    variableEvaluation(key, defaultValue, ctx, "Integer") { case i: java.lang.Integer => i }()
+
+  // Optimizely has one integer variable type; the SDK hands back an Integer, or a Long when the value is beyond Int
+  // range. Both widen exactly to Long.
+  override def getLongEvaluation(
+    key: String,
+    defaultValue: java.lang.Long,
+    ctx: OFEvaluationContext
+  ): ProviderEvaluation[java.lang.Long] =
+    variableEvaluation(key, defaultValue, ctx, "Long") {
+      case i: java.lang.Integer => java.lang.Long.valueOf(i.longValue)
+      case l: java.lang.Long    => l
+    }()
 
   override def getDoubleEvaluation(
     key: String,
     defaultValue: java.lang.Double,
     ctx: OFEvaluationContext
   ): ProviderEvaluation[java.lang.Double] =
-    typedEvaluation[java.lang.Double](key, defaultValue, ctx, classOf[java.lang.Double])
+    variableEvaluation(key, defaultValue, ctx, "Double") {
+      case d: java.lang.Double  => d
+      case i: java.lang.Integer => java.lang.Double.valueOf(i.doubleValue)
+      case l: java.lang.Long    => java.lang.Double.valueOf(l.doubleValue)
+    }()
 
-  // Optimizely has no long-typed variable, so Long evaluations read the same integer variable that
-  // getIntegerEvaluation does and widen it — Int -> Long is exact, so a resolved value is never lossy.
-  //
-  // This deliberately does NOT reuse `typedEvaluation`. Doing so would mean seeding it with a default of the
-  // wrong type: narrowing the caller's Long would silently truncate anything outside Int range
-  // (`long("f", 5000000000L)` -> 705032704), and seeding a sentinel instead would leave this method having to
-  // infer "did a variable resolve?" from the built result. That inference is not sound — `deriveReason` reports
-  // DEFAULT whenever the decision has no variation key, independently of whether a variable was read, so a flag
-  // that is off but still carries variable defaults would have its real value discarded here while
-  // `getIntegerEvaluation` returned it. Reading the variable directly keeps `usedDefault` a fact rather than a
-  // guess, and mirrors `getObjectEvaluation`, which resolves its own variable for the same reason.
-  override def getLongEvaluation(
-    key: String,
-    defaultValue: java.lang.Long,
-    ctx: OFEvaluationContext
-  ): ProviderEvaluation[java.lang.Long] =
-    decide(key, ctx) match {
-      case Right(d) =>
-        val variableKey = OptimizelyFeatureProvider.variableKey(ctx)
-        val variable    = readVariable[java.lang.Integer](d, variableKey, classOf[java.lang.Integer])
-        val (value, usedDefault) = variable match {
-          case Some(i) => (java.lang.Long.valueOf(i.longValue()), false)
-          case None    => (defaultValue, true)
-        }
-        // Builder calls are split across statements (not chained) — see the note on getBooleanEvaluation above.
-        val builder = ProviderEvaluation.builder[java.lang.Long]()
-        builder.value(value)
-        builder.variant(d.getVariationKey)
-        builder.reason(if (usedDefault) Reason.DEFAULT.name() else deriveReason(d))
-        builder.flagMetadata(metadataFrom(d))
-        builder.build().asInstanceOf[ProviderEvaluation[java.lang.Long]]
-      case Left(err) => failingEvaluation(defaultValue, err)
-    }
-
-  /** Shared scaffold for Integer/Double evaluations: extract the named variable, fall back to the OF default with a
-    * `DEFAULT` reason if the variable is missing. The Optimizely SDK throws `JsonParseException` from `getValue` when
-    * the key is absent, so we wrap in `Try` and treat any failure as a missing variable.
-    */
-  private def typedEvaluation[A](
-    key: String,
-    defaultValue: A,
-    ctx: OFEvaluationContext,
-    clazz: Class[A]
-  ): ProviderEvaluation[A] =
-    decide(key, ctx) match {
-      case Right(d) =>
-        val variableKey = OptimizelyFeatureProvider.variableKey(ctx)
-        val variable    = readVariable[A](d, variableKey, clazz)
-        val (value, usedDefault) = variable match {
-          case Some(v) => (v, false)
-          case None    => (defaultValue, true)
-        }
-        val builder = ProviderEvaluation.builder[A]()
-        builder.value(value)
-        builder.variant(d.getVariationKey)
-        builder.reason(if (usedDefault) Reason.DEFAULT.name() else deriveReason(d))
-        builder.flagMetadata(metadataFrom(d))
-        builder.build().asInstanceOf[ProviderEvaluation[A]]
-      case Left(err) => failingEvaluation(defaultValue, err)
-    }
-
-  /** Reads the named variable as type `A`, swallowing the JSON-parse failures Optimizely throws when the key is absent.
-    * `clazz` tells the Optimizely SDK which Java type to extract.
-    */
-  private def readVariable[A](d: OptimizelyDecision, name: String, clazz: Class[A]): Option[A] =
-    Try(d.getVariables.getValue(name, clazz)).toOption.flatMap(Option(_))
-
+  // Reads the single variable named by `variableKey` (a JSON object), not the whole variables map (#264).
   override def getObjectEvaluation(
     key: String,
     defaultValue: Value,
     ctx: OFEvaluationContext
   ): ProviderEvaluation[Value] =
+    variableEvaluation(key, defaultValue, ctx, "Object") { case m: java.util.Map[_, _] =>
+      new Value(Structure.mapToStructure(m.asInstanceOf[java.util.Map[String, Object]]))
+    }()
+
+  /** Shared scaffold for variable-backed evaluations. The variable named by `variableKey` is looked up raw and
+    * converted strictly and losslessly by `convert` (#456):
+    *   - absent → `onAbsent` (by default the OF default with reason `DEFAULT`);
+    *   - convertible → the value, with the decision's reason;
+    *   - present with another type → the OF default with `TYPE_MISMATCH` — never a parse ("42") or a truncation (1.5).
+    */
+  private def variableEvaluation[A](key: String, defaultValue: A, ctx: OFEvaluationContext, expected: String)(
+    convert: PartialFunction[AnyRef, A]
+  )(
+    onAbsent: OptimizelyDecision => ProviderEvaluation[A] = (d: OptimizelyDecision) =>
+      success(d, defaultValue, usedDefault = true)
+  ): ProviderEvaluation[A] =
     decide(key, ctx) match {
       case Right(d) =>
-        // Mirror the other typed paths: read the single variable named by `variableKey` (a JSON object) rather than
-        // returning the whole variables map, and fall back to the OF default with reason DEFAULT when it is absent.
-        // Previously object evaluation ignored `variableKey` and never reached `defaultValue` (#264).
-        val variableKey = OptimizelyFeatureProvider.variableKey(ctx)
-        val variable    = readVariable[java.util.Map[_, _]](d, variableKey, classOf[java.util.Map[_, _]])
-        val (value, usedDefault) = variable match {
-          case Some(m) => (new Value(Structure.mapToStructure(m.asInstanceOf[java.util.Map[String, Object]])), false)
-          case None    => (defaultValue, true)
+        val name = OptimizelyFeatureProvider.variableKey(ctx)
+        lookupVariable(d, name) match {
+          case None => onAbsent(d)
+          case Some(raw) =>
+            convert.lift(raw) match {
+              case Some(v) => success(d, v, usedDefault = false)
+              case None =>
+                typeMismatch(defaultValue, s"variable '$name' is ${raw.getClass.getSimpleName}, expected $expected")
+            }
         }
-        val builder = ProviderEvaluation.builder[Value]()
-        builder.value(value)
-        builder.variant(d.getVariationKey)
-        builder.reason(if (usedDefault) Reason.DEFAULT.name() else deriveReason(d))
-        builder.flagMetadata(metadataFrom(d))
-        builder.build().asInstanceOf[ProviderEvaluation[Value]]
       case Left(err) => failingEvaluation(defaultValue, err)
     }
+
+  /** The raw variable value as the SDK typed it from the datafile (String, Boolean, Integer or Long, Double, or a
+    * `java.util.Map` for JSON); `None` when the variable is absent or null.
+    */
+  private def lookupVariable(d: OptimizelyDecision, name: String): Option[AnyRef] =
+    Option(d.getVariables).flatMap(vs => Option(vs.toMap)).flatMap(m => Option(m.get(name)))
+
+  private def success[A](d: OptimizelyDecision, value: A, usedDefault: Boolean): ProviderEvaluation[A] = {
+    // Builder calls are split across statements (not chained) because the SDK's SuperBuilder-style self-type confuses
+    // Scala 2.13's existential resolution past the second fluent call.
+    val builder = ProviderEvaluation.builder[A]()
+    builder.value(value)
+    builder.variant(d.getVariationKey)
+    builder.reason(if (usedDefault) Reason.DEFAULT.name() else deriveReason(d))
+    builder.flagMetadata(metadataFrom(d))
+    builder.build().asInstanceOf[ProviderEvaluation[A]]
+  }
+
+  private def typeMismatch[A](defaultValue: A, message: String): ProviderEvaluation[A] = {
+    val builder = ProviderEvaluation.builder[A]()
+    builder.value(defaultValue)
+    builder.reason(Reason.ERROR.name())
+    builder.errorCode(dev.openfeature.sdk.ErrorCode.TYPE_MISMATCH)
+    builder.errorMessage(message)
+    builder.build().asInstanceOf[ProviderEvaluation[A]]
+  }
 
   // Common decision pipeline. Returns Left with an error reason string when no decision is possible.
   //
@@ -526,12 +492,8 @@ final class OptimizelyFeatureProvider private[optimizely] (
       }
     }
 
-  private def deriveReason(d: OptimizelyDecision): String = {
-    val errs = Option(d.getReasons).map(_.asScala.toList).getOrElse(Nil)
-    if (errs.isEmpty && Option(d.getVariationKey).isDefined) Reason.TARGETING_MATCH.name()
-    else if (Option(d.getVariationKey).isEmpty) Reason.DEFAULT.name()
-    else Reason.TARGETING_MATCH.name()
-  }
+  private def deriveReason(d: OptimizelyDecision): String =
+    if (Option(d.getVariationKey).isDefined) Reason.TARGETING_MATCH.name() else Reason.DEFAULT.name()
 
   private def metadataFrom(d: OptimizelyDecision): ImmutableMetadata = {
     val builder = ImmutableMetadata.builder()

@@ -53,7 +53,7 @@ object Optimizely:
   // --8<-- [end:variables]
 
   // --8<-- [start:fail-fast]
-  def failFast(provider: OptimizelyFeatureProvider): ZLayer[Scope, Throwable, FeatureFlags] =
+  def failFast(provider: OptimizelyFeatureProvider): ZLayer[Any, Throwable, FeatureFlags] =
     FeatureFlags.fromProvider(provider, FeatureFlagsConfig().withInitTimeout(15.seconds)) // build fails if not ready
   // --8<-- [end:fail-fast]
 
@@ -66,7 +66,7 @@ object Optimizely:
   // --8<-- [end:readiness]
 
   // --8<-- [start:circuit-breaker]
-  def resilient(provider: OptimizelyFeatureProvider): ZLayer[Scope, Throwable, FeatureFlags] =
+  def resilient(provider: OptimizelyFeatureProvider): ZLayer[Any, Throwable, FeatureFlags] =
     ZLayer.fromZIO(CircuitBreakerProvider.make(provider, CircuitBreakerProviderConfig(failureThreshold = 5))).flatMap {
       env =>
         val chain = FeatureFlags.multiProvider(

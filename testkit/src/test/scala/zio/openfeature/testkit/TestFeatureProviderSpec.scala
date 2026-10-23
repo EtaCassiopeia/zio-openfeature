@@ -262,21 +262,21 @@ object TestFeatureProviderSpec extends ZIOSpecDefault {
       }
     ),
     suite("scoped layer")(
-      test("scopedLayer provides both TestFeatureProvider and FeatureFlags") {
+      test("layer provides both TestFeatureProvider and FeatureFlags") {
         val program = for {
           _      <- ZIO.service[TestFeatureProvider]
           _      <- ZIO.service[FeatureFlags]
           result <- FeatureFlags.boolean("flag", default = false)
         } yield assertTrue(result == true)
 
-        program.provide(TestFeatureProvider.scopedLayer(Map("flag" -> true)))
+        program.provide(TestFeatureProvider.layer(Map("flag" -> true)))
       },
-      test("scopedLayer with empty flags works") {
+      test("layer with empty flags works") {
         val program = for {
           result <- FeatureFlags.booleanOrDefault("missing", default = true)
         } yield assertTrue(result == true)
 
-        program.provide(TestFeatureProvider.scopedLayer)
+        program.provide(TestFeatureProvider.layer)
       }
     )
   ) @@ TestAspect.withLiveClock

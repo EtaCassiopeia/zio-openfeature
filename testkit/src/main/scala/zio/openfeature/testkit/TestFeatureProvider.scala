@@ -560,7 +560,7 @@ object TestFeatureProvider {
 
   // Typed fixture factories (#351)
   //
-  // Every untyped factory gets a `FlagOverride*` twin, so reaching for `scopedLayer` after learning `layer` does not
+  // Every untyped factory gets a `FlagOverride*` twin, so reaching for another factory after learning `layer` does not
   // suddenly drop back to `Map[String, Any]`. Each delegates through `toFlagMap`, so typed and untyped fixtures build
   // exactly the same provider — the only difference is that the typed route checked the value against the flag's
   // declared type and encoded it on the way in.
@@ -582,24 +582,26 @@ object TestFeatureProvider {
     make(toFlagMap(overrides))
 
   /** Create a FeatureFlags layer from typed overrides. */
-  def layer(overrides: FlagOverride*): ZLayer[Scope, Throwable, TestFeatureProvider with FeatureFlags] =
+  def layer(overrides: FlagOverride*): ZLayer[Any, Throwable, TestFeatureProvider with FeatureFlags] =
     layer(toFlagMap(overrides))
 
-  /** Create a self-contained (scope-providing) layer from typed overrides. */
+  /** Same as [[layer(overrides*]]; kept for source compatibility from before layers stopped needing a `Scope`. */
+  @deprecated("Use layer(...): it no longer needs a Scope, so this twin is identical", "1.2.0")
   def scopedLayer(overrides: FlagOverride*): ZLayer[Any, Throwable, TestFeatureProvider with FeatureFlags] =
-    scopedLayer(toFlagMap(overrides))
+    layer(toFlagMap(overrides))
 
   /** Create an async-init layer from typed overrides. */
-  def asyncLayer(overrides: FlagOverride*): ZLayer[Scope, Throwable, TestFeatureProvider with FeatureFlags] =
+  def asyncLayer(overrides: FlagOverride*): ZLayer[Any, Throwable, TestFeatureProvider with FeatureFlags] =
     asyncLayer(toFlagMap(overrides))
 
   /** Create just the TestFeatureProvider layer from typed overrides. */
   def providerLayer(overrides: FlagOverride*): ULayer[TestFeatureProvider] =
     ZLayer.fromZIO(make(toFlagMap(overrides)))
 
-  /** Create a self-contained async layer from typed overrides. */
+  /** Same as [[asyncLayer(overrides*]]; kept for source compatibility from before layers stopped needing a `Scope`. */
+  @deprecated("Use asyncLayer(...): it no longer needs a Scope, so this twin is identical", "1.2.0")
   def scopedAsyncLayer(overrides: FlagOverride*): ZLayer[Any, Throwable, TestFeatureProvider with FeatureFlags] =
-    Scope.default >>> asyncLayer(toFlagMap(overrides))
+    asyncLayer(toFlagMap(overrides))
 
   /** Create an auto-transitioning async layer from typed overrides.
     *
@@ -614,11 +616,11 @@ object TestFeatureProvider {
   def asyncReadyLayer(
     delay: Duration,
     overrides: FlagOverride*
-  ): ZLayer[Scope, Throwable, TestFeatureProvider with FeatureFlags] =
+  ): ZLayer[Any, Throwable, TestFeatureProvider with FeatureFlags] =
     asyncReadyLayer(toFlagMap(overrides), delay)
 
   /** Create a FeatureFlags layer from TestFeatureProvider. */
-  def layer: ZLayer[Scope, Throwable, TestFeatureProvider with FeatureFlags] =
+  def layer: ZLayer[Any, Throwable, TestFeatureProvider with FeatureFlags] =
     layer(Map.empty[String, Any])
 
   /** Create a FeatureFlags layer with initial flags.
@@ -626,7 +628,7 @@ object TestFeatureProvider {
     * Each invocation creates an isolated OpenFeatureAPI instance and a unique domain, ensuring full test isolation.
     * Tests using this layer can safely run in parallel without cross-test event contamination.
     */
-  def layer(flags: Map[String, Any]): ZLayer[Scope, Throwable, TestFeatureProvider with FeatureFlags] =
+  def layer(flags: Map[String, Any]): ZLayer[Any, Throwable, TestFeatureProvider with FeatureFlags] =
     ZLayer
       .scoped {
         for {
@@ -687,26 +689,28 @@ object TestFeatureProvider {
     ZLayer.fromZIO(make(flags))
 
   /** Create a FeatureFlags layer from an existing TestFeatureProvider. */
-  def layerFrom(provider: TestFeatureProvider): ZLayer[Scope, Throwable, FeatureFlags] = {
+  def layerFrom(provider: TestFeatureProvider): ZLayer[Any, Throwable, FeatureFlags] = {
     val api    = OpenFeatureAPI.createIsolated()
     val domain = s"test-${java.util.UUID.randomUUID()}"
     FeatureFlags.fromProviderWithDomain(provider, domain, provider.statusRef, api = Some(api))
   }
 
-  /** Self-contained test layer that provides its own Scope. */
+  /** Same as [[layer]]; kept for source compatibility from before layers stopped needing a `Scope`. */
+  @deprecated("Use layer: it no longer needs a Scope, so this twin is identical", "1.2.0")
   val scopedLayer: ZLayer[Any, Throwable, TestFeatureProvider with FeatureFlags] =
-    Scope.default >>> TestFeatureProvider.layer
+    TestFeatureProvider.layer
 
-  /** Self-contained test layer with initial flags that provides its own Scope. */
+  /** Same as [[layer(flags:Map*]]; kept for source compatibility from before layers stopped needing a `Scope`. */
+  @deprecated("Use layer: it no longer needs a Scope, so this twin is identical", "1.2.0")
   def scopedLayer(flags: Map[String, Any]): ZLayer[Any, Throwable, TestFeatureProvider with FeatureFlags] =
-    Scope.default >>> TestFeatureProvider.layer(flags)
+    TestFeatureProvider.layer(flags)
 
   /** Create a FeatureFlags layer with async (non-blocking) initialization.
     *
     * The provider starts in NotReady state. Use `setStatus(ProviderStatus.Ready)` or emit a `ProviderEvent.Ready` event
     * to simulate the provider becoming ready. Evaluations will fail with `ProviderNotReady` until then.
     */
-  def asyncLayer: ZLayer[Scope, Throwable, TestFeatureProvider with FeatureFlags] =
+  def asyncLayer: ZLayer[Any, Throwable, TestFeatureProvider with FeatureFlags] =
     asyncLayer(Map.empty[String, Any])
 
   /** Create a FeatureFlags layer with async initialization and initial flags.
@@ -714,7 +718,7 @@ object TestFeatureProvider {
     * The provider starts in NotReady state and does not auto-initialize. Call `setStatus(ProviderStatus.Ready)` to
     * simulate the provider becoming ready. Evaluations will fail with `ProviderNotReady` until then.
     */
-  def asyncLayer(flags: Map[String, Any]): ZLayer[Scope, Throwable, TestFeatureProvider with FeatureFlags] =
+  def asyncLayer(flags: Map[String, Any]): ZLayer[Any, Throwable, TestFeatureProvider with FeatureFlags] =
     ZLayer
       .scoped {
         for {
@@ -777,7 +781,7 @@ object TestFeatureProvider {
   def asyncReadyLayer(
     flags: Map[String, Any] = Map.empty,
     initDelay: Duration = 100.millis
-  ): ZLayer[Scope, Throwable, TestFeatureProvider with FeatureFlags] =
+  ): ZLayer[Any, Throwable, TestFeatureProvider with FeatureFlags] =
     ZLayer
       .scoped {
         for {
@@ -802,12 +806,14 @@ object TestFeatureProvider {
         ZLayer.succeed(testProvider) ++ ZLayer.succeed(featureFlags)
       }
 
-  /** Self-contained async test layer that provides its own Scope. */
+  /** Same as [[asyncLayer]]; kept for source compatibility from before layers stopped needing a `Scope`. */
+  @deprecated("Use asyncLayer: it no longer needs a Scope, so this twin is identical", "1.2.0")
   val scopedAsyncLayer: ZLayer[Any, Throwable, TestFeatureProvider with FeatureFlags] =
-    Scope.default >>> TestFeatureProvider.asyncLayer
+    TestFeatureProvider.asyncLayer
 
-  /** Self-contained async test layer with initial flags. */
+  /** Same as [[asyncLayer(flags:Map*]]; kept for source compatibility from before layers stopped needing a `Scope`. */
+  @deprecated("Use asyncLayer: it no longer needs a Scope, so this twin is identical", "1.2.0")
   def scopedAsyncLayer(flags: Map[String, Any]): ZLayer[Any, Throwable, TestFeatureProvider with FeatureFlags] =
-    Scope.default >>> TestFeatureProvider.asyncLayer(flags)
+    TestFeatureProvider.asyncLayer(flags)
 
 }

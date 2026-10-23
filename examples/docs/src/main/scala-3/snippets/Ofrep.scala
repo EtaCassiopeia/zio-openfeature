@@ -34,7 +34,7 @@ object Ofrep:
   // --8<-- [end:config]
 
   // --8<-- [start:timeouts]
-  def bounded(provider: dev.openfeature.contrib.providers.ofrep.OfrepProvider): ZLayer[Scope, Throwable, FeatureFlags] =
+  def bounded(provider: dev.openfeature.contrib.providers.ofrep.OfrepProvider): ZLayer[Any, Throwable, FeatureFlags] =
     FeatureFlags.fromProvider(
       provider,
       FeatureFlagsConfig(initMode = InitMode.Async)

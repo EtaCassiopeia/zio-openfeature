@@ -131,8 +131,11 @@ The Java SDK itself sends `READY` or `ERROR` when a provider's initialization fi
 | `track(name, context, details)` | all three |
 
 The context is merged with the global, client and ambient context exactly as for an evaluation (see
-[Evaluation context](context.md)). `TrackingEventDetails` has an optional numeric `value` and `attributes`. A provider
-that does not support tracking ignores the call. A provider error fails the call with a `FeatureFlagError`.
+[Evaluation context](context.md)). `TrackingEventDetails` has an optional numeric `value` and `attributes`. Attribute
+values can be the plain types `withAttribute` accepts for a context, any `AttributeValue`, `Option`s of these, and nested
+`List`s and `Map`s; a `null` or `None` attribute is dropped. Any other type fails the call with
+`FeatureFlagError.InvalidContext` before anything is sent. A provider that does not support tracking ignores the call. A
+provider error fails the call with a `FeatureFlagError`.
 
 `trackedEvents` returns the last 1000 events this instance sent, oldest first, with their merged context. It is meant
 for tests and debugging.

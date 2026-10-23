@@ -18,7 +18,7 @@ object RealProvidersSpec extends ZIOSpecDefault:
   // would make every assertion pass even if the fault never reached the provider.
   def seededFallback: FeatureProvider = EnvVarProvider.withLookup(Map("FF_MY_FLAG" -> "true").get)
 
-  def flagsLayer(acquire: RIO[Scope, FeatureProvider]): URLayer[Scope, FeatureFlags & AcquireStatus] =
+  def flagsLayer(acquire: RIO[Scope, FeatureProvider]): URLayer[Any, FeatureFlags & AcquireStatus] =
     FeatureFlags.fromAcquireAsync(
       acquire = acquire,                     // e.g. ZIO.attemptBlocking(new VendorProvider(sdkKey))
       fallback = ZIO.succeed(seededFallback) // a fresh instance each time it runs

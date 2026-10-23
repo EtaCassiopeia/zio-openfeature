@@ -19,6 +19,14 @@ The `examples/` projects are not published, but CI compiles them:
 | `examplesTestkitApp` | Unit-testing a flag-driven service with `TestFeatureProvider` |
 | `examplesOfrepInitTimeout` | An OFREP-backed app with an init timeout and a circuit breaker |
 
+### Mutation testing
+
+`sbt core/stryker` runs [stryker4s](https://stryker-mutator.io/docs/stryker4s/getting-started/) on core: it makes
+small deliberate changes to the code (flipping a condition, swapping an operator) and checks that some test fails for
+each. The score and the surviving mutants are in `core/target/stryker4s-report/`. A full run takes hours, so CI runs it
+weekly (the `Mutation testing` workflow, also startable by hand) and never on a pull request; the score is
+informational and never fails the build. To try it on a few files, narrow `mutate` in `stryker4s.conf` locally.
+
 ## The documentation site
 
 The site is built with [MkDocs Material](https://squidfunk.github.io/mkdocs-material/) from `docs/`, and published

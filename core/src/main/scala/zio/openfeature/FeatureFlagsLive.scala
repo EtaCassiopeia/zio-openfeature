@@ -1052,8 +1052,12 @@ final private[openfeature] class FeatureFlagsLive(
     // `.changes` emits the current status first (so an already-Ready provider returns immediately) then every
     // subsequent transition — no polling. `runHead` completes on the first evaluable-or-Fatal status. On timeout
     // (`None`) or an exhausted stream we return the then-current status, so every path yields a real status.
+    // A shut-down instance never becomes evaluable again, so ShuttingDown and the terminal NotReady stop the wait too
+    // (#435) — otherwise `awaitReady()` on a shut-down instance would wait forever.
     state.statusRef.changes
-      .filter(s => s.canEvaluate || s == ProviderStatus.Fatal)
+      .filter(s =>
+        s.canEvaluate || s == ProviderStatus.Fatal || s == ProviderStatus.ShuttingDown || shutdownCompleted.get()
+      )
       .runHead
       .timeout(within)
       .flatMap {
@@ -1338,10 +1342,12 @@ final private[openfeature] class FeatureFlagsLive(
     // ShuttingDown rejects evaluations for the duration of the teardown (checkProviderStatus); the terminal state
     // after teardown is NotReady. The machine keeps both terminal: while ShuttingDown no bridge event transitions,
     // and ShutdownCompleted makes the final NotReady stick against a late event from the dying provider.
-    applySignal(Signal.ShutdownStarted) *>
+    // Uninterruptible (#435): an interrupt halfway would leave ShuttingDown for good, with the API half torn down. The
+    // region is bounded — the API shutdown waits at most its own timeout (#433).
+    (applySignal(Signal.ShutdownStarted) *>
       // Deregister the bridge handlers BEFORE tearing down the API so no emitter thread races the teardown (the scope
-      // finalizer also calls this — the SDK's removeHandler is idempotent).
-      ZIO.succeed(bridgeDeregister.get()()) *>
+      // finalizer also calls this — the SDK's removeHandler is idempotent). It takes the SDK's lock, so off the core pool.
+      ZIO.attemptBlocking(bridgeDeregister.get()()).ignore *>
       state.hooksRef.set(List.empty) *>
       state.zioApiHooksRef.set(List.empty) *>
       state.globalContextRef.set(EvaluationContext.empty) *>
@@ -1357,7 +1363,7 @@ final private[openfeature] class FeatureFlagsLive(
       // A non-owning `shutdown` therefore releases only this instance's own state (status/hooks/contexts/event hub,
       // torn down above); retire such clients via whatever owns the API (e.g. the registry).
       ZIO.when(ownsApi)(ProviderRegistration.boundedApiShutdown(api)) *>
-      applySignal(Signal.ShutdownCompleted).unit
+      applySignal(Signal.ShutdownCompleted).unit).uninterruptible
 
   // Tracking API
 

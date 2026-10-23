@@ -122,6 +122,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   An exception with a `getStatusCode`/`statusCode` accessor is now classified by its status (401/403 → `Unauthorized`,
   anything else → `ProviderError`). `Unauthorized` produced by `classify` now keeps the original exception as its
   `cause` (new `FeatureFlagError.unauthorized(reason, cause)`; `Unauthorized(reason)` patterns are unchanged).
+- **Teardown no longer strands waiters** (#435). Closing the layer's scope now shuts the event hub, so `events`
+  consumers and event-handler fibers end with it instead of waiting forever; `awaitReady()` returns at once on an
+  instance that is shutting down or shut down; and an interrupted `shutdown` still runs to the terminal `NotReady`
+  instead of leaving `ShuttingDown` and a half torn-down API.
 ||||||| a0a5a5b
 - **Tracking attributes are sent by type, and an unsupported one fails `track`** (#441). An `AttributeValue` attribute
   (and any type the converter did not know, including one nested in a `List`/`Map`) was sent as its `toString`, so

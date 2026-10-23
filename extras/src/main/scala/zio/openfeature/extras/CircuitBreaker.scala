@@ -30,10 +30,10 @@ object Ticker {
   *   probe that dies without recording an outcome pinning the circuit half-open forever.
   */
 final case class CircuitBreakerConfig(
-  failureThreshold: Int = 5,
-  resetTimeout: Duration = 30.seconds,
-  halfOpenMaxCalls: Int = 1,
-  probeTimeout: Duration = 1.second
+  failureThreshold: Int = CircuitBreaker.DefaultFailureThreshold,
+  resetTimeout: Duration = CircuitBreaker.DefaultResetTimeout,
+  halfOpenMaxCalls: Int = CircuitBreaker.DefaultHalfOpenMaxCalls,
+  probeTimeout: Duration = CircuitBreaker.DefaultProbeTimeout
 )
 
 /** Why the circuit was opened — determines which recovery applies. */
@@ -324,6 +324,12 @@ final class CircuitBreaker private[extras] (
 }
 
 object CircuitBreaker {
+
+  // Defaults shared by CircuitBreakerConfig and CircuitBreakerProviderConfig, so the two cannot drift apart.
+  val DefaultFailureThreshold: Int  = 5
+  val DefaultResetTimeout: Duration = 30.seconds
+  val DefaultHalfOpenMaxCalls: Int  = 1
+  val DefaultProbeTimeout: Duration = 1.second
 
   /** Proof that a call was admitted, tied to the circuit state that admitted it (#447). */
   final private[extras] case class Permit(epoch: Long)

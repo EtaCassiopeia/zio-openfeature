@@ -27,6 +27,11 @@ object FeatureFlagsState {
     */
   val MaxTrackedEvents: Int = 1000
 
+  /** Capacity of the provider-event hub. Sliding: a consumer that falls this far behind loses the oldest events rather
+    * than blocking the provider's event thread.
+    */
+  private[openfeature] val EventHubCapacity: Int = 256
+
   def make: URIO[Scope, FeatureFlagsState] =
     for {
       globalCtxRef   <- Ref.make(EvaluationContext.empty)
@@ -38,7 +43,7 @@ object FeatureFlagsState {
       // Sliding (not dropping): on overflow the OLDEST event is discarded, so the newest is always delivered.
       // `ConfigurationChanged.changedFlags` isn't reconstructible from status, and a re-reading consumer only needs
       // the latest change; dropping the *newest* on a burst (as `Hub.dropping` does) could hide the final change.
-      eventHub  <- Hub.sliding[ProviderEvent](256)
+      eventHub  <- Hub.sliding[ProviderEvent](EventHubCapacity)
       statusRef <- SubscriptionRef.make[ProviderStatus](ProviderStatus.NotReady)
       trackRec  <- Ref.make(Chunk.empty[(String, EvaluationContext, Option[TrackingEventDetails])])
     } yield FeatureFlagsState(

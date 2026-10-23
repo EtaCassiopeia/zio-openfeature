@@ -32,8 +32,8 @@ import scala.jdk.CollectionConverters._
   *   targeting key included, is hashed.
   */
 final case class CachingConfig(
-  maxEntries: Int = 1000,
-  ttl: Duration = 5.minutes,
+  maxEntries: Int = CachingProvider.DefaultMaxEntries,
+  ttl: Duration = CachingProvider.DefaultTtl,
   contextKeys: Option[Set[String]] = None
 )
 
@@ -296,6 +296,9 @@ final class CachingProvider private (
 }
 
 object CachingProvider {
+
+  val DefaultMaxEntries: Int = 1000
+  val DefaultTtl: Duration   = 5.minutes
 
   /** Create a CachingProvider wrapping the given provider.
     *

@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Tuning defaults are named** (#462). The circuit breaker, cache, construction-retry, event-hub, polling and
+  watchdog defaults now come from named constants instead of literals at the call sites; no value changed. Public:
+  `CircuitBreaker.DefaultFailureThreshold`/`DefaultResetTimeout`/`DefaultHalfOpenMaxCalls`/`DefaultProbeTimeout`
+  (shared by both breaker configs, so they cannot drift), `CircuitBreakerProvider.DefaultEvaluationTimeout`/
+  `DefaultStateCheckInterval`, `CachingProvider.DefaultMaxEntries`/`DefaultTtl`, `FeatureFlags.DefaultConstructionRetry`
+  and `TestFeatureProvider.DefaultInitDelay`.
 - **Optimizely SDK 4.6.0** (from 4.2.2, #474), with CMAB support. Factory-built providers now wire Optimizely's CMAB
   service: without it, a CMAB experiment served a placeholder `"$"` variation reported as `TARGETING_MATCH`, and
   every client build logged a WARN. A CMAB decision that cannot be fetched is now an `ERROR` evaluation (`GENERAL`)

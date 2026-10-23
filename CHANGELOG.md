@@ -19,6 +19,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with their fully merged evaluation contexts — often personal data — for `FeatureFlags.trackedEvents`, a test
   helper. Only testkit-built instances record now. Assert on tracking with the new `TestFeatureProvider.trackedEvents`
   (and `clearTrackedEvents`), which lists what the provider actually received.
+- **ZIO 2.1.27, Scala 3.3.8 / 2.13.18, zio-cache 0.2.8** (from 2.1.14, 3.3.4 / 2.13.16, 0.2.3; #475). These are now
+  the minimum versions consumers resolve to. The bump brings upstream fixes on paths this library runs on every
+  evaluation: a hang when an interrupt hits `raceFibersWith` (behind `timeoutFail`), `Queue#take` losing items on
+  interrupt (event-hub consumers), and zio-cache's concurrent-`get` deadlock and expired-entry hits. zio-cache stays on
+  the 0.2 line: 0.3.0 is built with a Scala 3 compiler a 3.3 build cannot read and ships Java 17 bytecode.
 - **Layers no longer ask for a `Scope`** (#443). Every `FeatureFlags` factory, `FeatureFlagRegistry.fromProvider` and
   the testkit layers were typed `ZLayer[Scope, …]`, although they build with `ZLayer.scoped`, which owns the layer's
   scope; so callers had to supply `Scope.default` for nothing. They are now `ZLayer[Any, …]` (`URLayer[Any, …]` for
@@ -71,6 +76,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`OptimizelyFeatureProvider` sends `track` calls to Optimizely** (#454). It did not implement `track`, so every call
+  fell through to the SDK's no-op default and no conversion was ever recorded, whichever client the provider wrapped.
+  A call now becomes a conversion for the context's user, with the details' attributes as event tags and the details'
+  `value` as the `value` tag. It fails, rather than silently doing nothing, when the provider is not ready, the context
+  has no targeting key, or the datafile has no such event.
+- **Optimizely: a datafile that never loads is reported as such** (#455). `initialize()` first called
+  `optimizely.isValid`, which blocks up to the SDK's blocking timeout while no datafile has loaded; added to `initWait`
+  that outlasted the `FeatureFlags` init timeout, so the caller saw a generic timeout instead of "datafile did not load
+  … check the SDK key and network reachability". A factory-built provider now reads its config manager's cache, and
+  `OptimizelyProvider.DefaultInitWait` drops from 30 s to 25 s so it fires before the 30 s `initTimeout`. The redundant
+  `start()` that logged a WARN on every init is gone, and the docs no longer claim construction makes no network
+  calls: the SDK starts fetching the datafile then.
 - **Optimizely: a variable of the wrong type is a `TYPE_MISMATCH`, not your default** (#456). Reading a string
   variable as `int` returned the default with reason `DEFAULT`, a double read as `int` was truncated, the string
   `"42"` was parsed, and an integer beyond `int` range could not be read as `long` at all. Conversions are now strict

@@ -2,6 +2,7 @@ package zio.openfeature.optimizely
 
 import com.optimizely.ab.Optimizely
 import com.optimizely.ab.optimizelydecision.OptimizelyDecision
+import dev.openfeature.sdk.exceptions.{GeneralError, ProviderNotReadyError, TargetingKeyMissingError}
 import dev.openfeature.sdk.{
   EvaluationContext => OFEvaluationContext,
   EventProvider,
@@ -40,9 +41,9 @@ import scala.util.Try
   *     and the provider is left NOT_READY (it never reports READY after a shutdown).
   *   - `shutdown()` removes the notification handler and closes the underlying client (which stops datafile polling and
   *     the HTTP client for factory-built providers).
-  *   - Factory-built providers (via `OptimizelyProvider.make`/`scoped`/`layer`) perform no network activity and run no
-  *     background polling until `initialize()` — a provider that is constructed but never registered does not fetch,
-  *     retry, or log against an unreachable CDN.
+  *   - Factory-built providers (via `OptimizelyProvider.make`/`scoped`/`layer`) start fetching the datafile at
+  *     construction — the Optimizely SDK offers no way to build its polling config manager paused. Prefer `scoped` or
+  *     `layer`, which own the provider's shutdown.
   *
   * '''Decision mapping:'''
   *   - Boolean: returns `decision.getEnabled`.
@@ -58,9 +59,9 @@ final class OptimizelyFeatureProvider private[optimizely] (
   optimizely: Optimizely,
   initWait: java.time.Duration,
   closeOnShutdown: Boolean,
-  // Present for factory-built providers: datafile polling is deliberately NOT running at construction
-  // (see OptimizelyProvider.buildClient); initialize() starts it, and shutdown() stops it via
-  // Optimizely.close(). Caller-managed clients (fromOptimizelyClient) own their polling lifecycle.
+  // Present for factory-built providers: the SDK starts datafile polling at construction (see
+  // OptimizelyProvider.buildClient); initialize() waits on it, and shutdown() stops it via Optimizely.close().
+  // Caller-managed clients (fromOptimizelyClient) own their polling lifecycle.
   configManager: Option[com.optimizely.ab.config.HttpProjectConfigManager] = None,
   // Present only when the staleness watchdog is enabled (factory-built providers with datafile polling on).
   // When defined, initialize() starts a background daemon that flips READY <-> STALE based on whether datafile
@@ -162,13 +163,16 @@ final class OptimizelyFeatureProvider private[optimizely] (
       return
     }
 
-    // The handler is registered before this call so a notification firing from here on can't be missed. The SDK
-    // may already have a fetch in flight or completed from construction time (see OptimizelyProvider#buildClient),
-    // in which case this `start()` is just a no-op (idempotent) — the `optimizely.isValid` check right below is
-    // what catches that already-completed case.
-    configManager.foreach(_.start())
+    // The handler is registered before this point so a notification firing from here on can't be missed. A
+    // factory-built manager is already polling — the SDK starts it at construction (see OptimizelyProvider#buildClient)
+    // — so `start()` only revives one stopped externally (calling it on a running manager just logs a WARN). A
+    // first fetch that completed before the handler was registered is caught by the check right below.
+    configManager.foreach(m => if (!m.isRunning) m.start())
 
-    if (optimizely.isValid) initLatch.countDown()
+    // For a manager we own, read its cache: `optimizely.isValid` blocks up to the SDK's blocking timeout while no
+    // datafile has loaded, which would stack in front of `initWait` and let the outer FeatureFlags init timeout fire
+    // first, hiding the specific error below (#455). A caller-managed client keeps `isValid`.
+    if (configManager.fold(optimizely.isValid)(_.getCachedConfig != null)) initLatch.countDown()
 
     if (!initLatch.await(initWait.toMillis, TimeUnit.MILLISECONDS))
       failInitialize(
@@ -424,6 +428,28 @@ final class OptimizelyFeatureProvider private[optimizely] (
   //      HTTP client, which is closed by then, and throw — bug observed by OptimizelyProviderLifecycleSpec.
   //   2. Targeting key — caller-supplied context error; only meaningful once the provider is actually usable.
   //   3. `optimizely.isValid` — defence-in-depth in case state says READY but the SDK silently went invalid.
+  /** Sends the call to Optimizely as a conversion for the context's user (#454). Fails — so `FeatureFlags.track` fails
+    * with a `FeatureFlagError` — when the provider is not ready, when the context has no targeting key (Optimizely
+    * would record user ""), or when the datafile has no event with this key (Optimizely would drop it with an INFO
+    * log). A factory-built provider only delivers conversions once its client has an event dispatcher (#453).
+    */
+  override def track(
+    eventName: String,
+    ctx: OFEvaluationContext,
+    details: dev.openfeature.sdk.TrackingEventDetails
+  ): Unit = {
+    val state  = stateRef.get()
+    val userId = ContextTransformer.userId(ctx)
+    if (state != ProviderState.READY && state != ProviderState.STALE)
+      throw new ProviderNotReadyError(s"Optimizely provider is not ready ($state)")
+    if (userId.isEmpty) throw new TargetingKeyMissingError("Optimizely tracking needs a targeting key")
+    if (!optimizely.getProjectConfig.getEventNameMapping.containsKey(eventName))
+      throw new GeneralError(s"Optimizely event '$eventName' is not in the datafile")
+    optimizely
+      .createUserContext(userId, ContextTransformer.attributes(ctx))
+      .trackEvent(eventName, ContextTransformer.eventTags(details))
+  }
+
   private def decide(key: String, ctx: OFEvaluationContext): Either[String, OptimizelyDecision] = {
     // Extract only the targeting key up front — cheap — and gate on it before normalizing attributes, so the
     // NOT_READY / missing-key / invalid short-circuits don't pay for a full attribute conversion whose result is

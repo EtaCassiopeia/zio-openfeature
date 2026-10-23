@@ -3,13 +3,19 @@ package zio.openfeature.conformance
 import io.cucumber.junit.{Cucumber, CucumberOptions}
 import org.junit.runner.RunWith
 
+import scala.annotation.nowarn
+
 /** JUnit entry point: sbt's junit-interface discovers this `@RunWith(Cucumber)` class and Cucumber executes every
   * `.feature` on the classpath under this package.
   *
   * The excluded tags must stay in sync with the zio-bdd runner's `excludeTags`; the canonical rationale for each
   * intentional exclusion (`@deprecated`, `@async`, `@immutability`) lives in `ConformanceSpec` in the
   * `conformance-zio-bdd` module. Both runners exclude exactly {deprecated, async, immutability}.
+  *
+  * `@CucumberOptions` is deprecated upstream in favour of the JUnit Platform suite engine; Scala 3.3.8+ reports
+  * deprecated Java annotations, hence the `@nowarn` until this runner moves off JUnit 4.
   */
+@nowarn("cat=deprecation")
 @RunWith(classOf[Cucumber])
 @CucumberOptions(
   features = Array("classpath:zio/openfeature/conformance"),

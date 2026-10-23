@@ -42,6 +42,8 @@ enum ProviderEventType:
   case Error
   case Stale
   case ConfigurationChanged
+
+  /** Reserved: the OpenFeature Java SDK never emits a reconnecting event, so `on(Reconnecting, …)` never fires. */
   case Reconnecting
 
 enum ProviderEvent:
@@ -59,6 +61,8 @@ enum ProviderEvent:
     providerMetadata: ProviderMetadata,
     eventMetadata: FlagMetadata = FlagMetadata.empty
   )
+
+  /** Reserved: the OpenFeature Java SDK never emits a reconnecting event, so this is never published. */
   case Reconnecting(providerMetadata: ProviderMetadata, eventMetadata: FlagMetadata = FlagMetadata.empty)
 
   /** Get the event type for this event. */

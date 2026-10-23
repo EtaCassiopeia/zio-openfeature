@@ -5,7 +5,7 @@ import com.github.tomakehurst.wiremock.client.WireMock._
 import com.github.tomakehurst.wiremock.core.WireMockConfiguration
 import com.optimizely.ab.Optimizely
 import com.optimizely.ab.config.HttpProjectConfigManager
-import dev.openfeature.sdk.{ImmutableContext, MutableStructure, Reason, Value}
+import dev.openfeature.sdk.{ErrorCode, ImmutableContext, MutableStructure, Reason, Value}
 import zio._
 import zio.test._
 
@@ -75,7 +75,7 @@ object OptimizelyObjectEvaluationSpec extends ZIOSpecDefault {
       Option(v.asDouble).exists(_.doubleValue == expected.toDouble)
 
   def spec: Spec[TestEnvironment & Scope, Any] = suite("OptimizelyFeatureProvider object evaluation")(
-    test("falls back to the OF default (reason DEFAULT) when the variable is not a JSON object (#264)") {
+    test("returns the OF default as a TYPE_MISMATCH when the variable is not a JSON object (#264, #456)") {
       withMockServer { server =>
         // `lifecycle_flag`'s `value` variable is a STRING, so reading it as a Map fails -> the fix must return the
         // supplied default, NOT a Structure wrapping the whole variables map (the old bug).
@@ -85,8 +85,9 @@ object OptimizelyObjectEvaluationSpec extends ZIOSpecDefault {
           val result   = provider.getObjectEvaluation("lifecycle_flag", sentinel, targetedContext)
           val struct   = result.getValue.asStructure
           assertTrue(
-            // Fell back to the caller's default...
-            result.getReason == Reason.DEFAULT.name(),
+            // Fell back to the caller's default, flagged as a type mismatch (#456)...
+            result.getReason == Reason.ERROR.name(),
+            result.getErrorCode == ErrorCode.TYPE_MISMATCH,
             struct.getValue("sentinel").asString == "dflt",
             // ...and did NOT smuggle the flag's `value` string back as a whole-map Structure (old #264 behaviour).
             struct.getValue("value") == null

@@ -38,7 +38,9 @@ object FeatureFlagsState {
       // Sliding (not dropping): on overflow the OLDEST event is discarded, so the newest is always delivered.
       // `ConfigurationChanged.changedFlags` isn't reconstructible from status, and a re-reading consumer only needs
       // the latest change; dropping the *newest* on a burst (as `Hub.dropping` does) could hide the final change.
-      eventHub  <- Hub.sliding[ProviderEvent](256)
+      eventHub <- ZIO.acquireRelease(Hub.sliding[ProviderEvent](256))(
+        _.shutdown
+      ) // ends `events` consumers on scope close (#435)
       statusRef <- SubscriptionRef.make[ProviderStatus](ProviderStatus.NotReady)
       trackRec  <- Ref.make(Chunk.empty[(String, EvaluationContext, Option[TrackingEventDetails])])
     } yield FeatureFlagsState(

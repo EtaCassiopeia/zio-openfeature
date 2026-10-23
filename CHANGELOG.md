@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Hostile-input property sweeps (Long beyond 2^53, NaN/Infinity/-0.0, emoji and control-character keys, nulls, deep and large structures) through value/context conversion, tracking conversion, OFREP response decoding and the Optimizely context transformer (#469).
+
 ### Changed
 
 - **Optimizely SDK 4.6.0** (from 4.2.2, #474), with CMAB support. Factory-built providers now wire Optimizely's CMAB

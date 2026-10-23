@@ -47,7 +47,8 @@ their current versions. For tests, use the in-memory `TestFeatureProvider` from 
 --8<-- "Providers.scala:shorthands"
 ```
 
-Every factory returns a layer that needs a `Scope`. When the scope closes, the instance [shuts down](#shut-down).
+Every factory returns a layer that owns its scope, so you provide it directly with no `Scope`. When the layer is
+released, the instance [shuts down](#shut-down).
 
 ## Configure it with `FeatureFlagsConfig`
 

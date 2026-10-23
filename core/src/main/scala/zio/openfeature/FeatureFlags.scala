@@ -1064,7 +1064,7 @@ object FeatureFlags {
     * `FeatureFlagsConfig()` reproduces `fromProvider(provider)` exactly (sync init, no domain, `Owned` API — the `Auto`
     * truth table's `domain.isEmpty` branch).
     */
-  def fromProvider(provider: OFFeatureProvider, config: FeatureFlagsConfig): ZLayer[Scope, Throwable, FeatureFlags] =
+  def fromProvider(provider: OFFeatureProvider, config: FeatureFlagsConfig): ZLayer[Any, Throwable, FeatureFlags] =
     fromProvider(provider, config, statusRef = None)
 
   /** `private[openfeature]` variant of [[fromProvider(OFFeatureProvider, FeatureFlagsConfig)]] that additionally
@@ -1079,7 +1079,7 @@ object FeatureFlags {
     statusRef: Option[SubscriptionRef[ProviderStatus]],
     apiOverride: Option[OpenFeatureAPI] = None,
     onReady: Option[java.util.concurrent.CountDownLatch] = None
-  ): ZLayer[Scope, Throwable, FeatureFlags] =
+  ): ZLayer[Any, Throwable, FeatureFlags] =
     ZLayer.scoped {
       val evalTimeout = config.evaluationTimeout match {
         case EvaluationTimeout.Default  => Some(DefaultEvaluationTimeout)
@@ -1152,7 +1152,7 @@ object FeatureFlags {
     * `IllegalStateException` wrapped at the layer boundary. Use `fromProvider(provider, FeatureFlagsConfig())` with
     * `.withInitTimeout(...)` to override.
     */
-  def fromProvider(provider: OFFeatureProvider): ZLayer[Scope, Throwable, FeatureFlags] =
+  def fromProvider(provider: OFFeatureProvider): ZLayer[Any, Throwable, FeatureFlags] =
     fromProvider(provider, FeatureFlagsConfig())
 
   /** Create a FeatureFlags layer with a global evaluation timeout.
@@ -1162,7 +1162,7 @@ object FeatureFlags {
     * `EvaluationOptions.timeout` override this global default. Initialization uses the default 30s init timeout.
     */
   @deprecated("Use fromProvider(p, FeatureFlagsConfig().withEvaluationTimeout(evalTimeout))", "0.2.0")
-  def fromProvider(provider: OFFeatureProvider, evaluationTimeout: Duration): ZLayer[Scope, Throwable, FeatureFlags] =
+  def fromProvider(provider: OFFeatureProvider, evaluationTimeout: Duration): ZLayer[Any, Throwable, FeatureFlags] =
     fromProvider(provider, FeatureFlagsConfig().withEvaluationTimeout(evaluationTimeout))
 
   /** Create a FeatureFlags layer with explicit evaluation and initialization timeouts.
@@ -1180,12 +1180,12 @@ object FeatureFlags {
     provider: OFFeatureProvider,
     evaluationTimeout: Duration,
     initTimeout: Duration
-  ): ZLayer[Scope, Throwable, FeatureFlags] =
+  ): ZLayer[Any, Throwable, FeatureFlags] =
     fromProvider(provider, FeatureFlagsConfig().withEvaluationTimeout(evaluationTimeout).withInitTimeout(initTimeout))
 
   /** Create a FeatureFlags layer with a named domain/client. */
   @deprecated("Use fromProvider(p, FeatureFlagsConfig().withDomain(d))", "0.2.0")
-  def fromProviderWithDomain(provider: OFFeatureProvider, domain: String): ZLayer[Scope, Throwable, FeatureFlags] =
+  def fromProviderWithDomain(provider: OFFeatureProvider, domain: String): ZLayer[Any, Throwable, FeatureFlags] =
     fromProvider(provider, FeatureFlagsConfig().withDomain(domain))
 
   /** Create a FeatureFlags layer with a named domain/client and version. */
@@ -1194,7 +1194,7 @@ object FeatureFlags {
     provider: OFFeatureProvider,
     domain: String,
     version: String
-  ): ZLayer[Scope, Throwable, FeatureFlags] =
+  ): ZLayer[Any, Throwable, FeatureFlags] =
     fromProvider(provider, FeatureFlagsConfig().withDomain(domain).withVersion(version))
 
   /** Create a FeatureFlags layer with a named domain/client and a shared status ref. */
@@ -1204,7 +1204,7 @@ object FeatureFlags {
     statusRef: SubscriptionRef[ProviderStatus],
     api: Option[OpenFeatureAPI] = None,
     onReady: Option[java.util.concurrent.CountDownLatch] = None
-  ): ZLayer[Scope, Throwable, FeatureFlags] =
+  ): ZLayer[Any, Throwable, FeatureFlags] =
     ZLayer.scoped(
       build(
         provider,
@@ -1220,7 +1220,7 @@ object FeatureFlags {
 
   /** Create a FeatureFlags layer from multiple providers using the first-match strategy. */
   @deprecated("Use fromProvider(FeatureFlags.multiProvider(ps), FeatureFlagsConfig())", "0.2.0")
-  def fromMultiProvider(providers: List[OFFeatureProvider]): ZLayer[Scope, Throwable, FeatureFlags] =
+  def fromMultiProvider(providers: List[OFFeatureProvider]): ZLayer[Any, Throwable, FeatureFlags] =
     fromProvider(multiProvider(providers), FeatureFlagsConfig())
 
   /** Create a FeatureFlags layer from multiple providers with a custom strategy. */
@@ -1228,7 +1228,7 @@ object FeatureFlags {
   def fromMultiProvider(
     providers: List[OFFeatureProvider],
     strategy: Strategy
-  ): ZLayer[Scope, Throwable, FeatureFlags] =
+  ): ZLayer[Any, Throwable, FeatureFlags] =
     fromProvider(multiProvider(providers, strategy), FeatureFlagsConfig())
 
   /** Create a FeatureFlags layer with initial hooks. */
@@ -1236,7 +1236,7 @@ object FeatureFlags {
   def fromProviderWithHooks(
     provider: OFFeatureProvider,
     initialHooks: List[FeatureHook]
-  ): ZLayer[Scope, Throwable, FeatureFlags] =
+  ): ZLayer[Any, Throwable, FeatureFlags] =
     fromProvider(provider, FeatureFlagsConfig().withHooks(initialHooks))
 
   // Async Factory Methods (non-blocking provider initialization)
@@ -1329,7 +1329,7 @@ object FeatureFlags {
     * `providerStatus` stop waiting. Use `fromProvider(provider, FeatureFlagsConfig(initMode = InitMode.Async))` with
     * `.withInitTimeout(...)` to override.
     */
-  def fromProviderAsync(provider: OFFeatureProvider): ZLayer[Scope, Throwable, FeatureFlags] =
+  def fromProviderAsync(provider: OFFeatureProvider): ZLayer[Any, Throwable, FeatureFlags] =
     fromProvider(provider, FeatureFlagsConfig(initMode = InitMode.Async))
 
   /** Create a FeatureFlags layer with a global evaluation timeout (non-blocking).
@@ -1345,7 +1345,7 @@ object FeatureFlags {
   def fromProviderAsync(
     provider: OFFeatureProvider,
     evaluationTimeout: Duration
-  ): ZLayer[Scope, Throwable, FeatureFlags] =
+  ): ZLayer[Any, Throwable, FeatureFlags] =
     fromProvider(provider, FeatureFlagsConfig(initMode = InitMode.Async).withEvaluationTimeout(evaluationTimeout))
 
   /** Create a FeatureFlags layer with explicit evaluation and initialization timeouts (non-blocking).
@@ -1361,7 +1361,7 @@ object FeatureFlags {
     provider: OFFeatureProvider,
     evaluationTimeout: Duration,
     initTimeout: Duration
-  ): ZLayer[Scope, Throwable, FeatureFlags] =
+  ): ZLayer[Any, Throwable, FeatureFlags] =
     fromProvider(
       provider,
       FeatureFlagsConfig(initMode = InitMode.Async)
@@ -1374,7 +1374,7 @@ object FeatureFlags {
   def fromProviderWithDomainAsync(
     provider: OFFeatureProvider,
     domain: String
-  ): ZLayer[Scope, Throwable, FeatureFlags] =
+  ): ZLayer[Any, Throwable, FeatureFlags] =
     fromProvider(provider, FeatureFlagsConfig(initMode = InitMode.Async).withDomain(domain))
 
   /** Create a FeatureFlags layer with a named domain and version (non-blocking). */
@@ -1386,7 +1386,7 @@ object FeatureFlags {
     provider: OFFeatureProvider,
     domain: String,
     version: String
-  ): ZLayer[Scope, Throwable, FeatureFlags] =
+  ): ZLayer[Any, Throwable, FeatureFlags] =
     fromProvider(provider, FeatureFlagsConfig(initMode = InitMode.Async).withDomain(domain).withVersion(version))
 
   /** Create a FeatureFlags layer with a named domain and shared status ref (non-blocking). */
@@ -1396,7 +1396,7 @@ object FeatureFlags {
     statusRef: SubscriptionRef[ProviderStatus],
     api: Option[OpenFeatureAPI] = None,
     onReady: Option[java.util.concurrent.CountDownLatch] = None
-  ): ZLayer[Scope, Throwable, FeatureFlags] =
+  ): ZLayer[Any, Throwable, FeatureFlags] =
     ZLayer.scoped(
       buildAsync(
         provider,
@@ -1415,7 +1415,7 @@ object FeatureFlags {
   def fromProviderWithHooksAsync(
     provider: OFFeatureProvider,
     initialHooks: List[FeatureHook]
-  ): ZLayer[Scope, Throwable, FeatureFlags] =
+  ): ZLayer[Any, Throwable, FeatureFlags] =
     fromProvider(provider, FeatureFlagsConfig(initMode = InitMode.Async).withHooks(initialHooks))
 
   /** Create a FeatureFlags layer from multiple providers (non-blocking, first-match strategy). */
@@ -1423,7 +1423,7 @@ object FeatureFlags {
     "Use fromProvider(FeatureFlags.multiProvider(ps), FeatureFlagsConfig(initMode = InitMode.Async))",
     "0.2.0"
   )
-  def fromMultiProviderAsync(providers: List[OFFeatureProvider]): ZLayer[Scope, Throwable, FeatureFlags] =
+  def fromMultiProviderAsync(providers: List[OFFeatureProvider]): ZLayer[Any, Throwable, FeatureFlags] =
     fromProvider(multiProvider(providers), FeatureFlagsConfig(initMode = InitMode.Async))
 
   /** Create a FeatureFlags layer from multiple providers with a custom strategy (non-blocking). */
@@ -1434,7 +1434,7 @@ object FeatureFlags {
   def fromMultiProviderAsync(
     providers: List[OFFeatureProvider],
     strategy: Strategy
-  ): ZLayer[Scope, Throwable, FeatureFlags] =
+  ): ZLayer[Any, Throwable, FeatureFlags] =
     fromProvider(multiProvider(providers, strategy), FeatureFlagsConfig(initMode = InitMode.Async))
 
   /** Default `compose` for [[fromAcquireAsync]]: layer the real provider over the fallback with a first-successful
@@ -1523,7 +1523,7 @@ object FeatureFlags {
     // Its own parameter, not a config field: this factory bypasses `FeatureFlagsConfig`, and it is exactly the
     // fallback-first path where a served-default log storm during an outage matters most (#350).
     fallbackLogging: FallbackLogging = FallbackLogging.Default
-  ): URLayer[Scope, FeatureFlags with AcquireStatus] =
+  ): URLayer[Any, FeatureFlags with AcquireStatus] =
     // `scopedEnvironment` rather than `scoped`: the layer emits two services, and only an explicit ZEnvironment can
     // carry an intersection.
     ZLayer.scopedEnvironment {

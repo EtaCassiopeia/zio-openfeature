@@ -39,10 +39,10 @@ object MyApp extends ZIOAppDefault:
     yield ()
 
   // Flags from environment variables (FF_MY_FEATURE=true); swap in any OpenFeature provider
-  def run = program.provide(Scope.default >>> FeatureFlags.fromProvider(EnvVarProvider()))
+  def run = program.provide(FeatureFlags.fromProvider(EnvVarProvider()))
 
 // In tests, the in-memory provider from the testkit
-MyApp.program.provide(TestFeatureProvider.scopedLayer(Map("my-feature" -> true)))
+MyApp.program.provide(TestFeatureProvider.layer(Map("my-feature" -> true)))
 ```
 
 `booleanOrDefault` never fails and serves the default instead; `boolean` fails with a `FeatureFlagError` when the flag

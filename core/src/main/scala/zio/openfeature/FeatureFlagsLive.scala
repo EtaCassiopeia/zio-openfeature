@@ -10,6 +10,7 @@ import zio.openfeature.internal.{
   FeatureFlagsState,
   ProviderReportedError,
   ProviderStatusMachine,
+  TrackingConverter,
   ValueBridge
 }
 import zio.openfeature.internal.ProviderStatusMachine.Signal
@@ -20,7 +21,6 @@ import dev.openfeature.sdk.{
   EventDetails,
   EventProviderAccess,
   FlagEvaluationDetails,
-  MutableTrackingEventDetails,
   OpenFeatureAPI
 }
 
@@ -1341,18 +1341,26 @@ final private[openfeature] class FeatureFlagsLive(
     context: EvaluationContext,
     details: Option[TrackingEventDetails]
   ): IO[FeatureFlagError, Unit] =
-    effectiveContext(context).flatMap { merged =>
-      recordTrack(eventName, merged, details) *>
-        ZIO
-          .attemptBlocking {
-            val ofContext = toJavaContext(merged)
-            details match {
-              case Some(d) => client.track(eventName, ofContext, toOpenFeatureDetails(d))
-              case None    => client.track(eventName, ofContext)
-            }
-          }
-          .mapError(e => FeatureFlagError.classify(e))
-    }
+    // Convert before anything is recorded or sent: an attribute the SDK cannot represent is a caller mistake, so it
+    // fails here as InvalidContext rather than inside the SDK call, where `classify` would blame the provider (#441).
+    ZIO
+      .foreach(details)(d =>
+        ZIO.fromEither(TrackingConverter.toOpenFeature(d)).mapError(FeatureFlagError.InvalidContext(_))
+      )
+      .flatMap { ofDetails =>
+        effectiveContext(context).flatMap { merged =>
+          recordTrack(eventName, merged, details) *>
+            ZIO
+              .attemptBlocking {
+                val ofContext = toJavaContext(merged)
+                ofDetails match {
+                  case Some(d) => client.track(eventName, ofContext, d)
+                  case None    => client.track(eventName, ofContext)
+                }
+              }
+              .mapError(e => FeatureFlagError.classify(e))
+        }
+      }
 
   // The recorder is bounded: when full, the oldest entries are dropped so long-running apps that
   // call `track` per request don't accumulate events (and their merged contexts) without limit.
@@ -1370,40 +1378,4 @@ final private[openfeature] class FeatureFlagsLive(
   override def trackedEvents: UIO[List[(String, EvaluationContext, Option[TrackingEventDetails])]] =
     state.trackRecorder.get.map(_.toList)
 
-  private def toOpenFeatureDetails(details: TrackingEventDetails): MutableTrackingEventDetails = {
-    val result = details.value match {
-      case Some(v) => new MutableTrackingEventDetails(v)
-      case None    => new MutableTrackingEventDetails()
-    }
-    details.attributes.foreach { case (k, v) =>
-      addAttributeToDetails(result, k, v)
-    }
-    result
-  }
-
-  private def addAttributeToDetails(details: MutableTrackingEventDetails, key: String, value: Any): Unit =
-    value match {
-      case b: Boolean => details.add(key, b)
-      case s: String  => details.add(key, s)
-      case i: Int     => details.add(key, Integer.valueOf(i))
-      // int-range long → Integer (no precision loss, and matches integer targeting); anything larger goes through
-      // `Value`'s native Long support (SDK 1.22.0) rather than the old Double fallback, which was silently lossy
-      // beyond 2^53.
-      case l: Long =>
-        if (l.isValidInt) details.add(key, Integer.valueOf(l.toInt))
-        else details.add(key, new dev.openfeature.sdk.Value(java.lang.Long.valueOf(l)))
-      case d: Double                  => details.add(key, d)
-      case f: Float                   => details.add(key, java.lang.Double.valueOf(f.toDouble))
-      case instant: java.time.Instant => details.add(key, instant)
-      case list: List[_] =>
-        val values = list.map(v => new dev.openfeature.sdk.Value(anyToObject(v))).asJava
-        details.add(key, values)
-      case map: Map[_, _] =>
-        val structure = dev.openfeature.sdk.Structure.mapToStructure(
-          map.asInstanceOf[Map[String, Any]].map { case (k, v) => k -> anyToObject(v) }.asJava
-        )
-        details.add(key, structure)
-      case null  => () // Skip null values
-      case other => details.add(key, other.toString)
-    }
 }

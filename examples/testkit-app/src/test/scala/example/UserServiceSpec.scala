@@ -7,7 +7,7 @@ import zio.test._
 
 /** Reference spec showing how to unit-test feature-flag-driven application code. Pattern:
   *
-  *   1. Build the layer with `TestFeatureProvider.scopedLayer` (or `scopedLayer(initialFlags)`).
+  *   1. Build the layer with `TestFeatureProvider.layer` (or `layer(initialFlags)`).
   *   2. Resolve the `TestFeatureProvider` service in your test and call `setFlag` / `setStatus` to drive evaluations.
   *   3. Wire your application service on top of `FeatureFlags` (the testkit provides both layers).
   *
@@ -16,7 +16,7 @@ import zio.test._
 object UserServiceSpec extends ZIOSpecDefault {
 
   private val testEnv: ZLayer[Any, Throwable, TestFeatureProvider with FeatureFlags with UserService] =
-    TestFeatureProvider.scopedLayer >>> (
+    TestFeatureProvider.layer >>> (
       ZLayer.environment[TestFeatureProvider with FeatureFlags] ++ UserService.live
     )
 

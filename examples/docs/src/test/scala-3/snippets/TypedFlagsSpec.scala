@@ -20,7 +20,7 @@ object TypedFlagsSpec extends ZIOSpecDefault:
         p <- plan
         c <- value
       yield assertTrue(p == Tier.Premium, c)
-    }.provide(Scope.default, fixture),
+    }.provide(fixture),
     test("derived enum decodes case-insensitively and encodes the declared label") {
       val ft = summon[FlagType[Tier]]
       assertTrue(
@@ -48,10 +48,10 @@ object TypedFlagsSpec extends ZIOSpecDefault:
         _        <- provider.setFlag("user-plan", "gold")
         result   <- plan.either
       yield assertTrue(result.left.exists(_.isInstanceOf[FeatureFlagError.TypeMismatch]))
-    }.provide(Scope.default, fixture),
+    }.provide(fixture),
     test("an unseeded flag serves the FlagDef default on the total tier") {
       FeatureFlags.valueOrDefault(Flags.PageSize).map(l => assertTrue(l == Level(1)))
-    }.provide(Scope.default, fixture),
+    }.provide(fixture),
     test("object-backed and fallible types evaluate") {
       for
         provider <- ZIO.service[TestFeatureProvider]
@@ -65,7 +65,7 @@ object TypedFlagsSpec extends ZIOSpecDefault:
         r == Region.Us,
         bad.left.exists(_.isInstanceOf[FeatureFlagError.TypeMismatch])
       )
-    }.provide(TestFeatureProvider.scopedLayer(Map.empty[String, Any])),
+    }.provide(TestFeatureProvider.layer(Map.empty[String, Any])),
     test("equality and sameKey") {
       assertTrue(!equal, same)
     },

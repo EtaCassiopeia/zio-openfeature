@@ -36,11 +36,11 @@ object Home:
       yield ()
 
     // Flags from environment variables (FF_MY_FEATURE=true); swap in any OpenFeature provider
-    def run = program.provide(Scope.default >>> FeatureFlags.fromProvider(EnvVarProvider()))
+    def run = program.provide(FeatureFlags.fromProvider(EnvVarProvider()))
   // --8<-- [end:quick-start]
 
   // --8<-- [start:quick-start-test]
   // In tests, the in-memory provider from the testkit
   val inTests: ZIO[Any, Throwable, Unit] =
-    MyApp.program.provide(TestFeatureProvider.scopedLayer(Map("my-feature" -> true)))
+    MyApp.program.provide(TestFeatureProvider.layer(Map("my-feature" -> true)))
   // --8<-- [end:quick-start-test]

@@ -4,7 +4,6 @@ import dev.openfeature.sdk.{
   EvaluationContext => OFEvaluationContext,
   ProviderEvent => JavaProviderEvent,
   EventProvider,
-  EventProviderBridge,
   FeatureProvider,
   Metadata,
   ProviderEvaluation,
@@ -128,14 +127,7 @@ final class CachingProvider private (
 
   private val generation = new java.util.concurrent.atomic.AtomicLong(0L)
 
-  private val delegateAttached = new AtomicBoolean(false)
-
-  // Event integration is derived from the delegate's type rather than stored as a separate flag, so
-  // "attached to something that cannot emit" is unrepresentable. Empty for a plain `FeatureProvider`.
-  private val eventDelegate: Option[EventProvider] = underlying match {
-    case ev: EventProvider => Some(ev)
-    case _                 => None
-  }
+  private val channel = new DelegateEventChannel(underlying, onDelegateEvent)
 
   // Forward delegate emissions upward (the delegate is never registered with an API, so without this its
   // events go nowhere) and invalidate the cache on configuration changes so stale values aren't served
@@ -146,10 +138,7 @@ final class CachingProvider private (
     ()
   }
 
-  private def attachDelegate(): Unit =
-    eventDelegate.foreach { ev =>
-      if (delegateAttached.compareAndSet(false, true)) EventProviderBridge.attach(ev, onDelegateEvent)
-    }
+  private def attachDelegate(): Unit = channel.attach()
 
   override def initialize(context: OFEvaluationContext): Unit = {
     attachDelegate()
@@ -163,12 +152,13 @@ final class CachingProvider private (
 
   override def isDomainScoped(): Boolean = underlying.isDomainScoped()
 
+  // `super.shutdown()` (EventProvider's) last: it is what stops this wrapper's own event emitter (#450). It waits up to
+  // a few seconds for in-flight emissions to drain.
   override def shutdown(): Unit = {
-    eventDelegate.foreach { ev =>
-      if (delegateAttached.compareAndSet(true, false)) scala.util.Try(EventProviderBridge.detach(ev))
-    }
+    channel.detach()
     invalidateAllNow()
-    underlying.shutdown()
+    try underlying.shutdown()
+    finally super.shutdown()
   }
 
   // Length-prefix each field so user-supplied strings cannot synthesize separator collisions

@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Layers no longer ask for a `Scope`** (#443). Every `FeatureFlags` factory, `FeatureFlagRegistry.fromProvider` and
+  the testkit layers were typed `ZLayer[Scope, …]`, although they build with `ZLayer.scoped`, which owns the layer's
+  scope; so callers had to supply `Scope.default` for nothing. They are now `ZLayer[Any, …]` (`URLayer[Any, …]` for
+  `fromAcquireAsync`); lifetimes are unchanged, still bound to the layer. Existing code keeps compiling, and
+  `Scope.default >>> layer` still works. One catch: `provide(Scope.default, FeatureFlags.fromProvider(p))`, when
+  nothing else needs the `Scope`, now draws ZIO's "unused layer" warning, which fails builds that use `-Werror` — drop
+  the `Scope.default`. Binary compatible.
 - **API tidy-ups** (#444):
   - `EvaluationOptions` (per-call hooks, hints, timeout) can now be passed to every `*OrDefault`, `valueOrDefault` and
     `value`, including the `FlagDef` forms, not only to `*Details` and `resolveOrDefault`.
@@ -17,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Unreadable provider event metadata is logged instead of silently dropped (the event is still delivered).
   - A typed error built from a provider-reported code (`PARSE_ERROR`, `GENERAL`) carries the provider's message in a
     stackless cause instead of a stack trace pointing into this library.
+||||||| fca038a
 - **The documentation site moved to MkDocs Material and was rewritten.** Every page was checked against the code and
   simplified, new pages cover evaluation, provider lifecycle and events, and OFREP, and animations show how an
   evaluation, context, hooks, transactions and providers work. Every code sample on the site is now compiled and,
@@ -51,6 +59,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`CachingProvider` and `CircuitBreakerProvider` release their event plumbing properly** (#450). Their `shutdown`
+  never called `EventProvider.shutdown`, so each wrapper's event emitter kept running and could still dispatch
+  afterwards. And a wrapper whose attach to the delegate failed (the delegate already belonged to another wrapper)
+  still detached the delegate on `shutdown`, cutting off the wrapper that owned it. Both now share one event-channel
+  helper that records an attachment only once it succeeds, and `shutdown` ends with `EventProvider.shutdown`.
 - **Circuit breaker: stale outcomes and polled `READY` no longer reset the circuit** (#447).
   - A call admitted in one circuit state could record its outcome in a later one: a slow call admitted while closed
     could close a half-open circuit while the real probe was still running, or free the probe slot so two probes ran
@@ -69,6 +82,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   An exception with a `getStatusCode`/`statusCode` accessor is now classified by its status (401/403 → `Unauthorized`,
   anything else → `ProviderError`). `Unauthorized` produced by `classify` now keeps the original exception as its
   `cause` (new `FeatureFlagError.unauthorized(reason, cause)`; `Unauthorized(reason)` patterns are unchanged).
+||||||| a0a5a5b
+- **Tracking attributes are sent by type, and an unsupported one fails `track`** (#441). An `AttributeValue` attribute
+  (and any type the converter did not know, including one nested in a `List`/`Map`) was sent as its `toString`, so
+  `withAttribute("plan", AttributeValue.string("pro"))` arrived as `"StringValue(pro)"`. `AttributeValue`s, `Option`s
+  and SDK `Value`s now convert properly, longs beyond `Int` range keep full precision, and any other type makes `track`
+  fail with `FeatureFlagError.InvalidContext` naming the attribute — nothing is sent or recorded. **Behaviour change:**
+  types that used to be sent as their `toString` now fail, among them `Short`, `Byte`, `BigDecimal`, `UUID` and
+  collections other than `List`/`Map` (`Vector`, `Seq`, `Set`, Java collections); convert them before tracking. A long
+  inside a `List`/`Map` that fits in an `Int` is now sent as an integer, as a top-level one already was.
 ||||||| a0a5a5b
 - **`CircuitBreakerProvider` now trips on providers that return error codes instead of throwing** (#446). Any returned
   evaluation counted as a success, so a delegate that reports network failures as `errorCode = GENERAL` — the OFREP
@@ -875,6 +897,9 @@ change (#247) — and the **Removed** `OpenFeatureAPIFactory` shim (#316). Detai
   `getRawEvaluations`, and `setFlags` call sites that relied on the clear-first behavior to `replaceFlags`.
 
 ### Deprecated
+
+- **Testkit `scopedLayer` / `scopedAsyncLayer`, in favour of `layer` / `asyncLayer`** (#443). With layers no longer
+  needing a `Scope`, the twins are identical to them.
 
 - **14 `FeatureFlags` factory overloads, superseded by `fromProvider(provider, config)`** (#253):
   `fromProvider(p, evaluationTimeout)`, `fromProvider(p, evaluationTimeout, initTimeout)`,

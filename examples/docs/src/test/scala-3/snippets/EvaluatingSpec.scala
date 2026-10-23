@@ -8,7 +8,7 @@ import snippets.Evaluating.*
 
 object EvaluatingSpec extends ZIOSpecDefault:
 
-  private val empty = TestFeatureProvider.scopedLayer(Map.empty[String, Any])
+  private val empty = TestFeatureProvider.layer(Map.empty[String, Any])
 
   def spec = suite("Evaluating flags")(
     test("every typed method reads its flag") {

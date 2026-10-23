@@ -62,7 +62,7 @@ exactly `fromProvider(provider)`.
 | Field | Default | Setter | What it does |
 |:--|:--|:--|:--|
 | `domain` | none | `withDomain(d)` | Binds the client to a named [domain](#domains). |
-| `version` | none | `withVersion(v)` | Client version, reported by `clientMetadata`. Only used together with a domain. |
+| `version` | none | `withVersion(v)` | Client version, reported by `clientMetadata` and passed to the SDK client. |
 | `initialHooks` | none | `withHooks(list)`, `withHook(h)` | Client-level [hooks](hooks.md) installed from the start. |
 | `evaluationTimeout` | 1 second | `withEvaluationTimeout(d)`, `withoutEvaluationTimeout` | Bounds each evaluation. On timeout the call fails with `ProviderError` wrapping a `TimeoutException`; the provider call keeps running in the background. Per-call override: see [Evaluating flags](evaluating.md). |
 | `initTimeout` | 30 seconds | `withInitTimeout(d)` | Bounds initialization, see [Sync or async start](#sync-or-async-start). |
@@ -247,6 +247,11 @@ What happens:
    swapping in a fresh fallback.
 
 In every failure case, `setProvider` again with a working provider recovers.
+
+Once a swap has started it finishes, with one of the outcomes above, even if the calling fiber is interrupted: an
+interrupt halfway would leave neither the new provider nor the old one properly in place. So `setProvider(p).timeout(d)`
+returns only when the swap has settled, at most about twice `initTimeout`. A call still waiting for an earlier swap to
+finish can be interrupted at once.
 
 `setProvider` is the only way out of `Fatal`. When you use a wrapper such as `CircuitBreakerProvider`, swap in a new
 wrapper around the new provider, not just the inner provider.

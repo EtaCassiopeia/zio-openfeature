@@ -29,6 +29,9 @@ trait FeatureFlagRegistry {
 
 object FeatureFlagRegistry {
 
+  // How often `awaitReady` re-reads a freshly registered provider's status.
+  private[openfeature] val AwaitReadyPollInterval: Duration = 10.millis
+
   def getClient(domain: String): ZIO[FeatureFlagRegistry, FeatureFlagError, FeatureFlags] =
     ZIO.serviceWithZIO(_.getClient(domain))
 
@@ -229,7 +232,7 @@ final private class FeatureFlagRegistryLive(
     * The loop is bounded by the default init timeout.
     */
   private def awaitReady(client: FeatureFlags): IO[FeatureFlagError, Unit] = {
-    val pollMillis = 10L
+    val pollMillis = FeatureFlagRegistry.AwaitReadyPollInterval.toMillis
     val maxPolls   = math.max(1L, FeatureFlags.DefaultInitTimeout.toMillis / pollMillis)
 
     val check: IO[FeatureFlagError, Option[Unit]] = client.providerStatus.flatMap {

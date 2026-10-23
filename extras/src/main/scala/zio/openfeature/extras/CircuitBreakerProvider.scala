@@ -47,12 +47,12 @@ object StalePolicy {
   *   evaluation outcome immediately.
   */
 final case class CircuitBreakerProviderConfig(
-  failureThreshold: Int = 5,
-  resetTimeout: Duration = 30.seconds,
-  evaluationTimeout: Duration = 500.millis,
-  halfOpenMaxCalls: Int = 1,
+  failureThreshold: Int = CircuitBreaker.DefaultFailureThreshold,
+  resetTimeout: Duration = CircuitBreaker.DefaultResetTimeout,
+  evaluationTimeout: Duration = CircuitBreakerProvider.DefaultEvaluationTimeout,
+  halfOpenMaxCalls: Int = CircuitBreaker.DefaultHalfOpenMaxCalls,
   stalePolicy: StalePolicy = StalePolicy.Open,
-  stateCheckInterval: Duration = 1.second
+  stateCheckInterval: Duration = CircuitBreakerProvider.DefaultStateCheckInterval
 ) {
   private[extras] def toCircuitBreakerConfig: CircuitBreakerConfig =
     CircuitBreakerConfig(
@@ -61,7 +61,7 @@ final case class CircuitBreakerProviderConfig(
       halfOpenMaxCalls = halfOpenMaxCalls,
       // A probe should never be considered wedged before the evaluation it runs could itself time out; add a
       // margin so a legitimately slow probe is not stolen out from under itself.
-      probeTimeout = evaluationTimeout + 1.second
+      probeTimeout = evaluationTimeout + CircuitBreakerProvider.ProbeTimeoutMargin
     )
 }
 
@@ -236,7 +236,7 @@ final class CircuitBreakerProvider private (
       case None =>
         val detail = breaker.currentState match {
           case CircuitState.Open(sinceNanos, reason) =>
-            val ago = (breaker.ticker.nanos() - sinceNanos) / 1000000
+            val ago = java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(breaker.ticker.nanos() - sinceNanos)
             val cause = reason match {
               case OpenReason.Failures => "consecutive failures"
               case OpenReason.External => "delegate reported unhealthy state"
@@ -391,6 +391,13 @@ final class CircuitBreakerProvider private (
 }
 
 object CircuitBreakerProvider {
+
+  val DefaultEvaluationTimeout: Duration  = 500.millis
+  val DefaultStateCheckInterval: Duration = 1.second
+
+  // Added to the evaluation timeout to get the probe timeout: a probe is never considered wedged before the evaluation
+  // it runs could itself time out.
+  private[extras] val ProbeTimeoutMargin: Duration = 1.second
 
   def make(
     underlying: FeatureProvider,

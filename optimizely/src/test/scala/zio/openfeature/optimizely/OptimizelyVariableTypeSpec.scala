@@ -29,16 +29,21 @@ object OptimizelyVariableTypeSpec extends ZIOSpecDefault {
       server.stubFor(
         get(urlEqualTo(DatafilePath)).willReturn(okJson(readResource("/datafiles/typed-variables.json")))
       )
+      // One NotificationCenter for manager and client, as production buildClient wires it: the datafile-update
+      // notification is what drives initialize(), instead of a single blocking isValid window that a slow fetch
+      // under load can miss.
+      val center = new com.optimizely.ab.notification.NotificationCenter()
       val manager = HttpProjectConfigManager
         .builder()
         .withSdkKey("typed-variables-key")
+        .withNotificationCenter(center)
         .withUrl(s"http://localhost:${server.port()}$DatafilePath")
         .withBlockingTimeout(2000, TimeUnit.MILLISECONDS)
         .withPollingInterval(3600, TimeUnit.SECONDS)
         .withOptimizelyHttpClient(TestHttpClient.failFast())
         .build()
       val provider = new OptimizelyFeatureProvider(
-        Optimizely.builder().withConfigManager(manager).build(),
+        Optimizely.builder().withConfigManager(manager).withNotificationCenter(center).build(),
         java.time.Duration.ofSeconds(3),
         closeOnShutdown = true
       )

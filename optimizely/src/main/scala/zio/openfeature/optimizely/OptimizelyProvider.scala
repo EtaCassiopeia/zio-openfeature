@@ -90,6 +90,13 @@ object OptimizelyProvider {
     */
   val DefaultInitWait: java.time.Duration = java.time.Duration.ofSeconds(25)
 
+  // Staleness watchdog tuning: without `staleAfter`, the provider is STALE after this many polling intervals with no
+  // successful fetch; the watchdog checks every polling interval or every threshold / divisor, whichever is shorter,
+  // and never more often than every `MinCheckIntervalMs`.
+  private[optimizely] val DefaultStaleMultiplier: Long = 3L
+  private[optimizely] val StalenessCheckDivisor: Long  = 2L
+  private[optimizely] val MinCheckIntervalMs: Long     = 1L
+
   /** Validate an SDK key and construct a provider that fetches its datafile from the Optimizely CDN.
     *
     * Validation rules:
@@ -174,12 +181,12 @@ object OptimizelyProvider {
     * check interval is the smaller of one polling interval and half the threshold (so staleness is detected within
     * roughly one poll of the window elapsing), floored at 1ms.
     */
-  private def stalenessConfig(
+  private[optimizely] def stalenessConfig(
     config: OptimizelyProviderConfig
   ): Option[OptimizelyFeatureProvider.StalenessConfig] =
     config.pollingInterval.map { poll =>
-      val staleAfter = config.staleAfter.getOrElse(poll.multipliedBy(3))
-      val checkMs    = math.max(1L, math.min(poll.toMillis, staleAfter.toMillis / 2))
+      val staleAfter = config.staleAfter.getOrElse(poll.multipliedBy(DefaultStaleMultiplier))
+      val checkMs = math.max(MinCheckIntervalMs, math.min(poll.toMillis, staleAfter.toMillis / StalenessCheckDivisor))
       OptimizelyFeatureProvider.StalenessConfig(
         new OptimizelyFeatureProvider.FetchObserver,
         staleAfter,
@@ -232,7 +239,9 @@ object OptimizelyProvider {
 
   /** Upper bound on provider teardown. `shutdown()` is `shutdownNow`-based and normally returns in milliseconds; the
     * bound exists so a pathological close (e.g. an HTTP client wedged mid-request) cannot hang scope teardown — the
-    * SDK's polling and evictor threads are daemon, so the JVM can still exit either way.
+    * SDK's polling and evictor threads are daemon, so the JVM can still exit either way. It is longer than the OFREP
+    * provider's bound: closing the Optimizely client stops its poller and HTTP clients and, with an event processor,
+    * flushes buffered events, where OFREP only stops an executor.
     */
   private val ShutdownTimeout: zio.Duration = 10.seconds
 

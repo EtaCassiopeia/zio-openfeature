@@ -308,12 +308,11 @@ object HostileValueSweepSpec extends ZIOSpecDefault {
           assertTrue(back.asDouble.exists(sameBits(_, d)))
         }
       },
-      // Finding (see PR notes): valueToAttribute maps any whole double through `num == num.toLong.toDouble`, and
-      // -0.0 == 0.0, so DoubleValue(-0.0) comes back as IntValue(0): the sign bit is silently dropped.
+      // Found by this sweep: `-0.0 == 0.0`, so the whole-number check turned DoubleValue(-0.0) into IntValue(0).
       test("DoubleValue(-0.0) keeps its sign") {
         val back = roundTripAttr(AttributeValue.DoubleValue(negativeZero))
         assertTrue(back.asDouble.exists(isNegativeZero))
-      } @@ TestAspect.ignore, // ContextConverter.scala:85 -- confirmed failing; reported separately, see PR notes
+      },
       test("nested lists and structures with hostile leaves and keys preserve every value exactly") {
         check(anyAttr) { attr =>
           val back = roundTripAttr(attr)

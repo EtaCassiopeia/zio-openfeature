@@ -82,7 +82,11 @@ private[openfeature] object ContextConverter {
       val num = value.asDouble()
       // Long.MaxValue.toDouble rounds up to 2^63 (strictly greater than Long.MaxValue), so .toLong on
       // out-of-range doubles silently saturates. Strict `<` on the upper bound rejects the saturation point.
-      if (num == num.toLong.toDouble && num >= Long.MinValue.toDouble && num < Long.MaxValue.toDouble) {
+      // -0.0 == 0.0, so it is excluded explicitly: as an integer it would lose its sign (#469).
+      val negativeZero = java.lang.Double.doubleToRawLongBits(num) == java.lang.Double.doubleToRawLongBits(-0.0)
+      if (
+        !negativeZero && num == num.toLong.toDouble && num >= Long.MinValue.toDouble && num < Long.MaxValue.toDouble
+      ) {
         val asLong = num.toLong
         if (asLong >= Int.MinValue && asLong <= Int.MaxValue) AttributeValue.IntValue(asLong.toInt)
         else AttributeValue.LongValue(asLong)

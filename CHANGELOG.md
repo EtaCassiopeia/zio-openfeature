@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Concurrency property tests** (#465) for hook-data isolation (#438), circuit-breaker epochs (#447) and cache
+  invalidation (#449), plus a generated swap/evaluate schedule in the hot-swap stress spec. Test-only.
+
 ### Changed
 
 - **Optimizely SDK 4.6.0** (from 4.2.2, #474), with CMAB support. Factory-built providers now wire Optimizely's CMAB

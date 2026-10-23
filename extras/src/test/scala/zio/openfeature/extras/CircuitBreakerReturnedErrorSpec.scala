@@ -119,6 +119,14 @@ object CircuitBreakerReturnedErrorSpec extends ZIOSpecDefault {
       cb.getBooleanEvaluation("flag", false, ctx)
       assertTrue(stateAfterProbe == ProviderState.STALE, delegate.evaluationCount.get() == before + 1)
     },
+    test("a half-open probe that returns an infrastructure error re-opens the circuit") {
+      val (delegate, cb, ticker) = tripWith(ErrorCode.GENERAL)
+      ticker.advance(2.seconds)
+      cb.getBooleanEvaluation("flag", false, ctx)
+      val before   = delegate.evaluationCount.get()
+      val rejected = scala.util.Try(cb.getBooleanEvaluation("flag", false, ctx)).isFailure
+      assertTrue(cb.getState == ProviderState.ERROR, rejected, delegate.evaluationCount.get() == before)
+    },
     test("a returned error-coded evaluation is passed through unchanged") {
       val delegate = new CodedProvider
       val cb       = CircuitBreakerProvider(delegate, config, new ManualTicker)

@@ -15,7 +15,11 @@ import dev.openfeature.sdk.{
 
 // #440: classify by the HTTP status an exception carries, not by its class name; keep the original throwable on
 // Unauthorized; name the flag-scoped predicate for what it is.
+@scala.annotation.nowarn("cat=deprecation")
 object FeatureFlagErrorStatusSpec extends ZIOSpecDefault {
+
+  // Built outside the assertTrue macros, which report deprecations at their own position (past @nowarn).
+  private val emptyFlagVariables: FeatureFlagError = FeatureFlagError.EmptyFlagVariables("f")
 
   /** Shaped like Apache httpclient5's HttpResponseException: any status, exposed through getStatusCode. */
   final class FakeHttpResponseException(status: Int)
@@ -118,7 +122,7 @@ object FeatureFlagErrorStatusSpec extends ZIOSpecDefault {
         isFlagError(FlagNotFound("f")),
         isFlagError(TypeMismatch("f", "a", "b")),
         isFlagError(ParseError("f", boom)),
-        isFlagError(EmptyFlagVariables("f")),
+        isFlagError(emptyFlagVariables),
         isFlagError(TargetingKeyMissing("f")),
         isFlagError(InvalidContext("c")),
         !isFlagError(NestedTransactionNotAllowed),

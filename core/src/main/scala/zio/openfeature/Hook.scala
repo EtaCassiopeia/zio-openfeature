@@ -167,6 +167,18 @@ object FeatureHook {
 
   val noop: FeatureHook = new FeatureHook {}
 
+  /** Per-evaluation timing for the timing hooks (#444): `start` in `before`, `elapsed` in a later stage. Kept in the
+    * hook's own HookData, so it never leaks between hooks or evaluations.
+    */
+  final private class Stopwatch(name: String) {
+    private val startKey = TypedKey[Long](s"$name.startTime")
+
+    def start(ctx: HookContext): UIO[Unit] = Clock.nanoTime.flatMap(now => ZIO.succeed(ctx.hookData.set(startKey, now)))
+
+    def elapsed(ctx: HookContext): UIO[Duration] =
+      Clock.nanoTime.map(end => Duration.fromNanos(end - ctx.hookData.get(startKey).getOrElse(end)))
+  }
+
   private val composeIds = new java.util.concurrent.atomic.AtomicLong(0L)
 
   /** Run `hooks` as one hook: `before` in order, the other stages in reverse.
@@ -271,7 +283,7 @@ object FeatureHook {
     logContext: Boolean = false,
     redactKeys: Set[String] = Set.empty
   ): FeatureHook = new FeatureHook {
-    private val startTimeKey = TypedKey[Long]("structuredLogging.startTime")
+    private val stopwatch = new Stopwatch("structuredLogging")
 
     private def annotate(annotations: Set[zio.LogAnnotation])(effect: UIO[Unit]): UIO[Unit] =
       ZIO.logAnnotate(annotations)(effect)
@@ -323,8 +335,7 @@ object FeatureHook {
     // context-modified tracking.
     override def before(ctx: HookContext, hints: HookHints): UIO[Option[EvaluationContext]] =
       for {
-        now <- Clock.nanoTime
-        _   <- ZIO.succeed(ctx.hookData.set(startTimeKey, now))
+        _ <- stopwatch.start(ctx)
         _ <- beforeLevel match {
           case Some(level) =>
             annotate(baseAnnotations(ctx) ++ contextAnnotations(ctx))(
@@ -334,11 +345,7 @@ object FeatureHook {
         }
       } yield None
 
-    private def elapsed(ctx: HookContext): UIO[Duration] =
-      Clock.nanoTime.map { end =>
-        val start = ctx.hookData.get(startTimeKey).getOrElse(end)
-        Duration.fromNanos(end - start)
-      }
+    private def elapsed(ctx: HookContext): UIO[Duration] = stopwatch.elapsed(ctx)
 
     override def after[A](ctx: HookContext, details: FlagResolution[A], hints: HookHints): UIO[Unit] =
       afterLevel match {
@@ -375,26 +382,16 @@ object FeatureHook {
 
   def metrics(onEvaluation: (String, Duration, Boolean) => UIO[Unit]): FeatureHook =
     new FeatureHook {
-      private val startTimeKey = TypedKey[Long]("metrics.startTime")
+      private val stopwatch = new Stopwatch("metrics")
 
       override def before(ctx: HookContext, hints: HookHints): UIO[Option[EvaluationContext]] =
-        Clock.nanoTime.flatMap(now => ZIO.succeed(ctx.hookData.set(startTimeKey, now))).as(None)
+        stopwatch.start(ctx).as(None)
 
       override def after[A](ctx: HookContext, details: FlagResolution[A], hints: HookHints): UIO[Unit] =
-        for {
-          end <- Clock.nanoTime
-          start    = ctx.hookData.get(startTimeKey).getOrElse(end)
-          duration = Duration.fromNanos(end - start)
-          _ <- onEvaluation(ctx.flagKey, duration, true)
-        } yield ()
+        stopwatch.elapsed(ctx).flatMap(onEvaluation(ctx.flagKey, _, true))
 
       override def error(ctx: HookContext, err: FeatureFlagError, hints: HookHints): UIO[Unit] =
-        for {
-          end <- Clock.nanoTime
-          start    = ctx.hookData.get(startTimeKey).getOrElse(end)
-          duration = Duration.fromNanos(end - start)
-          _ <- onEvaluation(ctx.flagKey, duration, false)
-        } yield ()
+        stopwatch.elapsed(ctx).flatMap(onEvaluation(ctx.flagKey, _, false))
     }
 
   /** A detailed metrics hook that provides full evaluation context for building rich metric tags.
@@ -413,29 +410,21 @@ object FeatureHook {
     onSuccess: (HookContext, FlagResolution[_], Duration) => UIO[Unit],
     onError: (HookContext, FeatureFlagError, Duration) => UIO[Unit]
   ): FeatureHook = new FeatureHook {
-    private val startTimeKey = TypedKey[Long]("metricsDetailed.startTime")
+    private val stopwatch = new Stopwatch("metricsDetailed")
 
     override def before(ctx: HookContext, hints: HookHints): UIO[Option[EvaluationContext]] =
-      for {
-        now <- Clock.nanoTime
-        _   <- ZIO.succeed(ctx.hookData.set(startTimeKey, now))
-      } yield None
+      stopwatch.start(ctx).as(None)
 
     override def after[A](ctx: HookContext, details: FlagResolution[A], hints: HookHints): UIO[Unit] =
-      Clock.nanoTime.flatMap { end =>
-        val start    = ctx.hookData.get(startTimeKey).getOrElse(end)
-        val duration = Duration.fromNanos(end - start)
-        onSuccess(ctx, details, duration)
-      }
+      stopwatch.elapsed(ctx).flatMap(onSuccess(ctx, details, _))
 
     override def error(ctx: HookContext, err: FeatureFlagError, hints: HookHints): UIO[Unit] =
-      Clock.nanoTime.flatMap { end =>
-        val start    = ctx.hookData.get(startTimeKey).getOrElse(end)
-        val duration = Duration.fromNanos(end - start)
-        onError(ctx, err, duration)
-      }
+      stopwatch.elapsed(ctx).flatMap(onError(ctx, err, _))
   }
 
+  /** Logs a warning when an evaluation's context lacks the targeting key or attributes you require. It does not reject
+    * the evaluation: hooks cannot abort one (see the hook error semantics on [[FeatureHook]]).
+    */
   def contextValidator(
     requireTargetingKey: Boolean = false,
     requiredAttributes: List[String] = Nil

@@ -1,320 +1,132 @@
----
-layout: default
-title: OpenFeature Spec Compliance
-nav_order: 13
----
-
-# OpenFeature Specification Compliance
-
-ZIO OpenFeature wraps the [OpenFeature Java SDK](https://openfeature.dev/docs/reference/technologies/server/java), inheriting its specification compliance while adding ZIO-specific features.
-
----
-
-## Version Compatibility
-
-| Component | Version | Notes |
-|:----------|:--------|:------|
-| **OpenFeature Spec** | v0.9.0 as of 1.1.0, v0.8.0 as of 1.0.0 | [Specification](https://github.com/open-feature/spec) |
-| **OpenFeature Java SDK** | 1.23.0 as of 1.2.0 (unreleased), 1.22.1 as of 1.1.0, 1.21.0 as of 1.0.0 | [Java SDK](https://github.com/open-feature/java-sdk) |
-| **ZIO OpenFeature** | [![Maven Central](https://img.shields.io/maven-central/v/io.github.etacassiopeia/zio-openfeature-core_3.svg)](https://search.maven.org/search?q=g:io.github.etacassiopeia%20AND%20a:zio-openfeature-core_3) | This library |
-
-This library targets the **dynamic-context paradigm** (server-side) of the OpenFeature specification.
-
-### How compliance is verified
-
-The claims on this page are executable, not assertions. The specification's own gherkin suites are vendored
-verbatim from [`open-feature/spec`](https://github.com/open-feature/spec) at the pinned tag above and run on
-every build, twice — once under Cucumber (`conformance`) and once under
-[zio-bdd](https://github.com/EtaCassiopeia/zio-bdd) (`conformance-zio-bdd`). A scheduled job compares the
-vendored copies against upstream and files an issue if they drift, so a new or changed upstream scenario
-surfaces as work rather than silently going unrun.
-
-The same zio-bdd module carries a second suite for this library's *own* API — the ZIO-specific features
-below, which the spec has no opinion about — in its own repo-owned feature directory, so the vendored spec
-files stay byte-identical to upstream.
-
----
-
-## Compliance Summary
-
-The library is **fully compliant** with core OpenFeature functionality:
-
-| Category | Status | Notes |
-|:---------|:-------|:------|
-| Flag Evaluation | ✅ Full | All typed evaluation methods |
-| Evaluation Context | ✅ Full | Global, Client, Scoped, Transaction, Invocation levels |
-| Hooks | ✅ Full | API, Client, and Invocation levels |
-| Provider Lifecycle | ✅ Full | Init, shutdown, status, metadata |
-| Events | ✅ Full | Stream + specific handlers with cancellation |
-| Tracking | ✅ Full | All track() overloads |
-
----
-
-## Flag Evaluation (Spec 1.3-1.4)
-
-| Requirement | Status | Implementation |
-|:------------|:-------|:---------------|
-| Boolean evaluation | ✅ | `boolean(key, default)`, `boolean(key, default, ctx)` |
-| String evaluation | ✅ | `string(key, default)`, `string(key, default, ctx)` |
-| Integer evaluation | ✅ | `int(key, default)`, `long(key, default)` + context overloads |
-| Double evaluation | ✅ | `double(key, default)`, `double(key, default, ctx)` |
-| Object evaluation | ✅ | `obj(key, default)`, `obj(key, default, ctx)` |
-| Generic evaluation | ✅ | `value[A](key, default)` with `FlagType` + context overload |
-| Detailed evaluation | ✅ | `*Details(key, default)`, `*Details(key, default, ctx)`, `*Details(key, default, ctx, options)` |
-| Context overload | ✅ | All methods accept optional `EvaluationContext` |
-| Options overload | ✅ | All detail methods accept `EvaluationOptions` |
-| No exceptions (§1.4.10: always return the default) | ✅ | The total tier (`*OrDefault`, `resolveOrDefault`) never fails and serves the default with the error code on the resolution; the typed tier (`value`, `*Details`) instead fails with a typed `FeatureFlagError` — including for a provider-reported error code — as a ZIO-native addition |
-| No client-side logging (§1.4.11: SHOULD NOT write log messages) | ⚠️ Deviates by default | The total tier writes one **warn** line per flag key per 60 s when it serves a default (`FallbackLogging.Default`). Deliberate: the throttle bounds the volume §1.4.11 warns about, and a silently served default is the highest-value signal the client has. `FallbackLogging.Off` restores conformance for served defaults — only the absorbed-*defect* breadcrumb (a bug, not outage noise) is still written, throttled to one line per key per minute. Per-evaluation logging belongs in a hook (`FeatureHook.logging`), as the spec recommends. |
-
-### Evaluation Methods
-
-All types support three overload patterns:
-
-```scala
-// Basic evaluation
-FeatureFlags.boolean("flag", false)
-FeatureFlags.int("flag", 0)
-FeatureFlags.long("flag", 0L)
-FeatureFlags.double("flag", 0.0)
-FeatureFlags.string("flag", "default")
-FeatureFlags.obj("flag", Map.empty)
-FeatureFlags.value[A]("flag", default)
-
-// With context
-FeatureFlags.boolean("flag", false, context)
-FeatureFlags.long("flag", 0L, context)
-FeatureFlags.obj("flag", Map.empty, context)
-
-// Detailed evaluation (all three patterns)
-FeatureFlags.booleanDetails("flag", false)
-FeatureFlags.booleanDetails("flag", false, context)
-FeatureFlags.booleanDetails("flag", false, context, options)
-
-// Same patterns for: stringDetails, intDetails, longDetails, doubleDetails, objDetails, valueDetails
-```
-
-### Resolution Details
-
-| Field | Status | Notes |
-|:------|:-------|:------|
-| value | ✅ | The resolved flag value |
-| variant | ✅ | Optional variant identifier |
-| reason | ✅ | STATIC, DEFAULT, TARGETING_MATCH, SPLIT, CACHED, etc. |
-| errorCode | ✅ | PROVIDER_NOT_READY, PROVIDER_FATAL, FLAG_NOT_FOUND, TYPE_MISMATCH, etc. |
-| errorMessage | ✅ | Optional error description |
-| flagMetadata | ✅ | Typed metadata values (boolean, string, int, long, double, float) per spec 2.2.10 |
-
----
-
-## Evaluation Context (Spec 3.1)
-
-| Requirement | Status | Implementation |
-|:------------|:-------|:---------------|
-| Targeting key | ✅ | `EvaluationContext.targetingKey` |
-| Custom attributes | ✅ | `EvaluationContext.attributes` |
-| Global context | ✅ | `setGlobalContext` / `globalContext` |
-| Client context | ✅ | `setClientContext` / `clientContext` |
-| Scoped context | ✅ | `withContext` |
-| Invocation context | ✅ | Per-evaluation parameter |
-| Context merging | ✅ | Global → Transaction → Client → Scoped → Invocation |
-
-### Context Merge Order
-
-```
-┌──────────────────────────────────────────────────────────────┐
-│                     Final Merged Context                      │
-│  (Invocation > Scoped > Client > Transaction > Global)       │
-└──────────────────────────────────────────────────────────────┘
-```
-
----
-
-## Hooks (Spec 4.x)
-
-| Requirement | Status | Implementation |
-|:------------|:-------|:---------------|
-| Hook stages | ✅ | before, after, error, finallyAfter |
-| Hook context | ✅ | flagKey, flagType, defaultValue, context, clientMetadata, providerMetadata |
-| Hook hints | ✅ | `HookHints` for passing data between stages |
-| Hook data (4.6.1) | ✅ | `HookData` per-hook mutable state across stages |
-| API-level hooks | ✅ | `FeatureFlags.addApiHook` / `clearApiHooks` |
-| Client-level hooks | ✅ | `FeatureFlags.addHook` / `addHooks` / `clearHooks` |
-| Invocation-level hooks | ✅ | Via `EvaluationOptions` |
-| Provider-level hooks | ✅ | Automatically included from `provider.getProviderHooks()` |
-| Execution order | ✅ | API → Client → Invocation → Provider (reversed for after/error/finally) |
-| Error in before/after runs `error` (4.4.5) | ✅ | A defect in either stage runs the `error` stage; the remaining hooks of that stage are skipped (4.4.6) |
-| Error in after returns the default (4.4.8, spec `main`) | ✅ | Total tier serves the default with `ERROR`/`GENERAL`, and `finallyAfter` receives those details; the typed tier fails with the defect, as for 1.4.10 |
-
-### Invocation-Level Hooks Example
-
-```scala
-val options = EvaluationOptions(
-  hooks = List(myHook),
-  hookHints = HookHints("key" -> "value")
-)
-
-FeatureFlags.booleanDetails("flag", false, EvaluationContext.empty, options)
-```
-
----
-
-## Provider Lifecycle (Spec 2.4-2.5)
-
-| Requirement | Status | Implementation |
-|:------------|:-------|:---------------|
-| Initialize (blocking) | ✅ | Layer creation registers the provider and waits, bounded by `initTimeout`, for `READY` |
-| Initialize (async) | ✅ | `setProvider` via `fromProviderAsync` / `FeatureFlagsConfig(initMode = InitMode.Async)` |
-| Shutdown (1.6.1) | ✅ | Automatic via ZIO Scope finalizer + explicit `shutdown` method |
-| Provider metadata | ✅ | `providerMetadata` returns name and version |
-| Client metadata | ✅ | `clientMetadata` returns domain and version |
-| Domain binding | ✅ | `FeatureFlagsConfig().withDomain(domain)` |
-| Client version | ✅ | `FeatureFlagsConfig().withDomain(domain).withVersion(version)` |
-
----
-
-## Provider Status (Spec 1.7)
-
-| Status | Implemented | Description |
-|:-------|:------------|:------------|
-| NOT_READY | ✅ `NotReady` | Provider not initialized |
-| READY | ✅ `Ready` | Provider ready for evaluation |
-| ERROR | ✅ `Error` | Provider encountered recoverable error |
-| STALE | ✅ `Stale` | Provider data may be outdated |
-| FATAL | ✅ `Fatal` | Provider encountered unrecoverable error |
-| (extra) | ✅ `ShuttingDown` | Provider is shutting down |
-
-```scala
-for
-  status <- FeatureFlags.providerStatus
-  _ <- ZIO.when(status == ProviderStatus.Ready) {
-         Console.printLine("Provider ready")
-       }
-yield ()
-```
-
-When a provider is in the `NotReady` state, all flag evaluations will fail with `FeatureFlagError.ProviderNotReady`. When a provider enters the `Fatal` state, all flag evaluations will fail with `FeatureFlagError.ProviderFatal`.
-
----
-
-## Events (Spec 5.x)
-
-| Requirement | Status | Implementation |
-|:------------|:-------|:---------------|
-| Ready event | ✅ | `ProviderEvent.Ready` |
-| Error event | ✅ | `ProviderEvent.Error` |
-| Stale event | ✅ | `ProviderEvent.Stale` |
-| ConfigurationChanged | ✅ | `ProviderEvent.ConfigurationChanged` |
-| Reconnecting event | ✅ | `ProviderEvent.Reconnecting` |
-| Event metadata | ✅ | All events carry `eventMetadata: FlagMetadata` from provider |
-| Event stream | ✅ | `FeatureFlags.events` returns ZStream |
-| Handler registration | ✅ | `onProviderReady`, `onProviderError`, etc. |
-| Handler cancellation | ✅ | Handlers return cancellation effect |
-| Generic handler | ✅ | `on(eventType, handler)` |
-| Immediate execution | ✅ | Handlers run immediately if state matches (Spec 5.3.3) |
-
-### Event Handlers
-
-```scala
-// Specific event handlers (return cancellation effect)
-val cancel = FeatureFlags.onProviderReady { metadata =>
-  ZIO.logInfo(s"Provider ${metadata.name} is ready")
-}
-
-// Cancel when no longer needed
-cancel.flatMap(c => c)
-
-// Generic event handler
-FeatureFlags.on(ProviderEventType.Error, event => ZIO.logError(s"Error: $event"))
-
-// Event stream
-FeatureFlags.events.foreach { event =>
-  ZIO.logInfo(s"Event: $event")
-}.fork
-```
-
----
-
-## Tracking (Spec 2.7)
-
-| Requirement | Status | Implementation |
-|:------------|:-------|:---------------|
-| Track event name | ✅ | `track(eventName)` |
-| Track with context | ✅ | `track(eventName, context)` |
-| Track with details | ✅ | `track(eventName, details)` |
-| Track full | ✅ | `track(eventName, context, details)` |
-
-### Tracking Example
-
-```scala
-// Simple tracking
-FeatureFlags.track("button-clicked")
-
-// With context
-FeatureFlags.track("purchase", EvaluationContext("user-123"))
-
-// With details
-val details = TrackingEventDetails(
-  value = Some(99.99),
-  attributes = Map("currency" -> "USD", "items" -> 3)
-)
-FeatureFlags.track("checkout", details)
-```
-
----
-
-## ZIO-Specific Features
-
-Beyond the OpenFeature spec, ZIO OpenFeature provides:
-
-| Feature | Description |
-|:--------|:------------|
-| Transactions | Scoped overrides with evaluation caching and tracking; re-entrant via `NestedPolicy.Reuse`; `transactionEvaluations` tells "no transaction" from "nothing evaluated" |
-| Typed and total tiers | `value`/`*Details` fail typed on any evaluation problem, including a provider-reported error code; `*OrDefault`/`resolveOrDefault` never fail and serve the default (the spec's §1.4.10 contract) |
-| Fiber-local context | `withContext` scopes context to a code block via FiberRef |
-| Type-safe evaluation | `FlagType` type class for compile-time safety |
-| Typed flag definitions | `FlagDef[A]` states a flag's key, type and default once — see [Typed Flags]({{ site.baseurl }}/typed-flags) |
-| Derived flag codecs | `derives FlagType` for your own enums and case classes (Scala 3) |
-| Ambient context | `ContextSource` pulls request identity into every evaluation from outside the ZIO environment |
-| Effect-based hooks | Hooks return `UIO` instead of callbacks |
-| Resource management | Automatic lifecycle via ZIO Scope |
-| Event streaming | Provider events as ZStream |
-| Multi-provider | Combine multiple providers with configurable strategies |
-| Verified hot-swap | `fromAcquireAsync` serves a fallback, verifies the real provider before swapping it in, and reports `AcquireStatus` |
-| Served-default logging | A default served after a failure leaves a warn line, rate-limited per flag key — a documented §1.4.11 deviation; `FallbackLogging.Off` opts out |
-
----
-
-## Comparison with Java SDK
-
-| Aspect | Java SDK | ZIO OpenFeature |
-|:-------|:---------|:----------------|
-| Provider management | Global singleton | ZIO Layer |
-| Error handling | Exceptions + defaults | Typed effects |
-| Context scoping | Thread-local | Fiber-local |
-| Transactions | Not available | Built-in |
-| Hooks | Callbacks | Effects (UIO) |
-| Events | Callbacks | ZStream + handlers |
-| Tracking | Blocking calls | Effect-based |
-
----
-
-## Provider SDK Version Compatibility
-
-ZIO OpenFeature ships with OpenFeature Java SDK 1.23.0. You may use providers compiled against older SDK versions, with the following considerations:
-
-**Providers implementing `FeatureProvider` directly — fully compatible.** The `FeatureProvider` interface's abstract methods are identical from v1.14.1 through v1.23.0. Every new method (e.g., `track()`, `getLongEvaluation`) was introduced with a `default` implementation. A provider JAR compiled against any 1.14.x+ SDK will work at runtime without recompilation.
-
-**Providers extending `EventProvider` — requires SDK 1.16.0+.** In SDK v1.16.0, the `emit()` and `emitProvider*()` methods changed their return type from `void` to `Awaitable`. Since return types are part of JVM method descriptors, a provider compiled against a pre-1.16.0 SDK that calls `this.emit(...)` will fail at runtime with `NoSuchMethodError`. Most ecosystem providers (flagd, LaunchDarkly, Optimizely, etc.) extend `EventProvider`, so they need to be compiled against SDK 1.16.0+.
-
-**Recommendation:** Use provider versions that target the same SDK generation as this library (1.16.0+). When in doubt, check the provider's declared `dev.openfeature:sdk` dependency version.
-
----
-
-## Not Implemented
-
-The following OpenFeature features are not exposed in the ZIO wrapper:
-
-| Feature | Reason |
-|:--------|:-------|
-| Context change reconciliation | Provider-specific, handled by SDK |
-| Static-context paradigm | Use standard context hierarchy instead |
+# Spec compliance
+
+ZIO OpenFeature wraps the [OpenFeature Java SDK](https://openfeature.dev/docs/reference/technologies/server/java)
+and implements the specification's **dynamic-context paradigm**, the one for servers: each evaluation can carry its
+own context.
+
+| Component | Version |
+|:----------|:--------|
+| [OpenFeature specification](https://github.com/open-feature/spec) | v0.9.0 (since zio-openfeature 1.1.0; v0.8.0 in 1.0.0) |
+| [OpenFeature Java SDK](https://github.com/open-feature/java-sdk) | 1.23.0 on `main`; 1.22.1 in 1.1.x; 1.21.0 in 1.0.0 |
+
+## How compliance is tested
+
+The specification ships its own test scenarios as Gherkin feature files. This repository copies them verbatim from
+the v0.9.0 tag and runs them on every build, twice:
+
+- the `conformance` module runs them with Cucumber;
+- the `conformance-zio-bdd` module runs them with [zio-bdd](https://github.com/EtaCassiopeia/zio-bdd).
+
+`hooks.feature` is taken from the specification's `main` branch instead, because the scenario for requirement 4.4.8
+is not in a release yet. A weekly job compares the copies with upstream and opens an issue when they drift.
+Three tags are skipped: `@deprecated` (superseded scenarios), `@async` (every evaluation is already a non-blocking
+effect, so there is no separate async API to test) and `@immutability` (context immutability; `EvaluationContext` is
+an immutable value, but these scenarios have no step definitions yet).
+
+`conformance-zio-bdd` also has feature files for this library's own additions (typed flags, transactions, context
+sources, served-default logging and more), which the specification does not cover.
+
+## Summary
+
+| Area | Status |
+|:-----|:-------|
+| Flag evaluation (§1) | ✅ with one documented deviation (logging, below) |
+| Providers and their lifecycle (§1.6, §1.7, §2) | ✅ |
+| Evaluation context (§3) | ✅ |
+| Hooks (§4) | ✅ |
+| Events (§5) | ✅ |
+| Tracking (§6) | ✅ |
+| Static-context paradigm (client side) | not implemented |
+
+## Flag evaluation
+
+| Requirement | How |
+|:------------|:----|
+| Typed evaluation: boolean, string, number, object | `boolean`, `string`, `int`, `long`, `double`, `obj`, and `value[A]` for any `FlagType` |
+| Detailed evaluation | `booleanDetails` … `objDetails`, `valueDetails`, returning `FlagResolution` |
+| Optional context and options arguments | every method takes a context; `*Details` also take `EvaluationOptions` (hooks, hook hints, timeout) |
+| Resolution details: value, variant, reason, error code, error message, flag metadata | `FlagResolution` fields; metadata values may be boolean, string, int, long, float or double |
+| Never throw; return the default (§1.4.10) | the total tier (`*OrDefault`, `resolveOrDefault`) never fails and returns the default, with the error code on the resolution. The typed tier (`boolean`, `value`, `*Details`) fails with a typed `FeatureFlagError` instead: a ZIO-native addition. See [Evaluating flags](evaluating.md). |
+| No logging by the client (§1.4.11, SHOULD NOT) | ⚠️ deviates by default: when the total tier serves a default, it logs one warning per flag key per minute (`FallbackLogging.Default`). Set `FallbackLogging.Off` to conform. A default served because of a defect is still logged, since it means a bug. |
+
+## Providers
+
+| Requirement | How |
+|:------------|:----|
+| Set a provider and wait for it (blocking init) | `FeatureFlags.fromProvider` |
+| Set a provider without waiting (async init) | `fromProviderAsync`, or `FeatureFlagsConfig().withAsyncInit` |
+| Shut down (§1.6.1) | when the layer's `Scope` closes, or `FeatureFlags.shutdown` |
+| Domains | `FeatureFlagsConfig().withDomain(d)` (and `.withVersion(v)` for the client version); `FeatureFlagRegistry` for many domains |
+| Provider and client metadata | `providerMetadata`, `clientMetadata` |
+| Provider status (§1.7) | `providerStatus`: `NotReady`, `Ready`, `Stale`, `Error`, `Fatal`, plus `ShuttingDown` |
+| Several providers | `FeatureFlags.multiProvider` (the SDK's `MultiProvider`) |
+
+While the provider is `NotReady` or `ShuttingDown`, evaluations fail with `ProviderNotReady`; while it is `Fatal`,
+with `ProviderFatal`. v0.9.0 no longer requires this short-circuit, but allows it, and the library keeps it so that
+its error contract does not change. Transaction overrides and cached transaction values are still served. See
+[Lifecycle and events](lifecycle.md).
+
+## Evaluation context
+
+| Requirement | How |
+|:------------|:----|
+| Targeting key and attributes | `EvaluationContext(targetingKey)`, `.withAttribute(...)` |
+| Global (API) context | `setGlobalContext`, `globalContext` |
+| Client context | `setClientContext`, `clientContext` |
+| Invocation context | the `ctx` argument of an evaluation |
+| Transaction context propagation (§3.3) | `withContext(ctx)(effect)`, scoped to the fiber |
+| Merging, later wins | global → transaction → client → `ContextSource` → `withContext` → invocation |
+
+`ContextSource` and the transaction level are additions. See [Evaluation context](context.md).
+
+## Hooks
+
+| Requirement | How |
+|:------------|:----|
+| Stages: before, after, error, finally | `FeatureHook`: `before`, `after`, `error`, `finallyAfter` |
+| Hook context | `HookContext`: flag key, flag type, default value, evaluation context, client and provider metadata |
+| Hook hints | `HookHints`, passed through `EvaluationOptions` |
+| Hook data (§4.6) | `HookData`, per hook, shared across its stages |
+| API, client, invocation and provider hooks | `addZioApiHook`; `addHook`; `EvaluationOptions(hooks = ...)`; the provider's own `getProviderHooks`. Java SDK hooks can be added with `addApiHook`. |
+| Order | before: API → client → invocation, then, inside the SDK call, Java SDK API hooks → provider hooks; after, error and finally run in reverse |
+| A failing `before` or `after` runs `error` (§4.4.5–4.4.6) | yes; the rest of that stage is skipped |
+| A failing `after` yields the default (§4.4.8) | the total tier returns the default with reason `Error` and code `General`, and `finallyAfter` sees that; the typed tier fails |
+
+See [Hooks](hooks.md).
+
+## Events
+
+| Requirement | How |
+|:------------|:----|
+| Ready, error, stale, configuration-changed events | `ProviderEvent.Ready`, `Error`, `Stale`, `ConfigurationChanged`, each with the provider's event metadata |
+| Add and remove handlers | `onProviderReady`, `onProviderError`, `onProviderStale`, `onConfigurationChanged`, or `on(eventType, handler)`; each returns an effect that removes the handler |
+| Run a handler at once if the provider is already in that state (§5.3.3) | yes |
+| All events as a stream | `FeatureFlags.events`, a `ZStream` |
+
+`ProviderEvent.Reconnecting` exists, but the Java SDK has no such event (it belongs to the client-side paradigm), so
+`FeatureFlags` never emits it. See [Lifecycle and events](lifecycle.md).
+
+## Tracking
+
+| Requirement | How |
+|:------------|:----|
+| Track an event, optionally with context and details | `track(name)`, `track(name, ctx)`, `track(name, details)`, `track(name, ctx, details)` |
+| Details: a numeric value and attributes | `TrackingEventDetails(value, attributes)` |
+
+## Not implemented
+
+| Feature | Why |
+|:--------|:----|
+| Static-context paradigm and its context reconciliation | the library targets servers; use the context levels above |
+
+## Providers built for older SDKs
+
+The library ships Java SDK 1.23.0. Providers built against an older SDK usually work:
+
+- A provider that implements `FeatureProvider` directly works if it was built against SDK 1.14 or later: every
+  method added since has a default implementation.
+- A provider that extends `EventProvider` needs SDK 1.16 or later. In 1.16 the `emit*` methods changed their return
+  type, so an older build fails at runtime with `NoSuchMethodError` when it emits an event. Most ecosystem providers
+  (flagd, LaunchDarkly, …) extend `EventProvider`.
+
+If in doubt, check which `dev.openfeature:sdk` version the provider depends on.

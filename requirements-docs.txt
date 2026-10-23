@@ -1,0 +1,4 @@
+# Builds the documentation site: pip install -r requirements-docs.txt && mkdocs serve
+mkdocs==1.6.1
+mkdocs-material==9.6.23
+pymdown-extensions==10.21.3

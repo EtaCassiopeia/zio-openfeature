@@ -1,0 +1,17 @@
+/* Indigo and cyan, the animations' palette */
+:root {
+  --md-primary-fg-color: #1e2a5a;
+  --md-primary-fg-color--light: #2f3f80;
+  --md-primary-fg-color--dark: #121a3c;
+  --md-accent-fg-color: #0891b2;
+}
+
+[data-md-color-scheme="slate"] {
+  --md-typeset-a-color: #22d3ee;
+}
+
+/* The animations are wide; let them use the full column */
+.md-typeset img[src$=".svg"] {
+  width: 100%;
+  height: auto;
+}

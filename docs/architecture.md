@@ -1,536 +1,92 @@
----
-layout: default
-title: Architecture
-nav_order: 4
----
+# Under the hood
 
-# Architecture
-{: .no_toc }
+ZIO OpenFeature is a ZIO layer over the [OpenFeature Java SDK](https://openfeature.dev/docs/reference/technologies/server/java).
+The SDK holds the provider and talks to it. `FeatureFlags` adds what the SDK does not have: effects and typed errors,
+fiber-local context, ZIO hooks, transactions, a provider status you can rely on, and events as a stream.
 
-## Table of contents
-{: .no_toc .text-delta }
+![Evaluations start on your fiber, pass through FeatureFlags and call the OpenFeature client on ZIO's blocking pool, which asks the provider. Provider events arrive on the SDK's own threads; FeatureFlags bridges them into ZIO, updates the provider status and publishes them on an event hub that feeds the events stream and the registered handlers.](assets/components.svg)
 
-1. TOC
-{:toc}
+## The pieces
 
----
+| Piece | What it is | Where it lives |
+|---|---|---|
+| `FeatureFlags` | The service your code calls | a `ZLayer`, built by one of the [factories](providers.md) |
+| `OpenFeatureAPI` | The SDK's registry of providers and API-level hooks | the global singleton, or an isolated instance per [`FeatureFlagRegistry`](providers.md) |
+| `Client` | The SDK object that evaluates flags | one per `FeatureFlags`, internal |
+| `FeatureProvider` | Any OpenFeature Java provider | passed to the factory |
+| `EvaluationContext` | Targeting attributes | an immutable Scala value, converted to the SDK's type per call |
+| `FeatureHook` | A ZIO hook | run by `FeatureFlags` on your fiber |
+| `ProviderEvent` | Provider readiness and change notifications | published on a ZIO `Hub` |
 
-## Overview
+The OpenFeature concepts map one to one: the SDK's `Hook` becomes `FeatureHook`, its `EvaluationContext` becomes
+ours, its event handlers become `onProviderReady`, `onConfigurationChanged` and `FeatureFlags.events`.
 
-ZIO OpenFeature is a ZIO-native wrapper around the [OpenFeature Java SDK](https://openfeature.dev/docs/reference/technologies/server/java). It provides a functional, type-safe API for feature flag evaluation while leveraging the entire OpenFeature ecosystem of providers.
+## One evaluation, step by step
 
-### Design Goals
+![One flag evaluation through the pipeline, three ways: a plain read that reaches the provider, a transaction override that answers without it, and a missing flag that comes back with an error code.](assets/evaluation.svg)
 
-1. **OpenFeature Ecosystem Access**: Use any OpenFeature provider (LaunchDarkly, Flagsmith, flagd, etc.)
-2. **Type Safety**: Compile-time guarantees through the `FlagType` type class
-3. **ZIO Integration**: Effect-based API with proper resource management
-4. **Unique Features**: Transactions, caching, hierarchical context, ZIO-native hooks
-5. **Testability**: In-memory provider for testing without external dependencies
+1. **Context.** Six levels merge into one context, each overriding the ones before it: global, transaction, client,
+   context source, scoped (`withContext`), then the context passed to the call. See [Evaluation context](context.md).
+2. **Before hooks** run in order: API-level ZIO hooks, then client hooks, then the call's own hooks. Each can add
+   context, which lands on top of everything else. See [Hooks](hooks.md).
+3. **Transaction.** Inside a [transaction](transactions.md), an override for the key answers at once with reason
+   `CACHED`. With caching on, so does a flag the transaction has already read. The provider is not called.
+4. **Status gate.** If the provider is `NotReady`, `ShuttingDown` or `Fatal`, the evaluation fails fast with
+   `ProviderNotReady` or `ProviderFatal`. `Ready`, `Stale` and `Error` go through. See
+   [Lifecycle and events](lifecycle.md).
+5. **Provider.** The SDK client is called on ZIO's blocking pool, with a timeout (1 second by default). On timeout the
+   evaluation fails, but the provider call itself is abandoned, not cancelled.
+6. **After or error hooks** run in reverse order. A resolution that carries an error code (`FLAG_NOT_FOUND`,
+   `TYPE_MISMATCH`, …) runs the error stage, not the after stage.
+7. **finallyAfter** hooks run last, whatever happened.
+8. **Your answer.** The typed tier turns an error code into a `FeatureFlagError`. The total tier serves your default
+   and keeps the code on the result. See [Evaluating flags](evaluating.md).
 
----
+Hooks run on every path, including overrides, cache hits and a provider that is not ready: a `before` hook sees every
+evaluation, and an `error` hook sees every failure.
 
-## Component Architecture
+## Fibers and threads
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                        Application Code                          │
-└─────────────────────────────────────────────────────────────────┘
-                                │
-                                ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                         FeatureFlags                             │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────────┐  │
-│  │   Hooks     │  │ Transactions│  │   Context Management    │  │
-│  │  Pipeline   │  │   Support   │  │ (Global/Fiber/Invocation)│  │
-│  └─────────────┘  └─────────────┘  └─────────────────────────┘  │
-└─────────────────────────────────────────────────────────────────┘
-                                │
-                                ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                     OpenFeature Java SDK                         │
-│              (OpenFeatureAPI, Client, FeatureProvider)           │
-└─────────────────────────────────────────────────────────────────┘
-                                │
-            ┌───────────────────┼───────────────────┐
-            ▼                   ▼                   ▼
-    ┌───────────────┐   ┌───────────────┐   ┌───────────────┐
-    │     flagd     │   │ LaunchDarkly  │   │  Flagsmith    │
-    │   Provider    │   │   Provider    │   │   Provider    │
-    └───────────────┘   └───────────────┘   └───────────────┘
-```
+- Everything except the provider call runs on the calling fiber: context merge, hooks, the transaction lookup and the
+  status gate.
+- The provider call runs on ZIO's blocking pool, because providers are blocking Java code. SDK-level hooks (added with
+  `addApiHook`) and the provider's own hooks run there too, inside the call.
+- Provider events arrive on the SDK's threads. `FeatureFlags` bridges each one into ZIO, updates the provider status,
+  then publishes it on a sliding hub of 256 events, so a slow subscriber loses the oldest events, never the newest.
 
-### Core Components
+## State
 
-| Component | Responsibility |
-|:----------|:---------------|
-| **FeatureFlags** | Main service interface for flag evaluation, context management, hooks, and transactions |
-| **OpenFeature SDK** | Underlying Java SDK for provider management and flag resolution |
-| **EvaluationContext** | User and environment attributes for targeting decisions |
-| **FlagType** | Type class for compile-time type safety and value conversion |
-| **FeatureHook** | Cross-cutting concerns (logging, metrics, validation) |
-| **Transaction** | Scoped flag overrides and evaluation tracking with caching |
+| State | Held in | Scope |
+|---|---|---|
+| Global and client context | `Ref` | the `FeatureFlags` instance |
+| Scoped context (`withContext`) | `FiberRef` | the fiber and its children |
+| Transaction (overrides, cache, recorded flags) | `FiberRef` | the transaction block |
+| Hooks | `Ref` | the instance; API-level ZIO hooks are shared by a registry's clients |
+| Provider status | a serialized state machine | the instance |
 
----
+Because scoped context and transactions are fiber-local, concurrent requests never see each other's targeting or
+overrides.
 
-## Layer Architecture
+## Sharing the SDK
 
-ZIO OpenFeature uses ZIO's layer system for dependency injection. The `FeatureFlags` layer is created from any OpenFeature provider:
+`fromProvider` and its variants register the provider with the SDK's global `OpenFeatureAPI`. Without a domain, the
+`FeatureFlags` owns that API and shuts it down when its scope closes; with a domain, it shares the API and leaves it
+running. `FeatureFlagRegistry` instead creates an isolated `OpenFeatureAPI` of its own, with one client per domain, so
+it cannot interfere with anything else in the JVM. See [Wiring a provider](providers.md).
 
-```scala
-import zio.*
-import zio.openfeature.*
-import dev.openfeature.contrib.providers.flagd.FlagdProvider
+## Modules
 
-// Production: use any OpenFeature provider
-val prodLayer: ZLayer[Scope, Throwable, FeatureFlags] =
-  FeatureFlags.fromProvider(new FlagdProvider())
-
-// Testing: use in-memory provider
-val testLayer: ZLayer[Scope, Throwable, FeatureFlags] =
-  TestFeatureProvider.layer(Map("my-flag" -> true))
-
-// Provide to your application
-program.provide(Scope.default >>> prodLayer)
+```mermaid
+graph LR
+  core["zio-openfeature-core"] --> sdk["OpenFeature Java SDK"]
+  extras["extras: HOCON, env vars, caching, circuit breaker"] --> core
+  ofrep["ofrep"] --> core
+  optimizely["optimizely"] --> core
+  testkit["testkit"] --> core
+  ofrep --> ofrepj["OFREP contrib provider"]
+  optimizely --> opt["Optimizely Java SDK"]
 ```
 
-### Layer Dependencies
-
-```
-FeatureFlags.fromProvider(provider)
-    │
-    └── wraps OpenFeature SDK
-              │
-              └── OpenFeatureAPI.getInstance()
-                      │
-                      └── FeatureProvider (any OpenFeature provider)
-                              │
-                              ├── FlagdProvider
-                              ├── LaunchDarklyProvider
-                              ├── FlagsmithProvider
-                              ├── TestFeatureProvider (for testing)
-                              └── ... any OpenFeature provider
-```
-
-### Factory Methods
-
-| Method | Description |
-|:-------|:------------|
-| `fromProvider(provider)` | Create from any OpenFeature provider (blocking init) |
-| `fromProviderAsync(provider)` | Create from any OpenFeature provider (non-blocking init) |
-| `fromProvider(provider, config)` | The config-driven factory — domain, version, hooks, timeouts, `InitMode`, `ApiOwnership`, in any combination, via [`FeatureFlagsConfig`](providers.md#featureflagsconfig) |
-| `FeatureFlags.multiProvider(providers, strategy)` | Combine multiple providers into one `OFFeatureProvider` (first-match strategy by default), to pass into `fromProvider` |
-
-See [Factory Methods](providers.md#factory-methods) for the full `FeatureFlagsConfig` reference.
-
----
-
-## Type-Safe Flag Evaluation
-
-### The FlagType Type Class
-
-`FlagType[A]` provides compile-time type safety for flag values:
-
-```scala
-trait FlagType[A]:
-  def typeName: String
-  def wireType: String = typeName   // what the PROVIDER is asked for; see "Scalar-backed custom types"
-  def decode(value: Any): Either[String, A]
-  def encode(value: A): Any
-  def defaultValue: A
-```
-
-Built-in instances:
-
-| Type | Description |
-|:-----|:------------|
-| `Boolean` | Feature toggles |
-| `String` | Variations, variants |
-| `Int`, `Long` | Numeric configurations |
-| `Float`, `Double` | Percentages, rates |
-| `Map[String, Any]` | Complex JSON configurations |
-| `Option[A]` | Optional values |
-| `List[A]` | Collections |
-
-### Custom Flag Types
-
-Create custom flag types for domain-specific values. **How the flag is stored decides which constructor you
-want** — see the next section; getting this wrong is the difference between a working flag and a
-`TYPE_MISMATCH`.
-
-`FlagType.from` builds an **object-backed** type: the value is fetched with the provider's *object*
-resolver and then decoded. Use it when the flag really is stored as a structure/JSON:
-
-```scala
-final case class RolloutPlan(tier: String, percentage: Int)
-
-given rolloutFlagType: FlagType[RolloutPlan] = FlagType.from(
-  name = "RolloutPlan",
-  default = RolloutPlan("free", 0),
-  decoder = {
-    case m: Map[?, ?] =>
-      val sm = m.asInstanceOf[Map[String, Any]]
-      Right(RolloutPlan(sm.getOrElse("tier", "free").toString, sm.get("percentage").fold(0)(_.toString.toInt)))
-    case other => Left(s"Unknown rollout plan: $other")
-  }
-)
-```
-
-On this path the `encoder` matters even if you never read the encoded form yourself: it is what the caller's default
-is converted to before being handed to the provider, so a provider can serve that default on a miss. A missing flag
-comes back the same way it does for the built-in types — the provider's `FLAG_NOT_FOUND`, which the typed tier
-surfaces as `FlagNotFound(key)` and the total tier as the caller's default with that error code — not a
-`TYPE_MISMATCH`. A `TYPE_MISMATCH` on this path means what it says: the provider returned a payload your `decoder`
-rejected.
-
-Note the numbers your decoder receives arrive as `Double` (they pass through the OpenFeature `Value` bridge), and
-null-valued fields are dropped rather than arriving as `null` — decode through `FlagType[Int]`/`FlagType[Long]`
-rather than casting, and model optional fields as `Option`.
-
-### Scalar-backed custom types
-
-The most common feature flag is an **enum stored as a string** (`"off" | "dual_write" | "shard_only"`). Such
-a flag is *not* an object: the provider holds a string, so it must be fetched with the **string** resolver and
-then decoded into the domain type. `FlagType` expresses this with `wireType` — the representation the provider
-is asked for, as distinct from `typeName`, the domain type.
-
-`FlagType.mapped` sets `wireType` from its underlying type automatically, so this is all it takes:
-
-```scala
-enum Plan:
-  case Free, Premium, Enterprise
-
-object Plan:
-  def parse(s: String): Plan = s match
-    case "premium"    => Premium
-    case "enterprise" => Enterprise
-    case _            => Free
-  def render(p: Plan): String = p.toString.toLowerCase
-
-// wireType == "String" (inherited), typeName == "Plan"
-given planFlagType: FlagType[Plan] =
-  FlagType.mapped[Plan, String]("Plan", Plan.Free)(Plan.parse, Plan.render)
-
-// Use with type safety — resolved through the provider's STRING resolver, then decoded
-val plan: IO[FeatureFlagError, Plan] =
-  FeatureFlags.value[Plan]("user-plan", Plan.Free)
-```
-
-The same works over any scalar: `FlagType.mapped[Level, Int](…)` for a newtype over an int, and so on.
-
-> **Do not reach for `FlagType.from` for a string-backed enum.** It leaves `wireType` at the domain name, so
-> the evaluation goes to the provider's *object* resolver, asks for an object the provider does not have, and
-> comes back `TYPE_MISMATCH`.
-
-If you need a **fallible** decoder on a scalar-backed type — rejecting an unknown variant rather than mapping
-it to a fallback, which `mapped`'s total function cannot express — override `wireType` and `encode` together:
-
-```scala
-given tierFlagType: FlagType[Tier] with
-  def typeName: String            = "Tier"
-  override def wireType: String   = "String"        // fetch via the string resolver
-  def defaultValue: Tier          = Tier.Free
-  def decode(v: Any)              = Tier.parseStrict(v)   // may return Left => TYPE_MISMATCH
-  override def encode(t: Tier)    = Tier.render(t)  // MUST produce the wireType's boxed type
-```
-
-A decode failure becomes a typed `TypeMismatch` error rather than a silently-substituted default. Note that
-`wireType` also determines the `FlagValueType` hooks are filtered on, so a hook scoped to
-`FlagValueType.String` sees these evaluations.
-
-### Derived instances (Scala 3)
-
-Most of the above can be skipped entirely: `FlagType` derives from the type's own structure, so a
-string-backed enum or a structured flag needs no hand-written codec.
-
-```scala
-enum Plan derives FlagType:
-  case Free, Premium, Enterprise
-
-final case class Rollout(tier: String, pct: Int = 10, note: Option[String]) derives FlagType
-```
-
-An **enum with parameterless cases** derives a string codec over the case labels — `wireType` is `"String"`, so
-it resolves through the provider's string method. `encode` emits the label as declared, `decode` matches
-case-insensitively, and `defaultValue` is the first declared case. A case *with* parameters is not supported and
-fails to compile; use `FlagType.from`/`mapped` for those.
-
-A **product** derives a `Map[String, Any]` codec, field by field through each field's own `FlagType`, so nested
-products, `Option` and `List` fields all work with no extra wiring. It stays on the object path. Unknown keys in
-the payload are ignored, which keeps forward-compatible payloads working, and an absent key resolves in this
-order:
-
-1. the field's declared **Scala default**, if it has one (`pct = 10` above);
-2. otherwise whatever the field's own instance makes of an absent value — which is how an `Option` field becomes
-   `None`;
-3. otherwise a decode error naming the field.
-
-`defaultValue` for a derived product is built from its fields' own `defaultValue`s — `Rollout("", 0, None)` — a
-type-level zero rather than the declared Scala defaults. That asymmetry is deliberate: `defaultValue` is never
-consulted when evaluating (the caller's default is), whereas the Scala defaults describe how to read a real
-payload.
-
-Derivation is Scala 3 only, since it is built on `Mirror`. On 2.13 the same types are written with
-`FlagType.from`/`mapped`, which remain fully supported on both versions.
-
-> `FlagType.derived` is deliberately **not** a `given`, so it never competes in implicit search and the built-in
-> instances keep priority for their own shapes. Use a `derives` clause, or write
-> `given FlagType[X] = FlagType.derived[X]` explicitly.
-
-### Typed Flag Definitions
-
-The call above restates the key, the type and the default at every use site, so they can drift — two sites
-falling back to different defaults for the same key, or reading one key at two types. `FlagDef[A]` states all
-three once:
-
-```scala
-val UserPlan = FlagDef("user-plan", Plan.Free, "subscription tier")
-
-val plan: ZIO[FeatureFlags, FeatureFlagError, Plan] =
-  FeatureFlags.value(UserPlan)
-```
-
-`value`, `valueOrDefault`, `resolveOrDefault` and `valueDetails` each accept a `FlagDef` in place of the
-`(key, default)` pair, on both the `FeatureFlags` trait and its companion accessors, with the same
-context/options arities as the key-based forms:
-
-```scala
-FeatureFlags.valueOrDefault(UserPlan)                      // UIO[Plan] — never fails
-FeatureFlags.value(UserPlan, ctx)                          // honours a targeting context
-FeatureFlags.valueDetails(UserPlan, ctx, options)          // full resolution + invocation hooks
-```
-
-These are delegations to the generic tier, not a separate evaluation path, so hooks, caching, transactions,
-timeouts and error semantics are all unchanged. The string-key API remains fully supported — `FlagDef` is
-additive.
-
-> **Which default is used.** `FlagType[A]` also carries a `defaultValue`, so a `FlagDef` looks like it holds two
-> defaults. It does not in any way that matters: **`FlagDef.default` is always the value served** on a miss or
-> error. `FlagType.defaultValue` is a type-level zero needed internally by `FlagType.from`/`mapped` and is never
-> consulted when evaluating.
-
-Two definitions for the same key with different defaults are **not** equal — they are genuinely different
-definitions. Use `sameKey` to compare by key alone, across differing type parameters:
-
-```scala
-UserPlan.sameKey(FlagDef("user-plan", Plan.Enterprise))  // true
-```
-
----
-
-## Context Hierarchy
-
-Evaluation context flows through six levels, with later levels taking precedence:
-
-| Level | Scope | Use Case |
-|:------|:------|:---------|
-| **Global** | Application-wide | App version, environment, deployment region |
-| **Transaction** | Within transaction block | Test overrides, experiment context |
-| **Client** | FeatureFlags instance | Service name, region |
-| **Context source** | Pulled per evaluation | Ambient identity held outside ZIO (MDC, tracing tags) |
-| **Scoped** | Block of code (via `withContext`) | User session, request context |
-| **Invocation** | Single evaluation | One-off targeting attributes |
-
-Contexts merge with higher-precedence levels overriding lower ones:
-`Invocation > Scoped > ContextSource > Client > Transaction > Global`. The five spec-defined levels are
-push-based — the caller sets them. `ContextSource` is the one pull-based level: an effect the library
-consults on every evaluation, for identity the application holds somewhere the ZIO environment cannot see.
-
-Its slot is deliberate, and it is why this is library machinery rather than a hook. Ambient request
-identity should override static client and global context, while an explicit `withContext` or a per-call
-context at the call site should still win over it. A `before` hook cannot express that: its contribution is
-merged on top of the already-finished effective context, so it can only ever take the highest-precedence
-slot — and `HookContext` exposes one flattened context with no record of which attribute came from where,
-so a hook cannot rebuild the ordering either.
-
-```scala
-val fromMdc = ContextSource(ZIO.succeed(EvaluationContext(Mdc.get("userId"))))
-
-FeatureFlags.fromProvider(provider, FeatureFlagsConfig().withContextSource(fromMdc))
-```
-
-`current` returns `UIO`, so a source can never fail an evaluation — a source with nothing to contribute
-returns `EvaluationContext.empty`, which merges to a no-op. It is consulted on every evaluation and on
-`track`, so keep it cheap (a `FiberRef` or `ThreadLocal` read, not a network call). Compose sources with
-`++`; the right-hand side wins on key collisions, matching the right-biased merge used everywhere else.
-
-See [Evaluation Context]({{ site.baseurl }}/context) for detailed usage, attribute types, and practical examples.
-
----
-
-## Hook Pipeline
-
-Hooks execute around flag evaluation in four stages: **before**, **after**, **error**, and **finallyAfter**. Hooks can modify evaluation context, pass data between stages via `HookHints`, and run effects for logging, metrics, or validation.
-
-| Stage | When | Purpose |
-|:------|:-----|:--------|
-| **before** | Before evaluation | Modify context, start timers, validate |
-| **after** | On successful evaluation | Log results, record metrics |
-| **error** | On evaluation failure | Log errors, alert, fallback logic |
-| **finallyAfter** | Always (like try-finally) | Cleanup, span completion. Receives `Option[FlagResolution[_]]` with evaluation details (spec 4.3.8) |
-
-See [Hooks]({{ site.baseurl }}/hooks) for the complete hook lifecycle, built-in hooks, and custom hook examples.
-
----
-
-## Transaction System
-
-Transactions provide scoped flag overrides, evaluation caching, and tracking:
-
-| Feature | Description |
-|:--------|:------------|
-| **Overrides** | Provide values that override provider evaluation |
-| **Caching** | Evaluations cached within transaction (optional via `cacheEvaluations`) |
-| **Tracking** | Record all flag keys and values evaluated |
-| **Isolation** | Overrides only affect code within the transaction |
-
-```scala
-FeatureFlags.transaction(Map("feature-a" -> true)) {
-  for
-    a <- FeatureFlags.boolean("feature-a", false)  // Returns true (override)
-    b <- FeatureFlags.boolean("feature-b", false)  // Evaluated from provider
-  yield (a, b)
-}
-```
-
-See [Transactions]({{ site.baseurl }}/transactions) for complete usage, caching behavior, and result API.
-
----
-
-## Provider Lifecycle
-
-The OpenFeature SDK manages provider lifecycle. ZIO OpenFeature adds scoped resource management via ZIO's `Scope`:
-
-| State | Description |
-|:------|:------------|
-| `NotReady` | Provider not initialized. Evaluations fail with `ProviderNotReady` |
-| `Ready` | Can evaluate flags |
-| `Error` | Provider encountered a recoverable error. Evaluations still proceed (deliberate library policy — only `NotReady`/`Fatal` fail fast) — the provider serves cached values or errors on its own |
-| `Stale` | Provider data may be outdated |
-| `Fatal` | Provider encountered unrecoverable error. Evaluations fail with `ProviderFatal` |
-
-Provider events (`Ready`, `ConfigurationChanged`, `Stale`, `Error`) can be observed via `FeatureFlags.events` stream or specific handlers like `onProviderReady`.
-
-See [Providers]({{ site.baseurl }}/providers) for complete lifecycle management, events, and provider setup.
-
----
-
-## Error Handling
-
-The library uses `FeatureFlagError` for typed error handling. The **typed tier** (`boolean`, `value`, every
-`*Details`, and the `FlagDef` overloads) fails with one of these whenever an evaluation cannot produce a real value —
-whether the provider *threw* or, as most providers do, answered with an **error code on the resolution**
-(`FLAG_NOT_FOUND`, `TYPE_MISMATCH`, `PARSE_ERROR`, …); the code is mapped to the matching error below. The **total
-tier** (`*OrDefault`, `resolveOrDefault`) is built on the same channel and never fails: it serves the default and
-reports the code on the returned `FlagResolution`. Hooks observe an error-coded resolution as the `error` stage on
-both tiers.
-
-| Error | Cause |
-|:------|:------|
-| `FlagNotFound` | Flag key doesn't exist in provider |
-| `TypeMismatch` | Value type doesn't match expected type |
-| `ProviderNotReady` | Provider not initialized |
-| `ProviderInitializationFailed` | Sync init (or a `setProvider` swap) ended in a non-`READY` state, or did not finish within `initTimeout` |
-| `ProviderFatal` | Provider hit an irrecoverable state (e.g. async init never produced a datafile within `initTimeout`) |
-| `Unauthorized` | Provider rejected the request (HTTP 401 / 403 or analogous SDK signal — typically a wrong SDK key) |
-| `Unreachable` | Provider could not be reached at the network layer (DNS, connection refused, no route) |
-| `TargetingKeyMissing` | Required targeting key not provided |
-| `InvalidContext` | Evaluation context is invalid |
-| `InvalidConfiguration` | Provider construction was rejected (e.g. malformed `baseUrl`, placeholder SDK key) |
-| `ProviderError` | Fallback wrapping an unclassified underlying provider exception |
-| `NestedTransactionNotAllowed` | Attempted nested transaction |
-| `OverrideTypeMismatch` | Transaction override type mismatch |
-
-`Unauthorized`, `Unreachable`, and the `ProviderError` fallback are produced by a shared classifier (`FeatureFlagError.classify`) wherever the library wraps a `Throwable` from the underlying provider. Operators can alert on `Unauthorized` (a misconfigured key) distinctly from `Unreachable` (a network outage) and the generic `ProviderError` (everything else, with the original `Throwable` preserved on `.cause`).
-
-### Error Recovery
-
-```scala
-FeatureFlags.boolean("feature", false)
-  .catchSome {
-    case FeatureFlagError.FlagNotFound(_) =>
-      ZIO.succeed(false)  // Use default
-    case _: FeatureFlagError.ProviderNotReady =>
-      ZIO.succeed(false)  // Fail safe — provider not yet ready
-    case _: FeatureFlagError.Unreachable =>
-      ZIO.succeed(false)  // Network blip — serve default rather than fail
-    case _: FeatureFlagError.Unauthorized =>
-      // Misconfigured SDK key — fail loud so operators investigate, don't paper over
-      ZIO.logError("Provider auth failed — check SDK key rotation") *> ZIO.succeed(false)
-  }
-```
-
----
-
-## OpenFeature Relationship
-
-ZIO OpenFeature wraps the OpenFeature Java SDK:
-
-| OpenFeature Concept | ZIO OpenFeature |
-|:--------------------|:----------------|
-| `OpenFeatureAPI` | Internal, managed by `FeatureFlags` layer |
-| `Client` | Internal, managed by `FeatureFlagsLive` |
-| `FeatureProvider` | Passed to `FeatureFlags.fromProvider()` |
-| `EvaluationContext` | Our `EvaluationContext`, converted internally |
-| `Hooks` | Our `FeatureHook` trait (ZIO-native) |
-| `ProviderEvent` | Our `ProviderEvent` enum |
-
-### ZIO-Specific Additions
-
-These features are unique to ZIO OpenFeature:
-
-1. **FlagType Type Class**: Compile-time type safety beyond basic types
-2. **Transactions**: Scoped overrides with caching and tracking
-3. **Fiber-Local Context**: Hierarchical context via `FiberRef`
-4. **Effect-Based API**: All operations return ZIO effects
-5. **ZIO-Native Hooks**: Effectful hook pipeline
-
----
-
-## Module Structure
-
-```
-zio-openfeature/
-├── core/                    # ZIO wrapper around OpenFeature SDK
-│   └── src/main/scala/zio/openfeature/
-│       ├── FeatureFlags.scala        # Main service trait + factory methods
-│       ├── FeatureFlagsLive.scala    # Service implementation
-│       ├── EvaluationContext.scala   # Context for targeting
-│       ├── FlagType.scala            # Type class for flag types
-│       ├── FlagResolution.scala      # Resolution result
-│       ├── Hook.scala                # Hook system
-│       ├── Transaction.scala         # Transaction support
-│       └── internal/
-│           └── ContextConverter.scala  # ZIO ↔ OpenFeature conversion
-│
-└── testkit/                 # Testing utilities
-    └── src/main/scala/zio/openfeature/testkit/
-        └── TestFeatureProvider.scala # In-memory OpenFeature provider
-```
-
----
-
-## Thread Safety
-
-All components are designed for concurrent use:
-
-- **FeatureFlags**: Uses `Ref` for global context, `FiberRef` for scoped context and transactions
-- **OpenFeature SDK**: Thread-safe by design
-- **TestFeatureProvider**: Uses `Ref` for mutable state
-- **Transactions**: Use `FiberRef` for fiber isolation
-
----
-
-## Performance Considerations
-
-1. **Context Merging**: Performed on each evaluation; keep contexts small
-2. **Hook Execution**: Hooks run sequentially; keep them fast
-3. **Transaction Caching**: Enable caching to avoid redundant evaluations
-4. **Type Conversion**: `FlagType.decode` runs on each evaluation
-
-### Optimization Tips
-
-- Set frequently-used attributes in global context (merged once)
-- Use typed methods (`boolean`, `string`) instead of generic `value[A]`
-- Enable transaction caching for repeated evaluations
-- Keep hooks lightweight; use async operations for heavy work
-
+Only `core` is required. The others are separate artifacts, so you pull in an HTTP stack or the Optimizely SDK only
+if you use them. Every module is cross-built for Scala 2.13 and 3; a few conveniences, such as `derives FlagType`, are
+Scala 3 only.

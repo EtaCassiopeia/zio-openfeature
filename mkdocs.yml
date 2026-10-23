@@ -1,0 +1,95 @@
+site_name: ZIO OpenFeature
+site_description: Type-safe, ZIO-native feature flags for Scala on top of the OpenFeature Java SDK.
+site_url: https://etacassiopeia.github.io/zio-openfeature/
+repo_url: https://github.com/EtaCassiopeia/zio-openfeature
+repo_name: EtaCassiopeia/zio-openfeature
+edit_uri: edit/main/docs/
+copyright: Apache License 2.0
+strict: true
+validation:
+  links:
+    anchors: warn
+    unrecognized_links: warn
+
+theme:
+  name: material
+  icon:
+    logo: material/flag-variant
+    repo: fontawesome/brands/github
+  favicon: assets/favicon.svg
+  features:
+    - content.code.copy
+    - content.action.edit
+    - navigation.footer
+    - navigation.indexes
+    - navigation.sections
+    - navigation.top
+    - search.suggest
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+
+extra_css:
+  - stylesheets/extra.css
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - def_list
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.tabbed:
+      alternate_style: true
+  # Code samples are included from compiled sources (the `examplesDocs` sbt project), so they cannot drift from the API.
+  - pymdownx.snippets:
+      base_path:
+        - examples/docs/src/main/scala-3/snippets
+        - examples/docs/src/test/scala-3/snippets
+      check_paths: true
+      dedent_subsections: true
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+
+nav:
+  - Home: index.md
+  - Getting started: getting-started.md
+  - Guide:
+      - Evaluating flags: evaluating.md
+      - Typed flags: typed-flags.md
+      - Evaluation context: context.md
+      - Hooks: hooks.md
+      - Transactions: transactions.md
+      - Wiring a provider: providers.md
+      - Lifecycle and events: lifecycle.md
+  - Providers:
+      - Extras: extras.md
+      - OFREP: ofrep.md
+      - Optimizely: optimizely.md
+  - Testing:
+      - Testkit: testkit.md
+      - Testing real providers: testing-real-providers.md
+  - Under the hood: architecture.md
+  - Spec compliance: spec-compliance.md
+  - API reference: https://javadoc.io/doc/io.github.etacassiopeia/zio-openfeature-core_3
+  - Development: development.md

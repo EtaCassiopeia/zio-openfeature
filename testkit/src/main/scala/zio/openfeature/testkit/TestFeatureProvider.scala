@@ -770,6 +770,9 @@ object TestFeatureProvider {
     * Like `asyncLayer`, the provider starts in NotReady state. After `initDelay`, it automatically transitions to Ready
     * without manual `setStatus` calls. Useful for simulating a real async provider (e.g., connecting to a remote
     * service) without needing to manage the state transition in tests.
+    *
+    * The delay runs on the ZIO clock, so under zio-test's `TestClock` it never elapses by itself: advance it with
+    * `TestClock.adjust(initDelay)` rather than `ZIO.sleep`, which would hang.
     */
   def asyncReadyLayer(
     flags: Map[String, Any] = Map.empty,

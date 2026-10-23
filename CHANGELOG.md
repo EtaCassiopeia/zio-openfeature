@@ -35,6 +35,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`CircuitBreakerProvider` now trips on providers that return error codes instead of throwing** (#446). Any returned
+  evaluation counted as a success, so a delegate that reports network failures as `errorCode = GENERAL` — the OFREP
+  provider does — kept the circuit closed through a full outage, and a returned `FLAG_NOT_FOUND` could close a
+  half-open circuit. Returned codes are now classified like thrown errors: `GENERAL`, `PROVIDER_NOT_READY` and
+  `PROVIDER_FATAL` count as failures, application codes only prove the provider is reachable. The evaluation itself is
+  still returned unchanged.
 - **Hooks inside `FeatureHook.compose` no longer share `HookData` across evaluations** (#438, spec 4.3.2). A
   composite kept one `HookData` per inner hook for its whole lifetime, so a composite registered once (for example
   `addHook(compose(List(logging, metrics)))`) let concurrent evaluations overwrite each other's data, which made the

@@ -172,13 +172,17 @@ object FeatureFlagError {
   private val StatusAccessors = List("getStatusCode", "statusCode")
 
   private def httpStatus(t: Throwable): Option[Int] =
-    StatusAccessors.iterator
-      .flatMap { name =>
-        scala.util.Try(t.getClass.getMethod(name)).toOption.flatMap { m =>
-          scala.util.Try(m.invoke(t)).toOption.collect { case i: java.lang.Integer => i.intValue }
-        }
+    StatusAccessors.iterator.flatMap(name => statusVia(t, name)).nextOption()
+
+  // Total: classify runs on error paths, so a broken exception class (a LinkageError while resolving its methods, which
+  // Try would let through) must not turn one failure into another.
+  private def statusVia(t: Throwable, accessor: String): Option[Int] =
+    try
+      t.getClass.getMethod(accessor).invoke(t) match {
+        case i: java.lang.Integer => Some(i.intValue)
+        case _                    => None
       }
-      .nextOption()
+    catch { case _: LinkageError | scala.util.control.NonFatal(_) => None }
 
   // Without a status accessor (the java.net.http client used by contrib providers has none), fall back to the
   // exception's name and message: the canonical "401"/"403" tokens, "unauthorized", "forbidden". This is permissive —

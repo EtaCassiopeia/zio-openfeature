@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Layers no longer ask for a `Scope`** (#443). Every `FeatureFlags` factory, `FeatureFlagRegistry.fromProvider` and
+  the testkit layers were typed `ZLayer[Scope, …]`, although they build with `ZLayer.scoped`, which owns the layer's
+  scope; so callers had to supply `Scope.default` for nothing. They are now `ZLayer[Any, …]` (`URLayer[Any, …]` for
+  `fromAcquireAsync`); lifetimes are unchanged, still bound to the layer. Existing code keeps compiling, and
+  `Scope.default >>> layer` still works. One catch: `provide(Scope.default, FeatureFlags.fromProvider(p))`, when
+  nothing else needs the `Scope`, now draws ZIO's "unused layer" warning, which fails builds that use `-Werror` — drop
+  the `Scope.default`. Binary compatible.
+- **API tidy-ups** (#444):
+  - `EvaluationOptions` (per-call hooks, hints, timeout) can now be passed to every `*OrDefault`, `valueOrDefault` and
+    `value`, including the `FlagDef` forms, not only to `*Details` and `resolveOrDefault`.
+  - `EvaluationContext.builder` takes `Long` and `java.time.Instant` attributes.
+  - An `on(...)` registration reports the provider that is current when it runs, not when the effect was built.
+  - Unreadable provider event metadata is logged instead of silently dropped (the event is still delivered).
+  - A typed error built from a provider-reported code (`PARSE_ERROR`, `GENERAL`) carries the provider's message in a
+    stackless cause instead of a stack trace pointing into this library.
+||||||| fca038a
 - **The documentation site moved to MkDocs Material and was rewritten.** Every page was checked against the code and
   simplified, new pages cover evaluation, provider lifecycle and events, and OFREP, and animations show how an
   evaluation, context, hooks, transactions and providers work. Every code sample on the site is now compiled and,
@@ -33,8 +49,77 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   it was just untested outside the zio-bdd conformance job. On Scala 3 it prints a `sun.misc.Unsafe` deprecation
   warning from the Scala 3.3 standard library (`scala.runtime.LazyVals`), not from this library.
 
+### Deprecated
+
+- **`FeatureFlagError.EmptyFlagVariables`** (#444). No module has ever raised it; it stays for binary compatibility.
+
+- **`FeatureFlagError.isRecoverable`, in favour of `isFlagError`** (#440). It is true for flag-scoped evaluation errors
+  (missing flag, wrong type, unparsable value, bad context), which has nothing to do with retrying or with
+  `ProviderStatus.isRecoverable`. The behaviour is unchanged.
+
 ### Fixed
 
+- **`CachingProvider` and `CircuitBreakerProvider` release their event plumbing properly** (#450). Their `shutdown`
+  never called `EventProvider.shutdown`, so each wrapper's event emitter kept running and could still dispatch
+  afterwards. And a wrapper whose attach to the delegate failed (the delegate already belonged to another wrapper)
+  still detached the delegate on `shutdown`, cutting off the wrapper that owned it. Both now share one event-channel
+  helper that records an attachment only once it succeeds, and `shutdown` ends with `EventProvider.shutdown`.
+- **Circuit breaker: stale outcomes and polled `READY` no longer reset the circuit** (#447).
+  - A call admitted in one circuit state could record its outcome in a later one: a slow call admitted while closed
+    could close a half-open circuit while the real probe was still running, or free the probe slot so two probes ran
+    at once. Outcomes now only count in the state that admitted the call.
+  - `CircuitBreakerProvider` reset a circuit that a delegate's `PROVIDER_ERROR` event had opened as soon as its next
+    `getState()` poll said `READY`, and since SDK 1.22 that poll says `READY` unless the provider overrides it. A
+    polled `READY` now only closes a circuit that a poll opened; an event-driven trip closes on an event `READY` or
+    after `resetTimeout` and a successful probe. The same now holds for the trip a failed `initialize` causes, which
+    the next poll used to undo.
+- **`IntegerWideningLongProvider` reads longs beyond `Int` range** (#452). It picked the integer resolver from the
+  caller's default, so a flag stored as `5_000_000_000` read with default `0L` failed with `TYPE_MISMATCH` (or was
+  narrowed, depending on the provider). A `TYPE_MISMATCH` from the integer path now retries on the long path.
+||||||| 79c921d
+- **`FeatureFlagError.classify` reads the HTTP status instead of trusting the exception's name** (#440). Any class
+  named `*HttpResponseException` was reported as `Unauthorized`, so a 503 from such a client looked like a bad SDK key.
+  An exception with a `getStatusCode`/`statusCode` accessor is now classified by its status (401/403 → `Unauthorized`,
+  anything else → `ProviderError`). `Unauthorized` produced by `classify` now keeps the original exception as its
+  `cause` (new `FeatureFlagError.unauthorized(reason, cause)`; `Unauthorized(reason)` patterns are unchanged).
+||||||| a0a5a5b
+- **Tracking attributes are sent by type, and an unsupported one fails `track`** (#441). An `AttributeValue` attribute
+  (and any type the converter did not know, including one nested in a `List`/`Map`) was sent as its `toString`, so
+  `withAttribute("plan", AttributeValue.string("pro"))` arrived as `"StringValue(pro)"`. `AttributeValue`s, `Option`s
+  and SDK `Value`s now convert properly, longs beyond `Int` range keep full precision, and any other type makes `track`
+  fail with `FeatureFlagError.InvalidContext` naming the attribute — nothing is sent or recorded. **Behaviour change:**
+  types that used to be sent as their `toString` now fail, among them `Short`, `Byte`, `BigDecimal`, `UUID` and
+  collections other than `List`/`Map` (`Vector`, `Seq`, `Set`, Java collections); convert them before tracking. A long
+  inside a `List`/`Map` that fits in an `Int` is now sent as an integer, as a top-level one already was.
+||||||| a0a5a5b
+- **`CircuitBreakerProvider` now trips on providers that return error codes instead of throwing** (#446). Any returned
+  evaluation counted as a success, so a delegate that reports network failures as `errorCode = GENERAL` — the OFREP
+  provider does — kept the circuit closed through a full outage, and a returned `FLAG_NOT_FOUND` could close a
+  half-open circuit. Returned codes are now classified like thrown errors: `GENERAL`, `PROVIDER_NOT_READY` and
+  `PROVIDER_FATAL` count as failures, application codes only prove the provider is reachable. The evaluation itself is
+  still returned unchanged.
+- **`DeferredProvider` forwards `track` and refuses to start after `shutdown`** (#448). `track` fell through to the
+  SDK's no-op default, so tracking events never reached the wrapped provider; and `initialize` on a shut-down instance
+  returned normally, so the SDK reported it ready while it answered `PROVIDER_NOT_READY` forever. It now throws
+  `FatalError`, as it does after a failed start or when `shutdown` overtakes the construction. The wrapper-completeness test could not see the missing `track`, because Scala emits a synthetic
+  forwarder for every inherited Java default method; it now ignores those.
+||||||| 14311fc
+- **`CachingProvider` no longer re-caches a stale value after invalidation** (#449). zio-cache stores a finished lookup
+  unconditionally, so an evaluation already in flight when `invalidateAll` ran — or when the delegate reported a
+  configuration change — wrote the pre-change value back, and it was served as `CACHED` for the rest of the TTL.
+  Cache keys now carry an invalidation epoch, so such a late write lands under a key no later evaluation reads.
+||||||| 0bde390
+- **Hooks inside `FeatureHook.compose` no longer share `HookData` across evaluations** (#438, spec 4.3.2). A
+  composite kept one `HookData` per inner hook for its whole lifetime, so a composite registered once (for example
+  `addHook(compose(List(logging, metrics)))`) let concurrent evaluations overwrite each other's data, which made the
+  timing hooks report wrong durations. The same hook instance listed twice, in a composite or via two `addHook` calls,
+  also shared one `HookData`. Each inner hook now gets its own `HookData` per evaluation, keyed by its position.
+- **Event handlers no longer inherit the registering fiber's transaction or context** (#436). A handler registered
+  inside `transaction(...)` kept applying that transaction's overrides on every later event, and kept recording into
+  its long-finished state; one registered inside `withContext(...)` kept that context. Handlers, including the
+  immediate call for a provider already in the event's state, now run without either. Other `FiberRef`s, such as log
+  annotations, are still inherited.
+||||||| 28fdacf
 - **A provider whose `initialize()` never returns no longer wedges the layer** (#433). Registration used the Java
   SDK's `setProviderAndWait`, which holds the API write lock for the whole of `initialize()`:
   - `setProvider` had no time limit at all, so a hanging provider kept the swap — and status `NotReady` — forever.
@@ -829,6 +914,9 @@ change (#247) — and the **Removed** `OpenFeatureAPIFactory` shim (#316). Detai
   `getRawEvaluations`, and `setFlags` call sites that relied on the clear-first behavior to `replaceFlags`.
 
 ### Deprecated
+
+- **Testkit `scopedLayer` / `scopedAsyncLayer`, in favour of `layer` / `asyncLayer`** (#443). With layers no longer
+  needing a `Scope`, the twins are identical to them.
 
 - **14 `FeatureFlags` factory overloads, superseded by `fromProvider(provider, config)`** (#253):
   `fromProvider(p, evaluationTimeout)`, `fromProvider(p, evaluationTimeout, initTimeout)`,

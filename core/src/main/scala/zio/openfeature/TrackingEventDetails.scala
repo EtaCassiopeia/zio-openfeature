@@ -5,7 +5,10 @@ package zio.openfeature
   * @param value
   *   Optional numeric value associated with the event (e.g., revenue, count)
   * @param attributes
-  *   Additional attributes for the event
+  *   Additional attributes for the event. Accepted values: `Boolean`, `String`, `Int`, `Long`, `Double`, `Float`,
+  *   `java.time.Instant`, any [[AttributeValue]], an OpenFeature `Value`, `Option`s of these, and `List`s /
+  *   `Map[String, _]`s of these (nested). A `null` or `None` attribute is dropped. Any other type makes `track` fail
+  *   with `FeatureFlagError.InvalidContext` naming the attribute, rather than being sent as its `toString`.
   */
 final case class TrackingEventDetails(
   value: Option[Double] = None,

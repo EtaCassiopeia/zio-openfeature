@@ -15,7 +15,7 @@ object Extras:
   val fromConfig: HoconProvider =
     HoconProvider.fromConfig(ConfigFactory.parseString("new-checkout = true"))
 
-  val hoconFlags: ZLayer[Scope, Throwable, FeatureFlags] = FeatureFlags.fromProvider(fromApplicationConf)
+  val hoconFlags: ZLayer[Any, Throwable, FeatureFlags] = FeatureFlags.fromProvider(fromApplicationConf)
   // --8<-- [end:hocon]
 
   // --8<-- [start:hocon-reload]
@@ -31,12 +31,12 @@ object Extras:
 
   // --8<-- [start:chain]
   // Environment variables override application.conf; a key neither holds falls back to the caller's default.
-  val layered: ZLayer[Scope, Throwable, FeatureFlags] =
+  val layered: ZLayer[Any, Throwable, FeatureFlags] =
     FeatureFlags.fromProvider(FeatureFlags.multiProvider(List(EnvVarProvider(), HoconProvider())))
   // --8<-- [end:chain]
 
   // --8<-- [start:caching]
-  def cached(remote: FeatureProvider): ZLayer[Scope, Throwable, FeatureFlags] =
+  def cached(remote: FeatureProvider): ZLayer[Any, Throwable, FeatureFlags] =
     ZLayer.fromZIO(CachingProvider.make(remote, CachingConfig(maxEntries = 1000, ttl = 1.minute))).flatMap { env =>
       FeatureFlags.fromProvider(env.get[CachingProvider])
     }
@@ -52,7 +52,7 @@ object Extras:
   // --8<-- [end:caching-invalidate]
 
   // --8<-- [start:circuit-breaker]
-  def resilient(remote: FeatureProvider): ZLayer[Scope, Throwable, FeatureFlags] =
+  def resilient(remote: FeatureProvider): ZLayer[Any, Throwable, FeatureFlags] =
     ZLayer
       .fromZIO(
         CircuitBreakerProvider.make(
@@ -76,11 +76,11 @@ object Extras:
 
   // --8<-- [start:deferred]
   // `construct` runs inside initialize(), on the SDK's init thread, not where the layer is built
-  def deferred(construct: () => FeatureProvider): ZLayer[Scope, Throwable, FeatureFlags] =
+  def deferred(construct: () => FeatureProvider): ZLayer[Any, Throwable, FeatureFlags] =
     FeatureFlags.fromProviderAsync(DeferredProvider("my-vendor")(construct))
   // --8<-- [end:deferred]
 
   // --8<-- [start:integer-widening]
-  def widened(legacy: FeatureProvider): ZLayer[Scope, Throwable, FeatureFlags] =
+  def widened(legacy: FeatureProvider): ZLayer[Any, Throwable, FeatureFlags] =
     FeatureFlags.fromProvider(IntegerWideningLongProvider(legacy))
   // --8<-- [end:integer-widening]

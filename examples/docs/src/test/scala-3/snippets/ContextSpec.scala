@@ -47,7 +47,7 @@ object ContextSpec extends ZIOSpecDefault:
         ctx.getString("service").contains("checkout"),
         ctx.getString("plan").contains("premium")
       )
-    }.provide(TestFeatureProvider.scopedLayer(Map("new-ui" -> true))),
+    }.provide(TestFeatureProvider.layer(Map("new-ui" -> true))),
     test("precedence: global < transaction < client < source < scoped < invocation < before hook") {
       def layer(key: String, value: String) = EvaluationContext.empty.withAttribute(key, value)
       val source = ContextSource(ZIO.succeed(layer("source", "source").withAttribute("p", "source")))
@@ -107,7 +107,7 @@ object ContextSpec extends ZIOSpecDefault:
         ctx.getString("a").contains("outer"),
         ctx.getString("b").contains("inner")
       )
-    }.provide(TestFeatureProvider.scopedLayer(Map("new-ui" -> true))),
+    }.provide(TestFeatureProvider.layer(Map("new-ui" -> true))),
     test("context source: log annotations become the targeting key, ++ composes") {
       for
         provider <- TestFeatureProvider.make(Map("new-ui" -> true))
@@ -127,5 +127,5 @@ object ContextSpec extends ZIOSpecDefault:
         ctx.targetingKey.contains("u-9"),
         ctx.getString("country").contains("NL")
       )
-    }.provide(TestFeatureProvider.scopedLayer(Map("new-ui" -> true, "banner" -> "spring")))
+    }.provide(TestFeatureProvider.layer(Map("new-ui" -> true, "banner" -> "spring")))
   ) @@ TestAspect.withLiveClock

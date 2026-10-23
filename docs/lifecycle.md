@@ -77,6 +77,8 @@ Register a handler for the events you care about. Each registration returns an e
 - A handler that dies is logged, and keeps its subscription.
 - When the status already matches, the handler gets a payload that describes the current state, not the event that
   caused it.
+- A handler does not run inside the transaction or `withContext` block it was registered from, even though it may
+  have been registered there: its evaluations see neither the transaction's overrides nor that fiber-local context.
 
 ## Read the event stream
 
@@ -129,8 +131,11 @@ The Java SDK itself sends `READY` or `ERROR` when a provider's initialization fi
 | `track(name, context, details)` | all three |
 
 The context is merged with the global, client and ambient context exactly as for an evaluation (see
-[Evaluation context](context.md)). `TrackingEventDetails` has an optional numeric `value` and `attributes`. A provider
-that does not support tracking ignores the call. A provider error fails the call with a `FeatureFlagError`.
+[Evaluation context](context.md)). `TrackingEventDetails` has an optional numeric `value` and `attributes`. Attribute
+values can be the plain types `withAttribute` accepts for a context, any `AttributeValue`, `Option`s of these, and nested
+`List`s and `Map`s; a `null` or `None` attribute is dropped. Any other type fails the call with
+`FeatureFlagError.InvalidContext` before anything is sent. A provider that does not support tracking ignores the call. A
+provider error fails the call with a `FeatureFlagError`.
 
 `trackedEvents` returns the last 1000 events this instance sent, oldest first, with their merged context. It is meant
 for tests and debugging.

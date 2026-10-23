@@ -39,14 +39,24 @@ object WrapperCompletenessSpec extends ZIOSpecDefault:
       .distinct
       .sortBy(render)
 
+  /** Methods the class itself declares, minus bridge/synthetic ones. Scala 3 emits a public `ACC_BRIDGE |
+    * ACC_SYNTHETIC` forwarder for every Java default method a class inherits without overriding (body: `invokespecial`
+    * the interface default), so without this filter a wrapper that forgets e.g. `track` still "declares" it and the
+    * check passes vacuously (#448). A real override is never bridge or synthetic.
+    */
   private def declaredSigs(cls: Class[?]): Set[Sig] =
-    cls.getDeclaredMethods.map(m => (m.getName, m.getParameterTypes.toList)).toSet
+    cls.getDeclaredMethods
+      .filterNot(m => m.isBridge || m.isSynthetic)
+      .map(m => (m.getName, m.getParameterTypes.toList))
+      .toSet
+
+  private def missing(cls: Class[?]): List[Sig] =
+    val declared = declaredSigs(cls)
+    surface.filterNot(declared.contains).filterNot(s => exempt.contains(s._1))
 
   private def check(cls: Class[?]): TestResult =
-    val declared = declaredSigs(cls)
-    val missing  = surface.filterNot(declared.contains).filterNot(s => exempt.contains(s._1))
-    assertTrue(missing.isEmpty) ??
-      s"${cls.getSimpleName} does not forward: ${missing.map(render).mkString(", ")}"
+    val gaps = missing(cls)
+    assertTrue(gaps.isEmpty) ?? s"${cls.getSimpleName} does not forward: ${gaps.map(render).mkString(", ")}"
 
   def spec = suite("wrapper completeness")(
     test("CachingProvider forwards the whole FeatureProvider surface")(check(classOf[CachingProvider])),
@@ -57,6 +67,10 @@ object WrapperCompletenessSpec extends ZIOSpecDefault:
     test("IntegerWideningLongProvider forwards the whole FeatureProvider surface")(
       check(classOf[IntegerWideningLongProvider])
     ),
+    // Guards the guard (#448): a wrapper that overrides everything except a Java default method must be reported.
+    test("a wrapper that does not override track is reported as missing it") {
+      assertTrue(missing(classOf[WrapperCompletenessSpec.ForgetsTrack]).map(_._1) == List("track"))
+    },
     // Guards the guard: if the reflection ever returns an empty surface (an SDK repackaging, a
     // shading step, a JPMS change), every check above would pass vacuously and the suite would
     // report success while verifying nothing.
@@ -71,3 +85,28 @@ object WrapperCompletenessSpec extends ZIOSpecDefault:
       )
     }
   )
+
+  /** Fixture for the guard-the-guard test: forwards every FeatureProvider method except `track`. */
+  final class ForgetsTrack(d: FeatureProvider) extends FeatureProvider:
+    override def getMetadata: dev.openfeature.sdk.Metadata                                  = d.getMetadata
+    override def getProviderHooks: java.util.List[dev.openfeature.sdk.Hook[?]]              = d.getProviderHooks
+    override def initialize(c: dev.openfeature.sdk.EvaluationContext): Unit                 = d.initialize(c)
+    override def initialize(c: dev.openfeature.sdk.EvaluationContext, domain: String): Unit = d.initialize(c, domain)
+    override def isDomainScoped(): Boolean                                                  = d.isDomainScoped()
+    override def shutdown(): Unit                                                           = d.shutdown()
+    override def getBooleanEvaluation(k: String, v: java.lang.Boolean, c: dev.openfeature.sdk.EvaluationContext) =
+      d.getBooleanEvaluation(k, v, c)
+    override def getStringEvaluation(k: String, v: String, c: dev.openfeature.sdk.EvaluationContext) =
+      d.getStringEvaluation(k, v, c)
+    override def getIntegerEvaluation(k: String, v: java.lang.Integer, c: dev.openfeature.sdk.EvaluationContext) =
+      d.getIntegerEvaluation(k, v, c)
+    override def getDoubleEvaluation(k: String, v: java.lang.Double, c: dev.openfeature.sdk.EvaluationContext) =
+      d.getDoubleEvaluation(k, v, c)
+    override def getLongEvaluation(k: String, v: java.lang.Long, c: dev.openfeature.sdk.EvaluationContext) =
+      d.getLongEvaluation(k, v, c)
+    override def getObjectEvaluation(
+      k: String,
+      v: dev.openfeature.sdk.Value,
+      c: dev.openfeature.sdk.EvaluationContext
+    ) =
+      d.getObjectEvaluation(k, v, c)

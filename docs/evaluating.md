@@ -92,12 +92,15 @@ empty, since an error code fails the effect instead.
 | `InvalidConfiguration(reason)` | building a provider ([OFREP](ofrep.md), [Optimizely](optimizely.md)) with bad settings |
 | `OverrideTypeMismatch(key, expected, actual)` | a [transaction](transactions.md) override of the wrong type |
 | `NestedTransactionNotAllowed` | a transaction started inside another, under the default nesting policy |
-| `EmptyFlagVariables(key)` | kept for compatibility; nothing in the library raises it |
+| `EmptyFlagVariables(key)` | deprecated: nothing in the library raises it; kept for binary compatibility |
 
-`Unauthorized`, `Unreachable` and `ProviderError` come from `FeatureFlagError.classify`, which sorts anything a provider
-throws. The OFREP and Optimizely modules use it too, so you can alert on a bad key separately from an outage. Every
-error has a `message`, and a `cause` when there is an underlying exception. `FeatureFlagError.isRecoverable` (a problem
-with this flag) and `isProviderError` (a problem with the provider) group them.
+`Unauthorized`, `Unreachable` and `ProviderError` come from `FeatureFlagError.classify`, which sorts what a provider
+throws from `track` or past the SDK during evaluation (a timeout, for instance), so you can alert on a bad key
+separately from an outage. An exception that carries an HTTP status (a `getStatusCode` or `statusCode` accessor) is
+classified by that status: 401 and 403 are `Unauthorized`, anything else a `ProviderError`. Every error has a `message`,
+and a `cause` when there is an underlying exception; `Unauthorized` from `classify` keeps the original exception there.
+`FeatureFlagError.isFlagError` (a problem with this flag) and `isProviderError` (a problem with the provider) group
+them. `isRecoverable` is the deprecated old name of `isFlagError`; it has nothing to do with retrying.
 
 Recover from the cases you expect and let the rest fail:
 
@@ -107,8 +110,9 @@ Recover from the cases you expect and let the rest fail:
 
 ## Options for one call
 
-`EvaluationOptions` adds hooks, hook hints or a timeout to a single evaluation. Pass it to a `*Details` method or to
-`resolveOrDefault`:
+`EvaluationOptions` adds hooks, hook hints or a timeout to a single evaluation. Pass it as the fourth argument, after
+the context, to a `*Details` method, `resolveOrDefault`, any `*OrDefault`, `valueOrDefault` or `value` (including the
+`FlagDef` forms):
 
 ```scala
 --8<-- "Evaluating.scala:options"

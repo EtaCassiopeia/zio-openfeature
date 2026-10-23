@@ -5,6 +5,8 @@ sealed trait FeatureFlagError extends Product with Serializable {
   def cause: Option[Throwable] = None
 }
 
+// The deprecated EmptyFlagVariables case is still part of this ADT, so the compiler's generated members reference it.
+@scala.annotation.nowarn("cat=deprecation")
 object FeatureFlagError {
   final case class FlagNotFound(key: String) extends FeatureFlagError {
     def message: String = s"Flag '$key' not found"
@@ -19,6 +21,7 @@ object FeatureFlagError {
     override def cause: Option[Throwable] = Some(underlying)
   }
 
+  @deprecated("Never raised by any module; kept for binary compatibility", "1.2.0")
   final case class EmptyFlagVariables(key: String) extends FeatureFlagError {
     def message: String = s"Flag '$key' has no variables but non-boolean type requested"
   }
@@ -51,6 +54,20 @@ object FeatureFlagError {
     */
   final case class Unauthorized(reason: String) extends FeatureFlagError {
     def message: String = s"Provider rejected request: $reason"
+
+    // Write-once, set only by `FeatureFlagError.unauthorized` before the instance escapes. Not a case field, so
+    // `Unauthorized(reason)` patterns, equality and the binary shape stay as they were (#440); and the factory lives
+    // outside the companion because an explicit companion changes its type hierarchy on 2.13. `copy` does not carry it.
+    private[FeatureFlagError] var underlying: Option[Throwable] = None
+
+    override def cause: Option[Throwable] = underlying
+  }
+
+  /** An [[Unauthorized]] that keeps the throwable it was classified from as its `cause`. */
+  def unauthorized(reason: String, cause: Throwable): Unauthorized = {
+    val error = Unauthorized(reason)
+    error.underlying = Option(cause)
+    error
   }
 
   /** The remote provider could not be reached at the network layer (DNS failure, connection refused, no route).
@@ -77,7 +94,12 @@ object FeatureFlagError {
     def message: String = s"Override for flag '$key' type mismatch: expected $expected, got $actual"
   }
 
-  def isRecoverable(error: FeatureFlagError): Boolean = error match {
+  /** Whether `error` is about the flag being evaluated (missing, wrong type, unparsable, bad context) rather than about
+    * the provider or this library. Unrelated to [[ProviderStatus.isRecoverable]], and says nothing about whether a
+    * retry would help.
+    */
+  @scala.annotation.nowarn("cat=deprecation")
+  def isFlagError(error: FeatureFlagError): Boolean = error match {
     case _: FlagNotFound        => true
     case _: TypeMismatch        => true
     case _: ParseError          => true
@@ -86,6 +108,12 @@ object FeatureFlagError {
     case _: InvalidContext      => true
     case _                      => false
   }
+
+  @deprecated(
+    "Use isFlagError: this is true for flag-scoped evaluation errors, not about retrying or ProviderStatus.isRecoverable",
+    "1.2.0"
+  )
+  def isRecoverable(error: FeatureFlagError): Boolean = isFlagError(error)
 
   def isProviderError(error: FeatureFlagError): Boolean = error match {
     case _: ProviderNotReady             => true
@@ -98,6 +126,7 @@ object FeatureFlagError {
     case _                               => false
   }
 
+  @scala.annotation.nowarn("cat=deprecation")
   def toErrorCode(error: FeatureFlagError): ErrorCode = error match {
     case _: FlagNotFound                 => ErrorCode.FlagNotFound
     case _: TypeMismatch                 => ErrorCode.TypeMismatch
@@ -130,23 +159,46 @@ object FeatureFlagError {
       case _: java.net.NoRouteToHostException                                                 => Unreachable(t)
       case _: java.net.ConnectException                                                       => Unreachable(t)
       case _: java.nio.channels.ClosedChannelException if msg.toLowerCase.contains("connect") => Unreachable(t)
-      case _ if isHttpAuthFailure(t, msg) => Unauthorized(extractAuthReason(t, msg))
-      case _                              => ProviderError(t)
+      case _ =>
+        httpStatus(t) match {
+          case Some(status) if AuthStatuses.contains(status) => unauthorized(extractAuthReason(t, msg), t)
+          case Some(_)                                       => ProviderError(t)
+          case None if isHttpAuthFailure(t, msg)             => unauthorized(extractAuthReason(t, msg), t)
+          case None                                          => ProviderError(t)
+        }
     }
   }
 
-  // The HTTP client used by contrib providers (java.net.http) doesn't expose status codes via a fixed exception type,
-  // so we fall back to scanning the exception message for the canonical "401"/"403" tokens. This is permissive — if a
-  // provider message happens to contain those substrings for another reason it will be misclassified, but the cost is
-  // low (caller still sees the original Throwable on Unauthorized.cause-equivalent flows when needed).
-  // Word-boundary match so "401"/"403" only hit as standalone tokens — a port 4013, a byte count, or a
-  // flag key containing the digits must not classify as an auth failure.
+  private val AuthStatuses: Set[Int] = Set(401, 403)
+
+  // Many HTTP clients' response exceptions (Apache httpclient, Google http-client, ...) carry the status behind a
+  // getStatusCode/statusCode accessor. When one is there, it decides — the class name says nothing about which status
+  // it carries, so a 503 must not read as an auth failure (#440).
+  private val StatusAccessors = List("getStatusCode", "statusCode")
+
+  private def httpStatus(t: Throwable): Option[Int] =
+    StatusAccessors.iterator.flatMap(name => statusVia(t, name)).nextOption()
+
+  // Total: classify runs on error paths, so a broken exception class (a LinkageError while resolving its methods, which
+  // Try would let through) must not turn one failure into another.
+  private def statusVia(t: Throwable, accessor: String): Option[Int] =
+    try
+      t.getClass.getMethod(accessor).invoke(t) match {
+        case i: java.lang.Integer => Some(i.intValue)
+        case _                    => None
+      }
+    catch { case _: LinkageError | scala.util.control.NonFatal(_) => None }
+
+  // Without a status accessor (the java.net.http client used by contrib providers has none), fall back to the
+  // exception's name and message: the canonical "401"/"403" tokens, "unauthorized", "forbidden". This is permissive —
+  // a message that happens to contain those for another reason is misclassified — so the original throwable is kept as
+  // the Unauthorized's cause. Word-boundary match so "401"/"403" only hit as standalone tokens: a port 4013, a byte
+  // count, or a flag key containing the digits must not classify as an auth failure.
   private val AuthStatusToken = java.util.regex.Pattern.compile("\\b(401|403)\\b")
 
   private def isHttpAuthFailure(t: Throwable, msg: String): Boolean = {
     val cls    = t.getClass.getName
     val msgLow = msg.toLowerCase
-    cls.endsWith("HttpResponseException") ||
     cls.endsWith("UnauthorizedException") ||
     cls.endsWith("ForbiddenException") ||
     AuthStatusToken.matcher(msgLow).find() ||

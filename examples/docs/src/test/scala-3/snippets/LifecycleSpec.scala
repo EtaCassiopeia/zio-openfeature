@@ -12,7 +12,7 @@ object LifecycleSpec extends ZIOSpecDefault:
   private def evaluateIn(status: ProviderStatus) =
     ZIO.serviceWithZIO[TestFeatureProvider](_.setStatus(status)) *> flag.either
 
-  private val layer = TestFeatureProvider.scopedLayer(Map("new-checkout" -> true))
+  private val layer = TestFeatureProvider.layer(Map("new-checkout" -> true))
 
   def spec = suite("Lifecycle")(
     test("readiness is true once the provider is Ready") {

@@ -124,7 +124,7 @@ object TransactionsSpec extends ZIOSpecDefault:
       )
     }
   ).provide(
-    TestFeatureProvider.scopedLayer(
+    TestFeatureProvider.layer(
       Map("feature" -> true, "feature-b" -> true, "feature-c" -> false, "premium-feature" -> true, "n" -> 7)
     )
   )

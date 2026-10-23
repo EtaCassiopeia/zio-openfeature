@@ -143,6 +143,9 @@ you can afford to be, or clear the cache yourself:
 --8<-- "Extras.scala:caching-invalidate"
 ```
 
+Clearing applies to evaluations already in flight too: one that started before the clear still answers its caller, but
+its result is not cached.
+
 ## Circuit breaker provider
 
 A remote provider that is down can make every evaluation wait for a timeout. `CircuitBreakerProvider` notices
@@ -161,16 +164,19 @@ The circuit has three states:
 |---|---|
 | Closed | It goes to the provider. Consecutive failures are counted. |
 | Open | It fails at once, without calling the provider. After `resetTimeout`, the next call becomes a probe. |
-| Half-open | One probe goes to the provider at a time. `halfOpenMaxCalls` successful probes close the circuit; a failed one opens it again. |
+| Half-open | One probe goes to the provider at a time. `halfOpenMaxCalls` successful probes close the circuit; a failed one opens it again. A slow call let through earlier, before the circuit opened, does not count. |
 
 Three things open the circuit:
 
 - **Failures:** `failureThreshold` consecutive infrastructure failures. A call slower than `evaluationTimeout` counts
-  as one.
+  as one. A failure counts whether the provider throws it or returns it as an error code (`GENERAL`,
+  `PROVIDER_NOT_READY`, `PROVIDER_FATAL`); errors such as `FLAG_NOT_FOUND` only show the provider is reachable.
 - **The provider's state:** at most once per `stateCheckInterval`, the breaker asks the provider for its state. `ERROR`
   or `FATAL` opens the circuit at once, and `READY` closes a circuit opened this way.
 - **The provider's events:** `PROVIDER_ERROR` opens the circuit and `PROVIDER_READY` closes one opened by state or
-  events. This needs an `EventProvider`; any other provider relies on the first two.
+  events. A circuit opened by an event, or by a failed `initialize`, stays open through a polled `READY`, since most
+  providers report `READY` by default when polled; it closes on an event `READY` or after `resetTimeout` and a
+  successful probe. This needs an `EventProvider`; any other provider relies on the first two.
 
 Only failures that say the provider is unhealthy count. A `FLAG_NOT_FOUND`, type mismatch, parse error, missing
 targeting key or invalid context proves the provider answered, so it resets the failure count instead.
@@ -210,6 +216,8 @@ provider. With async initialization, that is on the SDK's own thread, so your st
 - It reports the name you give it, before and after the real provider exists.
 - Until the real provider is built, evaluations answer `PROVIDER_NOT_READY` with your default.
 - A shutdown during construction shuts the new provider down as soon as it is built.
+- Once the real provider exists, provider hooks and `track` calls go to it.
+- A `DeferredProvider` that was shut down, or failed to start, cannot be started again; build a new one.
 - It does not pass on the wrapped provider's events.
 
 Use `FeatureFlags.fromAcquireAsync` instead if a fallback should answer while the real provider starts; see
@@ -229,6 +237,9 @@ resolver instead:
 - A default that fits in an `Int` is resolved by the integer resolver and widened to `Long`, keeping the reason,
   variant, error code and metadata.
 - A larger default goes to the provider's long path unchanged, so it is never truncated.
+- If the integer resolver reports a type mismatch, for example because the stored value is a long beyond `Int` range,
+  the evaluation is retried on the long path. A provider that silently truncates such a value instead cannot be
+  detected.
 - It does not pass on the wrapped provider's events.
 
 Every provider shipped with this library already resolves longs natively, so they never need it.

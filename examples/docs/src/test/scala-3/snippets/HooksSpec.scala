@@ -165,5 +165,5 @@ object HooksSpec extends ZIOSpecDefault:
       yield assertTrue(out.head.exists(_.errorCode.isDefined), out(1).isEmpty)
     }
   ).provide(
-    TestFeatureProvider.scopedLayer(Map("on" -> true, "color" -> "blue", "new-ui" -> true))
+    TestFeatureProvider.layer(Map("on" -> true, "color" -> "blue", "new-ui" -> true))
   ) @@ TestAspect.withLiveClock

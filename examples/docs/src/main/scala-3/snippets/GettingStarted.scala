@@ -19,15 +19,14 @@ object GettingStarted:
       yield message
 
     // An in-memory provider holding one flag
-    def run = program.provide(TestFeatureProvider.scopedLayer(Map("new-checkout" -> true)))
+    def run = program.provide(TestFeatureProvider.layer(Map("new-checkout" -> true)))
   // --8<-- [end:first-flag]
 
   // --8<-- [start:real-provider]
   // Any OpenFeature Java provider: flagd, LaunchDarkly, Flagsmith, OFREP, Optimizely, ...
   def withProvider(provider: FeatureProvider): ZIO[Any, Throwable | FeatureFlagError, String] =
     FirstFlag.program.provide(
-      Scope.default,
-      FeatureFlags.fromProvider(provider) // initializes the provider, shuts it down when the scope closes
+      FeatureFlags.fromProvider(provider) // initializes the provider, shuts it down when the layer is released
     )
   // --8<-- [end:real-provider]
 

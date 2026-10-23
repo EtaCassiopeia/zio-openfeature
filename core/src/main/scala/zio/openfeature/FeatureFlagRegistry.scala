@@ -44,7 +44,7 @@ object FeatureFlagRegistry {
   def addZioApiHook(hook: FeatureHook): ZIO[FeatureFlagRegistry, Nothing, Unit] =
     ZIO.serviceWithZIO(_.addZioApiHook(hook))
 
-  def fromProvider(defaultProvider: OFFeatureProvider): ZLayer[Scope, Throwable, FeatureFlagRegistry] =
+  def fromProvider(defaultProvider: OFFeatureProvider): ZLayer[Any, Throwable, FeatureFlagRegistry] =
     ZLayer.scoped {
       for {
         api            <- ZIO.succeed(OpenFeatureAPI.createIsolated())

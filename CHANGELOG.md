@@ -35,9 +35,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Circuit breaker: stale outcomes and polled `READY` no longer reset the circuit** (#447).
+  - A call admitted in one circuit state could record its outcome in a later one: a slow call admitted while closed
+    could close a half-open circuit while the real probe was still running, or free the probe slot so two probes ran
+    at once. Outcomes now only count in the state that admitted the call.
+  - `CircuitBreakerProvider` reset a circuit that a delegate's `PROVIDER_ERROR` event had opened as soon as its next
+    `getState()` poll said `READY`, and since SDK 1.22 that poll says `READY` unless the provider overrides it. A
+    polled `READY` now only closes a circuit that a poll opened; an event-driven trip closes on an event `READY` or
+    after `resetTimeout` and a successful probe. The same now holds for the trip a failed `initialize` causes, which
+    the next poll used to undo.
 - **`IntegerWideningLongProvider` reads longs beyond `Int` range** (#452). It picked the integer resolver from the
   caller's default, so a flag stored as `5_000_000_000` read with default `0L` failed with `TYPE_MISMATCH` (or was
   narrowed, depending on the provider). A `TYPE_MISMATCH` from the integer path now retries on the long path.
+||||||| 79c921d
 - **`CircuitBreakerProvider` now trips on providers that return error codes instead of throwing** (#446). Any returned
   evaluation counted as a success, so a delegate that reports network failures as `errorCode = GENERAL` — the OFREP
   provider does — kept the circuit closed through a full outage, and a returned `FLAG_NOT_FOUND` could close a
@@ -50,6 +60,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `FatalError`, as it does after a failed start or when `shutdown` overtakes the construction. The wrapper-completeness test could not see the missing `track`, because Scala emits a synthetic
   forwarder for every inherited Java default method; it now ignores those.
 ||||||| 14311fc
+- **`CachingProvider` no longer re-caches a stale value after invalidation** (#449). zio-cache stores a finished lookup
+  unconditionally, so an evaluation already in flight when `invalidateAll` ran — or when the delegate reported a
+  configuration change — wrote the pre-change value back, and it was served as `CACHED` for the rest of the TTL.
+  Cache keys now carry an invalidation epoch, so such a late write lands under a key no later evaluation reads.
+||||||| 0bde390
 - **Hooks inside `FeatureHook.compose` no longer share `HookData` across evaluations** (#438, spec 4.3.2). A
   composite kept one `HookData` per inner hook for its whole lifetime, so a composite registered once (for example
   `addHook(compose(List(logging, metrics)))`) let concurrent evaluations overwrite each other's data, which made the

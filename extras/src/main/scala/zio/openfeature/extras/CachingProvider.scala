@@ -50,15 +50,19 @@ final private[extras] class CacheKey(
   val flagKey: String,
   val flagType: String,
   val contextFingerprint: String,
+  // Invalidation epoch (#449): zio-cache writes a finished lookup back unconditionally, so a lookup in flight across
+  // an invalidation would repopulate the cleared map. Keying by epoch strands that write under a key no later read uses.
+  val generation: Long,
   val evaluate: () => ProviderEvaluation[Any]
 ) {
   override def equals(other: Any): Boolean = other match {
     case that: CacheKey =>
-      flagKey == that.flagKey && flagType == that.flagType && contextFingerprint == that.contextFingerprint
+      flagKey == that.flagKey && flagType == that.flagType && contextFingerprint == that.contextFingerprint &&
+      generation == that.generation
     case _ => false
   }
-  override def hashCode: Int    = (flagKey, flagType, contextFingerprint).hashCode()
-  override def toString: String = s"CacheKey($flagKey, $flagType, $contextFingerprint)"
+  override def hashCode: Int    = (flagKey, flagType, contextFingerprint, generation).hashCode()
+  override def toString: String = s"CacheKey($flagKey, $flagType, $contextFingerprint, gen=$generation)"
 }
 
 /** A decorator provider that wraps any existing provider and adds evaluation caching backed by `zio-cache`.
@@ -122,6 +126,8 @@ final class CachingProvider private (
   override def track(eventName: String, context: OFEvaluationContext, details: TrackingEventDetails): Unit =
     underlying.track(eventName, context, details)
 
+  private val generation = new java.util.concurrent.atomic.AtomicLong(0L)
+
   private val delegateAttached = new AtomicBoolean(false)
 
   // Event integration is derived from the delegate's type rather than stored as a separate flag, so
@@ -135,10 +141,7 @@ final class CachingProvider private (
   // events go nowhere) and invalidate the cache on configuration changes so stale values aren't served
   // for the remainder of the TTL.
   private def onDelegateEvent(event: JavaProviderEvent, details: ProviderEventDetails): Unit = {
-    if (event == JavaProviderEvent.PROVIDER_CONFIGURATION_CHANGED)
-      Unsafe.unsafe { implicit u =>
-        runtime.unsafe.run(cache.invalidateAll).getOrThrowFiberFailure()
-      }
+    if (event == JavaProviderEvent.PROVIDER_CONFIGURATION_CHANGED) invalidateAllNow()
     emit(event, details)
     ()
   }
@@ -164,9 +167,7 @@ final class CachingProvider private (
     eventDelegate.foreach { ev =>
       if (delegateAttached.compareAndSet(true, false)) scala.util.Try(EventProviderBridge.detach(ev))
     }
-    Unsafe.unsafe { implicit u =>
-      runtime.unsafe.run(cache.invalidateAll).getOrThrowFiberFailure()
-    }
+    invalidateAllNow()
     underlying.shutdown()
   }
 
@@ -221,6 +222,7 @@ final class CachingProvider private (
       key,
       flagType,
       contextFingerprint(context),
+      generation.get(),
       () => { ran.set(true); evaluate.asInstanceOf[ProviderEvaluation[Any]] }
     )
     Unsafe.unsafe { implicit u =>
@@ -290,8 +292,17 @@ final class CachingProvider private (
   ): ProviderEvaluation[Value] =
     cached(key, "object", context, underlying.getObjectEvaluation(key, defaultValue, context))
 
-  /** Invalidate all cached entries. Call this when the underlying provider's configuration changes. */
-  def invalidateAll: UIO[Unit] = cache.invalidateAll
+  /** Invalidate all cached entries. Call this when the underlying provider's configuration changes. A lookup already in
+    * flight when this runs still answers its own caller, but its result is not kept.
+    */
+  def invalidateAll: UIO[Unit] =
+    // Bump the epoch BEFORE clearing: any evaluation that starts after this point builds a new-epoch key and misses.
+    ZIO.succeed(generation.incrementAndGet()) *> cache.invalidateAll
+
+  private def invalidateAllNow(): Unit =
+    Unsafe.unsafe { implicit u =>
+      runtime.unsafe.run(invalidateAll).getOrThrowFiberFailure()
+    }
 }
 
 object CachingProvider {

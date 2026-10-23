@@ -143,6 +143,9 @@ you can afford to be, or clear the cache yourself:
 --8<-- "Extras.scala:caching-invalidate"
 ```
 
+Clearing applies to evaluations already in flight too: one that started before the clear still answers its caller, but
+its result is not cached.
+
 ## Circuit breaker provider
 
 A remote provider that is down can make every evaluation wait for a timeout. `CircuitBreakerProvider` notices
@@ -161,7 +164,7 @@ The circuit has three states:
 |---|---|
 | Closed | It goes to the provider. Consecutive failures are counted. |
 | Open | It fails at once, without calling the provider. After `resetTimeout`, the next call becomes a probe. |
-| Half-open | One probe goes to the provider at a time. `halfOpenMaxCalls` successful probes close the circuit; a failed one opens it again. |
+| Half-open | One probe goes to the provider at a time. `halfOpenMaxCalls` successful probes close the circuit; a failed one opens it again. A slow call let through earlier, before the circuit opened, does not count. |
 
 Three things open the circuit:
 
@@ -171,7 +174,9 @@ Three things open the circuit:
 - **The provider's state:** at most once per `stateCheckInterval`, the breaker asks the provider for its state. `ERROR`
   or `FATAL` opens the circuit at once, and `READY` closes a circuit opened this way.
 - **The provider's events:** `PROVIDER_ERROR` opens the circuit and `PROVIDER_READY` closes one opened by state or
-  events. This needs an `EventProvider`; any other provider relies on the first two.
+  events. A circuit opened by an event, or by a failed `initialize`, stays open through a polled `READY`, since most
+  providers report `READY` by default when polled; it closes on an event `READY` or after `resetTimeout` and a
+  successful probe. This needs an `EventProvider`; any other provider relies on the first two.
 
 Only failures that say the provider is unhealthy count. A `FLAG_NOT_FOUND`, type mismatch, parse error, missing
 targeting key or invalid context proves the provider answered, so it resets the failure count instead.

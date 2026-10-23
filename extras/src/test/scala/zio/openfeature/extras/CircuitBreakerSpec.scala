@@ -19,12 +19,12 @@ object CircuitBreakerSpec extends ZIOSpecDefault {
   def spec = suite("CircuitBreaker")(
     suite("Closed state")(
       test("allows calls when closed") {
-        val cb = CircuitBreaker()
+        val cb = CircuitBreaker(CircuitBreakerConfig(), Ticker.system)
         assertTrue(cb.tryAcquire == GateResult.Allowed) &&
         assertTrue(cb.isClosed)
       },
       test("recordSuccess resets failure counter") {
-        val cb = CircuitBreaker(CircuitBreakerConfig(failureThreshold = 5))
+        val cb = CircuitBreaker(CircuitBreakerConfig(failureThreshold = 5), Ticker.system)
         cb.recordFailure()
         cb.recordFailure()
         cb.recordSuccess()
@@ -34,13 +34,13 @@ object CircuitBreakerSpec extends ZIOSpecDefault {
         assertTrue(cb.isClosed)
       },
       test("recordSuccess returns false when staying closed") {
-        val cb = CircuitBreaker()
+        val cb = CircuitBreaker(CircuitBreakerConfig(), Ticker.system)
         assertTrue(!cb.recordSuccess())
       }
     ),
     suite("Opening")(
       test("opens after failureThreshold consecutive failures") {
-        val cb = CircuitBreaker(CircuitBreakerConfig(failureThreshold = 3))
+        val cb = CircuitBreaker(CircuitBreakerConfig(failureThreshold = 3), Ticker.system)
         cb.recordFailure()
         cb.recordFailure()
         val didOpen = cb.recordFailure()
@@ -48,12 +48,12 @@ object CircuitBreakerSpec extends ZIOSpecDefault {
         assertTrue(cb.isOpen)
       },
       test("does not open on fewer failures than threshold") {
-        val cb = CircuitBreaker(CircuitBreakerConfig(failureThreshold = 5))
+        val cb = CircuitBreaker(CircuitBreakerConfig(failureThreshold = 5), Ticker.system)
         (1 to 4).foreach(_ => cb.recordFailure())
         assertTrue(cb.isClosed)
       },
       test("recordFailure returns true only on the tripping failure") {
-        val cb = CircuitBreaker(CircuitBreakerConfig(failureThreshold = 3))
+        val cb = CircuitBreaker(CircuitBreakerConfig(failureThreshold = 3), Ticker.system)
         assertTrue(!cb.recordFailure()) &&
         assertTrue(!cb.recordFailure()) &&
         assertTrue(cb.recordFailure()) // this one trips
@@ -183,13 +183,13 @@ object CircuitBreakerSpec extends ZIOSpecDefault {
     ),
     suite("External trip/reset")(
       test("trip forces circuit open") {
-        val cb = CircuitBreaker()
+        val cb = CircuitBreaker(CircuitBreakerConfig(), Ticker.system)
         cb.trip()
         assertTrue(cb.isOpen) &&
         assertTrue(cb.tryAcquire == GateResult.Rejected)
       },
       test("reset closes externally-tripped circuit") {
-        val cb = CircuitBreaker()
+        val cb = CircuitBreaker(CircuitBreakerConfig(), Ticker.system)
         cb.trip()
         cb.reset()
         assertTrue(cb.isClosed)
@@ -202,7 +202,7 @@ object CircuitBreakerSpec extends ZIOSpecDefault {
         assertTrue(cb.isOpen)
       },
       test("transitionToHalfOpen allows a probe") {
-        val cb = CircuitBreaker()
+        val cb = CircuitBreaker(CircuitBreakerConfig(), Ticker.system)
         cb.trip()
         cb.transitionToHalfOpen()
         assertTrue(cb.tryAcquire == GateResult.Allowed)
@@ -232,7 +232,7 @@ object CircuitBreakerSpec extends ZIOSpecDefault {
         assertTrue(cb.isHalfOpen)
       },
       test("resets consecutive failures in closed state") {
-        val cb = CircuitBreaker(CircuitBreakerConfig(failureThreshold = 5))
+        val cb = CircuitBreaker(CircuitBreakerConfig(failureThreshold = 5), Ticker.system)
         cb.recordFailure()
         cb.recordFailure()
         cb.recordReachable()

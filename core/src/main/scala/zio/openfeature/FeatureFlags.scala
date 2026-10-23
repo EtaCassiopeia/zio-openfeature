@@ -423,7 +423,8 @@ trait FeatureFlags {
   /** Semantically block until the provider reaches an evaluable state (`canEvaluate` — Ready/Stale), returns early on
     * `Fatal`, or `within` elapses — returning the status at that moment in every case. Backed by the status change
     * stream (no polling), and safe for many concurrent waiters. Ideal for `/ready` probes:
-    * `ff.awaitReady(5.seconds).map(_.canEvaluate)`.
+    * `ff.awaitReady(5.seconds).map(_.canEvaluate)`. On an instance that is shutting down or shut down it returns at
+    * once with that status (`ShuttingDown` / `NotReady`), since it will never become evaluable again.
     */
   def awaitReady(within: Duration = Duration.Infinity): UIO[ProviderStatus]
 
@@ -1070,11 +1071,7 @@ object FeatureFlags {
       verified <- (ProviderRegistration.registerAndAwait(api, domain, provider, initTimeout) *>
         verifyInitState(provider))
         .tapError(_ => ZIO.attemptBlocking(provider.shutdown()).ignore)
-      client <- (domain, version) match {
-        case (Some(d), Some(v)) => ZIO.attempt(api.getClient(d, v))
-        case (Some(d), None)    => ZIO.attempt(api.getClient(d))
-        case _                  => ZIO.attempt(api.getClient())
-      }
+      client <- ZIO.attempt(api.getClient(domain.orNull, version.orNull))
       providerName = Option(provider.getMetadata).map(_.getName).getOrElse(UnknownProviderName)
       providerRef <- Ref.make(provider)
       providerNameRef = new java.util.concurrent.atomic.AtomicReference(providerName)
@@ -1364,11 +1361,7 @@ object FeatureFlags {
         case Some(d) => ZIO.attempt(api.setProvider(d, provider))
         case None    => ZIO.attempt(api.setProvider(provider))
       }
-      client <- (domain, version) match {
-        case (Some(d), Some(v)) => ZIO.attempt(api.getClient(d, v))
-        case (Some(d), None)    => ZIO.attempt(api.getClient(d))
-        case _                  => ZIO.attempt(api.getClient())
-      }
+      client <- ZIO.attempt(api.getClient(domain.orNull, version.orNull))
       // `ZIO.attempt` for the same reason as the registration above: a throwing `getMetadata` here must be a
       // typed failure, not a defect that strands the registry build fiber (see the `setProvider` note).
       providerName <- ZIO.attempt(Option(provider.getMetadata).map(_.getName).getOrElse(UnknownProviderName))

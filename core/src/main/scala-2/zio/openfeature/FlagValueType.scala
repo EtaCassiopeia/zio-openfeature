@@ -1,5 +1,9 @@
 package zio.openfeature
 
+/** The type of the provider resolver an evaluation called — what hooks scope themselves to via
+  * `FeatureHook.supportedFlagTypes`. It mirrors the provider's resolvers, not the Scala type: a `Float` flag is resolved
+  * as a `Double` and a scalar-backed custom type as its scalar, so a hook scoped to `Double` also sees `Float` flags.
+  */
 sealed trait FlagValueType extends Product with Serializable {
   def name: String = this match {
     case FlagValueType.Boolean => "Boolean"

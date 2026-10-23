@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Concurrency property tests** (#465) for hook-data isolation (#438), circuit-breaker epochs (#447) and cache
+  invalidation (#449), plus a generated swap/evaluate schedule in the hot-swap stress spec. Test-only.
+
 ### Changed
 
 - **Tuning defaults are named** (#462). The circuit breaker, cache, construction-retry, event-hub, polling and
@@ -75,6 +80,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`FeatureFlagError.EmptyFlagVariables`** (#444). No module has ever raised it; it stays for binary compatibility.
 - **`FeatureFlags.trackedEvents`, in favour of `TestFeatureProvider.trackedEvents`** (#442). It is empty on production
   instances.
+- **Standalone `CircuitBreaker(config)`** (#461). It is the engine behind `CircuitBreakerProvider`, whose gate
+  result is internal and still changing; use `CircuitBreakerProvider`. Also documented, without code changes: the
+  `Reconnecting` event type is reserved (the Java SDK never emits it, so `on(Reconnecting, …)` never fires), and
+  `FlagValueType` mirrors the provider resolver called, so a hook scoped to `Double` also sees `Float` flags. A client
+  `version` set without a domain is now passed to the SDK client too, through a single `getClient` call.
 
 - **`FeatureFlagError.isRecoverable`, in favour of `isFlagError`** (#440). It is true for flag-scoped evaluation errors
   (missing flag, wrong type, unparsable value, bad context), which has nothing to do with retrying or with
@@ -128,6 +138,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   An exception with a `getStatusCode`/`statusCode` accessor is now classified by its status (401/403 → `Unauthorized`,
   anything else → `ProviderError`). `Unauthorized` produced by `classify` now keeps the original exception as its
   `cause` (new `FeatureFlagError.unauthorized(reason, cause)`; `Unauthorized(reason)` patterns are unchanged).
+- **Teardown no longer strands waiters** (#435). Closing the layer's scope now shuts the event hub, so `events`
+  consumers and event-handler fibers end with it instead of waiting forever; `awaitReady()` returns at once on an
+  instance that is shutting down or shut down; and an interrupted `shutdown` still runs to the terminal `NotReady`
+  instead of leaving `ShuttingDown` and a half torn-down API.
 ||||||| a0a5a5b
 - **Tracking attributes are sent by type, and an unsupported one fails `track`** (#441). An `AttributeValue` attribute
   (and any type the converter did not know, including one nested in a `List`/`Map`) was sent as its `toString`, so

@@ -12,7 +12,7 @@ import dev.openfeature.sdk.{
 }
 import zio._
 import zio.test._
-import zio.test.TestAspect.{withLiveClock, timeout}
+import zio.test.TestAspect.{withLiveClock, timeout, samples}
 
 /** Stress-tests hot-swap under concurrent evaluation load.
   *
@@ -133,6 +133,43 @@ object ProviderHotSwapStressSpec extends ZIOSpecDefault {
         )
       }
     } @@ withLiveClock @@ timeout(30.seconds),
+    // Generated schedule: a random sequence of good / failing swaps runs while a random number of fibers evaluate.
+    test("generated swap/evaluate schedules never produce defects and end on the last good provider") {
+      val schedules = for {
+        evaluators <- Gen.int(2, 30)
+        swaps      <- Gen.listOfBounded(1, 6)(Gen.option(Gen.boolean)) // None = failing provider, Some(v) = good with v
+      } yield (evaluators, swaps)
+      check(schedules) { case (evaluators, swaps) =>
+        ZIO.scoped {
+          for {
+            ff <- FeatureFlags.build(
+              new ConstantProvider("init", true),
+              domain = Some(s"stress-gen-${java.util.UUID.randomUUID()}"),
+              version = None,
+              initialHooks = Nil,
+              statusRef = None,
+              addShutdownFinalizer = false,
+              apiOverride = Some(OpenFeatureAPI.createIsolated()),
+              evaluationTimeout = Some(5.seconds)
+            )
+            evalFibers <- ZIO.foreach(1 to evaluators)(_ => ZIO.foreach(1 to EvalsPerFiber)(_ => runOne(ff)).fork)
+            _ <- ZIO.foreachDiscard(swaps) {
+              case Some(v) => ff.setProvider(new ConstantProvider(s"good-$v", v)).either.ignore
+              case None    => ff.setProvider(new FailingInitProvider).either.ignore
+            }
+            flat <- ZIO.foreach(evalFibers)(_.join).map(_.toList.flatten)
+            last <- ff.boolean("flag", default = !swaps.lastOption.flatten.getOrElse(true))
+          } yield {
+            val expectedLast = swaps.lastOption.flatten
+            assertTrue(
+              flat.count(_ == Outcome.DefectSeen) == 0,
+              flat.size == evaluators * EvalsPerFiber,
+              expectedLast.forall(_ == last)
+            )
+          }
+        }
+      }
+    } @@ samples(10) @@ withLiveClock @@ timeout(60.seconds),
     test("50 concurrent setProvider calls — all serialized, final provider coherent") {
       val api    = OpenFeatureAPI.createIsolated()
       val domain = s"concurrent-swap-${java.util.UUID.randomUUID()}"

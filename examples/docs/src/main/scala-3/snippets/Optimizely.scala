@@ -13,7 +13,7 @@ object Optimizely:
     ZLayer.scoped {
       for
         sdkKey   <- ZIO.attempt(sys.env("OPTIMIZELY_SDK_KEY"))
-        provider <- OptimizelyProvider.make(sdkKey) // validates the key; no network yet
+        provider <- OptimizelyProvider.make(sdkKey) // validates the key and starts fetching the datafile
         env      <- FeatureFlags.fromProviderAsync(provider).build
       yield env.get[FeatureFlags]
     }

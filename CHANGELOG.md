@@ -81,6 +81,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   A call now becomes a conversion for the context's user, with the details' attributes as event tags and the details'
   `value` as the `value` tag. It fails, rather than silently doing nothing, when the provider is not ready, the context
   has no targeting key, or the datafile has no such event.
+- **Optimizely: a datafile that never loads is reported as such** (#455). `initialize()` first called
+  `optimizely.isValid`, which blocks up to the SDK's blocking timeout while no datafile has loaded; added to `initWait`
+  that outlasted the `FeatureFlags` init timeout, so the caller saw a generic timeout instead of "datafile did not load
+  … check the SDK key and network reachability". A factory-built provider now reads its config manager's cache, and
+  `OptimizelyProvider.DefaultInitWait` drops from 30 s to 25 s so it fires before the 30 s `initTimeout`. The redundant
+  `start()` that logged a WARN on every init is gone, and the docs no longer claim construction makes no network
+  calls: the SDK starts fetching the datafile then.
 - **`CachingProvider` and `CircuitBreakerProvider` release their event plumbing properly** (#450). Their `shutdown`
   never called `EventProvider.shutdown`, so each wrapper's event emitter kept running and could still dispatch
   afterwards. And a wrapper whose attach to the delegate failed (the delegate already belonged to another wrapper)

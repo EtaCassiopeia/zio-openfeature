@@ -423,7 +423,8 @@ trait FeatureFlags {
   /** Semantically block until the provider reaches an evaluable state (`canEvaluate` — Ready/Stale), returns early on
     * `Fatal`, or `within` elapses — returning the status at that moment in every case. Backed by the status change
     * stream (no polling), and safe for many concurrent waiters. Ideal for `/ready` probes:
-    * `ff.awaitReady(5.seconds).map(_.canEvaluate)`.
+    * `ff.awaitReady(5.seconds).map(_.canEvaluate)`. On an instance that is shutting down or shut down it returns at
+    * once with that status (`ShuttingDown` / `NotReady`), since it will never become evaluable again.
     */
   def awaitReady(within: Duration = Duration.Infinity): UIO[ProviderStatus]
 
@@ -488,6 +489,10 @@ trait FeatureFlags {
     * rolled back: the new provider stays registered (status recovers to `Ready` if it finishes initializing later), and
     * the previous provider is not restored, because the SDK would shut it down if the new one later became ready. Call
     * `setProvider` again with another provider to recover.
+    *
+    * Once the swap has started it runs to one of those outcomes even if the calling fiber is interrupted, so
+    * `setProvider(p).timeout(d)` with `d` shorter than the init timeout returns only when the swap has settled (at most
+    * about twice the init timeout). Waiting for an earlier swap to finish can still be interrupted.
     */
   def setProvider(provider: OFFeatureProvider): IO[FeatureFlagError, Unit]
 
@@ -1057,11 +1062,7 @@ object FeatureFlags {
       verified <- (ProviderRegistration.registerAndAwait(api, domain, provider, initTimeout) *>
         verifyInitState(provider))
         .tapError(_ => ZIO.attemptBlocking(provider.shutdown()).ignore)
-      client <- (domain, version) match {
-        case (Some(d), Some(v)) => ZIO.attempt(api.getClient(d, v))
-        case (Some(d), None)    => ZIO.attempt(api.getClient(d))
-        case _                  => ZIO.attempt(api.getClient())
-      }
+      client <- ZIO.attempt(api.getClient(domain.orNull, version.orNull))
       providerName = Option(provider.getMetadata).map(_.getName).getOrElse(UnknownProviderName)
       providerRef <- Ref.make(provider)
       providerNameRef = new java.util.concurrent.atomic.AtomicReference(providerName)
@@ -1351,11 +1352,7 @@ object FeatureFlags {
         case Some(d) => ZIO.attempt(api.setProvider(d, provider))
         case None    => ZIO.attempt(api.setProvider(provider))
       }
-      client <- (domain, version) match {
-        case (Some(d), Some(v)) => ZIO.attempt(api.getClient(d, v))
-        case (Some(d), None)    => ZIO.attempt(api.getClient(d))
-        case _                  => ZIO.attempt(api.getClient())
-      }
+      client <- ZIO.attempt(api.getClient(domain.orNull, version.orNull))
       // `ZIO.attempt` for the same reason as the registration above: a throwing `getMetadata` here must be a
       // typed failure, not a defect that strands the registry build fiber (see the `setProvider` note).
       providerName <- ZIO.attempt(Option(provider.getMetadata).map(_.getName).getOrElse(UnknownProviderName))

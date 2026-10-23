@@ -1,0 +1,55 @@
+name: Mutation testing
+
+# Scheduled mutation testing of core with stryker4s (#468). It measures how many deliberately broken versions of the
+# code the test suite catches. Informational, never a PR gate: a run takes far longer than PR CI can afford, and a
+# low score is a prompt to look at the report, not a build failure (`thresholds.break` is 0 in stryker4s.conf).
+
+on:
+  schedule:
+    # Sundays 03:00 UTC: a full run takes hours, so weekly, and off-peak.
+    - cron: '0 3 * * 0'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Force any JavaScript action still bundled with Node 20 to run on Node 24 (see ci.yml, #164).
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  stryker:
+    runs-on: ubuntu-latest
+    # Each mutant reruns the core suite; a mutant that hangs it is cut off by stryker's own timeout, so this bound
+    # only catches a wedged runner.
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v7
+      - name: Set up JDK 21
+        uses: actions/setup-java@v6
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: sbt
+      - name: Setup sbt
+        uses: sbt/setup-sbt@v1
+      - name: Run stryker4s on core
+        # `shell: bash` runs with pipefail, so the build's exit status survives the `tee`.
+        shell: bash
+        run: sbt core/stryker 2>&1 | tee stryker.log
+      - name: Summarize
+        if: always()
+        run: |
+          {
+            echo '## Mutation testing (core)'
+            echo
+            grep -E 'Total mutants|Mutation score' stryker.log | sed 's/^\[info\] /- /' || echo '- no score: see the log'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: stryker4s-report
+          path: core/target/stryker4s-report/
+          if-no-files-found: warn
+          retention-days: 30

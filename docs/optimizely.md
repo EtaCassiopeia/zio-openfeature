@@ -69,9 +69,12 @@ check:
 |---|---|
 | `boolean` | whether the flag is enabled for this user |
 | `string` | the flag variable named `value`; if there is none, the variation key; otherwise your default |
-| `int`, `long`, `double`, `obj` | the flag variable named `value` (a JSON variable for `obj`); otherwise your default |
+| `int`, `long`, `double`, `obj` | the flag variable named `value` (a JSON variable for `obj`); if there is none, your default |
 
-A long is read from an integer variable, since Optimizely has no 64-bit one. To read a variable with another name,
+A variable that exists with another type is an error, not your default: reading a double variable as `int`, or the
+string `"42"` as `int`, fails with `TypeMismatch`. Only exact widenings are accepted: an integer variable reads as
+`long` or `double`. A long is read from an integer variable, since Optimizely has no 64-bit one; values beyond the
+`int` range read as `long` but not as `int`. To read a variable with another name,
 put its name in the context attribute `openfeature.variableKey`
 (`OptimizelyFeatureProvider.VariableKeyAttribute`):
 
@@ -87,6 +90,7 @@ variant. The resolution's metadata carries `optimizely.flagKey` and `optimizely.
 | `TargetingKeyMissing` | the context has no targeting key |
 | `FlagNotFound` | the datafile has no flag with this key |
 | `ProviderNotReady` | the datafile has not loaded yet, or the provider was shut down |
+| `TypeMismatch` | the variable exists but has another type (for example a double read as `int`) |
 | `General` | the Optimizely SDK failed to decide, including a CMAB experiment whose decision could not be fetched |
 
 **CMAB experiments** (contextual multi-armed bandits) are supported: the provider wires Optimizely's CMAB service, as

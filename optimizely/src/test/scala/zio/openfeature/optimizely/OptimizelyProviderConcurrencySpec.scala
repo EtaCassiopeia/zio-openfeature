@@ -37,10 +37,11 @@ object OptimizelyProviderConcurrencySpec extends ZIOSpecDefault {
   private def datafileUrl(server: WireMockServer): String =
     s"http://localhost:${server.port()}$DatafilePath"
 
-  // Build the client the same way `OptimizelyProvider.buildClient` does: `build(true)` skips the blocking initial
-  // fetch and does NOT leave a running poller — `mgr.stop()` ensures construction performs no network activity. The
-  // poller is owned by the provider (started by `initialize()`, stopped by `shutdown()` via `Optimizely.close()`), so
-  // it can never become an orphaned "retries forever" thread. The old no-arg `.build()` started a live poller at
+  // Build the client like `OptimizelyProvider.buildClient`: `build(true)` skips the blocking initial fetch, and one
+  // NotificationCenter is shared by the manager and the client, so the datafile-update notification reaches the
+  // provider's init handler (#455: `initialize()` no longer falls back on a blocking `isValid`). `mgr.stop()` keeps
+  // this spec's provider in charge of the poller (started by `initialize()`, stopped by `shutdown()` via
+  // `Optimizely.close()`), so it can never become an orphaned "retries forever" thread. The old no-arg `.build()` started a live poller at
   // construction; when WireMock stopped, its Apache HttpClient retried against the dead socket on a thread that
   // outlived every test and kept the (even forked) JVM from exiting — hanging `sbt test` until CI's timeout.
   private def buildClient(
@@ -48,9 +49,11 @@ object OptimizelyProviderConcurrencySpec extends ZIOSpecDefault {
     blockingTimeout: java.time.Duration = java.time.Duration.ofSeconds(2),
     pollingInterval: java.time.Duration = java.time.Duration.ofSeconds(3600)
   ): (Optimizely, HttpProjectConfigManager) = {
+    val sharedCenter = new com.optimizely.ab.notification.NotificationCenter()
     val mgr = HttpProjectConfigManager
       .builder()
       .withSdkKey("concurrency-key")
+      .withNotificationCenter(sharedCenter)
       .withUrl(datafileUrl(server))
       .withBlockingTimeout(blockingTimeout.toMillis, TimeUnit.MILLISECONDS)
       .withPollingInterval(pollingInterval.toSeconds, TimeUnit.SECONDS)
@@ -58,7 +61,7 @@ object OptimizelyProviderConcurrencySpec extends ZIOSpecDefault {
       .withOptimizelyHttpClient(TestHttpClient.failFast())
       .build(true)
     mgr.stop()
-    (Optimizely.builder().withConfigManager(mgr).build(), mgr)
+    (Optimizely.builder().withConfigManager(mgr).withNotificationCenter(sharedCenter).build(), mgr)
   }
 
   @scala.annotation.nowarn("msg=deprecated")

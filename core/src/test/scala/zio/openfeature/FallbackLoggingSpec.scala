@@ -101,7 +101,6 @@ object FallbackLoggingSpec extends ZIOSpecDefault {
       context: EvaluationContext,
       details: TrackingEventDetails
     ): IO[FeatureFlagError, Unit] = ???
-    override def trackedEvents: UIO[List[(String, EvaluationContext, Option[TrackingEventDetails])]] = ???
   }
 
   def spec = suite("FallbackLoggingSpec")(

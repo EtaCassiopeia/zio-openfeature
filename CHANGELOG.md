@@ -76,6 +76,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`OptimizelyFeatureProvider` sends `track` calls to Optimizely** (#454). It did not implement `track`, so every call
+  fell through to the SDK's no-op default and no conversion was ever recorded, whichever client the provider wrapped.
+  A call now becomes a conversion for the context's user, with the details' attributes as event tags and the details'
+  `value` as the `value` tag. It fails, rather than silently doing nothing, when the provider is not ready, the context
+  has no targeting key, or the datafile has no such event.
 - **`CachingProvider` and `CircuitBreakerProvider` release their event plumbing properly** (#450). Their `shutdown`
   never called `EventProvider.shutdown`, so each wrapper's event emitter kept running and could still dispatch
   afterwards. And a wrapper whose attach to the delegate failed (the delegate already belonged to another wrapper)

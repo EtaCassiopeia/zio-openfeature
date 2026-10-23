@@ -47,8 +47,10 @@ jobs:
       # Scala 2.12 compiler sbt uses for build files can parse, so the project stopped loading at
       # all — and no gate saw it. `scalafmtSbtCheck` closes that gap; it shares this step so the
       # job pays one sbt JVM start rather than two, and sbt still names whichever task fails.
+      # The root `scalafmtCheckAll` only reaches aggregated modules, so the non-aggregated provider fault tests (#470)
+      # are named explicitly.
       - name: Check formatting
-        run: sbt scalafmtCheckAll scalafmtSbtCheck
+        run: sbt scalafmtCheckAll scalafmtSbtCheck providerFaultTests/scalafmtCheckAll
 
   # Build + test on every supported (JDK, Scala) pair. The library advertises Java 11+ via the OpenFeature Java SDK
   # but we don't currently support running CI on JDK 11 because Optimizely's core-httpclient-impl requires JDK 17+.
@@ -193,6 +195,10 @@ jobs:
         uses: sbt/setup-sbt@v1
       - name: Compile and test examples
         run: sbt "examplesOfrepInitTimeout/compile" "examplesTestkitApp/test" "examplesDocs/test"
+      # Compile only, never run: the provider fault tests are a local-only check (#470). Their tests need JDK 22+ and
+      # rift's native engine, and no CI job runs them or holds a secret for them.
+      - name: Compile the provider fault tests
+        run: sbt "providerFaultTests/Test/compile"
 
   # Conformance runs the vendored OpenFeature gherkin suite via Cucumber. It is Scala 3 only and not aggregated by
   # root (so `++2.13.18 test` doesn't try to compile it), hence its own job on the primary JDK / default Scala.

@@ -12,6 +12,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Weekly mutation testing of core** (#468): stryker4s via the new `Mutation testing` workflow (scheduled and
   manual), with its report as a build artifact. Informational only: never runs on a pull request and never fails the
   build. Locally, `core/stryker`; see the development guide.
+- **`provider-fault-tests`, a local-only chaos suite for the real providers** (#470). The OFREP and Optimizely
+  providers run through rift-scala's in-process TLS intercept proxy while the network rejects credentials, answers
+  `503`/`429`, resets the connection, stalls, or returns a truncated or non-JSON body, and the suite asserts the
+  library's outcome: a typed error or the fallback's answer, in bounded time, with a bounded shutdown. Run it with
+  `sbt providerFaultTests/test` on JDK 22+. It is not in the root aggregate and CI only compiles it. The rift code on
+  the "Testing real providers" page now comes from this module, so it is compiled with the docs.
 - **Concurrency property tests** (#465) for hook-data isolation (#438), circuit-breaker epochs (#447) and cache
   invalidation (#449), plus a generated swap/evaluate schedule in the hot-swap stress spec. Test-only.
 - Hostile-input property sweeps (Long beyond 2^53, NaN/Infinity/-0.0, emoji and control-character keys, nulls, deep and large structures) through value/context conversion, tracking conversion, OFREP response decoding and the Optimizely context transformer (#469).

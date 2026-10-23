@@ -1,0 +1,35 @@
+{
+  "version": "4",
+  "accountId": "test",
+  "projectId": "test",
+  "revision": "1",
+  "anonymizeIP": false,
+  "botFiltering": false,
+  "sendFlagDecisions": true,
+  "experiments": [
+    {
+      "id": "310",
+      "key": "cmab-experiment",
+      "status": "Running",
+      "layerId": "310",
+      "audienceIds": [],
+      "forcedVariations": {},
+      "trafficAllocation": [],
+      "cmab": { "attributeIds": ["700"], "trafficAllocation": 10000 },
+      "variations": [
+        { "id": "410", "key": "treatment", "featureEnabled": true, "variables": [] },
+        { "id": "411", "key": "control", "featureEnabled": true, "variables": [] }
+      ]
+    }
+  ],
+  "featureFlags": [
+    { "id": "110", "key": "cmab_flag", "rolloutId": "210", "experimentIds": ["310"], "variables": [] }
+  ],
+  "rollouts": [{ "id": "210", "experiments": [] }],
+  "audiences": [],
+  "typedAudiences": [],
+  "groups": [],
+  "attributes": [{ "id": "700", "key": "plan" }],
+  "variables": [],
+  "events": []
+}

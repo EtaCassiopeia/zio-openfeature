@@ -63,6 +63,7 @@ markdown_extensions:
       base_path:
         - examples/docs/src/main/scala-3/snippets
         - examples/docs/src/test/scala-3/snippets
+        - provider-fault-tests/src/test/scala-3/snippets
       check_paths: true
       dedent_subsections: true
   - pymdownx.superfences:

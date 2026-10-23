@@ -26,13 +26,35 @@ small deliberate changes to the code (flipping a condition, swapping an operator
 each. The score and the surviving mutants are in `core/target/stryker4s-report/`. A full run takes hours, so CI runs it
 weekly (the `Mutation testing` workflow, also startable by hand) and never on a pull request; the score is
 informational and never fails the build. To try it on a few files, narrow `mutate` in `stryker4s.conf` locally.
+## Provider fault tests
+
+`provider-fault-tests` runs the real OFREP and Optimizely providers through
+[rift-scala](https://github.com/achird-labs/rift-scala)'s in-process TLS intercept proxy, while scripted network
+faults (rejected credentials, `503`, `429`, a connection reset, a stalled response, a truncated or non-JSON body)
+play out. It asserts what the library does about each: a typed error or the fallback's answer, in bounded time. See
+[Testing real providers](testing-real-providers.md) for the approach.
+
+```sh
+sbt providerFaultTests/test    # JDK 22+
+```
+
+It is a dev-machine check, by design:
+
+- It is not aggregated into the root project, so `sbt test` and `sbt +test` never run it.
+- CI only compiles it (`providerFaultTests/Test/compile`). No CI job runs its tests, and none holds a secret for it.
+- It needs JDK 22 or later, for rift's native engine. On a JDK where the engine cannot load, the suites are reported
+  as ignored. The tests make no external network calls: the proxy and the stand-in servers are in-process.
+
+The module enables the `sbt-rift` plugin, which writes a throwaway CA and truststore under
+`provider-fault-tests/target/rift` and points the forked test JVM at them.
 
 ## The documentation site
 
 The site is built with [MkDocs Material](https://squidfunk.github.io/mkdocs-material/) from `docs/`, and published
 to GitHub Pages from `main`.
 
-Code samples are not written in the pages. They live in `examples/docs/src/main/scala-3/snippets/`, between
+Code samples are not written in the pages. They live in `examples/docs/src/main/scala-3/snippets/` (and, for the rift
+code on the real-providers page, `provider-fault-tests/src/test/scala-3/snippets/`), between
 `// --8<-- [start:name]` and `// --8<-- [end:name]` markers, and a page includes them with
 `--8<-- "File.scala:name"`. So every sample compiles, and `examples/docs/src/test` runs the ones that can run on
 their own and checks what the page says about them.

@@ -79,7 +79,8 @@ not.
 **Sync** (`InitMode.Sync`, the default; `fromProvider`). Building the layer waits until the provider is `Ready` or
 `Stale`. If that takes longer than `initTimeout`, the layer fails with a `TimeoutException`. If the provider ends up in
 any other state, the layer fails with an `IllegalStateException`. Either way the provider is shut down, and a wrong SDK
-key or an unreachable service stops the app at startup instead of serving defaults.
+key or an unreachable service stops the app at startup instead of serving defaults. Closing the scope after a timeout
+does not wait for a stuck `initialize()`, and the scope-close `api.shutdown()` is itself capped at 15 seconds.
 
 **Async** (`InitMode.Async`; `fromProviderAsync`). The layer is ready at once. Until the provider reports `Ready`,
 evaluations fail with `ProviderNotReady`. If the provider never gets there within `initTimeout`, the status becomes
@@ -234,11 +235,18 @@ What happens:
 
 1. The status becomes `NotReady`. Evaluations that start now fail with `ProviderNotReady`; ones already running
    finish on the old provider. Swaps are serialized.
-2. The SDK shuts down the old provider and initializes the new one. `setProvider` waits for this, with no time limit.
+2. The SDK initializes the new provider. `setProvider` waits for this for at most `initTimeout`, the layer's init
+   timeout. Once the new provider is ready, the SDK shuts down the old one.
 3. On success, the status becomes `Ready` and the new provider serves.
-4. On failure, `setProvider` fails with `ProviderInitializationFailed`, the previous provider is registered again, and
-   the status returns to `Ready`. If even that fails, the status stays `Error`; call `setProvider` again with a working
-   provider.
+4. If the new provider's `initialize()` throws, `setProvider` fails with `ProviderInitializationFailed`, the previous
+   provider is registered again, and the status returns to `Ready`. If even that fails, the status stays `Error`.
+5. If `initialize()` has not finished within `initTimeout`, `setProvider` fails with `ProviderInitializationFailed`
+   wrapping a `TimeoutException`, and the status becomes `Error`. This swap is not rolled back: the new provider stays
+   registered, and the status becomes `Ready` on its own if it finishes later. The previous provider is not restored,
+   because the SDK would shut it down as soon as the new one became ready. `fromAcquireAsync` handles this by
+   swapping in a fresh fallback.
+
+In every failure case, `setProvider` again with a working provider recovers.
 
 `setProvider` is the only way out of `Fatal`. When you use a wrapper such as `CircuitBreakerProvider`, swap in a new
 wrapper around the new provider, not just the inner provider.

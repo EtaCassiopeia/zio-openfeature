@@ -66,7 +66,6 @@ object TotalEvaluationDefectSpec extends ZIOSpecDefault {
       context: EvaluationContext,
       details: TrackingEventDetails
     ): IO[FeatureFlagError, Unit] = ???
-    override def trackedEvents: UIO[List[(String, EvaluationContext, Option[TrackingEventDetails])]] = ???
   }
 
   private def dying: BoomFlags = new BoomFlags {

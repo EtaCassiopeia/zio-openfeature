@@ -44,7 +44,10 @@ final private[openfeature] class FeatureFlagsLive(
   onReady: Option[java.util.concurrent.CountDownLatch] = None,
   evaluationTimeout: Option[Duration] = Some(FeatureFlags.DefaultEvaluationTimeout),
   // Pull-based ambient context (#353), consulted per evaluation and per `track` in `effectiveContext`.
-  contextSource: ContextSource = ContextSource.empty
+  contextSource: ContextSource = ContextSource.empty,
+  // Whether `track` keeps a copy of each event and its merged context for `trackedEvents` (#442). Only testkit-built
+  // instances set it: a production instance must not retain contexts, which routinely hold PII.
+  recordTracking: Boolean = false
 ) extends FeatureFlags {
 
   // The total tier's served-default breadcrumb, under this instance's `FallbackLogging` policy (#350). Lives here, not
@@ -1356,12 +1359,15 @@ final private[openfeature] class FeatureFlagsLive(
     merged: EvaluationContext,
     details: Option[TrackingEventDetails]
   ): UIO[Unit] =
-    state.trackRecorder.update { rec =>
-      val appended = rec :+ ((eventName, merged, details))
-      val overflow = appended.length - FeatureFlagsState.MaxTrackedEvents
-      if (overflow > 0) appended.drop(overflow) else appended
-    }
+    ZIO
+      .when(recordTracking)(state.trackRecorder.update { rec =>
+        val appended = rec :+ ((eventName, merged, details))
+        val overflow = appended.length - FeatureFlagsState.MaxTrackedEvents
+        if (overflow > 0) appended.drop(overflow) else appended
+      })
+      .unit
 
+  @scala.annotation.nowarn("cat=deprecation")
   override def trackedEvents: UIO[List[(String, EvaluationContext, Option[TrackingEventDetails])]] =
     state.trackRecorder.get.map(_.toList)
 

@@ -115,6 +115,8 @@ The provider records every evaluation that reaches it, with the context it recei
 | `getEvaluations` | every `(key, EvaluationContext)`, oldest first |
 | `getRawEvaluations` | the same, with the Java SDK's `EvaluationContext` |
 | `clearEvaluations` | forgets them |
+| `trackedEvents` | every `track` call received, oldest first (the last 1000): `(name, EvaluationContext, Option[TrackingEventDetails])`, with the context the SDK merged |
+| `clearTrackedEvents` | forgets them |
 | `boundDomain` | the domain the provider was registered under, if any |
 
 Evaluations answered without the provider, by a [transaction](transactions.md) override or cache, are not recorded.

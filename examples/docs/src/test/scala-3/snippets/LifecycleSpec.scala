@@ -73,7 +73,7 @@ object LifecycleSpec extends ZIOSpecDefault:
     test("tracking: both events are recorded with their context and details") {
       for
         _      <- Lifecycle.purchase
-        events <- FeatureFlags.trackedEvents
+        events <- ZIO.serviceWithZIO[TestFeatureProvider](_.trackedEvents)
       yield assertTrue(
         events.map(_._1) == List("checkout-completed", "purchase"),
         events(1)._2.targetingKey.contains("user-42"),

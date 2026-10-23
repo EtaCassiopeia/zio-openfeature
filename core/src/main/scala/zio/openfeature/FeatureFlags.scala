@@ -457,12 +457,12 @@ trait FeatureFlags {
   def track(eventName: String, details: TrackingEventDetails): IO[FeatureFlagError, Unit]
   def track(eventName: String, context: EvaluationContext, details: TrackingEventDetails): IO[FeatureFlagError, Unit]
 
-  /** The most recent tracking events recorded by this instance, oldest first.
-    *
-    * The recorder is a bounded test/debug affordance: only the last 1000 events are retained; older events are dropped.
-    * It is not a delivery guarantee mechanism — providers receive every `track` call regardless.
+  /** The most recent tracking events recorded by this instance, oldest first — only for instances built by the testkit.
+    * Production instances retain nothing (the merged contexts would routinely hold PII), so this is empty for them.
+    * Testkit-built instances keep the last 1000 events.
     */
-  def trackedEvents: UIO[List[(String, EvaluationContext, Option[TrackingEventDetails])]]
+  @deprecated("Use TestFeatureProvider.trackedEvents, which records what the provider received", "1.2.0")
+  def trackedEvents: UIO[List[(String, EvaluationContext, Option[TrackingEventDetails])]] = ZIO.succeed(Nil)
 }
 
 object FeatureFlags {
@@ -813,6 +813,7 @@ object FeatureFlags {
   ): ZIO[FeatureFlags, FeatureFlagError, Unit] =
     ZIO.serviceWithZIO(_.track(eventName, context, details))
 
+  @deprecated("Use TestFeatureProvider.trackedEvents, which records what the provider received", "1.2.0")
   def trackedEvents: ZIO[FeatureFlags, Nothing, List[(String, EvaluationContext, Option[TrackingEventDetails])]] =
     ZIO.serviceWithZIO(_.trackedEvents)
 
@@ -872,6 +873,38 @@ object FeatureFlags {
     contextSource: ContextSource = ContextSource.empty,
     fallbackLogging: FallbackLogging = FallbackLogging.Default
   ): ZIO[Scope, Throwable, FeatureFlagsLive] =
+    buildWithTracking(
+      provider = provider,
+      domain = domain,
+      version = version,
+      initialHooks = initialHooks,
+      statusRef = statusRef,
+      addShutdownFinalizer = addShutdownFinalizer,
+      apiOverride = apiOverride,
+      evaluationTimeout = evaluationTimeout,
+      initTimeout = initTimeout,
+      onReady = onReady,
+      contextSource = contextSource,
+      fallbackLogging = fallbackLogging,
+      recordTracking = false
+    )
+
+  /** [[build]], optionally keeping tracked events for `trackedEvents` (testkit only, #442). */
+  private[openfeature] def buildWithTracking(
+    provider: OFFeatureProvider,
+    domain: Option[String],
+    version: Option[String],
+    initialHooks: List[FeatureHook],
+    statusRef: Option[SubscriptionRef[ProviderStatus]],
+    addShutdownFinalizer: Boolean,
+    apiOverride: Option[OpenFeatureAPI] = None,
+    evaluationTimeout: Option[Duration] = Some(DefaultEvaluationTimeout),
+    initTimeout: Duration = DefaultInitTimeout,
+    onReady: Option[java.util.concurrent.CountDownLatch] = None,
+    contextSource: ContextSource = ContextSource.empty,
+    fallbackLogging: FallbackLogging = FallbackLogging.Default,
+    recordTracking: Boolean = false
+  ): ZIO[Scope, Throwable, FeatureFlagsLive] =
     for {
       api <- ZIO.succeed(apiOverride.getOrElse(OpenFeatureAPI.getInstance()))
       // Register the API shutdown finalizer BEFORE initiating provider registration. If init times out,
@@ -919,7 +952,8 @@ object FeatureFlags {
         fallbackLogLimiter,
         onReady,
         evaluationTimeout,
-        contextSource
+        contextSource,
+        recordTracking
       )
       // Only seed status when the caller didn't hand us a shared ref (testkit shares one). Routed through
       // `seedStatus` so the machine's `everReady` flag records a Ready/Stale seed.
@@ -1075,7 +1109,7 @@ object FeatureFlags {
     onReady: Option[java.util.concurrent.CountDownLatch] = None
   ): ZLayer[Any, Throwable, FeatureFlags] =
     ZLayer.scoped(
-      build(
+      buildWithTracking(
         provider,
         domain = Some(domain),
         version = None,
@@ -1083,7 +1117,9 @@ object FeatureFlags {
         statusRef = Some(statusRef),
         addShutdownFinalizer = false,
         apiOverride = api,
-        onReady = onReady
+        onReady = onReady,
+        // These overloads exist for the testkit, whose instances keep tracked events for assertions (#442).
+        recordTracking = true
       )
     )
 
@@ -1130,6 +1166,38 @@ object FeatureFlags {
     initTimeout: Duration = DefaultInitTimeout,
     contextSource: ContextSource = ContextSource.empty,
     fallbackLogging: FallbackLogging = FallbackLogging.Default
+  ): ZIO[Scope, Throwable, FeatureFlagsLive] =
+    buildAsyncWithTracking(
+      provider = provider,
+      domain = domain,
+      version = version,
+      initialHooks = initialHooks,
+      statusRef = statusRef,
+      addShutdownFinalizer = addShutdownFinalizer,
+      apiOverride = apiOverride,
+      onReady = onReady,
+      evaluationTimeout = evaluationTimeout,
+      initTimeout = initTimeout,
+      contextSource = contextSource,
+      fallbackLogging = fallbackLogging,
+      recordTracking = false
+    )
+
+  /** [[buildAsync]], optionally keeping tracked events for `trackedEvents` (testkit only, #442). */
+  private[openfeature] def buildAsyncWithTracking(
+    provider: OFFeatureProvider,
+    domain: Option[String],
+    version: Option[String],
+    initialHooks: List[FeatureHook],
+    statusRef: Option[SubscriptionRef[ProviderStatus]],
+    addShutdownFinalizer: Boolean,
+    apiOverride: Option[OpenFeatureAPI] = None,
+    onReady: Option[java.util.concurrent.CountDownLatch] = None,
+    evaluationTimeout: Option[Duration] = Some(DefaultEvaluationTimeout),
+    initTimeout: Duration = DefaultInitTimeout,
+    contextSource: ContextSource = ContextSource.empty,
+    fallbackLogging: FallbackLogging = FallbackLogging.Default,
+    recordTracking: Boolean = false
   ): ZIO[Scope, Throwable, FeatureFlagsLive] =
     for {
       api <- ZIO.succeed(apiOverride.getOrElse(OpenFeatureAPI.getInstance()))
@@ -1179,7 +1247,8 @@ object FeatureFlags {
         fallbackLogLimiter,
         onReady,
         evaluationTimeout,
-        contextSource
+        contextSource,
+        recordTracking
       )
       // Start event bridge — if provider is already ready, replay fires immediately
       _ <- ff.startEventBridge
@@ -1267,7 +1336,7 @@ object FeatureFlags {
     onReady: Option[java.util.concurrent.CountDownLatch] = None
   ): ZLayer[Any, Throwable, FeatureFlags] =
     ZLayer.scoped(
-      buildAsync(
+      buildAsyncWithTracking(
         provider,
         domain = Some(domain),
         version = None,
@@ -1275,7 +1344,9 @@ object FeatureFlags {
         statusRef = Some(statusRef),
         addShutdownFinalizer = false,
         apiOverride = api,
-        onReady = onReady
+        onReady = onReady,
+        // These overloads exist for the testkit, whose instances keep tracked events for assertions (#442).
+        recordTracking = true
       )
     )
 

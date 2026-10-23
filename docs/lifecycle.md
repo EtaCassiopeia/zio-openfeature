@@ -137,8 +137,9 @@ values can be the plain types `withAttribute` accepts for a context, any `Attrib
 `FeatureFlagError.InvalidContext` before anything is sent. A provider that does not support tracking ignores the call. A
 provider error fails the call with a `FeatureFlagError`.
 
-`trackedEvents` returns the last 1000 events this instance sent, oldest first, with their merged context. It is meant
-for tests and debugging.
+Tracked events are not kept by the instance: their merged contexts routinely hold personal data. To assert on tracking
+in a test, use the testkit's `TestFeatureProvider.trackedEvents`, which lists what the provider received (see
+[Testkit](testkit.md)). `FeatureFlags.trackedEvents` is deprecated, and is empty except on testkit-built instances.
 
 ## Shut down
 

@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Production instances no longer keep tracked events** (#442). Every instance recorded the last 1000 `track` calls
+  with their fully merged evaluation contexts — often personal data — for `FeatureFlags.trackedEvents`, a test
+  helper. Only testkit-built instances record now. Assert on tracking with the new `TestFeatureProvider.trackedEvents`
+  (and `clearTrackedEvents`), which lists what the provider actually received.
 - **Layers no longer ask for a `Scope`** (#443). Every `FeatureFlags` factory, `FeatureFlagRegistry.fromProvider` and
   the testkit layers were typed `ZLayer[Scope, …]`, although they build with `ZLayer.scoped`, which owns the layer's
   scope; so callers had to supply `Scope.default` for nothing. They are now `ZLayer[Any, …]` (`URLayer[Any, …]` for
@@ -41,6 +45,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   warning from the Scala 3.3 standard library (`scala.runtime.LazyVals`), not from this library.
 
 ### Deprecated
+
+- **`FeatureFlags.trackedEvents`, in favour of `TestFeatureProvider.trackedEvents`** (#442). It is empty on production
+  instances.
 
 - **`FeatureFlagError.isRecoverable`, in favour of `isFlagError`** (#440). It is true for flag-scoped evaluation errors
   (missing flag, wrong type, unparsable value, bad context), which has nothing to do with retrying or with

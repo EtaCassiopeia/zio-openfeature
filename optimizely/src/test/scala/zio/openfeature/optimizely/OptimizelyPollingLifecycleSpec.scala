@@ -7,9 +7,10 @@ import dev.openfeature.sdk.ImmutableContext
 import zio._
 import zio.test._
 
-/** Pins the datafile-polling lifecycle fixed in #208: a factory-built provider performs no network activity at
-  * construction, polls only between `initialize()` and `shutdown()`/scope close, and is therefore resilient to an
-  * unreachable CDN or bad keys (403): no background retry loop survives the provider's lifecycle.
+/** Pins the datafile-polling lifecycle fixed in #208: constructing a factory-built provider does not block and fetches
+  * at most once before `initialize()` (the SDK starts its poller at construction, #455); polling stops at
+  * `shutdown()`/scope close, so no background retry loop against an unreachable CDN or bad keys (403) survives the
+  * provider's lifecycle.
   */
 object OptimizelyPollingLifecycleSpec extends ZIOSpecDefault {
 
@@ -45,7 +46,7 @@ object OptimizelyPollingLifecycleSpec extends ZIOSpecDefault {
     catch { case t: Throwable => Left(t) }
 
   def spec: Spec[TestEnvironment & Scope, Any] = suite("Optimizely datafile polling lifecycle (#208)")(
-    test("make performs no datafile fetch and does not block, even against a 403 CDN") {
+    test("make does not block, and fetches at most once before initialize, even against a 403 CDN") {
       withMockServer { server =>
         server.stubFor(get(urlEqualTo(DatafilePath)).willReturn(aResponse().withStatus(403)))
         for {
@@ -66,9 +67,8 @@ object OptimizelyPollingLifecycleSpec extends ZIOSpecDefault {
         } yield assertTrue(
           // The old construction path blocked up to the SDK's 10s getConfig timeout
           tookMs < 5000L,
-          // `buildClient` uses `build(true)` then `stop()`; the SDK's first scheduled fetch may be submitted in the
-          // instant before `stop()` cancels it, so the contract is "at most one aborted request" — not zero. Asserting
-          // `== 0` raced that window and flaked across both Scala versions (see #211).
+          // `buildClient` uses `build(true)`, which starts the SDK's poller: its first fetch runs at construction, and
+          // with an hour-long polling interval nothing else fires before `initialize()` — "at most one request".
           requests <= 1
         )
       }
@@ -104,7 +104,8 @@ object OptimizelyPollingLifecycleSpec extends ZIOSpecDefault {
           _         <- sleepBlocking(700.millis)
           afterWait <- ZIO.succeed(requestCount(server))
         } yield assertTrue(
-          beforeInit == 0,
+          // The SDK starts its poller at construction (#455), so the first fetch can land before initialize().
+          beforeInit <= 1,
           initResult.isRight,
           whileActive >= 3,
           afterWait == afterStop

@@ -5,7 +5,7 @@ import com.github.tomakehurst.wiremock.client.WireMock._
 import com.github.tomakehurst.wiremock.core.WireMockConfiguration
 import com.optimizely.ab.Optimizely
 import com.optimizely.ab.config.HttpProjectConfigManager
-import dev.openfeature.sdk.{ImmutableContext, Reason, Value}
+import dev.openfeature.sdk.{ErrorCode, ImmutableContext, Reason, Value}
 import zio._
 import zio.test._
 
@@ -73,8 +73,8 @@ object OptimizelyLongEvaluationSpec extends ZIOSpecDefault {
   def spec: Spec[TestEnvironment & Scope, Any] = suite("OptimizelyFeatureProvider long evaluation")(
     test("falls back to the caller's Long default without narrowing it") {
       withMockServer { server =>
-        // `lifecycle_flag`'s `value` variable is a STRING, so reading it as an Integer fails and the provider must
-        // fall back to the caller's default. Seeding the integer read with a narrowed default would return
+        // `lifecycle_flag`'s `value` variable is a STRING, so reading it as a Long is a TYPE_MISMATCH (#456) and the
+        // provider must fall back to the caller's default. Seeding the integer read with a narrowed default would return
         // 705032704 for the out-of-range cases.
         val provider = readyProvider(server, readResource("/test-datafile-with-flag.json"))
         try {
@@ -82,10 +82,10 @@ object OptimizelyLongEvaluationSpec extends ZIOSpecDefault {
           val unknown = provider.getLongEvaluation("no-such-flag", java.lang.Long.valueOf(BigDefault), targetedContext)
           val small   = provider.getLongEvaluation("lifecycle_flag", java.lang.Long.valueOf(42L), targetedContext)
           assertTrue(
-            big.getReason == Reason.DEFAULT.name(),
+            big.getErrorCode == ErrorCode.TYPE_MISMATCH,
             big.getValue.longValue == BigDefault,
             unknown.getValue.longValue == BigDefault,
-            small.getReason == Reason.DEFAULT.name(),
+            small.getErrorCode == ErrorCode.TYPE_MISMATCH,
             small.getValue.longValue == 42L
           )
         } finally provider.shutdown()

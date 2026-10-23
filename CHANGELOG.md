@@ -81,6 +81,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`OptimizelyFeatureProvider` sends `track` calls to Optimizely** (#454). It did not implement `track`, so every call
+  fell through to the SDK's no-op default and no conversion was ever recorded, whichever client the provider wrapped.
+  A call now becomes a conversion for the context's user, with the details' attributes as event tags and the details'
+  `value` as the `value` tag. It fails, rather than silently doing nothing, when the provider is not ready, the context
+  has no targeting key, or the datafile has no such event.
+- **Optimizely: a datafile that never loads is reported as such** (#455). `initialize()` first called
+  `optimizely.isValid`, which blocks up to the SDK's blocking timeout while no datafile has loaded; added to `initWait`
+  that outlasted the `FeatureFlags` init timeout, so the caller saw a generic timeout instead of "datafile did not load
+  … check the SDK key and network reachability". A factory-built provider now reads its config manager's cache, and
+  `OptimizelyProvider.DefaultInitWait` drops from 30 s to 25 s so it fires before the 30 s `initTimeout`. The redundant
+  `start()` that logged a WARN on every init is gone, and the docs no longer claim construction makes no network
+  calls: the SDK starts fetching the datafile then.
+- **Optimizely: a variable of the wrong type is a `TYPE_MISMATCH`, not your default** (#456). Reading a string
+  variable as `int` returned the default with reason `DEFAULT`, a double read as `int` was truncated, the string
+  `"42"` was parsed, and an integer beyond `int` range could not be read as `long` at all. Conversions are now strict
+  and lossless: an absent variable still serves the default (`DEFAULT`), a present one of another type fails on the
+  typed tier with `TypeMismatch` (the total tier still serves the default), and integers widen exactly to `long` and
+  `double`.
 - **`CachingProvider` and `CircuitBreakerProvider` release their event plumbing properly** (#450). Their `shutdown`
   never called `EventProvider.shutdown`, so each wrapper's event emitter kept running and could still dispatch
   afterwards. And a wrapper whose attach to the delegate failed (the delegate already belonged to another wrapper)

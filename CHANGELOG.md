@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Layers no longer ask for a `Scope`** (#443). Every `FeatureFlags` factory, `FeatureFlagRegistry.fromProvider` and
+  the testkit layers were typed `ZLayer[Scope, …]`, although they build with `ZLayer.scoped`, which owns the layer's
+  scope; so callers had to supply `Scope.default` for nothing. They are now `ZLayer[Any, …]` (`URLayer[Any, …]` for
+  `fromAcquireAsync`); lifetimes are unchanged, still bound to the layer. Existing code keeps compiling, and
+  `Scope.default >>> layer` still works. One catch: `provide(Scope.default, FeatureFlags.fromProvider(p))`, when
+  nothing else needs the `Scope`, now draws ZIO's "unused layer" warning, which fails builds that use `-Werror` — drop
+  the `Scope.default`. Binary compatible.
 - **The documentation site moved to MkDocs Material and was rewritten.** Every page was checked against the code and
   simplified, new pages cover evaluation, provider lifecycle and events, and OFREP, and animations show how an
   evaluation, context, hooks, transactions and providers work. Every code sample on the site is now compiled and,
@@ -849,6 +856,9 @@ change (#247) — and the **Removed** `OpenFeatureAPIFactory` shim (#316). Detai
   `getRawEvaluations`, and `setFlags` call sites that relied on the clear-first behavior to `replaceFlags`.
 
 ### Deprecated
+
+- **Testkit `scopedLayer` / `scopedAsyncLayer`, in favour of `layer` / `asyncLayer`** (#443). With layers no longer
+  needing a `Scope`, the twins are identical to them.
 
 - **14 `FeatureFlags` factory overloads, superseded by `fromProvider(provider, config)`** (#253):
   `fromProvider(p, evaluationTimeout)`, `fromProvider(p, evaluationTimeout, initTimeout)`,

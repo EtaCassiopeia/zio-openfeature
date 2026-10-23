@@ -143,6 +143,9 @@ you can afford to be, or clear the cache yourself:
 --8<-- "Extras.scala:caching-invalidate"
 ```
 
+Clearing applies to evaluations already in flight too: one that started before the clear still answers its caller, but
+its result is not cached.
+
 ## Circuit breaker provider
 
 A remote provider that is down can make every evaluation wait for a timeout. `CircuitBreakerProvider` notices

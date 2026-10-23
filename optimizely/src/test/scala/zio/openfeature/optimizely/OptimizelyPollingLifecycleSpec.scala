@@ -104,7 +104,8 @@ object OptimizelyPollingLifecycleSpec extends ZIOSpecDefault {
           _         <- sleepBlocking(700.millis)
           afterWait <- ZIO.succeed(requestCount(server))
         } yield assertTrue(
-          beforeInit == 0,
+          // The SDK starts its poller at construction (#455), so the first fetch can land before initialize().
+          beforeInit <= 1,
           initResult.isRight,
           whileActive >= 3,
           afterWait == afterStop

@@ -153,15 +153,16 @@ object OptimizelyProvider {
       // the fetch-success signal is shared between the observing HTTP client (below) and the provider's watchdog.
       staleness = stalenessConfig(config)
       observer  = staleness.map(_.observer)
-      pair <- ZIO
+      built <- ZIO
         .attempt(buildClient(validKey, validUrl, config.pollingInterval, config.blockingTimeout, httpClient, observer))
         .mapError(t => FeatureFlagError.InvalidConfiguration(s"Optimizely client build failed: ${t.getMessage}"))
     } yield new OptimizelyFeatureProvider(
-      pair._1,
+      built.optimizely,
       config.initWait,
       closeOnShutdown = true,
-      configManager = Some(pair._2),
-      staleness = staleness
+      configManager = Some(built.configManager),
+      staleness = staleness,
+      ownedResources = List(built.cmabHttpClient)
     )
 
   /** Derive the staleness watchdog configuration from a provider config, or `None` when the watchdog is disabled.
@@ -284,7 +285,7 @@ object OptimizelyProvider {
     // advances this observer's timestamp (#267). Wrapping preserves the wrapped client's exact behaviour — for the
     // production path that is the SDK default client, so nothing about how fetches are performed changes.
     fetchObserver: Option[OptimizelyFeatureProvider.FetchObserver]
-  ): (Optimizely, HttpProjectConfigManager) = {
+  ): BuiltClient = {
     // Share a single NotificationCenter between the polling config manager and the Optimizely client. Without this,
     // the manager fires UpdateConfigNotification on its own private NotificationCenter and handlers registered via
     // `Optimizely.addUpdateConfigNotificationHandler` (the public API our provider uses) never see subsequent datafile
@@ -332,10 +333,29 @@ object OptimizelyProvider {
     // either completes before `initialize()` runs — caught by `initialize()`'s `optimizely.isValid` fallback check
     // — or is still in flight and finishes normally afterward. See #237.
     val configManager = configBuilder.build(true)
+    // CMAB experiments decide through a CmabService (SDK 4.6). Without one the SDK serves a placeholder "$" variation
+    // and logs a WARN on every build. Wired like `OptimizelyFactory.newDefaultInstance`, except that this provider owns
+    // the CMAB HTTP client so it can close it: `Optimizely.close()` does not (#474).
+    val cmabHttpClient = com.optimizely.ab.OptimizelyHttpClient.builder().build()
+    val cmabService = com.optimizely.ab.cmab.service.DefaultCmabService
+      .builder()
+      .withClient(new com.optimizely.ab.cmab.DefaultCmabClient(cmabHttpClient))
+      .build()
     val optimizely =
-      Optimizely.builder().withConfigManager(configManager).withNotificationCenter(notificationCenter).build()
-    (optimizely, configManager)
+      Optimizely
+        .builder()
+        .withConfigManager(configManager)
+        .withNotificationCenter(notificationCenter)
+        .withCmabService(cmabService)
+        .build()
+    BuiltClient(optimizely, configManager, cmabHttpClient)
   }
+
+  final private case class BuiltClient(
+    optimizely: Optimizely,
+    configManager: HttpProjectConfigManager,
+    cmabHttpClient: com.optimizely.ab.OptimizelyHttpClient
+  )
 
   // Validation
 

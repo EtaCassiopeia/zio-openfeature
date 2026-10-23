@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Optimizely SDK 4.6.0** (from 4.2.2, #474), with CMAB support. Factory-built providers now wire Optimizely's CMAB
+  service: without it, a CMAB experiment served a placeholder `"$"` variation reported as `TARGETING_MATCH`, and
+  every client build logged a WARN. A CMAB decision that cannot be fetched is now an `ERROR` evaluation (`GENERAL`)
+  rather than a silent default. On a cache miss a CMAB decision is a blocking network call (10s, one retry by default).
+  The bump also removes a latent crash: 4.2.2's event serializer reads a Jackson field that the jackson-databind this
+  module ships no longer has, which would have failed the first real event dispatch.
 - **Layers no longer ask for a `Scope`** (#443). Every `FeatureFlags` factory, `FeatureFlagRegistry.fromProvider` and
   the testkit layers were typed `ZLayer[Scope, …]`, although they build with `ZLayer.scoped`, which owns the layer's
   scope; so callers had to supply `Scope.default` for nothing. They are now `ZLayer[Any, …]` (`URLayer[Any, …]` for

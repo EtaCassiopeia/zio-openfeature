@@ -46,6 +46,40 @@ object DeferredProviderSpec extends ZIOSpecDefault {
   }
 
   def spec = suite("DeferredProviderSpec")(
+    test("initialize after shutdown fails with FatalError instead of silently reporting ready (#448)") {
+      val dp = DeferredProvider("d")(() => new RecordingProvider(true))
+      dp.initialize(ctx)
+      dp.shutdown()
+      val thrown = scala.util.Try(dp.initialize(ctx)).failed.toOption
+      assertTrue(thrown.exists(_.isInstanceOf[dev.openfeature.sdk.exceptions.FatalError]))
+    },
+    test("initialize after a failed start fails with FatalError (#448)") {
+      val attempts = new AtomicInteger(0)
+      val dp = DeferredProvider("d") { () =>
+        attempts.incrementAndGet()
+        throw new RuntimeException("construction boom")
+      }
+      val first  = scala.util.Try(dp.initialize(ctx)).failed.toOption
+      val second = scala.util.Try(dp.initialize(ctx)).failed.toOption
+      assertTrue(
+        first.exists(_.getMessage == "construction boom"),
+        second.exists(_.isInstanceOf[dev.openfeature.sdk.exceptions.FatalError]),
+        attempts.get() == 1
+      )
+    },
+    test("a second initialize while active is still a no-op") {
+      val inits = new AtomicInteger(0)
+      val dp    = DeferredProvider("d") { () => inits.incrementAndGet(); new RecordingProvider(true) }
+      dp.initialize(ctx)
+      dp.initialize(ctx)
+      assertTrue(inits.get() == 1, dp.getBooleanEvaluation("flag", false, ctx).getValue.booleanValue())
+    },
+    test("re-registering a shut-down DeferredProvider does not leave the layer Ready (#448)") {
+      val dp = DeferredProvider("d")(() => new RecordingProvider(true))
+      dp.initialize(ctx)
+      dp.shutdown()
+      ZIO.scoped(FeatureFlags.fromProvider(dp, FeatureFlagsConfig()).build).either.map(r => assertTrue(r.isLeft))
+    },
     // AC5: no NPE pre-construction; typed PROVIDER_NOT_READY
     test("pre-construction evaluation returns a typed PROVIDER_NOT_READY, not an NPE") {
       val dp   = DeferredProvider("d")(() => new RecordingProvider(true))
@@ -72,10 +106,15 @@ object DeferredProviderSpec extends ZIOSpecDefault {
         _     <- ZIO.attemptBlocking(constructing.await())
         _     <- ZIO.succeed(dp.shutdown())
         _     <- ZIO.succeed(release.countDown())
-        _     <- fiber.join
+        init  <- fiber.join.either
         sd    <- ZIO.succeed(delegate.shutdownCount)
         st    <- ZIO.succeed(dp.getState)
-      } yield assertTrue(sd == 1, st == ProviderState.NOT_READY)
+      } yield assertTrue(
+        sd == 1,
+        st == ProviderState.NOT_READY,
+        // The overtaken initialize must not report success, or the SDK would mark the provider ready (#448).
+        init.left.toOption.exists(_.isInstanceOf[dev.openfeature.sdk.exceptions.FatalError])
+      )
     } @@ TestAspect.withLiveClock,
     // AC5: delegate.initialize throwing shuts the delegate down once and does not wedge in Constructing
     test("delegate.initialize throwing shuts the delegate down and reports not-ready") {

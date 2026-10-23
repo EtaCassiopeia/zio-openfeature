@@ -49,7 +49,7 @@ A testkit
 | `zio-openfeature-optimizely` | A provider for Optimizely Feature Experimentation |
 | `zio-openfeature-testkit` | `TestFeatureProvider` and test helpers |
 
-Scala 3.3+ and 2.13, ZIO 2.1, JDK 11+ (CI tests 17, 21 and 25). It implements the server-side (dynamic context) paradigm of the
+Scala 3.3.8+ and 2.13.18+, ZIO 2.1.27+, JDK 11+ (CI tests 17, 21 and 25). It implements the server-side (dynamic context) paradigm of the
 OpenFeature specification v0.9.0; see [spec compliance](spec-compliance.md).
 
 [Get started](getting-started.md){ .md-button .md-button--primary }

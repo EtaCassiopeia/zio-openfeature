@@ -500,6 +500,26 @@ lazy val examplesTypedFlags = (project in file("examples/typed-flags"))
     )
   )
 
+// The documentation site's code. `mkdocs.yml` includes its `--8<--` sections into the pages, so every snippet on the
+// site is compiled here, and its tests run the ones that can run on their own and check what the page says they do.
+lazy val examplesDocs = (project in file("examples/docs"))
+  .dependsOn(core, testkit, extras, ofrep, optimizely)
+  .settings(examplesCommon)
+  .settings(crossVersionSourceDirs)
+  .settings(
+    name := "zio-openfeature-example-docs",
+    libraryDependencies ++= Seq(
+      "dev.zio" %% "zio"          % zioVersion,
+      "dev.zio" %% "zio-test"     % zioVersion % Test,
+      "dev.zio" %% "zio-test-sbt" % zioVersion % Test
+    ),
+    // OFREP and Optimizely pull Jackson; hold it at the family the published modules pin (see `jacksonPins`).
+    dependencyOverrides ++= jacksonPins,
+    // Forked for the reason `commonSettings` gives: a leaked non-daemon thread cannot then hang sbt after the tests.
+    Test / fork := true,
+    testFrameworks += new TestFramework("zio.test.sbt.ZTestFramework")
+  )
+
 lazy val examplesTestkitApp = (project in file("examples/testkit-app"))
   .dependsOn(core, testkit)
   .settings(examplesCommon)

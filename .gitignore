@@ -24,3 +24,5 @@ coverage-report/
 *.log
 *.swp
 *~
+__pycache__/
+/site/

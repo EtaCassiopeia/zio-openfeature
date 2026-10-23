@@ -35,6 +35,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`IntegerWideningLongProvider` reads longs beyond `Int` range** (#452). It picked the integer resolver from the
+  caller's default, so a flag stored as `5_000_000_000` read with default `0L` failed with `TYPE_MISMATCH` (or was
+  narrowed, depending on the provider). A `TYPE_MISMATCH` from the integer path now retries on the long path.
 - **`CircuitBreakerProvider` now trips on providers that return error codes instead of throwing** (#446). Any returned
   evaluation counted as a success, so a delegate that reports network failures as `errorCode = GENERAL` — the OFREP
   provider does — kept the circuit closed through a full outage, and a returned `FLAG_NOT_FOUND` could close a

@@ -232,6 +232,9 @@ resolver instead:
 - A default that fits in an `Int` is resolved by the integer resolver and widened to `Long`, keeping the reason,
   variant, error code and metadata.
 - A larger default goes to the provider's long path unchanged, so it is never truncated.
+- If the integer resolver reports a type mismatch, for example because the stored value is a long beyond `Int` range,
+  the evaluation is retried on the long path. A provider that silently truncates such a value instead cannot be
+  detected.
 - It does not pass on the wrapped provider's events.
 
 Every provider shipped with this library already resolves longs natively, so they never need it.

@@ -80,26 +80,26 @@ object FeatureFlagErrorSpec extends ZIOSpecDefault {
         assertTrue(error.message == "Override for flag 'my-flag' type mismatch: expected Int, got String")
       }
     ),
-    suite("isRecoverable")(
+    suite("isFlagError")(
       test("evaluation errors are recoverable") {
-        assertTrue(FeatureFlagError.isRecoverable(FeatureFlagError.FlagNotFound("key"))) &&
-        assertTrue(FeatureFlagError.isRecoverable(FeatureFlagError.TypeMismatch("key", "A", "B"))) &&
-        assertTrue(FeatureFlagError.isRecoverable(FeatureFlagError.ParseError("key", new Exception))) &&
-        assertTrue(FeatureFlagError.isRecoverable(FeatureFlagError.EmptyFlagVariables("key"))) &&
-        assertTrue(FeatureFlagError.isRecoverable(FeatureFlagError.TargetingKeyMissing("key"))) &&
-        assertTrue(FeatureFlagError.isRecoverable(FeatureFlagError.InvalidContext("reason")))
+        assertTrue(FeatureFlagError.isFlagError(FeatureFlagError.FlagNotFound("key"))) &&
+        assertTrue(FeatureFlagError.isFlagError(FeatureFlagError.TypeMismatch("key", "A", "B"))) &&
+        assertTrue(FeatureFlagError.isFlagError(FeatureFlagError.ParseError("key", new Exception))) &&
+        assertTrue(FeatureFlagError.isFlagError(FeatureFlagError.EmptyFlagVariables("key"))) &&
+        assertTrue(FeatureFlagError.isFlagError(FeatureFlagError.TargetingKeyMissing("key"))) &&
+        assertTrue(FeatureFlagError.isFlagError(FeatureFlagError.InvalidContext("reason")))
       },
       test("provider errors are not recoverable") {
-        assertTrue(!FeatureFlagError.isRecoverable(FeatureFlagError.ProviderNotReady(ProviderStatus.NotReady))) &&
-        assertTrue(!FeatureFlagError.isRecoverable(FeatureFlagError.ProviderInitializationFailed(new Exception))) &&
-        assertTrue(!FeatureFlagError.isRecoverable(FeatureFlagError.ProviderError(new Exception))) &&
-        assertTrue(!FeatureFlagError.isRecoverable(FeatureFlagError.Unauthorized("reason"))) &&
-        assertTrue(!FeatureFlagError.isRecoverable(FeatureFlagError.Unreachable(new Exception))) &&
-        assertTrue(!FeatureFlagError.isRecoverable(FeatureFlagError.InvalidConfiguration("reason")))
+        assertTrue(!FeatureFlagError.isFlagError(FeatureFlagError.ProviderNotReady(ProviderStatus.NotReady))) &&
+        assertTrue(!FeatureFlagError.isFlagError(FeatureFlagError.ProviderInitializationFailed(new Exception))) &&
+        assertTrue(!FeatureFlagError.isFlagError(FeatureFlagError.ProviderError(new Exception))) &&
+        assertTrue(!FeatureFlagError.isFlagError(FeatureFlagError.Unauthorized("reason"))) &&
+        assertTrue(!FeatureFlagError.isFlagError(FeatureFlagError.Unreachable(new Exception))) &&
+        assertTrue(!FeatureFlagError.isFlagError(FeatureFlagError.InvalidConfiguration("reason")))
       },
       test("transaction errors are not recoverable") {
-        assertTrue(!FeatureFlagError.isRecoverable(FeatureFlagError.NestedTransactionNotAllowed)) &&
-        assertTrue(!FeatureFlagError.isRecoverable(FeatureFlagError.OverrideTypeMismatch("key", "A", "B")))
+        assertTrue(!FeatureFlagError.isFlagError(FeatureFlagError.NestedTransactionNotAllowed)) &&
+        assertTrue(!FeatureFlagError.isFlagError(FeatureFlagError.OverrideTypeMismatch("key", "A", "B")))
       }
     ),
     suite("isProviderError")(

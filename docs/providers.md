@@ -248,6 +248,11 @@ What happens:
 
 In every failure case, `setProvider` again with a working provider recovers.
 
+Once a swap has started it finishes, with one of the outcomes above, even if the calling fiber is interrupted: an
+interrupt halfway would leave neither the new provider nor the old one properly in place. So `setProvider(p).timeout(d)`
+returns only when the swap has settled, at most about twice `initTimeout`. A call still waiting for an earlier swap to
+finish can be interrupted at once.
+
 `setProvider` is the only way out of `Fatal`. When you use a wrapper such as `CircuitBreakerProvider`, swap in a new
 wrapper around the new provider, not just the inner provider.
 

@@ -423,7 +423,8 @@ trait FeatureFlags {
   /** Semantically block until the provider reaches an evaluable state (`canEvaluate` — Ready/Stale), returns early on
     * `Fatal`, or `within` elapses — returning the status at that moment in every case. Backed by the status change
     * stream (no polling), and safe for many concurrent waiters. Ideal for `/ready` probes:
-    * `ff.awaitReady(5.seconds).map(_.canEvaluate)`.
+    * `ff.awaitReady(5.seconds).map(_.canEvaluate)`. On an instance that is shutting down or shut down it returns at
+    * once with that status (`ShuttingDown` / `NotReady`), since it will never become evaluable again.
     */
   def awaitReady(within: Duration = Duration.Infinity): UIO[ProviderStatus]
 
@@ -488,6 +489,10 @@ trait FeatureFlags {
     * rolled back: the new provider stays registered (status recovers to `Ready` if it finishes initializing later), and
     * the previous provider is not restored, because the SDK would shut it down if the new one later became ready. Call
     * `setProvider` again with another provider to recover.
+    *
+    * Once the swap has started it runs to one of those outcomes even if the calling fiber is interrupted, so
+    * `setProvider(p).timeout(d)` with `d` shorter than the init timeout returns only when the swap has settled (at most
+    * about twice the init timeout). Waiting for an earlier swap to finish can still be interrupted.
     */
   def setProvider(provider: OFFeatureProvider): IO[FeatureFlagError, Unit]
 

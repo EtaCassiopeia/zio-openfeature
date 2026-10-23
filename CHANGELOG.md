@@ -104,6 +104,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   afterwards. And a wrapper whose attach to the delegate failed (the delegate already belonged to another wrapper)
   still detached the delegate on `shutdown`, cutting off the wrapper that owned it. Both now share one event-channel
   helper that records an attachment only once it succeeds, and `shutdown` ends with `EventProvider.shutdown`.
+- **Interrupting `setProvider` mid-swap no longer leaves the status stuck at `NotReady`** (#434). An interrupt that
+  arrived while the new provider was initializing skipped both the success signal and the rollback: the new provider
+  could end up bound and ready while every typed evaluation failed. A started swap now runs to its outcome (success,
+  or rollback, or the timed-out `Error` of #433) before the interrupt takes effect — bounded by the init timeout.
+  Waiting for an earlier swap to finish stays interruptible.
 - **Circuit breaker: stale outcomes and polled `READY` no longer reset the circuit** (#447).
   - A call admitted in one circuit state could record its outcome in a later one: a slow call admitted while closed
     could close a half-open circuit while the real probe was still running, or free the probe slot so two probes ran
@@ -122,6 +127,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   An exception with a `getStatusCode`/`statusCode` accessor is now classified by its status (401/403 → `Unauthorized`,
   anything else → `ProviderError`). `Unauthorized` produced by `classify` now keeps the original exception as its
   `cause` (new `FeatureFlagError.unauthorized(reason, cause)`; `Unauthorized(reason)` patterns are unchanged).
+- **Teardown no longer strands waiters** (#435). Closing the layer's scope now shuts the event hub, so `events`
+  consumers and event-handler fibers end with it instead of waiting forever; `awaitReady()` returns at once on an
+  instance that is shutting down or shut down; and an interrupted `shutdown` still runs to the terminal `NotReady`
+  instead of leaving `ShuttingDown` and a half torn-down API.
 ||||||| a0a5a5b
 - **Tracking attributes are sent by type, and an unsupported one fails `track`** (#441). An `AttributeValue` attribute
   (and any type the converter did not know, including one nested in a `List`/`Map`) was sent as its `toString`, so

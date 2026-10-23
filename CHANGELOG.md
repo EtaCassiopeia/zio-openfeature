@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **API tidy-ups** (#444):
+  - `EvaluationOptions` (per-call hooks, hints, timeout) can now be passed to every `*OrDefault`, `valueOrDefault` and
+    `value`, including the `FlagDef` forms, not only to `*Details` and `resolveOrDefault`.
+  - `EvaluationContext.builder` takes `Long` and `java.time.Instant` attributes.
+  - An `on(...)` registration reports the provider that is current when it runs, not when the effect was built.
+  - Unreadable provider event metadata is logged instead of silently dropped (the event is still delivered).
+  - A typed error built from a provider-reported code (`PARSE_ERROR`, `GENERAL`) carries the provider's message in a
+    stackless cause instead of a stack trace pointing into this library.
 - **The documentation site moved to MkDocs Material and was rewritten.** Every page was checked against the code and
   simplified, new pages cover evaluation, provider lifecycle and events, and OFREP, and animations show how an
   evaluation, context, hooks, transactions and providers work. Every code sample on the site is now compiled and,
@@ -34,6 +42,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   warning from the Scala 3.3 standard library (`scala.runtime.LazyVals`), not from this library.
 
 ### Deprecated
+
+- **`FeatureFlagError.EmptyFlagVariables`** (#444). No module has ever raised it; it stays for binary compatibility.
 
 - **`FeatureFlagError.isRecoverable`, in favour of `isFlagError`** (#440). It is true for flag-scoped evaluation errors
   (missing flag, wrong type, unparsable value, bad context), which has nothing to do with retrying or with

@@ -92,7 +92,7 @@ empty, since an error code fails the effect instead.
 | `InvalidConfiguration(reason)` | building a provider ([OFREP](ofrep.md), [Optimizely](optimizely.md)) with bad settings |
 | `OverrideTypeMismatch(key, expected, actual)` | a [transaction](transactions.md) override of the wrong type |
 | `NestedTransactionNotAllowed` | a transaction started inside another, under the default nesting policy |
-| `EmptyFlagVariables(key)` | kept for compatibility; nothing in the library raises it |
+| `EmptyFlagVariables(key)` | deprecated: nothing in the library raises it; kept for binary compatibility |
 
 `Unauthorized`, `Unreachable` and `ProviderError` come from `FeatureFlagError.classify`, which sorts what a provider
 throws from `track` or past the SDK during evaluation (a timeout, for instance), so you can alert on a bad key
@@ -110,8 +110,9 @@ Recover from the cases you expect and let the rest fail:
 
 ## Options for one call
 
-`EvaluationOptions` adds hooks, hook hints or a timeout to a single evaluation. Pass it to a `*Details` method or to
-`resolveOrDefault`:
+`EvaluationOptions` adds hooks, hook hints or a timeout to a single evaluation. Pass it as the fourth argument, after
+the context, to a `*Details` method, `resolveOrDefault`, any `*OrDefault`, `valueOrDefault` or `value` (including the
+`FlagDef` forms):
 
 ```scala
 --8<-- "Evaluating.scala:options"

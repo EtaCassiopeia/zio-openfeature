@@ -429,7 +429,7 @@ both tiers.
 | `FlagNotFound` | Flag key doesn't exist in provider |
 | `TypeMismatch` | Value type doesn't match expected type |
 | `ProviderNotReady` | Provider not initialized |
-| `ProviderInitializationFailed` | Sync init returned a non-`READY` state, or `setProviderAndWait` exceeded `initTimeout` |
+| `ProviderInitializationFailed` | Sync init (or a `setProvider` swap) ended in a non-`READY` state, or did not finish within `initTimeout` |
 | `ProviderFatal` | Provider hit an irrecoverable state (e.g. async init never produced a datafile within `initTimeout`) |
 | `Unauthorized` | Provider rejected the request (HTTP 401 / 403 or analogous SDK signal — typically a wrong SDK key) |
 | `Unreachable` | Provider could not be reached at the network layer (DNS, connection refused, no route) |

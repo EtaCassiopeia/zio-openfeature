@@ -2,6 +2,7 @@ package zio.openfeature
 
 import dev.openfeature.sdk.{FeatureProvider => OFFeatureProvider, OpenFeatureAPI}
 import zio._
+import zio.openfeature.internal.ProviderRegistration
 
 trait FeatureFlagRegistry {
 
@@ -63,7 +64,7 @@ object FeatureFlagRegistry {
           lock,
           zioApiHooksRef
         )
-        _ <- ZIO.addFinalizer(ZIO.attemptBlocking(api.shutdown()).ignore)
+        _ <- ZIO.addFinalizer(ProviderRegistration.boundedApiShutdown(api))
       } yield registry
     }
 }

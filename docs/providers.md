@@ -323,7 +323,7 @@ FeatureFlags.fromProvider(
 `FeatureFlagsConfig.initMode` replaces the old sync/async *factory pairs* (`fromProvider*` vs `fromProvider*Async`)
 with a single field:
 
-- **`InitMode.Sync`** (default) — `setProviderAndWait`. Layer build blocks until the provider is `READY`/`STALE` or
+- **`InitMode.Sync`** (default) — the layer build blocks until the provider is `READY`/`STALE` or
   `initTimeout` elapses; misconfiguration fails the build itself.
 - **`InitMode.Async`** — `setProvider`. Layer build returns immediately; evaluations fail `ProviderNotReady` until the
   provider becomes ready. The `initTimeout` watchdog still runs in the background — see
@@ -404,7 +404,9 @@ ff.setProvider(launchDarklyProvider)
 
 1. Status transitions to `NotReady` — new evaluations fail fast with `ProviderNotReady`
 2. Provider and metadata refs are updated (so the event bridge sees consistent metadata)
-3. The Java SDK calls `shutdown()` on the old provider and `initialize()` on the new provider (blocks until ready)
+3. The new provider is registered with the Java SDK, which runs its `initialize()`; `setProvider` waits for the outcome
+   for at most `initTimeout` (the layer's init timeout, 30s by default). Once the new provider is ready the SDK calls
+   `shutdown()` on the old one
 4. Status transitions to `Ready` — evaluations resume with the new provider
 
 The swap is serialized via a semaphore — concurrent `setProvider` calls queue up safely.
@@ -433,13 +435,23 @@ The swap is serialized via a semaphore — concurrent `setProvider` calls queue 
 
 **Error handling:**
 
-If the new provider fails to initialize, `setProvider` returns `FeatureFlagError.ProviderInitializationFailed` and the status transitions to `Error` (not `NotReady`). The old provider has already been shut down by the Java SDK. To recover, call `setProvider` again with a working provider:
+If the new provider's `initialize()` throws, `setProvider` returns `FeatureFlagError.ProviderInitializationFailed` and
+rolls back: the previous provider is registered again and, once it is ready, status returns to `Ready` and evaluations
+are served by it. If that rollback itself fails, status stays `Error`.
+
+If `initialize()` has not finished within `initTimeout`, `setProvider` returns `ProviderInitializationFailed` wrapping a
+`TimeoutException` and status becomes `Error`, but the swap is **not** rolled back. The new provider stays registered,
+and status recovers to `Ready` on its own if it finishes initializing later. The previous provider is not restored,
+because the Java SDK shuts it down as soon as the new one becomes ready, and would do so even after a re-registration.
+`fromAcquireAsync` handles this case itself by swapping in a fresh fallback.
+
+In either case, recover by calling `setProvider` again with a working provider:
 
 ```scala
 val result = ff.setProvider(unreliableProvider).either
 result match {
   case Left(_: FeatureFlagError.ProviderInitializationFailed) =>
-    // Old provider is gone, new one failed — recover with a fallback
+    // Rolled back (init threw) or left in Error (timed out); install a known-good provider
     ff.setProvider(envVarFallbackProvider)
   case Left(other) => ZIO.fail(other)
   case Right(_)    => ZIO.unit
@@ -532,7 +544,7 @@ val layer = FeatureFlags.fromProvider(
 
 Every layer bounds initialization at **30 seconds by default** (`FeatureFlagsConfig.initTimeout`). The bound applies to both `InitMode` values:
 
-- **Sync (`InitMode.Sync`, the default)**: if `setProviderAndWait` takes longer than `initTimeout`, the layer build fails with a `TimeoutException`. After init returns, the library verifies the provider's actual state — anything other than `READY` / `STALE` fails the build with an `IllegalStateException`, so a wrong SDK key or unreachable endpoint surfaces at startup instead of returning default values on every evaluation.
+- **Sync (`InitMode.Sync`, the default)**: if the provider has not finished initializing within `initTimeout`, the layer build fails with a `TimeoutException`, and closing the layer's scope does not wait for the stuck `initialize()` (the provider is registered without holding the Java SDK's API lock across its initialization). After init returns, the library verifies the provider's actual state — anything other than `READY` / `STALE` fails the build with an `IllegalStateException`, so a wrong SDK key or unreachable endpoint surfaces at startup instead of returning default values on every evaluation.
 - **Async (`InitMode.Async`)**: a watchdog fiber forked into the layer's `Scope` sleeps `initTimeout`, then escalates to `Fatal` **only if the provider never became usable** — i.e. it is still `NotReady` / `Error` and has never reached `Ready` / `Stale`. A provider that reached `Ready` before the deadline (even if it has since dipped into a transient `Error`) is left running untouched. On escalation the watchdog also shuts the provider down (so its poller/HTTP threads don't outlive the layer) and publishes a `ProviderEvent.Error` carrying `ErrorCode.ProviderFatal`. Callers polling `providerStatus` stop waiting. Because the provider is shut down, this `Fatal` is terminal (see [Recovery semantics under `Fatal`](#recovery-semantics-under-fatal)).
 
 Override via `.withInitTimeout(...)`:
@@ -699,7 +711,7 @@ Provider construction has two orthogonal dimensions: **how long the layer build 
 
 The 30-second default applies to both `fromProvider` and `fromProviderAsync`. Its effect differs:
 
-- **Sync**: bounds the *blocking* call. If `setProviderAndWait` (the underlying Java SDK call) doesn't return within `initTimeout`, the layer build fails with a `TimeoutException`. After it returns successfully, the library reads the provider's `getState()` — anything other than `READY`/`STALE` fails the build with `IllegalStateException`. Translation: in sync mode, `initTimeout` is a hard ceiling on cold-start latency and the layer never lands in a half-initialised state.
+- **Sync**: bounds the wait for initialization. If the provider's `initialize()` doesn't complete within `initTimeout`, the layer build fails with a `TimeoutException`. After it returns successfully, the library reads the provider's `getState()` — anything other than `READY`/`STALE` fails the build with `IllegalStateException`. Translation: in sync mode, `initTimeout` is a hard ceiling on cold-start latency and the layer never lands in a half-initialised state.
 - **Async**: a daemon fiber forked into the layer's `Scope` sleeps `initTimeout` then escalates to `Fatal` **only if the provider never became usable** (still `NotReady`/`Error`, never reached `Ready`/`Stale`) — a provider that reached `Ready` and later dipped into a transient `Error` is left running, not Fataled. On escalation it also shuts the provider down. Translation: in async mode, `initTimeout` is the **bounded uncertainty window** at boot; after it elapses you have a reliable, terminal signal you can act on (see [Recovery semantics](#recovery-semantics-under-fatal)).
 
 ### The "all defaults" gap
@@ -796,7 +808,7 @@ yield ()
 
 ### Initialization
 
-When you create a `FeatureFlags` layer, the provider is automatically initialized using `setProviderAndWait`. This ensures the provider is ready before any flag evaluations. The initialization is bounded by `initTimeout` (default 30 seconds) and the provider's actual state is verified after the SDK call returns — see [Initialization Timeout](#initialization-timeout) above for details.
+When you create a `FeatureFlags` layer, the provider is automatically registered and its initialization awaited. This ensures the provider is ready before any flag evaluations. The initialization is bounded by `initTimeout` (default 30 seconds) and the provider's actual state is verified after the SDK call returns — see [Initialization Timeout](#initialization-timeout) above for details.
 
 ```scala
 // Provider is initialized when layer is provided (blocking, bounded by initTimeout)

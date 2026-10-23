@@ -162,7 +162,7 @@ FeatureFlags.booleanDetails("flag", false, EvaluationContext.empty, options)
 
 | Requirement | Status | Implementation |
 |:------------|:-------|:---------------|
-| Initialize (blocking) | ✅ | `setProviderAndWait` on layer creation |
+| Initialize (blocking) | ✅ | Layer creation registers the provider and waits, bounded by `initTimeout`, for `READY` |
 | Initialize (async) | ✅ | `setProvider` via `fromProviderAsync` / `FeatureFlagsConfig(initMode = InitMode.Async)` |
 | Shutdown (1.6.1) | ✅ | Automatic via ZIO Scope finalizer + explicit `shutdown` method |
 | Provider metadata | ✅ | `providerMetadata` returns name and version |

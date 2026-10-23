@@ -45,8 +45,8 @@ import java.util.concurrent.TimeUnit
   *     `FeatureFlagsConfig().withInitTimeout(…)` translates that into either a layer build failure (sync mode) or a
   *     `ProviderStatus.Fatal` transition (async mode), so an evaluation never silently returns the default value under
   *     a misconfigured provider.
-  *   - Construction itself (this object's `make`) does NOT make network calls — it only validates inputs and builds the
-  *     Optimizely client object. The actual HTTP fetch happens inside `initialize()`.
+  *   - Construction (this object's `make`) does not block on the network, but the first datafile fetch starts then: the
+  *     Optimizely SDK offers no way to build its polling config manager paused. `initialize()` waits for it.
   *
   * Construction validates the SDK key (and URL, where applicable) before touching the Optimizely SDK, and checks that
   * the SDK can find a JSON parser to read datafiles with; failures surface as `FeatureFlagError.InvalidConfiguration`
@@ -84,10 +84,11 @@ final case class OptimizelyProviderConfig(
 object OptimizelyProvider {
 
   /** Default time the underlying `OptimizelyFeatureProvider.initialize()` will wait for the first datafile load before
-    * declaring the provider failed. The outer `FeatureFlags` factories layer their own `initTimeout` on top; this inner
-    * bound is a defence-in-depth so a misconfigured client doesn't hang the build pool indefinitely.
+    * declaring the provider failed. It is deliberately shorter than the `FeatureFlags` default `initTimeout` (30
+    * seconds), so a datafile that never loads is reported with the provider's own error ("datafile did not load …")
+    * rather than the generic outer timeout (#455).
     */
-  val DefaultInitWait: java.time.Duration = java.time.Duration.ofSeconds(30)
+  val DefaultInitWait: java.time.Duration = java.time.Duration.ofSeconds(25)
 
   /** Validate an SDK key and construct a provider that fetches its datafile from the Optimizely CDN.
     *
@@ -118,10 +119,11 @@ object OptimizelyProvider {
 
   /** Validate the configuration and construct a provider.
     *
-    * Construction performs no network activity and starts no background polling: the datafile poller is created paused
-    * and only starts inside `initialize()`. The returned provider owns a polling executor and an HTTP client — the
-    * caller is responsible for `shutdown()` (registering it with a `FeatureFlags` layer counts: the layer's finalizer
-    * shuts the provider down). Prefer [[scoped]] or [[layer]] to make that ownership explicit.
+    * Construction does not block on the network, but the datafile poller starts then — the Optimizely SDK offers no way
+    * to build it paused — and `initialize()` waits for its first fetch. The returned provider owns a polling executor
+    * and an HTTP client — the caller is responsible for `shutdown()` (registering it with a `FeatureFlags` layer
+    * counts: the layer's finalizer shuts the provider down). Prefer [[scoped]] or [[layer]] to make that ownership
+    * explicit.
     */
   def make(config: OptimizelyProviderConfig): IO[FeatureFlagError.InvalidConfiguration, OptimizelyFeatureProvider] =
     make(config, httpClient = None)

@@ -324,8 +324,8 @@ lazy val optimizely = (project in file("optimizely"))
       // NOTE: on a core-api/core-httpclient upgrade, re-verify `com/optimizely/ab/ObservingOptimizelyHttpClient.java`
       // — it lives in the `com.optimizely.ab` package to reach the package-private `OptimizelyHttpClient` ctor and
       // `getHttpClient()` (the staleness fetch-observation seam for #267). A version bump breaks it at compile time.
-      "com.optimizely.ab" % "core-api"             % "4.2.2",
-      "com.optimizely.ab" % "core-httpclient-impl" % "4.2.2",
+      "com.optimizely.ab" % "core-api"             % "4.6.0",
+      "com.optimizely.ab" % "core-httpclient-impl" % "4.6.0",
       "org.wiremock"      % "wiremock"             % wiremockVersion % Test
     ),
     // The Optimizely SDK needs a JSON parser it does not declare (see `checkOptimizelyJsonParser`), so this module

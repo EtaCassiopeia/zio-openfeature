@@ -85,7 +85,12 @@ variant. The resolution's metadata carries `optimizely.flagKey` and `optimizely.
 | `TargetingKeyMissing` | the context has no targeting key |
 | `FlagNotFound` | the datafile has no flag with this key |
 | `ProviderNotReady` | the datafile has not loaded yet, or the provider was shut down |
-| `General` | the Optimizely SDK failed to decide |
+| `General` | the Optimizely SDK failed to decide, including a CMAB experiment whose decision could not be fetched |
+
+**CMAB experiments** (contextual multi-armed bandits) are supported: the provider wires Optimizely's CMAB service, as
+the SDK's own factory does. On a cache miss, deciding a CMAB flag makes a blocking call to Optimizely's CMAB endpoint
+(10 seconds and one retry by default), so give such flags an `evaluationTimeout` you can afford, or put the provider
+behind a `CircuitBreakerProvider`.
 
 Context attributes go to Optimizely as audience attributes. Strings, booleans and numbers pass as they are, and an
 `Instant` becomes its ISO-8601 string. Lists and structures are left out, because no audience condition can match
@@ -166,7 +171,8 @@ like any other answer.
 
 ## Bring your own client
 
-If you already build and manage an `Optimizely` client, wrap it. The provider then never closes the client:
+If you already build and manage an `Optimizely` client, wrap it. The provider then never closes the client. Build it
+with a `CmabService` (as `OptimizelyFactory` does) if your project uses CMAB experiments:
 
 ```scala
 --8<-- "Optimizely.scala:own-client"

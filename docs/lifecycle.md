@@ -29,7 +29,7 @@ false only for `Fatal`.
 | The provider reports `ERROR` | `NotReady`, `Ready` or `Stale` → `Error` |
 | The provider reports `ERROR` with code `ProviderFatal` | any status except `ShuttingDown` → `Fatal` |
 | Async start: `initTimeout` passes before the provider was ever ready | `NotReady` or `Error` → `Fatal` |
-| [`setProvider`](providers.md#replace-the-provider-at-runtime) | any → `NotReady` while it runs, then `Ready` (`Error` if neither the new nor the old provider can serve) |
+| [`setProvider`](providers.md#replace-the-provider-at-runtime) | any → `NotReady` while it runs, then `Ready` (`Error` if neither the new nor the old provider can serve, or if the new provider is still initializing at `initTimeout`) |
 | `shutdown` | any → `ShuttingDown` → `NotReady` |
 
 `Fatal` stays until `setProvider` installs a new provider. Events that arrive during a swap, or after a shutdown, do
@@ -137,8 +137,9 @@ values can be the plain types `withAttribute` accepts for a context, any `Attrib
 `FeatureFlagError.InvalidContext` before anything is sent. A provider that does not support tracking ignores the call. A
 provider error fails the call with a `FeatureFlagError`.
 
-`trackedEvents` returns the last 1000 events this instance sent, oldest first, with their merged context. It is meant
-for tests and debugging.
+Tracked events are not kept by the instance: their merged contexts routinely hold personal data. To assert on tracking
+in a test, use the testkit's `TestFeatureProvider.trackedEvents`, which lists what the provider received (see
+[Testkit](testkit.md)). `FeatureFlags.trackedEvents` is deprecated, and is empty except on testkit-built instances.
 
 ## Shut down
 

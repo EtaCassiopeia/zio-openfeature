@@ -65,7 +65,10 @@ final class OptimizelyFeatureProvider private[optimizely] (
   // Present only when the staleness watchdog is enabled (factory-built providers with datafile polling on).
   // When defined, initialize() starts a background daemon that flips READY <-> STALE based on whether datafile
   // fetches keep succeeding (see the watchdog section below and issue #267). None = watchdog disabled.
-  staleness: Option[OptimizelyFeatureProvider.StalenessConfig] = None
+  staleness: Option[OptimizelyFeatureProvider.StalenessConfig] = None,
+  // Resources the factory built for this provider beyond the Optimizely client itself, closed on shutdown when the
+  // provider owns the client: `Optimizely.close()` does not close the CMAB service's HTTP client (#474).
+  ownedResources: List[java.io.Closeable] = Nil
 ) extends EventProvider {
 
   // Public construction is via the OptimizelyProvider factory in this package — the constructor is private to keep
@@ -234,7 +237,10 @@ final class OptimizelyFeatureProvider private[optimizely] (
       Try(optimizely.getNotificationCenter.removeNotificationListener(handle))
       ()
     }
-    if (closeOnShutdown) Try(optimizely.close())
+    if (closeOnShutdown) {
+      Try(optimizely.close())
+      ownedResources.foreach(r => Try(r.close()))
+    }
     stateRef.set(ProviderState.NOT_READY)
   }
 
@@ -468,7 +474,7 @@ final class OptimizelyFeatureProvider private[optimizely] (
         .map(t => Option(t.getMessage).getOrElse(t.getClass.getSimpleName))
         .flatMap { decision =>
           if (isFlagNotFound(decision)) Left("FLAG_NOT_FOUND")
-          else Right(decision)
+          else cmabFailure(decision).toLeft(decision)
         }
   }
 
@@ -476,6 +482,14 @@ final class OptimizelyFeatureProvider private[optimizely] (
     * was found for key "..."` (via `DecisionMessage.FLAG_KEY_INVALID`); we match on a stable substring and the
     * `FLAG_KEY_INVALID` symbol so a future formatting tweak doesn't silently re-break this path.
     */
+  /** A CMAB experiment whose decision could not be fetched comes back with no variation and an error reason ("Failed to
+    * fetch CMAB data for experiment …", SDK 4.6). That is an evaluation error, not a decision to serve the default
+    * (#474).
+    */
+  private def cmabFailure(d: OptimizelyDecision): Option[String] =
+    if (Option(d.getVariationKey).isDefined) None
+    else Option(d.getReasons).map(_.asScala.toList).getOrElse(Nil).find(_.toLowerCase.contains("failed to fetch cmab"))
+
   private def isFlagNotFound(d: OptimizelyDecision): Boolean =
     if (Option(d.getVariationKey).isDefined) false
     else {

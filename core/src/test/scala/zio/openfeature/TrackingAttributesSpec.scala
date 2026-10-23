@@ -18,6 +18,7 @@ import scala.jdk.CollectionConverters._
 
 // #441: tracking attributes are converted to OpenFeature values by type — AttributeValue included — and an unsupported
 // type fails `track` instead of being sent as its toString.
+@scala.annotation.nowarn("cat=deprecation")
 object TrackingAttributesSpec extends ZIOSpecDefault {
 
   private class CapturingProvider extends EventProvider {

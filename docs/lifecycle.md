@@ -77,6 +77,8 @@ Register a handler for the events you care about. Each registration returns an e
 - A handler that dies is logged, and keeps its subscription.
 - When the status already matches, the handler gets a payload that describes the current state, not the event that
   caused it.
+- A handler does not run inside the transaction or `withContext` block it was registered from, even though it may
+  have been registered there: its evaluations see neither the transaction's overrides nor that fiber-local context.
 
 ## Read the event stream
 

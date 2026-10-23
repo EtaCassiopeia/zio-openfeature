@@ -33,8 +33,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   it was just untested outside the zio-bdd conformance job. On Scala 3 it prints a `sun.misc.Unsafe` deprecation
   warning from the Scala 3.3 standard library (`scala.runtime.LazyVals`), not from this library.
 
+### Deprecated
+
+- **`FeatureFlagError.isRecoverable`, in favour of `isFlagError`** (#440). It is true for flag-scoped evaluation errors
+  (missing flag, wrong type, unparsable value, bad context), which has nothing to do with retrying or with
+  `ProviderStatus.isRecoverable`. The behaviour is unchanged.
+
 ### Fixed
 
+- **`FeatureFlagError.classify` reads the HTTP status instead of trusting the exception's name** (#440). Any class
+  named `*HttpResponseException` was reported as `Unauthorized`, so a 503 from such a client looked like a bad SDK key.
+  An exception with a `getStatusCode`/`statusCode` accessor is now classified by its status (401/403 → `Unauthorized`,
+  anything else → `ProviderError`). `Unauthorized` produced by `classify` now keeps the original exception as its
+  `cause` (new `FeatureFlagError.unauthorized(reason, cause)`; `Unauthorized(reason)` patterns are unchanged).
 - **`CircuitBreakerProvider` now trips on providers that return error codes instead of throwing** (#446). Any returned
   evaluation counted as a success, so a delegate that reports network failures as `errorCode = GENERAL` — the OFREP
   provider does — kept the circuit closed through a full outage, and a returned `FLAG_NOT_FOUND` could close a

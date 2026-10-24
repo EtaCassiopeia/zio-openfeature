@@ -87,11 +87,14 @@ object CachingInvalidationPropertySpec extends ZIOSpecDefault {
           if (viaEvent) ZIO.attemptBlocking(delegate.configChanged())
           else cache.invalidateAll
         for {
-          _          <- ZIO.attemptBlocking(cache.initialize(ctx))      // attaches the delegate's event channel
-          inFlight   <- ZIO.foreach(parkedKeys)(k => eval(cache, k).fork)
-          _          <- ZIO.attemptBlocking(delegate.entered.await())
-          _          <- invalidate
+          _        <- ZIO.attemptBlocking(cache.initialize(ctx)) // attaches the delegate's event channel
+          inFlight <- ZIO.foreach(parkedKeys)(k => eval(cache, k).fork)
+          _        <- ZIO.attemptBlocking(delegate.entered.await())
+          // The delegate changes first, then the cache is invalidated — the order a real provider follows (update its
+          // state, then emit CONFIGURATION_CHANGED). The other way round races: a duplicate-key caller that has not yet
+          // reached the cache could take a key after the invalidation, still read `Old`, and store it legitimately.
           _          <- ZIO.succeed(delegate.current.set(New))
+          _          <- invalidate
           postFibers <- ZIO.foreach(postKeys)(k => eval(cache, k).fork) // start while the old lookups are parked
           _    <- ZIO.sleep(20.millis) // let them reach the cache while the old lookups are still parked
           _    <- ZIO.succeed(delegate.gate.countDown())

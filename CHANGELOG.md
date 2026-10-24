@@ -24,6 +24,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Behaviour change: factory-built Optimizely providers now send events to Optimizely** (#453). Providers from
+  `OptimizelyProvider.make`/`scoped`/`layer` built their client without an event processor, so the SDK dropped every
+  impression and every `track` conversion: experiments showed zero visitors. They now batch events and send them to
+  `logx.optimizely.com`, as the SDK's own default factory does. An event carries the targeting key as the visitor
+  id, the audience attributes derived from the evaluation context, and the decision or conversion. To keep the old
+  behaviour, set `events = OptimizelyEvents.Disabled` on `OptimizelyProviderConfig`; `OptimizelyEvents.Batched` tunes
+  the batch size, flush interval and shutdown wait (at most 4 s, so shutdown stays within its 10 s bound). Providers
+  from `fromOptimizelyClient` are unchanged. **Recompile, don't just bump the version:** `events` is a new field of
+  `OptimizelyProviderConfig`, which is source compatible but removes the six-argument constructor, `apply` and `copy`,
+  so code compiled against an earlier release fails with `NoSuchMethodError`.
 - **Tuning defaults are named** (#462). The circuit breaker, cache, construction-retry, event-hub, polling and
   watchdog defaults now come from named constants instead of literals at the call sites; no value changed. Public:
   `CircuitBreaker.DefaultFailureThreshold`/`DefaultResetTimeout`/`DefaultHalfOpenMaxCalls`/`DefaultProbeTimeout`

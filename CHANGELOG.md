@@ -135,6 +135,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   no longer overwritten; and the behaviour aspects restore the settings they found instead of the defaults, so a
   test-level aspect no longer wipes a suite-level one, and `withFailureProbability` clamps (NaN to 0) like
   `setFailureProbability`.
+- **An `EvaluationContext` round-trips through the SDK unchanged, and an attribute can no longer clobber the targeting
+  key** (#497). The SDK stores the targeting key as the attribute `targetingKey`, so a context read back from it
+  (hooks, `TestFeatureProvider.evaluations`) carried the key twice, and an attribute of that name overwrote the
+  targeting key on the way out. `targetingKey` is now a reserved attribute name: an explicit `targetingKey` wins over
+  the attribute; with none set, a string attribute of that name becomes the key (as before) and a non-string one is
+  dropped; and the attribute is never read back.
 - **Optimizely: a variable of the wrong type is a `TYPE_MISMATCH`, not your default** (#456). Reading a string
   variable as `int` returned the default with reason `DEFAULT`, a double read as `int` was truncated, the string
   `"42"` was parsed, and an integer beyond `int` range could not be read as `long` at all. Conversions are now strict

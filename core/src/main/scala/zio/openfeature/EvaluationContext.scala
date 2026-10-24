@@ -1,5 +1,15 @@
 package zio.openfeature
 
+/** The context a flag is evaluated against: an optional targeting key plus attributes.
+  *
+  * `targetingKey` is a reserved attribute name. The OpenFeature SDK stores the targeting key as the attribute of that
+  * name (`EvaluationContext.TARGETING_KEY`), so the two are one slot and cannot differ. When a context goes to the SDK:
+  *   - with `targetingKey` set, an attribute named `targetingKey` is ignored and the explicit key wins;
+  *   - with no `targetingKey`, a `StringValue` attribute of that name becomes the key; a non-string one is dropped.
+  *
+  * A context read back from the SDK never carries a `targetingKey` attribute, so any context without that attribute
+  * round-trips through the SDK unchanged (#497).
+  */
 final case class EvaluationContext(
   targetingKey: Option[String],
   attributes: Map[String, AttributeValue]
@@ -18,6 +28,7 @@ final case class EvaluationContext(
   def withTargetingKey(key: String): EvaluationContext =
     copy(targetingKey = Some(key))
 
+  /** Adds or replaces an attribute. The name `targetingKey` is reserved; see the class documentation. */
   def withAttribute(key: String, value: AttributeValue): EvaluationContext =
     copy(attributes = attributes + (key -> value))
 
@@ -82,7 +93,9 @@ object EvaluationContext {
     targetingKey: Option[String],
     attributes: Map[String, AttributeValue]
   ) {
-    def targetingKey(key: String): Builder                     = copy(targetingKey = Some(key))
+    def targetingKey(key: String): Builder = copy(targetingKey = Some(key))
+
+    /** Adds or replaces an attribute. The name `targetingKey` is reserved; see `EvaluationContext`. */
     def attribute(key: String, value: AttributeValue): Builder = copy(attributes = attributes + (key -> value))
     def attribute(key: String, value: String): Builder         = attribute(key, AttributeValue.StringValue(value))
     def attribute(key: String, value: Boolean): Builder        = attribute(key, AttributeValue.BoolValue(value))

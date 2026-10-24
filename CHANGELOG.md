@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`FaultyProvider` in the testkit** (#463): wraps any provider (or a fresh `TestFeatureProvider`) and applies a
+  scripted `Fault` per `Op`, one per call with the last repeating: `Throw`, `Delay`, `HangUntilReleased` (an
+  `initialize()` that ignores `shutdown()`), `HangUntilShutdown` and `Emit`. It records every call (`calls`,
+  `awaitEntered`), and `FaultyProvider.scoped` releases any hang still parked when the scope closes. `Op` covers every
+  `FeatureProvider`/`EventProvider` method but `emit*`, and a reflective test fails if the SDK adds one. The #433,
+  #434 and #435 lifecycle scenarios are re-expressed with it in the testkit, and extras' tests now use it (extras
+  depends on testkit for tests only). See "Fault injection" on the testkit page.
 - **Weekly mutation testing of core** (#468): stryker4s via the new `Mutation testing` workflow (scheduled and
   manual), with its report as a build artifact. Informational only: never runs on a pull request and never fails the
   build. Locally, `core/stryker`; see the development guide.
@@ -21,9 +28,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Concurrency property tests** (#465) for hook-data isolation (#438), circuit-breaker epochs (#447) and cache
   invalidation (#449), plus a generated swap/evaluate schedule in the hot-swap stress spec. Test-only.
 - Hostile-input property sweeps (Long beyond 2^53, NaN/Infinity/-0.0, emoji and control-character keys, nulls, deep and large structures) through value/context conversion, tracking conversion, OFREP response decoding and the Optimizely context transformer (#469).
+- **`CachingProvider.scoped` and `CircuitBreakerProvider.scoped`, and config validation for both wrappers** (#451).
+  `scoped(underlying, config)` is `make` plus a finalizer that shuts the wrapper (and so the wrapped provider) down,
+  bounded and logged on failure; use `ZLayer.scoped(...)` for a layer. Every constructor now checks the config:
+  `failureThreshold` and `halfOpenMaxCalls` at least 1, `resetTimeout`, `evaluationTimeout` and `probeTimeout` greater
+  than zero (`Duration.Infinity` legal), `stateCheckInterval` zero or more, `maxEntries` at least 1, `ttl` greater
+  than zero (`Duration.Infinity` legal). Before, a zero `evaluationTimeout` failed every call, a non-positive
+  `maxEntries` cached nothing, and a negative `ttl` or `resetTimeout` expired at once. The unsafe `apply`
+  constructors, including the standalone `CircuitBreaker.apply`, throw `IllegalArgumentException`. Both wrappers'
+  `shutdown()` is now idempotent, so a wrapper that is scoped and registered with `FeatureFlags` shuts its delegate
+  down once.
 
 ### Changed
 
+- **`CachingProvider.make` and `CircuitBreakerProvider.make` can fail** (#451). They return
+  `IO[FeatureFlagError.InvalidConfiguration, _]` instead of `UIO`, the same as the OFREP and Optimizely `make`, failing
+  with a message naming each invalid field (`CircuitBreakerProviderConfig.failureThreshold must be >= 1, got 0`).
+  Binary-compatible; code that annotates the result as `UIO`/`ULayer`, or a layer error type as `Throwable`, widens
+  it to include `FeatureFlagError`.
 - **Tuning defaults are named** (#462). The circuit breaker, cache, construction-retry, event-hub, polling and
   watchdog defaults now come from named constants instead of literals at the call sites; no value changed. Public:
   `CircuitBreaker.DefaultFailureThreshold`/`DefaultResetTimeout`/`DefaultHalfOpenMaxCalls`/`DefaultProbeTimeout`
@@ -135,6 +157,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   no longer overwritten; and the behaviour aspects restore the settings they found instead of the defaults, so a
   test-level aspect no longer wipes a suite-level one, and `withFailureProbability` clamps (NaN to 0) like
   `setFailureProbability`.
+- **An `EvaluationContext` round-trips through the SDK unchanged, and an attribute can no longer clobber the targeting
+  key** (#497). The SDK stores the targeting key as the attribute `targetingKey`, so a context read back from it
+  (hooks, `TestFeatureProvider.evaluations`) carried the key twice, and an attribute of that name overwrote the
+  targeting key on the way out. `targetingKey` is now a reserved attribute name: an explicit `targetingKey` wins over
+  the attribute; with none set, a string attribute of that name becomes the key (as before) and a non-string one is
+  dropped; and the attribute is never read back.
 - **Optimizely: a variable of the wrong type is a `TYPE_MISMATCH`, not your default** (#456). Reading a string
   variable as `int` returned the default with reason `DEFAULT`, a double read as `int` was truncated, the string
   `"42"` was parsed, and an integer beyond `int` range could not be read as `long` at all. Conversions are now strict
@@ -147,6 +175,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   SDK as a `Double`, so anything beyond 2^53 was rounded, and a `Long` arriving from the SDK (hook contexts,
   transactions) was read back through a `Double` the same way. Both directions now carry `java.lang.Long`; int-range
   values still go as `Integer` (#249).
+- **OFREP 401/403 responses fail the typed tier with `Unauthorized`** (#498). The contrib provider does not throw on an
+  auth failure: it returns a `GENERAL` evaluation error with the message "authentication/authorization error for
+  flag: ...", which core mapped to `ProviderError`. A `GENERAL` error whose message names an auth failure (a standalone
+  `401`/`403`, `unauthorized`, `forbidden`, or that literal) is now `Unauthorized`, with a `cause` carrying the message,
+  on the typed tier and in the `error` hook stage. The resolution's error code stays `General`.
 - **`CachingProvider` and `CircuitBreakerProvider` release their event plumbing properly** (#450). Their `shutdown`
   never called `EventProvider.shutdown`, so each wrapper's event emitter kept running and could still dispatch
   afterwards. And a wrapper whose attach to the delegate failed (the delegate already belonged to another wrapper)

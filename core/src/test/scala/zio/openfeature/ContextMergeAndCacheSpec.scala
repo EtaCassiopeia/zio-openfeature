@@ -82,6 +82,18 @@ object ContextMergeAndCacheSpec extends ZIOSpecDefault {
       val m         = keyOnly.merge(attrsOnly)
       assertTrue(m.targetingKey.contains("user-1"), m.getString("b").contains("1"))
     },
+    test("a provider sees the explicit targeting key, not a targetingKey attribute (#497)") {
+      val seen = new AtomicReference[String]("unset")
+      val ctx  = EvaluationContext("u1").withAttribute("targetingKey", AttributeValue.StringValue("x"))
+      ZIO.scoped {
+        buildFF(seen).flatMap { ff =>
+          ff.boolean("flag", default = false, ctx).map { _ =>
+            val key = seen.get()
+            assertTrue(key == "u1")
+          }
+        }
+      }
+    },
     test("the Java-context conversion cache does not serve a stale context after setGlobalContext") {
       val seen = new AtomicReference[String]("unset")
       ZIO.scoped {

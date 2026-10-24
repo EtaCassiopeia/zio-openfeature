@@ -231,7 +231,7 @@ object ProviderInitTimeoutSpec extends ZIOSpecDefault {
         )
         .ensuring(ZIO.succeed(stuck.release()) *> ZIO.attemptBlocking(api.shutdown()).ignore)
     },
-    test("fromAcquireAsync with a stuck real provider falls back to a fresh fallback and reports the failure") {
+    test("fromAcquireAsync with a stuck real provider keeps the fallback serving and reports the failure") {
       val firstFallback = new BoolProvider("fb", false)
       val fallbacks     = new java.util.concurrent.ConcurrentLinkedQueue[BoolProvider]()
       val fallback: URIO[Scope, FeatureProvider] = ZIO.succeed {
@@ -259,10 +259,10 @@ object ProviderInitTimeoutSpec extends ZIOSpecDefault {
           status <- ff.providerStatus
           meta   <- ff.providerMetadata
           value  <- ff.boolean("x", true)
-          // Released by us: the SDK would only shut it down from the stuck composite's never-finishing init task.
+          // #512: the stuck composite never reached the SDK, so the first fallback is still the one serving.
           firstShutdowns <- ZIO.succeed(firstFallback.shutdowns.get())
         } yield assertTrue(
-          firstShutdowns == 1,
+          firstShutdowns == 0,
           err.isInstanceOf[ProviderSwapFailed],
           state.isInstanceOf[AcquireState.Failed],
           status == ProviderStatus.Ready,

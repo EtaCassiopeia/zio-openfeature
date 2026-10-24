@@ -3,7 +3,7 @@ package snippets
 import zio.*
 import zio.openfeature.*
 import zio.openfeature.extras.{CircuitBreakerProvider, CircuitBreakerProviderConfig, EnvVarProvider}
-import zio.openfeature.optimizely.{OptimizelyFeatureProvider, OptimizelyProvider, OptimizelyProviderConfig}
+import zio.openfeature.optimizely.{OptimizelyEvents, OptimizelyFeatureProvider, OptimizelyProvider, OptimizelyProviderConfig}
 
 /** The code on the Optimizely page. The tests only check the parts that need no network: SDK key validation. */
 object Optimizely:
@@ -33,6 +33,16 @@ object Optimizely:
       )
     )
   // --8<-- [end:config]
+
+  // --8<-- [start:events]
+  val silent: IO[FeatureFlagError.InvalidConfiguration, OptimizelyFeatureProvider] =
+    OptimizelyProvider.make(
+      OptimizelyProviderConfig(
+        sdkKey = "abcd1234efgh5678",
+        events = OptimizelyEvents.Disabled // no impressions or conversions leave the process
+      )
+    )
+  // --8<-- [end:events]
 
   // --8<-- [start:agent]
   val selfHosted: IO[FeatureFlagError.InvalidConfiguration, OptimizelyFeatureProvider] =
@@ -66,7 +76,7 @@ object Optimizely:
   // --8<-- [end:readiness]
 
   // --8<-- [start:circuit-breaker]
-  def resilient(provider: OptimizelyFeatureProvider): ZLayer[Any, Throwable, FeatureFlags] =
+  def resilient(provider: OptimizelyFeatureProvider): ZLayer[Any, Throwable | FeatureFlagError, FeatureFlags] =
     ZLayer.fromZIO(CircuitBreakerProvider.make(provider, CircuitBreakerProviderConfig(failureThreshold = 5))).flatMap {
       env =>
         val chain = FeatureFlags.multiProvider(

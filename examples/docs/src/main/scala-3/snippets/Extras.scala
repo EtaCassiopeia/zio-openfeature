@@ -36,8 +36,8 @@ object Extras:
   // --8<-- [end:chain]
 
   // --8<-- [start:caching]
-  def cached(remote: FeatureProvider): ZLayer[Any, Throwable, FeatureFlags] =
-    ZLayer.fromZIO(CachingProvider.make(remote, CachingConfig(maxEntries = 1000, ttl = 1.minute))).flatMap { env =>
+  def cached(remote: FeatureProvider): ZLayer[Any, Throwable | FeatureFlagError, FeatureFlags] =
+    ZLayer.scoped(CachingProvider.scoped(remote, CachingConfig(maxEntries = 1000, ttl = 1.minute))).flatMap { env =>
       FeatureFlags.fromProvider(env.get[CachingProvider])
     }
   // --8<-- [end:caching]
@@ -52,10 +52,10 @@ object Extras:
   // --8<-- [end:caching-invalidate]
 
   // --8<-- [start:circuit-breaker]
-  def resilient(remote: FeatureProvider): ZLayer[Any, Throwable, FeatureFlags] =
+  def resilient(remote: FeatureProvider): ZLayer[Any, Throwable | FeatureFlagError, FeatureFlags] =
     ZLayer
-      .fromZIO(
-        CircuitBreakerProvider.make(
+      .scoped(
+        CircuitBreakerProvider.scoped(
           remote,
           CircuitBreakerProviderConfig(
             failureThreshold = 3,          // open after 3 consecutive infrastructure failures

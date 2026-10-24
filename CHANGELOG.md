@@ -190,6 +190,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   could end up bound and ready while every typed evaluation failed. A started swap now runs to its outcome (success,
   or rollback, or the timed-out `Error` of #433) before the interrupt takes effect — bounded by the init timeout.
   Waiting for an earlier swap to finish stays interruptible.
+- **`fromAcquireAsync` no longer fails evaluations while it swaps the real provider in** (#512). The swap went through
+  `setProvider`, so for as long as the real provider's `initialize()` ran (the first datafile fetch or probe, up to
+  `initTimeout`) the status was `NotReady` and every typed evaluation failed with `ProviderNotReady`, although the
+  factory promises fallback answers until the swap. The SDK now sees one provider for the life of the layer, an
+  internal switch that delegates to the fallback; the composed stack is initialized off to the side and the switch
+  routes to it once that succeeds, so the status stays `Ready` and the fallback answers throughout. A failed or
+  timed-out initialization leaves the first fallback serving (no fallback re-registration), and a `setProvider` before
+  the switch wins, with the state `Failed`. The composed stack's events reach handlers and status through the switch.
 - **Circuit breaker: stale outcomes and polled `READY` no longer reset the circuit** (#447).
   - A call admitted in one circuit state could record its outcome in a later one: a slow call admitted while closed
     could close a half-open circuit while the real probe was still running, or free the probe slot so two probes ran

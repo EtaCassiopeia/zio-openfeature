@@ -174,8 +174,7 @@ object NonBlockingInitSpec extends ZIOSpecDefault {
             for {
               _ <- ff.addHook(hook)
               _ <- ff.setGlobalContext(marker)
-              // Wait for the swap: the composed stack answers the real value (true) for the default-false call. The eval
-              // transiently fails with ProviderNotReady during the swap window, so tolerate that (`.either`) and retry.
+              // Wait for the swap: the composed stack answers the real value (true) for the default-false call.
               swapped <- Live.live(
                 ff.boolean("x", false).either.repeatUntil(_ == Right(true)).timeout(30.seconds)
               )

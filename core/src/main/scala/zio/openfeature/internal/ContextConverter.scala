@@ -81,8 +81,9 @@ private[openfeature] object ContextConverter {
   private def doubleToAttribute(num: Double): AttributeValue = {
     // Long.MaxValue.toDouble rounds up to 2^63 (strictly greater than Long.MaxValue), so .toLong on
     // out-of-range doubles silently saturates. Strict `<` on the upper bound rejects the saturation point.
-    // -0.0 == 0.0, so it is excluded explicitly: as an integer it would lose its sign (#469).
-    val negativeZero = java.lang.Double.doubleToRawLongBits(num) == java.lang.Double.doubleToRawLongBits(-0.0)
+    // -0.0 == 0.0, so it is excluded explicitly: as an integer it would lose its sign (#469). Tested via 1 / -0.0 rather
+    // than a `-0.0` literal, which stryker4s re-prints as `0.0`.
+    val negativeZero = num == 0.0 && (1.0 / num).isNegInfinity
     if (!negativeZero && num == num.toLong.toDouble && num >= Long.MinValue.toDouble && num < Long.MaxValue.toDouble) {
       val asLong = num.toLong
       if (asLong >= Int.MinValue && asLong <= Int.MaxValue) AttributeValue.IntValue(asLong.toInt)

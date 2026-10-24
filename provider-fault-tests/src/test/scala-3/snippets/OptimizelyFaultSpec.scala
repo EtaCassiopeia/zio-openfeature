@@ -5,7 +5,7 @@ import rift.zio.testkit.aspects as riftAspects
 import zio.*
 import zio.openfeature.*
 import zio.openfeature.extras.EnvVarProvider
-import zio.openfeature.optimizely.{OptimizelyProvider, OptimizelyProviderConfig}
+import zio.openfeature.optimizely.{OptimizelyEvents, OptimizelyProvider, OptimizelyProviderConfig}
 import zio.test.*
 
 /** The real Optimizely provider (Apache HttpClient underneath, so it reads the JVM truststore and proxy properties at
@@ -31,7 +31,8 @@ object OptimizelyFaultSpec extends ZIOSpecDefault:
     sdkKey = "fault-test-key",
     datafileUrl = Some(s"https://$host/datafiles/fault-test-key.json"),
     initWait = java.time.Duration.ofSeconds(2),
-    blockingTimeout = Some(java.time.Duration.ofSeconds(2))
+    blockingTimeout = Some(java.time.Duration.ofSeconds(2)),
+    events = OptimizelyEvents.Disabled // datafile behaviour only; keep events off the network (#453)
   )
 
   // Bounds, in the live clock: the provider's own init wait is 2 s.

@@ -24,7 +24,9 @@ import scala.util.Try
   *
   * Construction is intentionally simple: take an already-configured `Optimizely` client and adapt its decision API to
   * OpenFeature's evaluation API. The Optimizely client is responsible for its own datafile polling, error handling, and
-  * event dispatch; this class translates between the two worlds.
+  * event dispatch; this class translates between the two worlds. Factory-built clients dispatch impressions and
+  * conversions as `OptimizelyProviderConfig.events` says (batched to Optimizely by default); a client passed to
+  * `OptimizelyProvider.fromOptimizelyClient` dispatches through whatever event processor it was built with.
   *
   * '''Lifecycle notes:'''
   *   - On `initialize()` we register an Optimizely `UpdateConfigNotification` handler. It counts down an internal latch
@@ -67,8 +69,9 @@ final class OptimizelyFeatureProvider private[optimizely] (
   // When defined, initialize() starts a background daemon that flips READY <-> STALE based on whether datafile
   // fetches keep succeeding (see the watchdog section below and issue #267). None = watchdog disabled.
   staleness: Option[OptimizelyFeatureProvider.StalenessConfig] = None,
-  // Resources the factory built for this provider beyond the Optimizely client itself, closed on shutdown when the
-  // provider owns the client: `Optimizely.close()` does not close the CMAB service's HTTP client (#474).
+  // Resources the factory built for this provider beyond the Optimizely client itself, closed in order after
+  // `Optimizely.close()` when the provider owns the client: `Optimizely.close()` closes neither the CMAB service's
+  // HTTP client (#474) nor the event processor's executor (#453).
   ownedResources: List[java.io.Closeable] = Nil
 ) extends EventProvider {
 

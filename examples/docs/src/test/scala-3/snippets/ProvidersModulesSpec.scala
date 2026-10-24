@@ -3,7 +3,7 @@ package snippets
 import zio.*
 import zio.openfeature.*
 import zio.openfeature.ofrep.{OFREPProvider, OFREPProviderConfig}
-import zio.openfeature.optimizely.{OptimizelyProvider, OptimizelyProviderConfig}
+import zio.openfeature.optimizely.{OptimizelyEvents, OptimizelyProvider, OptimizelyProviderConfig}
 import zio.test.*
 
 /** The OFREP and Optimizely pages' validation claims. Construction never touches the network, so these run offline. */
@@ -34,7 +34,19 @@ object ProvidersModulesSpec extends ZIOSpecDefault:
             OptimizelyProviderConfig("abcd1234efgh5678", pollingInterval = Some(java.time.Duration.ZERO))
           )
         )
-      yield assertTrue(placeholder, short, spaces, url, polling)
+        closeTimeout <- rejected(
+          OptimizelyProvider.make(
+            OptimizelyProviderConfig(
+              "abcd1234efgh5678",
+              events = OptimizelyEvents.Batched(closeTimeout = java.time.Duration.ofSeconds(5))
+            )
+          )
+        )
+      yield assertTrue(placeholder, short, spaces, url, polling, closeTimeout)
+    },
+    test("Optimizely events are batched by default, with a 3 s shutdown wait") {
+      val events = OptimizelyProviderConfig("abcd1234efgh5678").events
+      assertTrue(events == OptimizelyEvents.Batched(10, java.time.Duration.ofSeconds(30), java.time.Duration.ofSeconds(3)))
     },
     test("OptimizelyProvider.scoped accepts a well-formed key and shuts the provider down with the scope") {
       ZIO.scoped(OptimizelyProvider.scoped("abcd1234efgh5678")).as(assertCompletes)

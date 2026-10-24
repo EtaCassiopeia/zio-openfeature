@@ -10,44 +10,20 @@ private[openfeature] object ContextConverter {
 
   /** Convert a zio-openfeature EvaluationContext to an OpenFeature SDK EvaluationContext. */
   def toOpenFeature(ctx: EvaluationContext): OFEvaluationContext = {
-    val mutableCtx = new MutableContext()
-
+    // Built from a map of `Value`s rather than `MutableContext.add`, which has no Long overload (#471).
+    val mutableCtx = new MutableContext(ctx.attributes.map { case (k, v) => k -> attributeToValue(v) }.asJava)
     ctx.targetingKey.foreach(key => mutableCtx.setTargetingKey(key))
-
-    ctx.attributes.foreach { case (key, value) =>
-      addAttributeToContext(mutableCtx, key, value)
-    }
-
     mutableCtx
   }
 
-  private def addAttributeToContext(ctx: MutableContext, key: String, attr: AttributeValue): Unit =
-    attr match {
-      case AttributeValue.BoolValue(b)   => ctx.add(key, b)
-      case AttributeValue.StringValue(s) => ctx.add(key, s)
-      case AttributeValue.IntValue(i)    => ctx.add(key, Integer.valueOf(i))
-      // OpenFeature's Value has no Long: send an int-range long as Integer so provider targeting rules that do
-      // `instanceof Integer` match, and only fall back to Double (lossy beyond 2^53) for out-of-int-range values.
-      case AttributeValue.LongValue(l) =>
-        if (l.isValidInt) ctx.add(key, Integer.valueOf(l.toInt))
-        else ctx.add(key, java.lang.Double.valueOf(l.toDouble))
-      case AttributeValue.DoubleValue(d)   => ctx.add(key, d)
-      case AttributeValue.InstantValue(dt) => ctx.add(key, dt)
-      case AttributeValue.ListValue(list) =>
-        val javaList = list.map(attributeToValue).asJava
-        ctx.add(key, javaList)
-      case AttributeValue.StructValue(map) =>
-        val javaMap: java.util.Map[String, Object] = map.map { case (k, v) =>
-          k -> attributeToValue(v).asObject()
-        }.asJava
-        ctx.add(key, Structure.mapToStructure(javaMap))
-    }
-
   private def attributeToValue(attr: AttributeValue): Value = attr match {
-    case AttributeValue.BoolValue(b)     => new Value(b)
-    case AttributeValue.StringValue(s)   => new Value(s)
-    case AttributeValue.IntValue(i)      => new Value(i)
-    case AttributeValue.LongValue(l)     => if (l.isValidInt) new Value(l.toInt) else new Value(l.toDouble)
+    case AttributeValue.BoolValue(b)   => new Value(b)
+    case AttributeValue.StringValue(s) => new Value(s)
+    case AttributeValue.IntValue(i)    => new Value(Integer.valueOf(i))
+    // An int-range long goes as Integer, so provider targeting rules that do `instanceof Integer` match (#249); any
+    // other long as java.lang.Long, exactly (#471).
+    case AttributeValue.LongValue(l) =>
+      if (l.isValidInt) new Value(Integer.valueOf(l.toInt)) else new Value(java.lang.Long.valueOf(l))
     case AttributeValue.DoubleValue(d)   => new Value(d)
     case AttributeValue.InstantValue(dt) => new Value(dt)
     case AttributeValue.ListValue(list) =>
@@ -78,20 +54,14 @@ private[openfeature] object ContextConverter {
   private def valueToAttribute(value: Value): AttributeValue =
     if (value.isBoolean) AttributeValue.BoolValue(value.asBoolean())
     else if (value.isString) AttributeValue.StringValue(value.asString())
-    else if (value.isNumber) {
-      val num = value.asDouble()
-      // Long.MaxValue.toDouble rounds up to 2^63 (strictly greater than Long.MaxValue), so .toLong on
-      // out-of-range doubles silently saturates. Strict `<` on the upper bound rejects the saturation point.
-      // -0.0 == 0.0, so it is excluded explicitly: as an integer it would lose its sign (#469).
-      val negativeZero = java.lang.Double.doubleToRawLongBits(num) == java.lang.Double.doubleToRawLongBits(-0.0)
-      if (
-        !negativeZero && num == num.toLong.toDouble && num >= Long.MinValue.toDouble && num < Long.MaxValue.toDouble
-      ) {
-        val asLong = num.toLong
-        if (asLong >= Int.MinValue && asLong <= Int.MaxValue) AttributeValue.IntValue(asLong.toInt)
-        else AttributeValue.LongValue(asLong)
-      } else AttributeValue.DoubleValue(num)
-    } else if (value.isList) {
+    else if (value.isNumber) value.asObject() match {
+      // Integral boxes convert exactly; only other numbers go through the whole-double check below (#471).
+      case i: java.lang.Integer => AttributeValue.IntValue(i.intValue)
+      case l: java.lang.Long =>
+        if (l.longValue.isValidInt) AttributeValue.IntValue(l.intValue) else AttributeValue.LongValue(l.longValue)
+      case _ => doubleToAttribute(value.asDouble())
+    }
+    else if (value.isList) {
       val list = value.asList().asScala.map(valueToAttribute).toList
       AttributeValue.ListValue(list)
     } else if (value.isStructure) {
@@ -106,4 +76,17 @@ private[openfeature] object ContextConverter {
       AttributeValue.StructValue(struct)
     } else if (value.isInstant) AttributeValue.InstantValue(value.asInstant())
     else AttributeValue.StringValue(value.asString())
+
+  // A whole double in Long range becomes IntValue/LongValue, anything else stays a double.
+  private def doubleToAttribute(num: Double): AttributeValue = {
+    // Long.MaxValue.toDouble rounds up to 2^63 (strictly greater than Long.MaxValue), so .toLong on
+    // out-of-range doubles silently saturates. Strict `<` on the upper bound rejects the saturation point.
+    // -0.0 == 0.0, so it is excluded explicitly: as an integer it would lose its sign (#469).
+    val negativeZero = java.lang.Double.doubleToRawLongBits(num) == java.lang.Double.doubleToRawLongBits(-0.0)
+    if (!negativeZero && num == num.toLong.toDouble && num >= Long.MinValue.toDouble && num < Long.MaxValue.toDouble) {
+      val asLong = num.toLong
+      if (asLong >= Int.MinValue && asLong <= Int.MaxValue) AttributeValue.IntValue(asLong.toInt)
+      else AttributeValue.LongValue(asLong)
+    } else AttributeValue.DoubleValue(num)
+  }
 }

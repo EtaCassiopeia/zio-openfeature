@@ -232,6 +232,27 @@ object TestkitSpec extends ZIOSpecDefault:
   }
   // --8<-- [end:caching-reason]
 
+  // --8<-- [start:fault-injection]
+  val faultInjection = suite("when the provider itself misbehaves")(
+    test("an initialize() that never returns fails the layer at the init timeout") {
+      for
+        faulty <- FaultyProvider.scoped(Map("flag" -> true)) // the scope releases any hang left parked
+        _      <- faulty.script(Op.Initialize, Fault.HangUntilReleased) // ignores shutdown(), like a stuck SDK
+        error  <- FeatureFlags.fromProvider(faulty, FeatureFlagsConfig().withInitTimeout(200.millis)).build.flip
+      yield assertTrue(error.isInstanceOf[java.util.concurrent.TimeoutException])
+    },
+    test("the first evaluation fails, the ones after it succeed") {
+      for
+        faulty <- FaultyProvider.scoped(Map("flag" -> true))
+        _      <- faulty.script(Op.EvaluateBoolean, Fault.Throw(new RuntimeException("timeout")), Fault.Succeed)
+        both <- (FeatureFlags.boolean("flag", default = false).either <*> FeatureFlags.boolean("flag", default = false))
+          .provide(FeatureFlags.fromProvider(faulty))
+        calls <- faulty.calls(Op.EvaluateBoolean)
+      yield assertTrue(both._1.isLeft, both._2, calls.size == 2)
+    }
+  ) @@ TestAspect.withLiveClock
+  // --8<-- [end:fault-injection]
+
   def spec = suite("Testkit page")(
     greeterSuite,
     typedFixture,
@@ -247,5 +268,6 @@ object TestkitSpec extends ZIOSpecDefault:
     withOverrides,
     chain,
     celsiusLaws,
-    cachingReason
-  ) @@ TestAspect.sequential // `chain` and `cachingReason` use the global OpenFeature API
+    cachingReason,
+    faultInjection
+  ) @@ TestAspect.sequential // `chain`, `cachingReason` and `faultInjection` use the global OpenFeature API

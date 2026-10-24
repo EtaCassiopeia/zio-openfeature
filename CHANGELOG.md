@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`FaultyProvider` in the testkit** (#463): wraps any provider (or a fresh `TestFeatureProvider`) and applies a
+  scripted `Fault` per `Op`, one per call with the last repeating: `Throw`, `Delay`, `HangUntilReleased` (an
+  `initialize()` that ignores `shutdown()`), `HangUntilShutdown` and `Emit`. It records every call (`calls`,
+  `awaitEntered`), and `FaultyProvider.scoped` releases any hang still parked when the scope closes. `Op` covers every
+  `FeatureProvider`/`EventProvider` method but `emit*`, and a reflective test fails if the SDK adds one. The #433,
+  #434 and #435 lifecycle scenarios are re-expressed with it in the testkit, and extras' tests now use it (extras
+  depends on testkit for tests only). See "Fault injection" on the testkit page.
 - **Weekly mutation testing of core** (#468): stryker4s via the new `Mutation testing` workflow (scheduled and
   manual), with its report as a build artifact. Informational only: never runs on a pull request and never fails the
   build. Locally, `core/stryker`; see the development guide.

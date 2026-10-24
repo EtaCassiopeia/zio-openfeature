@@ -16,9 +16,7 @@ import scala.jdk.CollectionConverters._
   * \+-Infinity, -0.0, subnormals, empty / emoji / control-character / lone-surrogate strings and keys, nulls in lists
   * and maps, deep nesting and very large containers.
   *
-  * Known gaps, deliberately NOT asserted as passing here:
-  *   - #471: `ContextConverter` sends an out-of-int-range Long attribute as a lossy Double. Documented below with a
-  *     current-behaviour test plus an ignored exactness property.
+  * Longs beyond +-2^53 are swept separately: they round-trip exactly since #471.
   */
 object HostileValueSweepSpec extends ZIOSpecDefault {
 
@@ -281,20 +279,12 @@ object HostileValueSweepSpec extends ZIOSpecDefault {
         val backs = cases.map(l => l -> roundTripAttr(AttributeValue.LongValue(l)).asLong)
         assertTrue(backs.forall { case (l, back) => back.contains(l) })
       },
-      // #471: out-of-int-range Long attributes are sent as a lossy Double. This test pins CURRENT behaviour so a fix is
-      // noticed (it must then be flipped to the exact-preservation property below); it is not an endorsement.
-      test("#471 current behaviour: a Long beyond +-2^53 reads back as its nearest Double, never anything wilder") {
-        check(beyondSafeLong) { l =>
-          val back = roundTripAttr(AttributeValue.LongValue(l))
-          assertTrue(back.asDouble.exists(sameBits(_, l.toDouble)))
-        }
-      },
-      test("#471 desired: every Long beyond +-2^53 survives with its exact value") {
+      test("every Long beyond +-2^53 survives with its exact value (#471)") {
         check(beyondSafeLong) { l =>
           val back = roundTripAttr(AttributeValue.LongValue(l))
           assertTrue(back.asLong.contains(l))
         }
-      } @@ TestAspect.ignore, // #471: held for human triage; flip on once ContextConverter stops narrowing to Double
+      },
       test("NaN, +-Infinity, subnormals and extremes survive bit-for-bit") {
         check(hostileDouble.filter(d => !isNegativeZero(d))) { d =>
           val back = roundTripAttr(AttributeValue.DoubleValue(d))

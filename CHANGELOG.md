@@ -133,6 +133,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `double`.
 - **A `-0.0` context attribute keeps its sign** (#469). Converting a context back from the OpenFeature SDK treated
   `-0.0` as the whole number `0` and returned `IntValue(0)`. Found by the new hostile-input sweeps.
+- **A `Long` context attribute beyond the `int` range keeps its exact value** (#471). It was sent to the OpenFeature
+  SDK as a `Double`, so anything beyond 2^53 was rounded, and a `Long` arriving from the SDK (hook contexts,
+  transactions) was read back through a `Double` the same way. Both directions now carry `java.lang.Long`; int-range
+  values still go as `Integer` (#249).
 - **`CachingProvider` and `CircuitBreakerProvider` release their event plumbing properly** (#450). Their `shutdown`
   never called `EventProvider.shutdown`, so each wrapper's event emitter kept running and could still dispatch
   afterwards. And a wrapper whose attach to the delegate failed (the delegate already belonged to another wrapper)

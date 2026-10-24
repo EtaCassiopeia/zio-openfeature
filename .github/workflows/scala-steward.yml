@@ -4,9 +4,10 @@ name: Scala Steward
 # dependencies in build.sbt / project/*), which Dependabot cannot do. It runs on a schedule and can be
 # triggered manually; it never runs on pull_request, so it is not part of the CI merge gate.
 #
-# By default it authenticates with the built-in GITHUB_TOKEN. PRs opened by that token do not themselves
-# trigger CI; to have Steward's update PRs run CI automatically, create a Personal Access Token with `repo`
-# scope, store it as the `SCALA_STEWARD_TOKEN` secret, and set `github-token: ${{ secrets.SCALA_STEWARD_TOKEN }}`.
+# It authenticates with the SCALA_STEWARD_TOKEN secret: a fine-grained personal access token scoped to this
+# repository (Contents and Pull requests read/write, Metadata read). The built-in GITHUB_TOKEN does not work here:
+# this repo does not allow GitHub Actions to create pull requests (every run failed with a 403, #473), and a PR
+# opened by GITHUB_TOKEN would not trigger CI anyway. Version pins live in .scala-steward.conf.
 on:
   schedule:
     - cron: "0 6 * * 1"
@@ -23,4 +24,4 @@ jobs:
       - name: Run Scala Steward
         uses: scala-steward-org/scala-steward-action@v2
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+          github-token: ${{ secrets.SCALA_STEWARD_TOKEN }}

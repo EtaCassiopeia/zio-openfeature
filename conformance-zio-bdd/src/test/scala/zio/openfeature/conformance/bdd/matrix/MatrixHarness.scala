@@ -4,7 +4,7 @@ import zio._
 import zio.bdd.mock._
 import zio.bdd.mock.dsl._
 import zio.openfeature._
-import zio.openfeature.optimizely.{OptimizelyProvider, OptimizelyProviderConfig}
+import zio.openfeature.optimizely.{OptimizelyEvents, OptimizelyProvider, OptimizelyProviderConfig}
 
 /** Builds a per-scenario ZLayer[Any, Throwable, FeatureFlags] from a named datafile fixture.
   *
@@ -64,7 +64,8 @@ object MatrixHarness {
                     datafileUrl = Some(dataUrl),
                     initWait = java.time.Duration.ofSeconds(5),
                     pollingInterval = Some(java.time.Duration.ofSeconds(3600)), // no polling in tests
-                    blockingTimeout = Some(java.time.Duration.ofSeconds(2))
+                    blockingTimeout = Some(java.time.Duration.ofSeconds(2)),
+                    events = OptimizelyEvents.Disabled // datafile behaviour only; keep events off the network (#453)
                   )
         provider <- OptimizelyProvider.scoped(config).mapError(e => new RuntimeException(e.message))
         domain    = s"flag-matrix-${java.util.UUID.randomUUID()}"

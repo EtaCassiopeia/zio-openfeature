@@ -121,6 +121,28 @@ object FeatureFlagErrorSpec extends ZIOSpecDefault {
         assertTrue(!FeatureFlagError.isProviderError(FeatureFlagError.NestedTransactionNotAllowed))
       }
     ),
+    suite("looksLikeAuthFailure")(
+      test("matches standalone 401/403 tokens, unauthorized, forbidden and the OFREP contrib literal") {
+        val matched = List(
+          "HTTP 401",
+          "status 403 returned",
+          "Unauthorized",
+          "forbidden",
+          "authentication/authorization error for flag: my-flag"
+        ).map(FeatureFlagError.looksLikeAuthFailure)
+        assertTrue(matched == List(true, true, true, true, true))
+      },
+      test("does not match digits inside other tokens or unrelated failures") {
+        val matched = List(
+          "port 4013",
+          "flag 403abc",
+          "Rate limit exceeded for flag: my-flag",
+          "General error: upstream is sick",
+          ""
+        ).map(FeatureFlagError.looksLikeAuthFailure)
+        assertTrue(matched == List(false, false, false, false, false))
+      }
+    ),
     suite("toErrorCode")(
       test("maps evaluation errors correctly") {
         assertTrue(FeatureFlagError.toErrorCode(FeatureFlagError.FlagNotFound("key")) == ErrorCode.FlagNotFound) &&

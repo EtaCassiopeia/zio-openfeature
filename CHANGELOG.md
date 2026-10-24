@@ -59,6 +59,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   derived instances and `Option` set it themselves; a custom instance overrides `wire`. An instance that still
   overrides `wireType` keeps working, and its name is now matched ignoring case, so `"string"` selects the string
   resolver instead of silently falling to the object path.
+- **`WrapperLaws.delegation` in the testkit** (#466): checks that a provider wrapper passes every `FeatureProvider`
+  call on. One test per `Op`: the method is called on the wrapper with distinctive arguments and the wrapped
+  `FaultyProvider` must record the same call with equal arguments, both `initialize` overloads included. Ops the
+  wrapper answers itself go in `handledByWrapper` with a reason, and an entry that is no longer needed fails. The
+  extras wrappers and `CachingReasonProvider` now run it on 2.13 and 3, replacing the Scala-3-only reflection specs,
+  which could not see a missing default-method override. `FaultyProvider.Call` now records the call's arguments. See
+  "Checking your own wrapper" on the testkit page.
 
 ### Changed
 

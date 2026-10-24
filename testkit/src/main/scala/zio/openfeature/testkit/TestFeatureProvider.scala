@@ -21,7 +21,6 @@ import dev.openfeature.sdk.{
   ProviderEventDetails,
   ProviderState,
   Value,
-  Structure,
   TrackingEventDetails => OFTracking
 }
 import dev.openfeature.sdk.exceptions._
@@ -234,34 +233,7 @@ final class TestFeatureProvider private (
   ): ProviderEvaluation[Value] = {
     evaluations.add((key, context))
     applyBehavior()
-    evaluate(key, defaultValue)(anyToValue)
-  }
-
-  private def anyToValue(any: Any): Value = any match {
-    // Option is unwrapped before the `other.toString` fallback below, and a `Value` passes straight through. Without
-    // these, seeding a flag with an encoder's output — `setFlag(key, FlagType[Rollout].encode(r))`, the natural way
-    // to test a derived product — sends an Option-valued field as the literal string "Some(x)". Kept in step with
-    // the equivalent helper in `FeatureFlagsLive`.
-    case v: Value      => v
-    case Some(inner)   => anyToValue(inner)
-    case None          => new Value()
-    case b: Boolean    => new Value(b)
-    case s: String     => new Value(s)
-    case i: Int        => new Value(i)
-    case l: Long       => new Value(l)
-    case d: Double     => new Value(d)
-    case f: Float      => new Value(f.toDouble)
-    case list: List[_] => new Value(list.map(anyToValue).asJava)
-    case map: Map[_, _] =>
-      val javaMap: java.util.Map[String, Object] = map
-        .asInstanceOf[Map[String, Any]]
-        .map { case (k, v) =>
-          k -> anyToValue(v).asObject()
-        }
-        .asJava
-      new Value(Structure.mapToStructure(javaMap))
-    case null  => new Value()
-    case other => new Value(other.toString)
+    evaluate(key, defaultValue)(ValueBridge.anyToValue)
   }
 
   // Test Helper Methods
@@ -563,6 +535,48 @@ object TestFeatureProvider {
       ZIO.serviceWith[TestFeatureProvider](tp => tp.behaviorRef.getAndUpdate(c => modify(c)))
     )(previous => ZIO.serviceWith[TestFeatureProvider](_.behaviorRef.set(previous)))
 
+  // Flag overrides — TestAspects (#458)
+
+  /** Aspect that pins these typed flag values for the duration of the test.
+    *
+    * Restores '''per key''': before the test each overridden key's current value (or its absence) is saved, and after
+    * the test that value is put back, or the key removed if it was absent. Keys the aspect does not name are never
+    * touched, so a test's own `setFlag` on another key survives, and a test-level aspect nested in a suite-level one
+    * returns the suite's value afterwards. A `setFlag` on an overridden key inside the test is undone by the restore.
+    *
+    * '''Sharing caveat''': with `provideShared`, every test sees the same provider, so flag aspects on tests that run
+    * concurrently race each other. Use `provide` per test, or `TestAspect.sequential` on the suite.
+    *
+    * Like the typed `layer`, two overrides for the same key are rejected when the aspect is built.
+    */
+  def withFlags(overrides: FlagOverride*): TestAspect[Nothing, TestFeatureProvider, Nothing, Any] =
+    flagAspect(toFlagMap(overrides))
+
+  /** Untyped twin of [[withFlags(overrides*]]: pins these key/value pairs for the test and restores each key after. */
+  def withFlags(flags: Map[String, Any]): TestAspect[Nothing, TestFeatureProvider, Nothing, Any] =
+    flagAspect(flags)
+
+  /** Aspect that pins one typed flag for the test; see [[withFlags(overrides*]] for the restore and sharing rules. */
+  def withFlag[A](flag: FlagDef[A], value: A): TestAspect[Nothing, TestFeatureProvider, Nothing, Any] =
+    withFlags(FlagOverride.Ops(flag) := value)
+
+  /** Aspect that pins one flag key for the test; see [[withFlags(overrides*]] for the restore and sharing rules. */
+  def withFlag(key: String, value: Any): TestAspect[Nothing, TestFeatureProvider, Nothing, Any] =
+    withFlags(Map(key -> value))
+
+  private def flagAspect(overrides: Map[String, Any]): TestAspect[Nothing, TestFeatureProvider, Nothing, Any] =
+    TestAspect.aroundWith(
+      // `put` returns the previous value atomically, so the save and the set cannot interleave with another writer.
+      ZIO.serviceWith[TestFeatureProvider](tp => overrides.map { case (k, v) => k -> Option(tp.flags.put(k, v)) })
+    )(previous =>
+      ZIO.serviceWith[TestFeatureProvider] { tp =>
+        previous.foreach {
+          case (k, Some(old)) => tp.flags.put(k, old)
+          case (k, None)      => tp.flags.remove(k)
+        }
+      }
+    )
+
   /** The metadata name every factory except [[makeNamed]] reports. */
   final val DefaultName: String = "TestFeatureProvider"
 
@@ -592,26 +606,43 @@ object TestFeatureProvider {
     makeReady(name, initialFlags)
 
   private def makeReady(name: String, initialFlags: Map[String, Any]): UIO[TestFeatureProvider] =
+    build(name, initialFlags, Start.Ready)
+
+  /** How a provider starts: which status it reports and which latches it carries. */
+  sealed private trait Start extends Product with Serializable
+  private object Start {
+
+    /** Ready, no latches — the plain [[make]] provider. */
+    case object Ready extends Start
+
+    /** Ready, with an `initDone` latch for the sync layer's `PROVIDER_READY` replay handshake. */
+    case object ReadyWithHandshake extends Start
+
+    /** NotReady; `initialize()` blocks on `initLatch` until `setStatus(Ready)`, which then waits on `initDone`. */
+    case object NotReady extends Start
+  }
+
+  private def build(name: String, initialFlags: Map[String, Any], start: Start): UIO[TestFeatureProvider] = {
+    val ready = start != Start.NotReady
     for {
       eventsHub <- Hub.unbounded[ProviderEvent]
-      statusRef <- SubscriptionRef.make[ProviderStatus](ProviderStatus.Ready)
+      statusRef <- SubscriptionRef.make[ProviderStatus](if (ready) ProviderStatus.Ready else ProviderStatus.NotReady)
       provider <- ZIO.succeed {
         val flags = new ConcurrentHashMap[String, Any]()
         initialFlags.foreach { case (k, v) => flags.put(k, v) }
-        val state       = new AtomicReference[ProviderState](ProviderState.READY)
-        val evaluations = new CopyOnWriteArrayList[(String, OFEvaluationContext)]()
         new TestFeatureProvider(
           flags,
-          state,
-          evaluations,
+          new AtomicReference[ProviderState](if (ready) ProviderState.READY else ProviderState.NOT_READY),
+          new CopyOnWriteArrayList[(String, OFEvaluationContext)](),
           eventsHub,
           statusRef,
-          initLatch = None,
-          initDone = None,
+          initLatch = if (start == Start.NotReady) Some(new CountDownLatch(1)) else None,
+          initDone = if (start == Start.Ready) None else Some(new CountDownLatch(1)),
           name = name
         )
       }
     } yield provider
+  }
 
   // Typed fixture factories (#351)
   //
@@ -684,56 +715,76 @@ object TestFeatureProvider {
     * Tests using this layer can safely run in parallel without cross-test event contamination.
     */
   def layer(flags: Map[String, Any]): ZLayer[Any, Throwable, TestFeatureProvider with FeatureFlags] =
+    isolatedLayer(flags, LayerMode.Sync("initial PROVIDER_READY replay during layer construction"))
+
+  /** How an isolated layer connects its provider to the SDK. */
+  sealed private trait LayerMode extends Product with Serializable {
+    def domainPrefix: String
+  }
+  private object LayerMode {
+
+    /** Blocking `fromProviderWithDomain`, then wait for the SDK's initial `PROVIDER_READY` replay. The Java SDK
+      * dispatches that event asynchronously when handlers are registered on an already-ready provider; waiting for it
+      * (a deterministic handshake, formerly a fixed 50ms sleep) keeps a `setStatus()` made straight after the build
+      * from being overwritten by the late replay. `what` names the wait in the timeout message.
+      */
+    final case class Sync(what: String) extends LayerMode { val domainPrefix = "test-" }
+
+    /** Non-blocking `fromProviderWithDomainAsync`; the test drives the transition to Ready. */
+    case object Async extends LayerMode { val domainPrefix = "test-async-" }
+
+    /** Like [[Async]], but a scoped fiber sets the provider Ready after `delay` on the ZIO clock. */
+    final case class AsyncAutoReady(delay: Duration) extends LayerMode { val domainPrefix = "test-async-ready-" }
+  }
+
+  /** Register `provider` with a fresh isolated `OpenFeatureAPI` under a unique domain, so tests never share SDK state
+    * or see each other's events. `onReady` is the latch the event bridge counts down on `PROVIDER_READY`.
+    */
+  private def connect(
+    provider: TestFeatureProvider,
+    mode: LayerMode,
+    onReady: Option[CountDownLatch]
+  ): ZIO[Scope, Throwable, FeatureFlags] =
+    for {
+      api    <- ZIO.succeed(OpenFeatureAPI.createIsolated())
+      domain <- ZIO.succeed(s"${mode.domainPrefix}${java.util.UUID.randomUUID()}")
+      layer = mode match {
+        case LayerMode.Sync(_) =>
+          FeatureFlags.fromProviderWithDomain(provider, domain, provider.statusRef, api = Some(api), onReady = onReady)
+        case _ =>
+          FeatureFlags
+            .fromProviderWithDomainAsync(provider, domain, provider.statusRef, api = Some(api), onReady = onReady)
+      }
+      featureFlags <- layer.build.map(_.get[FeatureFlags])
+      _ <- mode match {
+        case LayerMode.Sync(what) => awaitLatch(onReady, what)
+        case LayerMode.Async      => ZIO.unit
+        case LayerMode.AsyncAutoReady(delay) =>
+          (ZIO.sleep(delay) *> provider.setStatus(ProviderStatus.Ready)).forkScoped.unit
+      }
+    } yield featureFlags
+
+  /** A fresh provider holding `flags`, connected through [[connect]], exposed with its `FeatureFlags`. */
+  private def isolatedLayer(
+    flags: Map[String, Any],
+    mode: LayerMode
+  ): ZLayer[Any, Throwable, TestFeatureProvider with FeatureFlags] = {
+    val start = mode match {
+      case LayerMode.Sync(_) => Start.ReadyWithHandshake
+      case _                 => Start.NotReady
+    }
     ZLayer
       .scoped {
         for {
-          testProvider <- makeReadyWithInitDone(flags)
-          api    = OpenFeatureAPI.createIsolated()
-          domain = s"test-${java.util.UUID.randomUUID()}"
-          featureFlags <- FeatureFlags
-            .fromProviderWithDomain(
-              testProvider,
-              domain,
-              testProvider.statusRef,
-              api = Some(api),
-              onReady = testProvider.initDone
-            )
-            .build
-            .map(_.get)
-          // The Java SDK dispatches an initial PROVIDER_READY event asynchronously when handlers are
-          // registered on an already-ready provider. The event bridge counts down `initDone` when that
-          // replay arrives — a deterministic handshake (formerly a fixed 50ms sleep) ensuring subsequent
-          // setStatus() calls in tests are not overwritten by the late replay.
-          _ <- awaitLatch(testProvider.initDone, "initial PROVIDER_READY replay during layer construction")
+          testProvider <- build(DefaultName, flags, start)
+          featureFlags <- connect(testProvider, mode, testProvider.initDone)
         } yield (testProvider, featureFlags)
       }
       .flatMap { env =>
         val (testProvider, featureFlags) = env.get[(TestFeatureProvider, FeatureFlags)]
         ZLayer.succeed(testProvider) ++ ZLayer.succeed(featureFlags)
       }
-
-  /** Like [[make]], but in Ready state with an `initDone` latch wired for the sync layer's PROVIDER_READY handshake. */
-  private def makeReadyWithInitDone(initialFlags: Map[String, Any]): UIO[TestFeatureProvider] =
-    for {
-      eventsHub <- Hub.unbounded[ProviderEvent]
-      statusRef <- SubscriptionRef.make[ProviderStatus](ProviderStatus.Ready)
-      provider <- ZIO.succeed {
-        val flags = new ConcurrentHashMap[String, Any]()
-        initialFlags.foreach { case (k, v) => flags.put(k, v) }
-        val state       = new AtomicReference[ProviderState](ProviderState.READY)
-        val evaluations = new CopyOnWriteArrayList[(String, OFEvaluationContext)]()
-        new TestFeatureProvider(
-          flags,
-          state,
-          evaluations,
-          eventsHub,
-          statusRef,
-          initLatch = None,
-          initDone = Some(new CountDownLatch(1)),
-          name = DefaultName
-        )
-      }
-    } yield provider
+  }
 
   /** Create just the TestFeatureProvider layer (without FeatureFlags). */
   def providerLayer: ULayer[TestFeatureProvider] =
@@ -751,16 +802,11 @@ object TestFeatureProvider {
     */
   def layerFrom(provider: TestFeatureProvider): ZLayer[Any, Throwable, FeatureFlags] =
     ZLayer.scoped {
-      for {
-        replayed <- ZIO.succeed(new CountDownLatch(1))
-        api    = OpenFeatureAPI.createIsolated()
-        domain = s"test-${java.util.UUID.randomUUID()}"
-        featureFlags <- FeatureFlags
-          .fromProviderWithDomain(provider, domain, provider.statusRef, api = Some(api), onReady = Some(replayed))
-          .build
-          .map(_.get)
-        _ <- awaitLatch(Some(replayed), "initial PROVIDER_READY replay during layerFrom")
-      } yield featureFlags
+      ZIO
+        .succeed(new CountDownLatch(1))
+        .flatMap(replayed =>
+          connect(provider, LayerMode.Sync("initial PROVIDER_READY replay during layerFrom"), Some(replayed))
+        )
     }
 
   /** Same as [[layer]]; kept for source compatibility from before layers stopped needing a `Scope`. */
@@ -787,28 +833,7 @@ object TestFeatureProvider {
     * simulate the provider becoming ready. Evaluations will fail with `ProviderNotReady` until then.
     */
   def asyncLayer(flags: Map[String, Any]): ZLayer[Any, Throwable, TestFeatureProvider with FeatureFlags] =
-    ZLayer
-      .scoped {
-        for {
-          testProvider <- makeNotReady(flags)
-          api    = OpenFeatureAPI.createIsolated()
-          domain = s"test-async-${java.util.UUID.randomUUID()}"
-          featureFlags <- FeatureFlags
-            .fromProviderWithDomainAsync(
-              testProvider,
-              domain,
-              testProvider.statusRef,
-              api = Some(api),
-              onReady = testProvider.initDone
-            )
-            .build
-            .map(_.get)
-        } yield (testProvider, featureFlags)
-      }
-      .flatMap { env =>
-        val (testProvider, featureFlags) = env.get[(TestFeatureProvider, FeatureFlags)]
-        ZLayer.succeed(testProvider) ++ ZLayer.succeed(featureFlags)
-      }
+    isolatedLayer(flags, LayerMode.Async)
 
   /** Create a TestFeatureProvider that starts in NotReady state.
     *
@@ -816,26 +841,7 @@ object TestFeatureProvider {
     * slow-connecting provider (e.g., one that needs to establish a network connection).
     */
   private[testkit] def makeNotReady(initialFlags: Map[String, Any]): UIO[TestFeatureProvider] =
-    for {
-      eventsHub <- Hub.unbounded[ProviderEvent]
-      statusRef <- SubscriptionRef.make[ProviderStatus](ProviderStatus.NotReady)
-      provider <- ZIO.succeed {
-        val flags = new ConcurrentHashMap[String, Any]()
-        initialFlags.foreach { case (k, v) => flags.put(k, v) }
-        val state       = new AtomicReference[ProviderState](ProviderState.NOT_READY)
-        val evaluations = new CopyOnWriteArrayList[(String, OFEvaluationContext)]()
-        new TestFeatureProvider(
-          flags,
-          state,
-          evaluations,
-          eventsHub,
-          statusRef,
-          initLatch = Some(new CountDownLatch(1)),
-          initDone = Some(new CountDownLatch(1)),
-          name = DefaultName
-        )
-      }
-    } yield provider
+    build(DefaultName, initialFlags, Start.NotReady)
 
   /** Create a FeatureFlags layer with async initialization that auto-transitions to Ready.
     *
@@ -850,29 +856,7 @@ object TestFeatureProvider {
     flags: Map[String, Any] = Map.empty,
     initDelay: Duration = TestFeatureProvider.DefaultInitDelay
   ): ZLayer[Any, Throwable, TestFeatureProvider with FeatureFlags] =
-    ZLayer
-      .scoped {
-        for {
-          testProvider <- makeNotReady(flags)
-          api    = OpenFeatureAPI.createIsolated()
-          domain = s"test-async-ready-${java.util.UUID.randomUUID()}"
-          featureFlags <- FeatureFlags
-            .fromProviderWithDomainAsync(
-              testProvider,
-              domain,
-              testProvider.statusRef,
-              api = Some(api),
-              onReady = testProvider.initDone
-            )
-            .build
-            .map(_.get)
-          _ <- (ZIO.sleep(initDelay) *> testProvider.setStatus(ProviderStatus.Ready)).forkScoped
-        } yield (testProvider, featureFlags)
-      }
-      .flatMap { env =>
-        val (testProvider, featureFlags) = env.get[(TestFeatureProvider, FeatureFlags)]
-        ZLayer.succeed(testProvider) ++ ZLayer.succeed(featureFlags)
-      }
+    isolatedLayer(flags, LayerMode.AsyncAutoReady(initDelay))
 
   /** Same as [[asyncLayer]]; kept for source compatibility from before layers stopped needing a `Scope`. */
   @deprecated("Use asyncLayer: it no longer needs a Scope, so this twin is identical", "1.2.0")

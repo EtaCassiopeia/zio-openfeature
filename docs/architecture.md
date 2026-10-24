@@ -35,7 +35,9 @@ ours, its event handlers become `onProviderReady`, `onConfigurationChanged` and 
    `ProviderNotReady` or `ProviderFatal`. `Ready`, `Stale` and `Error` go through. See
    [Lifecycle and events](lifecycle.md).
 5. **Provider.** The SDK client is called on ZIO's blocking pool, with a timeout (1 second by default). On timeout the
-   evaluation fails, but the provider call itself is abandoned, not cancelled.
+   evaluation fails, but the provider call itself is abandoned, not cancelled. It holds its thread until it returns, so
+   each instance caps the abandoned calls still running (256 by default) and rejects timed evaluations at the cap; see
+   [Evaluating flags](evaluating.md).
 6. **After or error hooks** run in reverse order. A resolution that carries an error code (`FLAG_NOT_FOUND`,
    `TYPE_MISMATCH`, …) runs the error stage, not the after stage.
 7. **finallyAfter** hooks run last, whatever happened.

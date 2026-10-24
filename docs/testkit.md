@@ -224,11 +224,61 @@ There is an `Op` for every `FeatureProvider` method: `Initialize` (both overload
 
 Prefer the scoped factories: a test that fails while a call is parked then still frees the thread. `delegate` is the
 wrapped provider (for `make`, the `TestFeatureProvider`, so `setFlag` works). `calls` lists every completed call with
-its op, flag key, thread, start time and outcome; a hung call appears once it is released. `awaitEntered(op)` waits
+its op, flag key, thread, start time, outcome and arguments; a hung call appears once it is released. `awaitEntered(op)` waits
 until a call has started, for example until `initialize()` is parked.
 
 The wrapper emits its own events, so the wrapped provider's events do not reach `FeatureFlags`: use `Fault.Emit` or
 the wrapper's `emit`.
+## Per-test flag overrides
+
+To pin flags for one test, or for every test in a suite, use a flag aspect. It needs `TestFeatureProvider` in the
+environment:
+
+```scala
+--8<-- "TestkitSpec.scala:flag-aspects"
+```
+
+| Aspect | Pins |
+|:-------|:-----|
+| `withFlags(overrides*)` | typed overrides, `Flag := value`, as `layer` takes them |
+| `withFlags(map)` | key/value pairs, as `layer(map)` takes them |
+| `withFlag(flag, value)` | one typed flag |
+| `withFlag(key, value)` | one key |
+
+Each aspect restores per key. Before the test it saves the current value of every key it pins, or notes that the key
+was absent; after the test it puts that value back, or removes the key. So keys it does not pin are left alone: a
+`setFlag("other", ...)` inside the test survives. Aspects nest: a test-level aspect inside a suite-level one on the same
+key gives the test the inner value and leaves the suite's value afterwards.
+
+Unlike a [transaction](#transactions) override, the value comes from the provider, so `wasEvaluated`, the error
+modes and provider chains all apply.
+
+!!! warning
+    With `provideShared`, tests share one provider, so flag aspects on tests that run at the same time race each
+    other. Add `@@ TestAspect.sequential` to the suite, as above, or use `provide` to give each test its own provider.
+
+## Recording hook calls
+
+`RecordingHook` is a hook that records every stage call it receives, in order. Install it like any other hook, with
+`FeatureFlags.addHook`, `FeatureFlagsConfig.withHook` or per call through `EvaluationOptions`. It works with any
+`FeatureFlags`, not only the testkit layers:
+
+```scala
+--8<-- "TestkitSpec.scala:recording-hook"
+```
+
+`calls` returns a `Chunk[HookCall]`, oldest first, and `clear` empties it. Each `HookCall` carries the full arguments
+of its stage, including the `HookContext` (flag key, wire type, default value, context, metadata) and the hints:
+
+| Case | Stage | Also carries |
+|:-----|:------|:-------------|
+| `HookCall.Before` | `before` | |
+| `HookCall.After` | `after`, on a clean resolution | `resolution` |
+| `HookCall.Error` | `error`, on a failure or an error-coded resolution such as `FLAG_NOT_FOUND` | `error` |
+| `HookCall.Finally` | `finallyAfter`, last on every exit | `resolution: Option[...]` |
+
+`RecordingHook.make(types)` records only evaluations of those flag types; by default, all of them. Its `before` always
+returns `None`, so it never changes the evaluation context.
 
 ## Transactions
 
@@ -270,6 +320,29 @@ If you write a `FlagType` by hand, check it with `FlagTypeLaws`. Give it a `Gen`
 The second one finds the real problems: the SDK turns every number into a `Double`, so a `Long` above 2^53 does not
 survive, and it drops structure members it cannot represent. It matters most for object-backed types, which always
 take that path. Both laws work on Scala 2.13 too.
+
+## Checking your own wrapper
+
+A provider that wraps another one (for caching, metrics, retries) must pass every call on. The OpenFeature SDK adds
+methods to `FeatureProvider` with default bodies, so a wrapper written before one of them keeps compiling and answers
+it from the default instead of asking the provider it wraps: `track` events vanish, or a `Long` evaluation goes
+through `getDoubleEvaluation`. `WrapperLaws.delegation` catches this. Give it a name and a function that builds your
+wrapper around a provider:
+
+```scala
+--8<-- "TestkitSpec.scala:wrapper-laws"
+```
+
+The result is a suite with one test per `Op`. Each test builds your wrapper around a fresh `FaultyProvider`, calls one
+method with distinctive arguments, and checks the wrapped provider received the same call with equal arguments
+(contexts and tracking details are compared by content). For `Initialize` it checks both overloads, so a wrapper that
+drops the domain from `initialize(ctx, domain)` fails. The law does not look at the results.
+
+`handledByWrapper` lists the ops your wrapper answers itself, each with a reason that becomes part of the test name.
+For those, the test checks the call does not reach the wrapped provider, and fails with "allow-list entry no longer
+needed" if it does, so the list cannot go stale. The law runs on Scala 2.13 and 3. The library's own wrappers
+(`CachingProvider`, `CircuitBreakerProvider`, `DeferredProvider`, `IntegerWideningLongProvider`,
+`CachingReasonProvider`) are checked with it.
 
 ## `CachingReasonProvider`
 

@@ -11,6 +11,7 @@ import zio.openfeature.internal.{
   ProviderRegistration,
   ProviderReportedError,
   ProviderStatusMachine,
+  SwitchableProvider,
   TrackingConverter,
   ValueBridge
 }
@@ -50,6 +51,8 @@ final private[openfeature] class FeatureFlagsLive(
   contextSource: ContextSource = ContextSource.empty,
   // Bounds a hot swap's provider initialization, and its rollback re-registration, exactly as it bounds the build (#433).
   initTimeout: Duration = FeatureFlags.DefaultInitTimeout,
+  // Cap on provider calls abandoned by the evaluation timeout and still running (#437); see `withTimeout`.
+  maxAbandonedCalls: Int = FeatureFlags.DefaultMaxAbandonedCalls,
   // Whether `track` keeps a copy of each event and its merged context for `trackedEvents` (#442). Only testkit-built
   // instances set it: a production instance must not retain contexts, which routinely hold PII.
   recordTracking: Boolean = false
@@ -63,6 +66,14 @@ final private[openfeature] class FeatureFlagsLive(
     defect: Option[Cause[Nothing]]
   ): UIO[Unit] =
     fallbackLogLimiter.log(key, resolution, defect)
+
+  // Provider calls abandoned by the evaluation timeout that have not returned yet (#437). Each one parks a blocking-pool
+  // thread, and that pool is unbounded, so `withTimeout` refuses new timed calls once this reaches `maxAbandonedCalls`.
+  // AtomicInteger (not Ref): it is read on every timed evaluation, and decremented from the abandoned call's finalizer.
+  private val abandonedCalls = new java.util.concurrent.atomic.AtomicInteger(0)
+
+  /** Abandoned provider calls still running (#437) — for tests. */
+  private[openfeature] def abandonedCallCount: Int = abandonedCalls.get()
 
   // True while `setProvider` holds the swap lock and is re-registering the provider. Bridge events must not drive
   // the status machine during that window: a queued event from the OLD provider would clobber the swap's own
@@ -581,17 +592,55 @@ final private[openfeature] class FeatureFlagsLive(
     val flagType  = FlagType[A]
     val ofContext = toJavaContext(context)
 
+    // The only place a provider call can be abandoned, so the abandoned-call cap (#437) lives here and nowhere else:
+    // the untimed path cannot abandon a call and never touches the counter.
     def withTimeout[B](effect: Task[B]): Task[B] =
       timeout match {
         case Some(d) =>
-          effect.disconnect
-            .timeoutFail(new java.util.concurrent.TimeoutException(s"Evaluation of '$key' timed out after $d"))(d)
+          ZIO.suspendSucceed {
+            val abandoned = abandonedCalls.get()
+            // Check, then start: under a race a few calls may slip past the cap, which is fine — it bounds the thread
+            // leak, it is not an exact quota.
+            if (abandoned >= maxAbandonedCalls) rejectAbandoned(abandoned)
+            else {
+              // Exactly one of the finalizer (Running -> Done) and the abandoning side (Running -> Abandoned) wins the
+              // CAS, so the counter is incremented and decremented once per abandoned call and never drifts.
+              val call = new java.util.concurrent.atomic.AtomicInteger(FeatureFlagsLive.CallRunning)
+              val abandon = ZIO.succeed {
+                if (call.compareAndSet(FeatureFlagsLive.CallRunning, FeatureFlagsLive.CallAbandoned))
+                  abandonedCalls.incrementAndGet()
+              }.unit
+              effect
+                // Before `.disconnect`, so the finalizer runs on the disconnected fiber when the provider finally
+                // returns, however long after the caller moved on.
+                .ensuring(ZIO.succeed {
+                  if (!call.compareAndSet(FeatureFlagsLive.CallRunning, FeatureFlagsLive.CallDone))
+                    abandonedCalls.decrementAndGet()
+                })
+                .disconnect
+                .timeoutFail(new java.util.concurrent.TimeoutException(s"Evaluation of '$key' timed out after $d"))(d)
+                .tapError {
+                  case _: java.util.concurrent.TimeoutException => abandon
+                  case _                                        => ZIO.unit
+                }
+                // An interrupted caller walks away from the disconnected call just as a timeout does.
+                .onInterrupt(abandon)
+            }
+          }
         case None => effect
       }
 
+    def rejectAbandoned[B](abandoned: Int): Task[B] = {
+      val error = new java.util.concurrent.RejectedExecutionException(
+        s"Evaluation of '$key' rejected: $abandoned abandoned provider calls are still running " +
+          s"(cap $maxAbandonedCalls); the provider appears hung"
+      )
+      fallbackLogLimiter.logRejection(error.getMessage) *> ZIO.fail(error)
+    }
+
     val evaluation: IO[FeatureFlagError, FlagResolution[A]] =
       ClientEvaluator.evaluateStandard[A](flagType, client, key, default, ofContext) match {
-        // The instance declares a scalar `wireType` its `encode` does not produce — a contract violation, surfaced as
+        // The instance declares a scalar wire type its `encode` does not produce — a contract violation, surfaced as
         // a typed error rather than an opaque ClassCastException from inside the SDK bridge (#360).
         case Some(Left(message)) =>
           ZIO.fail(FeatureFlagError.TypeMismatch(key, flagType.typeName, message))
@@ -611,10 +660,11 @@ final private[openfeature] class FeatureFlagsLive(
               }
             }
 
-        // Deliberately `typeName`, not `wireType`: this branch casts the default to `Map[String, Any]`, which is only
-        // sound for the built-in object instance. A *custom* type whose wire form is an object has a domain `typeName`
-        // and must fall through to the decode branch below instead.
-        case None if flagType.typeName == "Object" =>
+        // Reference identity to the built-in instance, not a name test: this branch casts the default to
+        // `Map[String, Any]` and serves the raw map as `A` past `decode`, which is only sound for that instance. Any
+        // other object-backed type, even one named "Object" (`FlagType.from("Object", ...)`), falls through to the
+        // decode branch below so its own `decode` runs (#439).
+        case None if flagType eq FlagType.objectFlagType =>
           withTimeout(
             ZIO.attemptBlocking {
               // Through `anyToValue` so a `Map` flag encodes its members exactly as a derived product does. Building
@@ -688,9 +738,9 @@ final private[openfeature] class FeatureFlagsLive(
                   ZIO.fail(FeatureFlagError.TypeMismatch(key, flagType.typeName, message))
 
                 // Nothing extractable, and the provider reported no error. Let the instance say what an absent
-                // value means before failing: `FlagType[Option[A]]` decodes null to `None`, and its typeName
-                // (`Option[String]`) routes it down this very path, so failing outright here would make a legitimately
-                // empty optional flag unresolvable.
+                // value means before failing: `FlagType[Option[A]]` decodes null to `None`, and an `Option` over an
+                // object-backed type (`Option[Rollout]`) routes down this very path, so failing outright here would make
+                // a legitimately empty optional flag unresolvable.
                 case None =>
                   flagType.decode(null) match {
                     case Right(empty) =>
@@ -1055,6 +1105,9 @@ final private[openfeature] class FeatureFlagsLive(
       if (status == ProviderStatus.Ready || status == ProviderStatus.Stale) everReady.set(true)
     } *> state.statusRef.set(status)
 
+  /** Every status transition, current first. Test observability only: lets a spec prove a status was never entered. */
+  private[openfeature] def statusChanges: ZStream[Any, Nothing, ProviderStatus] = state.statusRef.changes
+
   override def awaitReady(within: Duration): UIO[ProviderStatus] =
     // `.changes` emits the current status first (so an already-Ready provider returns immediately) then every
     // subsequent transition — no polling. `runHead` completes on the first evaluable-or-Fatal status. On timeout
@@ -1344,6 +1397,45 @@ final private[openfeature] class FeatureFlagsLive(
         }
     }
 
+  /** `fromAcquireAsync`'s swap (#512): flip the registered [[SwitchableProvider]] to `next`, an already-initialized
+    * provider, without going through the SDK — so status never leaves `Ready` and the SDK never refuses an evaluation.
+    * Serialized with [[setProvider]] by `swapLock`. Returns `false`, changing nothing, when `switch` is no longer the
+    * registered provider (a user `setProvider` replaced it first); the caller then owns `next`. On `true` the replaced
+    * delegate has been shut down (bounded).
+    */
+  private[openfeature] def switchProvider(switch: SwitchableProvider, next: OFFeatureProvider): Task[Boolean] =
+    swapLock
+      .withPermit(
+        providerRef.get.flatMap { registered =>
+          if (registered ne switch) ZIO.none
+          else
+            ZIO.attempt {
+              // The name first: the SDK stamps the switch's (now `next`'s) name on every event, and the identity guard
+              // compares that against this ref. Setting it before the flip drops a straggler event from the old
+              // delegate rather than one from `next`.
+              val oldName = providerNameRef.get()
+              providerNameRef.set(Option(next.getMetadata).map(_.getName).getOrElse(FeatureFlags.UnknownProviderName))
+              try Some(switch.switchTo(next))
+              catch {
+                case e: Throwable =>
+                  providerNameRef.set(oldName)
+                  throw e
+              }
+            }
+        }
+      )
+      .uninterruptible
+      .flatMap {
+        case Some(old) =>
+          ProviderRegistration.boundedProviderShutdown(old, "fromAcquireAsync (replaced fallback)").as(true)
+        case None => ZIO.succeed(false)
+      }
+
+  /** The API's evaluation context, which the SDK passes to `initialize()`; `fromAcquireAsync` initializes its composed
+    * stack itself and passes the same (#512).
+    */
+  private[openfeature] def apiEvaluationContext: dev.openfeature.sdk.EvaluationContext = api.getEvaluationContext
+
   private def reconcileLateReady(newProvider: OFFeatureProvider): UIO[Unit] =
     ZIO
       .attemptBlocking {
@@ -1448,4 +1540,12 @@ final private[openfeature] class FeatureFlagsLive(
   override def trackedEvents: UIO[List[(String, EvaluationContext, Option[TrackingEventDetails])]] =
     state.trackRecorder.get.map(_.toList)
 
+}
+
+private[openfeature] object FeatureFlagsLive {
+
+  // Per-call states for the abandoned-call cap (#437), see `withTimeout`.
+  private[openfeature] val CallRunning   = 0
+  private[openfeature] val CallDone      = 1
+  private[openfeature] val CallAbandoned = 2
 }

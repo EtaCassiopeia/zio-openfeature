@@ -23,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `FeatureProvider`/`EventProvider` method but `emit*`, and a reflective test fails if the SDK adds one. The #433,
   #434 and #435 lifecycle scenarios are re-expressed with it in the testkit, and extras' tests now use it (extras
   depends on testkit for tests only). See "Fault injection" on the testkit page.
+
 - **Weekly mutation testing of core** (#468): stryker4s via the new `Mutation testing` workflow (scheduled and
   manual), with its report as a build artifact. Informational only: never runs on a pull request and never fails the
   build. Locally, `core/stryker`; see the development guide.
@@ -45,6 +46,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   constructors, including the standalone `CircuitBreaker.apply`, throw `IllegalArgumentException`. Both wrappers'
   `shutdown()` is now idempotent, so a wrapper that is scoped and registered with `FeatureFlags` shuts its delegate
   down once.
+- **Per-test flag overrides and a hook recorder in the testkit** (#458). `TestFeatureProvider.withFlags(Flag := v)`,
+  `withFlags(map)`, `withFlag(flag, v)` and `withFlag(key, v)` are test aspects that pin flags for one test and
+  restore each key afterwards (or remove it if it was absent), so they nest and leave other keys alone.
+  `RecordingHook.make()` is a `FeatureHook` that records every stage call (`HookCall.Before`/`After`/`Error`/`Finally`,
+  with the full `HookContext` and hints) for assertions. See "Per-test flag overrides" and "Recording hook calls" on
+  the testkit page.
+- **A cap on abandoned provider calls** (#437). A timed-out evaluation abandons its provider call, which keeps a thread
+  of ZIO's unbounded blocking pool until the provider returns, so a hung provider used to park one more thread per
+  timeout. Each instance now counts the abandoned calls still running and, at `FeatureFlags.DefaultMaxAbandonedCalls`
+  (256), fails timed evaluations fast with `ProviderError` wrapping a `RejectedExecutionException` without calling the
+  provider, logging one rate-limited warning; the `*OrDefault` calls keep serving defaults and evaluations resume as
+  the abandoned calls return. Healthy traffic never reaches the cap, and untimed evaluations are never gated.
+  Configure it with `FeatureFlagsConfig.withMaxAbandonedCalls(n)` or `fromAcquireAsync`'s new trailing
+  `maxAbandonedCalls`; `Int.MaxValue` disables it. The evaluation-timeout docs now spell out the per-timeout thread
+  cost and recommend `CircuitBreakerProvider` for remote providers.
+- **`WireType` and `FlagType.wire`** (#439). Evaluation now dispatches on a typed `WireType` (`Boolean`, `String`,
+  `Int`, `Long`, `Float`, `Double`, `Object`) instead of the free-form `wireType` string. The built-ins, `mapped`,
+  derived instances and `Option` set it themselves; a custom instance overrides `wire`. An instance that still
+  overrides `wireType` keeps working, and its name is now matched ignoring case, so `"string"` selects the string
+  resolver instead of silently falling to the object path.
+- **`WrapperLaws.delegation` in the testkit** (#466): checks that a provider wrapper passes every `FeatureProvider`
+  call on. One test per `Op`: the method is called on the wrapper with distinctive arguments and the wrapped
+  `FaultyProvider` must record the same call with equal arguments, both `initialize` overloads included. Ops the
+  wrapper answers itself go in `handledByWrapper` with a reason, and an entry that is no longer needed fails. The
+  extras wrappers and `CachingReasonProvider` now run it on 2.13 and 3, replacing the Scala-3-only reflection specs,
+  which could not see a missing default-method override. `FaultyProvider.Call` now records the call's arguments. See
+  "Checking your own wrapper" on the testkit page.
 
 ### Changed
 
@@ -53,6 +81,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with a message naming each invalid field (`CircuitBreakerProviderConfig.failureThreshold must be >= 1, got 0`).
   Binary-compatible; code that annotates the result as `UIO`/`ULayer`, or a layer error type as `Throwable`, widens
   it to include `FeatureFlagError`.
+- **`FeatureFlagsConfig` has a new last field, `maxAbandonedCalls`** (#437), so its constructor, `apply` and `copy`
+  changed binary signature: code compiled against an earlier release must be recompiled (source is unaffected, apart
+  from positional patterns on it). A value below 1 now throws `IllegalArgumentException` at construction. A timed
+  evaluation can now fail with `ProviderError(RejectedExecutionException)` when the cap is reached.
+
 - **Tuning defaults are named** (#462). The circuit breaker, cache, construction-retry, event-hub, polling and
   watchdog defaults now come from named constants instead of literals at the call sites; no value changed. Public:
   `CircuitBreaker.DefaultFailureThreshold`/`DefaultResetTimeout`/`DefaultHalfOpenMaxCalls`/`DefaultProbeTimeout`
@@ -72,6 +105,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rather than a silent default. On a cache miss a CMAB decision is a blocking network call (10s, one retry by default).
   The bump also removes a latent crash: 4.2.2's event serializer reads a Jackson field that the jackson-databind this
   module ships no longer has, which would have failed the first real event dispatch.
+- **Behaviour change: factory-built Optimizely providers now send events to Optimizely** (#453). Providers from
+  `OptimizelyProvider.make`/`scoped`/`layer` built their client without an event processor, so the SDK dropped every
+  impression and every `track` conversion: experiments showed zero visitors. They now batch events and send them to
+  `logx.optimizely.com`, as the SDK's own default factory does. An event carries the targeting key as the visitor
+  id, the audience attributes derived from the evaluation context, and the decision or conversion. To keep the old
+  behaviour, set `events = OptimizelyEvents.Disabled` on `OptimizelyProviderConfig`; `OptimizelyEvents.Batched` tunes
+  the batch size, flush interval and shutdown wait (at most 4 s, so shutdown stays within its 10 s bound). Providers
+  from `fromOptimizelyClient` are unchanged. **Recompile, don't just bump the version:** `events` is a new field of
+  `OptimizelyProviderConfig`, which is source compatible but removes the six-argument constructor, `apply` and `copy`,
+  so code compiled against an earlier release fails with `NoSuchMethodError`.
 - **Production instances no longer keep tracked events** (#442). Every instance recorded the last 1000 `track` calls
   with their fully merged evaluation contexts — often personal data — for `FeatureFlags.trackedEvents`, a test
   helper. Only testkit-built instances record now. Assert on tracking with the new `TestFeatureProvider.trackedEvents`
@@ -119,6 +162,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **CI tests every published module on JDK 25** as well as 17 and 21, on both Scala versions (#424). JDK 25 was green before;
   it was just untested outside the zio-bdd conformance job. On Scala 3 it prints a `sun.misc.Unsafe` deprecation
   warning from the Scala 3.3 standard library (`scala.runtime.LazyVals`), not from this library.
+- **`Option[A]` over a scalar `A` is resolved through `A`'s resolver** (#439). `value[Option[String]]` against a string
+  flag used to call the provider's object method, so a provider that checks types answered `TYPE_MISMATCH`; it now
+  reaches the string method and reads `Some(value)`. A `None` default is sent as `A`'s zero (`false`, `""`, `0`, a
+  derived enum's first case) and reads back as `None` when the provider answers with an error code, or with reason
+  `DEFAULT`, `DISABLED` or `ERROR` and that zero. A provider that serves exactly the zero with one of those reasons
+  therefore reads as `None`. `List[A]` stays on the object path. Two behaviour notes: `FlagValueType.fromFlagType` for
+  `Option[String]` is now `String` rather than `Object`, so hooks scoped by type see these evaluations; and the
+  provider getter called for an `Option` flag changes, which is visible to provider-level hooks and test doubles.
 
 ### Deprecated
 
@@ -134,6 +185,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`FeatureFlagError.isRecoverable`, in favour of `isFlagError`** (#440). It is true for flag-scoped evaluation errors
   (missing flag, wrong type, unparsable value, bad context), which has nothing to do with retrying or with
   `ProviderStatus.isRecoverable`. The behaviour is unchanged.
+- **`FlagType.wireType`, in favour of `wire`** (#439). Its default is still `typeName`, and it is read only through
+  `wire`'s default.
 
 ### Fixed
 
@@ -141,6 +194,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   repository does not let GitHub Actions create pull requests. The workflow now authenticates with a fine-grained
   `SCALA_STEWARD_TOKEN`, so its PRs also run CI. A new `.scala-steward.conf` keeps zio-cache on 0.2.x and Scala 3 on
   the 3.3 LTS line.
+- **A custom `FlagType` named `"Object"` runs its own `decode`** (#439). The object path's raw-map shortcut was chosen
+  by `typeName == "Object"`, so `FlagType.from("Object", ...)` either failed with a `ProviderError` wrapping a
+  `ClassCastException` (a non-`Map` default) or served the raw map past the user's `decode` (a `Map` default). Only the
+  built-in `Map[String, Any]` instance takes that shortcut now.
 - **`OptimizelyFeatureProvider` sends `track` calls to Optimizely** (#454). It did not implement `track`, so every call
   fell through to the SDK's no-op default and no conversion was ever recorded, whichever client the provider wrapped.
   A call now becomes a conversion for the context's user, with the details' attributes as event tags and the details'
@@ -197,6 +254,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   could end up bound and ready while every typed evaluation failed. A started swap now runs to its outcome (success,
   or rollback, or the timed-out `Error` of #433) before the interrupt takes effect — bounded by the init timeout.
   Waiting for an earlier swap to finish stays interruptible.
+- **`fromAcquireAsync` no longer fails evaluations while it swaps the real provider in** (#512). The swap went through
+  `setProvider`, so for as long as the real provider's `initialize()` ran (the first datafile fetch or probe, up to
+  `initTimeout`) the status was `NotReady` and every typed evaluation failed with `ProviderNotReady`, although the
+  factory promises fallback answers until the swap. The SDK now sees one provider for the life of the layer, an
+  internal switch that delegates to the fallback; the composed stack is initialized off to the side and the switch
+  routes to it once that succeeds, so the status stays `Ready` and the fallback answers throughout. A failed or
+  timed-out initialization leaves the first fallback serving (no fallback re-registration), and a `setProvider` before
+  the switch wins, with the state `Failed`. The composed stack's events reach handlers and status through the switch.
 - **Circuit breaker: stale outcomes and polled `READY` no longer reset the circuit** (#447).
   - A call admitted in one circuit state could record its outcome in a later one: a slow call admitted while closed
     could close a half-open circuit while the real probe was still running, or free the probe slot so two probes ran

@@ -24,8 +24,8 @@ import dev.openfeature.sdk.{
   * `OptimizelyFeatureProvider`) already implement `getLongEvaluation` natively and never need this wrapper.
   *
   * `getState` is not forwarded: it is deprecated in 1.22.0 (the SDK owns provider status now, see #332), so the
-  * interface's own default applies rather than this wrapper adding a fresh use of a deprecated API. The
-  * wrapper-completeness spec exempts it for the same reason.
+  * interface's own default applies rather than this wrapper adding a fresh use of a deprecated API. The delegation law
+  * (`WrapperDelegationSpec`) lists it as handled by the wrapper for the same reason.
   */
 final class IntegerWideningLongProvider(underlying: FeatureProvider) extends FeatureProvider {
 

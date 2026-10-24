@@ -187,6 +187,37 @@ object TestkitSpec extends ZIOSpecDefault:
   ).provide(TestFeatureProvider.layer(Map("flag" -> false))) @@ TestAspect.sequential
   // --8<-- [end:failures]
 
+  // --8<-- [start:flag-aspects]
+  val Greeting = FlagDef[Boolean]("new-greeting", false)
+
+  val perTestFlags = suite("Greeter with per-test flags")(
+    test("new greeting while the aspect pins the flag on") {
+      for msg <- ZIO.serviceWithZIO[Greeter](_.greet("dave"))
+      yield assertTrue(msg == "Hey dave!")
+    } @@ TestFeatureProvider.withFlag(Greeting, true),
+    test("the layer's value is back for the next test") {
+      for msg <- ZIO.serviceWithZIO[Greeter](_.greet("dave"))
+      yield assertTrue(msg == "Welcome, dave.")
+    }
+  ).provideShared(TestFeatureProvider.layer(Greeting := false), Greeter.live) @@ TestAspect.sequential
+  // --8<-- [end:flag-aspects]
+
+  // --8<-- [start:recording-hook]
+  val recordedHooks = test("the hook pipeline ran before, after, finally") {
+    for
+      recorder <- RecordingHook.make()
+      _        <- FeatureFlags.addHook(recorder)
+      _        <- ZIO.serviceWithZIO[Greeter](_.greet("erin"))
+      calls    <- recorder.calls
+      resolved = calls.collect { case HookCall.After(_, resolution, _) => resolution.value }
+    yield assertTrue(
+      calls.size == 3, // Before, After, Finally
+      resolved == Chunk[Any](true),
+      calls.forall(_.ctx.flagKey == "new-greeting")
+    )
+  }.provide(TestFeatureProvider.layer(Map("new-greeting" -> true)), Greeter.live)
+  // --8<-- [end:recording-hook]
+
   // --8<-- [start:transactions]
   val withOverrides = test("override flags for one block") {
     for
@@ -219,6 +250,46 @@ object TestkitSpec extends ZIOSpecDefault:
 
   val celsiusLaws = FlagTypeLaws.all(Gen.int(-100, 100).map(Celsius(_)))
   // --8<-- [end:laws]
+
+  // A hand-written wrapper: counts evaluations and forwards everything else, reporting its own name.
+  final class CountingProvider(inner: dev.openfeature.sdk.FeatureProvider) extends dev.openfeature.sdk.FeatureProvider:
+    import dev.openfeature.sdk.{EvaluationContext as Ctx, *}
+    val evaluations = new java.util.concurrent.atomic.AtomicLong
+
+    private def counted[A](evaluation: => ProviderEvaluation[A]): ProviderEvaluation[A] =
+      evaluations.incrementAndGet()
+      evaluation
+
+    @scala.annotation.nowarn("msg=deprecated")
+    override def getMetadata: Metadata = new Metadata:
+      override def getName: String = "counting"
+    override def getProviderHooks: java.util.List[Hook[?]]             = inner.getProviderHooks
+    @scala.annotation.nowarn("msg=deprecated")
+    override def getState: ProviderState                               = inner.getState
+    override def initialize(ctx: Ctx): Unit                            = inner.initialize(ctx)
+    override def initialize(ctx: Ctx, domain: String): Unit            = inner.initialize(ctx, domain)
+    override def isDomainScoped(): Boolean                             = inner.isDomainScoped()
+    override def shutdown(): Unit                                      = inner.shutdown()
+    override def track(name: String, ctx: Ctx, details: TrackingEventDetails): Unit = inner.track(name, ctx, details)
+    override def getBooleanEvaluation(key: String, default: java.lang.Boolean, ctx: Ctx) =
+      counted(inner.getBooleanEvaluation(key, default, ctx))
+    override def getStringEvaluation(key: String, default: String, ctx: Ctx) =
+      counted(inner.getStringEvaluation(key, default, ctx))
+    override def getIntegerEvaluation(key: String, default: java.lang.Integer, ctx: Ctx) =
+      counted(inner.getIntegerEvaluation(key, default, ctx))
+    override def getLongEvaluation(key: String, default: java.lang.Long, ctx: Ctx) =
+      counted(inner.getLongEvaluation(key, default, ctx))
+    override def getDoubleEvaluation(key: String, default: java.lang.Double, ctx: Ctx) =
+      counted(inner.getDoubleEvaluation(key, default, ctx))
+    override def getObjectEvaluation(key: String, default: Value, ctx: Ctx) =
+      counted(inner.getObjectEvaluation(key, default, ctx))
+
+  // --8<-- [start:wrapper-laws]
+  val countingDelegates = WrapperLaws.delegation("CountingProvider")(
+    inner => new CountingProvider(inner),
+    handledByWrapper = Map(Op.GetMetadata -> "reports its own name")
+  )
+  // --8<-- [end:wrapper-laws]
 
   // --8<-- [start:caching-reason]
   val cachingReason = test("CachingReasonProvider reports CACHED on a repeat") {
@@ -265,9 +336,12 @@ object TestkitSpec extends ZIOSpecDefault:
     asyncReady,
     events,
     failures,
+    perTestFlags,
+    recordedHooks,
     withOverrides,
     chain,
     celsiusLaws,
+    countingDelegates,
     cachingReason,
     faultInjection
   ) @@ TestAspect.sequential // `chain`, `cachingReason` and `faultInjection` use the global OpenFeature API

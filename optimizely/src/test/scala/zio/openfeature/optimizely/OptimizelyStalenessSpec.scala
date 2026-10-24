@@ -81,7 +81,8 @@ object OptimizelyStalenessSpec extends ZIOSpecDefault {
           initWait = java.time.Duration.ofSeconds(5),
           pollingInterval = Some(java.time.Duration.ofMillis(500)),
           blockingTimeout = Some(java.time.Duration.ofSeconds(2)),
-          staleAfter = Some(java.time.Duration.ofSeconds(2))
+          staleAfter = Some(java.time.Duration.ofSeconds(2)),
+          events = OptimizelyEvents.Disabled // nothing here is about events; keep them off the network (#453)
         )
         val provider = makeProvider(config)
         val api      = OpenFeatureAPI.getInstance()

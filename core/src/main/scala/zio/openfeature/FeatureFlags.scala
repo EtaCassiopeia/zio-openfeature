@@ -2,7 +2,7 @@ package zio.openfeature
 
 import zio._
 import zio.stream._
-import zio.openfeature.internal.{FallbackLogLimiter, FeatureFlagsState, ProviderRegistration}
+import zio.openfeature.internal.{FallbackLogLimiter, FeatureFlagsState, ProviderRegistration, SwitchableProvider}
 import dev.openfeature.sdk.{FeatureProvider => OFFeatureProvider, OpenFeatureAPI, ProviderState}
 import dev.openfeature.sdk.multiprovider.{MultiProvider, Strategy, FirstMatchStrategy, FirstSuccessfulStrategy}
 import java.util.concurrent.TimeoutException
@@ -1007,8 +1007,28 @@ object FeatureFlags {
     * to disable it; per call, `EvaluationOptions.empty.withTimeout(d)` bounds a single evaluation and `.withoutTimeout`
     * disables it (the latter also skips the timeout scaffolding, which matters for microsecond-latency in-memory
     * providers).
+    *
+    * Each timed-out call keeps a blocking-pool thread until the provider returns, and that pool is unbounded, so
+    * against a provider that never returns every timeout parks one more thread. [[DefaultMaxAbandonedCalls]] caps how
+    * many such calls an instance tolerates; for a remote provider, wrapping it in the extras module's
+    * `CircuitBreakerProvider` also stops new calls once it starts failing.
     */
   val DefaultEvaluationTimeout: Duration = 1.second
+
+  /** Default cap on **abandoned** provider calls per `FeatureFlags` instance: **256**. A call is abandoned when the
+    * [[DefaultEvaluationTimeout evaluation timeout]] fires (or the caller is interrupted) while the provider is still
+    * running; it holds a blocking-pool thread until the provider returns. Once an instance has this many abandoned
+    * calls still running, every new timed evaluation fails fast with `FeatureFlagError.ProviderError` wrapping a
+    * `java.util.concurrent.RejectedExecutionException`, without calling the provider, until enough of them return. The
+    * total tier (`*OrDefault`, `value`) absorbs that error and serves defaults, and the first rejection in each
+    * `FallbackLogging` window logs a warning.
+    *
+    * Only abandoned calls count, so healthy traffic never gets near the cap however concurrent it is, and untimed
+    * evaluations (`withoutEvaluationTimeout`, `EvaluationOptions.withoutTimeout`) can never be rejected. Change it with
+    * `FeatureFlagsConfig().withMaxAbandonedCalls(n)` (or `fromAcquireAsync`'s `maxAbandonedCalls`); `Int.MaxValue`
+    * disables the cap.
+    */
+  val DefaultMaxAbandonedCalls: Int = 256
 
   /** Verify the provider reached a usable state after sync initialization. Anything outside `READY` / `STALE` causes
     * the layer build to fail so misconfiguration surfaces at startup, not at first evaluation. Returns the ZIO-level
@@ -1068,6 +1088,7 @@ object FeatureFlags {
     onReady: Option[java.util.concurrent.CountDownLatch] = None,
     contextSource: ContextSource = ContextSource.empty,
     fallbackLogging: FallbackLogging = FallbackLogging.Default,
+    maxAbandonedCalls: Int = DefaultMaxAbandonedCalls,
     recordTracking: Boolean = false
   ): ZIO[Scope, Throwable, FeatureFlagsLive] =
     for {
@@ -1110,6 +1131,7 @@ object FeatureFlags {
         evaluationTimeout,
         contextSource,
         initTimeout,
+        maxAbandonedCalls,
         recordTracking
       )
       // Only seed status when the caller didn't hand us a shared ref (testkit shares one). Routed through
@@ -1152,8 +1174,11 @@ object FeatureFlags {
         case ApiOwnership.Shared => false
       }
       config.initMode match {
+        // The `WithTracking` variants, not `build`/`buildAsync`: those keep their released signatures (they are
+        // package-private but compiled into the published testkit), so newer knobs like `maxAbandonedCalls` (#437)
+        // reach the instance only through these.
         case InitMode.Sync =>
-          build(
+          buildWithTracking(
             provider,
             config.domain,
             config.version,
@@ -1165,10 +1190,11 @@ object FeatureFlags {
             initTimeout = config.initTimeout,
             onReady = onReady,
             contextSource = config.contextSource,
-            fallbackLogging = config.fallbackLogging
+            fallbackLogging = config.fallbackLogging,
+            maxAbandonedCalls = config.maxAbandonedCalls
           )
         case InitMode.Async =>
-          buildAsync(
+          buildAsyncWithTracking(
             provider,
             config.domain,
             config.version,
@@ -1180,7 +1206,8 @@ object FeatureFlags {
             evaluationTimeout = evalTimeout,
             initTimeout = config.initTimeout,
             contextSource = config.contextSource,
-            fallbackLogging = config.fallbackLogging
+            fallbackLogging = config.fallbackLogging,
+            maxAbandonedCalls = config.maxAbandonedCalls
           )
       }
     }
@@ -1354,6 +1381,7 @@ object FeatureFlags {
     initTimeout: Duration = DefaultInitTimeout,
     contextSource: ContextSource = ContextSource.empty,
     fallbackLogging: FallbackLogging = FallbackLogging.Default,
+    maxAbandonedCalls: Int = DefaultMaxAbandonedCalls,
     recordTracking: Boolean = false
   ): ZIO[Scope, Throwable, FeatureFlagsLive] =
     for {
@@ -1402,6 +1430,7 @@ object FeatureFlags {
         evaluationTimeout,
         contextSource,
         initTimeout,
+        maxAbandonedCalls,
         recordTracking
       )
       // Start event bridge — if provider is already ready, replay fires immediately
@@ -1541,7 +1570,7 @@ object FeatureFlags {
   }
 
   /** Fallback-first async factory: build the layer immediately on a fresh `fallback`, construct the real provider in a
-    * background scoped fiber, and hot-swap it in when ready.
+    * background scoped fiber, and switch the registered provider's delegate to it once it is initialized.
     *
     * Unlike every other factory, this takes the real provider **as an effect** (`acquire`) rather than a strict,
     * already-constructed instance — so a provider whose Java constructor does network I/O never runs on the
@@ -1550,7 +1579,11 @@ object FeatureFlags {
     * provider-related failure can propagate into the application's layer graph.
     *
     *   - Status is `Ready` from time zero; evaluations answer fallback values (never `ProviderNotReady`) until the
-    *     swap. Because `providerStatus` therefore cannot tell fallback from real, the layer also provides an
+    *     swap, and the swap itself never interrupts service. The SDK sees one provider for the life of the layer, an
+    *     internal switch that delegates to the fallback; the real provider is composed and **initialized off to the
+    *     side**, bounded by `initTimeout`, and only then does the switch start routing to it. There is no SDK
+    *     `setProvider` on this path, so neither this library nor the SDK reports `NotReady` at any point (#512).
+    *     Because `providerStatus` therefore cannot tell fallback from real, the layer also provides an
     *     [[AcquireStatus]] whose [[AcquireState]] is `Constructing` until the real provider is acquired, verified
     *     **and** swapped in (`Live`), or the construction fails terminally (`Failed(cause)`, set just before
     *     `onConstructionError` runs). `onSwapped` is the success-side twin of `onConstructionError`: it runs once
@@ -1562,23 +1595,27 @@ object FeatureFlags {
     *     stays on the fallback.
     *   - `verify` sees the **bare** candidate exactly as `acquire` returned it — before `compose`, before the swap,
     *     never the live stack — so in-flight evaluations cannot observe a half-verified provider. Two consequences: the
-    *     SDK has **not** called `initialize()` on it yet (that happens inside the swap), and no ambient context
+    *     composed stack has **not** been initialized yet (that happens next, before the switch), and no ambient context
     *     (`contextSource`, global context) applies. A provider that only answers after `initialize()` must be
-    *     initialized inside `acquire` (and its `initialize` must then tolerate the SDK's second call on swap), or be
-    *     verified through its own readiness API rather than an evaluation. Construction success is a weak health signal
-    *     (a provider can construct on bad credentials or an empty config and then serve wrong values that a
+    *     initialized inside `acquire` (and its `initialize` must then tolerate the second call before the switch), or
+    *     be verified through its own readiness API rather than an evaluation. Construction success is a weak health
+    *     signal (a provider can construct on bad credentials or an empty config and then serve wrong values that a
     *     first-successful chain would happily accept); `verify` is where a sentinel evaluation such as
     *     [[Verify.flagExists]] proves the candidate is actually answering.
-    *   - The composed stack uses a **fresh** fallback instance (the SDK shuts down the replaced provider on swap, so
-    *     the first fallback must not be reused). Hooks, contexts, and event handlers survive the swap.
+    *   - The composed stack uses a **fresh** fallback instance (the switch shuts the replaced first fallback down,
+    *     bounded, right after it flips, so the first fallback must not be reused). Hooks, contexts, and event handlers
+    *     survive the swap; the composed stack's events reach them through the switch. An initialization that fails or
+    *     exceeds `initTimeout` is a swap failure: the composed stack is shut down, the fallback keeps serving, and the
+    *     state becomes `Failed`. A user `setProvider` that lands before the switch wins: the acquired provider is
+    *     discarded and the state becomes `Failed`.
     *   - **Teardown.** Every attempt runs `acquire` in its own child `Scope`. A candidate that does not make it into
     *     service — `acquire` failed after registering finalizers, `verify` failed, the attempt timed out, or the swap
-    *     itself failed and rolled back — has that scope closed immediately, so its finalizers run then rather than at
-    *     layer close. The candidate that is swapped in has its scope handed to the layer scope, so a real provider
-    *     acquired but not yet swapped is still torn down on layer release, and layer release still interrupts an
-    *     in-flight attempt. As before, this only tears down what `acquire` registers in its `Scope` (e.g. via
-    *     `ZIO.acquireRelease`); a bare `attemptBlocking(new Provider(...))` registers no finalizer, so teardown of the
-    *     not-yet-swapped provider is then the caller's responsibility.
+    *     itself failed — has that scope closed immediately, so its finalizers run then rather than at layer close. The
+    *     candidate that is swapped in has its scope handed to the layer scope, so a real provider acquired but not yet
+    *     swapped is still torn down on layer release, and layer release still interrupts an in-flight attempt. As
+    *     before, this only tears down what `acquire` registers in its `Scope` (e.g. via `ZIO.acquireRelease`); a bare
+    *     `attemptBlocking(new Provider(...))` registers no finalizer, so teardown of the not-yet-swapped provider is
+    *     then the caller's responsibility.
     *
     * @param acquire
     *   the real provider as a scoped effect (typically `ZIO.attemptBlocking(new Provider(...))`)
@@ -1596,7 +1633,10 @@ object FeatureFlags {
     *   run on each acquired candidate before the swap; failure rejects the candidate and counts as a failed attempt.
     *   Defaults to accepting every candidate. See [[Verify]] for ready-made checks.
     * @param onSwapped
-    *   run once after the real provider is swapped in and [[AcquireState.Live]] is observable
+    *   run once after the switch routes to the real provider and [[AcquireState.Live]] is observable
+    * @param maxAbandonedCalls
+    *   cap on provider calls abandoned by `evaluationTimeout` and still running, see [[DefaultMaxAbandonedCalls]]; must
+    *   be at least 1
     */
   def fromAcquireAsync(
     acquire: RIO[Scope, OFFeatureProvider],
@@ -1616,8 +1656,11 @@ object FeatureFlags {
     onSwapped: UIO[Unit] = ZIO.unit,
     // Its own parameter, not a config field: this factory bypasses `FeatureFlagsConfig`, and it is exactly the
     // fallback-first path where a served-default log storm during an outage matters most (#350).
-    fallbackLogging: FallbackLogging = FallbackLogging.Default
-  ): URLayer[Any, FeatureFlags with AcquireStatus] =
+    fallbackLogging: FallbackLogging = FallbackLogging.Default,
+    // Its own parameter for the same reason as `fallbackLogging` (#437).
+    maxAbandonedCalls: Int = DefaultMaxAbandonedCalls
+  ): URLayer[Any, FeatureFlags with AcquireStatus] = {
+    require(maxAbandonedCalls >= 1, s"maxAbandonedCalls must be at least 1, got $maxAbandonedCalls")
     // `scopedEnvironment` rather than `scoped`: the layer emits two services, and only an explicit ZEnvironment can
     // carry an intersection.
     ZLayer.scopedEnvironment {
@@ -1625,9 +1668,12 @@ object FeatureFlags {
         // Build immediately on a fresh fallback. An in-memory fallback whose init fails is a programming bug, not a
         // recoverable condition, so a failed build is a defect (`orDie`) — this is what makes the layer a `URLayer`.
         firstFallback <- fallback
-        state         <- SubscriptionRef.make[AcquireState](AcquireState.Constructing)
-        ff <- build(
-          firstFallback,
+        // The one provider the SDK ever sees on this path (#512): it delegates to the fallback until the real provider
+        // is initialized, then is flipped to the composed stack. No SDK swap, so no NotReady window.
+        switch = new SwitchableProvider(firstFallback)
+        state <- SubscriptionRef.make[AcquireState](AcquireState.Constructing)
+        ff <- buildWithTracking(
+          switch,
           domain = None,
           version = None,
           initialHooks = Nil,
@@ -1636,7 +1682,8 @@ object FeatureFlags {
           evaluationTimeout = Some(evaluationTimeout),
           initTimeout = initTimeout,
           contextSource = contextSource,
-          fallbackLogging = fallbackLogging
+          fallbackLogging = fallbackLogging,
+          maxAbandonedCalls = maxAbandonedCalls
         ).orDie
         // One attempt = acquire, then verify the candidate, inside a child scope of the layer scope. The child scope
         // exists so a REJECTED candidate (acquire failed after registering finalizers, verify failed, or the attempt
@@ -1668,37 +1715,34 @@ object FeatureFlags {
         // release. A terminal construction/verification/swap failure is caught, reported, and left on the fallback —
         // nothing escapes to the (already-built) layer.
         construct = for {
-          accepted      <- attempt.retry(constructionRetry)
+          accepted <- attempt.retry(constructionRetry)
+          candidate = accepted._1
           freshFallback <- fallback
-          _ <- ff
-            .setProvider(compose(accepted._2, freshFallback))
-            // `setProvider`'s rollback now restores both routing AND status (#282): a failed swap re-registers the
-            // still-live fallback with the SDK and sets Ready, so no local force-ready workaround is needed here.
-            .mapError(ProviderSwapFailed(_))
-            // The rollback leaves the SDK on the fallback, so a candidate whose swap failed is dead: release it now
-            // rather than at layer close. `Scope.close` is idempotent, so the layer-scope finalizer is then a no-op.
-            .tapError(e => accepted._1.close(Exit.fail(e)))
-            // A timed-out swap is not rolled back (see `setProvider`), so the slot still holds the hung composite.
-            // Restore fallback service with a FRESH fallback instance: a new identity is safe to register even if the
-            // composite finishes initializing later, whereas re-registering the first fallback would not be.
-            .tapError {
-              case ProviderSwapFailed(FeatureFlagError.ProviderInitializationFailed(_: TimeoutException)) =>
-                fallback
-                  .flatMap(ff.setProvider)
-                  // The SDK shuts the first fallback down only from the stuck composite's own init task, which may
-                  // never finish; it is unbound now, so release it here rather than leak it.
-                  .zipRight(
-                    ZIO
-                      .attemptBlocking(firstFallback.shutdown())
-                      .catchAllCause(c =>
-                        ZIO.logWarningCause("fromAcquireAsync: shutting down the replaced fallback failed", c)
-                      )
-                  )
-                  .catchAll(e =>
-                    ZIO.logError(s"fromAcquireAsync: could not restore a fallback after a timed-out swap: $e")
-                  )
-              case _ => ZIO.unit
-            }
+          composed = compose(accepted._2, freshFallback)
+          // A composed stack that does not make it into service is dead: shut it down (which reaches the real provider
+          // and the fresh fallback) and release the candidate now rather than at layer close. `Scope.close` is
+          // idempotent, so the layer-scope finalizer is then a no-op.
+          discard = (cause: Cause[Any]) =>
+            ProviderRegistration.boundedProviderShutdown(composed, "fromAcquireAsync (discarded provider)") *>
+              candidate.close(Exit.failCause(cause))
+          // Initialize the composed stack ourselves, where the SDK's `setProvider` used to, bounded the same way. The
+          // fallback keeps serving throughout. `.disconnect` lets the timeout fire even though a blocking
+          // `initialize()` cannot be interrupted; it may keep running in the background, and the shutdown above is
+          // best-effort against it.
+          _ <- ZIO
+            .attemptBlocking(composed.initialize(ff.apiEvaluationContext))
+            .disconnect
+            .timeoutFail(new TimeoutException(s"Provider initialization exceeded $initTimeout"))(initTimeout)
+            .zipRight(verifyInitState(composed))
+            .mapError(e => ProviderSwapFailed(FeatureFlagError.ProviderInitializationFailed(e)))
+            .onError(discard)
+          switched <- ff.switchProvider(switch, composed).onError(discard)
+          _ <- ZIO.unless(switched) {
+            val e = new IllegalStateException(
+              "provider replaced by setProvider before the acquired provider was swapped in"
+            )
+            discard(Cause.fail(e)) *> ZIO.fail(e)
+          }
           // State flips before the callback so a probe reading `AcquireStatus.get` from inside it already sees Live.
           _ <- state.set(AcquireState.Live) *> onSwapped
         } yield ()
@@ -1721,4 +1765,38 @@ object FeatureFlags {
         }.forkScoped
       } yield ZEnvironment[FeatureFlags](ff).add[AcquireStatus](AcquireStatus.fromRef(state))
     }
+  }
+
+  // Binary-compatibility bridge for callers compiled against 1.1.2, before `maxAbandonedCalls` (#437). Package-private,
+  // so source callers never see it, but public in bytecode, so an already-compiled call still links. No defaults: a
+  // call needing one resolves to the full overload above.
+  private[openfeature] def fromAcquireAsync(
+    acquire: RIO[Scope, OFFeatureProvider],
+    fallback: URIO[Scope, OFFeatureProvider],
+    compose: (OFFeatureProvider, OFFeatureProvider) => OFFeatureProvider,
+    constructionRetry: Schedule[Any, Throwable, Any],
+    constructionTimeout: Duration,
+    onConstructionError: Throwable => UIO[Unit],
+    evaluationTimeout: Duration,
+    initTimeout: Duration,
+    contextSource: ContextSource,
+    verify: OFFeatureProvider => Task[Unit],
+    onSwapped: UIO[Unit],
+    fallbackLogging: FallbackLogging
+  ): URLayer[Any, FeatureFlags with AcquireStatus] =
+    fromAcquireAsync(
+      acquire,
+      fallback,
+      compose,
+      constructionRetry,
+      constructionTimeout,
+      onConstructionError,
+      evaluationTimeout,
+      initTimeout,
+      contextSource,
+      verify,
+      onSwapped,
+      fallbackLogging,
+      DefaultMaxAbandonedCalls
+    )
 }

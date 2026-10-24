@@ -1,5 +1,7 @@
 package zio.openfeature
 
+import scala.annotation.nowarn
+
 import zio._
 import zio.test._
 import zio.test.TestAspect.{sequential, withLiveClock}
@@ -18,8 +20,8 @@ import dev.openfeature.sdk.{
   * object path and asked the provider for an object it does not have, while forcing `typeName = "String"` hit a
   * `ClassCastException` on `default.asInstanceOf[String]`.
   *
-  * The fix adds `FlagType.wireType` (defaulting to `typeName`), dispatches on it, sends `encode(default)`, and decodes
-  * the extracted wire value with a `Left` becoming `TypeMismatch`.
+  * The fix added `FlagType.wireType` (now `FlagType.wire`, #439), dispatches on it, sends `encode(default)`, and
+  * decodes the extracted wire value with a `Left` becoming `TypeMismatch`.
   *
   * Shared (cross-compiled) test source dir → must compile on 2.13 and 3: braces only, no `given`/`using`, no `enum`.
   */
@@ -207,37 +209,52 @@ object ScalarWireTypeSpec extends ZIOSpecDefault {
     }
 
   def spec = suite("ScalarWireTypeSpec")(
-    // --- wireType itself (pure) ---
-    test("wireType defaults to typeName for every built-in instance") {
+    // --- wire itself (pure) ---
+    test("every built-in instance sets its own wire") {
       assertTrue(
-        FlagType[Boolean].wireType == "Boolean",
-        FlagType[String].wireType == "String",
-        FlagType[Int].wireType == "Int",
-        FlagType[Long].wireType == "Long",
-        FlagType[Float].wireType == "Float",
-        FlagType[Double].wireType == "Double",
-        FlagType[Map[String, Any]].wireType == "Object"
+        FlagType[Boolean].wire == WireType.Boolean,
+        FlagType[String].wire == WireType.String,
+        FlagType[Int].wire == WireType.Int,
+        FlagType[Long].wire == WireType.Long,
+        FlagType[Float].wire == WireType.Float,
+        FlagType[Double].wire == WireType.Double,
+        FlagType[Map[String, Any]].wire == WireType.Object
       )
     },
-    test("wireType defaults to typeName for Option and List, so their dispatch is unchanged") {
-      // These must NOT start dispatching on the underlying type — they stay on the object path.
+    test("the deprecated wireType still defaults to typeName for every built-in instance") {
+      @nowarn("cat=deprecation") val names = List(
+        FlagType[Boolean].wireType,
+        FlagType[String].wireType,
+        FlagType[Int].wireType,
+        FlagType[Long].wireType,
+        FlagType[Float].wireType,
+        FlagType[Double].wireType,
+        FlagType[Map[String, Any]].wireType
+      )
+      assertTrue(names == List("Boolean", "String", "Int", "Long", "Float", "Double", "Object"))
+    },
+    test("Option takes its element's wire (#439); List stays on the object path") {
       assertTrue(
-        FlagType[Option[Int]].wireType == "Option[Int]",
-        FlagType[List[Int]].wireType == "List[Int]"
+        FlagType[Option[Int]].wire == WireType.Int,
+        FlagType[Option[String]].wire == WireType.String,
+        FlagType[Option[Phase]].wire == WireType.String,
+        FlagType[Option[Region]].wire == WireType.Object,
+        FlagType[List[Int]].wire == WireType.Object
       )
     },
-    test("mapped sets wireType from the underlying instance while keeping its own typeName") {
-      assertTrue(phaseFlagType.typeName == "Phase", phaseFlagType.wireType == "String")
+    test("mapped sets wire from the underlying instance while keeping its own typeName") {
+      @nowarn("cat=deprecation") val legacyName = phaseFlagType.wireType
+      assertTrue(phaseFlagType.typeName == "Phase", phaseFlagType.wire == WireType.String, legacyName == "String")
     },
-    test("an instance may override wireType directly while keeping its domain typeName") {
-      assertTrue(tierFlagType.typeName == "Tier", tierFlagType.wireType == "String")
+    test("a legacy wireType override still selects the wire, keeping the domain typeName") {
+      assertTrue(tierFlagType.typeName == "Tier", tierFlagType.wire == WireType.String)
     },
-    test("FlagType.from stays object-backed — its wireType is the domain name") {
+    test("FlagType.from stays object-backed: its wire is read from the domain name") {
       // `from` builds object-encoded instances; it does not silently acquire a scalar wire type.
       val objectBacked = FlagType.from[Tier]("TierObj", Tier.Free, Tier.parseStrict, Tier.render)
-      assertTrue(objectBacked.wireType == "TierObj")
+      assertTrue(objectBacked.wire == WireType.Object)
     },
-    // --- FlagValueType follows wireType (drives hook filtering) ---
+    // --- FlagValueType follows wire (drives hook filtering) ---
     test("FlagValueType.fromFlagType is unchanged for the built-ins") {
       assertTrue(
         FlagValueType.fromFlagType[Boolean] == FlagValueType.Boolean,
@@ -257,9 +274,10 @@ object ScalarWireTypeSpec extends ZIOSpecDefault {
         FlagValueType.fromFlagType[Tier] == FlagValueType.String
       )
     },
-    test("FlagValueType.fromFlagType still reports Object for Option and List") {
+    test("FlagValueType.fromFlagType reports the element's type for Option and Object for List") {
       assertTrue(
-        FlagValueType.fromFlagType[Option[Int]] == FlagValueType.Object,
+        FlagValueType.fromFlagType[Option[Int]] == FlagValueType.Int,
+        FlagValueType.fromFlagType[Option[Phase]] == FlagValueType.String,
         FlagValueType.fromFlagType[List[Int]] == FlagValueType.Object
       )
     },
@@ -296,7 +314,7 @@ object ScalarWireTypeSpec extends ZIOSpecDefault {
     },
     test("an object-backed custom type still resolves through the object decode path") {
       ZIO.scoped {
-        // Region's wireType is "Region" (not a scalar), so it must reach `getObjectEvaluation`, which
+        // Region's wire is Object (its name is not a scalar), so it must reach `getObjectEvaluation`, which
         // answers a string-valued Value for this key. Proves the `case _ => None` fall-through still works.
         build(new WireProvider(identity, "DEFAULT"), "region").flatMap { ff =>
           ff.value[Region]("region.flag", Region.Eu).map(r => assertTrue(r == Region.Us))
@@ -305,8 +323,7 @@ object ScalarWireTypeSpec extends ZIOSpecDefault {
     },
     test("the built-in Object branch still evaluates a Map flag") {
       ZIO.scoped {
-        // Exercises the `case None if flagType.typeName == "Object"` branch, which the diff deliberately
-        // left keyed on typeName; nothing else in the suite executes it.
+        // Exercises the `case None if flagType eq FlagType.objectFlagType` branch (the built-in raw-map shortcut).
         build(new WireProvider(identity, "DEFAULT"), "objmap").flatMap { ff =>
           ff.obj("o.flag", Map("a" -> "x")).map(m => assertTrue(m == Map("a" -> "x")))
         }

@@ -1,6 +1,8 @@
 package dev.openfeature.sdk
 
-/** Access to package-private SDK members needed for hot-swap rollback (#282).
+import dev.openfeature.sdk.internal.{AutoCloseableReentrantReadWriteLock, TriConsumer}
+
+/** Access to package-private SDK members needed for hot-swap rollback (#282) and event forwarding (#512).
   *
   * When `setProvider`'s registration of the new provider fails because the new provider's `initialize()` throws, the
   * SDK has already evicted the old provider's state manager from the domain/default slot but left the old
@@ -15,6 +17,25 @@ package dev.openfeature.sdk
   * provider-event marker — it may change how attach/detach state is managed.
   */
 object EventProviderAccess {
+
+  /** Forward every event `provider` emits to `onEvent`, which runs on the provider's emitter executor. No-op for
+    * providers that don't extend `EventProvider` (they never emit). Used by `fromAcquireAsync`'s switchable provider
+    * (#512), whose delegate is never registered with an API, so the SDK never attaches to it. Same call shape as
+    * `extras`' `EventProviderBridge.attach`: the lock is private to this attachment, since no API serializes against
+    * it. Throws `IllegalStateException` if the provider is already attached.
+    */
+  def attach(provider: FeatureProvider, onEvent: (ProviderEvent, ProviderEventDetails) => Unit): Unit =
+    provider match {
+      case ep: EventProvider =>
+        ep.attach(
+          new TriConsumer[EventProvider, ProviderEvent, ProviderEventDetails] {
+            override def accept(p: EventProvider, event: ProviderEvent, details: ProviderEventDetails): Unit =
+              onEvent(event, details)
+          },
+          new AutoCloseableReentrantReadWriteLock()
+        )
+      case _ => ()
+    }
 
   /** Reset an `EventProvider`'s attach state so it can be re-registered with an API instance. No-op for providers that
     * don't extend `EventProvider` (they never attach). The SDK's `detach()` is idempotent (a plain

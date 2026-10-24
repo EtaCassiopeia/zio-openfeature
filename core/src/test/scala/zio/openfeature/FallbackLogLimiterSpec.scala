@@ -205,6 +205,22 @@ object FallbackLogLimiterSpec extends ZIOSpecDefault {
           logs.forall(_.startsWith("Total evaluation of 'k' absorbed a defect")),
           logs.forall(!_.contains("suppressed"))
         )
+      },
+      test("logRejection shares one bucket across keys and is bounded, not silenced, under Off (#437)") {
+        for {
+          base  <- baseline
+          l     <- FallbackLogLimiter.make(FallbackLogging.Off)
+          _     <- ZIO.foreach(List("a", "b", "c"))(k => l.logRejection(s"Evaluation of '$k' rejected"))
+          first <- warnings(base)
+          _     <- TestClock.adjust(60.seconds)
+          _     <- l.logRejection("Evaluation of 'd' rejected")
+          all   <- warnings(base)
+          keys  <- l.trackedKeys
+        } yield assertTrue(
+          first == Chunk("Evaluation of 'a' rejected"),
+          all.drop(1) == Chunk("Evaluation of 'd' rejected (suppressed 2 similar)"),
+          keys == 0
+        )
       }
     ) @@ TestAspect.sequential
   )

@@ -14,6 +14,8 @@ import dev.openfeature.sdk.{
 }
 import dev.openfeature.sdk.exceptions.GeneralError
 import zio._
+import zio.openfeature.FeatureFlagError
+import java.util.concurrent.atomic.AtomicBoolean
 
 /** Policy for how the circuit breaker reacts to `STALE` provider state. */
 sealed trait StalePolicy extends Product with Serializable
@@ -25,26 +27,31 @@ object StalePolicy {
 
 /** Configuration for the circuit breaker provider.
   *
+  * `CircuitBreakerProvider.make`, `CircuitBreakerProvider.scoped` and `CircuitBreakerProvider.apply` reject a config
+  * that breaks the bounds given for each field below.
+  *
   * @param failureThreshold
-  *   Number of consecutive failures before the circuit opens
+  *   Number of consecutive failures before the circuit opens. Must be `>= 1`.
   * @param resetTimeout
-  *   How long the circuit stays open before transitioning to half-open
+  *   How long the circuit stays open before transitioning to half-open. Must be `> 0`. `Duration.Infinity` is a real
+  *   mode, not an accident: the circuit never half-opens by elapsed time, and recovers only when the delegate emits
+  *   `PROVIDER_READY` (or, for a circuit a state poll opened, when a later poll reports `READY`).
   * @param evaluationTimeout
   *   Maximum time to wait for a single delegate evaluation call. Timed-out calls count as infrastructure failures. Set
   *   this higher than your provider's typical response time but low enough to fail fast during outages.
   *   `Duration.Infinity` disables the timeout and evaluates the delegate on the calling thread, which lets the members
   *   of a wrapped `MultiProvider` chain see the caller's client metadata in their provider hooks. Any finite value
   *   needs the delegate on another thread, where that context is out of reach. Without a timeout a hanging delegate
-  *   blocks the caller and is never counted as a failure.
+  *   blocks the caller and is never counted as a failure. Must be `> 0` (`Duration.Infinity` is legal).
   * @param halfOpenMaxCalls
-  *   Number of successful probes in half-open state required to close the circuit
+  *   Number of successful probes in half-open state required to close the circuit. Must be `>= 1`.
   * @param stalePolicy
   *   How to react when the delegate provider is in STALE state
   * @param stateCheckInterval
   *   Minimum time between polls of the delegate's `getState()` on the evaluation path. The state-driven trip mechanism
   *   only needs periodic freshness; polling on every evaluation puts delegate-defined work (locks, computed state) on
   *   the hot path. `Duration.Zero` checks on every evaluation. Failure-count tripping is unaffected and reacts to every
-  *   evaluation outcome immediately.
+  *   evaluation outcome immediately. Must be `>= 0`; `Duration.Infinity` polls only once.
   */
 final case class CircuitBreakerProviderConfig(
   failureThreshold: Int = CircuitBreaker.DefaultFailureThreshold,
@@ -164,13 +171,17 @@ final class CircuitBreakerProvider private (
 
   override def isDomainScoped(): Boolean = underlying.isDomainScoped()
 
+  private val shutdownRan = new AtomicBoolean(false)
+
   // `super.shutdown()` (EventProvider's) last: it is what stops this wrapper's own event emitter (#450). It waits up to
-  // a few seconds for in-flight emissions to drain.
-  override def shutdown(): Unit = {
-    channel.detach()
-    try underlying.shutdown()
-    finally super.shutdown()
-  }
+  // a few seconds for in-flight emissions to drain. Idempotent (#451): a wrapper that is both scoped and registered
+  // with `FeatureFlags` is shut down by the SDK and by the scope finalizer, and the delegate must see only the first.
+  override def shutdown(): Unit =
+    if (shutdownRan.compareAndSet(false, true)) {
+      channel.detach()
+      try underlying.shutdown()
+      finally super.shutdown()
+    }
 
   // Forward the delegate's provider hooks and tracking so wrapping a provider in a circuit breaker doesn't silently
   // drop its telemetry/validation hooks or discard `track` events. `track` is fire-and-forget, so it passes through
@@ -399,22 +410,52 @@ object CircuitBreakerProvider {
   // it runs could itself time out.
   private[extras] val ProbeTimeoutMargin: Duration = 1.second
 
+  /** Upper bound on the scope finalizer's `shutdown()`: the delegate's own shutdown may block, and a pathological one
+    * must not hang scope teardown.
+    */
+  private[extras] val ShutdownTimeout: Duration = 10.seconds
+
+  /** Wrap `underlying` in a circuit breaker.
+    *
+    * Fails with `InvalidConfiguration` naming every field of `config` that breaks the bounds documented on
+    * [[CircuitBreakerProviderConfig]]. The caller owns the wrapper's lifecycle: use `scoped` to have it shut down when
+    * a `Scope` closes.
+    */
   def make(
     underlying: FeatureProvider,
     config: CircuitBreakerProviderConfig = CircuitBreakerProviderConfig()
-  ): UIO[CircuitBreakerProvider] =
+  ): IO[FeatureFlagError.InvalidConfiguration, CircuitBreakerProvider] =
     make(underlying, config, Ticker.system)
 
   private[extras] def make(
     underlying: FeatureProvider,
     config: CircuitBreakerProviderConfig,
     ticker: Ticker
-  ): UIO[CircuitBreakerProvider] =
-    ZIO.runtime[Any].map { rt =>
-      val breaker = CircuitBreaker(config.toCircuitBreakerConfig, ticker)
-      new CircuitBreakerProvider(underlying, config, breaker, rt)
-    }
+  ): IO[FeatureFlagError.InvalidConfiguration, CircuitBreakerProvider] =
+    ZIO.fromEither(ConfigValidation.circuitBreakerProvider(config)) *>
+      ZIO.runtime[Any].map { rt =>
+        val breaker = CircuitBreaker(config.toCircuitBreakerConfig, ticker)
+        new CircuitBreakerProvider(underlying, config, breaker, rt)
+      }
 
+  /** `make` with scope-managed shutdown: when the surrounding `Scope` closes, the wrapper is shut down (bounded by a
+    * timeout; a failure is logged and ignored), which shuts down `underlying` too. Safe to combine with registering the
+    * wrapper with `FeatureFlags`: `shutdown()` is idempotent, so the delegate is shut down once. Use
+    * `ZLayer.scoped(CircuitBreakerProvider.scoped(provider, config))` for a layer.
+    */
+  def scoped(
+    underlying: FeatureProvider,
+    config: CircuitBreakerProviderConfig = CircuitBreakerProviderConfig()
+  ): ZIO[Scope, FeatureFlagError.InvalidConfiguration, CircuitBreakerProvider] =
+    ZIO.acquireRelease(make(underlying, config))(p =>
+      WrapperRelease.release("CircuitBreakerProvider", ShutdownTimeout)(p.shutdown())
+    )
+
+  /** Unsafe constructor for code without a ZIO runtime at hand; prefer `make` or `scoped`.
+    *
+    * @throws IllegalArgumentException
+    *   if `config` breaks the bounds documented on [[CircuitBreakerProviderConfig]]
+    */
   def apply(
     underlying: FeatureProvider,
     config: CircuitBreakerProviderConfig = CircuitBreakerProviderConfig()
@@ -429,6 +470,7 @@ object CircuitBreakerProvider {
     config: CircuitBreakerProviderConfig,
     ticker: Ticker
   ): CircuitBreakerProvider = {
+    ConfigValidation.orThrow(ConfigValidation.circuitBreakerProvider(config))
     val rt      = Runtime.default
     val breaker = CircuitBreaker(config.toCircuitBreakerConfig, ticker)
     new CircuitBreakerProvider(underlying, config, breaker, rt)

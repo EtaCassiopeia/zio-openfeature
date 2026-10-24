@@ -185,13 +185,6 @@ object HostileValueSweepSpec extends ZIOSpecDefault {
     case other => sys.error(s"unexpected generated value $other")
   }
 
-  /** `fromOpenFeature` reads the SDK's `asMap()`, which lists the targeting key as a `"targetingKey"` attribute, so a
-    * context that had one reads back with an extra attribute. Pre-existing and benign for these sweeps; stripped here
-    * so the properties compare only what the caller put in.
-    */
-  private def withoutTargetingKey(attrs: Map[String, AttributeValue]): Map[String, AttributeValue] =
-    attrs - "targetingKey"
-
   private def roundTripAttr(attr: AttributeValue): AttributeValue = {
     val javaCtx = ContextConverter.toOpenFeature(EvaluationContext(None, Map("k" -> attr)))
     ContextConverter.fromOpenFeature(javaCtx).attributes("k")
@@ -256,10 +249,11 @@ object HostileValueSweepSpec extends ZIOSpecDefault {
         }
       },
       test("any string key and the targeting key survive exactly") {
-        check(hostileString, hostileString) { (key, tk) =>
+        // `targetingKey` is the one reserved attribute name (#497); every other key round-trips exactly.
+        check(hostileString.filter(_ != "targetingKey"), hostileString) { (key, tk) =>
           val ctx  = EvaluationContext(Some(tk), Map(key -> AttributeValue.BoolValue(true)))
           val back = ContextConverter.fromOpenFeature(ContextConverter.toOpenFeature(ctx))
-          assertTrue(back.targetingKey == ctx.targetingKey, withoutTargetingKey(back.attributes) == ctx.attributes)
+          assertTrue(back == ctx)
         }
       },
       test("Int at and around the bounds, and every Int, survive as the same Int") {
@@ -346,13 +340,7 @@ object HostileValueSweepSpec extends ZIOSpecDefault {
             ))
         val ctx  = EvaluationContext(Some("tk"), attrs)
         val back = ContextConverter.fromOpenFeature(ContextConverter.toOpenFeature(ctx))
-        assertTrue(
-          back.targetingKey == ctx.targetingKey,
-          withoutTargetingKey(back.attributes).size == attrs.size,
-          withoutTargetingKey(back.attributes).map { case (k, v) => k -> canonAttr(v) } == attrs.map { case (k, v) =>
-            k -> canonAttr(v)
-          }
-        )
+        assertTrue(back == ctx)
       }
     ),
     suite("ValueBridge round-trip (anyToValue -> valueToAny)")(

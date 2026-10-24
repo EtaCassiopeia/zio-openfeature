@@ -14,15 +14,19 @@ import dev.openfeature.sdk.{
 }
 import zio._
 import zio.cache.{Cache, Lookup}
+import zio.openfeature.FeatureFlagError
 import java.util.concurrent.atomic.AtomicBoolean
 import scala.jdk.CollectionConverters._
 
 /** Configuration for the caching provider.
   *
+  * `CachingProvider.make`, `CachingProvider.scoped` and `CachingProvider.apply` reject a config that breaks the bounds
+  * given for each field below.
+  *
   * @param maxEntries
-  *   Maximum number of cached entries before LRU eviction
+  *   Maximum number of cached entries before LRU eviction. Must be `>= 1`.
   * @param ttl
-  *   Time-to-live for cached entries
+  *   Time-to-live for cached entries. Must be `> 0`; `Duration.Infinity` means entries never expire.
   * @param contextKeys
   *   If set, only these context attribute keys are included in the cache key hash — the targeting key is NOT included
   *   unless you list `"targetingKey"` yourself. Use this when contexts contain high-cardinality fields (e.g.,
@@ -152,14 +156,18 @@ final class CachingProvider private (
 
   override def isDomainScoped(): Boolean = underlying.isDomainScoped()
 
+  private val shutdownRan = new AtomicBoolean(false)
+
   // `super.shutdown()` (EventProvider's) last: it is what stops this wrapper's own event emitter (#450). It waits up to
-  // a few seconds for in-flight emissions to drain.
-  override def shutdown(): Unit = {
-    channel.detach()
-    invalidateAllNow()
-    try underlying.shutdown()
-    finally super.shutdown()
-  }
+  // a few seconds for in-flight emissions to drain. Idempotent (#451): a wrapper that is both scoped and registered
+  // with `FeatureFlags` is shut down by the SDK and by the scope finalizer, and the delegate must see only the first.
+  override def shutdown(): Unit =
+    if (shutdownRan.compareAndSet(false, true)) {
+      channel.detach()
+      invalidateAllNow()
+      try underlying.shutdown()
+      finally super.shutdown()
+    }
 
   // Length-prefix each field so user-supplied strings cannot synthesize separator collisions
   // (e.g., a value containing "|" or "," produces a different fingerprint than the corresponding split).
@@ -300,12 +308,23 @@ object CachingProvider {
   val DefaultMaxEntries: Int = 1000
   val DefaultTtl: Duration   = 5.minutes
 
+  /** Upper bound on the scope finalizer's `shutdown()`: the delegate's own shutdown may block, and a pathological one
+    * must not hang scope teardown.
+    */
+  private[extras] val ShutdownTimeout: Duration = 10.seconds
+
   /** Create a CachingProvider wrapping the given provider.
     *
-    * Uses `zio-cache` for concurrent lookup deduplication, TTL expiration, and LRU eviction.
+    * Uses `zio-cache` for concurrent lookup deduplication, TTL expiration, and LRU eviction. Fails with
+    * `InvalidConfiguration` naming every field of `config` that breaks the bounds documented on [[CachingConfig]]. The
+    * caller owns the wrapper's lifecycle: use `scoped` to have it shut down when a `Scope` closes.
     */
-  def make(underlying: FeatureProvider, config: CachingConfig = CachingConfig()): UIO[CachingProvider] =
+  def make(
+    underlying: FeatureProvider,
+    config: CachingConfig = CachingConfig()
+  ): IO[FeatureFlagError.InvalidConfiguration, CachingProvider] =
     for {
+      _  <- ZIO.fromEither(ConfigValidation.caching(config))
       rt <- ZIO.runtime[Any]
       cache <- Cache.make(
         config.maxEntries,
@@ -318,8 +337,26 @@ object CachingProvider {
       )
     } yield new CachingProvider(underlying, config, cache, rt)
 
-  /** Create a CachingProvider (convenience, requires ZIO runtime). */
+  /** `make` with scope-managed shutdown: when the surrounding `Scope` closes, the wrapper is shut down (bounded by a
+    * timeout; a failure is logged and ignored), which shuts down `underlying` too. Safe to combine with registering the
+    * wrapper with `FeatureFlags`: `shutdown()` is idempotent, so the delegate is shut down once. Use
+    * `ZLayer.scoped(CachingProvider.scoped(provider, config))` for a layer.
+    */
+  def scoped(
+    underlying: FeatureProvider,
+    config: CachingConfig = CachingConfig()
+  ): ZIO[Scope, FeatureFlagError.InvalidConfiguration, CachingProvider] =
+    ZIO.acquireRelease(make(underlying, config))(p =>
+      WrapperRelease.release("CachingProvider", ShutdownTimeout)(p.shutdown())
+    )
+
+  /** Create a CachingProvider (convenience, requires ZIO runtime); prefer `make` or `scoped`.
+    *
+    * @throws IllegalArgumentException
+    *   if `config` breaks the bounds documented on [[CachingConfig]]
+    */
   def apply(underlying: FeatureProvider, config: CachingConfig = CachingConfig()): CachingProvider = {
+    ConfigValidation.orThrow(ConfigValidation.caching(config))
     val rt = Runtime.default
     Unsafe.unsafe { implicit u =>
       rt.unsafe.run(make(underlying, config)).getOrThrowFiberFailure()

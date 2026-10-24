@@ -181,12 +181,8 @@ object ValueRoundTripSpec extends ZIOSpecDefault {
       )
       check(ctxGen) { ctx =>
         val rt = ContextConverter.fromOpenFeature(ContextConverter.toOpenFeature(ctx))
-        assertTrue(
-          rt.targetingKey == ctx.targetingKey,
-          rt.attributes("bool").asBoolean == ctx.attributes("bool").asBoolean,
-          rt.attributes("string").asString == ctx.attributes("string").asString,
-          rt.attributes("int").asInt == ctx.attributes("int").asInt
-        )
+        // The exact law: no phantom `targetingKey` attribute on the way back (#497).
+        assertTrue(rt == ctx)
       }
     }
   ) @@ TestAspect.samples(200)

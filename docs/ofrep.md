@@ -72,7 +72,8 @@ callers no more than you choose.
 
 | What happens | Typed tier (`boolean`, `value`, ...) | Total tier (`booleanOrDefault`, `resolveOrDefault`, ...) |
 |---|---|---|
-| The server answers 4xx or 5xx | fails with the error the response names, `ProviderError` for `GENERAL` | your default, with the error code on the resolution |
+| The server answers 401 or 403 | fails with `Unauthorized` (a wrong or missing credential) | your default, with error code `General` |
+| The server answers another 4xx or 5xx | fails with the error the response names, `ProviderError` for `GENERAL` | your default, with the error code on the resolution |
 | The server cannot be reached | fails with `Unreachable` (or `ProviderError`) | your default, with error code `General` |
 | No answer within `evaluationTimeout` | fails with `ProviderError` holding a `TimeoutException` | your default, with error code `General` |
 

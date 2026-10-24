@@ -67,7 +67,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Unreadable provider event metadata is logged instead of silently dropped (the event is still delivered).
   - A typed error built from a provider-reported code (`PARSE_ERROR`, `GENERAL`) carries the provider's message in a
     stackless cause instead of a stack trace pointing into this library.
-||||||| fca038a
 - **The documentation site moved to MkDocs Material and was rewritten.** Every page was checked against the code and
   simplified, new pages cover evaluation, provider lifecycle and events, and OFREP, and animations show how an
   evaluation, context, hooks, transactions and providers work. Every code sample on the site is now compiled and,
@@ -109,6 +108,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Scala Steward can open pull requests again** (#473). Every scheduled run had failed with a 403, because this
+  repository does not let GitHub Actions create pull requests. The workflow now authenticates with a fine-grained
+  `SCALA_STEWARD_TOKEN`, so its PRs also run CI. A new `.scala-steward.conf` keeps zio-cache on 0.2.x and Scala 3 on
+  the 3.3 LTS line.
 - **`OptimizelyFeatureProvider` sends `track` calls to Optimizely** (#454). It did not implement `track`, so every call
   fell through to the SDK's no-op default and no conversion was ever recorded, whichever client the provider wrapped.
   A call now becomes a conversion for the context's user, with the details' attributes as event tags and the details'
@@ -166,7 +169,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`IntegerWideningLongProvider` reads longs beyond `Int` range** (#452). It picked the integer resolver from the
   caller's default, so a flag stored as `5_000_000_000` read with default `0L` failed with `TYPE_MISMATCH` (or was
   narrowed, depending on the provider). A `TYPE_MISMATCH` from the integer path now retries on the long path.
-||||||| 79c921d
 - **`FeatureFlagError.classify` reads the HTTP status instead of trusting the exception's name** (#440). Any class
   named `*HttpResponseException` was reported as `Unauthorized`, so a 503 from such a client looked like a bad SDK key.
   An exception with a `getStatusCode`/`statusCode` accessor is now classified by its status (401/403 → `Unauthorized`,
@@ -176,7 +178,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   consumers and event-handler fibers end with it instead of waiting forever; `awaitReady()` returns at once on an
   instance that is shutting down or shut down; and an interrupted `shutdown` still runs to the terminal `NotReady`
   instead of leaving `ShuttingDown` and a half torn-down API.
-||||||| a0a5a5b
 - **Tracking attributes are sent by type, and an unsupported one fails `track`** (#441). An `AttributeValue` attribute
   (and any type the converter did not know, including one nested in a `List`/`Map`) was sent as its `toString`, so
   `withAttribute("plan", AttributeValue.string("pro"))` arrived as `"StringValue(pro)"`. `AttributeValue`s, `Option`s
@@ -185,7 +186,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   types that used to be sent as their `toString` now fail, among them `Short`, `Byte`, `BigDecimal`, `UUID` and
   collections other than `List`/`Map` (`Vector`, `Seq`, `Set`, Java collections); convert them before tracking. A long
   inside a `List`/`Map` that fits in an `Int` is now sent as an integer, as a top-level one already was.
-||||||| a0a5a5b
 - **`CircuitBreakerProvider` now trips on providers that return error codes instead of throwing** (#446). Any returned
   evaluation counted as a success, so a delegate that reports network failures as `errorCode = GENERAL` — the OFREP
   provider does — kept the circuit closed through a full outage, and a returned `FLAG_NOT_FOUND` could close a
@@ -197,12 +197,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   returned normally, so the SDK reported it ready while it answered `PROVIDER_NOT_READY` forever. It now throws
   `FatalError`, as it does after a failed start or when `shutdown` overtakes the construction. The wrapper-completeness test could not see the missing `track`, because Scala emits a synthetic
   forwarder for every inherited Java default method; it now ignores those.
-||||||| 14311fc
 - **`CachingProvider` no longer re-caches a stale value after invalidation** (#449). zio-cache stores a finished lookup
   unconditionally, so an evaluation already in flight when `invalidateAll` ran — or when the delegate reported a
   configuration change — wrote the pre-change value back, and it was served as `CACHED` for the rest of the TTL.
   Cache keys now carry an invalidation epoch, so such a late write lands under a key no later evaluation reads.
-||||||| 0bde390
 - **Hooks inside `FeatureHook.compose` no longer share `HookData` across evaluations** (#438, spec 4.3.2). A
   composite kept one `HookData` per inner hook for its whole lifetime, so a composite registered once (for example
   `addHook(compose(List(logging, metrics)))`) let concurrent evaluations overwrite each other's data, which made the
@@ -213,7 +211,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   its long-finished state; one registered inside `withContext(...)` kept that context. Handlers, including the
   immediate call for a provider already in the event's state, now run without either. Other `FiberRef`s, such as log
   annotations, are still inherited.
-||||||| 28fdacf
 - **A provider whose `initialize()` never returns no longer wedges the layer** (#433). Registration used the Java
   SDK's `setProviderAndWait`, which holds the API write lock for the whole of `initialize()`:
   - `setProvider` had no time limit at all, so a hanging provider kept the swap — and status `NotReady` — forever.

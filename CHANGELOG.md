@@ -16,15 +16,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `FeatureProvider`/`EventProvider` method but `emit*`, and a reflective test fails if the SDK adds one. The #433,
   #434 and #435 lifecycle scenarios are re-expressed with it in the testkit, and extras' tests now use it (extras
   depends on testkit for tests only). See "Fault injection" on the testkit page.
-- **A cap on abandoned provider calls** (#437). A timed-out evaluation abandons its provider call, which keeps a thread
-  of ZIO's unbounded blocking pool until the provider returns, so a hung provider used to park one more thread per
-  timeout. Each instance now counts the abandoned calls still running and, at `FeatureFlags.DefaultMaxAbandonedCalls`
-  (256), fails timed evaluations fast with `ProviderError` wrapping a `RejectedExecutionException` without calling the
-  provider, logging one rate-limited warning; the `*OrDefault` calls keep serving defaults and evaluations resume as
-  the abandoned calls return. Healthy traffic never reaches the cap, and untimed evaluations are never gated.
-  Configure it with `FeatureFlagsConfig.withMaxAbandonedCalls(n)` or `fromAcquireAsync`'s new trailing
-  `maxAbandonedCalls`; `Int.MaxValue` disables it. The evaluation-timeout docs now spell out the per-timeout thread
-  cost and recommend `CircuitBreakerProvider` for remote providers.
 
 - **Weekly mutation testing of core** (#468): stryker4s via the new `Mutation testing` workflow (scheduled and
   manual), with its report as a build artifact. Informational only: never runs on a pull request and never fails the
@@ -48,6 +39,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   constructors, including the standalone `CircuitBreaker.apply`, throw `IllegalArgumentException`. Both wrappers'
   `shutdown()` is now idempotent, so a wrapper that is scoped and registered with `FeatureFlags` shuts its delegate
   down once.
+- **A cap on abandoned provider calls** (#437). A timed-out evaluation abandons its provider call, which keeps a thread
+  of ZIO's unbounded blocking pool until the provider returns, so a hung provider used to park one more thread per
+  timeout. Each instance now counts the abandoned calls still running and, at `FeatureFlags.DefaultMaxAbandonedCalls`
+  (256), fails timed evaluations fast with `ProviderError` wrapping a `RejectedExecutionException` without calling the
+  provider, logging one rate-limited warning; the `*OrDefault` calls keep serving defaults and evaluations resume as
+  the abandoned calls return. Healthy traffic never reaches the cap, and untimed evaluations are never gated.
+  Configure it with `FeatureFlagsConfig.withMaxAbandonedCalls(n)` or `fromAcquireAsync`'s new trailing
+  `maxAbandonedCalls`; `Int.MaxValue` disables it. The evaluation-timeout docs now spell out the per-timeout thread
+  cost and recommend `CircuitBreakerProvider` for remote providers.
 
 ### Changed
 

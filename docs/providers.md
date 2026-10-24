@@ -142,6 +142,11 @@ Things to know:
   `firstSuccessful`, you get a `GENERAL` error carrying every provider's error.
 - Every provider stays in the chain, in order, even if two report the same name.
 - For your own strategy, implement `MultiProviderStrategy.Strategy` (the Java SDK's `Strategy` interface).
+- `Long` flags are read through each provider's own long getter, exact across the whole `Long` range. That holds for
+  `FeatureFlags.multiProvider` and the default `fromAcquireAsync` compose. A `MultiProvider` you build yourself with
+  `new MultiProvider(...)` has no long getter: it reads each provider's double getter instead, which fails integer
+  values with `TYPE_MISMATCH`. Use `FeatureFlags.multiProvider`, or wrap your chain in
+  [`IntegerWideningLongProvider`](extras.md#integer-widening-long-provider) for values in `Int` range.
 
 ## Start on a fallback: `fromAcquireAsync`
 

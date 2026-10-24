@@ -207,6 +207,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   repository does not let GitHub Actions create pull requests. The workflow now authenticates with a fine-grained
   `SCALA_STEWARD_TOKEN`, so its PRs also run CI. A new `.scala-steward.conf` keeps zio-cache on 0.2.x and Scala 3 on
   the 3.3 LTS line.
+- **Long flags read through `multiProvider` use each provider's long getter** (#533). The Java SDK's `MultiProvider`
+  has no `getLongEvaluation`, so a long read went through each child's double getter, which this library's providers
+  answer with `TYPE_MISMATCH` for integer values: `firstSuccessful` served the fallback's value, and `firstMatch`
+  failed. `FeatureFlags.multiProvider` and `fromAcquireAsync`'s default compose now build a `MultiProvider` subclass
+  whose long reads run the strategy over each child's `getLongEvaluation`, exact across the `Long` range, with the
+  child's provider hooks seeing `FlagValueType.LONG` and the caller's client metadata. A `MultiProvider` built
+  directly with `new MultiProvider(...)` keeps the SDK behaviour.
 - **A custom `FlagType` named `"Object"` runs its own `decode`** (#439). The object path's raw-map shortcut was chosen
   by `typeName == "Object"`, so `FlagType.from("Object", ...)` either failed with a `ProviderError` wrapping a
   `ClassCastException` (a non-`Map` default) or served the raw map past the user's `decode` (a `Map` default). Only the

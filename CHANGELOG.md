@@ -89,6 +89,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The OFREP factories return `OFREPFeatureProvider`** (#529). `OFREPProvider.make`, `scoped` and `layer` (every
+  overload) now yield `OFREPFeatureProvider`, a `FeatureProvider` wrapping the contrib `OfrepProvider` that adds the
+  `getLongEvaluation` the contrib one lacks. Code that names `OfrepProvider` as the result type changes it to
+  `OFREPFeatureProvider`, or reaches the contrib instance with `.underlying`. Code compiled against an earlier release
+  must be recompiled: the result types erase to `ZIO`/`ZLayer`, so MiMa reports nothing, but a compiled caller that
+  casts the result to `OfrepProvider` fails at run time. The deprecated `apply`/`fromOptions` are unchanged.
 - **`CachingProvider.make` and `CircuitBreakerProvider.make` can fail** (#451). They return
   `IO[FeatureFlagError.InvalidConfiguration, _]` instead of `UIO`, the same as the OFREP and Optimizely `make`, failing
   with a message naming each invalid field (`CircuitBreakerProviderConfig.failureThreshold must be >= 1, got 0`).
@@ -203,6 +209,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`FeatureFlags.long` serves OFREP flags** (#529). The contrib OFREP provider does not override
+  `getLongEvaluation`, so the SDK answered long reads from its double resolver, which accepts only JSON decimals:
+  every integer flag came back `TYPE_MISMATCH`, and `2.0` was served as `2`. `OFREPFeatureProvider` resolves long
+  reads through the object resolver: a JSON integer in the `Long` range is served exactly, anything else (`2.0`, a
+  string, an integer beyond `Long`) is `TYPE_MISMATCH` with the default, and server errors keep their codes.
 - **Scala Steward can open pull requests again** (#473). Every scheduled run had failed with a 403, because this
   repository does not let GitHub Actions create pull requests. The workflow now authenticates with a fine-grained
   `SCALA_STEWARD_TOKEN`, so its PRs also run CI. A new `.scala-steward.conf` keeps zio-cache on 0.2.x and Scala 3 on

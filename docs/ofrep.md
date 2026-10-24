@@ -29,14 +29,17 @@ app at startup instead of at the first evaluation.
 
 | Factory | Returns | Use it when |
 |---|---|---|
-| `make(baseUrl)` | `IO[InvalidConfiguration, OfrepProvider]` | you pass the provider to a `FeatureFlags` layer, which shuts it down |
+| `make(baseUrl)` | `IO[InvalidConfiguration, OFREPFeatureProvider]` | you pass the provider to a `FeatureFlags` layer, which shuts it down |
 | `make(config: OFREPProviderConfig)` | same | you need timeouts, headers or a proxy |
 | `make(options: OfrepProviderOptions)` | same | you build the contrib provider's own options |
-| `scoped(...)` | `ZIO[Scope, InvalidConfiguration, OfrepProvider]` | the provider should be shut down when a scope closes |
-| `layer(...)` | `ZLayer[Any, InvalidConfiguration, OfrepProvider]` | you want the provider itself as a layer |
+| `scoped(...)` | `ZIO[Scope, InvalidConfiguration, OFREPFeatureProvider]` | the provider should be shut down when a scope closes |
+| `layer(...)` | `ZLayer[Any, InvalidConfiguration, OFREPFeatureProvider]` | you want the provider itself as a layer |
 
-`scoped` and `layer` take the same three kinds of argument as `make`. The old `OFREPProvider()`,
-`OFREPProvider(baseUrl)` and `OFREPProvider.fromOptions(options)` still work but are deprecated: they skip the checks.
+`scoped` and `layer` take the same three kinds of argument as `make`. `OFREPFeatureProvider` is a `FeatureProvider`
+that wraps the contrib `OfrepProvider` and adds the `Long` support the contrib one lacks (see
+[`Long` flags](#long-flags)); `.underlying` gives you the contrib provider if you need it. The old `OFREPProvider()`,
+`OFREPProvider(baseUrl)` and `OFREPProvider.fromOptions(options)` still work but are deprecated: they skip the checks
+and return the bare contrib provider.
 
 ## Configuration
 
@@ -97,7 +100,11 @@ error code, not as a failure, so it does not count.
 
 ## `Long` flags
 
-The contrib provider has no resolver of its own for `Long`, so OpenFeature answers `FeatureFlags.long` from its
-double resolver. That is exact up to 2^53; beyond it you get a `TypeMismatch` rather than a wrong number. If your
-server rejects integer flags read as doubles, wrap the provider in
-[`IntegerWideningLongProvider`](extras.md#integer-widening-long-provider).
+`FeatureFlags.long` reads any JSON integer in the `Long` range exactly, `5` and `5000000000` alike. Anything else
+the server sends for a long read, including a whole decimal such as `2.0`, a string, or an integer beyond the `Long`
+range, is a `TypeMismatch` and you get your default. Nothing is rounded or widened.
+
+The contrib provider has no resolver of its own for `Long`; on its own, OpenFeature would answer long reads from its
+double resolver and reject every integer flag. `OFREPFeatureProvider` reads them through the contrib object resolver
+instead, which keeps the number exactly as the server sent it. The deprecated factories return the bare contrib
+provider and do not have this.

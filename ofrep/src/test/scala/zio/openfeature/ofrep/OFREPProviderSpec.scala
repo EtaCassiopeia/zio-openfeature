@@ -151,12 +151,12 @@ object OFREPProviderSpec extends ZIOSpecDefault {
           result.left.exists(_.isInstanceOf[FeatureFlagError.InvalidConfiguration])
         )
       },
-      test("layer accepts a valid URL and yields an OfrepProvider in the environment") {
+      test("layer accepts a valid URL and yields an OFREPFeatureProvider in the environment") {
         val build = ZIO.scoped(
           OFREPProvider
             .layer("http://localhost:9999")
             .build
-            .map(_.get[OfrepProvider])
+            .map(_.get[OFREPFeatureProvider])
         )
         for {
           provider <- build

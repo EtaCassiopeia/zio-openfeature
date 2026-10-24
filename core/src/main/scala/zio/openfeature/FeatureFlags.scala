@@ -992,9 +992,9 @@ object FeatureFlags {
     Schedule.recurs(DefaultConstructionRetries) && Schedule.exponential(DefaultConstructionBackoff).jittered
 
   /** Fallback provider name stamped when a provider exposes no metadata/name at registration time. The event-bridge
-    * identity guard (`FeatureFlagsLive.fromCurrentProvider`) treats this as an indeterminate identity and fails open,
-    * so a provider whose real name only appears after `initialize()` (e.g. the SDK's MultiProvider) still drives its
-    * own status.
+    * identity guard (`internal.EventBridge.fromCurrentProvider`) treats this as an indeterminate identity and fails
+    * open, so a provider whose real name only appears after `initialize()` (e.g. the SDK's MultiProvider) still drives
+    * its own status.
     */
   private[openfeature] val UnknownProviderName: String = "unknown"
 

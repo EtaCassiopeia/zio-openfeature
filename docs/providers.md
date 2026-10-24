@@ -147,9 +147,10 @@ Things to know:
 
 Some providers do their network work in the constructor, so even `fromProviderAsync` blocks until they are built.
 `fromAcquireAsync` takes the provider as an effect instead. The layer starts at once on a fallback provider, and a
-background fiber builds the real one, checks it, and swaps it in:
+background fiber builds the real one, checks it, initializes it, and then switches to it. The fallback answers every
+evaluation until that moment, and the status is `Ready` the whole time:
 
-![fromAcquireAsync: from the first moment evaluations are answered by the fallback provider while a background fiber acquires the real provider, retries after a failed attempt, verifies the candidate knows a sentinel flag, and swaps it in; AcquireStatus moves from Constructing to Live, and later evaluations get real values.](assets/acquire.svg)
+![fromAcquireAsync: from the first moment evaluations are answered by the fallback provider while a background fiber acquires the real provider, retries after a failed attempt, verifies the candidate knows a sentinel flag, and initializes it while the fallback keeps answering, then switches to it; the status stays Ready throughout, AcquireStatus moves from Constructing to Live, and later evaluations get real values.](assets/acquire.svg)
 
 ```scala
 --8<-- "Providers.scala:acquire"
@@ -161,7 +162,7 @@ to `onConstructionError`, and the fallback keeps serving.
 | Parameter | Default | Meaning |
 |:--|:--|:--|
 | `acquire` | | Builds the real provider. Register cleanup in its `Scope` (for example with `ZIO.acquireRelease`) to have a rejected or unused provider closed. |
-| `fallback` | | Builds a fallback. It runs again for the swap, because the swap shuts the first fallback down, so it must return a fresh instance each time. |
+| `fallback` | | Builds a fallback. It runs again for the swap, because the switch shuts the first fallback down, so it must return a fresh instance each time. |
 | `verify` | accept | Checks the real provider before the swap. A failure counts as a failed attempt. |
 | `compose` | `FeatureFlags.defaultAcquireCompose` | Combines real and fallback into the provider that is swapped in. The default asks the real provider first and falls back on any error (`firstSuccessful`). |
 | `constructionRetry` | `Schedule.recurs(3) && Schedule.exponential(1.second).jittered` | Retries `acquire` plus `verify`. |
@@ -174,7 +175,7 @@ to `onConstructionError`, and the fallback keeps serving.
 wrong values. `Verify.flagExists[A](key)` asks the candidate for a flag you know exists, and rejects it if the answer
 carries any error code (`Verify.VerificationFailed(key, errorCode, message)`). `Verify.all(check1, check2)` runs several
 checks in order; any `FeatureProvider => Task[Unit]` is a check. The candidate is checked as `acquire` returned it,
-before the SDK calls its `initialize()` and without global or ambient context. A provider that only answers after
+before its `initialize()` runs and without global or ambient context. A provider that only answers after
 `initialize()` must be initialized inside `acquire`.
 
 **Which provider is serving?** The status is `Ready` from the start, so it cannot tell you. The layer also provides
@@ -188,9 +189,13 @@ before the SDK calls its `initialize()` and without global or ambient context. A
 later, and the default `compose` then quietly answers from the fallback. For ongoing health, wrap the real provider in
 a [`CircuitBreakerProvider`](extras.md). A failed swap is reported as `ProviderSwapFailed(error)`.
 
-!!! note
-    The swap itself takes a moment, and evaluations that start during it fail with `ProviderNotReady`, like any
-    [`setProvider`](#replace-the-provider-at-runtime). Use the `*OrDefault` calls if a default is acceptable there.
+**How the swap works.** Unlike [`setProvider`](#replace-the-provider-at-runtime), the swap never makes evaluations fail
+with `ProviderNotReady`. The OpenFeature SDK only ever sees one provider on this path, an internal switch that starts
+out answering from the fallback. The composed real-plus-fresh-fallback provider is initialized off to the side, bounded
+by `initTimeout`, and the switch routes to it only once that has succeeded; it then shuts the first fallback down. If
+initialization fails or times out, the composed provider is shut down, the fallback keeps serving, and the state
+becomes `Failed(ProviderSwapFailed(...))`. If you call `setProvider` yourself before the switch, your provider wins:
+the acquired one is discarded and the state becomes `Failed`.
 
 If you want plain async start without a fallback for a provider whose constructor blocks, wrap it in a
 [`DeferredProvider`](extras.md) and pass it to `fromProviderAsync`.
@@ -244,8 +249,7 @@ What happens:
 5. If `initialize()` has not finished within `initTimeout`, `setProvider` fails with `ProviderInitializationFailed`
    wrapping a `TimeoutException`, and the status becomes `Error`. This swap is not rolled back: the new provider stays
    registered, and the status becomes `Ready` on its own if it finishes later. The previous provider is not restored,
-   because the SDK would shut it down as soon as the new one became ready. `fromAcquireAsync` handles this by
-   swapping in a fresh fallback.
+   because the SDK would shut it down as soon as the new one became ready.
 
 In every failure case, `setProvider` again with a working provider recovers.
 

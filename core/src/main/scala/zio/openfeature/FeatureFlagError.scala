@@ -48,9 +48,11 @@ object FeatureFlagError {
     override def cause: Option[Throwable] = Some(underlying)
   }
 
-  /** The remote provider refused the request because of an authentication or authorization failure (HTTP 401 / 403, or
-    * an analogous SDK signal). Operators should alert on this distinctly from generic provider errors — it almost
-    * always indicates a misconfigured SDK key.
+  /** The remote provider refused the request because of an authentication or authorization failure (HTTP 401 / 403, an
+    * analogous SDK signal, or a provider-reported `GENERAL` evaluation error whose message names an auth failure — the
+    * OFREP contrib provider reports 401/403 this way, #498). Operators should alert on this distinctly from generic
+    * provider errors — it almost always indicates a misconfigured SDK key. Its `toErrorCode` stays `General`, since the
+    * OpenFeature spec has no auth error code.
     */
   final case class Unauthorized(reason: String) extends FeatureFlagError {
     def message: String = s"Provider rejected request: $reason"
@@ -197,13 +199,26 @@ object FeatureFlagError {
   private val AuthStatusToken = java.util.regex.Pattern.compile("\\b(401|403)\\b")
 
   private def isHttpAuthFailure(t: Throwable, msg: String): Boolean = {
-    val cls    = t.getClass.getName
-    val msgLow = msg.toLowerCase
+    val cls = t.getClass.getName
     cls.endsWith("UnauthorizedException") ||
     cls.endsWith("ForbiddenException") ||
+    looksLikeAuthFailure(msg)
+  }
+
+  // The literal the OFREP contrib provider (0.0.2, internal/Resolver.java) puts in a GENERAL evaluation error for a
+  // 401/403 response. Pinned by OfrepAuthFailureSpec's canary, so a contrib bump that rewords it fails there (#498).
+  private val OfrepAuthPrefix = "authentication/authorization error"
+
+  /** Whether an error message names an authentication or authorization failure: a standalone `401`/`403` token,
+    * `unauthorized`, `forbidden`, or the OFREP contrib provider's auth literal. Shared by `classify` (thrown
+    * exceptions) and the mapping of provider-reported `GENERAL` evaluation errors, which carry only a message (#498).
+    */
+  private[openfeature] def looksLikeAuthFailure(message: String): Boolean = {
+    val msgLow = message.toLowerCase
     AuthStatusToken.matcher(msgLow).find() ||
     msgLow.contains("unauthorized") ||
-    msgLow.contains("forbidden")
+    msgLow.contains("forbidden") ||
+    msgLow.contains(OfrepAuthPrefix)
   }
 
   private def extractAuthReason(t: Throwable, msg: String): String =

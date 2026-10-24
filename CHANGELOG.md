@@ -39,6 +39,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   constructors, including the standalone `CircuitBreaker.apply`, throw `IllegalArgumentException`. Both wrappers'
   `shutdown()` is now idempotent, so a wrapper that is scoped and registered with `FeatureFlags` shuts its delegate
   down once.
+- **Per-test flag overrides and a hook recorder in the testkit** (#458). `TestFeatureProvider.withFlags(Flag := v)`,
+  `withFlags(map)`, `withFlag(flag, v)` and `withFlag(key, v)` are test aspects that pin flags for one test and
+  restore each key afterwards (or remove it if it was absent), so they nest and leave other keys alone.
+  `RecordingHook.make()` is a `FeatureHook` that records every stage call (`HookCall.Before`/`After`/`Error`/`Finally`,
+  with the full `HookContext` and hints) for assertions. See "Per-test flag overrides" and "Recording hook calls" on
+  the testkit page.
 - **A cap on abandoned provider calls** (#437). A timed-out evaluation abandons its provider call, which keeps a thread
   of ZIO's unbounded blocking pool until the provider returns, so a hung provider used to park one more thread per
   timeout. Each instance now counts the abandoned calls still running and, at `FeatureFlags.DefaultMaxAbandonedCalls`
@@ -80,6 +86,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rather than a silent default. On a cache miss a CMAB decision is a blocking network call (10s, one retry by default).
   The bump also removes a latent crash: 4.2.2's event serializer reads a Jackson field that the jackson-databind this
   module ships no longer has, which would have failed the first real event dispatch.
+- **Behaviour change: factory-built Optimizely providers now send events to Optimizely** (#453). Providers from
+  `OptimizelyProvider.make`/`scoped`/`layer` built their client without an event processor, so the SDK dropped every
+  impression and every `track` conversion: experiments showed zero visitors. They now batch events and send them to
+  `logx.optimizely.com`, as the SDK's own default factory does. An event carries the targeting key as the visitor
+  id, the audience attributes derived from the evaluation context, and the decision or conversion. To keep the old
+  behaviour, set `events = OptimizelyEvents.Disabled` on `OptimizelyProviderConfig`; `OptimizelyEvents.Batched` tunes
+  the batch size, flush interval and shutdown wait (at most 4 s, so shutdown stays within its 10 s bound). Providers
+  from `fromOptimizelyClient` are unchanged. **Recompile, don't just bump the version:** `events` is a new field of
+  `OptimizelyProviderConfig`, which is source compatible but removes the six-argument constructor, `apply` and `copy`,
+  so code compiled against an earlier release fails with `NoSuchMethodError`.
 - **Production instances no longer keep tracked events** (#442). Every instance recorded the last 1000 `track` calls
   with their fully merged evaluation contexts — often personal data — for `FeatureFlags.trackedEvents`, a test
   helper. Only testkit-built instances record now. Assert on tracking with the new `TestFeatureProvider.trackedEvents`
@@ -190,6 +206,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   SDK as a `Double`, so anything beyond 2^53 was rounded, and a `Long` arriving from the SDK (hook contexts,
   transactions) was read back through a `Double` the same way. Both directions now carry `java.lang.Long`; int-range
   values still go as `Integer` (#249).
+- **OFREP 401/403 responses fail the typed tier with `Unauthorized`** (#498). The contrib provider does not throw on an
+  auth failure: it returns a `GENERAL` evaluation error with the message "authentication/authorization error for
+  flag: ...", which core mapped to `ProviderError`. A `GENERAL` error whose message names an auth failure (a standalone
+  `401`/`403`, `unauthorized`, `forbidden`, or that literal) is now `Unauthorized`, with a `cause` carrying the message,
+  on the typed tier and in the `error` hook stage. The resolution's error code stays `General`.
 - **`CachingProvider` and `CircuitBreakerProvider` release their event plumbing properly** (#450). Their `shutdown`
   never called `EventProvider.shutdown`, so each wrapper's event emitter kept running and could still dispatch
   afterwards. And a wrapper whose attach to the delegate failed (the delegate already belonged to another wrapper)
@@ -200,6 +221,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   could end up bound and ready while every typed evaluation failed. A started swap now runs to its outcome (success,
   or rollback, or the timed-out `Error` of #433) before the interrupt takes effect — bounded by the init timeout.
   Waiting for an earlier swap to finish stays interruptible.
+- **`fromAcquireAsync` no longer fails evaluations while it swaps the real provider in** (#512). The swap went through
+  `setProvider`, so for as long as the real provider's `initialize()` ran (the first datafile fetch or probe, up to
+  `initTimeout`) the status was `NotReady` and every typed evaluation failed with `ProviderNotReady`, although the
+  factory promises fallback answers until the swap. The SDK now sees one provider for the life of the layer, an
+  internal switch that delegates to the fallback; the composed stack is initialized off to the side and the switch
+  routes to it once that succeeds, so the status stays `Ready` and the fallback answers throughout. A failed or
+  timed-out initialization leaves the first fallback serving (no fallback re-registration), and a `setProvider` before
+  the switch wins, with the state `Failed`. The composed stack's events reach handlers and status through the switch.
 - **Circuit breaker: stale outcomes and polled `READY` no longer reset the circuit** (#447).
   - A call admitted in one circuit state could record its outcome in a later one: a slow call admitted while closed
     could close a half-open circuit while the real probe was still running, or free the probe slot so two probes ran

@@ -99,6 +99,9 @@ throws from `track` or past the SDK during evaluation (a timeout, for instance),
 separately from an outage. An exception that carries an HTTP status (a `getStatusCode` or `statusCode` accessor) is
 classified by that status: 401 and 403 are `Unauthorized`, anything else a `ProviderError`. Every error has a `message`,
 and a `cause` when there is an underlying exception; `Unauthorized` from `classify` keeps the original exception there.
+A provider that reports a failure as a `GENERAL` evaluation error rather than throwing (the [OFREP](ofrep.md) provider
+does this for 401 and 403) also yields `Unauthorized` when the message names an auth failure; its error code stays
+`General`.
 `FeatureFlagError.isFlagError` (a problem with this flag) and `isProviderError` (a problem with the provider) group
 them. `isRecoverable` is the deprecated old name of `isFlagError`; it has nothing to do with retrying.
 

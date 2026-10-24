@@ -338,6 +338,15 @@ lazy val optimizely = (project in file("optimizely"))
   .settings(
     name := "zio-openfeature-optimizely",
     commonSettings,
+    // #453: `events` was added as the last, defaulted field of `OptimizelyProviderConfig`. Source compatible, but the
+    // case class's six-argument constructor, `apply` and `copy` are gone, so callers must recompile. Delete these when
+    // the baseline moves past the release that ships #453.
+    mimaBinaryIssueFilters ++= Seq(
+      ProblemFilters.exclude[DirectMissingMethodProblem]("zio.openfeature.optimizely.OptimizelyProviderConfig.this"),
+      ProblemFilters.exclude[DirectMissingMethodProblem]("zio.openfeature.optimizely.OptimizelyProviderConfig.apply"),
+      ProblemFilters.exclude[DirectMissingMethodProblem]("zio.openfeature.optimizely.OptimizelyProviderConfig.copy"),
+      ProblemFilters.exclude[MissingTypesProblem]("zio.openfeature.optimizely.OptimizelyProviderConfig$")
+    ),
     libraryDependencies ++= Seq(
       "dev.zio" %% "zio" % zioVersion,
       // NOTE: on a core-api/core-httpclient upgrade, re-verify `com/optimizely/ab/ObservingOptimizelyHttpClient.java`

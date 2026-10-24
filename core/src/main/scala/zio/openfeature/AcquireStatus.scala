@@ -4,8 +4,7 @@ import zio._
 import zio.stream.{SubscriptionRef, ZStream}
 
 /** Whether a [[FeatureFlags.fromAcquireAsync]] instance is serving its fallback or its real provider — the question a
-  * readiness probe asks and `providerStatus` cannot answer (it reads `Ready` from time zero, and dips through
-  * `NotReady` during the swap itself).
+  * readiness probe asks and `providerStatus` cannot answer (it reads `Ready` from time zero, through the swap).
   *
   * Provided alongside `FeatureFlags` by that one factory only: `fromAcquireAsync` returns `URLayer[Scope, FeatureFlags
   * with AcquireStatus]`. The concept is meaningless on instances built any other way, so it is a separate service
@@ -29,8 +28,8 @@ trait AcquireStatus {
 }
 
 /** The `cause` of [[AcquireState.Failed]] (and the argument to `onConstructionError`) when the real provider was
-  * acquired and verified but the swap itself failed and rolled back — carries the structured error rather than
-  * flattening it into a message.
+  * acquired and verified but the swap itself failed (its initialization failed or exceeded `initTimeout`; the fallback
+  * kept serving) — carries the structured error rather than flattening it into a message.
   */
 final case class ProviderSwapFailed(error: FeatureFlagError) extends RuntimeException(s"Provider swap failed: $error")
 

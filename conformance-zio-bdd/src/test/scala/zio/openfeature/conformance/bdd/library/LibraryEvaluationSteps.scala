@@ -72,6 +72,14 @@ trait LibraryEvaluationSteps { self: ZIOSteps[Any, LibraryWorld] =>
     } yield ()
   }
 
+  When("the integer flag " / string / " is evaluated with default " / int) { (key: String, default: Int) =>
+    for {
+      w   <- ScenarioContext.get
+      out <- w.ff.intDetails(key, default).either
+      _   <- record(out.map(_.asInstanceOf[FlagResolution[Any]]))
+    } yield ()
+  }
+
   When("the long flag " / string / " is evaluated with default " / long) { (key: String, default: Long) =>
     for {
       w   <- ScenarioContext.get

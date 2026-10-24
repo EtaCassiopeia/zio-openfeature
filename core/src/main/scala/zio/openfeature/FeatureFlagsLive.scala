@@ -1156,7 +1156,7 @@ final private[openfeature] class FeatureFlagsLive(
         s => s == ProviderStatus.Error || s == ProviderStatus.Fatal,
         (new RuntimeException("Provider in error state"), metadata),
         { case ProviderEvent.Error(error, m, _, _, _) => (error, m) },
-        (handler(_, _)).tupled
+        handler.tupled
       )
     }
 
@@ -1167,7 +1167,7 @@ final private[openfeature] class FeatureFlagsLive(
         _ == ProviderStatus.Stale,
         ("Provider in stale state", metadata),
         { case ProviderEvent.Stale(reason, m, _) => (reason, m) },
-        (handler(_, _)).tupled
+        handler.tupled
       )
     }
 

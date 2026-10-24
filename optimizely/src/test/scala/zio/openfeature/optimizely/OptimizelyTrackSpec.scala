@@ -45,7 +45,9 @@ object OptimizelyTrackSpec extends ZIOSpecDefault {
         .withUrl(s"http://localhost:${server.port()}$DatafilePath")
         .withBlockingTimeout(2000, TimeUnit.MILLISECONDS)
         .withPollingInterval(3600, TimeUnit.SECONDS)
-        .withOptimizelyHttpClient(TestHttpClient.failFast())
+        // A generous socket timeout: the client never retries and polls hourly, so one slow WireMock answer under load
+        // would otherwise fail initialize() for good. Still fail-fast at teardown.
+        .withOptimizelyHttpClient(TestHttpClient.failFast(timeoutMillis = 5000))
         .build()
       val events = new Recording
       val client = Optimizely

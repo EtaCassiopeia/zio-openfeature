@@ -152,14 +152,14 @@ object LongCoercionSpec extends ZIOSpecDefault {
         } yield assertTrue(seen.get() == "Integer")
       }
     },
-    test("an out-of-int-range Long context attribute still reaches the provider as a Double") {
+    test("an out-of-int-range Long context attribute reaches the provider as a Long (#471)") {
       val seen = new AtomicReference[String]("unset")
       ZIO.scoped {
         for {
           ff <- buildFF(new InspectingProvider(seen))
           ctx = EvaluationContext("user").withAttribute("id", AttributeValue.LongValue(Long.MaxValue))
           _ <- ff.boolean("flag", default = false, ctx)
-        } yield assertTrue(seen.get() == "Double")
+        } yield assertTrue(seen.get() == "Long")
       }
     },
     test("a provider with a native long resolver resolves beyond 2^53 exactly") {

@@ -29,12 +29,11 @@ object ValueRoundTripSpec extends ZIOSpecDefault {
   private val finiteFractionalDouble: Gen[Any, Double] =
     Gen.double(-1e10, 1e10).filter(d => !d.isWhole && !d.isNaN && !d.isInfinity)
 
-  /** Longs that round-trip exactly through `Double`. Doubles have 53 bits of mantissa, so any Long in `[Long.MinValue,
-    * 2^53)` is representable exactly. Outside that window we'd lose precision. We also bound below at a value the
-    * converter actually maps back as `LongValue` rather than `IntValue` (above Int.MaxValue).
+  /** Out-of-int-range longs, up to `Long.MaxValue` and down to `Long.MinValue`: the converter carries them as
+    * `java.lang.Long` both ways (#471), so every one must round-trip exactly — no `Double` in between.
     */
   private val largeLong: Gen[Any, Long] =
-    Gen.long(Int.MaxValue.toLong + 1L, (1L << 53) - 1L)
+    Gen.oneOf(Gen.long(Int.MaxValue.toLong + 1L, Long.MaxValue), Gen.long(Long.MinValue, Int.MinValue.toLong - 1L))
 
   /** Strings the converter accepts losslessly. Non-empty so the Java SDK's empty-string treatment isn't asserted here
     * (a corner case orthogonal to the round-trip property).
@@ -93,16 +92,10 @@ object ValueRoundTripSpec extends ZIOSpecDefault {
       }
       assertTrue(isNaN)
     },
-    test("LongValue(Long.MaxValue) lands as DoubleValue (documents the converter's strict-upper-bound)") {
-      // `valueToAttribute` rejects values >= Long.MaxValue.toDouble because the conversion saturates at that point.
-      // We don't assert exact equality on the resulting Double — the point is that no information is silently lost as
-      // an out-of-range Long; the caller sees a Double they can detect and handle.
-      val r = roundTrip(AttributeValue.LongValue(Long.MaxValue))
-      val isDouble = r match {
-        case _: AttributeValue.DoubleValue => true
-        case _                             => false
-      }
-      assertTrue(isDouble)
+    test("LongValue(Long.MaxValue) and LongValue(Long.MinValue) round-trip exactly (#471)") {
+      val max = roundTrip(AttributeValue.LongValue(Long.MaxValue))
+      val min = roundTrip(AttributeValue.LongValue(Long.MinValue))
+      assertTrue(max == AttributeValue.LongValue(Long.MaxValue), min == AttributeValue.LongValue(Long.MinValue))
     },
     test("Nested struct round-trip preserves leaf values via their getters") {
       val structGen: Gen[Any, AttributeValue.StructValue] = for {

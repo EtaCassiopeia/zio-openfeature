@@ -121,6 +121,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `OptimizelyProvider.DefaultInitWait` drops from 30 s to 25 s so it fires before the 30 s `initTimeout`. The redundant
   `start()` that logged a WARN on every init is gone, and the docs no longer claim construction makes no network
   calls: the SDK starts fetching the datafile then.
+- **`TestFeatureProvider` answers like a real provider** (#457). A key-based value read as another type was coerced:
+  a `Long` read as `int` was truncated (`5000000000L` became `705032704`), anything read as `string` was its
+  `toString`, numeric strings were parsed, and a non-`Boolean` read as `boolean` failed with `GENERAL`. The scalar
+  getters are now strict: a value is served only when its type is exactly the one read, with no widening (an `Int` read
+  as `long` or `double` is a mismatch too), and anything else is `TYPE_MISMATCH` with your default. Typed fixtures
+  already store the right type; a test that stored `42` for a `long` flag must now store `42L`. Also fixed: an
+  evaluation failed by a simulated failure is now recorded (`wasEvaluated`, `evaluationCount`), since the provider was
+  asked; `layerFrom` waits for the SDK's initial ready event as `layer` does, so a `setStatus` right after the build is
+  no longer overwritten; and the behaviour aspects restore the settings they found instead of the defaults, so a
+  test-level aspect no longer wipes a suite-level one, and `withFailureProbability` clamps (NaN to 0) like
+  `setFailureProbability`.
 - **Optimizely: a variable of the wrong type is a `TYPE_MISMATCH`, not your default** (#456). Reading a string
   variable as `int` returned the default with reason `DEFAULT`, a double read as `int` was truncated, the string
   `"42"` was parsed, and an integer beyond `int` range could not be read as `long` at all. Conversions are now strict
@@ -129,6 +140,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `double`.
 - **A `-0.0` context attribute keeps its sign** (#469). Converting a context back from the OpenFeature SDK treated
   `-0.0` as the whole number `0` and returned `IntValue(0)`. Found by the new hostile-input sweeps.
+- **A `Long` context attribute beyond the `int` range keeps its exact value** (#471). It was sent to the OpenFeature
+  SDK as a `Double`, so anything beyond 2^53 was rounded, and a `Long` arriving from the SDK (hook contexts,
+  transactions) was read back through a `Double` the same way. Both directions now carry `java.lang.Long`; int-range
+  values still go as `Integer` (#249).
 - **`CachingProvider` and `CircuitBreakerProvider` release their event plumbing properly** (#450). Their `shutdown`
   never called `EventProvider.shutdown`, so each wrapper's event emitter kept running and could still dispatch
   afterwards. And a wrapper whose attach to the delegate failed (the delegate already belonged to another wrapper)

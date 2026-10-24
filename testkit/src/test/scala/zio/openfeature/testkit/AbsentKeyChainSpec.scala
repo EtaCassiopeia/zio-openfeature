@@ -83,11 +83,11 @@ object AbsentKeyChainSpec extends ZIOSpecDefault {
         )
       },
       test("a present key still reports TARGETING_MATCH with no error code on every evaluation method") {
-        // Stored types deliberately differ from the requested ones where the provider widens (an Int read as Long, an
-        // Int read as Double), so the conversion paths are pinned to the same reason as the direct ones.
+        // Each stored value has exactly the requested type: the provider does not widen (#457), so an Int read as Long
+        // would be TYPE_MISMATCH rather than a present key.
         for {
           provider <- TestFeatureProvider.make(
-            Map("present" -> true, "name" -> "x", "count" -> 3, "big" -> 4, "rate" -> 5, "obj" -> Map("k" -> "v"))
+            Map("present" -> true, "name" -> "x", "count" -> 3, "big" -> 4L, "rate" -> 5.0, "obj" -> Map("k" -> "v"))
           )
           b   = provider.getBooleanEvaluation("present", false, ctx)
           s   = provider.getStringEvaluation("name", "d", ctx)

@@ -81,6 +81,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `agreesWithTestkit` is the `Spec`; `compare` returns the report. `HoconProvider` and `EnvVarProvider` now run
   against it in PR CI, with their deviations listed. See "Comparing a provider against the testkit" on the testkit
   page.
+- **The OFREP provider runs against `DifferentialLaws`** (#526). `OfrepDifferentialSpec` serves each generated flag
+  set from an in-process WireMock stub in the OFREP wire format and reads it through the real contrib client, in PR
+  CI. Its deviations are JSON's limits (no NaN/Infinity, untyped numbers) and one upstream behaviour: contrib 0.0.2
+  does not override `getLongEvaluation`, so a long read of a JSON integer is `TYPE_MISMATCH`. ofrep depends on
+  testkit for tests only.
 
 ### Changed
 

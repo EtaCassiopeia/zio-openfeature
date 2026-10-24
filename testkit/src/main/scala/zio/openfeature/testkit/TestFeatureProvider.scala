@@ -615,7 +615,7 @@ object TestFeatureProvider {
     /** Ready, no latches — the plain [[make]] provider. */
     case object Ready extends Start
 
-    /** Ready, with an `initDone` latch for the sync layer's `PROVIDER_READY` replay handshake. */
+    /** Ready, with an `initDone` latch for the sync layer's `PROVIDER_READY` handshake. */
     case object ReadyWithHandshake extends Start
 
     /** NotReady; `initialize()` blocks on `initLatch` until `setStatus(Ready)`, which then waits on `initDone`. */
@@ -715,7 +715,7 @@ object TestFeatureProvider {
     * Tests using this layer can safely run in parallel without cross-test event contamination.
     */
   def layer(flags: Map[String, Any]): ZLayer[Any, Throwable, TestFeatureProvider with FeatureFlags] =
-    isolatedLayer(flags, LayerMode.Sync("initial PROVIDER_READY replay during layer construction"))
+    isolatedLayer(flags, LayerMode.Sync("initial PROVIDER_READY during layer construction"))
 
   /** How an isolated layer connects its provider to the SDK. */
   sealed private trait LayerMode extends Product with Serializable {
@@ -723,10 +723,10 @@ object TestFeatureProvider {
   }
   private object LayerMode {
 
-    /** Blocking `fromProviderWithDomain`, then wait for the SDK's initial `PROVIDER_READY` replay. The Java SDK
-      * dispatches that event asynchronously when handlers are registered on an already-ready provider; waiting for it
-      * (a deterministic handshake, formerly a fixed 50ms sleep) keeps a `setStatus()` made straight after the build
-      * from being overwritten by the late replay. `what` names the wait in the timeout message.
+    /** Blocking `fromProviderWithDomain`, then wait for the provider's `PROVIDER_READY`. The build attaches the event
+      * bridge before registering the provider, so exactly one READY reaches it: the one the Java SDK dispatches,
+      * asynchronously, once `initialize()` returns (#531). Waiting for it keeps a `setStatus()` made straight after the
+      * build from being overwritten by that late event. `what` names the wait in the timeout message.
       */
     final case class Sync(what: String) extends LayerMode { val domainPrefix = "test-" }
 
@@ -796,7 +796,7 @@ object TestFeatureProvider {
 
   /** Create a FeatureFlags layer from an existing TestFeatureProvider.
     *
-    * Like [[layer]], it returns only after the SDK's initial `PROVIDER_READY` replay has arrived, so a `setStatus` made
+    * Like [[layer]], it returns only after the provider's initial `PROVIDER_READY` has arrived, so a `setStatus` made
     * straight after the build is not overwritten by that late event. The latch is the layer's own: a provider from
     * [[make]] carries none, and giving it one would make its `setStatus(Ready)` wait for an event no layer delivers.
     */
@@ -804,9 +804,7 @@ object TestFeatureProvider {
     ZLayer.scoped {
       ZIO
         .succeed(new CountDownLatch(1))
-        .flatMap(replayed =>
-          connect(provider, LayerMode.Sync("initial PROVIDER_READY replay during layerFrom"), Some(replayed))
-        )
+        .flatMap(ready => connect(provider, LayerMode.Sync("initial PROVIDER_READY during layerFrom"), Some(ready)))
     }
 
   /** Same as [[layer]]; kept for source compatibility from before layers stopped needing a `Scope`. */

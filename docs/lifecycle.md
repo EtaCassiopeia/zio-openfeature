@@ -76,6 +76,7 @@ Register a handler for the events you care about. Each registration returns an e
 - The subscription is in place before registration returns, so no later event is missed. An event that arrives while
   you register may reach the handler twice. Make handlers idempotent.
 - A handler that dies is logged, and keeps its subscription.
+- One provider initialization produces one `Ready` event; a later `Ready` means the provider recovered.
 - When the status already matches, the handler gets a payload that describes the current state, not the event that
   caused it.
 - A handler does not run inside the transaction or `withContext` block it was registered from, even though it may

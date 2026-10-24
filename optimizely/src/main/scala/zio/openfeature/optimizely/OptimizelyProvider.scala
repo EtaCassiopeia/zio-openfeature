@@ -3,9 +3,10 @@ package zio.openfeature.optimizely
 import com.optimizely.ab.Optimizely
 import com.optimizely.ab.config.HttpProjectConfigManager
 import com.optimizely.ab.config.parser.{ConfigParser, DefaultConfigParser}
+import com.optimizely.ab.event.{AsyncEventHandler, BatchEventProcessor, EventHandler}
 import zio._
 import zio.openfeature.FeatureFlagError
-import java.util.concurrent.TimeUnit
+import java.util.concurrent.{ExecutorService, Executors, ThreadFactory, TimeUnit}
 
 /** Scala-friendly factories for an Optimizely-backed OpenFeature provider.
   *
@@ -71,6 +72,10 @@ import java.util.concurrent.TimeUnit
   *   watchdog is only active when datafile polling is enabled (`pollingInterval` is `Some`) — with polling off there is
   *   nothing to observe and no watchdog runs. When polling is on and this is `None`, the threshold defaults to `3 ×
   *   pollingInterval`. Must be positive.
+  * @param events
+  *   What happens to the impression and conversion events the SDK produces (#453). The default,
+  *   [[OptimizelyEvents.Batched]], sends them to Optimizely in batches, as the SDK's own default factory does: without
+  *   them, experiments show no visitors and `track` conversions are lost. [[OptimizelyEvents.Disabled]] drops them.
   */
 final case class OptimizelyProviderConfig(
   sdkKey: String,
@@ -78,8 +83,43 @@ final case class OptimizelyProviderConfig(
   initWait: java.time.Duration = OptimizelyProvider.DefaultInitWait,
   pollingInterval: Option[java.time.Duration] = None,
   blockingTimeout: Option[java.time.Duration] = None,
-  staleAfter: Option[java.time.Duration] = None
+  staleAfter: Option[java.time.Duration] = None,
+  events: OptimizelyEvents = OptimizelyEvents.Batched()
 )
+
+/** What a factory-built provider does with the events the Optimizely SDK produces: an impression for each decision
+  * (when the datafile's `sendFlagDecisions` is on, rollout decisions included) and a conversion for each `track`.
+  *
+  * Events carry the user id (the context's targeting key), the audience attributes derived from the evaluation context,
+  * and the decision or conversion, and are sent to `logx.optimizely.com`.
+  */
+sealed trait OptimizelyEvents extends Product with Serializable
+
+object OptimizelyEvents {
+
+  /** Drop every event: nothing is sent to Optimizely. Experiment results then show no visitors and no conversions. */
+  case object Disabled extends OptimizelyEvents
+
+  /** Queue events and send them to Optimizely in batches, from a background thread.
+    *
+    * @param batchSize
+    *   events per request (the SDK default, 10); at least 1
+    * @param flushInterval
+    *   longest an event waits in the queue before its batch is sent (the SDK default, 30 seconds); positive
+    * @param closeTimeout
+    *   on shutdown, how long to wait for the queued events to be flushed, and then again for the requests in flight to
+    *   finish; positive and at most 4 seconds. The two waits and the datafile poller's close must fit the provider's
+    *   10-second shutdown bound, so `2 × 4 s` is the most it allows. Events still queued when it runs out are dropped.
+    */
+  final case class Batched(
+    batchSize: Int = 10,
+    flushInterval: java.time.Duration = java.time.Duration.ofSeconds(30),
+    closeTimeout: java.time.Duration = java.time.Duration.ofSeconds(3)
+  ) extends OptimizelyEvents
+
+  /** Upper bound on [[Batched.closeTimeout]]; see there. */
+  private[optimizely] val MaxCloseTimeout: java.time.Duration = java.time.Duration.ofSeconds(4)
+}
 
 object OptimizelyProvider {
 
@@ -140,13 +180,24 @@ object OptimizelyProvider {
     config: OptimizelyProviderConfig,
     httpClient: Option[com.optimizely.ab.OptimizelyHttpClient]
   ): IO[FeatureFlagError.InvalidConfiguration, OptimizelyFeatureProvider] =
-    makeWithParserProbe(config, httpClient, DefaultConfigParser.getInstance())
+    make(config, httpClient, eventHandler = None)
+
+  /** Test seam: [[make]] with an injected HTTP client and, for [[OptimizelyEvents.Batched]], an event handler that
+    * replaces the one sending batches to Optimizely.
+    */
+  private[optimizely] def make(
+    config: OptimizelyProviderConfig,
+    httpClient: Option[com.optimizely.ab.OptimizelyHttpClient],
+    eventHandler: Option[EventHandler]
+  ): IO[FeatureFlagError.InvalidConfiguration, OptimizelyFeatureProvider] =
+    makeWithParserProbe(config, httpClient, DefaultConfigParser.getInstance(), eventHandler)
 
   /** Test seam: [[make]] with the JSON-parser lookup injected, so a missing parser can be simulated (#431). */
   private[optimizely] def makeWithParserProbe(
     config: OptimizelyProviderConfig,
     httpClient: Option[com.optimizely.ab.OptimizelyHttpClient],
-    parserProbe: => ConfigParser
+    parserProbe: => ConfigParser,
+    eventHandler: Option[EventHandler] = None
   ): IO[FeatureFlagError.InvalidConfiguration, OptimizelyFeatureProvider] =
     for {
       validKey <- validateSdkKey(config.sdkKey)
@@ -157,13 +208,25 @@ object OptimizelyProvider {
       _ <- validatePositive("pollingInterval", config.pollingInterval)
       _ <- validatePositive("blockingTimeout", config.blockingTimeout)
       _ <- validatePositive("staleAfter", config.staleAfter)
+      _ <- validateEvents(config.events)
       _ <- requireJsonParser(parserProbe)
       // The watchdog observes datafile fetches, so it only makes sense when datafile polling is enabled. When it is,
       // the fetch-success signal is shared between the observing HTTP client (below) and the provider's watchdog.
       staleness = stalenessConfig(config)
       observer  = staleness.map(_.observer)
       built <- ZIO
-        .attempt(buildClient(validKey, validUrl, config.pollingInterval, config.blockingTimeout, httpClient, observer))
+        .attempt(
+          buildClient(
+            validKey,
+            validUrl,
+            config.pollingInterval,
+            config.blockingTimeout,
+            httpClient,
+            observer,
+            config.events,
+            eventHandler
+          )
+        )
         .mapError(t => FeatureFlagError.InvalidConfiguration(s"Optimizely client build failed: ${t.getMessage}"))
     } yield new OptimizelyFeatureProvider(
       built.optimizely,
@@ -171,8 +234,14 @@ object OptimizelyProvider {
       closeOnShutdown = true,
       configManager = Some(built.configManager),
       staleness = staleness,
-      ownedResources = List(built.cmabHttpClient)
+      // Closed in order after `optimizely.close()`, which has flushed the event processor by then. The event
+      // processor's executor goes first: `BatchEventProcessor.close()` stops its consumer loop but never shuts the
+      // executor down. The HTTP client goes last, as the event handler may use it until the processor is closed.
+      ownedResources = built.eventExecutor.toList.map(shutdownOnClose) :+ built.cmabHttpClient
     )
+
+  private def shutdownOnClose(executor: ExecutorService): java.io.Closeable =
+    () => executor.shutdownNow(): Unit
 
   /** Derive the staleness watchdog configuration from a provider config, or `None` when the watchdog is disabled.
     *
@@ -231,7 +300,15 @@ object OptimizelyProvider {
     config: OptimizelyProviderConfig,
     httpClient: Option[com.optimizely.ab.OptimizelyHttpClient]
   ): ZIO[Scope, FeatureFlagError.InvalidConfiguration, OptimizelyFeatureProvider] =
-    ZIO.acquireRelease(make(config, httpClient))(releaseProvider)
+    scoped(config, httpClient, eventHandler = None)
+
+  /** Test seam: [[scoped]] with an injected HTTP client and event handler (see the matching [[make]] overload). */
+  private[optimizely] def scoped(
+    config: OptimizelyProviderConfig,
+    httpClient: Option[com.optimizely.ab.OptimizelyHttpClient],
+    eventHandler: Option[EventHandler]
+  ): ZIO[Scope, FeatureFlagError.InvalidConfiguration, OptimizelyFeatureProvider] =
+    ZIO.acquireRelease(make(config, httpClient, eventHandler))(releaseProvider)
 
   /** [[scoped]] for the common CDN-only case. */
   def scoped(sdkKey: String): ZIO[Scope, FeatureFlagError.InvalidConfiguration, OptimizelyFeatureProvider] =
@@ -249,9 +326,10 @@ object OptimizelyProvider {
     // `.disconnect` because finalizers run uninterruptibly and the timeout must still fire.
     ZIO.attemptBlocking(provider.shutdown()).disconnect.timeout(ShutdownTimeout).ignore
 
-  /** Escape hatch for callers who already manage an `Optimizely` client lifecycle (e.g. they want their own polling
-    * interval, event handler, or user profile service). The returned provider does NOT close the client on shutdown;
-    * the caller stays in charge.
+  /** Escape hatch for callers who already manage an `Optimizely` client lifecycle (e.g. they want a user profile
+    * service, an ODP manager, or an event processor tuned beyond what [[OptimizelyEvents]] offers). The returned
+    * provider does NOT close the client on shutdown; the caller stays in charge, including of how the client's events
+    * are dispatched.
     */
   def fromOptimizelyClient(client: Optimizely): UIO[OptimizelyFeatureProvider] =
     ZIO.succeed(new OptimizelyFeatureProvider(client, DefaultInitWait, closeOnShutdown = false))
@@ -280,7 +358,15 @@ object OptimizelyProvider {
     config: OptimizelyProviderConfig,
     httpClient: Option[com.optimizely.ab.OptimizelyHttpClient]
   ): ZLayer[Any, FeatureFlagError.InvalidConfiguration, OptimizelyFeatureProvider] =
-    ZLayer.scoped(scoped(config, httpClient))
+    layer(config, httpClient, eventHandler = None)
+
+  /** Test seam: [[layer]] with an injected HTTP client and event handler (see the matching [[make]] overload). */
+  private[optimizely] def layer(
+    config: OptimizelyProviderConfig,
+    httpClient: Option[com.optimizely.ab.OptimizelyHttpClient],
+    eventHandler: Option[EventHandler]
+  ): ZLayer[Any, FeatureFlagError.InvalidConfiguration, OptimizelyFeatureProvider] =
+    ZLayer.scoped(scoped(config, httpClient, eventHandler))
 
   // Construction
 
@@ -295,7 +381,10 @@ object OptimizelyProvider {
     // Present when the staleness watchdog is enabled: the HTTP client is wrapped so every successful datafile fetch
     // advances this observer's timestamp (#267). Wrapping preserves the wrapped client's exact behaviour — for the
     // production path that is the SDK default client, so nothing about how fetches are performed changes.
-    fetchObserver: Option[OptimizelyFeatureProvider.FetchObserver]
+    fetchObserver: Option[OptimizelyFeatureProvider.FetchObserver],
+    events: OptimizelyEvents,
+    // Test seam: replaces the handler that sends event batches to Optimizely. Ignored when events are disabled.
+    eventHandler: Option[EventHandler]
   ): BuiltClient = {
     // Share a single NotificationCenter between the polling config manager and the Optimizely client. Without this,
     // the manager fires UpdateConfigNotification on its own private NotificationCenter and handlers registered via
@@ -352,21 +441,60 @@ object OptimizelyProvider {
       .builder()
       .withClient(new com.optimizely.ab.cmab.DefaultCmabClient(cmabHttpClient))
       .build()
-    val optimizely =
+    val builder =
       Optimizely
         .builder()
         .withConfigManager(configManager)
         .withNotificationCenter(notificationCenter)
         .withCmabService(cmabService)
-        .build()
-    BuiltClient(optimizely, configManager, cmabHttpClient)
+    // Without an event processor the SDK falls back to a no-op handler and drops every impression and conversion
+    // (#453). `Batched` wires what `OptimizelyFactory.newDefaultInstance` does, a batch processor in front of an async
+    // handler, without the factory itself: it also starts an ODP manager and reads global `PropertyUtils` state.
+    val eventExecutor = events match {
+      case OptimizelyEvents.Disabled => None
+      case batched: OptimizelyEvents.Batched =>
+        val closeTimeoutMs = math.max(1L, batched.closeTimeout.toMillis)
+        // The handler shares the CMAB HTTP client, so the provider owns a single HTTP client.
+        // `AsyncEventHandler.close()` closes it too; the provider's own close afterwards is then a no-op, and still
+        // covers an injected handler. The handler's close timeout defaults to forever, so it must be set to keep
+        // shutdown bounded.
+        val handler = eventHandler.getOrElse(
+          AsyncEventHandler
+            .builder()
+            .withCloseTimeout(closeTimeoutMs, TimeUnit.MILLISECONDS)
+            .withOptimizelyHttpClient(cmabHttpClient)
+            .build()
+        )
+        // An executor the provider owns, so it can shut it down: `BatchEventProcessor.close()` does not (see make).
+        val executor = Executors.newSingleThreadExecutor(EventProcessorThreadFactory)
+        val processor = BatchEventProcessor
+          .builder()
+          .withEventHandler(handler)
+          .withNotificationCenter(notificationCenter)
+          .withBatchSize(Integer.valueOf(batched.batchSize))
+          .withFlushInterval(java.lang.Long.valueOf(math.max(1L, batched.flushInterval.toMillis)))
+          .withTimeout(closeTimeoutMs, TimeUnit.MILLISECONDS)
+          .withExecutor(executor)
+          .build()
+        builder.withEventProcessor(processor): Unit
+        Some(executor)
+    }
+    BuiltClient(builder.build(), configManager, cmabHttpClient, eventExecutor)
   }
 
   final private case class BuiltClient(
     optimizely: Optimizely,
     configManager: HttpProjectConfigManager,
-    cmabHttpClient: com.optimizely.ab.OptimizelyHttpClient
+    cmabHttpClient: com.optimizely.ab.OptimizelyHttpClient,
+    // The event processor's executor, present when events are batched; shut down by the provider (see make).
+    eventExecutor: Option[ExecutorService]
   )
+
+  private val EventProcessorThreadFactory: ThreadFactory = (r: Runnable) => {
+    val t = new Thread(r, "optimizely-event-processor")
+    t.setDaemon(true)
+    t
+  }
 
   // Validation
 
@@ -419,6 +547,26 @@ object OptimizelyProvider {
         .fail(FeatureFlagError.InvalidConfiguration(s"Optimizely $name must be positive: $d"))
         .when(d.isNegative || d.isZero)
     }
+
+  private[optimizely] def validateEvents(events: OptimizelyEvents): IO[FeatureFlagError.InvalidConfiguration, Unit] = {
+    def fail(reason: String) = ZIO.fail(FeatureFlagError.InvalidConfiguration(reason))
+    events match {
+      case null                      => fail("Optimizely events is null")
+      case OptimizelyEvents.Disabled => ZIO.unit
+      case OptimizelyEvents.Batched(batchSize, flushInterval, closeTimeout) =>
+        if (batchSize < 1) fail(s"Optimizely events.batchSize must be at least 1: $batchSize")
+        else if (flushInterval == null) fail("Optimizely events.flushInterval is null")
+        else if (closeTimeout == null) fail("Optimizely events.closeTimeout is null")
+        else if (closeTimeout.compareTo(OptimizelyEvents.MaxCloseTimeout) > 0)
+          fail(
+            s"Optimizely events.closeTimeout must be at most ${OptimizelyEvents.MaxCloseTimeout}: $closeTimeout " +
+              "(it is waited out twice on shutdown, within the provider's 10-second bound)"
+          )
+        else
+          validatePositive("events.flushInterval", Some(flushInterval)) *>
+            validatePositive("events.closeTimeout", Some(closeTimeout))
+    }
+  }
 
   private val AllowedDatafileSchemes = Set("http", "https")
 

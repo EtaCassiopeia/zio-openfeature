@@ -112,6 +112,31 @@ becomes the `value` tag. Optimizely's `revenue` metric expects integer cents: pa
 `track` fails with a `FeatureFlagError` when the provider is not ready, when the context has no targeting key, or when
 the datafile defines no event with that key (Optimizely itself would drop it with only an INFO log).
 
+## Events
+
+Experiment results in Optimizely come from events the SDK sends from your process: an impression for each decision
+(rollout decisions too, when the project's "send flag decisions" setting is on) and a conversion for each `track`.
+A provider built with `make`, `scoped` or `layer` sends them by default. Each event carries:
+
+- the user id, which is the context's targeting key;
+- the audience attributes derived from the evaluation context (see above);
+- the decision (flag, rule, variation) or the conversion (event key, tags, `value`, `revenue`).
+
+They go to `https://logx.optimizely.com` in batches of 10, or after 30 seconds, whichever comes first, from a
+background thread, over the same HTTP client the provider uses for CMAB. Shutting the provider down sends what is
+queued, waiting up to 3 seconds for the queue and then up to 3 seconds for the requests in flight; events still
+queued after that are dropped.
+
+To send nothing, as earlier releases did, disable them:
+
+```scala
+--8<-- "Optimizely.scala:events"
+```
+
+`OptimizelyEvents.Batched(batchSize, flushInterval, closeTimeout)` tunes the batching instead. `closeTimeout` can be
+at most 4 seconds, because it is waited out twice on shutdown and the provider's shutdown is bounded at 10 seconds.
+A provider from `fromOptimizelyClient` sends events however its client was built.
+
 ## Configuration
 
 ```scala
@@ -126,6 +151,7 @@ the datafile defines no event with that key (Optimizely itself would drop it wit
 | `pollingInterval` | the SDK's, 5 min | how often the datafile is fetched again; setting it also turns on the staleness watchdog |
 | `blockingTimeout` | the SDK's, 10 s | longest the SDK blocks waiting for a config |
 | `staleAfter` | 3 × `pollingInterval` | with the watchdog on, how long without a successful fetch before the provider is `STALE` |
+| `events` | `OptimizelyEvents.Batched()` | send impressions and conversions to Optimizely, or `OptimizelyEvents.Disabled`; see [Events](#events) |
 
 `OptimizelyProvider.make(sdkKey, datafileUrl, initWait)` is a shortcut for the first three.
 

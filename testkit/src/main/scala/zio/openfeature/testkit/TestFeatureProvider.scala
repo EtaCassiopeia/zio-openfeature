@@ -153,14 +153,36 @@ final class TestFeatureProvider private (
       case None      => notFound(key, defaultValue)
     }
 
+  /** A scalar getter serves a stored value only when its runtime type is exactly the getter's boxed type; anything else
+    * is `TYPE_MISMATCH` with the caller's default, as a real provider answers (#457). No coercion, no parsing, no
+    * truncation and no widening — `Int` is not served as a `Long`, nor `Long` as an `Int`.
+    *
+    * The one exception is a `Float` read through the double getter: `FlagType[Float]` encodes to a `Float` and the SDK
+    * has no float surface, so that is the only way a typed `FlagDef[Float]` fixture can be served at all.
+    */
+  private def typed[T](key: String, defaultValue: T, expected: Class[T])(
+    accept: PartialFunction[Any, T] = PartialFunction.empty
+  ): ProviderEvaluation[T] =
+    Option(flags.get(key)) match {
+      case Some(raw) if expected.isInstance(raw) => ProviderEvaluations.of(expected.cast(raw), "TARGETING_MATCH")
+      case Some(raw) if accept.isDefinedAt(raw)  => ProviderEvaluations.of(accept(raw), "TARGETING_MATCH")
+      case Some(raw) =>
+        ProviderEvaluations.error(
+          defaultValue,
+          OFErrorCode.TYPE_MISMATCH,
+          s"Flag '$key' holds a ${raw.getClass.getSimpleName}, read as ${expected.getSimpleName}"
+        )
+      case None => notFound(key, defaultValue)
+    }
+
   override def getBooleanEvaluation(
     key: String,
     defaultValue: java.lang.Boolean,
     context: OFEvaluationContext
   ): ProviderEvaluation[java.lang.Boolean] = {
-    applyBehavior()
     evaluations.add((key, context))
-    evaluate(key, defaultValue)(raw => java.lang.Boolean.valueOf(raw.asInstanceOf[Boolean]))
+    applyBehavior()
+    typed(key, defaultValue, classOf[java.lang.Boolean])()
   }
 
   override def getStringEvaluation(
@@ -168,9 +190,9 @@ final class TestFeatureProvider private (
     defaultValue: String,
     context: OFEvaluationContext
   ): ProviderEvaluation[String] = {
-    applyBehavior()
     evaluations.add((key, context))
-    evaluate(key, defaultValue)(_.toString)
+    applyBehavior()
+    typed(key, defaultValue, classOf[String])()
   }
 
   override def getIntegerEvaluation(
@@ -178,14 +200,9 @@ final class TestFeatureProvider private (
     defaultValue: java.lang.Integer,
     context: OFEvaluationContext
   ): ProviderEvaluation[java.lang.Integer] = {
-    applyBehavior()
     evaluations.add((key, context))
-    evaluate(key, defaultValue) {
-      case i: Int    => java.lang.Integer.valueOf(i)
-      case l: Long   => java.lang.Integer.valueOf(l.toInt)
-      case d: Double => java.lang.Integer.valueOf(d.toInt)
-      case other     => java.lang.Integer.valueOf(other.toString.toInt)
-    }
+    applyBehavior()
+    typed(key, defaultValue, classOf[java.lang.Integer])()
   }
 
   override def getLongEvaluation(
@@ -193,14 +210,9 @@ final class TestFeatureProvider private (
     defaultValue: java.lang.Long,
     context: OFEvaluationContext
   ): ProviderEvaluation[java.lang.Long] = {
-    applyBehavior()
     evaluations.add((key, context))
-    evaluate(key, defaultValue) {
-      case l: Long   => java.lang.Long.valueOf(l)
-      case i: Int    => java.lang.Long.valueOf(i.toLong)
-      case d: Double => java.lang.Long.valueOf(d.toLong)
-      case other     => java.lang.Long.valueOf(other.toString.toLong)
-    }
+    applyBehavior()
+    typed(key, defaultValue, classOf[java.lang.Long])()
   }
 
   override def getDoubleEvaluation(
@@ -208,14 +220,10 @@ final class TestFeatureProvider private (
     defaultValue: java.lang.Double,
     context: OFEvaluationContext
   ): ProviderEvaluation[java.lang.Double] = {
-    applyBehavior()
     evaluations.add((key, context))
-    evaluate(key, defaultValue) {
-      case d: Double => java.lang.Double.valueOf(d)
-      case f: Float  => java.lang.Double.valueOf(f.toDouble)
-      case i: Int    => java.lang.Double.valueOf(i.toDouble)
-      case l: Long   => java.lang.Double.valueOf(l.toDouble)
-      case other     => java.lang.Double.valueOf(other.toString.toDouble)
+    applyBehavior()
+    typed(key, defaultValue, classOf[java.lang.Double]) { case f: java.lang.Float =>
+      java.lang.Double.valueOf(f.doubleValue)
     }
   }
 
@@ -224,8 +232,8 @@ final class TestFeatureProvider private (
     defaultValue: Value,
     context: OFEvaluationContext
   ): ProviderEvaluation[Value] = {
-    applyBehavior()
     evaluations.add((key, context))
+    applyBehavior()
     evaluate(key, defaultValue)(anyToValue)
   }
 
@@ -464,10 +472,8 @@ final class TestFeatureProvider private (
   /** Set the probability (0.0 to 1.0) that each evaluation fails randomly. Values outside the range — including NaN —
     * are clamped to [0.0, 1.0]; NaN is treated as 0.0 to avoid silently disabling failure injection.
     */
-  def setFailureProbability(p: Double): UIO[Unit] = {
-    val clamped = if (p.isNaN) 0.0 else p.max(0.0).min(1.0)
-    ZIO.succeed(behaviorRef.updateAndGet(_.copy(failureProbability = clamped))).unit
-  }
+  def setFailureProbability(p: Double): UIO[Unit] =
+    ZIO.succeed(behaviorRef.updateAndGet(_.copy(failureProbability = TestFeatureProvider.clampProbability(p)))).unit
 
   /** Reset all behavior controls to defaults. */
   def clearBehavior: UIO[Unit] =
@@ -502,6 +508,10 @@ object TestFeatureProvider {
       }.orDie
     }
 
+  /** Clamp a failure probability to [0.0, 1.0], mapping NaN to 0.0. */
+  private def clampProbability(p: Double): Double =
+    if (p.isNaN) 0.0 else p.max(0.0).min(1.0)
+
   // Behavior Controls — types
 
   private[testkit] case class BehaviorConfig(
@@ -535,17 +545,23 @@ object TestFeatureProvider {
   def withErrorMode(mode: ErrorMode): TestAspect[Nothing, TestFeatureProvider, Nothing, Any] =
     behaviorAspect(_.copy(errorMode = Some(mode)))
 
-  /** Aspect that makes evaluations fail randomly with the given probability (0.0 to 1.0). */
-  def withFailureProbability(p: Double): TestAspect[Nothing, TestFeatureProvider, Nothing, Any] =
-    behaviorAspect(_.copy(failureProbability = p))
+  /** Aspect that makes evaluations fail randomly with the given probability, clamped to [0.0, 1.0] exactly as
+    * `setFailureProbability` clamps it (NaN is 0.0).
+    */
+  def withFailureProbability(p: Double): TestAspect[Nothing, TestFeatureProvider, Nothing, Any] = {
+    val clamped = clampProbability(p)
+    behaviorAspect(_.copy(failureProbability = clamped))
+  }
 
+  /** Applies `modify` for the test and afterwards restores the config it found — not the defaults — so a test-level
+    * aspect nested in a suite-level one leaves the suite's settings in place (#457).
+    */
   private def behaviorAspect(
     modify: BehaviorConfig => BehaviorConfig
-  ): TestAspect[Nothing, TestFeatureProvider, Nothing, Any] = {
-    val setup   = ZIO.serviceWith[TestFeatureProvider](tp => tp.behaviorRef.updateAndGet(modify(_)))
-    val cleanup = ZIO.serviceWith[TestFeatureProvider](_.behaviorRef.set(BehaviorConfig()))
-    TestAspect.before(setup) >>> TestAspect.after(cleanup)
-  }
+  ): TestAspect[Nothing, TestFeatureProvider, Nothing, Any] =
+    TestAspect.aroundWith(
+      ZIO.serviceWith[TestFeatureProvider](tp => tp.behaviorRef.getAndUpdate(c => modify(c)))
+    )(previous => ZIO.serviceWith[TestFeatureProvider](_.behaviorRef.set(previous)))
 
   /** The metadata name every factory except [[makeNamed]] reports. */
   final val DefaultName: String = "TestFeatureProvider"
@@ -727,12 +743,25 @@ object TestFeatureProvider {
   def providerLayer(flags: Map[String, Any]): ULayer[TestFeatureProvider] =
     ZLayer.fromZIO(make(flags))
 
-  /** Create a FeatureFlags layer from an existing TestFeatureProvider. */
-  def layerFrom(provider: TestFeatureProvider): ZLayer[Any, Throwable, FeatureFlags] = {
-    val api    = OpenFeatureAPI.createIsolated()
-    val domain = s"test-${java.util.UUID.randomUUID()}"
-    FeatureFlags.fromProviderWithDomain(provider, domain, provider.statusRef, api = Some(api))
-  }
+  /** Create a FeatureFlags layer from an existing TestFeatureProvider.
+    *
+    * Like [[layer]], it returns only after the SDK's initial `PROVIDER_READY` replay has arrived, so a `setStatus` made
+    * straight after the build is not overwritten by that late event. The latch is the layer's own: a provider from
+    * [[make]] carries none, and giving it one would make its `setStatus(Ready)` wait for an event no layer delivers.
+    */
+  def layerFrom(provider: TestFeatureProvider): ZLayer[Any, Throwable, FeatureFlags] =
+    ZLayer.scoped {
+      for {
+        replayed <- ZIO.succeed(new CountDownLatch(1))
+        api    = OpenFeatureAPI.createIsolated()
+        domain = s"test-${java.util.UUID.randomUUID()}"
+        featureFlags <- FeatureFlags
+          .fromProviderWithDomain(provider, domain, provider.statusRef, api = Some(api), onReady = Some(replayed))
+          .build
+          .map(_.get)
+        _ <- awaitLatch(Some(replayed), "initial PROVIDER_READY replay during layerFrom")
+      } yield featureFlags
+    }
 
   /** Same as [[layer]]; kept for source compatibility from before layers stopped needing a `Scope`. */
   @deprecated("Use layer: it no longer needs a Scope, so this twin is identical", "1.2.0")

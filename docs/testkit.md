@@ -37,6 +37,8 @@ Every layer provides `TestFeatureProvider & FeatureFlags`.
 | `layerFrom(provider)` | as the provider is | you built the provider yourself with `make` / `makeNamed` |
 
 None of these needs a `Scope`: each layer owns its own and shuts the provider down when it is released.
+`layer` and `layerFrom` return only after the OpenFeature SDK has delivered its initial ready event, so a
+`setStatus` straight after the layer builds is not overwritten by that late event.
 `scopedLayer` and `scopedAsyncLayer` are deprecated aliases of `layer` and `asyncLayer` from when layers did need one.
 
 `flags` is a `Map[String, Any]`, or typed overrides (`Flag := value`, see below). `providerLayer` provides just a
@@ -93,16 +95,23 @@ of leaving it unset.
 
 Reporting `FLAG_NOT_FOUND` is also what lets a test provider sit in a [provider chain](#provider-chains).
 
-A value of the wrong type is an error too. The typed tier fails and the total tier serves your default; neither
-silently returns the default as if the flag were fine:
+A value of the wrong type is an error too, reported as `TYPE_MISMATCH` as a real provider reports it. The typed tier
+fails with `TypeMismatch` and the total tier serves your default; neither silently returns the default as if the flag
+were fine:
 
 ```scala
 --8<-- "TestkitSpec.scala:wrong-type"
 ```
 
+A key-based value is served only when its type is exactly the one read: `Boolean`, `String`, `Int`, `Long` or
+`Double`. Nothing is converted. A `Long` read as `int` is a mismatch even when it fits, and so is an `Int` read as
+`long` or `double`, a string read as a number, or any value read as `string`. Store `42L` for a `long` flag and `2.0`
+for a `double` one. Typed fixtures (`setFlag(flagDef, v)`, `Flag := v`) always store the right type.
+
 ## Checking which flags were read
 
-The provider records every evaluation that reaches it, with the context it received:
+The provider records every evaluation that reaches it, with the context it received. That includes evaluations a
+[simulated failure](#simulating-failures) made fail: the provider was asked, even though it did not answer.
 
 ```scala
 --8<-- "TestkitSpec.scala:recorded"
@@ -173,8 +182,11 @@ metadata. `Reconnecting` has no OpenFeature SDK equivalent, so it does not reach
 | `setDelay(d)` | each evaluation sleeps `d` first, on the real clock |
 | `clearErrorMode`, `clearDelay`, `clearBehavior` | undo the above |
 
-Each control has a test aspect that sets it before the test and resets it after: `TestFeatureProvider.withErrorMode(mode)`,
-`withFailures`, `withFailureProbability(p)` and `withDelay(d)`. They need `TestFeatureProvider` in the environment.
+Each control has a test aspect that sets it before the test and, after it, restores the settings it found:
+`TestFeatureProvider.withErrorMode(mode)`, `withFailures`, `withFailureProbability(p)` (clamped like
+`setFailureProbability`) and `withDelay(d)`. Because each restores what it found rather than the defaults, aspects
+nest: a test-level `withDelay` inside a suite-level `withErrorMode` keeps the error mode. They need
+`TestFeatureProvider` in the environment.
 
 An error mode applies to every key. To make one key missing, leave it unset.
 

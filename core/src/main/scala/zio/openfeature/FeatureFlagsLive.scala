@@ -449,8 +449,15 @@ final private[openfeature] class FeatureFlagsLive(
       case ErrorCode.InvalidContext      => FeatureFlagError.InvalidContext(message.getOrElse("invalid context"))
       case ErrorCode.ProviderNotReady    => FeatureFlagError.ProviderNotReady(ProviderStatus.NotReady)
       case ErrorCode.ProviderFatal       => FeatureFlagError.ProviderFatal
+      // The spec has no auth error code, so a provider that reports 401/403 as an evaluation result (the OFREP
+      // contrib) can only say so in the message (#498).
       case ErrorCode.General =>
-        FeatureFlagError.ProviderError(new ProviderReportedError(message.getOrElse("general error")))
+        message match {
+          case Some(m) if FeatureFlagError.looksLikeAuthFailure(m) =>
+            FeatureFlagError.unauthorized(m, new ProviderReportedError(m))
+          case _ =>
+            FeatureFlagError.ProviderError(new ProviderReportedError(message.getOrElse("general error")))
+        }
     }
 
   private def checkProviderStatus: IO[FeatureFlagError, Unit] =

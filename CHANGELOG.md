@@ -175,6 +175,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   SDK as a `Double`, so anything beyond 2^53 was rounded, and a `Long` arriving from the SDK (hook contexts,
   transactions) was read back through a `Double` the same way. Both directions now carry `java.lang.Long`; int-range
   values still go as `Integer` (#249).
+- **OFREP 401/403 responses fail the typed tier with `Unauthorized`** (#498). The contrib provider does not throw on an
+  auth failure: it returns a `GENERAL` evaluation error with the message "authentication/authorization error for
+  flag: ...", which core mapped to `ProviderError`. A `GENERAL` error whose message names an auth failure (a standalone
+  `401`/`403`, `unauthorized`, `forbidden`, or that literal) is now `Unauthorized`, with a `cause` carrying the message,
+  on the typed tier and in the `error` hook stage. The resolution's error code stays `General`.
 - **`CachingProvider` and `CircuitBreakerProvider` release their event plumbing properly** (#450). Their `shutdown`
   never called `EventProvider.shutdown`, so each wrapper's event emitter kept running and could still dispatch
   afterwards. And a wrapper whose attach to the delegate failed (the delegate already belonged to another wrapper)

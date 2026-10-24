@@ -367,8 +367,8 @@ Here an environment variable holds text, so a read of another type parses that t
   ints and doubles, for a provider that holds nothing else.
 - `compare` takes the same arguments and returns the `Report` instead of a test.
 
-This repository runs it for `HoconProvider` and `EnvVarProvider`. The HOCON run found that the provider truncated
-`1.5` to `1` for an int read.
+This repository runs it for `HoconProvider`, `EnvVarProvider` and the OFREP provider (against an in-process OFREP
+stub). The HOCON run found that the provider truncated `1.5` to `1` for an int read.
 
 ## `CachingReasonProvider`
 

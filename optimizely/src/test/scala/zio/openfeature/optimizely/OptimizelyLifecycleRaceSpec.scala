@@ -4,8 +4,6 @@ import com.github.tomakehurst.wiremock.WireMockServer
 import com.github.tomakehurst.wiremock.client.WireMock._
 import com.github.tomakehurst.wiremock.core.WireMockConfiguration
 import com.optimizely.ab.Optimizely
-import com.optimizely.ab.config.HttpProjectConfigManager
-import com.optimizely.ab.notification.NotificationCenter
 import dev.openfeature.sdk.{ImmutableContext, OpenFeatureAPI, ProviderState}
 import zio._
 import zio.test._
@@ -82,20 +80,16 @@ object OptimizelyLifecycleRaceSpec extends ZIOSpecDefault {
         // The datafile source is broken (500) to start; the SDK's continuous poller survives fetch failures (the
         // fetch task catches and logs), so a later re-stub is picked up on a subsequent tick.
         server.stubFor(get(urlEqualTo(DatafilePath)).willReturn(aResponse().withStatus(500).withBody("boom")))
-        // Share one NotificationCenter between the manager and the client (as production `buildClient` does) so the
-        // handler our `initialize` registers actually sees the poller's datafile-update notification on recovery.
-        val sharedCenter = new NotificationCenter()
-        // `.build()` runs a continuous poller (not paused); a short interval means recovery is observed quickly.
-        val mgr = HttpProjectConfigManager
-          .builder()
-          .withSdkKey("race-key")
-          .withUrl(datafileUrl(server))
-          .withBlockingTimeout(1000L, TimeUnit.MILLISECONDS)
-          .withPollingInterval(1L, TimeUnit.SECONDS)
-          .withNotificationCenter(sharedCenter)
-          .withOptimizelyHttpClient(TestHttpClient.failFast())
-          .build()
-        val client   = Optimizely.builder().withConfigManager(mgr).withNotificationCenter(sharedCenter).build()
+        // The shared NotificationCenter lets the handler our `initialize` registers see the poller's datafile-update
+        // notification on recovery. `.build()` runs a continuous poller (not paused); a short interval means recovery
+        // is observed quickly.
+        val client = OptimizelyTestSupport.wiredClient(
+          datafileUrl(server),
+          "race-key",
+          blockingTimeout = java.time.Duration.ofSeconds(1),
+          pollingInterval = java.time.Duration.ofSeconds(1)
+        )
+        // RetryInitWait is the subject: the first init must fail within it, so it stays short (see the budgets above).
         val provider = new OptimizelyFeatureProvider(client, RetryInitWait, closeOnShutdown = true)
         // A thread dying on an uncaught exception is invisible to `join`, so capture any failure and assert on it —
         // otherwise a broken re-stub would surface only as a puzzling `recovered == false` 20s later.
@@ -151,24 +145,17 @@ object OptimizelyLifecycleRaceSpec extends ZIOSpecDefault {
           get(urlEqualTo(DatafilePath)).willReturn(okJson(ValidDatafileV1).withFixedDelay(800))
         )
 
-        val sharedCenter = new NotificationCenter()
         // `build()` here would block on the delayed first fetch; `build(true)` starts the continuous poller without
-        // blocking, so the provider can register its handler before the (delayed) initial load arrives.
-        val configManager = HttpProjectConfigManager
-          .builder()
-          .withSdkKey("race-event-key")
-          .withUrl(datafileUrl(server))
-          .withBlockingTimeout(2000L, TimeUnit.MILLISECONDS)
-          .withPollingInterval(1L, TimeUnit.SECONDS)
-          .withNotificationCenter(sharedCenter)
-          // Timeout comfortably above the 800ms datafile delay so the initial fetch reliably completes (a socket
-          // timeout racing the delay would otherwise fail the initial load nondeterministically).
-          .withOptimizelyHttpClient(TestHttpClient.failFast(2000))
-          .build(true)
-        val optimizely =
-          Optimizely.builder().withConfigManager(configManager).withNotificationCenter(sharedCenter).build()
+        // blocking, so the provider can register its handler before the (delayed) initial load arrives. The default
+        // 5s socket timeout sits well above the 800ms datafile delay, so the initial fetch reliably completes.
+        val optimizely = OptimizelyTestSupport.wiredClient(
+          datafileUrl(server),
+          "race-event-key",
+          pollingInterval = java.time.Duration.ofSeconds(1),
+          deferStart = true
+        )
         val provider =
-          new OptimizelyFeatureProvider(optimizely, java.time.Duration.ofSeconds(5), closeOnShutdown = true)
+          new OptimizelyFeatureProvider(optimizely, OptimizelyTestSupport.InitWait, closeOnShutdown = true)
         val api      = OpenFeatureAPI.getInstance()
         val domain   = s"optimizely-firstfire-${UUID.randomUUID()}"
         val received = new AtomicInteger(0)
@@ -212,19 +199,13 @@ object OptimizelyLifecycleRaceSpec extends ZIOSpecDefault {
       withMockServer { server =>
         // A delayed datafile keeps initialize in-flight so a concurrent shutdown genuinely interleaves.
         server.stubFor(get(urlEqualTo(DatafilePath)).willReturn(okJson(ValidDatafileV1).withFixedDelay(300)))
-        val mgr = HttpProjectConfigManager
-          .builder()
-          .withSdkKey("race-key")
-          .withUrl(datafileUrl(server))
-          .withBlockingTimeout(2000L, TimeUnit.MILLISECONDS)
-          .withPollingInterval(3600L, TimeUnit.SECONDS)
-          .withOptimizelyHttpClient(TestHttpClient.failFast())
-          .build(true)
+        val (client, mgr) =
+          OptimizelyTestSupport.wiredClientWithManager(datafileUrl(server), "race-key", deferStart = true)
         mgr.stop()
-        val client = Optimizely.builder().withConfigManager(mgr).build()
         val provider =
           new OptimizelyFeatureProvider(
             client,
+            // Short on purpose: init may legitimately fail against the closing client, and the joins below are bounded.
             java.time.Duration.ofSeconds(2),
             closeOnShutdown = true,
             configManager = Some(mgr)

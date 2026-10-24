@@ -3,8 +3,6 @@ package zio.openfeature.optimizely
 import com.github.tomakehurst.wiremock.WireMockServer
 import com.github.tomakehurst.wiremock.client.WireMock._
 import com.github.tomakehurst.wiremock.core.WireMockConfiguration
-import com.optimizely.ab.Optimizely
-import com.optimizely.ab.config.HttpProjectConfigManager
 import com.optimizely.ab.event.{EventHandler, ForwardingEventProcessor, LogEvent}
 import dev.openfeature.sdk.{ImmutableContext, MutableTrackingEventDetails, Value}
 import dev.openfeature.sdk.exceptions.{GeneralError, ProviderNotReadyError, TargetingKeyMissingError}
@@ -12,7 +10,7 @@ import zio._
 import zio.openfeature.{EvaluationContext, FeatureFlagError, FeatureFlags, FeatureFlagsConfig, TrackingEventDetails}
 import zio.test._
 
-import java.util.concurrent.{CopyOnWriteArrayList, TimeUnit}
+import java.util.concurrent.CopyOnWriteArrayList
 import scala.jdk.CollectionConverters._
 
 // #454: OptimizelyFeatureProvider sends `track` calls to Optimizely as conversions instead of dropping them.
@@ -34,29 +32,13 @@ object OptimizelyTrackSpec extends ZIOSpecDefault {
     server.start()
     try {
       server.stubFor(get(urlEqualTo(DatafilePath)).willReturn(okJson(readResource("/datafiles/track.json"))))
-      // One NotificationCenter for manager and client, as production buildClient wires it: the datafile-update
-      // notification is what drives initialize(), instead of a single blocking isValid window that a slow fetch
-      // under load can miss.
-      val center = new com.optimizely.ab.notification.NotificationCenter()
-      val manager = HttpProjectConfigManager
-        .builder()
-        .withSdkKey("track-key")
-        .withNotificationCenter(center)
-        .withUrl(s"http://localhost:${server.port()}$DatafilePath")
-        .withBlockingTimeout(2000, TimeUnit.MILLISECONDS)
-        .withPollingInterval(3600, TimeUnit.SECONDS)
-        // A generous socket timeout: the client never retries and polls hourly, so one slow WireMock answer under load
-        // would otherwise fail initialize() for good. Still fail-fast at teardown.
-        .withOptimizelyHttpClient(TestHttpClient.failFast(timeoutMillis = 5000))
-        .build()
       val events = new Recording
-      val client = Optimizely
-        .builder()
-        .withConfigManager(manager)
-        .withNotificationCenter(center)
-        .withEventProcessor(new ForwardingEventProcessor(events, null))
-        .build()
-      val provider = new OptimizelyFeatureProvider(client, java.time.Duration.ofSeconds(3), closeOnShutdown = true)
+      val client = OptimizelyTestSupport.wiredClient(
+        s"http://localhost:${server.port()}$DatafilePath",
+        "track-key",
+        customize = _.withEventProcessor(new ForwardingEventProcessor(events, null))
+      )
+      val provider = new OptimizelyFeatureProvider(client, OptimizelyTestSupport.InitWait, closeOnShutdown = true)
       if (initialize) provider.initialize(new ImmutableContext())
       try body(provider, events)
       finally provider.shutdown()

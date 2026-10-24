@@ -44,24 +44,11 @@ object OptimizelyProviderConcurrencySpec extends ZIOSpecDefault {
   // `Optimizely.close()`), so it can never become an orphaned "retries forever" thread. The old no-arg `.build()` started a live poller at
   // construction; when WireMock stopped, its Apache HttpClient retried against the dead socket on a thread that
   // outlived every test and kept the (even forked) JVM from exiting — hanging `sbt test` until CI's timeout.
-  private def buildClient(
-    server: WireMockServer,
-    blockingTimeout: java.time.Duration = java.time.Duration.ofSeconds(2),
-    pollingInterval: java.time.Duration = java.time.Duration.ofSeconds(3600)
-  ): (Optimizely, HttpProjectConfigManager) = {
-    val sharedCenter = new com.optimizely.ab.notification.NotificationCenter()
-    val mgr = HttpProjectConfigManager
-      .builder()
-      .withSdkKey("concurrency-key")
-      .withNotificationCenter(sharedCenter)
-      .withUrl(datafileUrl(server))
-      .withBlockingTimeout(blockingTimeout.toMillis, TimeUnit.MILLISECONDS)
-      .withPollingInterval(pollingInterval.toSeconds, TimeUnit.SECONDS)
-      // Fail-fast HTTP so an in-flight poll can't retry against a stopped WireMock on a non-daemon thread (TestHttpClient).
-      .withOptimizelyHttpClient(TestHttpClient.failFast())
-      .build(true)
+  private def buildClient(server: WireMockServer): (Optimizely, HttpProjectConfigManager) = {
+    val (client, mgr) =
+      OptimizelyTestSupport.wiredClientWithManager(datafileUrl(server), "concurrency-key", deferStart = true)
     mgr.stop()
-    (Optimizely.builder().withConfigManager(mgr).withNotificationCenter(sharedCenter).build(), mgr)
+    (client, mgr)
   }
 
   @scala.annotation.nowarn("msg=deprecated")
@@ -118,7 +105,7 @@ object OptimizelyProviderConcurrencySpec extends ZIOSpecDefault {
         val provider =
           new OptimizelyFeatureProvider(
             client,
-            java.time.Duration.ofSeconds(3),
+            OptimizelyTestSupport.InitWait,
             closeOnShutdown = true,
             configManager = Some(mgr)
           )
@@ -147,7 +134,7 @@ object OptimizelyProviderConcurrencySpec extends ZIOSpecDefault {
         val provider =
           new OptimizelyFeatureProvider(
             client,
-            java.time.Duration.ofSeconds(3),
+            OptimizelyTestSupport.InitWait,
             closeOnShutdown = true,
             configManager = Some(mgr)
           )
@@ -220,7 +207,7 @@ object OptimizelyProviderConcurrencySpec extends ZIOSpecDefault {
         val provider =
           new OptimizelyFeatureProvider(
             client,
-            java.time.Duration.ofSeconds(3),
+            OptimizelyTestSupport.InitWait,
             closeOnShutdown = true,
             configManager = Some(mgr)
           )

@@ -3,13 +3,9 @@ package zio.openfeature.optimizely
 import com.github.tomakehurst.wiremock.WireMockServer
 import com.github.tomakehurst.wiremock.client.WireMock._
 import com.github.tomakehurst.wiremock.core.WireMockConfiguration
-import com.optimizely.ab.Optimizely
-import com.optimizely.ab.config.HttpProjectConfigManager
 import dev.openfeature.sdk.{ErrorCode, ImmutableContext, MutableStructure, Reason, Value}
 import zio._
 import zio.test._
-
-import java.util.concurrent.TimeUnit
 
 /** Object-evaluation tests for `OptimizelyFeatureProvider`, guarding the fix for #264.
   *
@@ -40,29 +36,10 @@ object OptimizelyObjectEvaluationSpec extends ZIOSpecDefault {
   private def datafileUrl(server: WireMockServer): String =
     s"http://localhost:${server.port()}$DatafilePath"
 
-  /** Same fail-fast client build as the lifecycle spec: aggressive timeouts and a fail-fast HTTP client so a poll in
-    * flight when WireMock stops fails immediately instead of retrying forever on a non-daemon thread.
-    */
-  private def buildClient(
-    server: WireMockServer,
-    blockingTimeout: java.time.Duration = java.time.Duration.ofSeconds(2),
-    pollingInterval: java.time.Duration = java.time.Duration.ofSeconds(3600)
-  ): Optimizely = {
-    val mgr = HttpProjectConfigManager
-      .builder()
-      .withSdkKey("object-eval-key")
-      .withUrl(datafileUrl(server))
-      .withBlockingTimeout(blockingTimeout.toMillis, TimeUnit.MILLISECONDS)
-      .withPollingInterval(pollingInterval.toSeconds, TimeUnit.SECONDS)
-      .withOptimizelyHttpClient(TestHttpClient.failFast())
-      .build()
-    Optimizely.builder().withConfigManager(mgr).build()
-  }
-
   private def readyProvider(server: WireMockServer, datafile: String): OptimizelyFeatureProvider = {
     server.stubFor(get(urlEqualTo(DatafilePath)).willReturn(okJson(datafile)))
-    val client   = buildClient(server)
-    val provider = new OptimizelyFeatureProvider(client, java.time.Duration.ofSeconds(3), closeOnShutdown = true)
+    val client   = OptimizelyTestSupport.wiredClient(datafileUrl(server), "object-eval-key")
+    val provider = new OptimizelyFeatureProvider(client, OptimizelyTestSupport.InitWait, closeOnShutdown = true)
     provider.initialize(new ImmutableContext())
     provider
   }

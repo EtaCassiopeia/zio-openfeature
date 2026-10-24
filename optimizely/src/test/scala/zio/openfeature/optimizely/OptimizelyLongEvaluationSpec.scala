@@ -3,13 +3,10 @@ package zio.openfeature.optimizely
 import com.github.tomakehurst.wiremock.WireMockServer
 import com.github.tomakehurst.wiremock.client.WireMock._
 import com.github.tomakehurst.wiremock.core.WireMockConfiguration
-import com.optimizely.ab.Optimizely
-import com.optimizely.ab.config.HttpProjectConfigManager
 import dev.openfeature.sdk.{ErrorCode, ImmutableContext, Reason, Value}
 import zio._
 import zio.test._
 
-import java.util.concurrent.TimeUnit
 import scala.jdk.CollectionConverters._
 
 /** Long evaluation for `OptimizelyFeatureProvider` (SDK 1.22.0 native `getLongEvaluation`).
@@ -47,22 +44,10 @@ object OptimizelyLongEvaluationSpec extends ZIOSpecDefault {
     finally server.stop()
   }
 
-  private def buildClient(server: WireMockServer): Optimizely = {
-    val mgr = HttpProjectConfigManager
-      .builder()
-      .withSdkKey("long-eval-key")
-      .withUrl(s"http://localhost:${server.port()}$DatafilePath")
-      .withBlockingTimeout(2000, TimeUnit.MILLISECONDS)
-      .withPollingInterval(3600, TimeUnit.SECONDS)
-      .withOptimizelyHttpClient(TestHttpClient.failFast())
-      .build()
-    Optimizely.builder().withConfigManager(mgr).build()
-  }
-
   private def readyProvider(server: WireMockServer, datafile: String): OptimizelyFeatureProvider = {
     server.stubFor(get(urlEqualTo(DatafilePath)).willReturn(okJson(datafile)))
-    val client   = buildClient(server)
-    val provider = new OptimizelyFeatureProvider(client, java.time.Duration.ofSeconds(3), closeOnShutdown = true)
+    val client   = OptimizelyTestSupport.wiredClient(s"http://localhost:${server.port()}$DatafilePath", "long-eval-key")
+    val provider = new OptimizelyFeatureProvider(client, OptimizelyTestSupport.InitWait, closeOnShutdown = true)
     provider.initialize(new ImmutableContext())
     provider
   }

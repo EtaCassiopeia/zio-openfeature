@@ -79,7 +79,7 @@ object OptimizelyPollingLifecycleSpec extends ZIOSpecDefault {
         val config = OptimizelyProviderConfig(
           sdkKey = "polling-key-2",
           datafileUrl = Some(datafileUrl(server)),
-          initWait = java.time.Duration.ofSeconds(3),
+          initWait = OptimizelyTestSupport.InitWait,
           pollingInterval = Some(java.time.Duration.ofMillis(200))
         )
         for {
@@ -118,6 +118,7 @@ object OptimizelyPollingLifecycleSpec extends ZIOSpecDefault {
         val config = OptimizelyProviderConfig(
           sdkKey = "polling-key-3",
           datafileUrl = Some(datafileUrl(server)),
+          // Short on purpose: init is expected to fail, and the polling window is what the test observes.
           initWait = java.time.Duration.ofMillis(400),
           pollingInterval = Some(java.time.Duration.ofMillis(150))
         )
@@ -149,7 +150,7 @@ object OptimizelyPollingLifecycleSpec extends ZIOSpecDefault {
         val config = OptimizelyProviderConfig(
           sdkKey = "polling-key-4",
           datafileUrl = Some(datafileUrl(server)),
-          initWait = java.time.Duration.ofSeconds(3),
+          initWait = OptimizelyTestSupport.InitWait,
           pollingInterval = Some(java.time.Duration.ofMillis(200))
         )
         for {

@@ -3,13 +3,10 @@ package zio.openfeature.optimizely
 import com.github.tomakehurst.wiremock.WireMockServer
 import com.github.tomakehurst.wiremock.client.WireMock._
 import com.github.tomakehurst.wiremock.core.WireMockConfiguration
-import com.optimizely.ab.Optimizely
-import com.optimizely.ab.config.HttpProjectConfigManager
 import dev.openfeature.sdk.{ErrorCode, ImmutableContext, ProviderEvaluation, Reason, Value}
 import zio._
 import zio.test._
 
-import java.util.concurrent.TimeUnit
 import scala.jdk.CollectionConverters._
 
 // #456: a variable that exists with another type is a TYPE_MISMATCH, not the caller's default with reason DEFAULT; an
@@ -29,24 +26,9 @@ object OptimizelyVariableTypeSpec extends ZIOSpecDefault {
       server.stubFor(
         get(urlEqualTo(DatafilePath)).willReturn(okJson(readResource("/datafiles/typed-variables.json")))
       )
-      // One NotificationCenter for manager and client, as production buildClient wires it: the datafile-update
-      // notification is what drives initialize(), instead of a single blocking isValid window that a slow fetch
-      // under load can miss.
-      val center = new com.optimizely.ab.notification.NotificationCenter()
-      val manager = HttpProjectConfigManager
-        .builder()
-        .withSdkKey("typed-variables-key")
-        .withNotificationCenter(center)
-        .withUrl(s"http://localhost:${server.port()}$DatafilePath")
-        .withBlockingTimeout(2000, TimeUnit.MILLISECONDS)
-        .withPollingInterval(3600, TimeUnit.SECONDS)
-        // A generous socket timeout: the client never retries and polls hourly, so one slow WireMock answer under load
-        // would otherwise fail initialize() for good. Still fail-fast at teardown.
-        .withOptimizelyHttpClient(TestHttpClient.failFast(timeoutMillis = 5000))
-        .build()
       val provider = new OptimizelyFeatureProvider(
-        Optimizely.builder().withConfigManager(manager).withNotificationCenter(center).build(),
-        java.time.Duration.ofSeconds(3),
+        OptimizelyTestSupport.wiredClient(s"http://localhost:${server.port()}$DatafilePath", "typed-variables-key"),
+        OptimizelyTestSupport.InitWait,
         closeOnShutdown = true
       )
       provider.initialize(new ImmutableContext())

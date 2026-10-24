@@ -54,7 +54,7 @@ object OptimizelyEventDispatchSpec extends ZIOSpecDefault {
     OptimizelyProviderConfig(
       sdkKey = "events-key",
       datafileUrl = Some(s"http://localhost:${server.port()}$DatafilePath"),
-      initWait = java.time.Duration.ofSeconds(5),
+      initWait = OptimizelyTestSupport.InitWait,
       blockingTimeout = Some(java.time.Duration.ofSeconds(2)),
       events = events
     )
@@ -161,6 +161,7 @@ object OptimizelyEventDispatchSpec extends ZIOSpecDefault {
           s <- server
           handler = AsyncEventHandler
             .builder()
+            // The close timeout is part of the subject (the handler must post within it at scope close): keep it.
             .withCloseTimeout(3000L, TimeUnit.MILLISECONDS)
             .withOptimizelyHttpClient(RedirectingHttpClient.toLocalhost(s.port()))
             .build()

@@ -59,7 +59,7 @@ with `derives FlagType`.
 
 | ZIO OpenFeature | OpenFeature spec | OpenFeature Java SDK |
 |---|---|---|
-| 1.2.0 (upcoming) | [v0.9.0](https://github.com/open-feature/spec/releases/tag/v0.9.0) | 1.23.0 |
+| 1.2.0 (latest published) | [v0.9.0](https://github.com/open-feature/spec/releases/tag/v0.9.0) | 1.23.0 |
 | 1.1.x | [v0.9.0](https://github.com/open-feature/spec/releases/tag/v0.9.0) | 1.22.1 |
 | 1.0.0 | [v0.8.0](https://github.com/open-feature/spec/releases/tag/v0.8.0) | 1.21.0 |
 

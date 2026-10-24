@@ -7,7 +7,7 @@ own context.
 | Component | Version |
 |:----------|:--------|
 | [OpenFeature specification](https://github.com/open-feature/spec) | v0.9.0 (since zio-openfeature 1.1.0; v0.8.0 in 1.0.0) |
-| [OpenFeature Java SDK](https://github.com/open-feature/java-sdk) | 1.23.0 on `main`; 1.22.1 in 1.1.x; 1.21.0 in 1.0.0 |
+| [OpenFeature Java SDK](https://github.com/open-feature/java-sdk) | 1.23.0 since 1.2.0; 1.22.1 in 1.1.x; 1.21.0 in 1.0.0 |
 
 ## How compliance is tested
 

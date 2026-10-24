@@ -4,7 +4,7 @@ import zio._
 import zio.bdd.mock._
 import zio.bdd.mock.rift.embedded.EmbeddedRift
 import zio.openfeature._
-import zio.openfeature.optimizely.{OptimizelyProvider, OptimizelyProviderConfig}
+import zio.openfeature.optimizely.{OptimizelyEvents, OptimizelyProvider, OptimizelyProviderConfig}
 
 import java.io.FileInputStream
 import java.security.KeyStore
@@ -100,7 +100,8 @@ object InterceptHarness {
                    datafileUrl = None, // real default CDN URL — MITM'd by Rift
                    initWait = java.time.Duration.ofSeconds(10),
                    pollingInterval = Some(java.time.Duration.ofSeconds(3600)),
-                   blockingTimeout = Some(java.time.Duration.ofSeconds(5))
+                   blockingTimeout = Some(java.time.Duration.ofSeconds(5)),
+                   events = OptimizelyEvents.Disabled // datafile behaviour only; keep events off the network (#453)
                  )
         provider <- OptimizelyProvider.scoped(config, Some(optClient)).mapError(e => new RuntimeException(e.message))
         domain    = s"intercept-matrix-${java.util.UUID.randomUUID()}"

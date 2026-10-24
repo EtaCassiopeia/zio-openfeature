@@ -65,6 +65,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rather than a silent default. On a cache miss a CMAB decision is a blocking network call (10s, one retry by default).
   The bump also removes a latent crash: 4.2.2's event serializer reads a Jackson field that the jackson-databind this
   module ships no longer has, which would have failed the first real event dispatch.
+- **Behaviour change: factory-built Optimizely providers now send events to Optimizely** (#453). Providers from
+  `OptimizelyProvider.make`/`scoped`/`layer` built their client without an event processor, so the SDK dropped every
+  impression and every `track` conversion: experiments showed zero visitors. They now batch events and send them to
+  `logx.optimizely.com`, as the SDK's own default factory does. An event carries the targeting key as the visitor
+  id, the audience attributes derived from the evaluation context, and the decision or conversion. To keep the old
+  behaviour, set `events = OptimizelyEvents.Disabled` on `OptimizelyProviderConfig`; `OptimizelyEvents.Batched` tunes
+  the batch size, flush interval and shutdown wait (at most 4 s, so shutdown stays within its 10 s bound). Providers
+  from `fromOptimizelyClient` are unchanged. **Recompile, don't just bump the version:** `events` is a new field of
+  `OptimizelyProviderConfig`, which is source compatible but removes the six-argument constructor, `apply` and `copy`,
+  so code compiled against an earlier release fails with `NoSuchMethodError`.
 - **Production instances no longer keep tracked events** (#442). Every instance recorded the last 1000 `track` calls
   with their fully merged evaluation contexts — often personal data — for `FeatureFlags.trackedEvents`, a test
   helper. Only testkit-built instances record now. Assert on tracking with the new `TestFeatureProvider.trackedEvents`

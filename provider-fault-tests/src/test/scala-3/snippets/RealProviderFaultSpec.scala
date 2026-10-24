@@ -10,7 +10,7 @@ import scala.concurrent.duration.{FiniteDuration, SECONDS}
 import zio.*
 import zio.openfeature.*
 import zio.openfeature.extras.EnvVarProvider
-import zio.openfeature.optimizely.{OptimizelyProvider, OptimizelyProviderConfig}
+import zio.openfeature.optimizely.{OptimizelyEvents, OptimizelyProvider, OptimizelyProviderConfig}
 import zio.test.*
 
 /** The "A suite" example of the "Testing real providers" page, against the real Optimizely provider (whose construction
@@ -28,7 +28,8 @@ object RealProviderFaultSpec extends ZIOSpecDefault:
         OptimizelyProviderConfig(
           sdkKey = "fault-test-key",
           datafileUrl = Some("https://cdn.example.com/datafiles/fault-test-key.json"),
-          initWait = java.time.Duration.ofSeconds(2)
+          initWait = java.time.Duration.ofSeconds(2),
+          events = OptimizelyEvents.Disabled // datafile behaviour only; keep events off the network (#453)
         )
       )
     )

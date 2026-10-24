@@ -75,6 +75,17 @@ private[openfeature] object ProviderRegistration {
     provider: OFFeatureProvider,
     timeout: Duration
   ): Task[Unit] =
+    registerThenAwait(api, domain, provider, timeout)(ZIO.unit)
+
+  /** [[registerAndAwait]], running `afterRegister` once the slot is bound to `provider` and before the wait. The build
+    * uses it to attach its event bridge to a slot that already holds the new provider (#531).
+    */
+  def registerThenAwait[R](
+    api: OpenFeatureAPI,
+    domain: Option[String],
+    provider: OFFeatureProvider,
+    timeout: Duration
+  )(afterRegister: ZIO[R, Throwable, Unit]): ZIO[R, Throwable, Unit] =
     ZIO.suspendSucceed {
       val lastError = new AtomicReference[Option[InitError]](None)
       val handler   = errorHandler(provider, lastError)
@@ -82,6 +93,7 @@ private[openfeature] object ProviderRegistration {
         ZIO.succeed(removeHandler(api, handler))
       ) { _ =>
         ZIO.attemptBlocking(register(api, domain, provider)) *>
+          afterRegister *>
           ZIO.attemptBlockingInterrupt(awaitOutcome(api, domain, provider, timeout, lastError))
       }
     }

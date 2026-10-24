@@ -1231,9 +1231,8 @@ object FeatureFlags {
   /** Shared initialization logic for async factory methods.
     *
     * Uses `setProvider` (non-blocking) instead of `setProviderAndWait`. The provider initializes in the background;
-    * evaluations fail with `ProviderNotReady` until the event bridge receives a `PROVIDER_READY` event. To avoid a race
-    * where the provider becomes ready before the event bridge is registered, we start the event bridge first and then
-    * check the provider's actual state.
+    * evaluations fail with `ProviderNotReady` until the event bridge receives a `PROVIDER_READY` event. The bridge is
+    * attached before the provider is registered, so that event cannot be missed and arrives exactly once (#531).
     */
   private[openfeature] def buildAsync(
     provider: OFFeatureProvider,

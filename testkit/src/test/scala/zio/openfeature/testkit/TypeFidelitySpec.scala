@@ -118,17 +118,28 @@ object TypeFidelitySpec extends ZIOSpecDefault {
       }
     ),
     suite("layerFrom readiness")(
-      test("a status set right after layerFrom builds is not overwritten by the initial PROVIDER_READY replay") {
+      // #531: the bridge used to get a second, late PROVIDER_READY that overwrote the status as recovery.
+      test("a status set right after layerFrom builds is not overwritten by a late PROVIDER_READY") {
         ZIO.scoped {
           for {
             p      <- TestFeatureProvider.make
             ff     <- TestFeatureProvider.layerFrom(p).build.map(_.get[FeatureFlags])
             _      <- p.setStatus(ProviderStatus.Error)
-            _      <- Live.live(ZIO.sleep(50.millis))
+            _      <- Live.live(ZIO.sleep(20.millis))
             status <- ff.providerStatus
           } yield assertTrue(status == ProviderStatus.Error)
         }
-      } @@ TestAspect.nonFlaky(50)
+      } @@ TestAspect.nonFlaky(500),
+      test("a status set right after TestFeatureProvider.layer builds is not overwritten by a late PROVIDER_READY") {
+        ZIO.scoped {
+          for {
+            env    <- TestFeatureProvider.layer.build
+            _      <- env.get[TestFeatureProvider].setStatus(ProviderStatus.Error)
+            _      <- Live.live(ZIO.sleep(20.millis))
+            status <- env.get[FeatureFlags].providerStatus
+          } yield assertTrue(status == ProviderStatus.Error)
+        }
+      } @@ TestAspect.nonFlaky(500)
     )
   )
 }

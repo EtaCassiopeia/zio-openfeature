@@ -98,6 +98,22 @@ final private[openfeature] class FeatureFlagsLive(
 
   private[openfeature] def startEventBridge: ZIO[Scope, Nothing, Unit] = eventBridge.startEventBridge
 
+  /** Replace the "unknown" fallback name with `name`; a real name is never overwritten. */
+  private[openfeature] def refreshUnknownProviderName(name: String): Unit = {
+    providerNameRef.compareAndSet(FeatureFlags.UnknownProviderName, name)
+    ()
+  }
+
+  /** Remove the bridge's SDK handlers now, rather than at scope close: a failed build must leave none behind (#531).
+    * The registry builds into its own long-lived scope, so its finalizer alone would keep a failed client's handlers.
+    */
+  private[openfeature] def stopEventBridge: UIO[Unit] =
+    // `removeHandler` for a handler that is absent is a no-op, and this runs on a failure path whose own error must
+    // win, so a throw here is logged rather than raised.
+    ZIO
+      .attempt(bridgeDeregister.get()())
+      .catchAllCause(c => ZIO.logWarningCause("event bridge: removing handlers after a failed build failed", c))
+
   // Detailed evaluation methods (one per type, with default parameters from trait)
 
   override def booleanDetails(

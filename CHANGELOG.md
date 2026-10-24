@@ -218,6 +218,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   every integer flag came back `TYPE_MISMATCH`, and `2.0` was served as `2`. `OFREPFeatureProvider` resolves long
   reads through the object resolver: a JSON integer in the `Long` range is served exactly, anything else (`2.0`, a
   string, an integer beyond `Long`) is `TYPE_MISMATCH` with the default, and server errors keep their codes.
+- **One provider initialization delivers one `Ready`** (#531). The event bridge was attached after the provider
+  initialized, so the SDK's post-init `PROVIDER_READY` and its replay for an already-ready provider could both reach
+  it, in either order: `on(Ready)` handlers and `events` subscribers could see a duplicate `Ready`, and the testkit's
+  `layer` / `layerFrom` let that late `Ready` overwrite a `setStatus` made right after the build. The bridge is now
+  attached before the provider is registered (sync and async builds, and so registry clients), and removed when
+  initialization fails.
 - **Scala Steward can open pull requests again** (#473). Every scheduled run had failed with a 403, because this
   repository does not let GitHub Actions create pull requests. The workflow now authenticates with a fine-grained
   `SCALA_STEWARD_TOKEN`, so its PRs also run CI. A new `.scala-steward.conf` keeps zio-cache on 0.2.x and Scala 3 on

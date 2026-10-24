@@ -3,7 +3,6 @@ package zio.openfeature.ofrep
 import com.github.tomakehurst.wiremock.WireMockServer
 import com.github.tomakehurst.wiremock.client.WireMock._
 import com.github.tomakehurst.wiremock.core.WireMockConfiguration
-import dev.openfeature.contrib.providers.ofrep.OfrepProvider
 import dev.openfeature.sdk.{ImmutableContext, Value}
 import zio._
 import zio.openfeature.{ErrorCode, FeatureFlagError, FeatureFlags}
@@ -36,7 +35,7 @@ object OFREPHostileResponseSpec extends ZIOSpecDefault {
       server
     })(server => ZIO.succeed(server.stop()))
 
-  private def providerFor(server: WireMockServer): ZIO[Scope, Nothing, OfrepProvider] =
+  private def providerFor(server: WireMockServer): ZIO[Scope, Nothing, OFREPFeatureProvider] =
     OFREPProvider.scoped(s"http://localhost:${server.port()}").mapError(e => new RuntimeException(e.toString)).orDie
 
   /** Stub a fresh flag returning `valueJson` and return its key. */

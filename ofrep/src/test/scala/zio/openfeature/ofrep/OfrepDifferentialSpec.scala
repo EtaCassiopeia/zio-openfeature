@@ -16,8 +16,8 @@ import zio.test._
   *
   * One stub serves the whole spec; its mappings are replaced for every sample (samples run one after another).
   *
-  * The deviations are limits of JSON as a wire format, plus one behaviour of the upstream contrib client, each with its
-  * reason. Anything else is a bug in one of the two providers.
+  * The deviations are limits of JSON as a wire format, each with its reason. Anything else is a bug in one of the two
+  * providers. Long reads need none: `OFREPFeatureProvider` serves them from the object resolver, exactly (#529).
   */
 object OfrepDifferentialSpec extends ZIOSpecDefault {
 
@@ -57,38 +57,26 @@ object OfrepDifferentialSpec extends ZIOSpecDefault {
   private def same(a: Observed, b: Observed): Boolean =
     a.reasonClass == b.reasonClass && a.errorCode == b.errorCode && DifferentialLaws.sameValue(a.value, b.value)
 
-  private val SafeLong: Long = (1L << 53) - 1
-
-  /** What a long read gets from the contrib client: it does not override `getLongEvaluation`, so the SDK's default
-    * runs. That default rejects a default value outside +-(2^53 - 1) before resolving anything, then delegates to
-    * `getDoubleEvaluation` and serves the result only if it is a whole number within that range. The contrib resolver
-    * serves a double read only when Jackson parsed the JSON value as a `Double`, so any JSON integer (an `Int` or a
-    * `Long` flag) is TYPE_MISMATCH, and a whole double (`2.0`, `-0.0`) is served as a long.
-    */
-  private def sdkDoubleBackedLong(flags: FlagSet, key: String, default: Long): Observed = {
-    val mismatch = Observed(default, ReasonClass.Error, Some(ErrorCode.TypeMismatch))
-    if (default > SafeLong || default < -SafeLong) mismatch
-    else
-      flags.flags.get(key) match {
-        case None => Observed(default, ReasonClass.Error, Some(ErrorCode.FlagNotFound))
-        case Some(d: Double) if !isNonFinite(d) && d == math.floor(d) && math.abs(d) <= SafeLong.toDouble =>
-          Observed(d.toLong, ReasonClass.Served, None)
-        case Some(_) => mismatch
-      }
-  }
-
   val deviations: List[Deviation] = List(
     Deviation(
       oracle,
       (flags, request, testkit, ofrep) =>
-        request.accessor.isInstanceOf[Accessor.IntRead] && testkit.errorCode.contains(ErrorCode.TypeMismatch) &&
-          ofrep.reasonClass == ReasonClass.Served &&
-          flags.flags.get(request.key).exists {
-            case l: Long => l.isValidInt && DifferentialLaws.sameValue(ofrep.value, l.toInt)
-            case _       => false
-          },
-      "JSON numbers are untyped: a Long flag inside the Int range is the same JSON integer as an Int, which the " +
-        "client parses as an Int, so an int read serves it where the testkit keeps Long and Int apart."
+        testkit.errorCode.contains(ErrorCode.TypeMismatch) && ofrep.reasonClass == ReasonClass.Served &&
+          (request.accessor match {
+            case _: Accessor.IntRead =>
+              flags.flags.get(request.key).exists {
+                case l: Long => l.isValidInt && DifferentialLaws.sameValue(ofrep.value, l.toInt)
+                case _       => false
+              }
+            case _: Accessor.LongRead =>
+              flags.flags.get(request.key).exists {
+                case i: Int => DifferentialLaws.sameValue(ofrep.value, i.toLong)
+                case _      => false
+              }
+            case _ => false
+          }),
+      "JSON numbers are untyped: a Long flag inside the Int range is the same JSON integer as an Int, so an int read " +
+        "serves it, and a long read serves an Int flag exactly, where the testkit keeps Long and Int apart."
     ),
     Deviation(
       oracle,
@@ -105,18 +93,6 @@ object OfrepDifferentialSpec extends ZIOSpecDefault {
             same(testkit.copy(value = asJsonLiteral(testkit.value)), ofrep)),
       "JSON has no NaN or +-Infinity: the stub sends their text, so a double read is TYPE_MISMATCH, a string read " +
         "serves the text, and inside an object they come back as strings."
-    ),
-    Deviation(
-      oracle,
-      (flags, request, _, ofrep) =>
-        request.accessor match {
-          case Accessor.LongRead(default) => same(ofrep, sdkDoubleBackedLong(flags, request.key, default))
-          case _                          => false
-        },
-      "Upstream: the OFREP contrib client (0.0.2) does not override getLongEvaluation, so the SDK's double-backed " +
-        "default runs over the contrib's strict double resolver. A long read of any JSON integer is TYPE_MISMATCH, " +
-        "a whole double (2.0, -0.0) is served as a long, and an absent key read with a default outside " +
-        "+-(2^53 - 1) is TYPE_MISMATCH instead of FLAG_NOT_FOUND."
     )
   )
 

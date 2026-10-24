@@ -3,7 +3,7 @@ package snippets
 import zio.*
 import zio.openfeature.*
 import zio.openfeature.extras.{CircuitBreakerProvider, CircuitBreakerProviderConfig}
-import zio.openfeature.ofrep.{OFREPProvider, OFREPProviderConfig}
+import zio.openfeature.ofrep.{OFREPFeatureProvider, OFREPProvider, OFREPProviderConfig}
 
 /** The code on the OFREP page. Nothing here is run by the tests: every call goes to an OFREP server. */
 object Ofrep:
@@ -22,7 +22,7 @@ object Ofrep:
   // --8<-- [end:quick-start]
 
   // --8<-- [start:config]
-  val configured: IO[FeatureFlagError.InvalidConfiguration, dev.openfeature.contrib.providers.ofrep.OfrepProvider] =
+  val configured: IO[FeatureFlagError.InvalidConfiguration, OFREPFeatureProvider] =
     OFREPProvider.make(
       OFREPProviderConfig(
         baseUrl = "https://flags.example.com",
@@ -34,7 +34,7 @@ object Ofrep:
   // --8<-- [end:config]
 
   // --8<-- [start:timeouts]
-  def bounded(provider: dev.openfeature.contrib.providers.ofrep.OfrepProvider): ZLayer[Any, Throwable, FeatureFlags] =
+  def bounded(provider: OFREPFeatureProvider): ZLayer[Any, Throwable, FeatureFlags] =
     FeatureFlags.fromProvider(
       provider,
       FeatureFlagsConfig(initMode = InitMode.Async)

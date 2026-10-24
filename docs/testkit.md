@@ -344,6 +344,32 @@ needed" if it does, so the list cannot go stale. The law runs on Scala 2.13 and 
 (`CachingProvider`, `CircuitBreakerProvider`, `DeferredProvider`, `IntegerWideningLongProvider`,
 `CachingReasonProvider`) are checked with it.
 
+## Comparing a provider against the testkit
+
+A test is only as good as the test provider's answers. `DifferentialLaws` checks them against a real provider. It
+generates flag sets over every wire type, puts each into `TestFeatureProvider` and into your provider, reads every key
+(and one absent key) through every typed accessor, and compares what `FeatureFlags` returns: the value, the reason
+class (`Served`, `Default` or `Error`) and the error code.
+
+Some differences are intended. List each one as a `Deviation` with its reason; any other difference fails the test.
+Here an environment variable holds text, so a read of another type parses that text:
+
+```scala
+--8<-- "TestkitSpec.scala:differential"
+```
+
+- `seed` builds your provider holding the generated flags.
+- A deviation that matched nothing in the run also fails the test, as stale. The list cannot outlive the behaviour it
+  excuses.
+- Each run checks 50 random flag sets (`samples`) plus a fixed `corpus` of edge cases: NaN, -0.0, `Long`s beyond the
+  `Int` range, text that looks like a number. zio-test seeds the randomness, so a failure is reproducible.
+- `flagSets` and `corpus` default to every wire type. `scalarFlagSets` and `scalarCorpus` keep to booleans, strings,
+  ints and doubles, for a provider that holds nothing else.
+- `compare` takes the same arguments and returns the `Report` instead of a test.
+
+This repository runs it for `HoconProvider` and `EnvVarProvider`. The HOCON run found that the provider truncated
+`1.5` to `1` for an int read.
+
 ## `CachingReasonProvider`
 
 `CachingReasonProvider` wraps any OpenFeature provider and reports the `CACHED` reason from the second evaluation of

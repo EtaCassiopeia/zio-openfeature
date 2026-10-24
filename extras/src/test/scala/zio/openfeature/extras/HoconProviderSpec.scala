@@ -23,6 +23,22 @@ object HoconProviderSpec extends ZIOSpecDefault {
   private val provider = HoconProvider.fromConfig(config)
   private val ctx      = new ImmutableContext()
 
+  private val numbers = HoconProvider.fromConfig(ConfigFactory.parseString("""
+    fraction = 1.5
+    whole = 2.0
+    huge = 1e300
+    beyond-int = 9999999999
+    beyond-double = 9007199254740993
+    nan = "NaN"
+    small = 7
+  """))
+  private def mismatch[A](read: => A): Boolean =
+    scala.util.Try(read).failed.toOption.exists {
+      case e: dev.openfeature.sdk.exceptions.OpenFeatureError =>
+        e.getErrorCode == dev.openfeature.sdk.ErrorCode.TYPE_MISMATCH
+      case _ => false
+    }
+
   def spec = suite("HoconProvider")(
     suite("boolean evaluation")(
       test("returns configured boolean") {
@@ -112,6 +128,35 @@ object HoconProviderSpec extends ZIOSpecDefault {
             case _ => false
           })
         }
+      }
+    ),
+    suite("number reads never change the value (#467)")(
+      test("a fraction read as an int or a long is TYPE_MISMATCH, not truncated") {
+        val asInt  = mismatch(numbers.getIntegerEvaluation("fraction", 0, ctx))
+        val asLong = mismatch(numbers.getLongEvaluation("fraction", 0L, ctx))
+        assertTrue(asInt, asLong)
+      },
+      test("a double beyond the long range read as a long is TYPE_MISMATCH, not saturated") {
+        val asLong = mismatch(numbers.getLongEvaluation("huge", 0L, ctx))
+        assertTrue(asLong)
+      },
+      test("a long beyond the int range read as an int is TYPE_MISMATCH") {
+        val asInt = mismatch(numbers.getIntegerEvaluation("beyond-int", 0, ctx))
+        assertTrue(asInt)
+      },
+      test("a long a double cannot hold exactly read as a double is TYPE_MISMATCH, not rounded") {
+        val asDouble = mismatch(numbers.getDoubleEvaluation("beyond-double", 0.0, ctx))
+        assertTrue(asDouble)
+      },
+      test("NaN read as an int is TYPE_MISMATCH, not 0") {
+        val asInt = mismatch(numbers.getIntegerEvaluation("nan", 0, ctx))
+        assertTrue(asInt)
+      },
+      test("an exact conversion is still served: 2.0 as an int, 7 as a long and a double") {
+        val two    = numbers.getIntegerEvaluation("whole", 0, ctx).getValue.intValue
+        val long   = numbers.getLongEvaluation("small", 0L, ctx).getValue.longValue
+        val double = numbers.getDoubleEvaluation("small", 0.0, ctx).getValue.doubleValue
+        assertTrue(two == 2, long == 7L, double == 7.0)
       }
     ),
     suite("metadata")(

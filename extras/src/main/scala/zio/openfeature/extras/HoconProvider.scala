@@ -52,6 +52,45 @@ final class HoconProvider private (
       case e: ConfigException.BadValue  => throw new ParseError(s"Flag '$key': ${e.getMessage}")
     }
 
+  /** Read a number and convert it to the getter's type only when nothing is lost (#467).
+    *
+    * HOCON has a single number type, so an int, long or double read accepts any number (and, by the HOCON spec's
+    * automatic conversions, a string that parses as one). What it must not do is change the value: Typesafe Config's
+    * own `getInt`/`getLong` truncate `1.5` to `1`, saturate `1e300` to `Long.MaxValue` and turn `NaN` into `0`, and
+    * `getDouble` rounds a long beyond 2^53. Any such conversion is a `TYPE_MISMATCH` instead, as a typed provider
+    * reports it.
+    */
+  private def exactNumber[A](key: String, expected: String)(convert: PartialFunction[Number, A]): A = {
+    val n = typedRead(key, config.getNumber(key))
+    convert.applyOrElse(
+      n,
+      (_: Number) => throw new TypeMismatchError(s"Flag '$key': $n cannot be read as $expected without changing it")
+    )
+  }
+
+  private val asInt: PartialFunction[Number, Int] = {
+    case i: java.lang.Integer                            => i.intValue
+    case l: java.lang.Long if l.longValue.isValidInt     => l.intValue
+    case d: java.lang.Double if d.doubleValue.isValidInt => d.intValue
+  }
+
+  // 2^63: the first double beyond the long range (`Long.MaxValue.toDouble` rounds up to it).
+  private val TwoTo63 = 9.223372036854775807e18
+
+  private val asLong: PartialFunction[Number, Long] = {
+    case i: java.lang.Integer => i.longValue
+    case l: java.lang.Long    => l.longValue
+    case d: java.lang.Double
+        if d.doubleValue == math.floor(d.doubleValue) && d.doubleValue >= -TwoTo63 && d.doubleValue < TwoTo63 =>
+      d.longValue
+  }
+
+  private val asDouble: PartialFunction[Number, Double] = {
+    case i: java.lang.Integer                                                                => i.doubleValue
+    case l: java.lang.Long if l.doubleValue < TwoTo63 && l.doubleValue.toLong == l.longValue => l.doubleValue
+    case d: java.lang.Double                                                                 => d.doubleValue
+  }
+
   /** A key this config does not contain is `FLAG_NOT_FOUND`, not a `DEFAULT`-reason answer (#355).
     *
     * That is what lets a `MultiProvider` chain distinguish "not configured here" from "configured to this value" and
@@ -94,7 +133,7 @@ final class HoconProvider private (
     context: OFEvaluationContext
   ): ProviderEvaluation[java.lang.Integer] =
     if (config.hasPath(key))
-      ProviderEvaluations.of(java.lang.Integer.valueOf(typedRead(key, config.getInt(key))), "STATIC")
+      ProviderEvaluations.of(java.lang.Integer.valueOf(exactNumber(key, "an int")(asInt)), "STATIC")
     else
       notFound(key, defaultValue)
 
@@ -104,7 +143,7 @@ final class HoconProvider private (
     context: OFEvaluationContext
   ): ProviderEvaluation[java.lang.Long] =
     if (config.hasPath(key))
-      ProviderEvaluations.of(java.lang.Long.valueOf(typedRead(key, config.getLong(key))), "STATIC")
+      ProviderEvaluations.of(java.lang.Long.valueOf(exactNumber(key, "a long")(asLong)), "STATIC")
     else
       notFound(key, defaultValue)
 
@@ -114,7 +153,7 @@ final class HoconProvider private (
     context: OFEvaluationContext
   ): ProviderEvaluation[java.lang.Double] =
     if (config.hasPath(key))
-      ProviderEvaluations.of(java.lang.Double.valueOf(typedRead(key, config.getDouble(key))), "STATIC")
+      ProviderEvaluations.of(java.lang.Double.valueOf(exactNumber(key, "a double")(asDouble)), "STATIC")
     else
       notFound(key, defaultValue)
 

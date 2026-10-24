@@ -7,6 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.0] — 2026-10-24
+
+**Contains a security fix.** If you use `zio-openfeature-ofrep`, upgrade. It now pins Jackson 2.22.4, which closes
+four advisories in `jackson-core` and `jackson-databind`. Details are under **Security** below.
+
+**A correctness release.** About forty fixes from a full review of the codebase, among them:
+- `FeatureFlags.long` now serves values over OFREP and through `multiProvider` chains.
+- Factory-built Optimizely providers now send impressions and conversions to Optimizely.
+- A provider whose `initialize()` hangs no longer wedges the layer.
+- Teardown no longer strands waiters.
+- One initialization now delivers exactly one `Ready`.
+
+The testkit gains `FaultyProvider`, per-test flag overrides, a hook recorder, `WrapperLaws` and `DifferentialLaws`.
+Underneath: OpenFeature Java SDK 1.23.0, Optimizely SDK 4.6.0, ZIO 2.1.27.
+
+**Upgrading from 1.1.x: recompile, don't just bump the version.** Most call sites compile unchanged. Several
+signatures changed binary shape, however, so a caller compiled against 1.1.x that is **not** recompiled fails at run
+time with `NoSuchMethodError`. The affected symbols are:
+- `FeatureFlagsConfig`'s constructor, `apply` and `copy` (#437);
+- `OptimizelyProviderConfig`'s constructor, `apply` and `copy` (#453);
+- the OFREP factories' result type (#529).
+
+The first two are listed, with their rationale, in the MiMa filters in `build.sbt`. MiMa cannot see the third, because
+the result types erase to `ZIO`/`ZLayer`.
+
+Some changes need more than a recompile:
+
+- **Custom `MultiProviderStrategy.Strategy` implementations.** `evaluate` now takes a `List[FeatureProvider]` instead
+  of a name-keyed `Map` (Java SDK 1.23.0).
+- **Code that names `OfrepProvider` as an OFREP factory's result.** Change it to `OFREPFeatureProvider`, or reach the
+  contrib provider with `.underlying` (#529).
+- **`CachingProvider.make` and `CircuitBreakerProvider.make` can now fail** with `InvalidConfiguration` (#451). Widen
+  any `UIO` / `ULayer` annotations.
+- **Optimizely: factory-built providers now send events** (#453). Set `events = OptimizelyEvents.Disabled` to keep
+  the old behaviour.
+- **`FeatureFlags.trackedEvents` is empty in production** (#442). Assert on tracking with
+  `TestFeatureProvider.trackedEvents` instead.
+
 ### Added
 
 - **A model-based property test of the provider lifecycle** (#464). `LifecycleModelSpec` (testkit, test-only)
@@ -1675,7 +1713,8 @@ promotes `[Unreleased]` to the new version section when a release tag is cut.
 
 Internal refactors that don't change behaviour or surface area don't need a CHANGELOG entry. When in doubt: write one.
 
-[Unreleased]: https://github.com/EtaCassiopeia/zio-openfeature/compare/v1.1.2...HEAD
+[Unreleased]: https://github.com/EtaCassiopeia/zio-openfeature/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/EtaCassiopeia/zio-openfeature/compare/v1.1.2...v1.2.0
 [1.1.2]: https://github.com/EtaCassiopeia/zio-openfeature/compare/v1.1.1...v1.1.2
 [1.1.1]: https://github.com/EtaCassiopeia/zio-openfeature/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/EtaCassiopeia/zio-openfeature/compare/v1.0.0...v1.1.0

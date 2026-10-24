@@ -23,8 +23,8 @@ later and Java 11 or later. The examples on this site
 use Scala 3 syntax.
 
 ??? note "Trying unreleased changes"
-    Every commit on `main` publishes the next version with a `-SNAPSHOT` suffix (for example `1.1.3-SNAPSHOT` after
-    `v1.1.2`). Add the snapshots resolver to use it:
+    Every commit on `main` publishes the next version with a `-SNAPSHOT` suffix (for example `1.2.1-SNAPSHOT` after
+    `v1.2.0`). Add the snapshots resolver to use it:
 
     ```scala
     resolvers += "Sonatype Central Snapshots" at "https://central.sonatype.com/repository/maven-snapshots/"

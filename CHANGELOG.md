@@ -109,6 +109,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`fromAcquireAsync` no longer fails evaluations while it swaps the real provider in** (#512). The swap went through
+  `setProvider`, so for as long as the real provider's `initialize()` ran (the first datafile fetch or probe, up to
+  `initTimeout`) the status was `NotReady` and every typed evaluation failed with `ProviderNotReady`, although the
+  factory promises fallback answers until the swap. The SDK now sees one provider for the life of the layer, an
+  internal switch that delegates to the fallback; the composed stack is initialized off to the side and the switch
+  routes to it once that succeeds, so the status stays `Ready` and the fallback answers throughout. A failed or
+  timed-out initialization leaves the first fallback serving (no fallback re-registration), and a `setProvider` before
+  the switch wins, with the state `Failed`. The composed stack's events reach handlers and status through the switch.
 - **`OptimizelyFeatureProvider` sends `track` calls to Optimizely** (#454). It did not implement `track`, so every call
   fell through to the SDK's no-op default and no conversion was ever recorded, whichever client the provider wrapped.
   A call now becomes a conversion for the context's user, with the details' attributes as event tags and the details'

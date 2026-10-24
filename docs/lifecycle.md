@@ -30,6 +30,7 @@ false only for `Fatal`.
 | The provider reports `ERROR` with code `ProviderFatal` | any status except `ShuttingDown` → `Fatal` |
 | Async start: `initTimeout` passes before the provider was ever ready | `NotReady` or `Error` → `Fatal` |
 | [`setProvider`](providers.md#replace-the-provider-at-runtime) | any → `NotReady` while it runs, then `Ready` (`Error` if neither the new nor the old provider can serve, or if the new provider is still initializing at `initTimeout`) |
+| [`fromAcquireAsync`](providers.md#start-on-a-fallback-fromacquireasync) switching from the fallback to the real provider | none: the status stays `Ready`, and the fallback answers until the switch |
 | `shutdown` | any → `ShuttingDown` → `NotReady` |
 
 `Fatal` stays until `setProvider` installs a new provider. Events that arrive during a swap, or after a shutdown, do

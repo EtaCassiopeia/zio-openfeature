@@ -58,11 +58,9 @@ object ScopeFreeLayerSpec extends ZIOSpecDefault {
         ZIO.succeed(new FlagProvider("real")),
         ZIO.succeed(new FlagProvider("fallback"))
       )
-      // Evaluate once the background swap is done: during it, typed evaluations can see `ProviderNotReady` (#512),
-      // which is not what this test is about.
-      (AcquireStatus.changes.filter(_ == AcquireState.Live).runHead *> FeatureFlags.boolean("f", false))
-        .provide(layer)
-        .map(v => assertTrue(v))
+      // Evaluates right after the layer builds, racing the background swap: that must never answer
+      // `ProviderNotReady` (#512).
+      (AcquireStatus.get *> FeatureFlags.boolean("f", false)).provide(layer).map(v => assertTrue(v))
     },
     test("FeatureFlagRegistry.fromProvider can be provided with no Scope") {
       val layer: ZLayer[Any, Throwable, FeatureFlagRegistry] = FeatureFlagRegistry.fromProvider(new FlagProvider("d"))

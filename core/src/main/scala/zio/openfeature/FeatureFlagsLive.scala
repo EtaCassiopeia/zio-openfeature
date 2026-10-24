@@ -11,6 +11,7 @@ import zio.openfeature.internal.{
   ProviderRegistration,
   ProviderReportedError,
   ProviderStatusMachine,
+  SwitchableProvider,
   TrackingConverter,
   ValueBridge
 }
@@ -1048,6 +1049,9 @@ final private[openfeature] class FeatureFlagsLive(
       if (status == ProviderStatus.Ready || status == ProviderStatus.Stale) everReady.set(true)
     } *> state.statusRef.set(status)
 
+  /** Every status transition, current first. Test observability only: lets a spec prove a status was never entered. */
+  private[openfeature] def statusChanges: ZStream[Any, Nothing, ProviderStatus] = state.statusRef.changes
+
   override def awaitReady(within: Duration): UIO[ProviderStatus] =
     // `.changes` emits the current status first (so an already-Ready provider returns immediately) then every
     // subsequent transition — no polling. `runHead` completes on the first evaluable-or-Fatal status. On timeout
@@ -1336,6 +1340,45 @@ final private[openfeature] class FeatureFlagsLive(
           case _ => ZIO.unit
         }
     }
+
+  /** `fromAcquireAsync`'s swap (#512): flip the registered [[SwitchableProvider]] to `next`, an already-initialized
+    * provider, without going through the SDK — so status never leaves `Ready` and the SDK never refuses an evaluation.
+    * Serialized with [[setProvider]] by `swapLock`. Returns `false`, changing nothing, when `switch` is no longer the
+    * registered provider (a user `setProvider` replaced it first); the caller then owns `next`. On `true` the replaced
+    * delegate has been shut down (bounded).
+    */
+  private[openfeature] def switchProvider(switch: SwitchableProvider, next: OFFeatureProvider): Task[Boolean] =
+    swapLock
+      .withPermit(
+        providerRef.get.flatMap { registered =>
+          if (registered ne switch) ZIO.none
+          else
+            ZIO.attempt {
+              // The name first: the SDK stamps the switch's (now `next`'s) name on every event, and the identity guard
+              // compares that against this ref. Setting it before the flip drops a straggler event from the old
+              // delegate rather than one from `next`.
+              val oldName = providerNameRef.get()
+              providerNameRef.set(Option(next.getMetadata).map(_.getName).getOrElse(FeatureFlags.UnknownProviderName))
+              try Some(switch.switchTo(next))
+              catch {
+                case e: Throwable =>
+                  providerNameRef.set(oldName)
+                  throw e
+              }
+            }
+        }
+      )
+      .uninterruptible
+      .flatMap {
+        case Some(old) =>
+          ProviderRegistration.boundedProviderShutdown(old, "fromAcquireAsync (replaced fallback)").as(true)
+        case None => ZIO.succeed(false)
+      }
+
+  /** The API's evaluation context, which the SDK passes to `initialize()`; `fromAcquireAsync` initializes its composed
+    * stack itself and passes the same (#512).
+    */
+  private[openfeature] def apiEvaluationContext: dev.openfeature.sdk.EvaluationContext = api.getEvaluationContext
 
   private def reconcileLateReady(newProvider: OFFeatureProvider): UIO[Unit] =
     ZIO

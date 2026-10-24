@@ -640,7 +640,7 @@ final private[openfeature] class FeatureFlagsLive(
 
     val evaluation: IO[FeatureFlagError, FlagResolution[A]] =
       ClientEvaluator.evaluateStandard[A](flagType, client, key, default, ofContext) match {
-        // The instance declares a scalar `wireType` its `encode` does not produce — a contract violation, surfaced as
+        // The instance declares a scalar wire type its `encode` does not produce — a contract violation, surfaced as
         // a typed error rather than an opaque ClassCastException from inside the SDK bridge (#360).
         case Some(Left(message)) =>
           ZIO.fail(FeatureFlagError.TypeMismatch(key, flagType.typeName, message))
@@ -660,10 +660,11 @@ final private[openfeature] class FeatureFlagsLive(
               }
             }
 
-        // Deliberately `typeName`, not `wireType`: this branch casts the default to `Map[String, Any]`, which is only
-        // sound for the built-in object instance. A *custom* type whose wire form is an object has a domain `typeName`
-        // and must fall through to the decode branch below instead.
-        case None if flagType.typeName == "Object" =>
+        // Reference identity to the built-in instance, not a name test: this branch casts the default to
+        // `Map[String, Any]` and serves the raw map as `A` past `decode`, which is only sound for that instance. Any
+        // other object-backed type, even one named "Object" (`FlagType.from("Object", ...)`), falls through to the
+        // decode branch below so its own `decode` runs (#439).
+        case None if flagType eq FlagType.objectFlagType =>
           withTimeout(
             ZIO.attemptBlocking {
               // Through `anyToValue` so a `Map` flag encodes its members exactly as a derived product does. Building
@@ -737,9 +738,9 @@ final private[openfeature] class FeatureFlagsLive(
                   ZIO.fail(FeatureFlagError.TypeMismatch(key, flagType.typeName, message))
 
                 // Nothing extractable, and the provider reported no error. Let the instance say what an absent
-                // value means before failing: `FlagType[Option[A]]` decodes null to `None`, and its typeName
-                // (`Option[String]`) routes it down this very path, so failing outright here would make a legitimately
-                // empty optional flag unresolvable.
+                // value means before failing: `FlagType[Option[A]]` decodes null to `None`, and an `Option` over an
+                // object-backed type (`Option[Rollout]`) routes down this very path, so failing outright here would make
+                // a legitimately empty optional flag unresolvable.
                 case None =>
                   flagType.decode(null) match {
                     case Right(empty) =>

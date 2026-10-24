@@ -313,8 +313,8 @@ object TransactionCustomTypeSpec extends ZIOSpecDefault {
         ff.transaction() {
           ff.value[Option[Phase]]("opt.phase", None).zip(ff.value[Option[Phase]]("opt.phase", None))
         }.map { tx =>
-          // The object path answers "us", which the total Phase parser maps to Off.
-          assertTrue(p.objectCalls.get() == 1, tx.result == ((Some(Phase.Off), Some(Phase.Off))))
+          // Option takes Phase's string wire (#439), so the string resolver answers "dual_write".
+          assertTrue(p.stringCalls.get() == 1, tx.result == ((Some(Phase.DualWrite), Some(Phase.DualWrite))))
         }
       }
     },

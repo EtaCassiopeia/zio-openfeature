@@ -2,7 +2,7 @@ package zio.openfeature.internal
 
 import zio._
 import zio.openfeature._
-import dev.openfeature.sdk.{Client => OFClient, FlagEvaluationDetails}
+import dev.openfeature.sdk.{Client => OFClient, FlagEvaluationDetails, Reason}
 
 /** Typeclass that encapsulates type-safe dispatch to the OpenFeature Java SDK client methods.
   *
@@ -53,15 +53,21 @@ private[openfeature] object ClientEvaluator {
     extract: FlagEvaluationDetails[_] => Either[String, A]
   )
 
-  /** Look up the evaluator for `flagType.wireType` and produce the type-erased evaluation.
+  /** Look up the evaluator for `flagType.wire` and produce the type-erased evaluation.
     *
-    * Dispatch is on `wireType`, not `typeName`, so a domain type carried over the wire as a scalar is resolved through
-    * that scalar's SDK method. The default sent down is `flagType.encode(default)` — already the wire value — and the
-    * result is run back through `flagType.decode`.
+    * Dispatch is on `wire`, not `typeName`, so a domain type carried over the wire as a scalar is resolved through that
+    * scalar's SDK method. The default sent down is `flagType.encode(default)` — already the wire value — and the result
+    * is run back through `flagType.decode`.
     *
-    *   - `None` — the wire type is not a scalar (`Object`, or a domain name); the caller uses the object path.
+    * `Option[A]` over a scalar `A` resolves through `A`'s resolver (#439). A `None` default encodes to `null`, which
+    * the scalar evaluators would unbox to `false`/`0`, so `A`'s own zero (`underlying.encode(underlying.defaultValue)`)
+    * is sent as a sentinel instead. The result reads back as `None` when the resolution carries an error code, or when
+    * its reason is `DEFAULT`, `DISABLED` or `ERROR` and the value is the sentinel: the provider served the default it
+    * was handed. A provider that serves exactly the zero value with one of those reasons therefore reads as `None`.
+    *
+    *   - `None` — the wire type is `Object`; the caller uses the object path.
     *   - `Some(Right(erased))` — dispatch resolved.
-    *   - `Some(Left(message))` — the instance is internally inconsistent: it declares a scalar `wireType` that its
+    *   - `Some(Left(message))` — the instance is internally inconsistent: it declares a scalar wire type that its
     *     `encode` does not produce. The caller reports this as a typed `TypeMismatch` (#360).
     */
   def evaluateStandard[A](
@@ -73,36 +79,50 @@ private[openfeature] object ClientEvaluator {
   ): Option[Either[String, Erased[A]]] = {
     // `wireClass` is the box the chosen evaluator will unbox. The `asInstanceOf[T]` below is erased, so a mismatch
     // does NOT fail here — it fails later inside the evaluator's bridge method as a bare ClassCastException carrying
-    // no flag key and no hint about the wireType/encode mismatch. Checking the box up front is what turns that
+    // no flag key and no hint about the wire/encode mismatch. Checking the box up front is what turns that
     // programmer error at a documented extension point into an actionable typed failure (#360).
     def erased[T](ev: ClientEvaluator[T], wireClass: Class[_]): Either[String, Erased[A]] = {
-      val wire = flagType.encode(default)
+      val encoded = flagType.encode(default)
+      val (wire, extract) = flagType match {
+        case optional: OptionalFlagType[_] if encoded == null =>
+          // Produced by the element's own `encode`, so it passes the box check below by construction.
+          val sentinel = optional.underlying.encode(optional.underlying.defaultValue)
+          val read: FlagEvaluationDetails[_] => Either[String, A] = { details =>
+            val raw = ev.extractValue(details)
+            // `decode(null)` is the Option instance's own `None`, so no cast to `A` is needed.
+            if (details.getErrorCode != null || (FellBackReasons.contains(details.getReason) && raw == sentinel))
+              flagType.decode(null)
+            else flagType.decode(raw)
+          }
+          (sentinel, read)
+        case _ =>
+          (encoded, (details: FlagEvaluationDetails[_]) => flagType.decode(ev.extractValue(details)))
+      }
       // `null` is let through: it reached the SDK before this check existed, and narrowing that is not this change's
       // business.
       if (wire == null || wireClass.isInstance(wire))
-        Right(
-          Erased[A](
-            ev.evaluate(client, key, wire.asInstanceOf[T], context),
-            details => flagType.decode(ev.extractValue(details))
-          )
-        )
+        Right(Erased[A](ev.evaluate(client, key, wire.asInstanceOf[T], context), extract))
       else
         Left(
-          s"FlagType '${flagType.typeName}' declares wireType '${flagType.wireType}' but encode produced " +
+          s"FlagType '${flagType.typeName}' declares wire type '${flagType.wire.name}' but encode produced " +
             s"${wire.getClass.getName}; override encode to produce ${wireClass.getName}"
         )
     }
 
-    flagType.wireType match {
-      case "Boolean" => Some(erased(booleanEvaluator, classOf[java.lang.Boolean]))
-      case "String"  => Some(erased(stringEvaluator, classOf[String]))
-      case "Int"     => Some(erased(intEvaluator, classOf[java.lang.Integer]))
-      case "Long"    => Some(erased(longEvaluator, classOf[java.lang.Long]))
-      case "Float"   => Some(erased(floatEvaluator, classOf[java.lang.Float]))
-      case "Double"  => Some(erased(doubleEvaluator, classOf[java.lang.Double]))
-      case _         => None
+    flagType.wire match {
+      case WireType.Boolean => Some(erased(booleanEvaluator, classOf[java.lang.Boolean]))
+      case WireType.String  => Some(erased(stringEvaluator, classOf[String]))
+      case WireType.Int     => Some(erased(intEvaluator, classOf[java.lang.Integer]))
+      case WireType.Long    => Some(erased(longEvaluator, classOf[java.lang.Long]))
+      case WireType.Float   => Some(erased(floatEvaluator, classOf[java.lang.Float]))
+      case WireType.Double  => Some(erased(doubleEvaluator, classOf[java.lang.Double]))
+      case WireType.Object  => None
     }
   }
+
+  // The spec reasons that mean "the provider served the default it was handed" — what the `Option` sentinel rule in
+  // `evaluateStandard` reads as `None`.
+  private val FellBackReasons: Set[String] = Set(Reason.DEFAULT.name, Reason.DISABLED.name, Reason.ERROR.name)
 
   implicit val booleanEvaluator: ClientEvaluator[Boolean] = new ClientEvaluator[Boolean] {
     def evaluate(

@@ -62,11 +62,13 @@ A `FlagDef[A]` needs a `FlagType[A]`, the codec between `A` and what the provide
 `Boolean`, `String`, `Int`, `Long`, `Float`, `Double`, `Map[String, Any]` (an object flag), and `Option` and `List` of
 any type that has one.
 
-!!! note "`Option` and `List` read an object"
-    `Option[A]` and `List[A]` are fetched with the provider's object resolver, even when `A` is a scalar, so a flag
-    stored as a plain boolean or string may come back `TYPE_MISMATCH`. To read an optional scalar, read the scalar
-    itself with the [total tier](evaluating.md#two-tiers). Routing them through the inner type's resolver is tracked in
-    [#439](https://github.com/EtaCassiopeia/zio-openfeature/issues/439).
+!!! note "`Option` reads its element's type; `List` reads an object"
+    `Option[A]` is fetched with `A`'s resolver, so `Option[String]` against a string flag reads `Some(value)`. A `None`
+    default cannot be sent as a scalar, so `A`'s zero (`false`, `""`, `0`, or a derived enum's first case) is sent in
+    its place. The result reads `None` when the provider answers with an error code, or with reason `DEFAULT`,
+    `DISABLED` or `ERROR` and exactly that zero. So a provider that deliberately serves the zero value with one of
+    those reasons reads as `None`; any other value, or the zero with a real reason such as `TARGETING_MATCH`, reads as
+    `Some`. `List[A]` has no scalar form and is always fetched with the object resolver.
 
 ### Derive it (Scala 3)
 
@@ -110,9 +112,9 @@ provider.
 
 ### Wire type and domain type
 
-A `FlagType` has a domain type, `typeName`, which your code sees, and a **wire type**, `wireType`, which the provider is
-asked for. Evaluation picks the provider method from the wire type: `"Boolean"`, `"String"`, `"Int"`, `"Long"`,
-`"Float"` or `"Double"` select that type's method, and anything else is read as an object.
+A `FlagType` has a domain type, `typeName`, which your code sees, and a **wire type**, `wire`, which the provider is
+asked for. Evaluation picks the provider method from the wire type, a `WireType`: `Boolean`, `String`, `Int`, `Long`,
+`Float` or `Double` select that type's method, and `Object` reads an object.
 
 | Built with | Wire type |
 |---|---|
@@ -120,6 +122,8 @@ asked for. Evaluation picks the provider method from the wire type: `"Boolean"`,
 | `derives` on an enum | `String` |
 | `derives` on a case class | object |
 | `mapped[A, B]` | `B`'s wire type |
+| `Option[A]` | `A`'s wire type |
+| `List[A]` | object |
 | `from` | object |
 
 !!! warning "Do not use `from` for a value stored as a string"
@@ -127,12 +131,17 @@ asked for. Evaluation picks the provider method from the wire type: `"Boolean"`,
     `TYPE_MISMATCH`. Use a derived enum or `mapped` instead.
 
 To store a scalar but reject values you do not recognise (which a total `mapped` function cannot do), write the instance
-by hand. Override `wireType` and `encode` together: `encode` must return the boxed type the wire type names (`String`,
+by hand. Override `wire` and `encode` together: `encode` must return the boxed type the wire type names (`String`,
 `java.lang.Integer`, …), or evaluation fails with a `TypeMismatch` naming both.
 
 ```scala
 --8<-- "TypedFlags.scala:fallible"
 ```
+
+`wire` replaces the string-valued `wireType`, which is deprecated. An instance that still overrides `wireType` keeps
+working: the name is matched ignoring case (`"string"` selects `String`), and any other name reads as an object. Only
+the built-in `Map[String, Any]` instance is served as a raw map; any other object-backed instance has its `decode` run,
+even one built with `from("Object", ...)`.
 
 [Hooks](hooks.md) filter by the wire type, so a hook scoped to `FlagValueType.String` sees this flag. In a hook, the
 flag's type is the wire type, while the default and the resolved value are domain values.

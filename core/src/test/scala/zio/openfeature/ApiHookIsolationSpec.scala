@@ -71,7 +71,10 @@ object ApiHookIsolationSpec extends ZIOSpecDefault {
     }
   }
 
-  private def buildIsolated(provider: EventProvider): ZIO[Scope, Throwable, FeatureFlags] = {
+  private def buildIsolated(
+    provider: EventProvider,
+    owned: Boolean = false
+  ): ZIO[Scope, Throwable, FeatureFlags] = {
     val api    = OpenFeatureAPI.createIsolated()
     val domain = s"api-hook-iso-${java.util.UUID.randomUUID()}"
     for {
@@ -81,7 +84,7 @@ object ApiHookIsolationSpec extends ZIOSpecDefault {
         version = None,
         initialHooks = Nil,
         statusRef = None,
-        addShutdownFinalizer = false,
+        addShutdownFinalizer = owned,
         apiOverride = Some(api)
       )
       _ <- ZIO.attemptBlocking(Thread.sleep(50)).ignore
@@ -120,6 +123,36 @@ object ApiHookIsolationSpec extends ZIOSpecDefault {
           _ <- ff.clearApiHooks
           _ <- ff.boolean("flag", default = false).provideEnvironment(ZEnvironment(ff))
         } yield assertTrue(hook.count.get() == 0)
+      }
+    },
+    test("clearApiHooks on a Shared instance clears the hooks and logs one warning") {
+      ZIO.scoped {
+        for {
+          ff <- buildIsolated(new SimpleBooleanProvider("p", true), owned = false)
+          hook = new CountingJavaHook
+          _     <- ff.addApiHook(hook)
+          since <- ZTestLogger.logOutput.map(_.length)
+          _     <- ff.clearApiHooks
+          _     <- ff.boolean("flag", default = false).provideEnvironment(ZEnvironment(ff))
+          warns <- ZTestLogger.logOutput.map(_.drop(since).filter(_.logLevel == LogLevel.Warning).map(_.message()))
+        } yield assertTrue(
+          hook.count.get() == 0,
+          warns.length == 1,
+          warns.exists(_.contains("clearApiHooks called from a Shared instance"))
+        )
+      }
+    },
+    test("clearApiHooks on an Owned instance clears the hooks and logs nothing") {
+      ZIO.scoped {
+        for {
+          ff <- buildIsolated(new SimpleBooleanProvider("p", true), owned = true)
+          hook = new CountingJavaHook
+          _     <- ff.addApiHook(hook)
+          since <- ZTestLogger.logOutput.map(_.length)
+          _     <- ff.clearApiHooks
+          _     <- ff.boolean("flag", default = false).provideEnvironment(ZEnvironment(ff))
+          warns <- ZTestLogger.logOutput.map(_.drop(since).filter(_.logLevel == LogLevel.Warning))
+        } yield assertTrue(hook.count.get() == 0, warns.isEmpty)
       }
     }
   )

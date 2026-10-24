@@ -1089,11 +1089,18 @@ final private[openfeature] class FeatureFlagsLive(
     for {
       subscribed <- Promise.make[Nothing, Unit]
       // Forked inside `detached`, so the fork copies the reset FiberRefs rather than the registering fiber's.
-      fiber <- detached(ZIO.scoped {
-        state.eventHub.subscribe.flatMap { queue =>
-          subscribed.succeed(()) *> consume(ZStream.fromQueue(queue))
-        }
-      }.forkDaemon)
+      // `interruptible`: a fork inherits the registering fiber's interruptibility, and `acquireRelease` runs its acquire
+      // uninterruptibly, so without it a handler registered there could never be cancelled (the canceller hung).
+      fiber <- detached(
+        ZIO
+          .scoped {
+            state.eventHub.subscribe.flatMap { queue =>
+              subscribed.succeed(()) *> consume(ZStream.fromQueue(queue))
+            }
+          }
+          .interruptible
+          .forkDaemon
+      )
       _ <- subscribed.await
     } yield fiber.interrupt.unit
 
@@ -1235,7 +1242,13 @@ final private[openfeature] class FeatureFlagsLive(
     ZIO.succeed(api.addHooks(hook))
 
   override def clearApiHooks: UIO[Unit] =
-    ZIO.succeed(api.clearHooks())
+    ZIO.succeed(api.clearHooks()) <*
+      ZIO
+        .logWarning(
+          "clearApiHooks called from a Shared instance; API-level hooks of every sibling client were cleared"
+        )
+        .when(!ownsApi)
+        .unit
 
   // Provider hot-swap
 

@@ -85,6 +85,16 @@ object EventHandlerIsolationSpec extends ZIOSpecDefault {
         } yield assertTrue(who == "<none>")
       }
     },
+    // #472: acquireRelease runs its acquire uninterruptibly; the handler fiber must still be cancellable
+    test("a handler registered in acquireRelease is cancelled when its scope closes") {
+      ZIO.scoped {
+        for {
+          ff     <- buildFF(new EchoProvider)
+          _      <- ZIO.scoped(ZIO.acquireRelease(ff.onProviderReady(_ => ZIO.unit))(cancel => cancel))
+          closed <- ZIO.succeed(true)
+        } yield assertTrue(closed)
+      }
+    },
     test("the immediate invocation for an already-Ready provider does not see the registering transaction") {
       ZIO.scoped {
         for {

@@ -231,6 +231,7 @@ object FeatureHook {
       }
   }
 
+  /** A hook that logs flag evaluations. `after` logs at Info; for per-stage levels use [[structuredLogging]]. */
   def logging(
     logBefore: Boolean = false,
     logAfter: Boolean = true,

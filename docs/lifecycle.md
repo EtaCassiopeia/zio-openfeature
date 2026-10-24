@@ -80,6 +80,17 @@ Register a handler for the events you care about. Each registration returns an e
 - A handler does not run inside the transaction or `withContext` block it was registered from, even though it may
   have been registered there: its evaluations see neither the transaction's overrides nor that fiber-local context.
 
+### Scoping a handler
+
+Every registration returns its canceller, and the handler keeps running until you run it or the instance shuts down.
+To tie a handler to a scope, hand the canceller to `acquireRelease`:
+
+```scala
+--8<-- "Lifecycle.scala:scoped-handler"
+```
+
+The same shape works for every `on*` method.
+
 ## Read the event stream
 
 `FeatureFlags.events` is a `ZStream` of every event. It ends when the instance shuts down.

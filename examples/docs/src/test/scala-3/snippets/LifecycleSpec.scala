@@ -53,6 +53,20 @@ object LifecycleSpec extends ZIOSpecDefault:
     test("handlers: all five register and unsubscribe") {
       Lifecycle.watchProvider.flatten.as(assertCompletes)
     },
+    test("scoped handler: stops receiving events after the scope closes") {
+      val settle = Live.live(ZIO.sleep(100.millis))
+      for
+        seen     <- Ref.make(0)
+        provider <- ZIO.service[TestFeatureProvider]
+        ready = ProviderEvent.Ready(ProviderMetadata("test"))
+        _      <- Lifecycle.readyWhileScoped(_ => seen.update(_ + 1))
+        _      <- settle
+        before <- seen.get
+        _      <- provider.emitEvent(ready)
+        _      <- settle
+        after  <- seen.get
+      yield assertTrue(after == before)
+    } @@ TestAspect.timeout(10.seconds),
     test("events: a configuration change reaches the stream") {
       for
         received <- Promise.make[Nothing, Set[String]]

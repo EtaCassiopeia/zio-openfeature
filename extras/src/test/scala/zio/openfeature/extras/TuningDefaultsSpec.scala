@@ -31,6 +31,14 @@ object TuningDefaultsSpec extends ZIOSpecDefault {
     test("CachingConfig defaults are unchanged") {
       val c = CachingConfig()
       assertTrue(c.maxEntries == 1000, c.ttl == 5.minutes)
+    },
+    test("FeatureFlags timeout defaults are unchanged, and the config uses the abandoned-call cap default (#437)") {
+      val config = zio.openfeature.FeatureFlagsConfig()
+      assertTrue(
+        zio.openfeature.FeatureFlags.DefaultEvaluationTimeout == 1.second,
+        zio.openfeature.FeatureFlags.DefaultMaxAbandonedCalls == 256,
+        config.maxAbandonedCalls == 256
+      )
     }
   )
 }

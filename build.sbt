@@ -249,6 +249,20 @@ lazy val core = (project in file("core"))
       "dev.zio"        %% "zio"         % zioVersion,
       "dev.zio"        %% "zio-streams" % zioVersion,
       "dev.openfeature" % "sdk"         % openFeatureSdkVersion
+    ),
+    // #437 added `maxAbandonedCalls` as the last field of the public case class `FeatureFlagsConfig`, which changes
+    // its constructor, `apply` and `copy` signatures, and on 2.13 drops the companion's synthetic `AbstractFunction9`
+    // parent. Intentional: callers must recompile (noted in the CHANGELOG).
+    // The same change keeps `FeatureFlags.fromAcquireAsync`'s 1.1.2 signature as a package-private bridge on the
+    // companion object, which is what Scala callers link against. Scala 2.13 emits no static forwarder for a
+    // package-private method, so the forwarder on the `FeatureFlags` interface (a Java-only entry point) is gone there.
+    // Delete these once the MiMa baseline moves past the release that ships #437.
+    mimaBinaryIssueFilters ++= Seq(
+      ProblemFilters.exclude[DirectMissingMethodProblem]("zio.openfeature.FeatureFlagsConfig.apply"),
+      ProblemFilters.exclude[DirectMissingMethodProblem]("zio.openfeature.FeatureFlagsConfig.this"),
+      ProblemFilters.exclude[DirectMissingMethodProblem]("zio.openfeature.FeatureFlagsConfig.copy"),
+      ProblemFilters.exclude[MissingTypesProblem]("zio.openfeature.FeatureFlagsConfig$"),
+      ProblemFilters.exclude[DirectMissingMethodProblem]("zio.openfeature.FeatureFlags.fromAcquireAsync")
     )
   )
 

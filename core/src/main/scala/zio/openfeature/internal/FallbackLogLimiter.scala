@@ -21,7 +21,16 @@ final private[openfeature] class FallbackLogLimiter private (
   entries: Ref[Map[String, FallbackLogLimiter.Entry]],
   maxKeys: Int
 ) {
-  import FallbackLogLimiter.{DefectSuffix, Entry, OverflowKey}
+  import FallbackLogLimiter.{DefectSuffix, Entry, OverflowKey, RejectionKey}
+
+  // Lines that report a bug or an operational fault rather than a served default: `Off` (which governs served-default
+  // lines only) is downgraded to `Default`, so they stay bounded but are never silenced.
+  private val boundedPolicy: FallbackLogging = policy match {
+    case FallbackLogging.Off => FallbackLogging.Default
+    case p                   => p
+  }
+
+  private def suffix(suppressed: Int): String = if (suppressed > 0) s" (suppressed $suppressed similar)" else ""
 
   /** `Some(n)` — emit now, `n` events for this bucket were suppressed since the previous emit; `None` — suppress. */
   def admit(key: String): UIO[Option[Int]] = admit(policy, key)
@@ -61,16 +70,11 @@ final private[openfeature] class FallbackLogLimiter private (
     */
   def log[A](key: String, resolution: FlagResolution[A], defect: Option[Cause[Nothing]]): UIO[Unit] = {
     // A custom FlagType's value may have a throwing `toString`; a breadcrumb must never fail the never-fails tier.
-    def served                  = Try(String.valueOf(resolution.value)).getOrElse("<unrenderable value>")
-    def suffix(suppressed: Int) = if (suppressed > 0) s" (suppressed $suppressed similar)" else ""
+    def served = Try(String.valueOf(resolution.value)).getOrElse("<unrenderable value>")
     defect match {
       case Some(cause) =>
         // `Default` is `Throttled`, so a defect under `Off` is bounded, never silenced.
-        val defectPolicy = policy match {
-          case FallbackLogging.Off => FallbackLogging.Default
-          case p                   => p
-        }
-        admit(defectPolicy, key + DefectSuffix).flatMap {
+        admit(boundedPolicy, key + DefectSuffix).flatMap {
           case None => ZIO.unit
           case Some(n) =>
             ZIO.logWarningCause(s"${FallbackLogLimiter.absorbedDefectMessage(key)} $served${suffix(n)}", cause)
@@ -85,8 +89,18 @@ final private[openfeature] class FallbackLogLimiter private (
     }
   }
 
-  /** Distinct flag keys currently tracked (the shared overflow bucket excluded). */
-  def trackedKeys: UIO[Int] = entries.get.map(m => m.size - (if (m.contains(OverflowKey)) 1 else 0))
+  /** The abandoned-call cap's rejection warning (#437), in one bucket shared by every key: a hung provider rejects
+    * every timed evaluation, so a per-key bucket would still storm the log. Like a defect it is an operational signal,
+    * not a served-default line, so `Off` bounds it at [[FallbackLogging.Default]]'s window rather than silencing it.
+    */
+  def logRejection(message: String): UIO[Unit] =
+    admit(boundedPolicy, RejectionKey).flatMap {
+      case None    => ZIO.unit
+      case Some(n) => ZIO.logWarning(s"$message${suffix(n)}")
+    }
+
+  /** Distinct flag keys currently tracked (the shared overflow and rejection buckets excluded). */
+  def trackedKeys: UIO[Int] = entries.get.map(m => m.size - m.keySet.count(k => k == OverflowKey || k == RejectionKey))
 }
 
 private[openfeature] object FallbackLogLimiter {
@@ -103,6 +117,7 @@ private[openfeature] object FallbackLogLimiter {
   // NUL cannot appear in a flag key, so neither reserved name can collide with a real one.
   private val DefectSuffix = "\u0000defect"
   private val OverflowKey  = "\u0000overflow"
+  private val RejectionKey = "\u0000rejection"
 
   def make(policy: FallbackLogging, maxKeys: Int = MaxTrackedKeys): UIO[FallbackLogLimiter] =
     Ref.make(Map.empty[String, Entry]).map(new FallbackLogLimiter(policy, _, maxKeys))

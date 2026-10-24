@@ -18,6 +18,12 @@ levels are merged into one context, and that is what the provider sees.
 `withAttribute` accepts plain `Boolean`, `String`, `Int`, `Long`, `Double` and `java.time.Instant` values. Other
 helpers: `withTargetingKey`, `withAttributes(...)`, `withoutAttribute(key)`, and `EvaluationContext.empty`.
 
+!!! note "`targetingKey` is a reserved attribute name"
+    The OpenFeature SDK stores the targeting key as the attribute `targetingKey`, so the two are one slot. An explicit
+    targeting key wins over an attribute of that name. With no targeting key, a string attribute named `targetingKey`
+    becomes the key and any other value is dropped. A context read back from the SDK, in a hook or in
+    `TestFeatureProvider.evaluations`, never has a `targetingKey` attribute.
+
 ### Attribute types
 
 | `AttributeValue` | Helper | Scala value |

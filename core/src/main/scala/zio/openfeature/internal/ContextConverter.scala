@@ -8,11 +8,26 @@ import java.time.Instant
 /** Internal utility for converting between zio-openfeature and OpenFeature SDK evaluation contexts. */
 private[openfeature] object ContextConverter {
 
-  /** Convert a zio-openfeature EvaluationContext to an OpenFeature SDK EvaluationContext. */
+  /** The SDK stores the targeting key as the attribute of this name (`MutableContext.setTargetingKey` writes it,
+    * `getTargetingKey` reads it), so the name is reserved at this boundary (#497).
+    */
+  private val TargetingKey: String = OFEvaluationContext.TARGETING_KEY
+
+  /** Convert a zio-openfeature EvaluationContext to an OpenFeature SDK EvaluationContext.
+    *
+    * An attribute named `targetingKey` never reaches the SDK as an attribute: it would overwrite the targeting key.
+    * When `ctx.targetingKey` is `None`, a `StringValue` attribute of that name becomes the key; any other is dropped.
+    */
   def toOpenFeature(ctx: EvaluationContext): OFEvaluationContext = {
     // Built from a map of `Value`s rather than `MutableContext.add`, which has no Long overload (#471).
-    val mutableCtx = new MutableContext(ctx.attributes.map { case (k, v) => k -> attributeToValue(v) }.asJava)
-    ctx.targetingKey.foreach(key => mutableCtx.setTargetingKey(key))
+    val attributes = ctx.attributes.collect {
+      case (k, v) if k != TargetingKey => k -> attributeToValue(v)
+    }
+    val mutableCtx = new MutableContext(attributes.asJava)
+    val key = ctx.targetingKey.orElse(ctx.attributes.get(TargetingKey).collect { case AttributeValue.StringValue(s) =>
+      s
+    })
+    key.foreach(k => mutableCtx.setTargetingKey(k))
     mutableCtx
   }
 
@@ -36,15 +51,19 @@ private[openfeature] object ContextConverter {
       new Value(Structure.mapToStructure(javaMap))
   }
 
-  /** Convert an OpenFeature SDK EvaluationContext to a zio-openfeature EvaluationContext. */
+  /** Convert an OpenFeature SDK EvaluationContext to a zio-openfeature EvaluationContext.
+    *
+    * The SDK's `targetingKey` entry is its storage of the key, not a user attribute, so it is left out of the
+    * attributes (#497).
+    */
   def fromOpenFeature(ctx: OFEvaluationContext): EvaluationContext = {
     val targetingKey = Option(ctx.getTargetingKey)
 
     val attributes = ctx
       .asMap()
       .asScala
-      .map { case (key, value) =>
-        key -> valueToAttribute(value)
+      .collect {
+        case (key, value) if key != TargetingKey => key -> valueToAttribute(value)
       }
       .toMap
 

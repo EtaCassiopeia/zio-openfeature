@@ -106,6 +106,26 @@ private[openfeature] object ProviderRegistration {
       .flatMap(_.join)
       .catchAllCause(_ => ZIO.unit) // a failure is already logged by tapErrorCause above
 
+  /** A single provider's `shutdown()`, bounded and best-effort, with the same daemon-fiber shape as
+    * [[boundedApiShutdown]] so it also runs from a finalizer carrying a pending interrupt. A failure or timeout is
+    * logged under `label`, never raised: the provider is out of service either way.
+    */
+  def boundedProviderShutdown(
+    provider: OFFeatureProvider,
+    label: String,
+    timeout: Duration = DefaultShutdownTimeout
+  ): UIO[Unit] =
+    ZIO
+      .attemptBlocking(provider.shutdown())
+      .tapErrorCause(c => ZIO.logWarningCause(s"$label: provider shutdown failed", c))
+      .disconnect
+      .timeout(timeout)
+      .interruptible
+      .someOrElseZIO(ZIO.logWarning(s"$label: provider shutdown exceeded $timeout; not waiting for it"))
+      .forkDaemon
+      .flatMap(_.join)
+      .catchAllCause(_ => ZIO.unit) // a failure is already logged by tapErrorCause above
+
   private def register(api: OpenFeatureAPI, domain: Option[String], provider: OFFeatureProvider): Unit =
     domain match {
       case Some(d) => api.setProvider(d, provider)

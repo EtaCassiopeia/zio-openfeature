@@ -3,9 +3,8 @@ package zio.openfeature.testkit
 import dev.openfeature.sdk.FeatureProvider
 import zio.test.*
 
-/** The `extras` counterpart of this spec carries the full rationale. Duplicated rather than shared because `extras` and
-  * `testkit` are sibling modules — neither depends on the other, and adding a dependency between them to host ~20 lines
-  * of reflection would be a worse trade than the copy.
+/** The `extras` counterpart of this spec carries the full rationale. Duplicated rather than shared because each module
+  * checks its own wrappers, and `extras` reaches testkit only from its tests (#463), not from a published artifact.
   */
 object TestkitWrapperCompletenessSpec extends ZIOSpecDefault:
 

@@ -33,12 +33,15 @@ object OfrepFaultSpec extends ZIOSpecDefault:
   private val fallback: URIO[Scope, FeatureProvider] =
     ZIO.succeed(EnvVarProvider.withLookup(Map("FF_MY_FLAG" -> "false").get))
 
-  /** How the library classifies each fault on the typed tier. An HTTP rejection or a timeout is a provider error; a
-    * payload that cannot be read (truncated, not JSON, or a connection reset before any bytes) is a `ParseError`.
+  /** How the library classifies each fault on the typed tier. A 401/403 is `Unauthorized`: the contrib provider reports
+    * it as a `GENERAL` evaluation error whose message core recognizes (#498). Any other HTTP rejection or a timeout is
+    * a provider error; a payload that cannot be read (truncated, not JSON, or a connection reset before any bytes) is a
+    * `ParseError`.
     */
   private def classifiedAs(fault: Fault)(error: FeatureFlagError): Boolean =
     fault match
-      case Fault.Truncated | Fault.NotJson => error.isInstanceOf[FeatureFlagError.ParseError]
+      case Fault.Unauthorized | Fault.Forbidden => error.isInstanceOf[FeatureFlagError.Unauthorized]
+      case Fault.Truncated | Fault.NotJson      => error.isInstanceOf[FeatureFlagError.ParseError]
       case Fault.Reset => error.isInstanceOf[FeatureFlagError.ParseError] || FeatureFlagError.isProviderError(error)
       case _           => FeatureFlagError.isProviderError(error)
 

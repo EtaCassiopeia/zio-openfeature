@@ -190,6 +190,46 @@ nest: a test-level `withDelay` inside a suite-level `withErrorMode` keeps the er
 
 An error mode applies to every key. To make one key missing, leave it unset.
 
+## Fault injection
+
+The controls above make evaluations fail. To test what your code does when the provider itself misbehaves, wrap it
+in a `FaultyProvider`: an `initialize()` that never returns, a `shutdown()` that hangs, an error event fired while
+starting up, or a failure on the first call only.
+
+```scala
+--8<-- "TestkitSpec.scala:fault-injection"
+```
+
+`FaultyProvider.script(op, faults*)` gives one `Op` a sequence of faults, used one per call. The last one repeats, so
+`script(Op.Initialize, Fault.Throw(e), Fault.Succeed)` fails the first `initialize()` and passes every later one. An
+op with no script calls the wrapped provider.
+
+| `Fault` | Effect |
+|:--------|:-------|
+| `Succeed` | call the wrapped provider |
+| `Throw(error)` | throw `error` without calling it |
+| `Delay(d, andThen)` | block the calling thread for `d`, then apply `andThen` (default `Succeed`) |
+| `HangUntilReleased` | block until `release`; `shutdown()` does not unblock it |
+| `HangUntilShutdown` | block until `shutdown()` or `release` |
+| `Emit(event, details, andThen)` | emit an OpenFeature event (e.g. `PROVIDER_ERROR` from inside `initialize()`), then apply `andThen` |
+
+There is an `Op` for every `FeatureProvider` method: `Initialize` (both overloads), `Shutdown`, `GetMetadata`,
+`GetProviderHooks`, `GetState`, `IsDomainScoped`, `Track`, and one per getter, `EvaluateBoolean` to `EvaluateObject`.
+
+| Factory | Wraps |
+|:--------|:------|
+| `FaultyProvider.scoped(flags, name)` | a fresh `TestFeatureProvider`; the scope releases every hang still parked when it closes |
+| `FaultyProvider.make(flags, name)` | the same, without the finalizer |
+| `FaultyProvider.wrapScoped(provider, name)`, `wrap(provider, name)` | any provider |
+
+Prefer the scoped factories: a test that fails while a call is parked then still frees the thread. `delegate` is the
+wrapped provider (for `make`, the `TestFeatureProvider`, so `setFlag` works). `calls` lists every completed call with
+its op, flag key, thread, start time and outcome; a hung call appears once it is released. `awaitEntered(op)` waits
+until a call has started, for example until `initialize()` is parked.
+
+The wrapper emits its own events, so the wrapped provider's events do not reach `FeatureFlags`: use `Fault.Emit` or
+the wrapper's `emit`.
+
 ## Transactions
 
 [Transactions](transactions.md) work on top of the test provider, so you can override a flag for one block:

@@ -193,7 +193,8 @@ final class FaultyProvider[+P <: FeatureProvider] private (val delegate: P, name
     case Fault.Emit(event, details, after) => emit(event, details); applyFault(after, body)
   }
 
-  private def run[A](op: Op, flagKey: Option[String])(body: => A): A = {
+  private def run[A](op: Op, flagKey: Option[String], arguments: Any*)(body: => A): A = {
+    val args      = Chunk.fromIterable(arguments)
     val startedAt = Instant.now()
     val thread    = Thread.currentThread().getName
     entryLock.synchronized {
@@ -202,11 +203,11 @@ final class FaultyProvider[+P <: FeatureProvider] private (val delegate: P, name
     }
     try {
       val result = applyFault(nextFault(op), body)
-      recorded.add(Call(op, flagKey, thread, startedAt, Outcome.Returned))
+      recorded.add(Call(op, flagKey, thread, startedAt, Outcome.Returned, args))
       result
     } catch {
       case error: Throwable =>
-        recorded.add(Call(op, flagKey, thread, startedAt, Outcome.Threw(error)))
+        recorded.add(Call(op, flagKey, thread, startedAt, Outcome.Threw(error), args))
         throw error
     }
   }
@@ -220,10 +221,10 @@ final class FaultyProvider[+P <: FeatureProvider] private (val delegate: P, name
   override def getState: ProviderState = run(Op.GetState, None)(delegate.getState)
 
   override def initialize(context: OFEvaluationContext): Unit =
-    run(Op.Initialize, None)(delegate.initialize(context))
+    run(Op.Initialize, None, context)(delegate.initialize(context))
 
   override def initialize(context: OFEvaluationContext, domain: String): Unit =
-    run(Op.Initialize, None)(delegate.initialize(context, domain))
+    run(Op.Initialize, None, context, domain)(delegate.initialize(context, domain))
 
   /** Unparks every [[Fault.HangUntilShutdown]] first, then applies the [[Op.Shutdown]] script. */
   override def shutdown(): Unit = {
@@ -234,49 +235,49 @@ final class FaultyProvider[+P <: FeatureProvider] private (val delegate: P, name
   override def isDomainScoped(): Boolean = run(Op.IsDomainScoped, None)(delegate.isDomainScoped())
 
   override def track(eventName: String, context: OFEvaluationContext, details: OFTracking): Unit =
-    run(Op.Track, Some(eventName))(delegate.track(eventName, context, details))
+    run(Op.Track, Some(eventName), eventName, context, details)(delegate.track(eventName, context, details))
 
   override def getBooleanEvaluation(
     key: String,
     defaultValue: java.lang.Boolean,
     ctx: OFEvaluationContext
   ): ProviderEvaluation[java.lang.Boolean] =
-    run(Op.EvaluateBoolean, Some(key))(delegate.getBooleanEvaluation(key, defaultValue, ctx))
+    run(Op.EvaluateBoolean, Some(key), key, defaultValue, ctx)(delegate.getBooleanEvaluation(key, defaultValue, ctx))
 
   override def getStringEvaluation(
     key: String,
     defaultValue: String,
     ctx: OFEvaluationContext
   ): ProviderEvaluation[String] =
-    run(Op.EvaluateString, Some(key))(delegate.getStringEvaluation(key, defaultValue, ctx))
+    run(Op.EvaluateString, Some(key), key, defaultValue, ctx)(delegate.getStringEvaluation(key, defaultValue, ctx))
 
   override def getIntegerEvaluation(
     key: String,
     defaultValue: java.lang.Integer,
     ctx: OFEvaluationContext
   ): ProviderEvaluation[java.lang.Integer] =
-    run(Op.EvaluateInteger, Some(key))(delegate.getIntegerEvaluation(key, defaultValue, ctx))
+    run(Op.EvaluateInteger, Some(key), key, defaultValue, ctx)(delegate.getIntegerEvaluation(key, defaultValue, ctx))
 
   override def getLongEvaluation(
     key: String,
     defaultValue: java.lang.Long,
     ctx: OFEvaluationContext
   ): ProviderEvaluation[java.lang.Long] =
-    run(Op.EvaluateLong, Some(key))(delegate.getLongEvaluation(key, defaultValue, ctx))
+    run(Op.EvaluateLong, Some(key), key, defaultValue, ctx)(delegate.getLongEvaluation(key, defaultValue, ctx))
 
   override def getDoubleEvaluation(
     key: String,
     defaultValue: java.lang.Double,
     ctx: OFEvaluationContext
   ): ProviderEvaluation[java.lang.Double] =
-    run(Op.EvaluateDouble, Some(key))(delegate.getDoubleEvaluation(key, defaultValue, ctx))
+    run(Op.EvaluateDouble, Some(key), key, defaultValue, ctx)(delegate.getDoubleEvaluation(key, defaultValue, ctx))
 
   override def getObjectEvaluation(
     key: String,
     defaultValue: Value,
     ctx: OFEvaluationContext
   ): ProviderEvaluation[Value] =
-    run(Op.EvaluateObject, Some(key))(delegate.getObjectEvaluation(key, defaultValue, ctx))
+    run(Op.EvaluateObject, Some(key), key, defaultValue, ctx)(delegate.getObjectEvaluation(key, defaultValue, ctx))
 }
 
 object FaultyProvider {
@@ -293,9 +294,17 @@ object FaultyProvider {
   }
 
   /** One completed call: the op, the flag key (evaluations) or event name (`track`), the calling thread's name, when
-    * the call started, and how it ended.
+    * the call started, how it ended, and the arguments it received, in parameter order (`initialize(ctx)` records one,
+    * `initialize(ctx, domain)` two; no-argument methods record none). [[WrapperLaws]] compares these.
     */
-  final case class Call(op: Op, flagKey: Option[String], thread: String, startedAt: Instant, outcome: Outcome)
+  final case class Call(
+    op: Op,
+    flagKey: Option[String],
+    thread: String,
+    startedAt: Instant,
+    outcome: Outcome,
+    arguments: Chunk[Any]
+  )
 
   /** Wrap `delegate`. The wrapper reports `name` as its metadata name. */
   def wrap[P <: FeatureProvider](delegate: P, name: String = DefaultName): UIO[FaultyProvider[P]] =

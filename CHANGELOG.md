@@ -16,6 +16,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `FeatureProvider`/`EventProvider` method but `emit*`, and a reflective test fails if the SDK adds one. The #433,
   #434 and #435 lifecycle scenarios are re-expressed with it in the testkit, and extras' tests now use it (extras
   depends on testkit for tests only). See "Fault injection" on the testkit page.
+- **`WrapperLaws.delegation` in the testkit** (#466): checks that a provider wrapper passes every `FeatureProvider`
+  call on. One test per `Op`: the method is called on the wrapper with distinctive arguments and the wrapped
+  `FaultyProvider` must record the same call with equal arguments, both `initialize` overloads included. Ops the
+  wrapper answers itself go in `handledByWrapper` with a reason, and an entry that is no longer needed fails. The
+  extras wrappers and `CachingReasonProvider` now run it on 2.13 and 3, replacing the Scala-3-only reflection specs,
+  which could not see a missing default-method override. `FaultyProvider.Call` now records the call's arguments. See
+  "Checking your own wrapper" on the testkit page.
 - **Weekly mutation testing of core** (#468): stryker4s via the new `Mutation testing` workflow (scheduled and
   manual), with its report as a build artifact. Informational only: never runs on a pull request and never fails the
   build. Locally, `core/stryker`; see the development guide.

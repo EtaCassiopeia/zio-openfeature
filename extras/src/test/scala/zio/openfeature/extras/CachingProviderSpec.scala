@@ -16,6 +16,7 @@ import dev.openfeature.sdk.{
 }
 import dev.openfeature.sdk.exceptions.{FlagNotFoundError, GeneralError, OpenFeatureError}
 import zio.openfeature.internal.ProviderEvaluations
+import zio.openfeature.testkit.{Fault, FaultyProvider, Op, TestFeatureProvider}
 import zio._
 import zio.test._
 import java.util.concurrent.CopyOnWriteArrayList
@@ -103,32 +104,18 @@ object CachingProviderSpec extends ZIOSpecDefault {
   }
 
   /** A provider whose every evaluation throws the given exception, to test error-surfacing (#258). */
-  private class ThrowingProvider(error: RuntimeException) extends EventProvider {
-    @scala.annotation.nowarn("msg=deprecated")
-    override def getMetadata: Metadata   = new Metadata { override def getName: String = "ThrowingProvider" }
-    override def getState: ProviderState = ProviderState.READY
-    override def initialize(ctx: OFEvaluationContext): Unit = ()
-    override def shutdown(): Unit                           = ()
-    override def getBooleanEvaluation(
-      k: String,
-      d: java.lang.Boolean,
-      c: OFEvaluationContext
-    ): ProviderEvaluation[java.lang.Boolean] = throw error
-    override def getStringEvaluation(k: String, d: String, c: OFEvaluationContext): ProviderEvaluation[String] =
-      throw error
-    override def getIntegerEvaluation(
-      k: String,
-      d: java.lang.Integer,
-      c: OFEvaluationContext
-    ): ProviderEvaluation[java.lang.Integer] = throw error
-    override def getDoubleEvaluation(
-      k: String,
-      d: java.lang.Double,
-      c: OFEvaluationContext
-    ): ProviderEvaluation[java.lang.Double] = throw error
-    override def getObjectEvaluation(k: String, d: Value, c: OFEvaluationContext): ProviderEvaluation[Value] =
-      throw error
-  }
+  private def throwing(error: RuntimeException): UIO[FaultyProvider[TestFeatureProvider]] =
+    FaultyProvider.make().tap(p => ZIO.foreachDiscard(evaluateOps)(p.script(_, Fault.Throw(error))))
+
+  private val evaluateOps: List[Op] =
+    List(
+      Op.EvaluateBoolean,
+      Op.EvaluateString,
+      Op.EvaluateInteger,
+      Op.EvaluateLong,
+      Op.EvaluateDouble,
+      Op.EvaluateObject
+    )
 
   /** A provider that always echoes the caller's default value with reason DEFAULT (as EnvVar/Hocon do for an absent
     * flag), counting evaluations. Used to prove DEFAULT-reason results are not cached across differing defaults (#259).
@@ -807,9 +794,9 @@ object CachingProviderSpec extends ZIOSpecDefault {
     ),
     suite("error surfacing (#258)")(
       test("a delegate OpenFeatureError surfaces as-is (an Exception), not a zio.FiberFailure") {
-        val cached = CachingProvider(new ThrowingProvider(new FlagNotFoundError("flag")))
         for {
-          err <- ZIO.attempt(cached.getBooleanEvaluation("flag", false, ctx)).flip
+          cached <- throwing(new FlagNotFoundError("flag")).map(p => CachingProvider(p))
+          err    <- ZIO.attempt(cached.getBooleanEvaluation("flag", false, ctx)).flip
         } yield assertTrue(
           err.isInstanceOf[FlagNotFoundError], // original error preserved so the SDK maps FLAG_NOT_FOUND
           err.isInstanceOf[Exception],         // caught by the SDK's `catch (Exception)` → default returned, hooks run
@@ -817,9 +804,9 @@ object CachingProviderSpec extends ZIOSpecDefault {
         )
       },
       test("a non-OpenFeature delegate failure is wrapped in GeneralError, not a zio.FiberFailure") {
-        val cached = CachingProvider(new ThrowingProvider(new RuntimeException("boom")))
         for {
-          err <- ZIO.attempt(cached.getStringEvaluation("flag", "d", ctx)).flip
+          cached <- throwing(new RuntimeException("boom")).map(p => CachingProvider(p))
+          err    <- ZIO.attempt(cached.getStringEvaluation("flag", "d", ctx)).flip
         } yield assertTrue(
           err.isInstanceOf[GeneralError],
           err.isInstanceOf[OpenFeatureError],

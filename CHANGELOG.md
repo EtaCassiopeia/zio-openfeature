@@ -27,14 +27,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the "Testing real providers" page now comes from this module, so it is compiled with the docs.
 - **Concurrency property tests** (#465) for hook-data isolation (#438), circuit-breaker epochs (#447) and cache
   invalidation (#449), plus a generated swap/evaluate schedule in the hot-swap stress spec. Test-only.
-- **`DifferentialLaws` in the testkit: compare a provider against `TestFeatureProvider`** (#467). It generates flag
-  sets over every wire type (hostile strings, `Long`s beyond the `Int` range, NaN/-0.0, nested objects) plus a fixed
-  corpus of edge cases, reads every key and an absent one through every typed accessor, evaluates both providers
-  through `FeatureFlags`, and compares value, reason class (`Served`/`Default`/`Error`) and error code. Every
-  difference must match a `Deviation` that gives its reason, and a deviation that matched nothing fails as stale.
-  `agreesWithTestkit` is the `Spec`; `compare` returns the report. `HoconProvider` and `EnvVarProvider` now run
-  against it in PR CI, with their deviations listed. See "Comparing a provider against the testkit" on the testkit
-  page.
 - Hostile-input property sweeps (Long beyond 2^53, NaN/Infinity/-0.0, emoji and control-character keys, nulls, deep and large structures) through value/context conversion, tracking conversion, OFREP response decoding and the Optimizely context transformer (#469).
 - **`CachingProvider.scoped` and `CircuitBreakerProvider.scoped`, and config validation for both wrappers** (#451).
   `scoped(underlying, config)` is `make` plus a finalizer that shuts the wrapper (and so the wrapped provider) down,
@@ -52,6 +44,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `RecordingHook.make()` is a `FeatureHook` that records every stage call (`HookCall.Before`/`After`/`Error`/`Finally`,
   with the full `HookContext` and hints) for assertions. See "Per-test flag overrides" and "Recording hook calls" on
   the testkit page.
+- **`DifferentialLaws` in the testkit: compare a provider against `TestFeatureProvider`** (#467). It generates flag
+  sets over every wire type (hostile strings, `Long`s beyond the `Int` range, NaN/-0.0, nested objects) plus a fixed
+  corpus of edge cases, reads every key and an absent one through every typed accessor, evaluates both providers
+  through `FeatureFlags`, and compares value, reason class (`Served`/`Default`/`Error`) and error code. Every
+  difference must match a `Deviation` that gives its reason, and a deviation that matched nothing fails as stale.
+  `agreesWithTestkit` is the `Spec`; `compare` returns the report. `HoconProvider` and `EnvVarProvider` now run
+  against it in PR CI, with their deviations listed. See "Comparing a provider against the testkit" on the testkit
+  page.
 
 ### Changed
 

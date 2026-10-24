@@ -109,6 +109,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Scala Steward can open pull requests again** (#473). Every scheduled run had failed with a 403, because this
+  repository does not let GitHub Actions create pull requests. The workflow now authenticates with a fine-grained
+  `SCALA_STEWARD_TOKEN`, so its PRs also run CI. A new `.scala-steward.conf` keeps zio-cache on 0.2.x and Scala 3 on
+  the 3.3 LTS line.
 - **`OptimizelyFeatureProvider` sends `track` calls to Optimizely** (#454). It did not implement `track`, so every call
   fell through to the SDK's no-op default and no conversion was ever recorded, whichever client the provider wrapped.
   A call now becomes a conversion for the context's user, with the details' attributes as event tags and the details'

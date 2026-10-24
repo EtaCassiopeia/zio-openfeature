@@ -2,6 +2,8 @@ package zio.openfeature
 
 import zio.test._
 import zio.test.Assertion._
+import zio.openfeature.internal.ContextConverter
+import scala.jdk.CollectionConverters._
 
 object EvaluationContextSpec extends ZIOSpecDefault {
 
@@ -232,6 +234,44 @@ object EvaluationContextSpec extends ZIOSpecDefault {
         val ofCtx     = zio.openfeature.internal.ContextConverter.toOpenFeature(ctx)
         val roundTrip = zio.openfeature.internal.ContextConverter.fromOpenFeature(ofCtx)
         assertTrue(roundTrip.targetingKey == None)
+      },
+      test("a targeting-key-only context round-trips to itself, with no targetingKey attribute (#497)") {
+        val ctx       = EvaluationContext("u1")
+        val roundTrip = ContextConverter.fromOpenFeature(ContextConverter.toOpenFeature(ctx))
+        assertTrue(roundTrip == EvaluationContext(Some("u1"), Map.empty))
+      },
+      test("an explicit targeting key wins over a targetingKey attribute (#497)") {
+        val ctx       = EvaluationContext(Some("u1"), Map("targetingKey" -> AttributeValue.StringValue("other")))
+        val ofCtx     = ContextConverter.toOpenFeature(ctx)
+        val sdkKey    = ofCtx.getTargetingKey
+        val sdkKeys   = ofCtx.keySet().asScala.toSet
+        val roundTrip = ContextConverter.fromOpenFeature(ofCtx)
+        assertTrue(
+          sdkKey == "u1",
+          sdkKeys == Set("targetingKey"),
+          roundTrip == EvaluationContext(Some("u1"), Map.empty)
+        )
+      },
+      test("with no targeting key, a string targetingKey attribute becomes the key (#497)") {
+        val ctx       = EvaluationContext(None, Map("targetingKey" -> AttributeValue.StringValue("u1")))
+        val ofCtx     = ContextConverter.toOpenFeature(ctx)
+        val sdkKey    = ofCtx.getTargetingKey
+        val roundTrip = ContextConverter.fromOpenFeature(ofCtx)
+        assertTrue(sdkKey == "u1", roundTrip == EvaluationContext(Some("u1"), Map.empty))
+      },
+      test("with no targeting key, a non-string targetingKey attribute is dropped (#497)") {
+        val ctx       = EvaluationContext(None, Map("targetingKey" -> AttributeValue.IntValue(1)))
+        val ofCtx     = ContextConverter.toOpenFeature(ctx)
+        val sdkKey    = Option(ofCtx.getTargetingKey)
+        val sdkKeys   = ofCtx.keySet().asScala.toSet
+        val roundTrip = ContextConverter.fromOpenFeature(ofCtx)
+        assertTrue(sdkKey.isEmpty, sdkKeys.isEmpty, roundTrip == EvaluationContext.empty)
+      },
+      test("a targetingKey entry in an SDK context is never read back as an attribute (#497)") {
+        val ofCtx = new dev.openfeature.sdk.MutableContext("u1")
+        ofCtx.add("plan", "pro")
+        val back = ContextConverter.fromOpenFeature(ofCtx)
+        assertTrue(back == EvaluationContext(Some("u1"), Map("plan" -> AttributeValue.StringValue("pro"))))
       },
       test("Long value larger than Int.MaxValue survives roundtrip as LongValue") {
         val big       = Int.MaxValue.toLong + 1L

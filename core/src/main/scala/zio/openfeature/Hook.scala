@@ -69,8 +69,8 @@ object HookData {
 }
 
 /** @param flagType
-  *   the '''wire''' type the provider was asked for (`FlagType.wireType`), which is what `supportedFlagTypes` filters
-  *   on. For a scalar-backed custom type this is the scalar — e.g. `String` for a string-backed enum — while
+  *   the '''wire''' type the provider was asked for (`FlagType.wire`), which is what `supportedFlagTypes` filters on.
+  *   For a scalar-backed custom type this is the scalar — e.g. `String` for a string-backed enum — while
   *   [[defaultValue]] here and `FlagResolution.value` in the `after` stage carry the '''domain''' value (the enum). So
   *   do not assume `defaultValue` has the class `flagType` names; casting it on that assumption throws.
   * @param defaultValue

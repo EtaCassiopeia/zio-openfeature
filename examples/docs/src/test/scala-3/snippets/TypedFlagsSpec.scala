@@ -24,7 +24,7 @@ object TypedFlagsSpec extends ZIOSpecDefault:
     test("derived enum decodes case-insensitively and encodes the declared label") {
       val ft = summon[FlagType[Tier]]
       assertTrue(
-        ft.wireType == "String",
+        ft.wire == WireType.String,
         ft.decode("PREMIUM") == Right(Tier.Premium),
         ft.encode(Tier.Enterprise) == "Enterprise",
         ft.decode("gold").isLeft
@@ -40,7 +40,7 @@ object TypedFlagsSpec extends ZIOSpecDefault:
       )
     },
     test("mapped inherits the wire type") {
-      assertTrue(summon[FlagType[Level]].wireType == "Int", summon[FlagType[Level]].typeName == "Level")
+      assertTrue(summon[FlagType[Level]].wire == WireType.Int, summon[FlagType[Level]].typeName == "Level")
     },
     test("an unknown enum value is a TypeMismatch, not the default") {
       for

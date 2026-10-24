@@ -187,6 +187,37 @@ object TestkitSpec extends ZIOSpecDefault:
   ).provide(TestFeatureProvider.layer(Map("flag" -> false))) @@ TestAspect.sequential
   // --8<-- [end:failures]
 
+  // --8<-- [start:flag-aspects]
+  val Greeting = FlagDef[Boolean]("new-greeting", false)
+
+  val perTestFlags = suite("Greeter with per-test flags")(
+    test("new greeting while the aspect pins the flag on") {
+      for msg <- ZIO.serviceWithZIO[Greeter](_.greet("dave"))
+      yield assertTrue(msg == "Hey dave!")
+    } @@ TestFeatureProvider.withFlag(Greeting, true),
+    test("the layer's value is back for the next test") {
+      for msg <- ZIO.serviceWithZIO[Greeter](_.greet("dave"))
+      yield assertTrue(msg == "Welcome, dave.")
+    }
+  ).provideShared(TestFeatureProvider.layer(Greeting := false), Greeter.live) @@ TestAspect.sequential
+  // --8<-- [end:flag-aspects]
+
+  // --8<-- [start:recording-hook]
+  val recordedHooks = test("the hook pipeline ran before, after, finally") {
+    for
+      recorder <- RecordingHook.make()
+      _        <- FeatureFlags.addHook(recorder)
+      _        <- ZIO.serviceWithZIO[Greeter](_.greet("erin"))
+      calls    <- recorder.calls
+      resolved = calls.collect { case HookCall.After(_, resolution, _) => resolution.value }
+    yield assertTrue(
+      calls.size == 3, // Before, After, Finally
+      resolved == Chunk[Any](true),
+      calls.forall(_.ctx.flagKey == "new-greeting")
+    )
+  }.provide(TestFeatureProvider.layer(Map("new-greeting" -> true)), Greeter.live)
+  // --8<-- [end:recording-hook]
+
   // --8<-- [start:transactions]
   val withOverrides = test("override flags for one block") {
     for
@@ -305,6 +336,8 @@ object TestkitSpec extends ZIOSpecDefault:
     asyncReady,
     events,
     failures,
+    perTestFlags,
+    recordedHooks,
     withOverrides,
     chain,
     celsiusLaws,

@@ -18,7 +18,7 @@ import zio.bdd.core.step.ZIOSteps
   *
   * One feature file per area, each naming the issue it pins:
   *
-  *   - `typed_flags.feature` — `FlagDef` (#357), `wireType` dispatch (#361), the encode/wireType diagnostic (#362),
+  *   - `typed_flags.feature` — `FlagDef` (#357), wire-type dispatch (#361), the encode/wire diagnostic (#362),
   *     Mirror derivation (#366), decode-on-extract and hook wire-type filtering (#356)
   *   - `long_evaluation.feature` — the SDK 1.22.0 native long surface, `FlagValueType.Long`, and
   *     `IntegerWideningLongProvider` (#333/#339)

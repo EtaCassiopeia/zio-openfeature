@@ -1,7 +1,7 @@
 Feature: Typed flag definitions and wire-type dispatch
 
   This file pins `FlagDef` as a first-class key/type/default (#357), evaluation
-  dispatching on `FlagType.wireType` rather than `typeName` (#361), the diagnostic for a codec that
+  dispatching on `FlagType.wire` rather than `typeName` (#361), the diagnostic for a codec that
   declares a wire type its `encode` does not produce (#362), Mirror-based derivation for enums and
   case classes (#366), and `decode` running on the value extracted from the provider (#356).
 
@@ -59,7 +59,7 @@ Feature: Typed flag definitions and wire-type dispatch
     Given a test provider
     When the flag "Contradictory" is evaluated
     Then the evaluation fails with error code "TYPE_MISMATCH"
-    And the failure message mentions "declares wireType 'Int'"
+    And the failure message mentions "declares wire type 'Int'"
 
   Scenario: A provider returning a null String is a type mismatch, not a null flag value
     Given a provider that returns a null string

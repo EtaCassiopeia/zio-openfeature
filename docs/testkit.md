@@ -229,6 +229,56 @@ until a call has started, for example until `initialize()` is parked.
 
 The wrapper emits its own events, so the wrapped provider's events do not reach `FeatureFlags`: use `Fault.Emit` or
 the wrapper's `emit`.
+## Per-test flag overrides
+
+To pin flags for one test, or for every test in a suite, use a flag aspect. It needs `TestFeatureProvider` in the
+environment:
+
+```scala
+--8<-- "TestkitSpec.scala:flag-aspects"
+```
+
+| Aspect | Pins |
+|:-------|:-----|
+| `withFlags(overrides*)` | typed overrides, `Flag := value`, as `layer` takes them |
+| `withFlags(map)` | key/value pairs, as `layer(map)` takes them |
+| `withFlag(flag, value)` | one typed flag |
+| `withFlag(key, value)` | one key |
+
+Each aspect restores per key. Before the test it saves the current value of every key it pins, or notes that the key
+was absent; after the test it puts that value back, or removes the key. So keys it does not pin are left alone: a
+`setFlag("other", ...)` inside the test survives. Aspects nest: a test-level aspect inside a suite-level one on the same
+key gives the test the inner value and leaves the suite's value afterwards.
+
+Unlike a [transaction](#transactions) override, the value comes from the provider, so `wasEvaluated`, the error
+modes and provider chains all apply.
+
+!!! warning
+    With `provideShared`, tests share one provider, so flag aspects on tests that run at the same time race each
+    other. Add `@@ TestAspect.sequential` to the suite, as above, or use `provide` to give each test its own provider.
+
+## Recording hook calls
+
+`RecordingHook` is a hook that records every stage call it receives, in order. Install it like any other hook, with
+`FeatureFlags.addHook`, `FeatureFlagsConfig.withHook` or per call through `EvaluationOptions`. It works with any
+`FeatureFlags`, not only the testkit layers:
+
+```scala
+--8<-- "TestkitSpec.scala:recording-hook"
+```
+
+`calls` returns a `Chunk[HookCall]`, oldest first, and `clear` empties it. Each `HookCall` carries the full arguments
+of its stage, including the `HookContext` (flag key, wire type, default value, context, metadata) and the hints:
+
+| Case | Stage | Also carries |
+|:-----|:------|:-------------|
+| `HookCall.Before` | `before` | |
+| `HookCall.After` | `after`, on a clean resolution | `resolution` |
+| `HookCall.Error` | `error`, on a failure or an error-coded resolution such as `FLAG_NOT_FOUND` | `error` |
+| `HookCall.Finally` | `finallyAfter`, last on every exit | `resolution: Option[...]` |
+
+`RecordingHook.make(types)` records only evaluations of those flag types; by default, all of them. Its `before` always
+returns `None`, so it never changes the evaluation context.
 
 ## Transactions
 

@@ -29,7 +29,7 @@ object Verify {
 
   /** Fail unless the candidate answers `key` **without an error code**.
     *
-    * Evaluates `key` directly on the bare provider through the SDK getter matching `FlagType[A].wireType` — the same
+    * Evaluates `key` directly on the bare provider through the SDK getter matching `FlagType[A].wire` — the same
     * dispatch evaluation uses — with a fixed neutral default (`false`, `""`, `0`, `0L`, `0.0`, or an empty `Value` on
     * the object path), so the sentinel flag may be of any type. Only the returned `errorCode` is judged: a value with
     * any reason (including `DEFAULT`) means the provider knows the key; `FLAG_NOT_FOUND` — which the SDK returns on the
@@ -52,7 +52,7 @@ object Verify {
     // `onConstructionError` see, never a defect that would skip both.
     ZIO
       .attemptBlocking {
-        val evaluation = evaluateExistence(provider, FlagType[A].wireType, key, ctx)
+        val evaluation = evaluateExistence(provider, FlagType[A].wire, key, ctx)
         if (evaluation eq null) Some((ErrorCode.General, Some("provider returned a null ProviderEvaluation")))
         else
           Option(evaluation.getErrorCode).map(c => (ErrorCodeConverter.fromJava(c), Option(evaluation.getErrorMessage)))
@@ -65,17 +65,17 @@ object Verify {
 
   private def evaluateExistence(
     provider: OFFeatureProvider,
-    wireType: String,
+    wire: WireType,
     key: String,
     ctx: dev.openfeature.sdk.EvaluationContext
   ): ProviderEvaluation[_] =
-    wireType match {
-      case "Boolean" => provider.getBooleanEvaluation(key, java.lang.Boolean.FALSE, ctx)
-      case "String"  => provider.getStringEvaluation(key, "", ctx)
-      case "Int"     => provider.getIntegerEvaluation(key, Integer.valueOf(0), ctx)
-      case "Long"    => provider.getLongEvaluation(key, java.lang.Long.valueOf(0L), ctx)
+    wire match {
+      case WireType.Boolean => provider.getBooleanEvaluation(key, java.lang.Boolean.FALSE, ctx)
+      case WireType.String  => provider.getStringEvaluation(key, "", ctx)
+      case WireType.Int     => provider.getIntegerEvaluation(key, Integer.valueOf(0), ctx)
+      case WireType.Long    => provider.getLongEvaluation(key, java.lang.Long.valueOf(0L), ctx)
       // Float has no SDK getter of its own; evaluation routes it through the double resolver too.
-      case "Float" | "Double" => provider.getDoubleEvaluation(key, java.lang.Double.valueOf(0.0), ctx)
-      case _                  => provider.getObjectEvaluation(key, new Value(), ctx)
+      case WireType.Float | WireType.Double => provider.getDoubleEvaluation(key, java.lang.Double.valueOf(0.0), ctx)
+      case WireType.Object                  => provider.getObjectEvaluation(key, new Value(), ctx)
     }
 }

@@ -4,6 +4,12 @@ import zio._
 
 /** Everything the `FeatureFlags.fromProvider(provider, config)` factory can configure, in one place. All fields have
   * defaults; `FeatureFlagsConfig()` reproduces `FeatureFlags.fromProvider(provider)` exactly.
+  *
+  * `maxAbandonedCalls` caps the provider calls an instance has abandoned to its `evaluationTimeout` that are still
+  * running, each holding a blocking-pool thread; at the cap, timed evaluations fail fast with `ProviderError` wrapping
+  * a `RejectedExecutionException` instead of parking another thread. Default [[FeatureFlags.DefaultMaxAbandonedCalls]]
+  * (256); `Int.MaxValue` disables it. It must be at least 1: constructing a config with a smaller value throws
+  * `IllegalArgumentException`.
   */
 final case class FeatureFlagsConfig(
   domain: Option[String] = None,
@@ -14,8 +20,11 @@ final case class FeatureFlagsConfig(
   initMode: InitMode = InitMode.Sync,
   apiOwnership: ApiOwnership = ApiOwnership.Auto,
   contextSource: ContextSource = ContextSource.empty,
-  fallbackLogging: FallbackLogging = FallbackLogging.Default
+  fallbackLogging: FallbackLogging = FallbackLogging.Default,
+  maxAbandonedCalls: Int = FeatureFlags.DefaultMaxAbandonedCalls
 ) {
+  require(maxAbandonedCalls >= 1, s"maxAbandonedCalls must be at least 1, got $maxAbandonedCalls")
+
   def withDomain(d: String): FeatureFlagsConfig               = copy(domain = Some(d))
   def withVersion(v: String): FeatureFlagsConfig              = copy(version = Some(v))
   def withHooks(hooks: List[FeatureHook]): FeatureFlagsConfig = copy(initialHooks = hooks)
@@ -35,6 +44,9 @@ final case class FeatureFlagsConfig(
 
   /** How the total tier logs served-default fallbacks — see [[FallbackLogging]]. */
   def withFallbackLogging(policy: FallbackLogging): FeatureFlagsConfig = copy(fallbackLogging = policy)
+
+  /** Cap abandoned provider calls at `n` — see [[FeatureFlags.DefaultMaxAbandonedCalls]]. Must be at least 1. */
+  def withMaxAbandonedCalls(n: Int): FeatureFlagsConfig = copy(maxAbandonedCalls = n)
 }
 
 /** How the provider is initialized.

@@ -20,8 +20,8 @@ import zio.test._
   *     `Long` beyond 2^53 does not survive, and a structure member the bridge cannot convert is dropped so its key
   *     reads back absent. A codec can satisfy `roundTrip` and still fail here.
   *
-  * Use [[all]] to check both. Reach for [[throughValueBridge]] specifically if your type is object-backed (its
-  * `wireType` is not one of the scalars), since that is the path it will actually be evaluated on.
+  * Use [[all]] to check both. Reach for [[throughValueBridge]] specifically if your type is object-backed (its `wire`
+  * is `WireType.Object`), since that is the path it will actually be evaluated on.
   *
   * {{{
   * object MyCodecSpec extends ZIOSpecDefault {

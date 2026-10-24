@@ -371,6 +371,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Vendored upstream's new `@spec-4.4.8` gherkin scenario** into both conformance runners, ahead of the spec tag that
   will carry it (the conformance README records the exception).
 
+### Security
+
+- **Raised the Jackson pins from 2.22.2 to 2.22.3**, closing Dependabot alerts #66–#69 (GHSA-wv8q-qhhj-9h54,
+  GHSA-cxp5-3px4-pw24 in `jackson-databind`; GHSA-p6pp-m3f8-5c89, GHSA-7hhh-6rmp-j9qf in `jackson-core`). Not 2.22.4:
+  it starts rejecting a lone UTF-16 surrogate in a JSON field name, which would turn such an OFREP object flag from a
+  served value into a `PARSE_ERROR`; that change deserves its own decision. Jackson reaches this library only through the OFREP contrib provider, which parses each flag server
+  response with `ObjectMapper.readValue(String, OfrepResponse.class)`. The `DataInput` parser (GHSA-7hhh),
+  polymorphic type ids (GHSA-wv8q) and object-identity forward references (GHSA-cxp5) are not on that path; the float-parsing ReDoS (GHSA-p6pp) is reachable only from
+  a hostile flag server. The pins are part of the published `zio-openfeature-ofrep` POM, so consumers resolve the
+  patched versions too.
+
 ## [1.1.2] — 2026-09-27
 
 **A build-hygiene patch. Nothing changes for consumers.** Every published artifact is bytecode-identical to 1.1.1 and

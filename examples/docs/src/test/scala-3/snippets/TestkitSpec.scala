@@ -2,7 +2,9 @@ package snippets
 
 import zio.*
 import zio.openfeature.*
+import zio.openfeature.extras.EnvVarProvider
 import zio.openfeature.testkit.*
+import zio.openfeature.testkit.DifferentialLaws.{Deviation, FlagSet, Observed, ReasonClass}
 import zio.openfeature.testkit.FlagOverride.Ops // brings `:=` into scope
 import zio.test.*
 
@@ -291,6 +293,31 @@ object TestkitSpec extends ZIOSpecDefault:
   )
   // --8<-- [end:wrapper-laws]
 
+  // --8<-- [start:differential]
+  def environment(flags: FlagSet): Map[String, String] =
+    flags.flags.map((key, value) => s"FF_${EnvVarProvider.defaultKeyTransform(key)}" -> value.toString)
+
+  def mismatchedInTestkit(testkit: Observed) = testkit.errorCode.contains(ErrorCode.TypeMismatch)
+
+  val envVarAgrees = DifferentialLaws.agreesWithTestkit("env-var")(
+    seed = flags => ZIO.succeed(EnvVarProvider.withLookup(environment(flags).get)),
+    deviations = List(
+      Deviation(
+        "env-var",
+        (_, _, testkit, env) => mismatchedInTestkit(testkit) && env.reasonClass == ReasonClass.Served,
+        "an env var is text: a read of another type is served when the text parses"
+      ),
+      Deviation(
+        "env-var",
+        (_, _, testkit, env) => mismatchedInTestkit(testkit) && env.errorCode.contains(ErrorCode.ParseError),
+        "an env var is text: text that does not parse is PARSE_ERROR, not TYPE_MISMATCH"
+      )
+    ),
+    flagSets = DifferentialLaws.scalarFlagSets, // an env var cannot hold a long or an object
+    corpus = DifferentialLaws.scalarCorpus
+  )
+  // --8<-- [end:differential]
+
   // --8<-- [start:caching-reason]
   val cachingReason = test("CachingReasonProvider reports CACHED on a repeat") {
     for
@@ -342,6 +369,7 @@ object TestkitSpec extends ZIOSpecDefault:
     chain,
     celsiusLaws,
     countingDelegates,
+    envVarAgrees,
     cachingReason,
     faultInjection
   ) @@ TestAspect.sequential // `chain`, `cachingReason` and `faultInjection` use the global OpenFeature API

@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Per-test flag overrides and a hook recorder in the testkit** (#458). `TestFeatureProvider.withFlags(Flag := v)`,
+  `withFlags(map)`, `withFlag(flag, v)` and `withFlag(key, v)` are test aspects that pin flags for one test and
+  restore each key afterwards (or remove it if it was absent), so they nest and leave other keys alone.
+  `RecordingHook.make()` is a `FeatureHook` that records every stage call (`HookCall.Before`/`After`/`Error`/`Finally`,
+  with the full `HookContext` and hints) for assertions. See "Per-test flag overrides" and "Recording hook calls" on
+  the testkit page.
 - **Weekly mutation testing of core** (#468): stryker4s via the new `Mutation testing` workflow (scheduled and
   manual), with its report as a build artifact. Informational only: never runs on a pull request and never fails the
   build. Locally, `core/stryker`; see the development guide.

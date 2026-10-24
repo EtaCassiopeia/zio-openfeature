@@ -87,14 +87,16 @@ object BehaviorControlsSpec extends ZIOSpecDefault {
           elapsed = Duration.fromNanos(end - start)
         } yield assertTrue(elapsed.toMillis >= 80L)
       },
-      test("failed evaluations are not tracked") {
+      // Recording means "the provider was asked", not "the provider answered" (#457, reversing #106).
+      test("failed evaluations are tracked") {
         for {
           tp    <- ZIO.service[TestFeatureProvider]
           _     <- tp.setFailing(true)
           _     <- FeatureFlags.boolean("flag", default = false).either
           _     <- tp.setFailing(false)
           count <- tp.evaluationCount("flag")
-        } yield assertTrue(count == 0)
+          was   <- tp.wasEvaluated("flag")
+        } yield assertTrue(count == 1, was)
       }
     ).provide(testLayer),
     suite("TestAspect API")(
@@ -133,7 +135,50 @@ object BehaviorControlsSpec extends ZIOSpecDefault {
         for {
           value <- FeatureFlags.boolean("flag", default = false)
         } yield assertTrue(value == true)
+      },
+      test("an evaluation failed by withFailures is still tracked") {
+        for {
+          tp    <- ZIO.service[TestFeatureProvider]
+          _     <- FeatureFlags.boolean("flag", default = false).either
+          was   <- tp.wasEvaluated("flag")
+          count <- tp.evaluationCount("flag")
+        } yield assertTrue(was, count == 1)
+      } @@ TestFeatureProvider.withFailures,
+      test("withFailureProbability(NaN) is clamped to 0.0, like setFailureProbability") {
+        for {
+          tp <- ZIO.service[TestFeatureProvider]
+          p = tp.behaviorRef.get().failureProbability
+        } yield assertTrue(p == 0.0)
+      } @@ TestFeatureProvider.withFailureProbability(Double.NaN),
+      test("withFailureProbability(2.0) is clamped to 1.0") {
+        for {
+          tp <- ZIO.service[TestFeatureProvider]
+          p = tp.behaviorRef.get().failureProbability
+        } yield assertTrue(p == 1.0)
+      } @@ TestFeatureProvider.withFailureProbability(2.0)
+    ).provide(testLayer),
+    // A test-level aspect restores the config it found, so it never wipes a suite-level aspect's settings (#457).
+    (suite("nested aspects")(
+      test("an inner withDelay keeps the outer withErrorMode, during and after the test") {
+        for {
+          total <- FeatureFlags.resolveOrDefault[Boolean]("flag", default = false)
+        } yield assertTrue(total.errorCode.contains(ErrorCode.General))
+      } @@ TestFeatureProvider.withDelay(10.millis) @@ TestAspect.after(outerErrorModeStillGeneral),
+      test("a sibling test still sees the outer withErrorMode") {
+        for {
+          total <- FeatureFlags.resolveOrDefault[Boolean]("flag", default = false)
+        } yield assertTrue(total.errorCode.contains(ErrorCode.General))
       }
-    ).provide(testLayer)
+    ) @@ TestFeatureProvider.withErrorMode(TestFeatureProvider.ErrorMode.General)).provide(testLayer)
   ) @@ TestAspect.withLiveClock
+
+  // Runs after the inner aspect has restored its state and before the outer one restores its own.
+  private val outerErrorModeStillGeneral: URIO[TestFeatureProvider, Unit] =
+    ZIO.serviceWithZIO[TestFeatureProvider] { tp =>
+      val mode = tp.behaviorRef.get().errorMode
+      ZIO
+        .dieMessage(s"inner aspect clobbered the outer config: errorMode = $mode")
+        .unless(mode.contains(TestFeatureProvider.ErrorMode.General))
+        .unit
+    }
 }

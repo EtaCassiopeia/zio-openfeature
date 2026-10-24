@@ -43,11 +43,11 @@ object FeatureFlagsSpec extends ZIOSpecDefault {
           result <- FeatureFlags.double("rate-limit", default = 1.0)
         } yield assertTrue(result == 2.5)
       }.provide(testLayer(Map("rate-limit" -> 2.5))),
-      test("long returns flag value via int conversion") {
+      test("long returns flag value") {
         for {
           result <- FeatureFlags.long("max-bytes", default = 1000L)
         } yield assertTrue(result == 999999L)
-      }.provide(testLayer(Map("max-bytes" -> 999999)))
+      }.provide(testLayer(Map("max-bytes" -> 999999L)))
     ),
     suite("Detailed Evaluation")(
       test("booleanDetails returns FlagResolution") {

@@ -90,9 +90,15 @@ object TestkitSpec extends ZIOSpecDefault:
   // --8<-- [end:absent-keys]
 
   // --8<-- [start:wrong-type]
-  val wrongType = test("a value of the wrong type is an error, not the default") {
-    for typed <- FeatureFlags.boolean("flag", default = false).either
-    yield assertTrue(typed.isLeft)
+  val wrongType = test("a value of the wrong type is a TYPE_MISMATCH, not the default") {
+    for
+      typed <- FeatureFlags.boolean("flag", default = false).either
+      total <- FeatureFlags.resolveOrDefault[Boolean]("flag", default = false)
+    yield assertTrue(
+      typed.left.exists(_.isInstanceOf[FeatureFlagError.TypeMismatch]),
+      total.errorCode.contains(ErrorCode.TypeMismatch),
+      total.value == false
+    )
   }.provide(TestFeatureProvider.layer(Map("flag" -> "not a boolean")))
   // --8<-- [end:wrong-type]
 

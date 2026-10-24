@@ -66,7 +66,7 @@ object Optimizely:
   // --8<-- [end:readiness]
 
   // --8<-- [start:circuit-breaker]
-  def resilient(provider: OptimizelyFeatureProvider): ZLayer[Any, Throwable, FeatureFlags] =
+  def resilient(provider: OptimizelyFeatureProvider): ZLayer[Any, Throwable | FeatureFlagError, FeatureFlags] =
     ZLayer.fromZIO(CircuitBreakerProvider.make(provider, CircuitBreakerProviderConfig(failureThreshold = 5))).flatMap {
       env =>
         val chain = FeatureFlags.multiProvider(

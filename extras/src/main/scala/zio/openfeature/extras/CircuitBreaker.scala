@@ -20,14 +20,15 @@ object Ticker {
 /** Configuration for the circuit breaker state machine.
   *
   * @param failureThreshold
-  *   Number of consecutive failures before the circuit opens
+  *   Number of consecutive failures before the circuit opens. Must be `>= 1`.
   * @param resetTimeout
-  *   How long the circuit stays open before transitioning to half-open
+  *   How long the circuit stays open before transitioning to half-open. Must be `> 0`. `Duration.Infinity` means the
+  *   circuit never half-opens by elapsed time and recovers only through `reset()`.
   * @param halfOpenMaxCalls
-  *   Number of successful probes in half-open state required to close the circuit
+  *   Number of successful probes in half-open state required to close the circuit. Must be `>= 1`.
   * @param probeTimeout
   *   How long a single half-open probe may hold the probe slot before another caller may steal it. Guards against a
-  *   probe that dies without recording an outcome pinning the circuit half-open forever.
+  *   probe that dies without recording an outcome pinning the circuit half-open forever. Must be `> 0`.
   */
 final case class CircuitBreakerConfig(
   failureThreshold: Int = CircuitBreaker.DefaultFailureThreshold,
@@ -336,6 +337,9 @@ object CircuitBreaker {
   /** Proof that a call was admitted, tied to the circuit state that admitted it (#447). */
   final private[extras] case class Permit(epoch: Long)
 
+  /** @throws IllegalArgumentException
+    *   if `config` violates the bounds documented on [[CircuitBreakerConfig]]
+    */
   @deprecated("Use CircuitBreakerProvider; the standalone breaker's gate result is internal", "1.2.0")
   def apply(
     config: CircuitBreakerConfig = CircuitBreakerConfig()
@@ -346,6 +350,7 @@ object CircuitBreaker {
     config: CircuitBreakerConfig,
     ticker: Ticker
   ): CircuitBreaker = {
+    ConfigValidation.orThrow(ConfigValidation.circuitBreaker(config))
     val state = new AtomicReference(CircuitBreakerState(CircuitState.Closed, consecutiveFailures = 0))
     new CircuitBreaker(config, state, ticker)
   }

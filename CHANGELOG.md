@@ -38,6 +38,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   constructors, including the standalone `CircuitBreaker.apply`, throw `IllegalArgumentException`. Both wrappers'
   `shutdown()` is now idempotent, so a wrapper that is scoped and registered with `FeatureFlags` shuts its delegate
   down once.
+- **Per-test flag overrides and a hook recorder in the testkit** (#458). `TestFeatureProvider.withFlags(Flag := v)`,
+  `withFlags(map)`, `withFlag(flag, v)` and `withFlag(key, v)` are test aspects that pin flags for one test and
+  restore each key afterwards (or remove it if it was absent), so they nest and leave other keys alone.
+  `RecordingHook.make()` is a `FeatureHook` that records every stage call (`HookCall.Before`/`After`/`Error`/`Finally`,
+  with the full `HookContext` and hints) for assertions. See "Per-test flag overrides" and "Recording hook calls" on
+  the testkit page.
 
 ### Changed
 

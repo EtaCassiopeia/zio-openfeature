@@ -19,9 +19,11 @@ val riftJavaInterceptVersion = "0.3.7"
 val wiremockVersion = "3.13.2"
 
 // Jackson reaches us only through the OFREP contrib provider; see `jacksonPins` above the `ofrep` module.
-// `jackson-annotations` is versioned WITHOUT a patch component from 2.20 onwards (jackson-bom 2.22.3 pins it
-// to `2.22`), so it cannot share `jacksonVersion` — `2.22.3` does not exist for that artifact.
-val jacksonVersion            = "2.22.3"
+// `jackson-annotations` is versioned WITHOUT a patch component from 2.20 onwards (jackson-bom 2.22.4 pins it
+// to `2.22`), so it cannot share `jacksonVersion` — `2.22.4` does not exist for that artifact.
+// 2.22.4 rejects a lone UTF-16 surrogate in a JSON field name (jackson-core #1683): such an OFREP object flag is a
+// PARSE_ERROR with the default (#534).
+val jacksonVersion            = "2.22.4"
 val jacksonAnnotationsVersion = "2.22"
 
 // OpenFeature Specification Compatibility

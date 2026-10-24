@@ -2,9 +2,9 @@ package zio.openfeature
 
 import zio._
 import zio.stream._
-import zio.openfeature.internal.{FallbackLogLimiter, FeatureFlagsFactories}
+import zio.openfeature.internal.{FallbackLogLimiter, FeatureFlagsFactories, LongAwareMultiProvider}
 import dev.openfeature.sdk.{FeatureProvider => OFFeatureProvider, OpenFeatureAPI}
-import dev.openfeature.sdk.multiprovider.{MultiProvider, Strategy, FirstMatchStrategy, FirstSuccessfulStrategy}
+import dev.openfeature.sdk.multiprovider.{Strategy, FirstMatchStrategy, FirstSuccessfulStrategy}
 
 /** The ZIO face of an OpenFeature client. Evaluation comes in two tiers, and which one you call is a statement about
   * what a missing or broken flag should do to the caller:
@@ -1128,13 +1128,19 @@ object FeatureFlags {
     *
     * For the chain to advance past a provider, that provider must report `FLAG_NOT_FOUND` for a key it does not hold;
     * see [[MultiProviderStrategy.firstMatch]] for what does and does not cause fall-through.
+    *
+    * Long reads dispatch to each child's own `getLongEvaluation`, exact across the whole `Long` range, with the child's
+    * provider hooks seeing `FlagValueType.LONG`. A bare `new MultiProvider(...)` does not: the SDK's `MultiProvider`
+    * has no long getter, so a long read goes through each child's double getter, which this library's providers answer
+    * with `TYPE_MISMATCH` for integer values. Build the chain here, or wrap a bare one in
+    * `zio.openfeature.extras.IntegerWideningLongProvider` for Int-range values.
     */
   def multiProvider(
     providers: List[OFFeatureProvider],
     strategy: Strategy = new FirstMatchStrategy()
   ): OFFeatureProvider = {
     import scala.jdk.CollectionConverters._
-    new MultiProvider(providers.asJava, strategy)
+    new LongAwareMultiProvider(providers.asJava, strategy)
   }
 
   /** Create a FeatureFlags layer from any OpenFeature provider.
@@ -1398,11 +1404,12 @@ object FeatureFlags {
 
   /** Default `compose` for [[fromAcquireAsync]]: layer the real provider over the fallback with a first-successful
     * strategy, so a sick real provider transparently falls through to the fallback. Both stay in the chain even if they
-    * report the same metadata name (Java SDK 1.23.0; earlier SDKs dropped the real provider in that case).
+    * report the same metadata name (Java SDK 1.23.0; earlier SDKs dropped the real provider in that case). Long reads
+    * use each provider's own long getter, as with [[multiProvider]].
     */
   def defaultAcquireCompose(real: OFFeatureProvider, fallback: OFFeatureProvider): OFFeatureProvider = {
     import scala.jdk.CollectionConverters._
-    new MultiProvider(List(real, fallback).asJava, new FirstSuccessfulStrategy())
+    new LongAwareMultiProvider(List(real, fallback).asJava, new FirstSuccessfulStrategy())
   }
 
   /** Fallback-first async factory: build the layer immediately on a fresh `fallback`, construct the real provider in a

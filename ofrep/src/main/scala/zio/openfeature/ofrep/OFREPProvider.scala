@@ -39,13 +39,15 @@ final case class OFREPProviderConfig(
   * ([[dev.openfeature.contrib.providers.ofrep.OfrepProvider]]).
   *
   * OFREP (OpenFeature Remote Evaluation Protocol) is the standard HTTP protocol for vendor-neutral remote flag
-  * evaluation. The factories here sugar over the contrib provider's static constructors; the returned value is a plain
-  * `OfrepProvider` (a `FeatureProvider`) that you pass to `FeatureFlags.fromProvider` or
-  * `FeatureFlags.fromProviderAsync` like any other provider.
+  * evaluation. The factories here sugar over the contrib provider's static constructors; [[make]], [[scoped]] and
+  * [[layer]] return an [[OFREPFeatureProvider]] (a `FeatureProvider`) that you pass to `FeatureFlags.fromProvider` or
+  * `FeatureFlags.fromProviderAsync` like any other provider. It wraps the contrib provider (reachable as `.underlying`)
+  * and adds the `getLongEvaluation` the contrib one lacks, so `FeatureFlags.long` reads integer flags exactly (#529).
   *
   * '''Recommended''': use [[make]] / [[layer]] for validated construction. The legacy throwing factories (`apply`,
   * `fromOptions`) are kept for backwards compatibility but flagged deprecated — they accept any `baseUrl` string and
-  * surface configuration mistakes only at the first evaluation, as opaque `ProviderError(MalformedURLException)`.
+  * surface configuration mistakes only at the first evaluation, as opaque `ProviderError(MalformedURLException)`. They
+  * also still return the bare contrib `OfrepProvider`, whose long reads fail with `TYPE_MISMATCH` for integer flags.
   *
   * '''Experimental:''' the underlying contrib provider artifact is at version 0.0.2. The OFREP protocol itself is
   * pre-1.0; both the wire format and this Scala facade may evolve in breaking ways. Pin the dependency deliberately.
@@ -93,11 +95,11 @@ object OFREPProvider {
     * Any failure surfaces as `FeatureFlagError.InvalidConfiguration` so layer composition can fail at startup rather
     * than at the first evaluation.
     */
-  def make(baseUrl: String): IO[FeatureFlagError.InvalidConfiguration, OfrepProvider] =
+  def make(baseUrl: String): IO[FeatureFlagError.InvalidConfiguration, OFREPFeatureProvider] =
     validateBaseUrl(baseUrl).flatMap { validated =>
       ZIO
         .attempt(
-          OfrepProvider.constructProvider(daemonOptionsBuilder().baseUrl(validated).build())
+          new OFREPFeatureProvider(OfrepProvider.constructProvider(daemonOptionsBuilder().baseUrl(validated).build()))
         )
         .mapError(t => FeatureFlagError.InvalidConfiguration(s"OFREP provider construction failed: ${t.getMessage}"))
     }
@@ -110,7 +112,7 @@ object OFREPProvider {
     * shut down (including this method's own validation-rejection path) blocks JVM exit. This method must not mutate
     * caller-supplied options, so the executor choice is the caller's responsibility.
     */
-  def make(options: OfrepProviderOptions): IO[FeatureFlagError.InvalidConfiguration, OfrepProvider] =
+  def make(options: OfrepProviderOptions): IO[FeatureFlagError.InvalidConfiguration, OFREPFeatureProvider] =
     for {
       _ <- ZIO
         .attempt(options.getBaseUrl)
@@ -122,7 +124,7 @@ object OFREPProvider {
           case other => validateBaseUrl(other).unit
         }
       provider <- ZIO
-        .attempt(OfrepProvider.constructProvider(options))
+        .attempt(new OFREPFeatureProvider(OfrepProvider.constructProvider(options)))
         .mapError(t => FeatureFlagError.InvalidConfiguration(s"OFREP provider construction failed: ${t.getMessage}"))
     } yield provider
 
@@ -134,10 +136,10 @@ object OFREPProvider {
     * This is the ergonomic path for configuring timeouts/headers/proxy: it takes plain Scala types and keeps the
     * daemon-executor and validate-before-pool guarantees, so callers never need to touch the raw Guava builder.
     */
-  def make(config: OFREPProviderConfig): IO[FeatureFlagError.InvalidConfiguration, OfrepProvider] =
+  def make(config: OFREPProviderConfig): IO[FeatureFlagError.InvalidConfiguration, OFREPFeatureProvider] =
     validateBaseUrl(config.baseUrl).flatMap { validated =>
       ZIO
-        .attempt(OfrepProvider.constructProvider(buildOptions(config, validated)))
+        .attempt(new OFREPFeatureProvider(OfrepProvider.constructProvider(buildOptions(config, validated))))
         .mapError(t => FeatureFlagError.InvalidConfiguration(s"OFREP provider construction failed: ${t.getMessage}"))
     }
 
@@ -150,7 +152,7 @@ object OFREPProvider {
     */
   private val ShutdownTimeout: zio.Duration = 5.seconds
 
-  private def releaseOfrep(provider: OfrepProvider): UIO[Unit] =
+  private def releaseOfrep(provider: OFREPFeatureProvider): UIO[Unit] =
     // `.disconnect` because finalizers run uninterruptibly and the timeout must still fire.
     ZIO.attemptBlocking(provider.shutdown()).disconnect.timeout(ShutdownTimeout).ignore
 
@@ -158,19 +160,19 @@ object OFREPProvider {
     * (bounded), terminating its executor and closing the HttpClient — even if it was never registered with a
     * `FeatureFlags` layer.
     */
-  def scoped(baseUrl: String): ZIO[Scope, FeatureFlagError.InvalidConfiguration, OfrepProvider] =
+  def scoped(baseUrl: String): ZIO[Scope, FeatureFlagError.InvalidConfiguration, OFREPFeatureProvider] =
     ZIO.acquireRelease(make(baseUrl))(releaseOfrep)
 
   /** [[make(OfrepProviderOptions)]] with scope-managed shutdown — see [[scoped(baseUrl:String)*]]. Especially important
     * here: caller-supplied options may hold a non-daemon executor, and this finalizer is what releases it.
     */
-  def scoped(options: OfrepProviderOptions): ZIO[Scope, FeatureFlagError.InvalidConfiguration, OfrepProvider] =
+  def scoped(options: OfrepProviderOptions): ZIO[Scope, FeatureFlagError.InvalidConfiguration, OFREPFeatureProvider] =
     ZIO.acquireRelease(make(options))(releaseOfrep)
 
   /** [[make(config:zio\.openfeature\.ofrep\.OFREPProviderConfig)*]] with scope-managed shutdown — see
     * [[scoped(baseUrl:String)*]].
     */
-  def scoped(config: OFREPProviderConfig): ZIO[Scope, FeatureFlagError.InvalidConfiguration, OfrepProvider] =
+  def scoped(config: OFREPProviderConfig): ZIO[Scope, FeatureFlagError.InvalidConfiguration, OFREPFeatureProvider] =
     ZIO.acquireRelease(make(config))(releaseOfrep)
 
   /** ZLayer convenience that wraps [[make(String)]]. Use as `OFREPProvider.layer("https://flags.example.com")` to wire
@@ -178,17 +180,17 @@ object OFREPProvider {
     * layer build time. The layer owns the provider lifecycle: its finalizer shuts the provider down when the layer's
     * scope closes.
     */
-  def layer(baseUrl: String): ZLayer[Any, FeatureFlagError.InvalidConfiguration, OfrepProvider] =
+  def layer(baseUrl: String): ZLayer[Any, FeatureFlagError.InvalidConfiguration, OFREPFeatureProvider] =
     ZLayer.scoped(scoped(baseUrl))
 
   /** ZLayer convenience that wraps [[make(OfrepProviderOptions)]]. Owns the provider lifecycle — see
     * [[layer(baseUrl:String)*]].
     */
-  def layer(options: OfrepProviderOptions): ZLayer[Any, FeatureFlagError.InvalidConfiguration, OfrepProvider] =
+  def layer(options: OfrepProviderOptions): ZLayer[Any, FeatureFlagError.InvalidConfiguration, OFREPFeatureProvider] =
     ZLayer.scoped(scoped(options))
 
   /** ZLayer from an [[OFREPProviderConfig]]. Owns the provider lifecycle — see [[layer(baseUrl:String)*]]. */
-  def layer(config: OFREPProviderConfig): ZLayer[Any, FeatureFlagError.InvalidConfiguration, OfrepProvider] =
+  def layer(config: OFREPProviderConfig): ZLayer[Any, FeatureFlagError.InvalidConfiguration, OFREPFeatureProvider] =
     ZLayer.scoped(scoped(config))
 
   /** Create an OFREP provider with the contrib provider's built-in default options (baseUrl defaults to whatever the

@@ -64,12 +64,13 @@ exactly `fromProvider(provider)`.
 | `domain` | none | `withDomain(d)` | Binds the client to a named [domain](#domains). |
 | `version` | none | `withVersion(v)` | Client version, reported by `clientMetadata` and passed to the SDK client. |
 | `initialHooks` | none | `withHooks(list)`, `withHook(h)` | Client-level [hooks](hooks.md) installed from the start. |
-| `evaluationTimeout` | 1 second | `withEvaluationTimeout(d)`, `withoutEvaluationTimeout` | Bounds each evaluation. On timeout the call fails with `ProviderError` wrapping a `TimeoutException`; the provider call keeps running in the background. Per-call override: see [Evaluating flags](evaluating.md). |
+| `evaluationTimeout` | 1 second | `withEvaluationTimeout(d)`, `withoutEvaluationTimeout` | Bounds each evaluation. On timeout the call fails with `ProviderError` wrapping a `TimeoutException`; the provider call keeps running in the background, holding a blocking-pool thread until it returns (see `maxAbandonedCalls`). Per-call override: see [Evaluating flags](evaluating.md). |
 | `initTimeout` | 30 seconds | `withInitTimeout(d)` | Bounds initialization, see [Sync or async start](#sync-or-async-start). |
 | `initMode` | `InitMode.Sync` | `withAsyncInit`, `withSyncInit` | [Sync or async start](#sync-or-async-start). |
 | `apiOwnership` | `ApiOwnership.Auto` | `withApiOwnership(o)` | Whether shutdown also stops the OpenFeature API, see [Who shuts down the API](#who-shuts-down-the-api). |
 | `contextSource` | none | `withContextSource(s)` | Ambient context read on every evaluation, see [Evaluation context](context.md). |
 | `fallbackLogging` | one line per flag per minute | `withFallbackLogging(p)` | How `*OrDefault` calls log a served default: `FallbackLogging.Off`, `Always` or `Throttled(window)`. See [Evaluating flags](evaluating.md). |
+| `maxAbandonedCalls` | 256 | `withMaxAbandonedCalls(n)` | Cap on timed-out provider calls still running. At the cap, timed evaluations fail fast with `ProviderError` wrapping a `RejectedExecutionException` instead of parking another thread; `Int.MaxValue` disables it. Must be at least 1. See [Evaluating flags](evaluating.md). |
 
 ## Sync or async start
 

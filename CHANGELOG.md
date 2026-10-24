@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A cap on abandoned provider calls** (#437). A timed-out evaluation abandons its provider call, which keeps a thread
+  of ZIO's unbounded blocking pool until the provider returns, so a hung provider used to park one more thread per
+  timeout. Each instance now counts the abandoned calls still running and, at `FeatureFlags.DefaultMaxAbandonedCalls`
+  (256), fails timed evaluations fast with `ProviderError` wrapping a `RejectedExecutionException` without calling the
+  provider, logging one rate-limited warning; the `*OrDefault` calls keep serving defaults and evaluations resume as
+  the abandoned calls return. Healthy traffic never reaches the cap, and untimed evaluations are never gated.
+  Configure it with `FeatureFlagsConfig.withMaxAbandonedCalls(n)` or `fromAcquireAsync`'s new trailing
+  `maxAbandonedCalls`; `Int.MaxValue` disables it. The evaluation-timeout docs now spell out the per-timeout thread
+  cost and recommend `CircuitBreakerProvider` for remote providers.
+
 - **Weekly mutation testing of core** (#468): stryker4s via the new `Mutation testing` workflow (scheduled and
   manual), with its report as a build artifact. Informational only: never runs on a pull request and never fails the
   build. Locally, `core/stryker`; see the development guide.
@@ -23,6 +33,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Hostile-input property sweeps (Long beyond 2^53, NaN/Infinity/-0.0, emoji and control-character keys, nulls, deep and large structures) through value/context conversion, tracking conversion, OFREP response decoding and the Optimizely context transformer (#469).
 
 ### Changed
+
+- **`FeatureFlagsConfig` has a new last field, `maxAbandonedCalls`** (#437), so its constructor, `apply` and `copy`
+  changed binary signature: code compiled against an earlier release must be recompiled (source is unaffected, apart
+  from positional patterns on it). A value below 1 now throws `IllegalArgumentException` at construction. A timed
+  evaluation can now fail with `ProviderError(RejectedExecutionException)` when the cap is reached.
 
 - **Tuning defaults are named** (#462). The circuit breaker, cache, construction-retry, event-hub, polling and
   watchdog defaults now come from named constants instead of literals at the call sites; no value changed. Public:

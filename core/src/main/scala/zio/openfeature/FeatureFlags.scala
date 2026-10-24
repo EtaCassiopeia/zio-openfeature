@@ -1007,8 +1007,28 @@ object FeatureFlags {
     * to disable it; per call, `EvaluationOptions.empty.withTimeout(d)` bounds a single evaluation and `.withoutTimeout`
     * disables it (the latter also skips the timeout scaffolding, which matters for microsecond-latency in-memory
     * providers).
+    *
+    * Each timed-out call keeps a blocking-pool thread until the provider returns, and that pool is unbounded, so
+    * against a provider that never returns every timeout parks one more thread. [[DefaultMaxAbandonedCalls]] caps how
+    * many such calls an instance tolerates; for a remote provider, wrapping it in the extras module's
+    * `CircuitBreakerProvider` also stops new calls once it starts failing.
     */
   val DefaultEvaluationTimeout: Duration = 1.second
+
+  /** Default cap on **abandoned** provider calls per `FeatureFlags` instance: **256**. A call is abandoned when the
+    * [[DefaultEvaluationTimeout evaluation timeout]] fires (or the caller is interrupted) while the provider is still
+    * running; it holds a blocking-pool thread until the provider returns. Once an instance has this many abandoned
+    * calls still running, every new timed evaluation fails fast with `FeatureFlagError.ProviderError` wrapping a
+    * `java.util.concurrent.RejectedExecutionException`, without calling the provider, until enough of them return. The
+    * total tier (`*OrDefault`, `value`) absorbs that error and serves defaults, and the first rejection in each
+    * `FallbackLogging` window logs a warning.
+    *
+    * Only abandoned calls count, so healthy traffic never gets near the cap however concurrent it is, and untimed
+    * evaluations (`withoutEvaluationTimeout`, `EvaluationOptions.withoutTimeout`) can never be rejected. Change it with
+    * `FeatureFlagsConfig().withMaxAbandonedCalls(n)` (or `fromAcquireAsync`'s `maxAbandonedCalls`); `Int.MaxValue`
+    * disables the cap.
+    */
+  val DefaultMaxAbandonedCalls: Int = 256
 
   /** Verify the provider reached a usable state after sync initialization. Anything outside `READY` / `STALE` causes
     * the layer build to fail so misconfiguration surfaces at startup, not at first evaluation. Returns the ZIO-level
@@ -1068,6 +1088,7 @@ object FeatureFlags {
     onReady: Option[java.util.concurrent.CountDownLatch] = None,
     contextSource: ContextSource = ContextSource.empty,
     fallbackLogging: FallbackLogging = FallbackLogging.Default,
+    maxAbandonedCalls: Int = DefaultMaxAbandonedCalls,
     recordTracking: Boolean = false
   ): ZIO[Scope, Throwable, FeatureFlagsLive] =
     for {
@@ -1110,6 +1131,7 @@ object FeatureFlags {
         evaluationTimeout,
         contextSource,
         initTimeout,
+        maxAbandonedCalls,
         recordTracking
       )
       // Only seed status when the caller didn't hand us a shared ref (testkit shares one). Routed through
@@ -1152,8 +1174,11 @@ object FeatureFlags {
         case ApiOwnership.Shared => false
       }
       config.initMode match {
+        // The `WithTracking` variants, not `build`/`buildAsync`: those keep their released signatures (they are
+        // package-private but compiled into the published testkit), so newer knobs like `maxAbandonedCalls` (#437)
+        // reach the instance only through these.
         case InitMode.Sync =>
-          build(
+          buildWithTracking(
             provider,
             config.domain,
             config.version,
@@ -1165,10 +1190,11 @@ object FeatureFlags {
             initTimeout = config.initTimeout,
             onReady = onReady,
             contextSource = config.contextSource,
-            fallbackLogging = config.fallbackLogging
+            fallbackLogging = config.fallbackLogging,
+            maxAbandonedCalls = config.maxAbandonedCalls
           )
         case InitMode.Async =>
-          buildAsync(
+          buildAsyncWithTracking(
             provider,
             config.domain,
             config.version,
@@ -1180,7 +1206,8 @@ object FeatureFlags {
             evaluationTimeout = evalTimeout,
             initTimeout = config.initTimeout,
             contextSource = config.contextSource,
-            fallbackLogging = config.fallbackLogging
+            fallbackLogging = config.fallbackLogging,
+            maxAbandonedCalls = config.maxAbandonedCalls
           )
       }
     }
@@ -1354,6 +1381,7 @@ object FeatureFlags {
     initTimeout: Duration = DefaultInitTimeout,
     contextSource: ContextSource = ContextSource.empty,
     fallbackLogging: FallbackLogging = FallbackLogging.Default,
+    maxAbandonedCalls: Int = DefaultMaxAbandonedCalls,
     recordTracking: Boolean = false
   ): ZIO[Scope, Throwable, FeatureFlagsLive] =
     for {
@@ -1402,6 +1430,7 @@ object FeatureFlags {
         evaluationTimeout,
         contextSource,
         initTimeout,
+        maxAbandonedCalls,
         recordTracking
       )
       // Start event bridge — if provider is already ready, replay fires immediately
@@ -1597,6 +1626,9 @@ object FeatureFlags {
     *   Defaults to accepting every candidate. See [[Verify]] for ready-made checks.
     * @param onSwapped
     *   run once after the real provider is swapped in and [[AcquireState.Live]] is observable
+    * @param maxAbandonedCalls
+    *   cap on provider calls abandoned by `evaluationTimeout` and still running, see [[DefaultMaxAbandonedCalls]]; must
+    *   be at least 1
     */
   def fromAcquireAsync(
     acquire: RIO[Scope, OFFeatureProvider],
@@ -1616,8 +1648,11 @@ object FeatureFlags {
     onSwapped: UIO[Unit] = ZIO.unit,
     // Its own parameter, not a config field: this factory bypasses `FeatureFlagsConfig`, and it is exactly the
     // fallback-first path where a served-default log storm during an outage matters most (#350).
-    fallbackLogging: FallbackLogging = FallbackLogging.Default
-  ): URLayer[Any, FeatureFlags with AcquireStatus] =
+    fallbackLogging: FallbackLogging = FallbackLogging.Default,
+    // Its own parameter for the same reason as `fallbackLogging` (#437).
+    maxAbandonedCalls: Int = DefaultMaxAbandonedCalls
+  ): URLayer[Any, FeatureFlags with AcquireStatus] = {
+    require(maxAbandonedCalls >= 1, s"maxAbandonedCalls must be at least 1, got $maxAbandonedCalls")
     // `scopedEnvironment` rather than `scoped`: the layer emits two services, and only an explicit ZEnvironment can
     // carry an intersection.
     ZLayer.scopedEnvironment {
@@ -1626,7 +1661,7 @@ object FeatureFlags {
         // recoverable condition, so a failed build is a defect (`orDie`) — this is what makes the layer a `URLayer`.
         firstFallback <- fallback
         state         <- SubscriptionRef.make[AcquireState](AcquireState.Constructing)
-        ff <- build(
+        ff <- buildWithTracking(
           firstFallback,
           domain = None,
           version = None,
@@ -1636,7 +1671,8 @@ object FeatureFlags {
           evaluationTimeout = Some(evaluationTimeout),
           initTimeout = initTimeout,
           contextSource = contextSource,
-          fallbackLogging = fallbackLogging
+          fallbackLogging = fallbackLogging,
+          maxAbandonedCalls = maxAbandonedCalls
         ).orDie
         // One attempt = acquire, then verify the candidate, inside a child scope of the layer scope. The child scope
         // exists so a REJECTED candidate (acquire failed after registering finalizers, verify failed, or the attempt
@@ -1721,4 +1757,38 @@ object FeatureFlags {
         }.forkScoped
       } yield ZEnvironment[FeatureFlags](ff).add[AcquireStatus](AcquireStatus.fromRef(state))
     }
+  }
+
+  // Binary-compatibility bridge for callers compiled against 1.1.2, before `maxAbandonedCalls` (#437). Package-private,
+  // so source callers never see it, but public in bytecode, so an already-compiled call still links. No defaults: a
+  // call needing one resolves to the full overload above.
+  private[openfeature] def fromAcquireAsync(
+    acquire: RIO[Scope, OFFeatureProvider],
+    fallback: URIO[Scope, OFFeatureProvider],
+    compose: (OFFeatureProvider, OFFeatureProvider) => OFFeatureProvider,
+    constructionRetry: Schedule[Any, Throwable, Any],
+    constructionTimeout: Duration,
+    onConstructionError: Throwable => UIO[Unit],
+    evaluationTimeout: Duration,
+    initTimeout: Duration,
+    contextSource: ContextSource,
+    verify: OFFeatureProvider => Task[Unit],
+    onSwapped: UIO[Unit],
+    fallbackLogging: FallbackLogging
+  ): URLayer[Any, FeatureFlags with AcquireStatus] =
+    fromAcquireAsync(
+      acquire,
+      fallback,
+      compose,
+      constructionRetry,
+      constructionTimeout,
+      onConstructionError,
+      evaluationTimeout,
+      initTimeout,
+      contextSource,
+      verify,
+      onSwapped,
+      fallbackLogging,
+      DefaultMaxAbandonedCalls
+    )
 }

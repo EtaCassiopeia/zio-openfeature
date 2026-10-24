@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A model-based property test of the provider lifecycle** (#464). `LifecycleModelSpec` (testkit, test-only)
+  generates sequences of swaps (to providers that start, fail, hang or start slowly), provider events, shutdowns,
+  interrupted swaps and released hangs, runs them against a real `FeatureFlags` built with `FaultyProvider`s, and checks
+  after every step that the status, `providerMetadata` and evaluations match a model written from the documented
+  lifecycle; at the end the scope must close within 5 s and leave no fiber or non-daemon thread. 25 sequences on every
+  PR, 300 weekly in the new `Property tests` workflow (`LIFECYCLE_MODEL_SAMPLES`). With the #434 fix reverted it
+  finds an interrupted swap left `NotReady`; that sequence is the first `regressions` example.
 - **`FaultyProvider` in the testkit** (#463): wraps any provider (or a fresh `TestFeatureProvider`) and applies a
   scripted `Fault` per `Op`, one per call with the last repeating: `Throw`, `Delay`, `HangUntilReleased` (an
   `initialize()` that ignores `shutdown()`), `HangUntilShutdown` and `Emit`. It records every call (`calls`,

@@ -26,6 +26,21 @@ small deliberate changes to the code (flipping a condition, swapping an operator
 each. The score and the surviving mutants are in `core/target/stryker4s-report/`. A full run takes hours, so CI runs it
 weekly (the `Mutation testing` workflow, also startable by hand) and never on a pull request; the score is
 informational and never fails the build. To try it on a few files, narrow `mutate` in `stryker4s.conf` locally.
+
+### Property tests
+
+`LifecycleModelSpec` in the testkit generates sequences of lifecycle actions (swaps to providers that start, fail,
+hang or start slowly, provider events, shutdown, an interrupted swap) and runs each against a real `FeatureFlags`,
+checking after every step that the status, the provider name and the evaluations agree with a model written from
+[Lifecycle and events](lifecycle.md). It also checks that the scope closes within 5 seconds and leaves no fiber or
+thread behind. Pull requests run 25 sequences; the weekly `Property tests` workflow (also startable by hand) runs 300.
+Set `LIFECYCLE_MODEL_SAMPLES` to choose the count locally:
+
+```sh
+LIFECYCLE_MODEL_SAMPLES=300 sbt "testkit/testOnly *LifecycleModelSpec"
+```
+
+A failure prints the shrunk sequence. Add it to the spec's `regressions` suite as an explicit list, not as a seed.
 ## Provider fault tests
 
 `provider-fault-tests` runs the real OFREP and Optimizely providers through

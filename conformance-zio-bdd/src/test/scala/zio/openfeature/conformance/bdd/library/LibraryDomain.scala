@@ -1,6 +1,6 @@
 package zio.openfeature.conformance.bdd.library
 
-import zio.openfeature.{FlagDef, FlagType}
+import zio.openfeature.{FlagDef, FlagType, WireType}
 
 /** Domain types and flag definitions shared by the library conformance suites.
   *
@@ -8,7 +8,7 @@ import zio.openfeature.{FlagDef, FlagType}
   *   - [[Tier]] — a Mirror-derived enum, carried on the wire as a `String` (#366);
   *   - [[Release]] — a Mirror-derived product, carried on the object path (#366);
   *   - [[Level]] — `FlagType.mapped` over `Int`, so its wire type is a *numeric* scalar (#361);
-  *   - [[Broken]] — declares a `wireType` its `encode` does not produce, the mistake #362 turns into a diagnostic.
+  *   - [[Broken]] — declares a wire type its `encode` does not produce, the mistake #362 turns into a diagnostic.
   */
 enum Tier derives FlagType:
   case Free, Premium, Enterprise
@@ -18,7 +18,7 @@ enum Tier derives FlagType:
   */
 final case class Release(tier: String, pct: Int = 10, note: Option[String] = None) derives FlagType
 
-/** A newtype over `Int`. `FlagType.mapped` inherits the underlying instance's `wireType`, so this must be resolved
+/** A newtype over `Int`. `FlagType.mapped` inherits the underlying instance's `wire`, so this must be resolved
   * through the provider's *integer* resolver rather than the object path.
   */
 final case class Level(n: Int)
@@ -26,7 +26,7 @@ final case class Level(n: Int)
 object Level:
   given FlagType[Level] = FlagType.mapped[Level, Int]("Level", Level(0))(Level.apply, _.n)
 
-/** Declares `wireType = "Int"` but encodes to a `String`. The pairing is not checked at compile time, so evaluation has
+/** Declares `wire = WireType.Int` but encodes to a `String`. The pairing is not checked at compile time, so evaluation has
   * to surface it as a diagnostic `TypeMismatch` rather than an opaque `ClassCastException` from inside the SDK bridge.
   */
 final case class Broken(v: String)
@@ -34,10 +34,10 @@ final case class Broken(v: String)
 object Broken:
   given FlagType[Broken] = new FlagType[Broken]:
     def typeName: String                           = "Broken"
-    override def wireType: String                  = "Int"   // declares Int…
+    override def wire: WireType                    = WireType.Int // declares Int…
     def defaultValue: Broken                       = Broken("x")
     def decode(value: Any): Either[String, Broken] = Right(Broken(value.toString))
-    override def encode(value: Broken): Any        = value.v // …but encodes to String
+    override def encode(value: Broken): Any        = value.v      // …but encodes to String
 
 /** The `FlagDef`s the feature files name. Keeping them in one place is the point of #357: a key, its type and its
   * default are stated once, and every scenario that mentions the flag by name gets all three.

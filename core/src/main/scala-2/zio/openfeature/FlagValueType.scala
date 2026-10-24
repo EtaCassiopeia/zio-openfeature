@@ -28,18 +28,18 @@ object FlagValueType {
   // flag type from every hook.
   val allTypes: Set[FlagValueType] = Set(Boolean, String, Int, Long, Double, Object)
 
-  /** Reads `wireType`, not `typeName`, so this reports the type the provider was actually asked for. A scalar-backed
-    * custom type therefore reports its scalar here, which is what lets hooks scoped to that type (via
-    * `FeatureHook.supportedFlagTypes`) see the evaluation at all.
+  /** Reads [[FlagType.wire]], not `typeName`, so this reports the type the provider was actually asked for. A
+    * scalar-backed custom type, and `Option` over a scalar, therefore report the scalar here, which is what lets hooks
+    * scoped to that type (via `FeatureHook.supportedFlagTypes`) see the evaluation at all.
     */
   def fromFlagType[A](implicit ft: FlagType[A]): FlagValueType =
-    ft.wireType match {
-      case "Boolean" => Boolean
-      case "String"  => String
-      case "Int"     => Int
-      case "Long"    => Long
-      case "Float"   => Double
-      case "Double"  => Double
-      case _         => Object
+    ft.wire match {
+      case WireType.Boolean => Boolean
+      case WireType.String  => String
+      case WireType.Int     => Int
+      case WireType.Long    => Long
+      case WireType.Float   => Double
+      case WireType.Double  => Double
+      case WireType.Object  => Object
     }
 }

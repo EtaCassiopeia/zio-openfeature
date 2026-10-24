@@ -17,7 +17,7 @@ import dev.openfeature.sdk.{
 /** #348: `FlagType.derived` via `Mirror`.
   *
   *   - a sum of singleton cases (an `enum` without parameters) derives a String codec over the case labels — which is
-  *     only evaluatable because #356 made dispatch key on `wireType`;
+  *     only evaluatable because #356 made dispatch key on the wire type (`wire`);
   *   - a product derives a `Map[String, Any]` codec, field-by-field through each field's own `FlagType`.
   *
   * This spec lives in `core/src/test/scala-3/` rather than the shared test dir, because `enum` and `derives` do not
@@ -113,9 +113,9 @@ object FlagTypeDerivedSpec extends ZIOSpecDefault:
 
   def spec = suite("FlagTypeDerivedSpec")(
     // --- sum of singletons ---
-    test("a derived enum reports its own typeName and a String wireType") {
-      // wireType String is the whole reason a derived enum is evaluatable at all (#356).
-      assertTrue(planFt.typeName == "Plan", planFt.wireType == "String")
+    test("a derived enum reports its own typeName and a String wire") {
+      // A String wire is the whole reason a derived enum is evaluatable at all (#356).
+      assertTrue(planFt.typeName == "Plan", planFt.wire == WireType.String)
     },
     test("a derived enum encodes to its canonical case label") {
       assertTrue(planFt.encode(Plan.Premium) == "Premium", planFt.encode(Plan.Free) == "Free")
@@ -137,8 +137,8 @@ object FlagTypeDerivedSpec extends ZIOSpecDefault:
       assertTrue(tierFlagType.typeName == "Tier", tierFlagType.decode("silver") == Right(Tier.Silver))
     },
     // --- products ---
-    test("a derived product keeps typeName as its wireType, so it stays on the object path") {
-      assertTrue(rolloutFt.typeName == "Rollout", rolloutFt.wireType == "Rollout")
+    test("a derived product has an Object wire, so it stays on the object path") {
+      assertTrue(rolloutFt.typeName == "Rollout", rolloutFt.wire == WireType.Object)
     },
     test("a derived product decodes a full map") {
       assertTrue(
@@ -238,6 +238,14 @@ object FlagTypeDerivedSpec extends ZIOSpecDefault:
         // Only reachable if wireType routed this to getStringEvaluation. The object path would not yield Enterprise.
         build(new DerivedProvider("enterprise"), "enum").flatMap { ff =>
           ff.value[Plan]("plan.flag", Plan.Free).map(p => assertTrue(p == Plan.Enterprise))
+        }
+      }
+    },
+    test("Option over a derived ENUM resolves through the string resolver to Some (#439)") {
+      ZIO.scoped {
+        // On the object path `DerivedProvider` echoes the default back, which would read as None.
+        build(new DerivedProvider("premium"), "opt-enum").flatMap { ff =>
+          ff.value[Option[Plan]]("plan.flag", None).map(p => assertTrue(p == Some(Plan.Premium)))
         }
       }
     },

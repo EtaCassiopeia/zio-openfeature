@@ -224,7 +224,7 @@ There is an `Op` for every `FeatureProvider` method: `Initialize` (both overload
 
 Prefer the scoped factories: a test that fails while a call is parked then still frees the thread. `delegate` is the
 wrapped provider (for `make`, the `TestFeatureProvider`, so `setFlag` works). `calls` lists every completed call with
-its op, flag key, thread, start time and outcome; a hung call appears once it is released. `awaitEntered(op)` waits
+its op, flag key, thread, start time, outcome and arguments; a hung call appears once it is released. `awaitEntered(op)` waits
 until a call has started, for example until `initialize()` is parked.
 
 The wrapper emits its own events, so the wrapped provider's events do not reach `FeatureFlags`: use `Fault.Emit` or
@@ -320,6 +320,29 @@ If you write a `FlagType` by hand, check it with `FlagTypeLaws`. Give it a `Gen`
 The second one finds the real problems: the SDK turns every number into a `Double`, so a `Long` above 2^53 does not
 survive, and it drops structure members it cannot represent. It matters most for object-backed types, which always
 take that path. Both laws work on Scala 2.13 too.
+
+## Checking your own wrapper
+
+A provider that wraps another one (for caching, metrics, retries) must pass every call on. The OpenFeature SDK adds
+methods to `FeatureProvider` with default bodies, so a wrapper written before one of them keeps compiling and answers
+it from the default instead of asking the provider it wraps: `track` events vanish, or a `Long` evaluation goes
+through `getDoubleEvaluation`. `WrapperLaws.delegation` catches this. Give it a name and a function that builds your
+wrapper around a provider:
+
+```scala
+--8<-- "TestkitSpec.scala:wrapper-laws"
+```
+
+The result is a suite with one test per `Op`. Each test builds your wrapper around a fresh `FaultyProvider`, calls one
+method with distinctive arguments, and checks the wrapped provider received the same call with equal arguments
+(contexts and tracking details are compared by content). For `Initialize` it checks both overloads, so a wrapper that
+drops the domain from `initialize(ctx, domain)` fails. The law does not look at the results.
+
+`handledByWrapper` lists the ops your wrapper answers itself, each with a reason that becomes part of the test name.
+For those, the test checks the call does not reach the wrapped provider, and fails with "allow-list entry no longer
+needed" if it does, so the list cannot go stale. The law runs on Scala 2.13 and 3. The library's own wrappers
+(`CachingProvider`, `CircuitBreakerProvider`, `DeferredProvider`, `IntegerWideningLongProvider`,
+`CachingReasonProvider`) are checked with it.
 
 ## Comparing a provider against the testkit
 

@@ -51,6 +51,8 @@ final private[openfeature] class FeatureFlagsLive(
   contextSource: ContextSource = ContextSource.empty,
   // Bounds a hot swap's provider initialization, and its rollback re-registration, exactly as it bounds the build (#433).
   initTimeout: Duration = FeatureFlags.DefaultInitTimeout,
+  // Cap on provider calls abandoned by the evaluation timeout and still running (#437); see `withTimeout`.
+  maxAbandonedCalls: Int = FeatureFlags.DefaultMaxAbandonedCalls,
   // Whether `track` keeps a copy of each event and its merged context for `trackedEvents` (#442). Only testkit-built
   // instances set it: a production instance must not retain contexts, which routinely hold PII.
   recordTracking: Boolean = false
@@ -64,6 +66,14 @@ final private[openfeature] class FeatureFlagsLive(
     defect: Option[Cause[Nothing]]
   ): UIO[Unit] =
     fallbackLogLimiter.log(key, resolution, defect)
+
+  // Provider calls abandoned by the evaluation timeout that have not returned yet (#437). Each one parks a blocking-pool
+  // thread, and that pool is unbounded, so `withTimeout` refuses new timed calls once this reaches `maxAbandonedCalls`.
+  // AtomicInteger (not Ref): it is read on every timed evaluation, and decremented from the abandoned call's finalizer.
+  private val abandonedCalls = new java.util.concurrent.atomic.AtomicInteger(0)
+
+  /** Abandoned provider calls still running (#437) — for tests. */
+  private[openfeature] def abandonedCallCount: Int = abandonedCalls.get()
 
   // True while `setProvider` holds the swap lock and is re-registering the provider. Bridge events must not drive
   // the status machine during that window: a queued event from the OLD provider would clobber the swap's own
@@ -582,13 +592,51 @@ final private[openfeature] class FeatureFlagsLive(
     val flagType  = FlagType[A]
     val ofContext = toJavaContext(context)
 
+    // The only place a provider call can be abandoned, so the abandoned-call cap (#437) lives here and nowhere else:
+    // the untimed path cannot abandon a call and never touches the counter.
     def withTimeout[B](effect: Task[B]): Task[B] =
       timeout match {
         case Some(d) =>
-          effect.disconnect
-            .timeoutFail(new java.util.concurrent.TimeoutException(s"Evaluation of '$key' timed out after $d"))(d)
+          ZIO.suspendSucceed {
+            val abandoned = abandonedCalls.get()
+            // Check, then start: under a race a few calls may slip past the cap, which is fine — it bounds the thread
+            // leak, it is not an exact quota.
+            if (abandoned >= maxAbandonedCalls) rejectAbandoned(abandoned)
+            else {
+              // Exactly one of the finalizer (Running -> Done) and the abandoning side (Running -> Abandoned) wins the
+              // CAS, so the counter is incremented and decremented once per abandoned call and never drifts.
+              val call = new java.util.concurrent.atomic.AtomicInteger(FeatureFlagsLive.CallRunning)
+              val abandon = ZIO.succeed {
+                if (call.compareAndSet(FeatureFlagsLive.CallRunning, FeatureFlagsLive.CallAbandoned))
+                  abandonedCalls.incrementAndGet()
+              }.unit
+              effect
+                // Before `.disconnect`, so the finalizer runs on the disconnected fiber when the provider finally
+                // returns, however long after the caller moved on.
+                .ensuring(ZIO.succeed {
+                  if (!call.compareAndSet(FeatureFlagsLive.CallRunning, FeatureFlagsLive.CallDone))
+                    abandonedCalls.decrementAndGet()
+                })
+                .disconnect
+                .timeoutFail(new java.util.concurrent.TimeoutException(s"Evaluation of '$key' timed out after $d"))(d)
+                .tapError {
+                  case _: java.util.concurrent.TimeoutException => abandon
+                  case _                                        => ZIO.unit
+                }
+                // An interrupted caller walks away from the disconnected call just as a timeout does.
+                .onInterrupt(abandon)
+            }
+          }
         case None => effect
       }
+
+    def rejectAbandoned[B](abandoned: Int): Task[B] = {
+      val error = new java.util.concurrent.RejectedExecutionException(
+        s"Evaluation of '$key' rejected: $abandoned abandoned provider calls are still running " +
+          s"(cap $maxAbandonedCalls); the provider appears hung"
+      )
+      fallbackLogLimiter.logRejection(error.getMessage) *> ZIO.fail(error)
+    }
 
     val evaluation: IO[FeatureFlagError, FlagResolution[A]] =
       ClientEvaluator.evaluateStandard[A](flagType, client, key, default, ofContext) match {
@@ -1492,4 +1540,12 @@ final private[openfeature] class FeatureFlagsLive(
   override def trackedEvents: UIO[List[(String, EvaluationContext, Option[TrackingEventDetails])]] =
     state.trackRecorder.get.map(_.toList)
 
+}
+
+private[openfeature] object FeatureFlagsLive {
+
+  // Per-call states for the abandoned-call cap (#437), see `withTimeout`.
+  private[openfeature] val CallRunning   = 0
+  private[openfeature] val CallDone      = 1
+  private[openfeature] val CallAbandoned = 2
 }

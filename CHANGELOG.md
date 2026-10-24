@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `FeatureProvider`/`EventProvider` method but `emit*`, and a reflective test fails if the SDK adds one. The #433,
   #434 and #435 lifecycle scenarios are re-expressed with it in the testkit, and extras' tests now use it (extras
   depends on testkit for tests only). See "Fault injection" on the testkit page.
+
 - **Weekly mutation testing of core** (#468): stryker4s via the new `Mutation testing` workflow (scheduled and
   manual), with its report as a build artifact. Informational only: never runs on a pull request and never fails the
   build. Locally, `core/stryker`; see the development guide.
@@ -44,6 +45,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `RecordingHook.make()` is a `FeatureHook` that records every stage call (`HookCall.Before`/`After`/`Error`/`Finally`,
   with the full `HookContext` and hints) for assertions. See "Per-test flag overrides" and "Recording hook calls" on
   the testkit page.
+- **A cap on abandoned provider calls** (#437). A timed-out evaluation abandons its provider call, which keeps a thread
+  of ZIO's unbounded blocking pool until the provider returns, so a hung provider used to park one more thread per
+  timeout. Each instance now counts the abandoned calls still running and, at `FeatureFlags.DefaultMaxAbandonedCalls`
+  (256), fails timed evaluations fast with `ProviderError` wrapping a `RejectedExecutionException` without calling the
+  provider, logging one rate-limited warning; the `*OrDefault` calls keep serving defaults and evaluations resume as
+  the abandoned calls return. Healthy traffic never reaches the cap, and untimed evaluations are never gated.
+  Configure it with `FeatureFlagsConfig.withMaxAbandonedCalls(n)` or `fromAcquireAsync`'s new trailing
+  `maxAbandonedCalls`; `Int.MaxValue` disables it. The evaluation-timeout docs now spell out the per-timeout thread
+  cost and recommend `CircuitBreakerProvider` for remote providers.
 - **`WireType` and `FlagType.wire`** (#439). Evaluation now dispatches on a typed `WireType` (`Boolean`, `String`,
   `Int`, `Long`, `Float`, `Double`, `Object`) instead of the free-form `wireType` string. The built-ins, `mapped`,
   derived instances and `Option` set it themselves; a custom instance overrides `wire`. An instance that still
@@ -57,6 +67,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with a message naming each invalid field (`CircuitBreakerProviderConfig.failureThreshold must be >= 1, got 0`).
   Binary-compatible; code that annotates the result as `UIO`/`ULayer`, or a layer error type as `Throwable`, widens
   it to include `FeatureFlagError`.
+- **`FeatureFlagsConfig` has a new last field, `maxAbandonedCalls`** (#437), so its constructor, `apply` and `copy`
+  changed binary signature: code compiled against an earlier release must be recompiled (source is unaffected, apart
+  from positional patterns on it). A value below 1 now throws `IllegalArgumentException` at construction. A timed
+  evaluation can now fail with `ProviderError(RejectedExecutionException)` when the cap is reached.
+
 - **Tuning defaults are named** (#462). The circuit breaker, cache, construction-retry, event-hub, polling and
   watchdog defaults now come from named constants instead of literals at the call sites; no value changed. Public:
   `CircuitBreaker.DefaultFailureThreshold`/`DefaultResetTimeout`/`DefaultHalfOpenMaxCalls`/`DefaultProbeTimeout`

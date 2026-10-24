@@ -135,6 +135,17 @@ Each evaluation is bounded by a timeout of **1 second** by default. Change it fo
 `TimeoutException`. The provider's call is abandoned, not cancelled: it keeps running in the background, because the
 Java SDK gives no way to stop it.
 
+Each abandoned call keeps a thread of ZIO's blocking pool until the provider returns, and that pool has no upper
+bound. Against a provider that hangs, every timeout would park one more thread, so each instance caps how many
+abandoned calls may still be running: **256** by default (`FeatureFlagsConfig.withMaxAbandonedCalls(n)`, or
+`fromAcquireAsync`'s `maxAbandonedCalls`; `Int.MaxValue` turns the cap off). At the cap, a timed evaluation fails
+at once with `ProviderError` wrapping a `RejectedExecutionException`, without calling the provider, and the first
+rejection in each `fallbackLogging` window logs a warning. The `*OrDefault` calls serve defaults meanwhile. Calls that
+return free their slot, so evaluations resume on their own once the provider recovers. Only abandoned calls count, so
+busy but healthy traffic never hits the cap, and an untimed evaluation (`withoutTimeout`) is never rejected. For a
+remote provider, also consider wrapping it in [`CircuitBreakerProvider`](extras.md#circuit-breaker-provider), which stops calling it once it
+starts failing.
+
 ## Logging served defaults
 
 Each time the total tier serves a default, it logs a warning that names the flag, the reason and the value:

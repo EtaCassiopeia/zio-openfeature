@@ -79,6 +79,7 @@ callers no more than you choose.
 | The server answers another 4xx or 5xx | fails with the error the response names, `ProviderError` for `GENERAL` | your default, with the error code on the resolution |
 | The server cannot be reached | fails with `Unreachable` (or `ProviderError`) | your default, with error code `General` |
 | No answer within `evaluationTimeout` | fails with `ProviderError` holding a `TimeoutException` | your default, with error code `General` |
+| The response is malformed JSON, such as an object key with an unpaired UTF-16 surrogate | fails with `ParseError` | your default, with error code `ParseError` |
 
 To alert on the total tier, look at the resolution's error code:
 

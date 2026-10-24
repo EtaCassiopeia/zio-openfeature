@@ -5,9 +5,11 @@ import com.github.tomakehurst.wiremock.client.WireMock._
 import com.github.tomakehurst.wiremock.core.WireMockConfiguration
 import dev.openfeature.sdk.{ImmutableContext, Value}
 import zio._
+import zio.openfeature.{ErrorCode, FeatureFlagError, FeatureFlags}
 import zio.test._
 
 import java.util.concurrent.atomic.AtomicInteger
+import scala.util.Try
 import scala.jdk.CollectionConverters._
 
 /** Hostile-input sweeps through OFREP response decoding (#469), against a WireMock stub.
@@ -16,6 +18,10 @@ import scala.jdk.CollectionConverters._
   * `errorCode` with the caller's default) -- never a silently rounded, truncated or stringified answer. Strings are
   * sent with every UTF-16 unit `\\u`-escaped so any generated string (lone surrogates, NUL, line separators) is valid
   * JSON. NaN and Infinity are not JSON and are therefore not sent.
+  *
+  * Object keys follow two contracts (#534): a well-formed key round-trips exactly, and a key holding an unpaired UTF-16
+  * surrogate is a `PARSE_ERROR` (Jackson 2.22.4 rejects it, jackson-core #1683). String values with lone surrogates
+  * still decode, an asymmetry that is upstream's and pinned here so a change to it shows up.
   */
 object OFREPHostileResponseSpec extends ZIOSpecDefault {
 
@@ -112,6 +118,36 @@ object OFREPHostileResponseSpec extends ZIOSpecDefault {
   private val hostileString: Gen[Any, String] =
     Gen.oneOf(Gen.fromIterable(hostileStrings), Gen.string(Gen.unicodeChar), Gen.string(Gen.char))
 
+  /** No unpaired surrogate: `codePoints` yields a lone surrogate as its own code point, so this rejects exactly them.
+    */
+  private def isWellFormed(s: String): Boolean =
+    s.codePoints().noneMatch(cp => Character.isSurrogate(cp.toChar))
+
+  private val wellFormedKey: Gen[Any, String] = hostileString.filter(isWellFormed)
+
+  private val loneHigh: Char = 0xd83d.toChar
+  private val loneLow: Char  = 0xde00.toChar
+
+  /** A well-formed key with one lone surrogate inserted at the start, the middle (a code-point boundary), the end, or
+    * the surrogate alone.
+    */
+  private val loneSurrogateKey: Gen[Any, String] =
+    for {
+      base      <- wellFormedKey
+      surrogate <- Gen.elements(loneHigh, loneLow)
+      position  <- Gen.elements("start", "middle", "end", "alone")
+    } yield {
+      val lone = surrogate.toString
+      position match {
+        case "start" => lone + base
+        case "middle" =>
+          val mid = base.offsetByCodePoints(0, base.codePointCount(0, base.length) / 2)
+          base.substring(0, mid) + lone + base.substring(mid)
+        case "end" => base + lone
+        case _     => lone
+      }
+    }
+
   private val negativeZero: Double = java.lang.Double.longBitsToDouble(0x8000000000000000L)
 
   private val finiteDouble: Gen[Any, Double] = Gen
@@ -163,7 +199,7 @@ object OFREPHostileResponseSpec extends ZIOSpecDefault {
       Gen.oneOf(
         leaf,
         Gen.listOfBounded(0, 4)(jsonGen(depth - 1)).map(xs => JList(xs): Json),
-        Gen.mapOfBounded(0, 4)(hostileString, jsonGen(depth - 1)).map(m => JObj(m): Json)
+        Gen.mapOfBounded(0, 4)(wellFormedKey, jsonGen(depth - 1)).map(m => JObj(m): Json)
       )
   }
 
@@ -244,12 +280,14 @@ object OFREPHostileResponseSpec extends ZIOSpecDefault {
         } yield r
       }
     },
-    test("an object value with hostile keys, strings, nulls and nesting decodes with every value preserved") {
+    test(
+      "an object value with well-formed hostile keys, strings, nulls and nesting decodes with every value preserved"
+    ) {
       ZIO.scoped {
         for {
           server   <- serverScoped
           provider <- providerFor(server)
-          r <- check(Gen.int(0, 3).flatMap(d => Gen.mapOfBounded(0, 4)(hostileString, jsonGen(d)))) { fields =>
+          r <- check(Gen.int(0, 3).flatMap(d => Gen.mapOfBounded(0, 4)(wellFormedKey, jsonGen(d)))) { fields =>
             val json   = JObj(fields)
             val key    = serve(server, render(json))
             val result = provider.getObjectEvaluation(key, new Value(), emptyContext)
@@ -257,6 +295,44 @@ object OFREPHostileResponseSpec extends ZIOSpecDefault {
             val want   = expected(json)
             val code   = result.getErrorCode
             assertTrue(code == null, got == want)
+          }
+        } yield r
+      }
+    },
+    // The contrib provider throws the SDK's typed `ParseError` (it does not return an errorCode), so the contract is
+    // checked where callers see it: through `FeatureFlags`, which serves the default with `PARSE_ERROR`.
+    test("an object key with a lone surrogate, at depth 1 or 2, is a PARSE_ERROR with the default and never throws") {
+      ZIO.scoped {
+        for {
+          server   <- serverScoped
+          provider <- providerFor(server)
+          env      <- FeatureFlags.fromProviderAsync(provider).build.orDie
+          ff = env.get[FeatureFlags]
+          r <- check(loneSurrogateKey, Gen.boolean, jsonGen(0)) { (badKey, nested, member) =>
+            val inner   = JObj(Map(badKey -> member))
+            val json    = if (nested) JObj(Map("outer" -> inner)) else inner
+            val key     = serve(server, render(json))
+            val default = Map[String, Any]("fallback" -> "DEFAULT")
+            val direct  = Try(provider.getObjectEvaluation(key, new Value(), emptyContext)).failed.toOption
+            val providerThrowsParseError = direct.exists(_.isInstanceOf[dev.openfeature.sdk.exceptions.ParseError])
+            for {
+              typed <- ff.objDetails(key, default).either
+              total <- ff.resolveOrDefault[Map[String, Any]](key, default)
+            } yield {
+              val typedIsParseError = typed match {
+                case Left(_: FeatureFlagError.ParseError) => true
+                case _                                    => false
+              }
+              val code  = total.errorCode
+              val value = total.value
+              assertTrue(
+                !isWellFormed(badKey),
+                providerThrowsParseError,
+                typedIsParseError,
+                code == Some(ErrorCode.ParseError),
+                value == default
+              )
+            }
           }
         } yield r
       }

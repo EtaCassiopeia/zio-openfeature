@@ -189,6 +189,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   therefore reads as `None`. `List[A]` stays on the object path. Two behaviour notes: `FlagValueType.fromFlagType` for
   `Option[String]` is now `String` rather than `Object`, so hooks scoped by type see these evaluations; and the
   provider getter called for an `Option` flag changes, which is visible to provider-level hooks and test doubles.
+- **An OFREP object flag whose JSON has a key with an unpaired UTF-16 surrogate now resolves to `PARSE_ERROR`** with
+  the caller's default (#534). Jackson 2.22.4 rejects a lone `\uXXXX` surrogate escape in a field name (jackson-core
+  #1683); 2.22.3 accepted it. Such a key is malformed UTF-16 that no conforming server emits. Well-formed keys,
+  including non-BMP characters, are unaffected, and string values with lone surrogates still decode.
 
 ### Deprecated
 
@@ -384,10 +388,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
-- **Raised the Jackson pins from 2.22.2 to 2.22.3**, closing Dependabot alerts #66–#69 (GHSA-wv8q-qhhj-9h54,
-  GHSA-cxp5-3px4-pw24 in `jackson-databind`; GHSA-p6pp-m3f8-5c89, GHSA-7hhh-6rmp-j9qf in `jackson-core`). Not 2.22.4:
-  it starts rejecting a lone UTF-16 surrogate in a JSON field name, which would turn such an OFREP object flag from a
-  served value into a `PARSE_ERROR`; that change deserves its own decision. Jackson reaches this library only through the OFREP contrib provider, which parses each flag server
+- **Raised the Jackson pins from 2.22.2 to 2.22.4**, closing Dependabot alerts #66–#69 (GHSA-wv8q-qhhj-9h54,
+  GHSA-cxp5-3px4-pw24 in `jackson-databind`; GHSA-p6pp-m3f8-5c89, GHSA-7hhh-6rmp-j9qf in `jackson-core`; #534 for
+  2.22.4's stricter parsing, see Changed). Jackson reaches this library only through the OFREP contrib provider, which parses each flag server
   response with `ObjectMapper.readValue(String, OfrepResponse.class)`. The `DataInput` parser (GHSA-7hhh),
   polymorphic type ids (GHSA-wv8q) and object-identity forward references (GHSA-cxp5) are not on that path; the float-parsing ReDoS (GHSA-p6pp) is reachable only from
   a hostile flag server. The pins are part of the published `zio-openfeature-ofrep` POM, so consumers resolve the

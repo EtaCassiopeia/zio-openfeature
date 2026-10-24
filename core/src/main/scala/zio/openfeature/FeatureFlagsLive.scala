@@ -3,31 +3,24 @@ package zio.openfeature
 import zio._
 import zio.stream._
 import zio.openfeature.internal.{
-  ClientEvaluator,
-  ContextConverter,
-  ErrorCodeConverter,
+  EventBridge,
+  Evaluator,
   FallbackLogLimiter,
   FeatureFlagsState,
+  HookPipeline,
   ProviderRegistration,
-  ProviderReportedError,
-  ProviderStatusMachine,
   SwitchableProvider,
-  TrackingConverter,
-  ValueBridge
+  TrackingConverter
 }
 import zio.openfeature.internal.ProviderStatusMachine.Signal
 import dev.openfeature.sdk.{
   Client => OFClient,
   FeatureProvider => OFFeatureProvider,
-  ProviderEvent => JavaProviderEvent,
   EventDetails,
   EventProviderAccess,
-  FlagEvaluationDetails,
   OpenFeatureAPI,
   ProviderState => JavaProviderState
 }
-
-import scala.jdk.CollectionConverters._
 
 final private[openfeature] class FeatureFlagsLive(
   client: OFClient,
@@ -67,779 +60,43 @@ final private[openfeature] class FeatureFlagsLive(
   ): UIO[Unit] =
     fallbackLogLimiter.log(key, resolution, defect)
 
-  // Provider calls abandoned by the evaluation timeout that have not returned yet (#437). Each one parks a blocking-pool
-  // thread, and that pool is unbounded, so `withTimeout` refuses new timed calls once this reaches `maxAbandonedCalls`.
-  // AtomicInteger (not Ref): it is read on every timed evaluation, and decremented from the abandoned call's finalizer.
-  private val abandonedCalls = new java.util.concurrent.atomic.AtomicInteger(0)
+  // The collaborators this instance delegates to (#445). It keeps lifecycle and state: construction, the provider
+  // swap, shutdown and status.
+  private val eventBridge  = new EventBridge(client, providerNameRef, state, onReady)
+  private val hookPipeline = new HookPipeline(state, providerNameRef, domain, version)
+  private val evaluator = new Evaluator(
+    client,
+    state,
+    contextSource,
+    evaluationTimeout,
+    maxAbandonedCalls,
+    fallbackLogLimiter,
+    hookPipeline
+  )
 
   /** Abandoned provider calls still running (#437) — for tests. */
-  private[openfeature] def abandonedCallCount: Int = abandonedCalls.get()
+  private[openfeature] def abandonedCallCount: Int = evaluator.abandonedCallCount
 
-  // True while `setProvider` holds the swap lock and is re-registering the provider. Bridge events must not drive
-  // the status machine during that window: a queued event from the OLD provider would clobber the swap's own
-  // outcome. The successful swap sets Ready explicitly at the end.
-  private val swapInProgress = new java.util.concurrent.atomic.AtomicBoolean(false)
+  private def swapInProgress    = eventBridge.swapInProgress
+  private def everReady         = eventBridge.everReady
+  private def shutdownCompleted = eventBridge.shutdownCompleted
+  private def bridgeDeregister  = eventBridge.bridgeDeregister
 
-  // Set once the provider has ever been usable (Ready/Stale). Gates the init watchdog: a provider that was Ready and
-  // later dipped to a transient Error must never be escalated to Fatal (the core #244 bug).
-  private val everReady = new java.util.concurrent.atomic.AtomicBoolean(false)
+  private def applySignal(signal: Signal): UIO[Option[ProviderStatus]] = eventBridge.applySignal(signal)
 
-  // Set when an explicit `shutdown` has run to completion: the final NotReady is terminal for bridge events; only
-  // setProvider (which installs a new provider) clears it.
-  private val shutdownCompleted = new java.util.concurrent.atomic.AtomicBoolean(false)
-
-  // Set by startEventBridge; invoked by `shutdown` BEFORE teardown (so no emitter thread races it) and by the scope
-  // finalizer (idempotent — removeHandler on an already-removed handler is a no-op in the SDK, so double-invocation
-  // is safe).
-  private val bridgeDeregister =
-    new java.util.concurrent.atomic.AtomicReference[() => Unit](() => ())
-
-  /** The single door to statusRef (#244). Every status write except the sync-build seed and the testkit's shared-ref
-    * control surface goes through here. `SubscriptionRef` is a `Ref.Synchronized`, so `modify` serializes
-    * read-decide-write against every other signal. Returns Some(next) iff a transition happened, so callers can attach
-    * transition-gated side effects (watchdog shutdown, latch release).
-    */
-  private def applySignal(signal: Signal): UIO[Option[ProviderStatus]] =
-    state.statusRef.modify { current =>
-      val ctx = ProviderStatusMachine.Context(everReady.get(), swapInProgress.get(), shutdownCompleted.get())
-      ProviderStatusMachine.transition(current, signal, ctx) match {
-        case Some(next) =>
-          // Update the linearization-point flags INSIDE the serialized modify (SubscriptionRef is a
-          // Ref.Synchronized, so the function runs under exclusive access). The writes are idempotent and depend only
-          // on `signal`/`next`, so there is no read-stale window for a concurrent applySignal — closing the tap-lag
-          // gap where a pending `everReady` write could let the watchdog Fatal an already-Ready provider.
-          if (next == ProviderStatus.Ready || next == ProviderStatus.Stale) everReady.set(true)
-          signal match {
-            case Signal.ShutdownCompleted => shutdownCompleted.set(true)
-            case Signal.SwapStarted       => shutdownCompleted.set(false)
-            case _                        => ()
-          }
-          (Some(next), next)
-        case None => (None, current)
-      }
-    }
-
-  // The SDK stamps every dispatched event with the emitting provider's metadata name — or NULL when the provider has
-  // no metadata/name (verified sdk-1.21.0, OpenFeatureAPI.runHandlersForProvider). An event whose name differs from
-  // the CURRENT provider's is a stale event from a replaced/failed provider still queued on the SDK's emitter
-  // executor: it must not drive the status machine. We drop ONLY when both identities are known and differ. A null
-  // event name (unnamed provider) OR an indeterminate current name fails open — we cannot attribute the event to a
-  // *different* provider, so it must be allowed to drive status. The current name is indeterminate when it is the
-  // "unknown" fallback the factories stamp for metadata-less providers, or for a provider like the SDK's MultiProvider
-  // whose metadata name only materializes inside initialize() (so the async build captured "unknown", while the
-  // provider's own later events carry the real name). Same-named swaps are indistinguishable — see "Known limitation"
-  // in #244.
-  //
-  // Phase 2 watch-point (#340): re-verify this identity-guard behaviour once the OpenFeature Java SDK ships the
-  // spec-v0.9.0 provider-event marker — it may offer a more direct way to attribute an event to its emitting provider.
-  private def fromCurrentProvider(details: EventDetails): Boolean = {
-    val eventName   = details.getProviderName
-    val currentName = providerNameRef.get()
-    eventName == null ||
-    currentName == null ||
-    currentName == FeatureFlags.UnknownProviderName ||
-    eventName == currentName
-  }
-
-  // Truthful payloads: publish under the name the SDK stamped on the event (the actual emitter), falling back to the
-  // current provider only when the event carries none.
-  private def eventProviderMetadata(details: EventDetails): ProviderMetadata = {
-    val name = details.getProviderName
-    ProviderMetadata(if (name == null) providerNameRef.get() else name)
-  }
-
-  // Event metadata is optional, so a payload that cannot be read must not drop the event: it is published with empty
-  // metadata — but the failure is logged rather than vanishing (#444).
-  private def extractEventMetadata(details: EventDetails): UIO[FlagMetadata] =
-    ZIO
-      .attempt {
-        val javaMeta = details.getEventMetadata
-        if (javaMeta == null || javaMeta.isEmpty) FlagMetadata.empty
-        else convertImmutableMetadata(javaMeta)
-      }
-      .catchAllCause(c =>
-        ZIO
-          .logWarningCause("event bridge: unreadable provider event metadata; publishing the event without it", c)
-          .as(FlagMetadata.empty)
-      )
-
-  // Bridge event bodies as pure effects (#244), so tests can drive them directly with a builder-constructed
-  // EventDetails. The Java-side Consumers registered in startEventBridge are thin wrappers that run these via
-  // `runHandler`. Events are ALWAYS published for observers; identity/machine gating applies only to the status
-  // transition and the onReady latch.
-
-  private[openfeature] def onReadyEvent(details: EventDetails): UIO[Unit] = extractEventMetadata(details).flatMap {
-    em =>
-      val current = fromCurrentProvider(details)
-      // Refresh a still-"unknown" provider name from the event's stamped name when the READY is from the current
-      // provider. A lazy-metadata provider (notably the SDK's MultiProvider) only builds its metadata name inside
-      // initialize(), so the async build captured the "unknown" fallback; the provider's own READY carries the real
-      // name. Refreshing restores accurate providerMetadata and re-enables the event-identity guard for such providers
-      // (#297). `compareAndSet` from the fallback only: it never clobbers a real name set by a concurrent swap.
-      val refreshName = ZIO.succeed {
-        val eventName = details.getProviderName
-        if (current && eventName != null)
-          providerNameRef.compareAndSet(FeatureFlags.UnknownProviderName, eventName)
-        ()
-      }
-      refreshName *>
-        (if (current) applySignal(Signal.EventReady) else ZIO.none) *>
-        state.eventHub.publish(ProviderEvent.Ready(eventProviderMetadata(details), em)).unit *>
-        ZIO.succeed(if (current) onReady.foreach(_.countDown()))
-  }
-
-  private[openfeature] def onErrorEvent(details: EventDetails): UIO[Unit] = extractEventMetadata(details).flatMap {
-    em =>
-      val error     = new RuntimeException(Option(details.getMessage).getOrElse("Provider error"))
-      val errorCode = Option(details.getErrorCode).map(ErrorCodeConverter.fromJava)
-      val fatal     = errorCode.contains(ErrorCode.ProviderFatal)
-      (if (fromCurrentProvider(details)) applySignal(Signal.EventError(fatal)) else ZIO.none).flatMap { transitioned =>
-        // A Fatal transition must release latch waiters (registry handshake, awaitReady seeds) so they observe Fatal
-        // instead of stalling the full timeout.
-        ZIO.succeed(onReady.foreach(_.countDown())).when(transitioned.contains(ProviderStatus.Fatal))
-      } *>
-        state.eventHub
-          .publish(
-            ProviderEvent.Error(error, eventProviderMetadata(details), errorCode, Option(details.getMessage), em)
-          )
-          .unit
-  }
-
-  private[openfeature] def onStaleEvent(details: EventDetails): UIO[Unit] = extractEventMetadata(details).flatMap {
-    em =>
-      val reason = Option(details.getMessage).getOrElse("Provider stale")
-      (if (fromCurrentProvider(details)) applySignal(Signal.EventStale) else ZIO.none) *>
-        state.eventHub.publish(ProviderEvent.Stale(reason, eventProviderMetadata(details), em)).unit
-  }
-
-  // Cache the Scala->Java context conversion by object identity. In the common case every per-call context layer
-  // (transaction/client/fiber-local/invocation) is empty, so the merged context IS the (unchanged) global context
-  // object — converting it once and reusing it avoids a fresh MutableContext plus one Value per attribute on every
-  // call. Keyed on identity: a different context (after `setGlobalContext`, or a non-empty invocation layer) misses and
-  // is re-converted, so no explicit invalidation is needed. Reuse is safe because the OpenFeature contract treats the
-  // context passed to a provider as read-only.
-  private val javaContextCache =
-    new java.util.concurrent.atomic.AtomicReference[(EvaluationContext, dev.openfeature.sdk.EvaluationContext)](null)
-
-  private def toJavaContext(context: EvaluationContext): dev.openfeature.sdk.EvaluationContext = {
-    val cached = javaContextCache.get()
-    if (cached != null && (cached._1 eq context)) cached._2
-    else {
-      val converted = ContextConverter.toOpenFeature(context)
-      javaContextCache.set((context, converted))
-      converted
-    }
-  }
-
-  // Bridge Java SDK provider events to ZIO event system
-  private[openfeature] def startEventBridge: ZIO[Scope, Nothing, Unit] = {
-    // Run an event-publish effect from a Java SDK thread. Failures are logged via the ZIO logger
-    // rather than thrown, so the Java SDK's event dispatch thread is never killed by a defect.
-    def runHandler(runtime: Runtime[Any], label: String)(effect: UIO[Unit]): Unit =
-      Unsafe.unsafe { implicit u =>
-        runtime.unsafe
-          .run(effect.catchAllCause(c => ZIO.logErrorCause(s"event bridge: $label", c)))
-          .getOrElse(_ => ())
-      }
-
-    ZIO.runtime[Any].flatMap { runtime =>
-      // `suspendSucceed` defers the handler bodies (metadata extraction, identity check, payload construction) into the
-      // effect so a synchronous throw while building them on the Java emitter thread becomes a defect caught by
-      // `runHandler`'s `catchAllCause`, rather than escaping to kill the SDK's dispatch thread.
-      val readyHandler: java.util.function.Consumer[EventDetails] =
-        details => runHandler(runtime, "PROVIDER_READY")(ZIO.suspendSucceed(onReadyEvent(details)))
-
-      val errorHandler: java.util.function.Consumer[EventDetails] =
-        details => runHandler(runtime, "PROVIDER_ERROR")(ZIO.suspendSucceed(onErrorEvent(details)))
-
-      val staleHandler: java.util.function.Consumer[EventDetails] =
-        details => runHandler(runtime, "PROVIDER_STALE")(ZIO.suspendSucceed(onStaleEvent(details)))
-
-      val configHandler: java.util.function.Consumer[EventDetails] = details =>
-        runHandler(runtime, "PROVIDER_CONFIGURATION_CHANGED")(
-          ZIO.suspendSucceed {
-            val flags = Option(details.getFlagsChanged)
-              .map(_.asScala.toSet)
-              .getOrElse(Set.empty[String])
-            extractEventMetadata(details).flatMap { em =>
-              state.eventHub
-                .publish(ProviderEvent.ConfigurationChanged(flags, eventProviderMetadata(details), em))
-                .unit
-            }
-          }
-        )
-
-      // Deregistration thunk stored on the instance so `shutdown` can remove the handlers BEFORE tearing down the API
-      // (no emitter thread can then race the teardown); the scope finalizer keeps calling it too (idempotent).
-      val deregister: () => Unit = () => {
-        client.removeHandler(JavaProviderEvent.PROVIDER_READY, readyHandler)
-        client.removeHandler(JavaProviderEvent.PROVIDER_ERROR, errorHandler)
-        client.removeHandler(JavaProviderEvent.PROVIDER_STALE, staleHandler)
-        client.removeHandler(JavaProviderEvent.PROVIDER_CONFIGURATION_CHANGED, configHandler)
-        ()
-      }
-
-      for {
-        _ <- ZIO.succeed {
-          client.on(JavaProviderEvent.PROVIDER_READY, readyHandler)
-          client.on(JavaProviderEvent.PROVIDER_ERROR, errorHandler)
-          client.on(JavaProviderEvent.PROVIDER_STALE, staleHandler)
-          client.on(JavaProviderEvent.PROVIDER_CONFIGURATION_CHANGED, configHandler)
-          bridgeDeregister.set(deregister)
-          ()
-        }
-        _ <- ZIO.addFinalizer(ZIO.attempt(deregister()).ignore)
-      } yield ()
-    }
-  }
-
-  // Context merges per OpenFeature spec: API (global) -> Transaction -> Client -> FiberLocal -> Invocation,
-  // with the pull-based ContextSource slotted between Client and FiberLocal (#353): ambient request identity
-  // overrides static client/global context, but an explicit `withContext` or a per-call context still wins over it.
-  //
-  // This is also the reason a ContextSource cannot be a `before` hook. A hook's contribution is merged on TOP of the
-  // finished context below, so it could only ever take the highest-precedence slot — and `HookContext` exposes one
-  // flattened context with no provenance, so a hook cannot rebuild this ordering either.
-  //
-  // Both evaluation and `track` route through here, so the source applies to both.
   private def effectiveContext(invocation: EvaluationContext): UIO[EvaluationContext] =
-    for {
-      global      <- state.globalContextRef.get
-      clientCtx   <- state.clientContextRef.get
-      ambient     <- contextSource.current
-      fiberLocal  <- state.fiberContextRef.get
-      transaction <- state.transactionRef.get
-      txContext = transaction.map(_.context).getOrElse(EvaluationContext.empty)
-    } yield global
-      .merge(txContext)
-      .merge(clientCtx)
-      .merge(ambient)
-      .merge(fiberLocal)
-      .merge(invocation)
+    evaluator.effectiveContext(invocation)
 
-  private def runWithHooks[A: FlagType](
-    key: String,
-    default: A,
-    context: EvaluationContext,
-    evaluate: EvaluationContext => IO[FeatureFlagError, FlagResolution[A]],
-    extraHooks: List[FeatureHook] = Nil,
-    initialHints: HookHints = HookHints.empty
-  ): IO[FeatureFlagError, FlagResolution[A]] =
-    for {
-      apiHooks     <- state.zioApiHooksRef.get
-      currentHooks <- state.hooksRef.get
-      pName        <- ZIO.succeed(providerNameRef.get())
-      flagType = FlagValueType.fromFlagType[A]
-      // Order per spec §4.4.1: API -> Client -> Invocation. Provider hooks run inside the Java SDK call.
-      // Pre-filtering by flag type (spec 4.4.2.1) lets evaluations with no applicable hooks skip the
-      // pipeline entirely; the composed hook's own per-stage filter then has nothing left to drop.
-      allHooks   = (apiHooks ++ currentHooks ++ extraHooks).filter(_.supportedFlagTypes.contains(flagType))
-      metadata   = ProviderMetadata(pName)
-      clientMeta = ClientMetadata(domain, version)
-      hookCtx = HookContext(
-        flagKey = key,
-        flagType = flagType,
-        defaultValue = default,
-        evaluationContext = context,
-        clientMetadata = clientMeta,
-        providerMetadata = metadata
-      )
-      result <-
-        if (allHooks.isEmpty) evaluate(context)
-        else runHookPipeline(hookCtx, allHooks, context, initialHints, evaluate)
-    } yield result
+  private def toJavaContext(context: EvaluationContext): dev.openfeature.sdk.EvaluationContext =
+    evaluator.toJavaContext(context)
 
-  private def runHookPipeline[A](
-    hookCtx: HookContext,
-    hooks: List[FeatureHook],
-    context: EvaluationContext,
-    initialHints: HookHints,
-    evaluate: EvaluationContext => IO[FeatureFlagError, FlagResolution[A]]
-  ): IO[FeatureFlagError, FlagResolution[A]] = {
-    val composedHook = FeatureHook.compose(hooks)
+  private[openfeature] def onReadyEvent(details: EventDetails): UIO[Unit] = eventBridge.onReadyEvent(details)
 
-    // `finallyAfter` must run on EVERY exit — including an interruption of `before` itself — so it is attached as one
-    // outer `onExit` wrapping the whole pipeline (an `onExit` nested inside the foldCauseZIO branches would be skipped
-    // when `before` is interrupted before that branch's effect is even entered). Per spec §4.3.5-4.3.8 the finally
-    // stage must observe the context as modified by the before hooks; that modified `(ctx, hints)` is recorded in a Ref
-    // once `before` succeeds, so the outer finalizer uses it, falling back to the original context when `before` never
-    // completed. The Ref's third slot holds the details to hand `finallyAfter` when the pipeline fails after a
-    // resolution was already replaced by the default (an `after`-hook defect, spec §4.4.8).
-    Ref.make((hookCtx, initialHints, Option.empty[FlagResolution[_]])).flatMap { finallyCtxRef =>
-      composedHook
-        .before(hookCtx, initialHints)
-        .foldCauseZIO(
-          // `before` is a UIO, so a non-success cause is a Die or an Interrupt. Only a Die is abnormal execution that
-          // runs the `error` stage (spec §4.3.8/§4.4.7) — a pure interruption (timeout / scope-close) is a cancellation,
-          // not a hook failure, so it must not be reported to `error`. The original cause is always preserved: even if
-          // the `error` stage itself defects, its cause is combined with (never replaces) `beforeCause`.
-          beforeCause =>
-            beforeCause.dieOption match {
-              case Some(defect) =>
-                composedHook
-                  .error(hookCtx, FeatureFlagError.ProviderError(defect), initialHints)
-                  .foldCauseZIO(
-                    errCause => ZIO.refailCause(beforeCause ++ errCause),
-                    _ => ZIO.refailCause(beforeCause)
-                  )
-              case None => ZIO.refailCause(beforeCause)
-            },
-          beforeResult => {
-            val effectiveCtx = beforeResult.getOrElse(context)
-            val hints        = initialHints
-            val stageCtx     = hookCtx.copy(evaluationContext = effectiveCtx)
-            finallyCtxRef.set((stageCtx, hints, None)) *>
-              evaluate(effectiveCtx)
-                .tapBoth(
-                  err => composedHook.error(stageCtx, err, hints),
-                  // A returned resolution can still be *abnormal* execution — it carries an error code (FLAG_NOT_FOUND,
-                  // TYPE_MISMATCH, ...) that the Java SDK surfaces as a default value plus a code rather than a throw.
-                  // Per spec §4.3.6/§4.4.6 that is the `error` stage's domain, NOT `after`: run `error` for an
-                  // error-code resolution and `after` only for a clean one.
-                  res =>
-                    res.errorCode match {
-                      case Some(code) =>
-                        composedHook.error(
-                          stageCtx,
-                          errorFromResolution(res.flagKey, code, res.errorMessage, expected = hookCtx.flagType.name),
-                          hints
-                        )
-                      case None =>
-                        // Mirrors the `before` branch: `after` is a UIO, so only a Die is abnormal execution. It runs
-                        // the `error` stage (spec §4.4.5) and replaces the resolution with the default (§4.4.8) — the
-                        // same ERROR/GENERAL details the total tier serves for an absorbed defect, so `finallyAfter`
-                        // and the caller agree. The defect itself still propagates, as `FeatureHook` documents.
-                        composedHook.after(stageCtx, res, hints).catchAllCause { afterCause =>
-                          afterCause.dieOption match {
-                            case Some(defect) =>
-                              val abnormal =
-                                FlagResolution
-                                  .error(res.flagKey, hookCtx.defaultValue, ErrorCode.General, defect.toString)
-                              finallyCtxRef.set((stageCtx, hints, Some(abnormal))) *>
-                                composedHook
-                                  .error(stageCtx, FeatureFlagError.ProviderError(defect), hints)
-                                  .foldCauseZIO(
-                                    errCause => ZIO.refailCause(afterCause ++ errCause),
-                                    _ => ZIO.refailCause(afterCause)
-                                  )
-                            case None => ZIO.refailCause(afterCause)
-                          }
-                        }
-                    }
-                )
-          }
-        )
-        .onExit { exit =>
-          finallyCtxRef.get.flatMap { case (ctx, hints, abnormal) =>
-            val details: Option[FlagResolution[_]] = exit.foldExit(_ => abnormal, res => Some(res))
-            composedHook.finallyAfter(ctx, details, hints)
-          }
-        }
-    }
-  }
+  private[openfeature] def onErrorEvent(details: EventDetails): UIO[Unit] = eventBridge.onErrorEvent(details)
 
-  /** Reconstruct a typed error from a resolution that carries an error code — a provider-reported failure
-    * (FLAG_NOT_FOUND, TYPE_MISMATCH, ...) returned as a default value rather than thrown. Used both to hand the `error`
-    * hook stage something typed and, since #388, to fail the typed tier itself. `expected` names the flag's type for
-    * `TypeMismatch`; the provider's message becomes `actual`, since the provider is the one that knows what it found.
-    * `ProviderNotReady`/`ProviderFatal` codes are normally caught upstream in `evaluateFromClient`; the arms are kept
-    * so the mapping is total.
-    */
-  private def errorFromResolution(
-    key: String,
-    code: ErrorCode,
-    message: Option[String],
-    expected: String
-  ): FeatureFlagError =
-    code match {
-      case ErrorCode.FlagNotFound => FeatureFlagError.FlagNotFound(key)
-      case ErrorCode.TypeMismatch => FeatureFlagError.TypeMismatch(key, expected, message.getOrElse("unknown"))
-      case ErrorCode.ParseError =>
-        FeatureFlagError.ParseError(key, new ProviderReportedError(message.getOrElse("parse error")))
-      case ErrorCode.TargetingKeyMissing => FeatureFlagError.TargetingKeyMissing(key)
-      case ErrorCode.InvalidContext      => FeatureFlagError.InvalidContext(message.getOrElse("invalid context"))
-      case ErrorCode.ProviderNotReady    => FeatureFlagError.ProviderNotReady(ProviderStatus.NotReady)
-      case ErrorCode.ProviderFatal       => FeatureFlagError.ProviderFatal
-      // The spec has no auth error code, so a provider that reports 401/403 as an evaluation result (the OFREP
-      // contrib) can only say so in the message (#498).
-      case ErrorCode.General =>
-        message match {
-          case Some(m) if FeatureFlagError.looksLikeAuthFailure(m) =>
-            FeatureFlagError.unauthorized(m, new ProviderReportedError(m))
-          case _ =>
-            FeatureFlagError.ProviderError(new ProviderReportedError(message.getOrElse("general error")))
-        }
-    }
+  private[openfeature] def onStaleEvent(details: EventDetails): UIO[Unit] = eventBridge.onStaleEvent(details)
 
-  private def checkProviderStatus: IO[FeatureFlagError, Unit] =
-    providerStatus.flatMap {
-      case ProviderStatus.Fatal    => ZIO.fail(FeatureFlagError.ProviderFatal)
-      case ProviderStatus.NotReady => ZIO.fail(FeatureFlagError.ProviderNotReady(ProviderStatus.NotReady))
-      case ProviderStatus.ShuttingDown =>
-        ZIO.fail(FeatureFlagError.ProviderNotReady(ProviderStatus.ShuttingDown))
-      // Error/Ready/Stale proceed: fast-failing only NOT_READY and FATAL is this library's deliberate policy — spec
-      // v0.9.0 removed the requirements that used to mandate this and renumbered the equivalent scenarios to
-      // @spec-2.2.7 (+ @spec-1.4.10) as *permitted*, not required, behaviour. A provider in ERROR is typically a
-      // transient, recoverable state and commonly still serves cached values — let the evaluation reach it (the
-      // provider serves or errors on its own) rather than turning one PROVIDER_ERROR into a total outage.
-      case _ => Exit.unit
-    }
-
-  // Context is already merged by evaluateWithDetails before entering the hook pipeline
-  private def evaluateFlag[A: FlagType](
-    key: String,
-    default: A,
-    context: EvaluationContext,
-    timeout: Option[Duration] = None
-  ): IO[FeatureFlagError, FlagResolution[A]] =
-    // The provider-readiness gate (`checkProviderStatus`) applies only where the value must actually come from the
-    // provider. A transaction override or a cached evaluation resolves purely locally and MUST still succeed while the
-    // provider is NotReady / Fatal / shutting down — that fallback role is the whole point of overrides (spec:
-    // deterministic tests without a live provider, and forcing known-safe values while a provider is down). So the gate
-    // is pushed down onto the provider-hitting paths (`evaluateFromClient` here, `evaluateAndCache` in
-    // `evaluateWithTransaction`) rather than run up front.
-    state.transactionRef.get.flatMap {
-      case Some(ts) => evaluateWithTransaction(key, default, context, ts, timeout)
-      case None     => checkProviderStatus *> evaluateFromClient(key, default, context, timeout)
-    }
-
-  private def evaluateWithTransaction[A: FlagType](
-    key: String,
-    default: A,
-    context: EvaluationContext,
-    txState: TransactionState,
-    timeout: Option[Duration] = None
-  ): IO[FeatureFlagError, FlagResolution[A]] = {
-    val flagType = FlagType[A]
-    // First check for explicit overrides
-    txState.getOverride(key) match {
-      case Some(overrideValue) =>
-        decodeOverride(flagType, overrideValue) match {
-          case Right(decoded) =>
-            val resolution = FlagResolution.cached(key, decoded)
-            FlagEvaluation.overridden(key, decoded).flatMap { eval =>
-              txState.record(eval).as(resolution)
-            }
-          case Left(reason) =>
-            val actual = if (overrideValue == null) "null" else overrideValue.getClass.getSimpleName
-            ZIO.fail(FeatureFlagError.OverrideTypeMismatch(key, flagType.typeName, s"$actual ($reason)"))
-        }
-
-      case None =>
-        // Check for cached evaluation from previous call in this transaction. A usable cache hit resolves locally; only
-        // the paths that must reach the provider (`evaluateAndCache`) run behind the readiness gate.
-        txState.getCachedEvaluation(key).flatMap {
-          case Some(cached) =>
-            // The cache holds the WIRE value, so this is the same decode the provider path runs — a custom type's
-            // domain value would not decode (decode is wire → domain), and that is what used to make the cache miss on
-            // every read for such types (#359). A `Left` now means a genuine cross-type read of the same key (cached as
-            // Boolean, re-read as String): not an error, just not servable from the cache.
-            flagType.decode(cached.wire) match {
-              case Right(decoded) =>
-                ZIO.succeed(FlagResolution.cached(key, decoded))
-              case Left(reason) =>
-                ZIO.logDebug(
-                  s"Transaction cache for '$key' does not decode as ${flagType.typeName} ($reason); evaluating from the provider"
-                ) *> checkProviderStatus *> evaluateAndCache(key, default, context, txState, timeout)
-            }
-          case None =>
-            checkProviderStatus *> evaluateAndCache(key, default, context, txState, timeout)
-        }
-    }
-  }
-
-  /** An override may be given as the WIRE value (`"dual_write"`) or the DOMAIN value (`Phase.DualWrite`). Wire is tried
-    * first — for every built-in the two coincide, so that is the whole story there. Otherwise the value is treated as a
-    * domain value and round-tripped through `encode`; `decode` stays the sole arbiter, so whatever is accepted is a
-    * real `A` that `decode` produced. A value of the wrong type typically throws inside `encode` (the erased cast is
-    * caught here) or encodes to something `decode` rejects; a total `encode` that maps a foreign value to a decodable
-    * wire form would accept it. Both reasons are reported — the wire one first, since it names the type the caller most
-    * likely meant, then why the value did not pass as a domain value either.
-    */
-  private def decodeOverride[A](flagType: FlagType[A], raw: Any): Either[String, A] =
-    flagType.decode(raw).left.flatMap { wireReason =>
-      scala.util
-        .Try(flagType.encode(raw.asInstanceOf[A]))
-        .toEither
-        .left
-        .map(t => s"encode threw ${t.getClass.getSimpleName}: ${t.getMessage}")
-        .flatMap(flagType.decode)
-        .left
-        .map { domainReason =>
-          if (domainReason == wireReason) wireReason else s"$wireReason; not a domain value either: $domainReason"
-        }
-    }
-
-  private def evaluateAndCache[A: FlagType](
-    key: String,
-    default: A,
-    context: EvaluationContext,
-    txState: TransactionState,
-    timeout: Option[Duration] = None
-  ): IO[FeatureFlagError, FlagResolution[A]] =
-    for {
-      resolution <- evaluateFromClient(key, default, context, timeout)
-      eval       <- zio.openfeature.FlagEvaluation.evaluated(key, resolution)
-      _          <- txState.record(eval)
-    } yield resolution
-
-  private def evaluateFromClient[A: FlagType](
-    key: String,
-    default: A,
-    context: EvaluationContext,
-    timeout: Option[Duration] = None
-  ): IO[FeatureFlagError, FlagResolution[A]] = {
-    val flagType  = FlagType[A]
-    val ofContext = toJavaContext(context)
-
-    // The only place a provider call can be abandoned, so the abandoned-call cap (#437) lives here and nowhere else:
-    // the untimed path cannot abandon a call and never touches the counter.
-    def withTimeout[B](effect: Task[B]): Task[B] =
-      timeout match {
-        case Some(d) =>
-          ZIO.suspendSucceed {
-            val abandoned = abandonedCalls.get()
-            // Check, then start: under a race a few calls may slip past the cap, which is fine — it bounds the thread
-            // leak, it is not an exact quota.
-            if (abandoned >= maxAbandonedCalls) rejectAbandoned(abandoned)
-            else {
-              // Exactly one of the finalizer (Running -> Done) and the abandoning side (Running -> Abandoned) wins the
-              // CAS, so the counter is incremented and decremented once per abandoned call and never drifts.
-              val call = new java.util.concurrent.atomic.AtomicInteger(FeatureFlagsLive.CallRunning)
-              val abandon = ZIO.succeed {
-                if (call.compareAndSet(FeatureFlagsLive.CallRunning, FeatureFlagsLive.CallAbandoned))
-                  abandonedCalls.incrementAndGet()
-              }.unit
-              effect
-                // Before `.disconnect`, so the finalizer runs on the disconnected fiber when the provider finally
-                // returns, however long after the caller moved on.
-                .ensuring(ZIO.succeed {
-                  if (!call.compareAndSet(FeatureFlagsLive.CallRunning, FeatureFlagsLive.CallDone))
-                    abandonedCalls.decrementAndGet()
-                })
-                .disconnect
-                .timeoutFail(new java.util.concurrent.TimeoutException(s"Evaluation of '$key' timed out after $d"))(d)
-                .tapError {
-                  case _: java.util.concurrent.TimeoutException => abandon
-                  case _                                        => ZIO.unit
-                }
-                // An interrupted caller walks away from the disconnected call just as a timeout does.
-                .onInterrupt(abandon)
-            }
-          }
-        case None => effect
-      }
-
-    def rejectAbandoned[B](abandoned: Int): Task[B] = {
-      val error = new java.util.concurrent.RejectedExecutionException(
-        s"Evaluation of '$key' rejected: $abandoned abandoned provider calls are still running " +
-          s"(cap $maxAbandonedCalls); the provider appears hung"
-      )
-      fallbackLogLimiter.logRejection(error.getMessage) *> ZIO.fail(error)
-    }
-
-    val evaluation: IO[FeatureFlagError, FlagResolution[A]] =
-      ClientEvaluator.evaluateStandard[A](flagType, client, key, default, ofContext) match {
-        // The instance declares a scalar wire type its `encode` does not produce — a contract violation, surfaced as
-        // a typed error rather than an opaque ClassCastException from inside the SDK bridge (#360).
-        case Some(Left(message)) =>
-          ZIO.fail(FeatureFlagError.TypeMismatch(key, flagType.typeName, message))
-
-        case Some(Right(erased)) =>
-          withTimeout(erased.task)
-            .mapError(e => FeatureFlagError.classify(e))
-            .flatMap { details =>
-              erased.extract(details) match {
-                case Right(value) =>
-                  toFlagResolution(key, details).map(r => r.copy(value = value))
-                case Left(message) =>
-                  // The provider answered, but its value is not a valid `A` — e.g. an unknown enum variant on a
-                  // string-backed type. A typed failure, not a silent fall back to the default: the total tier
-                  // (`*OrDefault`) still absorbs it upstream for callers who opted into that.
-                  ZIO.fail(FeatureFlagError.TypeMismatch(key, flagType.typeName, message))
-              }
-            }
-
-        // Reference identity to the built-in instance, not a name test: this branch casts the default to
-        // `Map[String, Any]` and serves the raw map as `A` past `decode`, which is only sound for that instance. Any
-        // other object-backed type, even one named "Object" (`FlagType.from("Object", ...)`), falls through to the
-        // decode branch below so its own `decode` runs (#439).
-        case None if flagType eq FlagType.objectFlagType =>
-          withTimeout(
-            ZIO.attemptBlocking {
-              // Through `anyToValue` so a `Map` flag encodes its members exactly as a derived product does. Building
-              // the structure with `anyToObject` instead left this path stringifying `Option` members (`"Some(1)"`)
-              // while the custom-type path sent the unwrapped value.
-              client.getObjectDetails(key, anyToValue(default.asInstanceOf[Map[String, Any]]), ofContext)
-            }
-          ).mapError(e => FeatureFlagError.classify(e))
-            .flatMap { details =>
-              val value = valueToMap(details.getValue)
-              toFlagMetadata(details.getFlagMetadata).map { metadata =>
-                FlagResolution(
-                  value = value.asInstanceOf[A],
-                  variant = Option(details.getVariant),
-                  reason = toResolutionReason(details.getReason),
-                  metadata = metadata,
-                  flagKey = key,
-                  errorCode = Option(details.getErrorCode).map(ErrorCodeConverter.fromJava),
-                  errorMessage = Option(details.getErrorMessage)
-                )
-              }
-            }
-
-        case None =>
-          // Custom type: resolve through the object surface and decode. The caller's default is ENCODED and sent
-          // down — it used to be an empty `Value()`, which meant a provider could never serve the caller's default
-          // for a custom type the way it does for the scalar ones.
-          withTimeout(
-            ZIO.attemptBlocking {
-              client.getObjectDetails(key, anyToValue(flagType.encode(default)), ofContext)
-            }
-          ).mapError(e => FeatureFlagError.classify(e))
-            .flatMap { details =>
-              val providerError = Option(details.getErrorCode).map(ErrorCodeConverter.fromJava)
-              val decoded       = valueToAny(details.getValue).map(flagType.decode)
-
-              decoded match {
-                case Some(Right(value)) =>
-                  toFlagMetadata(details.getFlagMetadata).map { metadata =>
-                    FlagResolution(
-                      value = value,
-                      variant = Option(details.getVariant),
-                      reason = toResolutionReason(details.getReason),
-                      metadata = metadata,
-                      flagKey = key,
-                      errorCode = providerError,
-                      errorMessage = Option(details.getErrorMessage)
-                    )
-                  }
-
-                // The provider itself reported a problem — FLAG_NOT_FOUND, PARSE_ERROR, ... Serve the caller's
-                // default and surface the provider's own code, which is exactly what the scalar path does.
-                // Relabelling this a `TypeMismatch` (the previous behaviour) hid the real cause and made every
-                // miss on a custom type look like a codec bug.
-                case _ if providerError.isDefined =>
-                  toFlagMetadata(details.getFlagMetadata).map { metadata =>
-                    FlagResolution(
-                      value = default,
-                      variant = Option(details.getVariant),
-                      reason = ResolutionReason.Error,
-                      metadata = metadata,
-                      flagKey = key,
-                      errorCode = providerError,
-                      errorMessage = Option(details.getErrorMessage)
-                    )
-                  }
-
-                // The provider answered successfully but the payload is not a valid `A` — a genuine codec failure,
-                // which must stay loud rather than being absorbed into the default.
-                case Some(Left(message)) =>
-                  ZIO.fail(FeatureFlagError.TypeMismatch(key, flagType.typeName, message))
-
-                // Nothing extractable, and the provider reported no error. Let the instance say what an absent
-                // value means before failing: `FlagType[Option[A]]` decodes null to `None`, and an `Option` over an
-                // object-backed type (`Option[Rollout]`) routes down this very path, so failing outright here would make
-                // a legitimately empty optional flag unresolvable.
-                case None =>
-                  flagType.decode(null) match {
-                    case Right(empty) =>
-                      toFlagMetadata(details.getFlagMetadata).map { metadata =>
-                        FlagResolution(
-                          value = empty,
-                          variant = Option(details.getVariant),
-                          reason = toResolutionReason(details.getReason),
-                          metadata = metadata,
-                          flagKey = key,
-                          errorCode = providerError,
-                          errorMessage = Option(details.getErrorMessage)
-                        )
-                      }
-                    case Left(message) =>
-                      ZIO.fail(FeatureFlagError.TypeMismatch(key, flagType.typeName, message))
-                  }
-              }
-            }
-      }
-
-    // Check resolution error codes for provider-level failures (handles TOCTOU race
-    // where checkProviderStatus passes but the Java SDK's internal state is stale)
-    evaluation.flatMap { resolution =>
-      resolution.errorCode match {
-        case Some(ErrorCode.ProviderNotReady) =>
-          ZIO.fail(FeatureFlagError.ProviderNotReady(ProviderStatus.NotReady))
-        case Some(ErrorCode.ProviderFatal) =>
-          ZIO.fail(FeatureFlagError.ProviderFatal)
-        case _ =>
-          ZIO.succeed(resolution)
-      }
-    }
-  }
-
-  private def toFlagResolution[A](key: String, details: FlagEvaluationDetails[A]): UIO[FlagResolution[A]] =
-    toFlagMetadata(details.getFlagMetadata).map { metadata =>
-      FlagResolution(
-        value = details.getValue,
-        variant = Option(details.getVariant),
-        reason = toResolutionReason(details.getReason),
-        metadata = metadata,
-        flagKey = key,
-        errorCode = Option(details.getErrorCode).map(ErrorCodeConverter.fromJava),
-        errorMessage = Option(details.getErrorMessage)
-      )
-    }
-
-  private def toResolutionReason(reason: String): ResolutionReason =
-    Option(reason) match {
-      // `Unknown` is reserved for a genuinely absent reason. A non-null but unrecognized reason is a provider-specific
-      // one and must be passed through verbatim (spec 1.4.7), not collapsed — otherwise Optimizely/flagd custom reasons
-      // are lost to hooks, analytics, and debugging.
-      case None => ResolutionReason.Unknown
-      case Some(r) =>
-        r.toUpperCase match {
-          case "STATIC"          => ResolutionReason.Static
-          case "DEFAULT"         => ResolutionReason.Default
-          case "TARGETING_MATCH" => ResolutionReason.TargetingMatch
-          case "SPLIT"           => ResolutionReason.Split
-          case "CACHED"          => ResolutionReason.Cached
-          case "DISABLED"        => ResolutionReason.Disabled
-          case "STALE"           => ResolutionReason.Stale
-          case "ERROR"           => ResolutionReason.Error
-          case _                 => ResolutionReason.Other(r)
-        }
-    }
-
-  private def convertImmutableMetadata(javaMeta: dev.openfeature.sdk.ImmutableMetadata): FlagMetadata = {
-    val javaMap = javaMeta.asUnmodifiableMap()
-    if (javaMap == null || javaMap.isEmpty) FlagMetadata.empty
-    else {
-      val entries = javaMap.asScala.collect {
-        case (k, v: java.lang.Boolean) => k -> MetadataValue.BooleanValue(v.booleanValue())
-        case (k, v: java.lang.Integer) => k -> MetadataValue.IntValue(v.intValue())
-        case (k, v: java.lang.Long)    => k -> MetadataValue.LongValue(v.longValue())
-        case (k, v: java.lang.Float)   => k -> MetadataValue.FloatValue(v.floatValue())
-        case (k, v: java.lang.Double)  => k -> MetadataValue.DoubleValue(v.doubleValue())
-        case (k, v: String)            => k -> MetadataValue.StringValue(v)
-        case (k, v) if v != null       => k -> MetadataValue.StringValue(v.toString)
-      }.toMap
-      FlagMetadata(entries)
-    }
-  }
-
-  private def toFlagMetadata(metadata: dev.openfeature.sdk.ImmutableMetadata): UIO[FlagMetadata] =
-    if (metadata == null || metadata.isEmpty) ZIO.succeed(FlagMetadata.empty)
-    else
-      ZIO
-        .attempt(convertImmutableMetadata(metadata))
-        .catchAll(e => ZIO.logWarning(s"Failed to parse flag metadata: ${e.getMessage}").as(FlagMetadata.empty))
-
-  // The Scala <-> SDK `Value` conversions live in `internal.ValueBridge` so that `testkit.FlagTypeLaws` can check a
-  // `FlagType` against the bridge this code actually crosses, rather than against a copy that could drift from it.
-  // Kept as local aliases so call sites read unchanged.
-  private def anyToObject(value: Any): Object                                = ValueBridge.anyToObject(value)
-  private def anyToValue(value: Any): dev.openfeature.sdk.Value              = ValueBridge.anyToValue(value)
-  private def valueToMap(value: dev.openfeature.sdk.Value): Map[String, Any] = ValueBridge.valueToMap(value)
-  private def valueToAny(value: dev.openfeature.sdk.Value): Option[Any]      = ValueBridge.valueToAny(value)
+  private[openfeature] def startEventBridge: ZIO[Scope, Nothing, Unit] = eventBridge.startEventBridge
 
   // Detailed evaluation methods (one per type, with default parameters from trait)
 
@@ -849,7 +106,7 @@ final private[openfeature] class FeatureFlagsLive(
     ctx: EvaluationContext,
     options: EvaluationOptions
   ): IO[FeatureFlagError, FlagResolution[Boolean]] =
-    evaluateWithDetails(key, default, ctx, options)
+    evaluator.evaluateWithDetails(key, default, ctx, options)
 
   override def stringDetails(
     key: String,
@@ -857,7 +114,7 @@ final private[openfeature] class FeatureFlagsLive(
     ctx: EvaluationContext,
     options: EvaluationOptions
   ): IO[FeatureFlagError, FlagResolution[String]] =
-    evaluateWithDetails(key, default, ctx, options)
+    evaluator.evaluateWithDetails(key, default, ctx, options)
 
   override def intDetails(
     key: String,
@@ -865,7 +122,7 @@ final private[openfeature] class FeatureFlagsLive(
     ctx: EvaluationContext,
     options: EvaluationOptions
   ): IO[FeatureFlagError, FlagResolution[Int]] =
-    evaluateWithDetails(key, default, ctx, options)
+    evaluator.evaluateWithDetails(key, default, ctx, options)
 
   override def longDetails(
     key: String,
@@ -873,7 +130,7 @@ final private[openfeature] class FeatureFlagsLive(
     ctx: EvaluationContext,
     options: EvaluationOptions
   ): IO[FeatureFlagError, FlagResolution[Long]] =
-    evaluateWithDetails(key, default, ctx, options)
+    evaluator.evaluateWithDetails(key, default, ctx, options)
 
   override def doubleDetails(
     key: String,
@@ -881,7 +138,7 @@ final private[openfeature] class FeatureFlagsLive(
     ctx: EvaluationContext,
     options: EvaluationOptions
   ): IO[FeatureFlagError, FlagResolution[Double]] =
-    evaluateWithDetails(key, default, ctx, options)
+    evaluator.evaluateWithDetails(key, default, ctx, options)
 
   override def objDetails(
     key: String,
@@ -889,7 +146,7 @@ final private[openfeature] class FeatureFlagsLive(
     ctx: EvaluationContext,
     options: EvaluationOptions
   ): IO[FeatureFlagError, FlagResolution[Map[String, Any]]] =
-    evaluateWithDetails(key, default, ctx, options)
+    evaluator.evaluateWithDetails(key, default, ctx, options)
 
   override def valueDetails[A: FlagType](
     key: String,
@@ -897,48 +154,7 @@ final private[openfeature] class FeatureFlagsLive(
     ctx: EvaluationContext,
     options: EvaluationOptions
   ): IO[FeatureFlagError, FlagResolution[A]] =
-    evaluateWithDetails(key, default, ctx, options)
-
-  private def evaluateWithDetails[A: FlagType](
-    key: String,
-    default: A,
-    ctx: EvaluationContext,
-    options: EvaluationOptions
-  ): IO[FeatureFlagError, FlagResolution[A]] = {
-    // Resolve the per-call selection against the instance's global timeout. `After` and `Disabled` override the global;
-    // `Default` defers to it. The result is `Option[Duration]` (None => skip the timeout scaffolding entirely).
-    val timeout = options.timeout match {
-      case EvaluationTimeout.After(d) => Some(d)
-      case EvaluationTimeout.Disabled => None
-      case EvaluationTimeout.Default  => evaluationTimeout
-    }
-    effectiveContext(ctx)
-      .flatMap { effectCtx =>
-        runWithHooks(
-          key,
-          default,
-          effectCtx,
-          c => evaluateFlag(key, default, c, timeout),
-          options.hooks,
-          options.hookHints
-        )
-      }
-      .flatMap { resolution =>
-        // The typed tier fails on a provider-reported error CODE, not only on a thrown one (#388). Most providers report
-        // FLAG_NOT_FOUND / TYPE_MISMATCH / ... as a code on the resolution and never throw, so without this the tier a
-        // caller reaches for precisely because a default would be wrong handed the default back with no signal — a
-        // fail-closed gate written with `value` was silently fail-open. Promoted HERE, after the hook pipeline, so hooks
-        // keep observing exactly what they did (the `error` stage via the pipeline's own errorCode branch, and a
-        // `finallyAfter` with the details — which is also what the Java SDK hands `finally` on error), and so a
-        // transaction still records the evaluation for audit. The total tier (`*OrDefault`/`resolveOrDefault`) is built
-        // on this failure channel and keeps serving the default with the code, as before.
-        resolution.errorCode match {
-          case Some(code) =>
-            ZIO.fail(errorFromResolution(key, code, resolution.errorMessage, expected = FlagType[A].typeName))
-          case None => ZIO.succeed(resolution)
-        }
-      }
-  }
+    evaluator.evaluateWithDetails(key, default, ctx, options)
 
   override def setGlobalContext(ctx: EvaluationContext): UIO[Unit] =
     state.globalContextRef.set(ctx)
@@ -1131,148 +347,20 @@ final private[openfeature] class FeatureFlagsLive(
   override def clientMetadata: UIO[ClientMetadata] =
     ZIO.succeed(ClientMetadata(domain, version))
 
-  // Event Handlers - return cancellation effects per OpenFeature spec 5.2.7
-
-  /** Runs `zio` with this library's FiberRefs reset (#436). A handler outlives the call that registered it, so it must
-    * not carry that call's transaction (whose overrides it would keep applying, and whose finished state it would keep
-    * recording into) or its fiber-local context. Other FiberRefs — log annotations, ones a ContextSource reads — are
-    * still inherited.
-    */
-  private def detached[R, E, A](zio: ZIO[R, E, A]): ZIO[R, E, A] =
-    state.transactionRef.locally(None)(state.fiberContextRef.locally(EvaluationContext.empty)(zio))
-
-  /** Fork a daemon fiber consuming hub events, guaranteeing the hub subscription is established before this method
-    * returns. Without the handshake, events published between handler registration and the forked stream's first pull
-    * would be silently lost. The returned effect cancels the subscription.
-    */
-  private def consumeEvents(consume: ZStream[Any, Nothing, ProviderEvent] => UIO[Unit]): UIO[UIO[Unit]] =
-    for {
-      subscribed <- Promise.make[Nothing, Unit]
-      // Forked inside `detached`, so the fork copies the reset FiberRefs rather than the registering fiber's.
-      // `interruptible`: a fork inherits the registering fiber's interruptibility, and `acquireRelease` runs its acquire
-      // uninterruptibly, so without it a handler registered there could never be cancelled (the canceller hung).
-      fiber <- detached(
-        ZIO
-          .scoped {
-            state.eventHub.subscribe.flatMap { queue =>
-              subscribed.succeed(()) *> consume(ZStream.fromQueue(queue))
-            }
-          }
-          .interruptible
-          .forkDaemon
-      )
-      _ <- subscribed.await
-    } yield fiber.interrupt.unit
-
-  /** Per OpenFeature spec 5.3.3, handlers attached after the provider reaches an associated state MUST run immediately.
-    *
-    * The subscription is established first, then the current status is checked: no event can fall between the two. The
-    * cost is at-least-once delivery — an event arriving in that window may invoke the handler via both the immediate
-    * check and the stream.
-    */
-  // Isolate a handler invocation so a defect does NOT kill the delivery fiber — the subscription is retained and the
-  // handler keeps receiving subsequent events (spec 5.2.5). `suspendSucceed` is essential: it captures a *synchronous*
-  // throw while `handler(a)` is producing its effect (e.g. a raw exception thrown in the handler body before it returns
-  // a ZIO) as a defect, not just an already-suspended `ZIO.die`. Interruption is re-raised (not logged) so cancelling
-  // the subscription still tears the fiber down.
-  private def isolate[A](handler: A => UIO[Unit]): A => UIO[Unit] =
-    a =>
-      ZIO.suspendSucceed(handler(a)).catchAllCause { cause =>
-        cause.dieOption match {
-          case Some(_) => ZIO.logErrorCause("event handler failed; subscription retained", cause)
-          case None    => ZIO.refailCause(cause)
-        }
-      }
-
-  private def subscribeToEvent[A](
-    immediateCondition: ProviderStatus => Boolean,
-    immediatePayload: => A,
-    collect: PartialFunction[ProviderEvent, A],
-    handler: A => UIO[Unit]
-  ): UIO[UIO[Unit]] = {
-    val safe = isolate(handler)
-    for {
-      cancel <- consumeEvents(_.collect(collect).foreach(safe))
-      status <- providerStatus
-      _      <- ZIO.when(immediateCondition(status))(detached(safe(immediatePayload)))
-    } yield cancel
-  }
-
   override def onProviderReady(handler: ProviderMetadata => UIO[Unit]): UIO[UIO[Unit]] =
-    ZIO.succeed(providerNameRef.get()).flatMap { pName =>
-      val metadata = ProviderMetadata(pName)
-      subscribeToEvent(
-        _ == ProviderStatus.Ready,
-        metadata,
-        { case ProviderEvent.Ready(m, _) => m },
-        handler
-      )
-    }
+    eventBridge.onProviderReady(handler)
 
   override def onProviderError(handler: (Throwable, ProviderMetadata) => UIO[Unit]): UIO[UIO[Unit]] =
-    ZIO.succeed(providerNameRef.get()).flatMap { pName =>
-      val metadata = ProviderMetadata(pName)
-      subscribeToEvent(
-        s => s == ProviderStatus.Error || s == ProviderStatus.Fatal,
-        (new RuntimeException("Provider in error state"), metadata),
-        { case ProviderEvent.Error(error, m, _, _, _) => (error, m) },
-        handler.tupled
-      )
-    }
+    eventBridge.onProviderError(handler)
 
   override def onProviderStale(handler: (String, ProviderMetadata) => UIO[Unit]): UIO[UIO[Unit]] =
-    ZIO.succeed(providerNameRef.get()).flatMap { pName =>
-      val metadata = ProviderMetadata(pName)
-      subscribeToEvent(
-        _ == ProviderStatus.Stale,
-        ("Provider in stale state", metadata),
-        { case ProviderEvent.Stale(reason, m, _) => (reason, m) },
-        handler.tupled
-      )
-    }
+    eventBridge.onProviderStale(handler)
 
-  override def onConfigurationChanged(handler: (Set[String], ProviderMetadata) => UIO[Unit]): UIO[UIO[Unit]] = {
-    // Configuration changed doesn't have an "associated state" so no immediate execution needed.
-    val safe = isolate[(Set[String], ProviderMetadata)] { case (flags, m) => handler(flags, m) }
-    consumeEvents(_.collect { case ProviderEvent.ConfigurationChanged(flags, m, _) => (flags, m) }.foreach(safe))
-  }
+  override def onConfigurationChanged(handler: (Set[String], ProviderMetadata) => UIO[Unit]): UIO[UIO[Unit]] =
+    eventBridge.onConfigurationChanged(handler)
 
-  // The generic `on` delivers the ORIGINAL event from the stream (preserving every payload field — errorCode,
-  // errorMessage, eventMetadata, ...), not a narrowed reconstruction. Associated-state events (Ready/Error/Stale) still
-  // fire immediately when the provider is already in that state (spec 5.3.3), using a synthetic event that reflects the
-  // current state (there is no original event to replay for an already-reached state). All invocations are isolated.
-  // Suspended so the provider name is read when the registration runs, not when the effect is built (#444).
   override def on(eventType: ProviderEventType, handler: ProviderEvent => UIO[Unit]): UIO[UIO[Unit]] =
-    ZIO.suspendSucceed {
-      val metadata = ProviderMetadata(providerNameRef.get())
-      eventType match {
-        case ProviderEventType.Ready =>
-          subscribeToEvent[ProviderEvent](
-            _ == ProviderStatus.Ready,
-            ProviderEvent.Ready(metadata),
-            { case e: ProviderEvent.Ready => e },
-            handler
-          )
-        case ProviderEventType.Error =>
-          subscribeToEvent[ProviderEvent](
-            s => s == ProviderStatus.Error || s == ProviderStatus.Fatal,
-            ProviderEvent.Error(new RuntimeException("Provider in error state"), metadata),
-            { case e: ProviderEvent.Error => e },
-            handler
-          )
-        case ProviderEventType.Stale =>
-          subscribeToEvent[ProviderEvent](
-            _ == ProviderStatus.Stale,
-            ProviderEvent.Stale("Provider in stale state", metadata),
-            { case e: ProviderEvent.Stale => e },
-            handler
-          )
-        case ProviderEventType.ConfigurationChanged =>
-          consumeEvents(_.filter(_.eventType == ProviderEventType.ConfigurationChanged).foreach(isolate(handler)))
-        case ProviderEventType.Reconnecting =>
-          consumeEvents(_.filter(_.eventType == ProviderEventType.Reconnecting).foreach(isolate(handler)))
-      }
-    }
+    eventBridge.on(eventType, handler)
 
   override def addHook(hook: FeatureHook): UIO[Unit] =
     state.hooksRef.update(_ :+ hook)

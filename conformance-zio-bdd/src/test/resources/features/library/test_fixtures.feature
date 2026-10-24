@@ -6,9 +6,11 @@ Feature: Typed test fixtures and distinctly-named test providers
   providers by their metadata name, so two default-named test providers are indistinguishable to it.
   (A `MultiProvider` chain also kept only the last same-named provider before Java SDK 1.23.0.)
 
+  # Read through the integer resolver: the test provider serves a value only as its stored type (#457), so this also
+  # proves the override was stored as the Int wire value rather than a `Level`.
   Scenario: A typed override stores the flag's wire value, not its domain value
     Given a test provider seeded with the typed override MaxItems set to 250
-    When the string flag "max.items" is evaluated with default "none"
+    When the integer flag "max.items" is evaluated with default 0
     Then the flag value is "250"
 
   Scenario: A typed override of a derived enum stores its canonical label

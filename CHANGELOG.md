@@ -28,9 +28,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Concurrency property tests** (#465) for hook-data isolation (#438), circuit-breaker epochs (#447) and cache
   invalidation (#449), plus a generated swap/evaluate schedule in the hot-swap stress spec. Test-only.
 - Hostile-input property sweeps (Long beyond 2^53, NaN/Infinity/-0.0, emoji and control-character keys, nulls, deep and large structures) through value/context conversion, tracking conversion, OFREP response decoding and the Optimizely context transformer (#469).
+- **`CachingProvider.scoped` and `CircuitBreakerProvider.scoped`, and config validation for both wrappers** (#451).
+  `scoped(underlying, config)` is `make` plus a finalizer that shuts the wrapper (and so the wrapped provider) down,
+  bounded and logged on failure; use `ZLayer.scoped(...)` for a layer. Every constructor now checks the config:
+  `failureThreshold` and `halfOpenMaxCalls` at least 1, `resetTimeout`, `evaluationTimeout` and `probeTimeout` greater
+  than zero (`Duration.Infinity` legal), `stateCheckInterval` zero or more, `maxEntries` at least 1, `ttl` greater
+  than zero (`Duration.Infinity` legal). Before, a zero `evaluationTimeout` failed every call, a non-positive
+  `maxEntries` cached nothing, and a negative `ttl` or `resetTimeout` expired at once. The unsafe `apply`
+  constructors, including the standalone `CircuitBreaker.apply`, throw `IllegalArgumentException`. Both wrappers'
+  `shutdown()` is now idempotent, so a wrapper that is scoped and registered with `FeatureFlags` shuts its delegate
+  down once.
 
 ### Changed
 
+- **`CachingProvider.make` and `CircuitBreakerProvider.make` can fail** (#451). They return
+  `IO[FeatureFlagError.InvalidConfiguration, _]` instead of `UIO`, the same as the OFREP and Optimizely `make`, failing
+  with a message naming each invalid field (`CircuitBreakerProviderConfig.failureThreshold must be >= 1, got 0`).
+  Binary-compatible; code that annotates the result as `UIO`/`ULayer`, or a layer error type as `Throwable`, widens
+  it to include `FeatureFlagError`.
 - **Tuning defaults are named** (#462). The circuit breaker, cache, construction-retry, event-hub, polling and
   watchdog defaults now come from named constants instead of literals at the call sites; no value changed. Public:
   `CircuitBreaker.DefaultFailureThreshold`/`DefaultResetTimeout`/`DefaultHalfOpenMaxCalls`/`DefaultProbeTimeout`

@@ -117,8 +117,8 @@ Wraps any provider and keeps its answers for a while, using [zio-cache](https://
 
 | `CachingConfig` field | Default | Meaning |
 |---|---|---|
-| `maxEntries` | `1000` | entries kept before the least recently used is evicted |
-| `ttl` | `5.minutes` | how long an entry is served |
+| `maxEntries` | `1000` | entries kept before the least recently used is evicted; at least `1` |
+| `ttl` | `5.minutes` | how long an entry is served; greater than zero, and `Duration.Infinity` never expires |
 | `contextKeys` | `None` | which context attributes make up the cache key; `None` uses the whole context |
 
 If your context carries something unique per request, such as a request id, every evaluation becomes its own entry
@@ -183,12 +183,12 @@ targeting key or invalid context proves the provider answered, so it resets the 
 
 | `CircuitBreakerProviderConfig` field | Default | Meaning |
 |---|---|---|
-| `failureThreshold` | `5` | consecutive failures that open the circuit |
-| `resetTimeout` | `30.seconds` | how long the circuit stays open before a probe |
-| `evaluationTimeout` | `500.millis` | longest wait for one provider call; `Duration.Infinity` disables it |
-| `halfOpenMaxCalls` | `1` | successful probes needed to close the circuit |
+| `failureThreshold` | `5` | consecutive failures that open the circuit; at least `1` |
+| `resetTimeout` | `30.seconds` | how long the circuit stays open before a probe; greater than zero, and `Duration.Infinity` means only a `PROVIDER_READY` event (or a polled `READY`, for a circuit a poll opened) closes it |
+| `evaluationTimeout` | `500.millis` | longest wait for one provider call, greater than zero; `Duration.Infinity` disables it |
+| `halfOpenMaxCalls` | `1` | successful probes needed to close the circuit; at least `1` |
 | `stalePolicy` | `StalePolicy.Open` | what a `STALE` provider does: `Open` the circuit, `HalfOpen` it, or `Ignore` it |
-| `stateCheckInterval` | `1.second` | how often the provider's state is polled; `Duration.Zero` polls on every call |
+| `stateCheckInterval` | `1.second` | how often the provider's state is polled, zero or more; `Duration.Zero` polls on every call |
 
 When failures open the circuit, the breaker emits `PROVIDER_STALE`; when a probe closes it, `PROVIDER_READY`. While it is
 open, it reports its own state as `ERROR`, and `STALE` while half-open.
@@ -202,6 +202,18 @@ open, it reports its own state as `ERROR`, and `STALE` while half-open.
 `CircuitBreaker` and `CircuitBreakerConfig` are the state machine behind the provider. `CircuitBreakerConfig` has the
 same `failureThreshold`, `resetTimeout` and `halfOpenMaxCalls`, plus `probeTimeout`: how long a probe may hold the
 half-open slot before another caller can take it. The provider sets it to `evaluationTimeout` plus one second.
+
+### Construction and lifecycle
+
+Both wrappers check their config when you build them. `make` fails with a `FeatureFlagError.InvalidConfiguration`
+naming every field outside the bounds in the tables above, for example
+`CircuitBreakerProviderConfig.failureThreshold must be >= 1, got 0`. The unsafe `apply` constructors throw an
+`IllegalArgumentException` with the same message.
+
+`scoped` is `make` plus a finalizer: when the scope closes, the wrapper is shut down, which shuts down the wrapped
+provider too. Wrap it in `ZLayer.scoped(...)` to get a layer, as the examples above do. It is safe to register a scoped
+wrapper with `FeatureFlags` as well: a wrapper's `shutdown()` runs once, so the wrapped provider is not shut down a
+second time.
 
 ## Deferred provider
 

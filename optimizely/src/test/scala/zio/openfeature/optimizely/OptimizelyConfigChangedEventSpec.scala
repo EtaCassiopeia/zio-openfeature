@@ -5,8 +5,6 @@ import com.github.tomakehurst.wiremock.client.WireMock._
 import com.github.tomakehurst.wiremock.core.WireMockConfiguration
 import com.github.tomakehurst.wiremock.stubbing.Scenario
 import com.optimizely.ab.Optimizely
-import com.optimizely.ab.config.HttpProjectConfigManager
-import com.optimizely.ab.notification.NotificationCenter
 import dev.openfeature.sdk.OpenFeatureAPI
 import zio._
 import zio.test._
@@ -55,7 +53,7 @@ object OptimizelyConfigChangedEventSpec extends ZIOSpecDefault {
         val datafileUrl = s"http://localhost:${server.port()}$DatafilePath"
         val provider = Unsafe.unsafe { implicit u =>
           Runtime.default.unsafe
-            .run(OptimizelyProvider.make("struct-check-key", Some(datafileUrl), java.time.Duration.ofSeconds(3)))
+            .run(OptimizelyProvider.make("struct-check-key", Some(datafileUrl), OptimizelyTestSupport.InitWait))
             .getOrThrowFiberFailure()
         }
         try {
@@ -89,28 +87,21 @@ object OptimizelyConfigChangedEventSpec extends ZIOSpecDefault {
         )
 
         val datafileUrl = s"http://localhost:${server.port()}$DatafilePath"
-        // Build the underlying client manually with a 1-second polling interval so the second fetch happens within
+        // Build the underlying client by hand with a 1-second polling interval so the second fetch happens within
         // our 15s test window. The public `OptimizelyProvider.make` factory doesn't expose `pollingInterval` (the
-        // SDK default is 5 minutes), and this spec is regression-checking the production wiring, so we mirror the
-        // production code path: share a NotificationCenter between the manager and the Optimizely client. If the
+        // SDK default is 5 minutes), and this spec is regression-checking the production wiring, so `wiredClient`
+        // mirrors the production code path: one NotificationCenter shared by the manager and the client. If the
         // production fix in OptimizelyProvider.buildClient regresses (omitting the share), the manual construction
         // here also won't see the event — but the same configuration is what production callers get, so the
         // regression surface is preserved.
-        val sharedCenter = new NotificationCenter()
-        val configManager = HttpProjectConfigManager
-          .builder()
-          .withSdkKey("event-test-key")
-          .withUrl(datafileUrl)
-          .withBlockingTimeout(2000L, TimeUnit.MILLISECONDS)
-          .withPollingInterval(1L, TimeUnit.SECONDS)
-          .withNotificationCenter(sharedCenter)
-          // Fail-fast HTTP so the 1s poller can't retry against the stopped WireMock and hang the JVM (TestHttpClient).
-          .withOptimizelyHttpClient(TestHttpClient.failFast())
-          .build()
         val optimizely =
-          Optimizely.builder().withConfigManager(configManager).withNotificationCenter(sharedCenter).build()
+          OptimizelyTestSupport.wiredClient(
+            datafileUrl,
+            "event-test-key",
+            pollingInterval = java.time.Duration.ofSeconds(1)
+          )
         val provider =
-          new OptimizelyFeatureProvider(optimizely, java.time.Duration.ofSeconds(3), closeOnShutdown = true)
+          new OptimizelyFeatureProvider(optimizely, OptimizelyTestSupport.InitWait, closeOnShutdown = true)
         val api      = OpenFeatureAPI.getInstance()
         val domain   = s"optimizely-revbump-${UUID.randomUUID()}"
         val received = new AtomicInteger(0)

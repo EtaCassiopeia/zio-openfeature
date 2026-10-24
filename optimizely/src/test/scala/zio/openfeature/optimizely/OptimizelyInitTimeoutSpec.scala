@@ -26,6 +26,8 @@ object OptimizelyInitTimeoutSpec extends ZIOSpecDefault {
             val config = OptimizelyProviderConfig(
               sdkKey = "rejected-key",
               datafileUrl = Some(s"http://localhost:${server.port()}/datafiles/rejected-key.json"),
+              // These durations are the subject: init must fail with the provider's own error within initWait,
+              // before blockingTimeout and the 4s FeatureFlags init timeout. Do not widen them.
               initWait = java.time.Duration.ofSeconds(2),
               blockingTimeout = Some(java.time.Duration.ofSeconds(3))
             )

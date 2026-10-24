@@ -5,7 +5,12 @@ import com.github.tomakehurst.wiremock.client.WireMock._
 import com.github.tomakehurst.wiremock.core.WireMockConfiguration
 import zio._
 import zio.openfeature._
-import zio.openfeature.optimizely.{OptimizelyEvents, OptimizelyProvider, OptimizelyProviderConfig}
+import zio.openfeature.optimizely.{
+  OptimizelyEvents,
+  OptimizelyProvider,
+  OptimizelyProviderConfig,
+  OptimizelyTestSupport
+}
 import zio.test._
 
 /** Standalone ZIO test that exercises the RecommendationService against each datafile fixture without going through the
@@ -38,7 +43,7 @@ object RecommendationServiceSpec extends ZIOSpecDefault {
         config = OptimizelyProviderConfig(
           sdkKey = SdkKey,
           datafileUrl = Some(dataUrl),
-          initWait = java.time.Duration.ofSeconds(5),
+          initWait = OptimizelyTestSupport.InitWait,
           pollingInterval = Some(java.time.Duration.ofSeconds(3600)),
           blockingTimeout = Some(java.time.Duration.ofSeconds(2)),
           events = OptimizelyEvents.Disabled // nothing here is about events; keep them off the network (#453)

@@ -78,7 +78,7 @@ object OptimizelyStalenessSpec extends ZIOSpecDefault {
         val config = OptimizelyProviderConfig(
           sdkKey = "staleness-key",
           datafileUrl = Some(datafileUrl(server)),
-          initWait = java.time.Duration.ofSeconds(5),
+          initWait = OptimizelyTestSupport.InitWait,
           pollingInterval = Some(java.time.Duration.ofMillis(500)),
           blockingTimeout = Some(java.time.Duration.ofSeconds(2)),
           staleAfter = Some(java.time.Duration.ofSeconds(2)),
@@ -138,7 +138,7 @@ object OptimizelyStalenessSpec extends ZIOSpecDefault {
         val config = OptimizelyProviderConfig(
           sdkKey = "no-poll-key",
           datafileUrl = Some(datafileUrl(server)),
-          initWait = java.time.Duration.ofSeconds(5),
+          initWait = OptimizelyTestSupport.InitWait,
           pollingInterval = None,
           blockingTimeout = Some(java.time.Duration.ofSeconds(2)),
           staleAfter = Some(java.time.Duration.ofMillis(500))

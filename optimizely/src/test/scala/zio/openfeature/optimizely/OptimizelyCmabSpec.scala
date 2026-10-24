@@ -3,16 +3,14 @@ package zio.openfeature.optimizely
 import com.github.tomakehurst.wiremock.WireMockServer
 import com.github.tomakehurst.wiremock.client.WireMock._
 import com.github.tomakehurst.wiremock.core.WireMockConfiguration
-import com.optimizely.ab.{Optimizely, OptimizelyUserContext}
+import com.optimizely.ab.OptimizelyUserContext
 import com.optimizely.ab.cmab.service.{CmabDecision, CmabService}
-import com.optimizely.ab.config.{HttpProjectConfigManager, ProjectConfig}
+import com.optimizely.ab.config.ProjectConfig
 import com.optimizely.ab.event.LogEvent
 import com.optimizely.ab.event.internal.payload.EventBatch
 import com.optimizely.ab.optimizelydecision.OptimizelyDecideOption
 import dev.openfeature.sdk.{ErrorCode, ImmutableContext, Reason}
 import zio.test._
-
-import java.util.concurrent.TimeUnit
 
 // #474: Optimizely SDK 4.6.0 — CMAB experiments decide through a CmabService, a CMAB fetch failure is an evaluation
 // ERROR (not a silent DEFAULT), and event payloads serialize with this build's Jackson.
@@ -28,16 +26,12 @@ object OptimizelyCmabSpec extends ZIOSpecDefault {
     server.start()
     try {
       server.stubFor(get(urlEqualTo(DatafilePath)).willReturn(okJson(readResource("/datafiles/cmab.json"))))
-      val manager = HttpProjectConfigManager
-        .builder()
-        .withSdkKey("cmab-key")
-        .withUrl(s"http://localhost:${server.port()}$DatafilePath")
-        .withBlockingTimeout(2000, TimeUnit.MILLISECONDS)
-        .withPollingInterval(3600, TimeUnit.SECONDS)
-        .withOptimizelyHttpClient(TestHttpClient.failFast())
-        .build()
-      val client   = Optimizely.builder().withConfigManager(manager).withCmabService(cmab).build()
-      val provider = new OptimizelyFeatureProvider(client, java.time.Duration.ofSeconds(3), closeOnShutdown = true)
+      val client = OptimizelyTestSupport.wiredClient(
+        s"http://localhost:${server.port()}$DatafilePath",
+        "cmab-key",
+        customize = _.withCmabService(cmab)
+      )
+      val provider = new OptimizelyFeatureProvider(client, OptimizelyTestSupport.InitWait, closeOnShutdown = true)
       provider.initialize(new ImmutableContext())
       try body(provider)
       finally provider.shutdown()

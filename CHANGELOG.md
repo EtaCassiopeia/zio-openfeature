@@ -30,6 +30,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (shared by both breaker configs, so they cannot drift), `CircuitBreakerProvider.DefaultEvaluationTimeout`/
   `DefaultStateCheckInterval`, `CachingProvider.DefaultMaxEntries`/`DefaultTtl`, `FeatureFlags.DefaultConstructionRetry`
   and `TestFeatureProvider.DefaultInitDelay`.
+- **`clearApiHooks` warns on a `Shared` instance** (#472). The API is shared, so the call clears the API-level hooks of
+  every sibling client; from an instance that does not own the API it now logs one warning saying so (an `Owned`
+  instance logs nothing). Behaviour is unchanged. The scaladoc of `addApiHook`, `clearApiHooks`, the `on*` handlers
+  (run the canceller, or scope it with `acquireRelease`) and `FeatureHook.logging` (`after` logs at Info) is sharper,
+  and the events page shows how to scope a handler.
+  Also fixed: a handler registered inside `ZIO.acquireRelease`'s acquire could never be cancelled (the canceller hung),
+  because its fiber inherited the uninterruptible region; handler fibers are now always interruptible.
 - **Optimizely SDK 4.6.0** (from 4.2.2, #474), with CMAB support. Factory-built providers now wire Optimizely's CMAB
   service: without it, a CMAB experiment served a placeholder `"$"` variation reported as `TARGETING_MATCH`, and
   every client build logged a WARN. A CMAB decision that cannot be fetched is now an `ERROR` evaluation (`GENERAL`)

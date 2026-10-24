@@ -440,6 +440,10 @@ trait FeatureFlags {
 
   /** Register a handler for provider ready events. Returns a cancellation effect.
     *
+    * The cancellation effect must be run, or the handler fiber lives until the instance shuts down. To tie a handler to
+    * a scope, wrap the registration: `ZIO.acquireRelease(ff.onProviderReady(h))(cancel => cancel)`. The same holds for
+    * every `on*` method below.
+    *
     * Per OpenFeature spec 5.2.1 and 5.2.7, handlers can be registered and removed. Delivery is at-least-once — see the
     * note on event handlers above.
     */
@@ -471,10 +475,19 @@ trait FeatureFlags {
   def clearZioApiHooks: UIO[Unit]
   def zioApiHooks: UIO[List[FeatureHook]]
 
-  /** Add an API-level hook that applies to all clients sharing this instance's OpenFeatureAPI. */
+  /** Add an API-level hook that applies to all clients sharing this instance's OpenFeatureAPI.
+    *
+    * The hook lives on the API, not on this instance: every sibling instance on the same API (registry domains
+    * included) runs it too. There is no per-instance removal; [[clearApiHooks]] is all-or-nothing.
+    */
   def addApiHook(hook: dev.openfeature.sdk.Hook[_]): UIO[Unit]
 
-  /** Clear all API-level hooks on this instance's OpenFeatureAPI. */
+  /** Clear all API-level hooks on this instance's OpenFeatureAPI.
+    *
+    * The API is shared by every sibling instance, so this removes their API-level hooks as well as this instance's.
+    * Called from a `Shared` instance (one that does not own the API) it reaches siblings the caller may not control,
+    * and logs one warning saying so; an `Owned` instance logs nothing.
+    */
   def clearApiHooks: UIO[Unit]
 
   /** Replace the underlying provider at runtime.

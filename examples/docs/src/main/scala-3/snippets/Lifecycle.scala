@@ -35,6 +35,15 @@ object Lifecycle:
     yield onReady *> onError *> onStale *> onChange *> onAny // run it to unsubscribe all five
   // --8<-- [end:handlers]
 
+  // --8<-- [start:scoped-handler]
+  // The handler is unsubscribed when the scope closes, even if the body fails
+  def readyWhileScoped(onReady: ProviderMetadata => UIO[Unit]): ZIO[FeatureFlags, Nothing, Unit] =
+    ZIO.scoped {
+      ZIO.acquireRelease(FeatureFlags.onProviderReady(onReady))(cancel => cancel) *>
+        ZIO.logInfo("handling events") // the work that needs the handler goes here
+    }
+  // --8<-- [end:scoped-handler]
+
   // --8<-- [start:events]
   val logEvents: ZIO[FeatureFlags & Scope, Nothing, Unit] =
     FeatureFlags.events

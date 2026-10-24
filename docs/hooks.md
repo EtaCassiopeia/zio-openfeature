@@ -37,7 +37,8 @@ Every stage also receives the `HookContext` (below) and the evaluation's `HookHi
 | Provider | the provider itself | run by the Java SDK |
 
 `FeatureFlags.hooks` and `zioApiHooks` list what is registered; `clearHooks`, `clearZioApiHooks` and `clearApiHooks`
-remove it.
+remove it. The Java API is shared by every instance on the same `OpenFeatureAPI`, so `clearApiHooks` from a shared
+instance also clears its siblings' API hooks, and logs a warning when it does.
 
 ```scala
 --8<-- "Hooks.scala:manage"

@@ -3,7 +3,6 @@ package zio.openfeature.ofrep
 import com.github.tomakehurst.wiremock.WireMockServer
 import com.github.tomakehurst.wiremock.client.WireMock._
 import com.github.tomakehurst.wiremock.core.WireMockConfiguration
-import dev.openfeature.contrib.providers.ofrep.OfrepProvider
 import dev.openfeature.sdk.{ErrorCode, ImmutableContext, MutableContext, Value}
 import zio._
 import zio.test._
@@ -33,7 +32,7 @@ object OFREPProviderIntegrationSpec extends ZIOSpecDefault {
     * `http://localhost:<dynamic port>`, so validation never actually fails — but exercising the validated factory keeps
     * the spec aligned with the recommended API.
     */
-  private def makeProvider(url: String): OfrepProvider =
+  private def makeProvider(url: String): OFREPFeatureProvider =
     Unsafe.unsafe { implicit u =>
       Runtime.default.unsafe.run(OFREPProvider.make(url)).getOrThrowFiberFailure()
     }

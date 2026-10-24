@@ -89,6 +89,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The OFREP factories return `OFREPFeatureProvider`** (#529). `OFREPProvider.make`, `scoped` and `layer` (every
+  overload) now yield `OFREPFeatureProvider`, a `FeatureProvider` wrapping the contrib `OfrepProvider` that adds the
+  `getLongEvaluation` the contrib one lacks. Code that names `OfrepProvider` as the result type changes it to
+  `OFREPFeatureProvider`, or reaches the contrib instance with `.underlying`. Code compiled against an earlier release
+  must be recompiled: the result types erase to `ZIO`/`ZLayer`, so MiMa reports nothing, but a compiled caller that
+  casts the result to `OfrepProvider` fails at run time. The deprecated `apply`/`fromOptions` are unchanged.
 - **`CachingProvider.make` and `CircuitBreakerProvider.make` can fail** (#451). They return
   `IO[FeatureFlagError.InvalidConfiguration, _]` instead of `UIO`, the same as the OFREP and Optimizely `make`, failing
   with a message naming each invalid field (`CircuitBreakerProviderConfig.failureThreshold must be >= 1, got 0`).
@@ -183,6 +189,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   therefore reads as `None`. `List[A]` stays on the object path. Two behaviour notes: `FlagValueType.fromFlagType` for
   `Option[String]` is now `String` rather than `Object`, so hooks scoped by type see these evaluations; and the
   provider getter called for an `Option` flag changes, which is visible to provider-level hooks and test doubles.
+- **An OFREP object flag whose JSON has a key with an unpaired UTF-16 surrogate now resolves to `PARSE_ERROR`** with
+  the caller's default (#534). Jackson 2.22.4 rejects a lone `\uXXXX` surrogate escape in a field name (jackson-core
+  #1683); 2.22.3 accepted it. Such a key is malformed UTF-16 that no conforming server emits. Well-formed keys,
+  including non-BMP characters, are unaffected, and string values with lone surrogates still decode.
 
 ### Deprecated
 
@@ -203,6 +213,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`FeatureFlags.long` serves OFREP flags** (#529). The contrib OFREP provider does not override
+  `getLongEvaluation`, so the SDK answered long reads from its double resolver, which accepts only JSON decimals:
+  every integer flag came back `TYPE_MISMATCH`, and `2.0` was served as `2`. `OFREPFeatureProvider` resolves long
+  reads through the object resolver: a JSON integer in the `Long` range is served exactly, anything else (`2.0`, a
+  string, an integer beyond `Long`) is `TYPE_MISMATCH` with the default, and server errors keep their codes.
 - **Scala Steward can open pull requests again** (#473). Every scheduled run had failed with a 403, because this
   repository does not let GitHub Actions create pull requests. The workflow now authenticates with a fine-grained
   `SCALA_STEWARD_TOKEN`, so its PRs also run CI. A new `.scala-steward.conf` keeps zio-cache on 0.2.x and Scala 3 on
@@ -380,10 +395,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
-- **Raised the Jackson pins from 2.22.2 to 2.22.3**, closing Dependabot alerts #66–#69 (GHSA-wv8q-qhhj-9h54,
-  GHSA-cxp5-3px4-pw24 in `jackson-databind`; GHSA-p6pp-m3f8-5c89, GHSA-7hhh-6rmp-j9qf in `jackson-core`). Not 2.22.4:
-  it starts rejecting a lone UTF-16 surrogate in a JSON field name, which would turn such an OFREP object flag from a
-  served value into a `PARSE_ERROR`; that change deserves its own decision. Jackson reaches this library only through the OFREP contrib provider, which parses each flag server
+- **Raised the Jackson pins from 2.22.2 to 2.22.4**, closing Dependabot alerts #66–#69 (GHSA-wv8q-qhhj-9h54,
+  GHSA-cxp5-3px4-pw24 in `jackson-databind`; GHSA-p6pp-m3f8-5c89, GHSA-7hhh-6rmp-j9qf in `jackson-core`; #534 for
+  2.22.4's stricter parsing, see Changed). Jackson reaches this library only through the OFREP contrib provider, which parses each flag server
   response with `ObjectMapper.readValue(String, OfrepResponse.class)`. The `DataInput` parser (GHSA-7hhh),
   polymorphic type ids (GHSA-wv8q) and object-identity forward references (GHSA-cxp5) are not on that path; the float-parsing ReDoS (GHSA-p6pp) is reachable only from
   a hostile flag server. The pins are part of the published `zio-openfeature-ofrep` POM, so consumers resolve the

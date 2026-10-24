@@ -169,8 +169,9 @@ private[openfeature] object ClientEvaluator {
   // and anything larger went to `getDoubleDetails` — exact only up to 2^53, silently lossy beyond it.
   //
   // Going native trades that silent precision loss for either an exact 64-bit result (providers that override
-  // `getLongEvaluation`, which every provider this library ships now does) or a loud TYPE_MISMATCH from the SDK's
-  // double-backed default. It also makes SDK-level `LongHook`s and `FlagValueType.LONG` observable, which the
+  // `getLongEvaluation`) or a loud TYPE_MISMATCH from the SDK's double-backed default. Every provider this library
+  // ships overrides it: the OFREP contrib provider does not, which is why the ofrep factories return
+  // `OFREPFeatureProvider`, whose override resolves long reads through the contrib object resolver (#529). It also makes SDK-level `LongHook`s and `FlagValueType.LONG` observable, which the
   // hand-rolled routing hid. A third-party provider that does NOT override `getLongEvaluation` can be wrapped in
   // `zio.openfeature.extras.IntegerWideningLongProvider` to restore the old int-range behaviour.
   implicit val longEvaluator: ClientEvaluator[Long] = new ClientEvaluator[Long] {

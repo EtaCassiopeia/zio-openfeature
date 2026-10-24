@@ -254,7 +254,8 @@ lazy val core = (project in file("core"))
 
 // Extras module - built-in providers (HOCON, env vars, caching wrapper)
 lazy val extras = (project in file("extras"))
-  .dependsOn(core)
+  // testkit's FaultyProvider for the wrapper specs (#463). Test scope only: consumers of extras never resolve testkit.
+  .dependsOn(core, testkit % "test->compile")
   .settings(
     name := "zio-openfeature-extras",
     commonSettings,

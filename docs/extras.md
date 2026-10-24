@@ -45,6 +45,11 @@ feature-flags {
 - Booleans, strings, ints, longs and doubles are read as their type. A nested block is an object flag.
 - A key that is present answers with reason `Static`.
 - A value of the wrong type is a `TypeMismatch`; a value Typesafe Config cannot parse is a `ParseError`.
+- HOCON has one number type, so an int, long or double read accepts any number, but only if the value does not
+  change: `1.5` read as an int, `1e300` as a long or `9007199254740993` as a double is a `TypeMismatch`. `2.0` read as
+  an int is `2`.
+- HOCON's automatic conversions apply: a string read of a number or boolean gives its text, and a number or boolean
+  read of a string such as `"42"` or `"true"` parses it.
 - An absent key is `FLAG_NOT_FOUND`: the typed tier fails with `FlagNotFound`, and the total tier serves your default
   with that error code. Hooks see the `error` stage. Reporting "not here" is what lets a
   [provider chain](#combining-providers) move on to the next provider.

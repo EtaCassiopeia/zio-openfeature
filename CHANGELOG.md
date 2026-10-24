@@ -27,6 +27,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the "Testing real providers" page now comes from this module, so it is compiled with the docs.
 - **Concurrency property tests** (#465) for hook-data isolation (#438), circuit-breaker epochs (#447) and cache
   invalidation (#449), plus a generated swap/evaluate schedule in the hot-swap stress spec. Test-only.
+- **`DifferentialLaws` in the testkit: compare a provider against `TestFeatureProvider`** (#467). It generates flag
+  sets over every wire type (hostile strings, `Long`s beyond the `Int` range, NaN/-0.0, nested objects) plus a fixed
+  corpus of edge cases, reads every key and an absent one through every typed accessor, evaluates both providers
+  through `FeatureFlags`, and compares value, reason class (`Served`/`Default`/`Error`) and error code. Every
+  difference must match a `Deviation` that gives its reason, and a deviation that matched nothing fails as stale.
+  `agreesWithTestkit` is the `Spec`; `compare` returns the report. `HoconProvider` and `EnvVarProvider` now run
+  against it in PR CI, with their deviations listed. See "Comparing a provider against the testkit" on the testkit
+  page.
 - Hostile-input property sweeps (Long beyond 2^53, NaN/Infinity/-0.0, emoji and control-character keys, nulls, deep and large structures) through value/context conversion, tracking conversion, OFREP response decoding and the Optimizely context transformer (#469).
 
 ### Changed
@@ -131,6 +139,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `OptimizelyProvider.DefaultInitWait` drops from 30 s to 25 s so it fires before the 30 s `initTimeout`. The redundant
   `start()` that logged a WARN on every init is gone, and the docs no longer claim construction makes no network
   calls: the SDK starts fetching the datafile then.
+- **`HoconProvider` no longer changes a number to fit the getter** (#467). Typesafe Config's `getInt`/`getLong`
+  truncated `1.5` to `1`, saturated `1e300` to `Long.MaxValue` and read `NaN` as `0`, and `getDouble` rounded a long
+  beyond 2^53. Each is now `TYPE_MISMATCH`; an exact conversion (`2.0` as an int, `7` as a double) is still served. A
+  long beyond the int range read as an int is `TYPE_MISMATCH` rather than `PARSE_ERROR`. Found by the new
+  differential check.
 - **`TestFeatureProvider` answers like a real provider** (#457). A key-based value read as another type was coerced:
   a `Long` read as `int` was truncated (`5000000000L` became `705032704`), anything read as `string` was its
   `toString`, numeric strings were parsed, and a non-`Boolean` read as `boolean` failed with `GENERAL`. The scalar

@@ -2,6 +2,7 @@ package zio.openfeature
 
 import scala.compiletime.{constValue, constValueTuple, summonAll}
 import scala.deriving.Mirror
+import scala.annotation.nowarn
 import scala.util.Try
 
 /** Codec between a domain type `A` and the value a provider carries — its ''wire'' value. For the built-in instances
@@ -21,19 +22,28 @@ trait FlagType[A]:
 
   /** The representation the *provider* is asked for, which is not always the domain type.
     *
-    * Evaluation dispatches on this, not on [[typeName]]: a domain type backed by a scalar — an enum-valued flag stored
-    * as a string, a newtype over an int — must be resolved through that scalar's SDK method and then decoded. One of
-    * `"Boolean" | "String" | "Int" | "Long" | "Float" | "Double"` selects the matching resolver; anything else
-    * (including `"Object"`) is resolved on the object path.
+    * Evaluation dispatches on this, not on [[typeName]]: a domain type backed by a scalar (an enum-valued flag stored
+    * as a string, a newtype over an int) must be resolved through that scalar's SDK method and then decoded. A scalar
+    * case selects the matching resolver; [[WireType.Object]] selects the object path.
     *
-    * Defaults to [[typeName]], so every instance that does not set it keeps its existing behaviour.
+    * The built-in instances, [[FlagType.mapped]] (which inherits its underlying instance's wire type) and `Option[A]`
+    * (which takes `A`'s) set this themselves. The default reads the deprecated [[wireType]] through
+    * [[WireType.fromName]], so an instance that overrides neither is resolved on the object path, and a legacy
+    * `wireType` override keeps working (its spelling is matched case-insensitively).
     *
-    * '''If you override this, [[encode]] must return the matching boxed type''' — `java.lang.Boolean`, `String`,
-    * `java.lang.Integer`, `java.lang.Long`, `java.lang.Float` or `java.lang.Double` respectively. The pairing is not
-    * checked at compile time; at evaluation time a mismatch fails with a `TypeMismatch` that names the domain type, the
-    * declared `wireType`, and the type `encode` actually produced (#360). [[FlagType.mapped]] gets the pairing right by
-    * construction, so prefer it where it fits.
+    * '''If you override this with a scalar, [[encode]] must return the matching boxed type''': `java.lang.Boolean`,
+    * `String`, `java.lang.Integer`, `java.lang.Long`, `java.lang.Float` or `java.lang.Double` respectively. The pairing
+    * is not checked at compile time; at evaluation time a mismatch fails with a `TypeMismatch` that names the domain
+    * type, the declared wire type, and the type `encode` actually produced (#360). [[FlagType.mapped]] gets the pairing
+    * right by construction, so prefer it where it fits.
     */
+  @nowarn("cat=deprecation")
+  def wire: WireType = WireType.fromName(wireType)
+
+  /** The wire type as a free-form name, read only by the default [[wire]] through [[WireType.fromName]]. Defaults to
+    * [[typeName]]. Override [[wire]] instead.
+    */
+  @deprecated("Override `wire` instead; `wireType` is read only through wire's default", "1.2.0")
   def wireType: String = typeName
 
   def decode(value: Any): Either[String, A]
@@ -50,8 +60,9 @@ object FlagType:
     d == d.toLong.toDouble && d >= Long.MinValue.toDouble && d < Long.MaxValue.toDouble
 
   given booleanFlagType: FlagType[Boolean] with
-    def typeName: String      = "Boolean"
-    def defaultValue: Boolean = false
+    def typeName: String        = "Boolean"
+    override def wire: WireType = WireType.Boolean
+    def defaultValue: Boolean   = false
     def decode(value: Any): Either[String, Boolean] = value match
       case b: Boolean => Right(b)
       case s: String  => s.toBooleanOption.toRight(s"Cannot parse '$s' as Boolean")
@@ -59,16 +70,18 @@ object FlagType:
       case _          => Left(s"Cannot convert ${value.getClass.getSimpleName} to Boolean")
 
   given stringFlagType: FlagType[String] with
-    def typeName: String     = "String"
-    def defaultValue: String = ""
+    def typeName: String        = "String"
+    override def wire: WireType = WireType.String
+    def defaultValue: String    = ""
     def decode(value: Any): Either[String, String] = value match
       case s: String => Right(s)
       case null      => Left("Cannot convert null to String")
       case other     => Left(s"Cannot convert ${other.getClass.getSimpleName} to String")
 
   given intFlagType: FlagType[Int] with
-    def typeName: String  = "Int"
-    def defaultValue: Int = 0
+    def typeName: String        = "Int"
+    override def wire: WireType = WireType.Int
+    def defaultValue: Int       = 0
     def decode(value: Any): Either[String, Int] = value match
       case i: Int                  => Right(i)
       case l: Long if l.isValidInt => Right(l.toInt)
@@ -82,8 +95,9 @@ object FlagType:
       case _         => Left(s"Cannot convert ${value.getClass.getSimpleName} to Int")
 
   given longFlagType: FlagType[Long] with
-    def typeName: String   = "Long"
-    def defaultValue: Long = 0L
+    def typeName: String        = "Long"
+    override def wire: WireType = WireType.Long
+    def defaultValue: Long      = 0L
     def decode(value: Any): Either[String, Long] = value match
       case l: Long   => Right(l)
       case i: Int    => Right(i.toLong)
@@ -96,8 +110,9 @@ object FlagType:
       case _         => Left(s"Cannot convert ${value.getClass.getSimpleName} to Long")
 
   given doubleFlagType: FlagType[Double] with
-    def typeName: String     = "Double"
-    def defaultValue: Double = 0.0
+    def typeName: String        = "Double"
+    override def wire: WireType = WireType.Double
+    def defaultValue: Double    = 0.0
     def decode(value: Any): Either[String, Double] = value match
       case d: Double => Right(d)
       case f: Float  => Right(f.toDouble)
@@ -109,8 +124,9 @@ object FlagType:
       case _         => Left(s"Cannot convert ${value.getClass.getSimpleName} to Double")
 
   given floatFlagType: FlagType[Float] with
-    def typeName: String    = "Float"
-    def defaultValue: Float = 0.0f
+    def typeName: String        = "Float"
+    override def wire: WireType = WireType.Float
+    def defaultValue: Float     = 0.0f
     def decode(value: Any): Either[String, Float] = value match
       case f: Float  => Right(f)
       case d: Double =>
@@ -126,6 +142,7 @@ object FlagType:
 
   given objectFlagType: FlagType[Map[String, Any]] with
     def typeName: String               = "Object"
+    override def wire: WireType        = WireType.Object
     def defaultValue: Map[String, Any] = Map.empty
     def decode(value: Any): Either[String, Map[String, Any]] = value match
       case m: Map[?, ?] =>
@@ -137,8 +154,12 @@ object FlagType:
       case _ =>
         Left(s"Cannot convert ${value.getClass.getSimpleName} to Object")
 
-  given optionFlagType[A](using underlying: FlagType[A]): FlagType[Option[A]] with
+  given optionFlagType[A](using elem: FlagType[A]): FlagType[Option[A]] with OptionalFlagType[A] with
+    def underlying: FlagType[A] = elem
     def typeName: String        = s"Option[${underlying.typeName}]"
+    // Resolved through the element's resolver, so `Option[String]` reaches the provider's string method. A `None`
+    // default is sent as a sentinel and read back as `None` by evaluation (see `OptionalFlagType`, #439).
+    override def wire: WireType = underlying.wire
     def defaultValue: Option[A] = None
     def decode(value: Any): Either[String, Option[A]] = value match
       case null    => Right(None)
@@ -171,10 +192,12 @@ object FlagType:
       case _    => Left(s"Cannot convert ${value.getClass.getSimpleName} to List")
     override def encode(value: List[A]): Any = value.map(underlying.encode)
 
-  /** Builds an instance that leaves [[FlagType.wireType]] at `name`, so unless `name` happens to be one of the scalar
-    * wire names it is resolved on the object path. For a type carried over the wire as a *scalar* — a string-backed
-    * enum, a newtype over an int — prefer [[mapped]], which inherits its underlying `wireType` and keeps `encode`
-    * consistent with it; failing that, override `wireType` and `encode` together.
+  /** Builds an instance whose [[FlagType.wire]] is read from `name` by [[WireType.fromName]], so unless `name` is one
+    * of the scalar names it is resolved on the object path. Only the built-in [[objectFlagType]] takes the raw-map
+    * shortcut there: an instance built here always has its `decode` run, even when its name is `"Object"`. For a type
+    * carried over the wire as a *scalar* (a string-backed enum, a newtype over an int) prefer [[mapped]], which
+    * inherits its underlying wire type and keeps `encode` consistent with it; failing that, override `wire` and
+    * `encode` together.
     */
   def from[A](
     name: String,
@@ -198,9 +221,9 @@ object FlagType:
     *
     * ==Sum of singleton cases==
     *
-    * An `enum` whose cases take no parameters derives a '''string''' codec over the case labels: `wireType` is
-    * `"String"`, so the flag is resolved through the provider's string method and decoded — the single most common
-    * feature-flag shape. `encode` emits the canonical label as declared; `decode` matches case-insensitively.
+    * An `enum` whose cases take no parameters derives a '''string''' codec over the case labels: `wire` is
+    * `WireType.String`, so the flag is resolved through the provider's string method and decoded — the single most
+    * common feature-flag shape. `encode` emits the canonical label as declared; `decode` matches case-insensitively.
     * `defaultValue` is the '''first declared case'''.
     *
     * Only parameterless cases are supported. A sum with a parameterised case fails to compile with a missing `ValueOf`
@@ -209,8 +232,9 @@ object FlagType:
     * ==Product==
     *
     * A product derives a `Map[String, Any]` codec, field by field through each field's own `FlagType` (so nested
-    * products, `Option` and `List` fields all work). `wireType` stays the type's name, so it is resolved on the object
-    * path. Unknown keys in the payload are ignored, which keeps forward-compatible payloads working.
+    * products, `Option` and `List` fields all work). `wire` is `WireType.Object` whatever the type is called, so it is
+    * resolved on the object path. Unknown keys in the payload are ignored, which keeps forward-compatible payloads
+    * working.
     *
     * An absent key resolves in this order: the field's declared Scala default if it has one; otherwise whatever the
     * field's own instance makes of `null` — which is how an `Option` field becomes `None`; otherwise a `Left` naming
@@ -259,8 +283,10 @@ object FlagType:
     cases: Vector[A],
     mirror: Mirror.SumOf[A]
   ): FlagType[A] = new FlagType[A]:
-    def typeName: String               = name
-    override def wireType: String      = "String"
+    def typeName: String        = name
+    override def wire: WireType = WireType.String
+    @nowarn("cat=deprecation")
+    override def wireType: String      = wire.name
     def defaultValue: A                = cases.head
     override def encode(value: A): Any = labels(mirror.ordinal(value))
 
@@ -302,6 +328,8 @@ object FlagType:
       }.toVector
 
     def typeName: String = name
+    // Fixed, not read from the name: a product called `Double` is still a map on the wire.
+    override def wire: WireType = WireType.Object
 
     private lazy val zero: A = mirror.fromProduct(Tuple.fromArray(fields.map(_.defaultValue).toArray))
     def defaultValue: A      = zero
@@ -353,7 +381,10 @@ object FlagType:
     def typeName: String = name
     // A mapped instance is by construction carried over the wire as its underlying type, so it inherits that
     // wire type — this is what makes `mapped` scalar-backed types evaluatable without any user action.
-    override def wireType: String             = underlying.wireType
+    override def wire: WireType = underlying.wire
+    // Kept in step with `wire` for code that still reads the deprecated name.
+    @nowarn("cat=deprecation")
+    override def wireType: String             = wire.name
     def defaultValue: A                       = default
     def decode(value: Any): Either[String, A] = underlying.decode(value).map(map)
     override def encode(value: A): Any        = underlying.encode(contramap(value))

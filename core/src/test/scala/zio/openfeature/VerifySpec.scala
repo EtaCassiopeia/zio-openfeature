@@ -104,7 +104,18 @@ object VerifySpec extends ZIOSpecDefault {
         )
       }
     },
-    test("flagExists dispatches on the FlagType's wireType") {
+    test("flagExists probes an Option through its element's getter and a List through the object getter (#439)") {
+      val p = new RecordingProvider(RecordingProvider.Mode.Found)
+      for {
+        _  <- Verify.flagExists[Option[String]]("os").apply(p)
+        os <- ZIO.succeed(p.lastCall.get())
+        _  <- Verify.flagExists[Option[Int]]("oi").apply(p)
+        oi <- ZIO.succeed(p.lastCall.get())
+        _  <- Verify.flagExists[List[String]]("ls").apply(p)
+        ls <- ZIO.succeed(p.lastCall.get())
+      } yield assertTrue(os == "string:os", oi == "integer:oi", ls == "object:ls")
+    },
+    test("flagExists dispatches on the FlagType's wire") {
       val p = new RecordingProvider(RecordingProvider.Mode.Found)
       for {
         _ <- Verify.flagExists[String]("s").apply(p)

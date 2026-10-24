@@ -21,6 +21,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Concurrency property tests** (#465) for hook-data isolation (#438), circuit-breaker epochs (#447) and cache
   invalidation (#449), plus a generated swap/evaluate schedule in the hot-swap stress spec. Test-only.
 - Hostile-input property sweeps (Long beyond 2^53, NaN/Infinity/-0.0, emoji and control-character keys, nulls, deep and large structures) through value/context conversion, tracking conversion, OFREP response decoding and the Optimizely context transformer (#469).
+- **`WireType` and `FlagType.wire`** (#439). Evaluation now dispatches on a typed `WireType` (`Boolean`, `String`,
+  `Int`, `Long`, `Float`, `Double`, `Object`) instead of the free-form `wireType` string. The built-ins, `mapped`,
+  derived instances and `Option` set it themselves; a custom instance overrides `wire`. An instance that still
+  overrides `wireType` keeps working, and its name is now matched ignoring case, so `"string"` selects the string
+  resolver instead of silently falling to the object path.
 
 ### Changed
 
@@ -91,6 +96,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **CI tests every published module on JDK 25** as well as 17 and 21, on both Scala versions (#424). JDK 25 was green before;
   it was just untested outside the zio-bdd conformance job. On Scala 3 it prints a `sun.misc.Unsafe` deprecation
   warning from the Scala 3.3 standard library (`scala.runtime.LazyVals`), not from this library.
+- **`Option[A]` over a scalar `A` is resolved through `A`'s resolver** (#439). `value[Option[String]]` against a string
+  flag used to call the provider's object method, so a provider that checks types answered `TYPE_MISMATCH`; it now
+  reaches the string method and reads `Some(value)`. A `None` default is sent as `A`'s zero (`false`, `""`, `0`, a
+  derived enum's first case) and reads back as `None` when the provider answers with an error code, or with reason
+  `DEFAULT`, `DISABLED` or `ERROR` and that zero. A provider that serves exactly the zero with one of those reasons
+  therefore reads as `None`. `List[A]` stays on the object path. Two behaviour notes: `FlagValueType.fromFlagType` for
+  `Option[String]` is now `String` rather than `Object`, so hooks scoped by type see these evaluations; and the
+  provider getter called for an `Option` flag changes, which is visible to provider-level hooks and test doubles.
 
 ### Deprecated
 
@@ -106,9 +119,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`FeatureFlagError.isRecoverable`, in favour of `isFlagError`** (#440). It is true for flag-scoped evaluation errors
   (missing flag, wrong type, unparsable value, bad context), which has nothing to do with retrying or with
   `ProviderStatus.isRecoverable`. The behaviour is unchanged.
+- **`FlagType.wireType`, in favour of `wire`** (#439). Its default is still `typeName`, and it is read only through
+  `wire`'s default.
 
 ### Fixed
 
+- **A custom `FlagType` named `"Object"` runs its own `decode`** (#439). The object path's raw-map shortcut was chosen
+  by `typeName == "Object"`, so `FlagType.from("Object", ...)` either failed with a `ProviderError` wrapping a
+  `ClassCastException` (a non-`Map` default) or served the raw map past the user's `decode` (a `Map` default). Only the
+  built-in `Map[String, Any]` instance takes that shortcut now.
 - **`OptimizelyFeatureProvider` sends `track` calls to Optimizely** (#454). It did not implement `track`, so every call
   fell through to the SDK's no-op default and no conversion was ever recorded, whichever client the provider wrapped.
   A call now becomes a conversion for the context's user, with the details' attributes as event tags and the details'

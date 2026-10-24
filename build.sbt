@@ -307,7 +307,9 @@ val jacksonPins = Seq(
 // Kept separate from `extras` so callers who only want HOCON/env vars don't pull in the OFREP contrib provider's
 // transitive HTTP-client stack (Jackson, Guava, Commons Validator, SLF4J).
 lazy val ofrep = (project in file("ofrep"))
-  .dependsOn(core)
+  // testkit's DifferentialLaws for OfrepDifferentialSpec (#526). Test scope only: consumers of ofrep never resolve
+  // testkit.
+  .dependsOn(core, testkit % "test->compile")
   .settings(
     name := "zio-openfeature-ofrep",
     commonSettings,

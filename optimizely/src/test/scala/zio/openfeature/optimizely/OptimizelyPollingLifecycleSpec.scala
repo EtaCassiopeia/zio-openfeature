@@ -50,7 +50,7 @@ object OptimizelyPollingLifecycleSpec extends ZIOSpecDefault {
       withMockServer { server =>
         server.stubFor(get(urlEqualTo(DatafilePath)).willReturn(aResponse().withStatus(403)))
         for {
-          start <- ZIO.succeed(java.lang.System.nanoTime())
+          start    <- ZIO.succeed(java.lang.System.nanoTime())
           provider <- OptimizelyProvider.make(
             OptimizelyProviderConfig(
               sdkKey = "polling-key-1",

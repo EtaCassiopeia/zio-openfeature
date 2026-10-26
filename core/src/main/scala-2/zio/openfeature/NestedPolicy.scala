@@ -1,10 +1,10 @@
 package zio.openfeature
 
-/** What `transaction` / `transactionEither` do when called from inside an enclosing transaction on the same fiber
-  * (or a fiber forked from it, since the transaction is fiber-local and inherited).
+/** What `transaction` / `transactionEither` do when called from inside an enclosing transaction on the same fiber (or a
+  * fiber forked from it, since the transaction is fiber-local and inherited).
   *
-  *   - [[NestedPolicy.Fail]] — the default, and the only behaviour before this type existed: the inner call fails
-  *     with `NestedTransactionNotAllowed` before its body runs. Right for code that wants to *know* it is nested.
+  *   - [[NestedPolicy.Fail]] — the default, and the only behaviour before this type existed: the inner call fails with
+  *     `NestedTransactionNotAllowed` before its body runs. Right for code that wants to *know* it is nested.
   *   - [[NestedPolicy.Reuse]] — the outermost transaction wins: the inner call runs its body inside the enclosing
   *     transaction and returns a `TransactionResult` reflecting that transaction as of the body's completion. This is
   *     what makes a per-request transaction safe as middleware: a handler that wraps a sub-operation in its own
@@ -15,8 +15,8 @@ package zio.openfeature
   * design, so it is stated here, in the method scaladoc, and in the docs; a caller who needs its own overrides while
   * nested wants `Fail` and a redesign, not `Reuse`.
   *
-  * When there is no enclosing transaction the policy is irrelevant: either value opens a fresh transaction exactly
-  * as before.
+  * When there is no enclosing transaction the policy is irrelevant: either value opens a fresh transaction exactly as
+  * before.
   */
 sealed trait NestedPolicy extends Product with Serializable
 

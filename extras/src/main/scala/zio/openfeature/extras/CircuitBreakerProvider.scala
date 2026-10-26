@@ -244,10 +244,10 @@ final class CircuitBreakerProvider private (
 
     breaker.acquire() match {
       case Some(permit) => executeWithTimeout(permit, evaluate)
-      case None =>
+      case None         =>
         val detail = breaker.currentState match {
           case CircuitState.Open(sinceNanos, reason) =>
-            val ago = java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(breaker.ticker.nanos() - sinceNanos)
+            val ago   = java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(breaker.ticker.nanos() - sinceNanos)
             val cause = reason match {
               case OpenReason.Failures => "consecutive failures"
               case OpenReason.External => "delegate reported unhealthy state"
@@ -302,7 +302,7 @@ final class CircuitBreakerProvider private (
       // Record the failure before re-throwing: a probe dying with e.g. OOM after winning the half-open CAS must
       // re-open the circuit, not leave it wedged "half-open, probe in progress".
       case e: VirtualMachineError => breaker.recordFailure(permit); throw e
-      case e: LinkageError =>
+      case e: LinkageError        =>
         breaker.recordFailure(permit)
         throw e
       case e: Throwable =>
@@ -379,7 +379,7 @@ final class CircuitBreakerProvider private (
   // undone by the next poll (#447).
   private def doCheckDelegateState(): Unit =
     scala.util.Try(delegateState()).toOption match {
-      case None => breaker.trip(OpenReason.Polled)
+      case None        => breaker.trip(OpenReason.Polled)
       case Some(state) =>
         if (state == ProviderState.ERROR || state == ProviderState.FATAL) breaker.trip(OpenReason.Polled)
         else if (state == ProviderState.STALE) config.stalePolicy match {

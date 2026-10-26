@@ -23,7 +23,7 @@ final class HookStageFailure(stage: String) extends RuntimeException(s"$stage ho
 
 class ConformanceSteps extends ScalaDsl with EN {
 
-  private val runtime = Runtime.default
+  private val runtime                              = Runtime.default
   private def run[A](z: ZIO[Any, Throwable, A]): A =
     Unsafe.unsafe(implicit u => runtime.unsafe.run(z).getOrThrowFiberFailure())
 
@@ -71,7 +71,7 @@ class ConformanceSteps extends ScalaDsl with EN {
     val statusRef = run(SubscriptionRef.make[ProviderStatus](ProviderStatus.Ready))
     val api       = OpenFeatureAPI.createIsolated()
     val domain    = s"conf-${java.util.UUID.randomUUID()}"
-    val ff = run(
+    val ff        = run(
       sc.extend[Any](
         FeatureFlags
           .fromProviderWithDomain(
@@ -257,7 +257,7 @@ class ConformanceSteps extends ScalaDsl with EN {
       case "string"  => check(m.getString(metaKey).contains(value), s"metadata $metaKey string != $value")
       case "integer" => check(m.getInt(metaKey).contains(value.toInt), s"metadata $metaKey int != $value")
       case "boolean" => check(m.getBoolean(metaKey).contains(value.toBoolean), s"metadata $metaKey bool != $value")
-      case "float" =>
+      case "float"   =>
         check(m.get(metaKey).contains(MetadataValue.FloatValue(value.toFloat)), s"metadata $metaKey float != $value")
       case other => throw new IllegalArgumentException(s"unknown metadata type: $other")
     }
@@ -305,7 +305,7 @@ class ConformanceSteps extends ScalaDsl with EN {
 
   private def assertHookDetailRow(dataType: String, key: String, value: String): Unit = key match {
     case "flag_key" => check(hookDetails.flagKey == value, s"flag_key ${hookDetails.flagKey} != $value")
-    case "value" =>
+    case "value"    =>
       val ok = dataType.toLowerCase match {
         case "boolean" => hookDetails.value == value.toBoolean
         case _         => hookDetails.value == value
@@ -349,7 +349,7 @@ class ConformanceSteps extends ScalaDsl with EN {
   }
 
   Then("""^the specified hooks should execute during evaluation$""") { () =>
-    val log = optionHookLog.asScala.toList
+    val log    = optionHookLog.asScala.toList
     val allRan = Set("first", "second").forall(n =>
       log.contains(s"$n:before") && log.contains(s"$n:after") && log.contains(s"$n:finally")
     )
@@ -371,10 +371,10 @@ class ConformanceSteps extends ScalaDsl with EN {
     EvaluationContext.builder.attribute(key, value).build
 
   private def addLevelEntry(key: String, value: String, level: String): Unit = level match {
-    case "API"         => apiCtx = apiCtx.merge(entryCtx(key, value))
-    case "Transaction" => txCtx = Some(txCtx.getOrElse(EvaluationContext.empty).merge(entryCtx(key, value)))
-    case "Client"      => clientCtx = clientCtx.merge(entryCtx(key, value))
-    case "Invocation"  => invocationCtx = invocationCtx.merge(entryCtx(key, value))
+    case "API"          => apiCtx = apiCtx.merge(entryCtx(key, value))
+    case "Transaction"  => txCtx = Some(txCtx.getOrElse(EvaluationContext.empty).merge(entryCtx(key, value)))
+    case "Client"       => clientCtx = clientCtx.merge(entryCtx(key, value))
+    case "Invocation"   => invocationCtx = invocationCtx.merge(entryCtx(key, value))
     case "Before Hooks" =>
       beforeHookCtx = Some(beforeHookCtx.getOrElse(EvaluationContext.empty).merge(entryCtx(key, value)))
     case other => throw new IllegalArgumentException(s"unknown level: $other")

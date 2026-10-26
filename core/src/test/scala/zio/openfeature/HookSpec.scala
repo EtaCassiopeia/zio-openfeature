@@ -250,7 +250,7 @@ object HookSpec extends ZIOSpecDefault {
           onError = (_, _, _) => ZIO.unit
         )
 
-        val ctx = makeHookContext("detailed-test")
+        val ctx        = makeHookContext("detailed-test")
         val resolution = FlagResolution(
           value = true,
           variant = Some("treatment"),
@@ -319,7 +319,7 @@ object HookSpec extends ZIOSpecDefault {
           onError = (_, _, _) => ZIO.unit
         )
 
-        val ctx = makeHookContext("tag-test")
+        val ctx        = makeHookContext("tag-test")
         val resolution = FlagResolution(
           value = true,
           variant = Some("v1"),
@@ -371,9 +371,9 @@ object HookSpec extends ZIOSpecDefault {
         for {
           result <- hook.before(hookCtx, HookHints.empty)
         } yield
-        // Returns None so it doesn't interfere with compose pipeline's context tracking
-        assertTrue(result.isEmpty) &&
-          assertTrue(hookCtx.hookData.get(TypedKey[Long]("structuredLogging.startTime")).isDefined)
+          // Returns None so it doesn't interfere with compose pipeline's context tracking
+          assertTrue(result.isEmpty) &&
+            assertTrue(hookCtx.hookData.get(TypedKey[Long]("structuredLogging.startTime")).isDefined)
       },
       test("after completes and reads start time from hookData") {
         val hook       = FeatureHook.structuredLogging()
@@ -404,7 +404,7 @@ object HookSpec extends ZIOSpecDefault {
           assertTrue(hookCtx.hookData.get(TypedKey[Long]("structuredLogging.startTime")).isDefined)
       },
       test("context logging with targeting key and attributes completes") {
-        val hook = FeatureHook.structuredLogging(logContext = true)
+        val hook    = FeatureHook.structuredLogging(logContext = true)
         val hookCtx = makeHookContext().copy(
           evaluationContext = EvaluationContext.builder
             .targetingKey("user-123")
@@ -543,9 +543,9 @@ object HookSpec extends ZIOSpecDefault {
           _ <- composed.before(ctx, HookHints.empty)
           _ <- composed.after(ctx, resolution, HookHints.empty)
         } yield
-        // The composed hook gives each hook its own hookData, so we check that
-        // the hook was able to read its own data across stages
-        assertTrue(true) // hookData is internal to the hook via compose
+          // The composed hook gives each hook its own hookData, so we check that
+          // the hook was able to read its own data across stages
+          assertTrue(true) // hookData is internal to the hook via compose
       },
       test("compose gives each hook separate hookData") {
         var hook1Value: Option[String] = None

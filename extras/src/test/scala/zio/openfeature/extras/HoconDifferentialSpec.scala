@@ -108,8 +108,8 @@ object HoconDifferentialSpec extends ZIOSpecDefault {
     case l: Long    => l.toString
     // HOCON has no literal for NaN or the infinities; the closest it can hold is the text, which Typesafe Config
     // parses back to the number on a double read.
-    case d: Double  => if (d.isNaN || d.isInfinite) quote(d.toString) else d.toString
-    case l: List[_] => l.map(renderValue).mkString("[", ", ", "]")
+    case d: Double    => if (d.isNaN || d.isInfinite) quote(d.toString) else d.toString
+    case l: List[_]   => l.map(renderValue).mkString("[", ", ", "]")
     case m: Map[_, _] =>
       m.toList.map { case (k, x) => s"${quote(k.toString)} : ${renderValue(x)}" }.mkString("{", ", ", "}")
     case other => sys.error(s"unexpected generated value $other")

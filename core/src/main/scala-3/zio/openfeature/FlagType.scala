@@ -60,9 +60,9 @@ object FlagType:
     d == d.toLong.toDouble && d >= Long.MinValue.toDouble && d < Long.MaxValue.toDouble
 
   given booleanFlagType: FlagType[Boolean] with
-    def typeName: String        = "Boolean"
-    override def wire: WireType = WireType.Boolean
-    def defaultValue: Boolean   = false
+    def typeName: String                            = "Boolean"
+    override def wire: WireType                     = WireType.Boolean
+    def defaultValue: Boolean                       = false
     def decode(value: Any): Either[String, Boolean] = value match
       case b: Boolean => Right(b)
       case s: String  => s.toBooleanOption.toRight(s"Cannot parse '$s' as Boolean")
@@ -70,18 +70,18 @@ object FlagType:
       case _          => Left(s"Cannot convert ${value.getClass.getSimpleName} to Boolean")
 
   given stringFlagType: FlagType[String] with
-    def typeName: String        = "String"
-    override def wire: WireType = WireType.String
-    def defaultValue: String    = ""
+    def typeName: String                           = "String"
+    override def wire: WireType                    = WireType.String
+    def defaultValue: String                       = ""
     def decode(value: Any): Either[String, String] = value match
       case s: String => Right(s)
       case null      => Left("Cannot convert null to String")
       case other     => Left(s"Cannot convert ${other.getClass.getSimpleName} to String")
 
   given intFlagType: FlagType[Int] with
-    def typeName: String        = "Int"
-    override def wire: WireType = WireType.Int
-    def defaultValue: Int       = 0
+    def typeName: String                        = "Int"
+    override def wire: WireType                 = WireType.Int
+    def defaultValue: Int                       = 0
     def decode(value: Any): Either[String, Int] = value match
       case i: Int                  => Right(i)
       case l: Long if l.isValidInt => Right(l.toInt)
@@ -95,9 +95,9 @@ object FlagType:
       case _         => Left(s"Cannot convert ${value.getClass.getSimpleName} to Int")
 
   given longFlagType: FlagType[Long] with
-    def typeName: String        = "Long"
-    override def wire: WireType = WireType.Long
-    def defaultValue: Long      = 0L
+    def typeName: String                         = "Long"
+    override def wire: WireType                  = WireType.Long
+    def defaultValue: Long                       = 0L
     def decode(value: Any): Either[String, Long] = value match
       case l: Long   => Right(l)
       case i: Int    => Right(i.toLong)
@@ -110,9 +110,9 @@ object FlagType:
       case _         => Left(s"Cannot convert ${value.getClass.getSimpleName} to Long")
 
   given doubleFlagType: FlagType[Double] with
-    def typeName: String        = "Double"
-    override def wire: WireType = WireType.Double
-    def defaultValue: Double    = 0.0
+    def typeName: String                           = "Double"
+    override def wire: WireType                    = WireType.Double
+    def defaultValue: Double                       = 0.0
     def decode(value: Any): Either[String, Double] = value match
       case d: Double => Right(d)
       case f: Float  => Right(f.toDouble)
@@ -124,9 +124,9 @@ object FlagType:
       case _         => Left(s"Cannot convert ${value.getClass.getSimpleName} to Double")
 
   given floatFlagType: FlagType[Float] with
-    def typeName: String        = "Float"
-    override def wire: WireType = WireType.Float
-    def defaultValue: Float     = 0.0f
+    def typeName: String                          = "Float"
+    override def wire: WireType                   = WireType.Float
+    def defaultValue: Float                       = 0.0f
     def decode(value: Any): Either[String, Float] = value match
       case f: Float  => Right(f)
       case d: Double =>
@@ -141,9 +141,9 @@ object FlagType:
       case _         => Left(s"Cannot convert ${value.getClass.getSimpleName} to Float")
 
   given objectFlagType: FlagType[Map[String, Any]] with
-    def typeName: String               = "Object"
-    override def wire: WireType        = WireType.Object
-    def defaultValue: Map[String, Any] = Map.empty
+    def typeName: String                                     = "Object"
+    override def wire: WireType                              = WireType.Object
+    def defaultValue: Map[String, Any]                       = Map.empty
     def decode(value: Any): Either[String, Map[String, Any]] = value match
       case m: Map[?, ?] =>
         Try(m.asInstanceOf[Map[String, Any]]).toEither.left.map(_.getMessage)
@@ -151,7 +151,7 @@ object FlagType:
         import scala.jdk.CollectionConverters.*
         Try(m.asScala.toMap.asInstanceOf[Map[String, Any]]).toEither.left.map(_.getMessage)
       case null => Left("Cannot convert null to Object")
-      case _ =>
+      case _    =>
         Left(s"Cannot convert ${value.getClass.getSimpleName} to Object")
 
   given optionFlagType[A](using elem: FlagType[A]): FlagType[Option[A]] with OptionalFlagType[A] with
@@ -159,8 +159,8 @@ object FlagType:
     def typeName: String        = s"Option[${underlying.typeName}]"
     // Resolved through the element's resolver, so `Option[String]` reaches the provider's string method. A `None`
     // default is sent as a sentinel and read back as `None` by evaluation (see `OptionalFlagType`, #439).
-    override def wire: WireType = underlying.wire
-    def defaultValue: Option[A] = None
+    override def wire: WireType                       = underlying.wire
+    def defaultValue: Option[A]                       = None
     def decode(value: Any): Either[String, Option[A]] = value match
       case null    => Right(None)
       case None    => Right(None)
@@ -173,8 +173,8 @@ object FlagType:
       case None    => null
 
   given listFlagType[A](using underlying: FlagType[A]): FlagType[List[A]] with
-    def typeName: String      = s"List[${underlying.typeName}]"
-    def defaultValue: List[A] = List.empty
+    def typeName: String                            = s"List[${underlying.typeName}]"
+    def defaultValue: List[A]                       = List.empty
     def decode(value: Any): Either[String, List[A]] = value match
       case list: List[?] =>
         list.foldRight[Either[String, List[A]]](Right(Nil)) { (elem, acc) =>
@@ -183,8 +183,8 @@ object FlagType:
             rest    <- acc
           yield decoded :: rest
         }
-      case seq: Seq[?]   => decode(seq.toList)
-      case arr: Array[?] => decode(arr.toList)
+      case seq: Seq[?]              => decode(seq.toList)
+      case arr: Array[?]            => decode(arr.toList)
       case jlist: java.util.List[?] =>
         import scala.jdk.CollectionConverters.*
         decode(jlist.asScala.toList)
@@ -342,7 +342,7 @@ object FlagType:
         .toMap
 
     def decode(value: Any): Either[String, A] = value match
-      case m: Map[?, ?] => decodeFields(m.asInstanceOf[Map[String, Any]])
+      case m: Map[?, ?]           => decodeFields(m.asInstanceOf[Map[String, Any]])
       case m: java.util.Map[?, ?] =>
         import scala.jdk.CollectionConverters.*
         decodeFields(m.asScala.toMap.asInstanceOf[Map[String, Any]])
@@ -361,7 +361,7 @@ object FlagType:
       val ft    = fields(index)
       payload.get(label) match
         case Some(raw) => ft.decode(raw).left.map(reason => s"$name.$label: $reason")
-        case None =>
+        case None      =>
           defaults(index) match
             // `invoke` is guarded: a reflective call can fail (an inaccessible companion, a module boundary) and
             // that must stay inside the `Either` contract rather than escaping `decode` as a defect.

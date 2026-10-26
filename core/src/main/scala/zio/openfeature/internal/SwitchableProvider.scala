@@ -60,10 +60,10 @@ final private[openfeature] class SwitchableProvider(initial: OFFeatureProvider) 
           }
     )
 
-  override def getMetadata: Metadata                       = current.get().getMetadata
-  override def getProviderHooks: java.util.List[OFHook[_]] = current.get().getProviderHooks
-  override def isDomainScoped: Boolean                     = current.get().isDomainScoped
-  override def initialize(ctx: OFEvaluationContext): Unit  = current.get().initialize(ctx)
+  override def getMetadata: Metadata                                      = current.get().getMetadata
+  override def getProviderHooks: java.util.List[OFHook[_]]                = current.get().getProviderHooks
+  override def isDomainScoped: Boolean                                    = current.get().isDomainScoped
+  override def initialize(ctx: OFEvaluationContext): Unit                 = current.get().initialize(ctx)
   override def initialize(ctx: OFEvaluationContext, domain: String): Unit =
     current.get().initialize(ctx, domain)
 

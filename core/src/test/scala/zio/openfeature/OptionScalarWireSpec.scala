@@ -325,7 +325,7 @@ object OptionScalarWireSpec extends ZIOSpecDefault {
         }
       },
       test("a custom from(\"Object\", ...) with a Map default runs its own decode") {
-        val decoded = new AtomicBoolean(false)
+        val decoded                                        = new AtomicBoolean(false)
         implicit val customMap: FlagType[Map[String, Any]] = FlagType.from[Map[String, Any]](
           "Object",
           Map.empty,

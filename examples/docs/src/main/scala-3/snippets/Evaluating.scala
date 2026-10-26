@@ -63,7 +63,7 @@ object Evaluating:
     FeatureFlags.boolean("dark-mode", default = false).catchSome {
       case FeatureFlagError.FlagNotFound(_) => ZIO.succeed(false) // not defined yet: treat as off
       case _: FeatureFlagError.Unreachable  => ZIO.succeed(false) // network blip: serve the default
-      case _: FeatureFlagError.Unauthorized => // wrong SDK key: be loud about it
+      case _: FeatureFlagError.Unauthorized =>                    // wrong SDK key: be loud about it
         ZIO.logError("flag provider rejected our credentials").as(false)
     }
   // --8<-- [end:recover]

@@ -93,10 +93,10 @@ object TypedFlags:
 
   object Region:
     given FlagType[Region] with
-      def typeName: String           = "Region"
-      override def wire: WireType    = WireType.String        // ask the provider for a string
-      def defaultValue: Region       = Region.Eu
-      override def encode(r: Region) = r.toString.toLowerCase // must be a String, to match wire
+      def typeName: String                       = "Region"
+      override def wire: WireType                = WireType.String        // ask the provider for a string
+      def defaultValue: Region                   = Region.Eu
+      override def encode(r: Region)             = r.toString.toLowerCase // must be a String, to match wire
       def decode(v: Any): Either[String, Region] = v match
         case "eu"  => Right(Region.Eu)
         case "us"  => Right(Region.Us)

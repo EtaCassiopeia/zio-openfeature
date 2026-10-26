@@ -203,15 +203,15 @@ object HostileValueSweepSpec extends ZIOSpecDefault {
       }
 
   private def expectedTracking(x: Any): Any = x match {
-    case null | None => null
-    case Some(inner) => expectedTracking(inner)
-    case b: Boolean  => ("Boolean", b.toString)
-    case s: String   => ("String", s)
-    case i: Int      => ("Integer", i.toString)
-    case l: Long     => if (l.isValidInt) ("Integer", l.toInt.toString) else ("Long", l.toString)
-    case d: Double   => ("Double", d.toString)
-    case f: Float    => ("Double", f.toDouble.toString)
-    case i: Instant  => ("Instant", i.toString)
+    case null | None       => null
+    case Some(inner)       => expectedTracking(inner)
+    case b: Boolean        => ("Boolean", b.toString)
+    case s: String         => ("String", s)
+    case i: Int            => ("Integer", i.toString)
+    case l: Long           => if (l.isValidInt) ("Integer", l.toInt.toString) else ("Long", l.toString)
+    case d: Double         => ("Double", d.toString)
+    case f: Float          => ("Double", f.toDouble.toString)
+    case i: Instant        => ("Instant", i.toString)
     case a: AttributeValue =>
       a match {
         case AttributeValue.BoolValue(b)    => ("Boolean", b.toString)
@@ -317,10 +317,12 @@ object HostileValueSweepSpec extends ZIOSpecDefault {
       },
       test("extreme Instants survive exactly, top-level and nested") {
         val instants = List(Instant.MIN, Instant.MAX, Instant.EPOCH, Instant.ofEpochSecond(-1L, 999999999L))
-        val backs = instants.map { i =>
-          i -> (roundTripAttr(AttributeValue.InstantValue(i)).asInstant,
-          roundTripAttr(AttributeValue.ListValue(List(AttributeValue.InstantValue(i)))).asList
-            .flatMap(_.headOption.flatMap(_.asInstant)))
+        val backs    = instants.map { i =>
+          i -> (
+            roundTripAttr(AttributeValue.InstantValue(i)).asInstant,
+            roundTripAttr(AttributeValue.ListValue(List(AttributeValue.InstantValue(i)))).asList
+              .flatMap(_.headOption.flatMap(_.asInstant))
+          )
         }
         assertTrue(backs.forall { case (i, (top, inner)) => top.contains(i) && inner.contains(i) })
       },
@@ -440,8 +442,8 @@ object HostileValueSweepSpec extends ZIOSpecDefault {
         }
       },
       test("a very large attribute map (5000 entries) and deep nesting (300 levels) convert exactly") {
-        val big  = (0 until 5000).map(i => s"k$i😀" -> (i.toLong + Int.MaxValue.toLong)).toMap
-        val deep = (1 to 300).foldLeft[Any]("leaf")((acc, _) => List(Map("k" -> acc)))
+        val big   = (0 until 5000).map(i => s"k$i😀" -> (i.toLong + Int.MaxValue.toLong)).toMap
+        val deep  = (1 to 300).foldLeft[Any]("leaf")((acc, _) => List(Map("k" -> acc)))
         val bigOk =
           trackedAttributes(big) == Right(big.map { case (k, v) => k -> expectedTracking(v) })
         val deepOk =

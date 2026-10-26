@@ -16,9 +16,9 @@ object ExtrasSpec extends ZIOSpecDefault:
 
   /** Answers every boolean with `true` (or throws, while `failing` is set) and counts its calls. */
   final class CountingProvider extends FeatureProvider:
-    val calls                 = new AtomicInteger(0)
-    @volatile var failing     = false
-    def getMetadata: Metadata = () => "counting"
+    val calls                                              = new AtomicInteger(0)
+    @volatile var failing                                  = false
+    def getMetadata: Metadata                              = () => "counting"
     private def answer[A](value: A): ProviderEvaluation[A] =
       calls.incrementAndGet()
       if failing then throw new GeneralError("remote is down")
@@ -34,7 +34,7 @@ object ExtrasSpec extends ZIOSpecDefault:
 
   /** A pre-1.22 provider: it never overrode `getLongEvaluation`, and its double resolver rejects integer flags. */
   final class LegacyProvider extends FeatureProvider:
-    def getMetadata: Metadata = () => "legacy"
+    def getMetadata: Metadata                          = () => "legacy"
     private def ok[A](value: A): ProviderEvaluation[A] =
       val b = ProviderEvaluation.builder[A]()
       b.value(value)
@@ -43,7 +43,7 @@ object ExtrasSpec extends ZIOSpecDefault:
     def getBooleanEvaluation(k: String, d: java.lang.Boolean, c: OFContext) = ok(d)
     def getStringEvaluation(k: String, d: String, c: OFContext)             = ok(d)
     def getIntegerEvaluation(k: String, d: Integer, c: OFContext)           = ok(Integer.valueOf(42))
-    def getDoubleEvaluation(k: String, d: java.lang.Double, c: OFContext) =
+    def getDoubleEvaluation(k: String, d: java.lang.Double, c: OFContext)   =
       throw new TypeMismatchError(s"'$k' is an integer flag")
     def getObjectEvaluation(k: String, d: Value, c: OFContext) = ok(d)
 
@@ -150,7 +150,7 @@ object ExtrasSpec extends ZIOSpecDefault:
         val ctx    = (user: String) => EvaluationContext(user).withAttribute("plan", "pro")
         for
           cached <- CachingProvider.make(remote, CachingConfig(contextKeys = Some(Set("plan"))))
-          _ <- flags(cached)(
+          _      <- flags(cached)(
             FeatureFlags.boolean("f", false, ctx("ann")) *> FeatureFlags.boolean("f", false, ctx("bob"))
           )
         yield assertTrue(remote.calls.get == 1)
@@ -159,7 +159,7 @@ object ExtrasSpec extends ZIOSpecDefault:
         val remote = new CountingProvider
         for
           cached <- CachingProvider.make(remote)
-          _ <- flags(cached)(
+          _      <- flags(cached)(
             FeatureFlags.boolean("f", false) *> cached.invalidateAll *> FeatureFlags.boolean("f", false)
           )
         yield assertTrue(remote.calls.get == 2)
@@ -175,7 +175,7 @@ object ExtrasSpec extends ZIOSpecDefault:
       yield assertTrue(answers.forall(_ == false), remote.calls.get == 2)
     } @@ withLiveClock,
     test("DeferredProvider builds the delegate on initialize, not before") {
-      val built = new AtomicInteger(0)
+      val built    = new AtomicInteger(0)
       val deferred = DeferredProvider("hocon") { () =>
         built.incrementAndGet(); hocon("f = true")
       }

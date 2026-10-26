@@ -96,11 +96,11 @@ object EvaluationContext {
     def targetingKey(key: String): Builder = copy(targetingKey = Some(key))
 
     /** Adds or replaces an attribute. The name `targetingKey` is reserved; see `EvaluationContext`. */
-    def attribute(key: String, value: AttributeValue): Builder = copy(attributes = attributes + (key -> value))
-    def attribute(key: String, value: String): Builder         = attribute(key, AttributeValue.StringValue(value))
-    def attribute(key: String, value: Boolean): Builder        = attribute(key, AttributeValue.BoolValue(value))
-    def attribute(key: String, value: Int): Builder            = attribute(key, AttributeValue.IntValue(value))
-    def attribute(key: String, value: Long): Builder           = attribute(key, AttributeValue.LongValue(value))
+    def attribute(key: String, value: AttributeValue): Builder    = copy(attributes = attributes + (key -> value))
+    def attribute(key: String, value: String): Builder            = attribute(key, AttributeValue.StringValue(value))
+    def attribute(key: String, value: Boolean): Builder           = attribute(key, AttributeValue.BoolValue(value))
+    def attribute(key: String, value: Int): Builder               = attribute(key, AttributeValue.IntValue(value))
+    def attribute(key: String, value: Long): Builder              = attribute(key, AttributeValue.LongValue(value))
     def attribute(key: String, value: java.time.Instant): Builder =
       attribute(key, AttributeValue.InstantValue(value))
     def attribute(key: String, value: Double): Builder        = attribute(key, AttributeValue.DoubleValue(value))

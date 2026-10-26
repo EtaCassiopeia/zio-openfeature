@@ -133,7 +133,7 @@ object NonBlockingInitSpec extends ZIOSpecDefault {
           override def initialize(c: OFEvaluationContext): Unit = throw new RuntimeException("init boom")
         }
       for {
-        errP <- Promise.make[Nothing, Throwable]
+        errP   <- Promise.make[Nothing, Throwable]
         result <- ZIO.scoped {
           FeatureFlags
             .fromAcquireAsync(acquire, fallback, compose = badCompose, onConstructionError = e => errP.succeed(e).unit)
@@ -158,7 +158,7 @@ object NonBlockingInitSpec extends ZIOSpecDefault {
     ) {
       val fbShutdowns = new AtomicInteger(0)
       val created     = new AtomicInteger(0)
-      val fallback = ZIO.succeed[FeatureProvider] {
+      val fallback    = ZIO.succeed[FeatureProvider] {
         created.incrementAndGet()
         new FixedBoolProvider(s"fb-${created.get()}", false, fbShutdowns)
       }
@@ -232,7 +232,7 @@ object NonBlockingInitSpec extends ZIOSpecDefault {
         // The evaluation observed from INSIDE verify: the swap must not have happened yet.
         duringVerify <- Ref.make(Option.empty[Either[FeatureFlagError, Boolean]])
         ffPromise    <- Promise.make[Nothing, FeatureFlags]
-        result <- ZIO.scoped {
+        result       <- ZIO.scoped {
           val verify = (p: FeatureProvider) =>
             seen.set(Some(p)) *>
               ffPromise.await.flatMap(ff => ff.boolean("x", true).either.flatMap(v => duringVerify.set(Some(v)))) *>
@@ -350,8 +350,8 @@ object NonBlockingInitSpec extends ZIOSpecDefault {
       }
       val fallback = ZIO.succeed[FeatureProvider](new FixedBoolProvider("fb", false))
       for {
-        known <- ZIO.succeed(new java.util.concurrent.atomic.AtomicBoolean(false))
-        errP  <- Promise.make[Nothing, Throwable]
+        known    <- ZIO.succeed(new java.util.concurrent.atomic.AtomicBoolean(false))
+        errP     <- Promise.make[Nothing, Throwable]
         rejected <- ZIO.scoped {
           FeatureFlags
             .fromAcquireAsync(
@@ -365,7 +365,7 @@ object NonBlockingInitSpec extends ZIOSpecDefault {
             .map(_.get[FeatureFlags])
             .flatMap(ff => errP.await.zip(ff.boolean("x", true)))
         }
-        _ <- ZIO.succeed(known.set(true))
+        _       <- ZIO.succeed(known.set(true))
         swapped <- ZIO.scoped {
           FeatureFlags
             .fromAcquireAsync(
@@ -396,8 +396,8 @@ object NonBlockingInitSpec extends ZIOSpecDefault {
           )
         verify = (_: FeatureProvider) => verifying.succeed(()) *> ZIO.never
         _ <- ZIO.scoped {
-          FeatureFlags.fromAcquireAsync(acquire, fallback, verify = verify).build.map(_.get[FeatureFlags]).flatMap {
-            _ => verifying.await // close the layer while verify is blocked
+          FeatureFlags.fromAcquireAsync(acquire, fallback, verify = verify).build.map(_.get[FeatureFlags]).flatMap { _ =>
+            verifying.await // close the layer while verify is blocked
           }
         }
         _ <- Live.live(
@@ -480,7 +480,7 @@ object NonBlockingInitSpec extends ZIOSpecDefault {
         result <- ZIO.scoped {
           for {
             statusP <- Promise.make[Nothing, AcquireStatus]
-            env <- FeatureFlags
+            env     <- FeatureFlags
               .fromAcquireAsync(
                 acquire,
                 fallback,
@@ -551,7 +551,7 @@ object NonBlockingInitSpec extends ZIOSpecDefault {
         result <- ZIO.scoped {
           for {
             statusP <- Promise.make[Nothing, AcquireStatus]
-            env <- FeatureFlags
+            env     <- FeatureFlags
               .fromAcquireAsync(
                 acquire,
                 fallback,
@@ -613,7 +613,7 @@ object NonBlockingInitSpec extends ZIOSpecDefault {
       val verifyErr                            = new RuntimeException("verify always rejects")
       val acquire: RIO[Scope, FeatureProvider] = ZIO.succeed(new FixedBoolProvider("real", true))
       for {
-        errP <- Promise.make[Nothing, Throwable]
+        errP   <- Promise.make[Nothing, Throwable]
         result <- ZIO.scoped {
           FeatureFlags
             .fromAcquireAsync(
@@ -641,7 +641,7 @@ object NonBlockingInitSpec extends ZIOSpecDefault {
       // `ZIO.succeed` does not catch — this is a Die, the shape a caller gets by not using attempt/attemptBlocking.
       val acquire: RIO[Scope, FeatureProvider] = ZIO.succeed[FeatureProvider](throw boom)
       for {
-        errP <- Promise.make[Nothing, Throwable]
+        errP   <- Promise.make[Nothing, Throwable]
         result <- ZIO.scoped {
           FeatureFlags
             .fromAcquireAsync(acquire, fallback, onConstructionError = e => errP.succeed(e).unit)
@@ -700,7 +700,7 @@ object NonBlockingInitSpec extends ZIOSpecDefault {
       val acquire: RIO[Scope, FeatureProvider] = ZIO.succeed(new FixedBoolProvider("real", true))
       val widened: URLayer[Scope, FeatureFlags with AcquireStatus] = FeatureFlags.fromAcquireAsync(acquire, fallback)
       val narrowed: URLayer[Scope, FeatureFlags]                   = widened // source compatibility (covariant ROut)
-      val program = for {
+      val program                                                  = for {
         _   <- ZIO.service[FeatureFlags]
         st  <- AcquireStatus.get
         st2 <- ZIO.serviceWithZIO[AcquireStatus](_.changes.runHead)

@@ -14,7 +14,7 @@ object EvaluatingSpec extends ZIOSpecDefault:
     test("every typed method reads its flag") {
       for
         provider <- ZIO.service[TestFeatureProvider]
-        _ <- provider.setFlags(
+        _        <- provider.setFlags(
           Map(
             "dark-mode"       -> true,
             "button-color"    -> "green",

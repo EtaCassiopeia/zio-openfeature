@@ -32,8 +32,8 @@ object OptimizelyEventDispatchSpec extends ZIOSpecDefault {
 
   // Never returns from a dispatch until its thread is interrupted.
   final private class Blocking extends EventHandler {
-    val entered     = new CountDownLatch(1)
-    val interrupted = new CountDownLatch(1)
+    val entered                                   = new CountDownLatch(1)
+    val interrupted                               = new CountDownLatch(1)
     override def dispatchEvent(e: LogEvent): Unit = {
       entered.countDown()
       try new CountDownLatch(1).await()
@@ -143,7 +143,7 @@ object OptimizelyEventDispatchSpec extends ZIOSpecDefault {
     test("the SDK's async handler posts the batch, and no event thread outlives the provider's scope") {
       // Every thread the provider starts is created, directly or by a thread it started, from the thread that builds
       // it. Building on a thread in a dedicated group makes them identifiable, whatever else runs in this JVM.
-      val group = new ThreadGroup("optimizely-events-spec")
+      val group   = new ThreadGroup("optimizely-events-spec")
       val builder = Executors.newSingleThreadExecutor { (r: Runnable) =>
         val t = new Thread(group, r, "optimizely-events-spec-builder")
         t.setDaemon(true)
@@ -217,7 +217,7 @@ object OptimizelyEventDispatchSpec extends ZIOSpecDefault {
         closeTooLong  <- rejected(OptimizelyEvents.Batched(closeTimeout = java.time.Duration.ofSeconds(5)))
         closeJustOver <- rejected(OptimizelyEvents.Batched(closeTimeout = java.time.Duration.ofMillis(4001)))
         flushNull     <- rejected(OptimizelyEvents.Batched(flushInterval = null))
-        atBounds <- OptimizelyProvider
+        atBounds      <- OptimizelyProvider
           .validateEvents(
             OptimizelyEvents.Batched(1, java.time.Duration.ofMillis(1), java.time.Duration.ofSeconds(4))
           )

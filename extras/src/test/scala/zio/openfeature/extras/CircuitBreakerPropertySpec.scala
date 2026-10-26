@@ -179,7 +179,7 @@ object CircuitBreakerPropertySpec extends ZIOSpecDefault {
               for {
                 _      <- ZIO.sleep(r.holdMillis.millis)
                 before <- snapshot("before settle")
-                _ <- ZIO.foreachDiscard(r.outcome) { o =>
+                _      <- ZIO.foreachDiscard(r.outcome) { o =>
                   ZIO.succeed(settle(cb, o, p)).flatMap { case (closed, opened) =>
                     check(
                       s"stale permit (epoch ${p.epoch} < ${before.epoch}) caused a close/open",

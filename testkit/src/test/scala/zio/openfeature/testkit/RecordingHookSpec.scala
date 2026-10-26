@@ -86,7 +86,7 @@ object RecordingHookSpec extends ZIOSpecDefault {
     test("every stage records the hints passed through EvaluationOptions") {
       for {
         recorder <- installed()
-        _ <- FeatureFlags.booleanDetails(
+        _        <- FeatureFlags.booleanDetails(
           "flag",
           default = false,
           options = EvaluationOptions.empty.withHint("request", "r-1")

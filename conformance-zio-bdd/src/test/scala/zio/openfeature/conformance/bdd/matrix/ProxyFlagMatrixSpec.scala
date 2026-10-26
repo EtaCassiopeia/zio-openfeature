@@ -13,10 +13,10 @@ import zio.openfeature.optimizely.matrix.{RecommendationResult, RecommendationSe
   *
   * Contrast with [[FlagMatrixSpec]]: there, `@flags(datafile=X)` selects *which fixture* a scenario's own dedicated
   * Rift mock space serves. Here there is no `datafile` key at all — every `@flags(...)` tag is a set of
-  * evaluation-context attributes (e.g. `plan`, `region`), and all scenarios' providers point at one shared Rift
-  * mock space (see [[ProxyMatrixHarness]]). `recommendation_rate_limit` in the
-  * `audience-segments` datafile is gated on *both* attributes together (`plan = "premium" AND region = "eu"`), so a
-  * single tag carrying both keys is what actually changes the flag's resolved value — not a provider swap.
+  * evaluation-context attributes (e.g. `plan`, `region`), and all scenarios' providers point at one shared Rift mock
+  * space (see [[ProxyMatrixHarness]]). `recommendation_rate_limit` in the `audience-segments` datafile is gated on
+  * *both* attributes together (`plan = "premium" AND region = "eu"`), so a single tag carrying both keys is what
+  * actually changes the flag's resolved value — not a provider swap.
   */
 @Suite(
   featureDirs = Array("conformance-zio-bdd/src/test/resources/features/optimizely/proxy"),

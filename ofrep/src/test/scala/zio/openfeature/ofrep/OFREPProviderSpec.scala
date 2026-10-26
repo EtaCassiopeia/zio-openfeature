@@ -99,20 +99,23 @@ object OFREPProviderSpec extends ZIOSpecDefault {
       test("accepts valid http URL") {
         for {
           provider <- OFREPProvider.make("http://localhost:9999")
-        } yield try assertTrue(provider.getMetadata.getName.toLowerCase.contains("ofrep"))
-        finally provider.shutdown()
+        } yield
+          try assertTrue(provider.getMetadata.getName.toLowerCase.contains("ofrep"))
+          finally provider.shutdown()
       },
       test("accepts valid https URL with path") {
         for {
           provider <- OFREPProvider.make("https://flags.example.com/api/ofrep")
-        } yield try assertCompletes
-        finally provider.shutdown()
+        } yield
+          try assertCompletes
+          finally provider.shutdown()
       },
       test("accepts URL with uppercase scheme") {
         for {
           provider <- OFREPProvider.make("HTTPS://flags.example.com")
-        } yield try assertCompletes
-        finally provider.shutdown()
+        } yield
+          try assertCompletes
+          finally provider.shutdown()
       }
     ),
     suite("make(OfrepProviderOptions)")(
@@ -136,8 +139,9 @@ object OFREPProviderSpec extends ZIOSpecDefault {
           .build()
         for {
           provider <- OFREPProvider.make(opts)
-        } yield try assertTrue(provider.getMetadata.getName.toLowerCase.contains("ofrep"))
-        finally provider.shutdown()
+        } yield
+          try assertTrue(provider.getMetadata.getName.toLowerCase.contains("ofrep"))
+          finally provider.shutdown()
       }
     ),
     suite("layer")(
@@ -160,8 +164,9 @@ object OFREPProviderSpec extends ZIOSpecDefault {
         )
         for {
           provider <- build
-        } yield try assertTrue(provider.getMetadata.getName.toLowerCase.contains("ofrep"))
-        finally provider.shutdown()
+        } yield
+          try assertTrue(provider.getMetadata.getName.toLowerCase.contains("ofrep"))
+          finally provider.shutdown()
       }
     )
   )

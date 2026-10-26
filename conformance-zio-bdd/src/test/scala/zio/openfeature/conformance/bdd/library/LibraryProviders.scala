@@ -28,9 +28,9 @@ object LibraryProviders {
     */
   final class NullStringProvider extends FeatureProvider {
     @scala.annotation.nowarn("msg=deprecated")
-    override def getMetadata: Metadata                      = meta("NullString")
-    override def getState: ProviderState                    = ProviderState.READY
-    override def initialize(ctx: OFEvaluationContext): Unit = ()
+    override def getMetadata: Metadata                                                         = meta("NullString")
+    override def getState: ProviderState                                                       = ProviderState.READY
+    override def initialize(ctx: OFEvaluationContext): Unit                                    = ()
     override def getBooleanEvaluation(k: String, d: java.lang.Boolean, c: OFEvaluationContext) =
       ProviderEvaluations.of[java.lang.Boolean](d, "DEFAULT")
     override def getStringEvaluation(k: String, d: String, c: OFEvaluationContext) =
@@ -49,8 +49,8 @@ object LibraryProviders {
     * error code on the way back. `sawObjectDefault` is the only place the first half is observable.
     */
   final class DefaultRecordingProvider extends FeatureProvider {
-    val sawObjectDefault: AtomicReference[Value]   = new AtomicReference[Value](null)
-    val sawStringDefault: AtomicReference[String]  = new AtomicReference[String](null)
+    val sawObjectDefault: AtomicReference[Value]        = new AtomicReference[Value](null)
+    val sawStringDefault: AtomicReference[String]       = new AtomicReference[String](null)
     val sawLongDefault: AtomicReference[java.lang.Long] = new AtomicReference[java.lang.Long](null)
 
     private def missing[T](k: String, d: T): ProviderEvaluation[T] =
@@ -61,17 +61,17 @@ object LibraryProviders {
     override def getState: ProviderState                    = ProviderState.READY
     override def initialize(ctx: OFEvaluationContext): Unit = ()
     override def getBooleanEvaluation(k: String, d: java.lang.Boolean, c: OFEvaluationContext) = missing(k, d)
-    override def getStringEvaluation(k: String, d: String, c: OFEvaluationContext) = {
+    override def getStringEvaluation(k: String, d: String, c: OFEvaluationContext)             = {
       sawStringDefault.set(d)
       missing(k, d)
     }
     override def getIntegerEvaluation(k: String, d: java.lang.Integer, c: OFEvaluationContext) = missing(k, d)
-    override def getLongEvaluation(k: String, d: java.lang.Long, c: OFEvaluationContext) = {
+    override def getLongEvaluation(k: String, d: java.lang.Long, c: OFEvaluationContext)       = {
       sawLongDefault.set(d)
       missing(k, d)
     }
     override def getDoubleEvaluation(k: String, d: java.lang.Double, c: OFEvaluationContext) = missing(k, d)
-    override def getObjectEvaluation(k: String, d: Value, c: OFEvaluationContext) = {
+    override def getObjectEvaluation(k: String, d: Value, c: OFEvaluationContext)            = {
       sawObjectDefault.set(d)
       missing(k, d)
     }
@@ -83,9 +83,9 @@ object LibraryProviders {
     */
   final class LegacyLongProvider extends FeatureProvider {
     @scala.annotation.nowarn("msg=deprecated")
-    override def getMetadata: Metadata                      = meta("LegacyLong")
-    override def getState: ProviderState                    = ProviderState.READY
-    override def initialize(ctx: OFEvaluationContext): Unit = ()
+    override def getMetadata: Metadata                                                         = meta("LegacyLong")
+    override def getState: ProviderState                                                       = ProviderState.READY
+    override def initialize(ctx: OFEvaluationContext): Unit                                    = ()
     override def getBooleanEvaluation(k: String, d: java.lang.Boolean, c: OFEvaluationContext) =
       ProviderEvaluations.of[java.lang.Boolean](d, "DEFAULT")
     override def getStringEvaluation(k: String, d: String, c: OFEvaluationContext) =
@@ -106,9 +106,9 @@ object LibraryProviders {
       ProviderEvaluations.error(d, OFErrorCode.FLAG_NOT_FOUND, s"Flag '$k' does not exist")
 
     @scala.annotation.nowarn("msg=deprecated")
-    override def getMetadata: Metadata                      = meta(nm)
-    override def getState: ProviderState                    = ProviderState.READY
-    override def initialize(ctx: OFEvaluationContext): Unit = ()
+    override def getMetadata: Metadata                                                         = meta(nm)
+    override def getState: ProviderState                                                       = ProviderState.READY
+    override def initialize(ctx: OFEvaluationContext): Unit                                    = ()
     override def getBooleanEvaluation(k: String, d: java.lang.Boolean, c: OFEvaluationContext) = missing(k, d)
     override def getStringEvaluation(k: String, d: String, c: OFEvaluationContext)             = missing(k, d)
     override def getIntegerEvaluation(k: String, d: java.lang.Integer, c: OFEvaluationContext) = missing(k, d)

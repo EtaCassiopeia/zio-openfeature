@@ -116,7 +116,7 @@ object Transactions:
   val state: ZIO[FeatureFlags, FeatureFlagError, (Boolean, Option[Set[String]])] =
     for
       inside <- FeatureFlags.inTransaction // false here
-      tx <- FeatureFlags.transaction() {
+      tx     <- FeatureFlags.transaction() {
         FeatureFlags.boolean("feature", false) *> auditFlags // Some(Set("feature"))
       }
     yield (inside, tx.result)

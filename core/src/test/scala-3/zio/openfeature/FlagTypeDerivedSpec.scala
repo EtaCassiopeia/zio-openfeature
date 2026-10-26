@@ -64,9 +64,9 @@ object FlagTypeDerivedSpec extends ZIOSpecDefault:
 
     override def getMetadata: Metadata = new Metadata:
       def getName: String = "Derived"
-    override def getState: ProviderState                    = ProviderState.READY
-    override def initialize(ctx: OFEvaluationContext): Unit = ()
-    override def shutdown(): Unit                           = ()
+    override def getState: ProviderState                                                       = ProviderState.READY
+    override def initialize(ctx: OFEvaluationContext): Unit                                    = ()
+    override def shutdown(): Unit                                                              = ()
     override def getBooleanEvaluation(k: String, d: java.lang.Boolean, c: OFEvaluationContext) =
       ProviderEvaluations.of[java.lang.Boolean](d, "DEFAULT")
     override def getStringEvaluation(k: String, d: String, c: OFEvaluationContext) =
@@ -97,8 +97,8 @@ object FlagTypeDerivedSpec extends ZIOSpecDefault:
     */
   final case class Wrapped(v: String)
   given wrappedFlagType: FlagType[Wrapped] with
-    def typeName: String      = "Wrapped"
-    def defaultValue: Wrapped = Wrapped("")
+    def typeName: String                            = "Wrapped"
+    def defaultValue: Wrapped                       = Wrapped("")
     def decode(value: Any): Either[String, Wrapped] = value match
       case m: Map[?, ?] =>
         m.asInstanceOf[Map[String, Any]].get("v") match

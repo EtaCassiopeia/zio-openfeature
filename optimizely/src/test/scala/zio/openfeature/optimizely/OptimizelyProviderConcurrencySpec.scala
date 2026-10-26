@@ -102,7 +102,7 @@ object OptimizelyProviderConcurrencySpec extends ZIOSpecDefault {
       withMockServer { server =>
         server.stubFor(get(urlEqualTo(DatafilePath)).willReturn(okJson(ValidDatafile)))
         val (client, mgr) = buildClient(server)
-        val provider =
+        val provider      =
           new OptimizelyFeatureProvider(
             client,
             OptimizelyTestSupport.InitWait,
@@ -111,8 +111,8 @@ object OptimizelyProviderConcurrencySpec extends ZIOSpecDefault {
           )
         try {
           provider.initialize(new ImmutableContext())
-          val N    = 1000
-          val ctxs = (0 until N).map(i => new ImmutableContext(s"user-$i"))
+          val N        = 1000
+          val ctxs     = (0 until N).map(i => new ImmutableContext(s"user-$i"))
           val outcomes = race(N) { i =>
             provider.getBooleanEvaluation(Flag, java.lang.Boolean.FALSE, ctxs(i))
           }
@@ -131,7 +131,7 @@ object OptimizelyProviderConcurrencySpec extends ZIOSpecDefault {
       withMockServer { server =>
         server.stubFor(get(urlEqualTo(DatafilePath)).willReturn(okJson(ValidDatafile)))
         val (client, mgr) = buildClient(server)
-        val provider =
+        val provider      =
           new OptimizelyFeatureProvider(
             client,
             OptimizelyTestSupport.InitWait,
@@ -140,8 +140,8 @@ object OptimizelyProviderConcurrencySpec extends ZIOSpecDefault {
           )
         try {
           provider.initialize(new ImmutableContext())
-          val N    = 500
-          val ctxs = (0 until N).map(i => new ImmutableContext(s"user-$i"))
+          val N        = 500
+          val ctxs     = (0 until N).map(i => new ImmutableContext(s"user-$i"))
           val outcomes = race(N) { i =>
             val ctx = ctxs(i)
             i % 5 match {
@@ -166,7 +166,7 @@ object OptimizelyProviderConcurrencySpec extends ZIOSpecDefault {
             .willReturn(okJson(ValidDatafile).withFixedDelay(200))
         )
         val (client, mgr) = buildClient(server)
-        val provider =
+        val provider      =
           new OptimizelyFeatureProvider(
             client,
             java.time.Duration.ofSeconds(2),
@@ -176,19 +176,19 @@ object OptimizelyProviderConcurrencySpec extends ZIOSpecDefault {
         try {
           val N           = 200
           val initStarted = new CountDownLatch(1)
-          val initThread = new Thread(() => {
+          val initThread  = new Thread(() => {
             initStarted.countDown()
             try provider.initialize(new ImmutableContext())
             catch { case _: Throwable => () }
           })
           initThread.start()
           initStarted.await()
-          val ctxs = (0 until N).map(i => new ImmutableContext(s"racer-$i"))
+          val ctxs     = (0 until N).map(i => new ImmutableContext(s"racer-$i"))
           val outcomes = race(N) { i =>
             provider.getBooleanEvaluation(Flag, java.lang.Boolean.FALSE, ctxs(i))
           }
           initThread.join(5000)
-          val anyThrew = outcomes.exists(_.isLeft)
+          val anyThrew   = outcomes.exists(_.isLeft)
           val classified = outcomes.collect { case Right(e) =>
             if (e.getErrorCode == ErrorCode.PROVIDER_NOT_READY) "not-ready"
             else if (e.getValue == java.lang.Boolean.TRUE) "ready-true"
@@ -204,7 +204,7 @@ object OptimizelyProviderConcurrencySpec extends ZIOSpecDefault {
       withMockServer { server =>
         server.stubFor(get(urlEqualTo(DatafilePath)).willReturn(okJson(ValidDatafile)))
         val (client, mgr) = buildClient(server)
-        val provider =
+        val provider      =
           new OptimizelyFeatureProvider(
             client,
             OptimizelyTestSupport.InitWait,

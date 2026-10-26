@@ -22,6 +22,7 @@ final case class ClientMetadata(
   domain: Option[String] = None,
   version: Option[String] = None
 ) {
+
   /** Returns true if this client is bound to a specific domain. */
   def hasDomain: Boolean = domain.isDefined
 
@@ -48,11 +49,13 @@ object ProviderEventType {
   case object Error                extends ProviderEventType
   case object Stale                extends ProviderEventType
   case object ConfigurationChanged extends ProviderEventType
+
   /** Reserved: the OpenFeature Java SDK never emits a reconnecting event, so `on(Reconnecting, …)` never fires. */
-  case object Reconnecting         extends ProviderEventType
+  case object Reconnecting extends ProviderEventType
 }
 
 sealed trait ProviderEvent extends Product with Serializable {
+
   /** Get the event type for this event. */
   def eventType: ProviderEventType = this match {
     case _: ProviderEvent.Ready                => ProviderEventType.Ready
@@ -83,6 +86,7 @@ object ProviderEvent {
     providerMetadata: ProviderMetadata,
     eventMetadata: FlagMetadata = FlagMetadata.empty
   ) extends ProviderEvent
+
   /** Reserved: the OpenFeature Java SDK never emits a reconnecting event, so this is never published. */
   final case class Reconnecting(providerMetadata: ProviderMetadata, eventMetadata: FlagMetadata = FlagMetadata.empty)
       extends ProviderEvent

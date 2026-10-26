@@ -34,7 +34,7 @@ object OptimizelyInitTimeoutSpec extends ZIOSpecDefault {
             for {
               provider <- OptimizelyProvider.scoped(config, Some(TestHttpClient.failFast()))
               start    <- Clock.nanoTime
-              result <- ZIO
+              result   <- ZIO
                 .scoped(
                   FeatureFlags
                     .fromProvider(

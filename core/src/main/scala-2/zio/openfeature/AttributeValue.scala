@@ -59,9 +59,9 @@ sealed trait AttributeValue extends Product with Serializable {
 }
 
 object AttributeValue {
-  final case class BoolValue(value: Boolean)                       extends AttributeValue
-  final case class StringValue(value: String)                      extends AttributeValue
-  final case class IntValue(value: Int)                            extends AttributeValue
+  final case class BoolValue(value: Boolean)  extends AttributeValue
+  final case class StringValue(value: String) extends AttributeValue
+  final case class IntValue(value: Int)       extends AttributeValue
 
   /** A 64-bit integer attribute.
     *
@@ -70,10 +70,10 @@ object AttributeValue {
     * provider boundary. If exact identity matters beyond 2^53 (e.g. snowflake IDs), pass the value as a `StringValue`
     * instead.
     */
-  final case class LongValue(value: Long)                          extends AttributeValue
-  final case class DoubleValue(value: Double)                      extends AttributeValue
-  final case class InstantValue(value: Instant)                    extends AttributeValue
-  final case class ListValue(values: List[AttributeValue])         extends AttributeValue
+  final case class LongValue(value: Long)                           extends AttributeValue
+  final case class DoubleValue(value: Double)                       extends AttributeValue
+  final case class InstantValue(value: Instant)                     extends AttributeValue
+  final case class ListValue(values: List[AttributeValue])          extends AttributeValue
   final case class StructValue(fields: Map[String, AttributeValue]) extends AttributeValue
 
   def bool(value: Boolean): AttributeValue                      = BoolValue(value)
@@ -85,10 +85,10 @@ object AttributeValue {
   def list(values: AttributeValue*): AttributeValue             = ListValue(values.toList)
   def struct(fields: (String, AttributeValue)*): AttributeValue = StructValue(fields.toMap)
 
-  implicit def boolToAttributeValue(value: Boolean): AttributeValue   = BoolValue(value)
-  implicit def stringToAttributeValue(value: String): AttributeValue  = StringValue(value)
-  implicit def intToAttributeValue(value: Int): AttributeValue        = IntValue(value)
-  implicit def longToAttributeValue(value: Long): AttributeValue      = LongValue(value)
-  implicit def doubleToAttributeValue(value: Double): AttributeValue  = DoubleValue(value)
+  implicit def boolToAttributeValue(value: Boolean): AttributeValue    = BoolValue(value)
+  implicit def stringToAttributeValue(value: String): AttributeValue   = StringValue(value)
+  implicit def intToAttributeValue(value: Int): AttributeValue         = IntValue(value)
+  implicit def longToAttributeValue(value: Long): AttributeValue       = LongValue(value)
+  implicit def doubleToAttributeValue(value: Double): AttributeValue   = DoubleValue(value)
   implicit def instantToAttributeValue(value: Instant): AttributeValue = InstantValue(value)
 }

@@ -62,7 +62,7 @@ object OptimizelyTestSupport {
     deferStart: Boolean = false,
     customize: Optimizely.Builder => Optimizely.Builder = identity
   ): (Optimizely, HttpProjectConfigManager) = {
-    val center = new NotificationCenter()
+    val center  = new NotificationCenter()
     val manager = HttpProjectConfigManager
       .builder()
       .withSdkKey(sdkKey)

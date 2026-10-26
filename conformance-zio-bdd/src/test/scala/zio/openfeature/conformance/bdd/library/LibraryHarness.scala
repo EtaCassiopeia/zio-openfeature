@@ -30,11 +30,11 @@ object LibraryHarness {
     * long the suite takes to get there, and there is no `TestClock` under the zio-bdd runner.
     */
   def fallbackPolicy(name: String): FallbackLogging = name match {
-    case "off"          => FallbackLogging.Off
-    case "always"       => FallbackLogging.Always
-    case "throttled"    => FallbackLogging.Throttled(1.hour)
-    case "unthrottled"  => FallbackLogging.Throttled(Duration.Zero)
-    case other          => throw new IllegalArgumentException(s"unknown fallback logging policy: $other")
+    case "off"         => FallbackLogging.Off
+    case "always"      => FallbackLogging.Always
+    case "throttled"   => FallbackLogging.Throttled(1.hour)
+    case "unthrottled" => FallbackLogging.Throttled(Duration.Zero)
+    case other         => throw new IllegalArgumentException(s"unknown fallback logging policy: $other")
   }
 
   def flagValueType(name: String): FlagValueType = name match {

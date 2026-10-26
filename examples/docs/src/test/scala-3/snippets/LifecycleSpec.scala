@@ -70,7 +70,7 @@ object LifecycleSpec extends ZIOSpecDefault:
     test("events: a configuration change reaches the stream") {
       for
         received <- Promise.make[Nothing, Set[String]]
-        _ <- FeatureFlags.events
+        _        <- FeatureFlags.events
           .collect { case ProviderEvent.ConfigurationChanged(keys, _, _) => keys }
           .foreach(received.succeed(_))
           .forkScoped

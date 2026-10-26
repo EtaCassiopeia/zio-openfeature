@@ -18,8 +18,8 @@ import zio.bdd.core.step.ZIOSteps
   *
   * One feature file per area, each naming the issue it pins:
   *
-  *   - `typed_flags.feature` — `FlagDef` (#357), wire-type dispatch (#361), the encode/wire diagnostic (#362),
-  *     Mirror derivation (#366), decode-on-extract and hook wire-type filtering (#356)
+  *   - `typed_flags.feature` — `FlagDef` (#357), wire-type dispatch (#361), the encode/wire diagnostic (#362), Mirror
+  *     derivation (#366), decode-on-extract and hook wire-type filtering (#356)
   *   - `long_evaluation.feature` — the SDK 1.22.0 native long surface, `FlagValueType.Long`, and
   *     `IntegerWideningLongProvider` (#333/#339)
   *   - `absent_keys.feature` — `FLAG_NOT_FOUND` for absent keys in the testkit (#374) and config (#370) providers, and
@@ -30,9 +30,9 @@ import zio.bdd.core.step.ZIOSteps
   *   - `acquire_status.feature` — `verify` before the swap (#349/#376) and `AcquireStatus` (#352/#377)
   *   - `test_fixtures.feature` — typed `FlagOverride` fixtures (#351/#372) and `makeNamed` (#375)
   *
-  * Two additions are deliberately not here. `FlagTypeLaws` (#368) builds a `zio-test` `Spec`, which has no
-  * meaning inside a gherkin step — `testkit`'s own `FlagTypeLawsSpec` is its home; what a *scenario* can assert is the
-  * law itself, which `test_fixtures.feature` does by seeding through `encode` and reading back through `decode`. MiMa
+  * Two additions are deliberately not here. `FlagTypeLaws` (#368) builds a `zio-test` `Spec`, which has no meaning
+  * inside a gherkin step — `testkit`'s own `FlagTypeLawsSpec` is its home; what a *scenario* can assert is the law
+  * itself, which `test_fixtures.feature` does by seeding through `encode` and reading back through `decode`. MiMa
   * baselining (#330) and the gherkin drift checks (#334/#337/#343) are build/CI machinery with no runtime surface.
   */
 @Suite(

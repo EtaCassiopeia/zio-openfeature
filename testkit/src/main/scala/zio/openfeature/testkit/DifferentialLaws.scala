@@ -375,7 +375,7 @@ object DifferentialLaws {
         testFlags    <- flagsFor(testProvider)
         oracle       <- seed(fs)
         oracleFlags  <- flagsFor(oracle)
-        results <- ZIO.foreach(requests) { r =>
+        results      <- ZIO.foreach(requests) { r =>
           observe(testFlags, r).zip(observe(oracleFlags, r)).map { case (t, o) =>
             if (same(t, o)) Left(()) else Right(Disagreement(fs, r, t, o))
           }

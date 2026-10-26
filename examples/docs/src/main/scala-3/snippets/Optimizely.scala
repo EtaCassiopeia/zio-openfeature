@@ -3,7 +3,12 @@ package snippets
 import zio.*
 import zio.openfeature.*
 import zio.openfeature.extras.{CircuitBreakerProvider, CircuitBreakerProviderConfig, EnvVarProvider}
-import zio.openfeature.optimizely.{OptimizelyEvents, OptimizelyFeatureProvider, OptimizelyProvider, OptimizelyProviderConfig}
+import zio.openfeature.optimizely.{
+  OptimizelyEvents,
+  OptimizelyFeatureProvider,
+  OptimizelyProvider,
+  OptimizelyProviderConfig
+}
 
 /** The code on the Optimizely page. The tests only check the parts that need no network: SDK key validation. */
 object Optimizely:

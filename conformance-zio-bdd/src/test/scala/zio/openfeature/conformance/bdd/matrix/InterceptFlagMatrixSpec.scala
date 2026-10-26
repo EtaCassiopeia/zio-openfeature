@@ -10,22 +10,22 @@ import zio.openfeature.optimizely.matrix.{InterceptHarness, RecommendationServic
 
 /** Rift intercept (TLS-MITM) suite — exercises the SDK's REAL default-CDN transport path (#280).
   *
-  * Unlike [[FlagMatrixSpec]] / [[MatrixHarness]], which override `datafileUrl` to a mock URL and fetch over
-  * plain HTTP, this suite leaves `datafileUrl = None` so the Optimizely SDK builds its production URL
-  * (`https://cdn.optimizely.com/datafiles/<key>.json`) and performs a real HTTPS fetch — which Rift's intercept
-  * engine transparently MITMs, serving the datafile fixture. It proves the same decision logic works over the
-  * default URL template + HTTPS + TLS-trust path a production deployment uses.
+  * Unlike [[FlagMatrixSpec]] / [[MatrixHarness]], which override `datafileUrl` to a mock URL and fetch over plain HTTP,
+  * this suite leaves `datafileUrl = None` so the Optimizely SDK builds its production URL
+  * (`https://cdn.optimizely.com/datafiles/<key>.json`) and performs a real HTTPS fetch — which Rift's intercept engine
+  * transparently MITMs, serving the datafile fixture. It proves the same decision logic works over the default URL
+  * template + HTTPS + TLS-trust path a production deployment uses.
   *
   * `scenarioParallelism = 1`: the intercept listener is per-engine, and each scenario stands up its own intercept
   * engine + per-provider `OptimizelyHttpClient` (trusting Rift's CA, routing through the intercept listener) — no
   * JVM-global proxy/truststore, so nothing leaks across suites (#278).
   */
 @Suite(
-  featureDirs         = Array("conformance-zio-bdd/src/test/resources/features/optimizely-intercept"),
-  reporters           = Array("pretty"),
-  parallelism         = 1,
+  featureDirs = Array("conformance-zio-bdd/src/test/resources/features/optimizely-intercept"),
+  reporters = Array("pretty"),
+  parallelism = 1,
   scenarioParallelism = 1,
-  logLevel            = "warning"
+  logLevel = "warning"
 )
 object InterceptFlagMatrixSpec extends ZIOSteps[FeatureFlags, World] {
 

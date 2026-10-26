@@ -12,7 +12,7 @@ object Extras:
   // --8<-- [start:hocon]
   val fromApplicationConf: HoconProvider = HoconProvider()               // the `feature-flags` block
   val fromOtherPath: HoconProvider       = HoconProvider("my-app.flags") // any other path
-  val fromConfig: HoconProvider =
+  val fromConfig: HoconProvider          =
     HoconProvider.fromConfig(ConfigFactory.parseString("new-checkout = true"))
 
   val hoconFlags: ZLayer[Any, Throwable, FeatureFlags] = FeatureFlags.fromProvider(fromApplicationConf)

@@ -186,8 +186,8 @@ object ProviderStatusBridgeSpec extends ZIOSpecDefault {
     },
     test("EventStale only transitions from Ready; a stale event over Error is ignored") {
       for {
-        refR <- SubscriptionRef.make[ProviderStatus](ProviderStatus.Ready)
-        refE <- SubscriptionRef.make[ProviderStatus](ProviderStatus.Error)
+        refR      <- SubscriptionRef.make[ProviderStatus](ProviderStatus.Ready)
+        refE      <- SubscriptionRef.make[ProviderStatus](ProviderStatus.Error)
         fromReady <- ZIO.scoped {
           build(refR, "current").flatMap(ff => ff.onStaleEvent(details("current")) *> ff.providerStatus)
         }

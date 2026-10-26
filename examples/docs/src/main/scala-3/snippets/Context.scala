@@ -41,7 +41,7 @@ object Context:
       "score"    -> AttributeValue.double(4.5),
       "signedUp" -> AttributeValue.instant(Instant.parse("2024-01-15T10:00:00Z")),
       "roles"    -> AttributeValue.list(AttributeValue.string("admin"), AttributeValue.string("editor")),
-      "address" -> AttributeValue.struct(
+      "address"  -> AttributeValue.struct(
         "country" -> AttributeValue.string("NL"),
         "city"    -> AttributeValue.string("Amsterdam")
       )

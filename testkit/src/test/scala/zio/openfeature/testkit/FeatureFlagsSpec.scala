@@ -103,8 +103,8 @@ object FeatureFlagsSpec extends ZIOSpecDefault {
         val globalCtx = EvaluationContext("global-user")
         val localCtx  = EvaluationContext("local-user")
         for {
-          _         <- FeatureFlags.setGlobalContext(globalCtx)
-          globalKey <- FeatureFlags.globalContext.map(_.targetingKey)
+          _           <- FeatureFlags.setGlobalContext(globalCtx)
+          globalKey   <- FeatureFlags.globalContext.map(_.targetingKey)
           localResult <- FeatureFlags.withContext(localCtx) {
             FeatureFlags.globalContext
           }
@@ -161,7 +161,7 @@ object FeatureFlagsSpec extends ZIOSpecDefault {
       test("inTransaction returns true inside transaction") {
         for {
           outside <- FeatureFlags.inTransaction
-          inside <- FeatureFlags.transaction() {
+          inside  <- FeatureFlags.transaction() {
             FeatureFlags.inTransaction
           }
         } yield assertTrue(!outside) &&
@@ -189,12 +189,12 @@ object FeatureFlagsSpec extends ZIOSpecDefault {
             } yield (first, second, third)
           }
         } yield
-        // All three evaluations should return the same value
-        assertTrue(txResult.result == (true, true, true)) &&
-          // Only one evaluation should be recorded (the first one, subsequent ones are cached)
-          assertTrue(txResult.flagCount == 1) &&
-          // The flag should not be marked as overridden (it was evaluated from provider, then cached)
-          assertTrue(!txResult.wasOverridden("cached-flag"))
+          // All three evaluations should return the same value
+          assertTrue(txResult.result == (true, true, true)) &&
+            // Only one evaluation should be recorded (the first one, subsequent ones are cached)
+            assertTrue(txResult.flagCount == 1) &&
+            // The flag should not be marked as overridden (it was evaluated from provider, then cached)
+            assertTrue(!txResult.wasOverridden("cached-flag"))
       }.provide(testLayer(Map("cached-flag" -> true))),
       test("transaction caching returns cached reason for subsequent evaluations") {
         for {
@@ -556,7 +556,7 @@ object FeatureFlagsSpec extends ZIOSpecDefault {
         } yield assertTrue(true)
       }.provide(testLayer()),
       test("track with context and details succeeds") {
-        val ctx = EvaluationContext("user-456")
+        val ctx     = EvaluationContext("user-456")
         val details = TrackingEventDetails(
           value = Some(149.99),
           attributes = Map("currency" -> "USD", "quantity" -> 2)
@@ -586,19 +586,19 @@ object FeatureFlagsSpec extends ZIOSpecDefault {
           )
           events <- FeatureFlags.trackedEvents
         } yield
-        // All merged contexts should contain both global and client attributes
-        assertTrue(events.size == 4) &&
-          assertTrue(events.forall { case (_, ctx, _) =>
-            ctx.getString("env").contains("prod") && ctx.getString("app").contains("web")
-          }) &&
-          // Verify targeting keys from invocation context
-          assertTrue(events(1)._2.targetingKey.contains("user-1")) &&
-          assertTrue(events(3)._2.targetingKey.contains("user-2")) &&
-          // Verify tracking details are passed through
-          assertTrue(events(0)._3.isEmpty) &&
-          assertTrue(events(1)._3.isEmpty) &&
-          assertTrue(events(2)._3.exists(_.value.contains(1.0))) &&
-          assertTrue(events(3)._3.exists(_.value.contains(2.0)))
+          // All merged contexts should contain both global and client attributes
+          assertTrue(events.size == 4) &&
+            assertTrue(events.forall { case (_, ctx, _) =>
+              ctx.getString("env").contains("prod") && ctx.getString("app").contains("web")
+            }) &&
+            // Verify targeting keys from invocation context
+            assertTrue(events(1)._2.targetingKey.contains("user-1")) &&
+            assertTrue(events(3)._2.targetingKey.contains("user-2")) &&
+            // Verify tracking details are passed through
+            assertTrue(events(0)._3.isEmpty) &&
+            assertTrue(events(1)._3.isEmpty) &&
+            assertTrue(events(2)._3.exists(_.value.contains(1.0))) &&
+            assertTrue(events(3)._3.exists(_.value.contains(2.0)))
       }.provide(testLayer()),
       test("trackedEvents recorder is bounded and drops oldest events") {
         val max   = zio.openfeature.internal.FeatureFlagsState.MaxTrackedEvents
@@ -991,7 +991,7 @@ object FeatureFlagsSpec extends ZIOSpecDefault {
         }
 
         for {
-          _ <- FeatureFlags.addHook(ctxCapture)
+          _      <- FeatureFlags.addHook(ctxCapture)
           fiber1 <- FeatureFlags
             .withContext(ctx1) {
               ZIO.sleep(50.millis) *> FeatureFlags.boolean("flag", default = false)

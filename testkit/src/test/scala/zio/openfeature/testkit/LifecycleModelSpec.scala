@@ -148,7 +148,7 @@ object LifecycleModelSpec extends ZIOSpecDefault {
       case Action.Evaluate => this
       // "Once a swap has started it finishes, with one of the outcomes above, even if the calling fiber is interrupted"
       case Action.InterruptSwap => this
-      case Action.ReleaseHangs =>
+      case Action.ReleaseHangs  =>
         val afterSwap = swap match {
           case None                => this
           case Some(_) if shutDown => copy(swap = None, providerName = None, swapCompleted = true)
@@ -291,7 +291,7 @@ object LifecycleModelSpec extends ZIOSpecDefault {
 
   /** Wait for a parked swap to finish (it gives up at initTimeout), then step the model as if it timed out. */
   private def settle(sut: Sut, run: Run, where: String): UIO[Run] = run.swapFiber match {
-    case None => ZIO.succeed(run)
+    case None        => ZIO.succeed(run)
     case Some(fiber) =>
       for {
         done <- fiber.await.timeout(SwapBound)
@@ -304,7 +304,7 @@ object LifecycleModelSpec extends ZIOSpecDefault {
 
   private def perform(sut: Sut, run: Run, action: Action, index: Int): URIO[Scope, Run] = {
     val where = s"step $index ($action)"
-    val name = action match {
+    val name  = action match {
       case Action.SetProvider(kind) => s"p$index-${label(kind)}"
       case _                        => ""
     }
@@ -378,7 +378,7 @@ object LifecycleModelSpec extends ZIOSpecDefault {
   private def runSteps(actions: List[Action]): URIO[Scope, Chunk[String]] =
     (for {
       initial <- newProvider("p0-initial", Kind.Good)
-      ff <- FeatureFlags.build(
+      ff      <- FeatureFlags.build(
         initial,
         domain = Some(s"lifecycle-model-${java.util.UUID.randomUUID()}"),
         version = None,
@@ -393,7 +393,7 @@ object LifecycleModelSpec extends ZIOSpecDefault {
       _ <- ZIO.foreachDiscard(List(ProviderEventType.Ready, ProviderEventType.Error, ProviderEventType.Stale)) { t =>
         ZIO.acquireRelease(ff.on(t, e => queue.offer(e).unit))(cancel => cancel)
       }
-      sut = Sut(ff, queue)
+      sut   = Sut(ff, queue)
       start = Run(
         Model.initial("p0-initial"),
         Map("p0-initial" -> initial),
@@ -404,7 +404,7 @@ object LifecycleModelSpec extends ZIOSpecDefault {
         Chunk.empty
       )
       first <- observe(sut, start.model, "initial")
-      last <- ZIO.foldLeft(actions.zipWithIndex)(start.copy(violations = first)) { case (run, (action, i)) =>
+      last  <- ZIO.foldLeft(actions.zipWithIndex)(start.copy(violations = first)) { case (run, (action, i)) =>
         perform(sut, run, action, i + 1)
       }
       settled <- settle(sut, last, "end of sequence")
@@ -552,7 +552,7 @@ object LifecycleModelSpec extends ZIOSpecDefault {
       test("the model refuses an EmitReady after Shutdown becoming Ready, and the checker flags a Ready instance") {
         val shutDown  = Model.initial("p0").step(Shutdown, "")
         val afterThat = shutDown.step(EmitReady, "")
-        val observed = Observation(
+        val observed  = Observation(
           ProviderStatus.Ready,
           "p0",
           Right(true),

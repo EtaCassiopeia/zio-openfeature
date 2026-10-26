@@ -62,7 +62,7 @@ object ProviderEventShutdownSpec extends ZIOSpecDefault {
       ZIO.scoped {
         for {
           ff <- buildFF
-          _ <- ZIO.foreach(1 to 100) { _ =>
+          _  <- ZIO.foreach(1 to 100) { _ =>
             ff.onProviderReady(_ => ZIO.unit).flatMap(cancel => cancel)
           }
         } yield assertCompletes

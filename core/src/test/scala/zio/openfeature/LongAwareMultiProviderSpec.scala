@@ -245,7 +245,7 @@ object LongAwareMultiProviderSpec extends ZIOSpecDefault {
             ff = env.get[FeatureFlags]
             before <- ff.long("n", 0L)
             _      <- gate.succeed(())
-            state <- env
+            state  <- env
               .get[AcquireStatus]
               .changes
               .filter(_ != AcquireState.Constructing)

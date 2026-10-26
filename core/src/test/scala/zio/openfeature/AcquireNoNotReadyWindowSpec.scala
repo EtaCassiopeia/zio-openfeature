@@ -38,7 +38,7 @@ object AcquireNoNotReadyWindowSpec extends ZIOSpecDefault {
     @scala.annotation.nowarn("msg=deprecated")
     override def getMetadata: Metadata = new Metadata { def getName: String = name }
     @scala.annotation.nowarn("msg=deprecated")
-    override def getState: ProviderState = ProviderState.READY
+    override def getState: ProviderState                    = ProviderState.READY
     override def initialize(ctx: OFEvaluationContext): Unit = {
       initStarted.countDown()
       initError.foreach(e => throw e)
@@ -63,8 +63,8 @@ object AcquireNoNotReadyWindowSpec extends ZIOSpecDefault {
 
   /** Hands out `first` on the first run and a new fallback on every later one, keeping each for shutdown counts. */
   private class Fallbacks {
-    val first   = new TestProvider("fb", false)
-    val created = new java.util.concurrent.ConcurrentLinkedQueue[TestProvider]()
+    val first                                = new TestProvider("fb", false)
+    val created                              = new java.util.concurrent.ConcurrentLinkedQueue[TestProvider]()
     val effect: URIO[Scope, FeatureProvider] = ZIO.succeed {
       val fb = if (created.isEmpty) first else new TestProvider("fb", false)
       created.add(fb)
@@ -211,7 +211,7 @@ object AcquireNoNotReadyWindowSpec extends ZIOSpecDefault {
           ff = env.get[FeatureFlags]
           _       <- awaitOutcome(env)
           changed <- Promise.make[Nothing, Set[String]]
-          _ <- ff.on(
+          _       <- ff.on(
             ProviderEventType.ConfigurationChanged,
             {
               case ProviderEvent.ConfigurationChanged(flags, _, _) => changed.succeed(flags).unit
@@ -222,7 +222,7 @@ object AcquireNoNotReadyWindowSpec extends ZIOSpecDefault {
           errored <- awaitStatus(ff, ProviderStatus.Error)
           _       <- ZIO.succeed(real.emitProviderReady(ProviderEventDetails.builder().build()))
           ready   <- awaitStatus(ff, ProviderStatus.Ready)
-          _ <- ZIO.succeed(
+          _       <- ZIO.succeed(
             real.emitProviderConfigurationChanged(
               ProviderEventDetails.builder().flagsChanged(List("f").asJava).build()
             )

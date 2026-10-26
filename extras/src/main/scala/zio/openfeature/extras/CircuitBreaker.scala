@@ -167,7 +167,7 @@ final class CircuitBreaker private[extras] (
     var didClose = false
     while (!done)
       current(permit) match {
-        case None => done = true
+        case None        => done = true
         case Some(state) =>
           state.circuit match {
             case Closed =>
@@ -204,7 +204,7 @@ final class CircuitBreaker private[extras] (
     var done = false
     while (!done)
       current(permit) match {
-        case None => done = true
+        case None        => done = true
         case Some(state) =>
           state.circuit match {
             case Closed =>
@@ -235,7 +235,7 @@ final class CircuitBreaker private[extras] (
     var didOpen = false
     while (!done)
       current(permit) match {
-        case None => done = true
+        case None        => done = true
         case Some(state) =>
           val newFailures = state.consecutiveFailures + 1
           state.circuit match {
@@ -269,7 +269,7 @@ final class CircuitBreaker private[extras] (
         case Open(since, OpenReason.Polled) if reason == OpenReason.External =>
           done = stateRef.compareAndSet(state, transition(state, Open(since, OpenReason.External)))
         case _: Open => done = true
-        case _ =>
+        case _       =>
           done = stateRef.compareAndSet(state, transition(state, Open(ticker.nanos(), reason)))
       }
     }

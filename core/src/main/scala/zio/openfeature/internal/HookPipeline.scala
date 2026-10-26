@@ -32,7 +32,7 @@ final private[openfeature] class HookPipeline(
       allHooks   = (apiHooks ++ currentHooks ++ extraHooks).filter(_.supportedFlagTypes.contains(flagType))
       metadata   = ProviderMetadata(pName)
       clientMeta = ClientMetadata(domain, version)
-      hookCtx = HookContext(
+      hookCtx    = HookContext(
         flagKey = key,
         flagType = flagType,
         defaultValue = default,

@@ -116,7 +116,7 @@ object OfrepLongEvaluationSpec extends ZIOSpecDefault {
           s        <- server
           _        <- serve(s, "huge", "9223372036854775808")
           provider <- OFREPProvider.scoped(s"http://localhost:${s.port()}")
-          result <- ZIO.attemptBlocking(
+          result   <- ZIO.attemptBlocking(
             provider.getLongEvaluation("huge", java.lang.Long.valueOf(3L), new ImmutableContext())
           )
         } yield {

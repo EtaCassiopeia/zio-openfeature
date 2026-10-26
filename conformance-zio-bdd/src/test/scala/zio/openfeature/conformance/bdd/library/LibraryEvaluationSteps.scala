@@ -8,8 +8,8 @@ import zio.openfeature._
 /** Evaluation and the assertions every suite shares. */
 trait LibraryEvaluationSteps { self: ZIOSteps[Any, LibraryWorld] =>
 
-  /** Written as a polymorphic method so `A` is bound once from the `FlagDef`; calling `valueDetails` on a
-    * `FlagDef[?]` directly would leave the compiler to capture the wildcard at every call site.
+  /** Written as a polymorphic method so `A` is bound once from the `FlagDef`; calling `valueDetails` on a `FlagDef[?]`
+    * directly would leave the compiler to capture the wildcard at every call site.
     */
   private def detailsOf[A](ff: FeatureFlags, flag: FlagDef[A]): IO[FeatureFlagError, FlagResolution[Any]] =
     ff.valueDetails(flag).map(_.asInstanceOf[FlagResolution[Any]])
@@ -109,7 +109,7 @@ trait LibraryEvaluationSteps { self: ZIOSteps[Any, LibraryWorld] =>
   When("the boolean flag " / string / " is evaluated with invocation context " / string / " = " / string) {
     (key: String, ctxKey: String, ctxValue: String) =>
       for {
-        w <- ScenarioContext.get
+        w   <- ScenarioContext.get
         out <- w.ff
           .booleanDetails(key, false, EvaluationContext.builder.attribute(ctxKey, ctxValue).build)
           .either

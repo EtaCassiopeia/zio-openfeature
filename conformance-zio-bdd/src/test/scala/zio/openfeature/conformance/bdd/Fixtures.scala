@@ -66,7 +66,7 @@ object Fixtures {
       def evaluate(flag: Flag[_], ctx: OFEvaluationContext): String = {
         val email    = Option(ctx.getValue("email")).flatMap(v => Option(v.asString()))
         val customer = Option(ctx.getValue("customer")).flatMap(v => Option(v.asBoolean())).map(_.booleanValue())
-        val age = Option(ctx.getValue("age")).flatMap { v =>
+        val age      = Option(ctx.getValue("age")).flatMap { v =>
           Option(v.asInteger()).map(_.intValue()).orElse(Option(v.asDouble()).map(_.intValue()))
         }
         if (!customer.getOrElse(false) && email.contains(TargetEmail) && age.exists(_ > 10)) "INTERNAL"
@@ -104,9 +104,9 @@ object Fixtures {
         "zero",
         evaluator = Some(emailTargeted(java.lang.Integer.valueOf(0)))
       ),
-      "float-flag"          -> flag(dbl, "half"),
-      "float-disabled-flag" -> flag(dbl, "half", disabled = true),
-      "float-zero-flag"     -> flag(zeroDbl, "zero"),
+      "float-flag"               -> flag(dbl, "half"),
+      "float-disabled-flag"      -> flag(dbl, "half", disabled = true),
+      "float-zero-flag"          -> flag(zeroDbl, "zero"),
       "float-targeted-zero-flag" -> flag(
         zeroDbl,
         "zero",
@@ -118,7 +118,7 @@ object Fixtures {
       "object-targeted-zero-flag" -> flag(zeroObj, "zero", evaluator = Some(emailTargeted(structValue(Map.empty)))),
       "metadata-flag"             -> flag(bool, "on", metadata = Some(metadataFlagMetadata)),
       "wrong-flag"                -> flag(Map("one" -> "uno", "two" -> "dos"), "one"),
-      "complex-targeted" -> flag(
+      "complex-targeted"          -> flag(
         Map("internal" -> "INTERNAL", "external" -> "EXTERNAL"),
         "external",
         evaluator = Some(complexTargetingEvaluator)

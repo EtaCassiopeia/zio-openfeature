@@ -67,16 +67,18 @@ object OFREPLifecycleSpec extends ZIOSpecDefault {
         )
         for {
           provider <- OFREPProvider.make(config)
-        } yield try assertTrue(provider.getMetadata.getName.toLowerCase.contains("ofrep"))
-        finally provider.shutdown()
+        } yield
+          try assertTrue(provider.getMetadata.getName.toLowerCase.contains("ofrep"))
+          finally provider.shutdown()
       },
       test("make(config) with a proxy selector builds an OFREP provider") {
         val proxy  = java.net.ProxySelector.getDefault
         val config = OFREPProviderConfig(baseUrl = ValidUrl, proxy = Some(proxy))
         for {
           provider <- OFREPProvider.make(config)
-        } yield try assertCompletes
-        finally provider.shutdown()
+        } yield
+          try assertCompletes
+          finally provider.shutdown()
       },
       test("make(config) with an invalid baseUrl fails fast with InvalidConfiguration (no pool leak)") {
         // Validation runs before any executor/options are built, so the rejection cannot orphan a pool.

@@ -49,7 +49,7 @@ object RealProviderFaultSpec extends ZIOSpecDefault:
         engine <- ZIO.service[Rift]
         handle <- ZIO.service[InterceptHandle]
         _      <- handle.clearRules
-        slow <- engine.create(
+        slow   <- engine.create(
           imposter("slow-cdn").stub(
             get("/datafiles/fault-test-key.json").reply(ok.json(datafile).after(FiniteDuration(30, SECONDS)))
           )

@@ -55,7 +55,7 @@ object DeferredProviderSpec extends ZIOSpecDefault {
     },
     test("initialize after a failed start fails with FatalError (#448)") {
       val attempts = new AtomicInteger(0)
-      val dp = DeferredProvider("d") { () =>
+      val dp       = DeferredProvider("d") { () =>
         attempts.incrementAndGet()
         throw new RuntimeException("construction boom")
       }
@@ -96,7 +96,7 @@ object DeferredProviderSpec extends ZIOSpecDefault {
       val constructing = new CountDownLatch(1)
       val release      = new CountDownLatch(1)
       val delegate     = new RecordingProvider(true)
-      val dp = DeferredProvider("d") { () =>
+      val dp           = DeferredProvider("d") { () =>
         constructing.countDown()
         release.await()
         delegate
@@ -119,7 +119,7 @@ object DeferredProviderSpec extends ZIOSpecDefault {
     // AC5: delegate.initialize throwing shuts the delegate down once and does not wedge in Constructing
     test("delegate.initialize throwing shuts the delegate down and reports not-ready") {
       val delegateShutdowns = new AtomicInteger(0)
-      val delegate = new RecordingProvider(true, delegateShutdowns) {
+      val delegate          = new RecordingProvider(true, delegateShutdowns) {
         override def initialize(c: OFEvaluationContext): Unit = throw new RuntimeException("init boom")
       }
       val dp = DeferredProvider("d")(() => delegate)
@@ -135,7 +135,7 @@ object DeferredProviderSpec extends ZIOSpecDefault {
       val dp       = DeferredProvider("deferred")(() => delegate)
       for {
         callerThread <- ZIO.succeed(Thread.currentThread().getName)
-        result <- ZIO.scoped {
+        result       <- ZIO.scoped {
           FeatureFlags.fromProviderAsync(dp).build.map(_.get[FeatureFlags]).flatMap { ff =>
             for {
               status <- ff.awaitReady(10.seconds)

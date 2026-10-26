@@ -218,7 +218,7 @@ object FeatureFlagRegistrySpec extends ZIOSpecDefault {
         val slowStarted     = new java.util.concurrent.CountDownLatch(1)
         val slowGate        = new java.util.concurrent.CountDownLatch(1)
         val defaultProvider = new SimpleProvider("Default", Map("flag" -> "fast"))
-        val slowProvider = new SimpleProvider("Slow", Map("flag" -> "slow")) {
+        val slowProvider    = new SimpleProvider("Slow", Map("flag" -> "slow")) {
           override def initialize(ctx: OFEvaluationContext): Unit = {
             slowStarted.countDown()
             slowGate.await() // hold the build until the fast domain has been served
@@ -241,7 +241,7 @@ object FeatureFlagRegistrySpec extends ZIOSpecDefault {
     test("concurrent getClient calls for the same domain build the client exactly once (#182)") {
       ZIO.scoped {
         val initCount = new java.util.concurrent.atomic.AtomicInteger(0)
-        val provider = new SimpleProvider("Counting", Map("flag" -> true)) {
+        val provider  = new SimpleProvider("Counting", Map("flag" -> true)) {
           override def initialize(ctx: OFEvaluationContext): Unit = {
             initCount.incrementAndGet()
             Thread.sleep(50) // widen the race window
@@ -340,7 +340,7 @@ object FeatureFlagRegistrySpec extends ZIOSpecDefault {
       // has already run, which is what made the original reproduction misread teardown as a setup-time shutdown.
       val shutCount       = new java.util.concurrent.atomic.AtomicInteger(0)
       val defaultProvider = new SimpleProvider("Default", Map("flag" -> "default"))
-      val p = new SimpleProvider("A", Map("flag" -> "a")) {
+      val p               = new SimpleProvider("A", Map("flag" -> "a")) {
         override def shutdown(): Unit = { shutCount.incrementAndGet(); () }
       }
       for {
@@ -361,7 +361,7 @@ object FeatureFlagRegistrySpec extends ZIOSpecDefault {
       val shutA           = new java.util.concurrent.atomic.AtomicInteger(0)
       val shutB           = new java.util.concurrent.atomic.AtomicInteger(0)
       val defaultProvider = new SimpleProvider("Default", Map("flag" -> "default"))
-      val pa = new SimpleProvider("A", Map("flag" -> "a")) {
+      val pa              = new SimpleProvider("A", Map("flag" -> "a")) {
         override def shutdown(): Unit = { shutA.incrementAndGet(); () }
       }
       val pb = new SimpleProvider("B", Map("flag" -> "b")) {

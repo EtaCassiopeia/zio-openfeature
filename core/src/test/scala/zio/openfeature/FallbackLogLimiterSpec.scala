@@ -10,7 +10,7 @@ object FallbackLogLimiterSpec extends ZIOSpecDefault {
     FlagResolution.error(key, true, ErrorCode.FlagNotFound, "no such flag")
 
   // The test logger accumulates across tests in the same runtime, so every test measures from its own baseline.
-  private def baseline: UIO[Int] = ZTestLogger.logOutput.map(_.length)
+  private def baseline: UIO[Int]                       = ZTestLogger.logOutput.map(_.length)
   private def warnings(since: Int): UIO[Chunk[String]] =
     ZTestLogger.logOutput.map(_.drop(since).filter(_.logLevel == LogLevel.Warning).map(_.message()))
 

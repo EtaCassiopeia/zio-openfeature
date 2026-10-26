@@ -175,7 +175,7 @@ object ComposeHookDataSpec extends ZIOSpecDefault {
       ZIO.scoped {
         for {
           sizes <- Ref.make(List.empty[Int])
-          probe = appendProbe(sizes)
+          probe      = appendProbe(sizes)
           stringOnly = new FeatureHook {
             override def supportedFlagTypes: Set[FlagValueType] = Set(FlagValueType.String)
           }
@@ -192,7 +192,7 @@ object ComposeHookDataSpec extends ZIOSpecDefault {
         probe = appendProbe(sizes)
         a     = FeatureHook.compose(List(probe))
         b     = FeatureHook.compose(List(probe, probe))
-        ctx = HookContext(
+        ctx   = HookContext(
           "manual",
           FlagValueType.Boolean,
           false,
@@ -212,7 +212,7 @@ object ComposeHookDataSpec extends ZIOSpecDefault {
         for {
           cap1 <- Ref.make[Option[Duration]](None)
           cap2 <- Ref.make[Option[Duration]](None)
-          h1 = FeatureHook.metrics((_, dur, _) => cap1.set(Some(dur)))
+          h1     = FeatureHook.metrics((_, dur, _) => cap1.set(Some(dur)))
           spacer = new FeatureHook {
             override def before(ctx: HookContext, hints: HookHints): UIO[Option[EvaluationContext]] =
               ZIO.sleep(120.millis).as(None)

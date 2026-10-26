@@ -59,9 +59,9 @@ object FlagType {
     d == d.toLong.toDouble && d >= Long.MinValue.toDouble && d < Long.MaxValue.toDouble
 
   implicit val booleanFlagType: FlagType[Boolean] = new FlagType[Boolean] {
-    def typeName: String      = "Boolean"
-    override def wire: WireType = WireType.Boolean
-    def defaultValue: Boolean = false
+    def typeName: String                            = "Boolean"
+    override def wire: WireType                     = WireType.Boolean
+    def defaultValue: Boolean                       = false
     def decode(value: Any): Either[String, Boolean] = value match {
       case b: Boolean => Right(b)
       case s: String  => s.toBooleanOption.toRight(s"Cannot parse '$s' as Boolean")
@@ -71,9 +71,9 @@ object FlagType {
   }
 
   implicit val stringFlagType: FlagType[String] = new FlagType[String] {
-    def typeName: String     = "String"
-    override def wire: WireType = WireType.String
-    def defaultValue: String = ""
+    def typeName: String                           = "String"
+    override def wire: WireType                    = WireType.String
+    def defaultValue: String                       = ""
     def decode(value: Any): Either[String, String] = value match {
       case s: String => Right(s)
       case null      => Left("Cannot convert null to String")
@@ -82,15 +82,15 @@ object FlagType {
   }
 
   implicit val intFlagType: FlagType[Int] = new FlagType[Int] {
-    def typeName: String  = "Int"
-    override def wire: WireType = WireType.Int
-    def defaultValue: Int = 0
+    def typeName: String                        = "Int"
+    override def wire: WireType                 = WireType.Int
+    def defaultValue: Int                       = 0
     def decode(value: Any): Either[String, Int] = value match {
       case i: Int                  => Right(i)
       case l: Long if l.isValidInt => Right(l.toInt)
       case l: Long                 => Left(s"Long value $l is out of Int range")
       case d: Double               => if (d.isValidInt) Right(d.toInt) else Left(s"Double value $d is not a valid Int")
-      case n: Number =>
+      case n: Number               =>
         val d = n.doubleValue()
         if (d.isValidInt) Right(d.toInt) else Left(s"Numeric value $n is not a valid Int")
       case s: String => s.toIntOption.toRight(s"Cannot parse '$s' as Int")
@@ -100,9 +100,9 @@ object FlagType {
   }
 
   implicit val longFlagType: FlagType[Long] = new FlagType[Long] {
-    def typeName: String   = "Long"
-    override def wire: WireType = WireType.Long
-    def defaultValue: Long = 0L
+    def typeName: String                         = "Long"
+    override def wire: WireType                  = WireType.Long
+    def defaultValue: Long                       = 0L
     def decode(value: Any): Either[String, Long] = value match {
       case l: Long   => Right(l)
       case i: Int    => Right(i.toLong)
@@ -117,9 +117,9 @@ object FlagType {
   }
 
   implicit val doubleFlagType: FlagType[Double] = new FlagType[Double] {
-    def typeName: String     = "Double"
-    override def wire: WireType = WireType.Double
-    def defaultValue: Double = 0.0
+    def typeName: String                           = "Double"
+    override def wire: WireType                    = WireType.Double
+    def defaultValue: Double                       = 0.0
     def decode(value: Any): Either[String, Double] = value match {
       case d: Double => Right(d)
       case f: Float  => Right(f.toDouble)
@@ -133,11 +133,11 @@ object FlagType {
   }
 
   implicit val floatFlagType: FlagType[Float] = new FlagType[Float] {
-    def typeName: String    = "Float"
-    override def wire: WireType = WireType.Float
-    def defaultValue: Float = 0.0f
+    def typeName: String                          = "Float"
+    override def wire: WireType                   = WireType.Float
+    def defaultValue: Float                       = 0.0f
     def decode(value: Any): Either[String, Float] = value match {
-      case f: Float => Right(f)
+      case f: Float  => Right(f)
       case d: Double =>
         // Rounding to Float precision is inherent and expected; only reject magnitude overflow,
         // which would silently turn a finite value into +/-Infinity.
@@ -152,9 +152,9 @@ object FlagType {
   }
 
   implicit val objectFlagType: FlagType[Map[String, Any]] = new FlagType[Map[String, Any]] {
-    def typeName: String               = "Object"
-    override def wire: WireType = WireType.Object
-    def defaultValue: Map[String, Any] = Map.empty
+    def typeName: String                                     = "Object"
+    override def wire: WireType                              = WireType.Object
+    def defaultValue: Map[String, Any]                       = Map.empty
     def decode(value: Any): Either[String, Map[String, Any]] = value match {
       case m: Map[_, _] =>
         Try(m.asInstanceOf[Map[String, Any]]).toEither.left.map(_.getMessage)
@@ -162,7 +162,7 @@ object FlagType {
         import scala.jdk.CollectionConverters._
         Try(m.asScala.toMap.asInstanceOf[Map[String, Any]]).toEither.left.map(_.getMessage)
       case null => Left("Cannot convert null to Object")
-      case _ =>
+      case _    =>
         Left(s"Cannot convert ${value.getClass.getSimpleName} to Object")
     }
   }
@@ -173,8 +173,8 @@ object FlagType {
       def typeName: String        = s"Option[${underlying.typeName}]"
       // Resolved through the element's resolver, so `Option[String]` reaches the provider's string method. A `None`
       // default is sent as a sentinel and read back as `None` by evaluation (see `OptionalFlagType`, #439).
-      override def wire: WireType = underlying.wire
-      def defaultValue: Option[A] = None
+      override def wire: WireType                       = underlying.wire
+      def defaultValue: Option[A]                       = None
       def decode(value: Any): Either[String, Option[A]] = value match {
         case null    => Right(None)
         case None    => Right(None)
@@ -191,8 +191,8 @@ object FlagType {
 
   implicit def listFlagType[A](implicit underlying: FlagType[A]): FlagType[List[A]] =
     new FlagType[List[A]] {
-      def typeName: String      = s"List[${underlying.typeName}]"
-      def defaultValue: List[A] = List.empty
+      def typeName: String                            = s"List[${underlying.typeName}]"
+      def defaultValue: List[A]                       = List.empty
       def decode(value: Any): Either[String, List[A]] = value match {
         case list: List[_] =>
           list.foldRight[Either[String, List[A]]](Right(Nil)) { (elem, acc) =>
@@ -201,13 +201,13 @@ object FlagType {
               rest    <- acc
             } yield decoded :: rest
           }
-        case seq: Seq[_]   => decode(seq.toList)
-        case arr: Array[_] => decode(arr.toList)
+        case seq: Seq[_]              => decode(seq.toList)
+        case arr: Array[_]            => decode(arr.toList)
         case jlist: java.util.List[_] =>
           import scala.jdk.CollectionConverters._
           decode(jlist.asScala.toList)
         case null => Left("Cannot convert null to List")
-        case _ => Left(s"Cannot convert ${value.getClass.getSimpleName} to List")
+        case _    => Left(s"Cannot convert ${value.getClass.getSimpleName} to List")
       }
       override def encode(value: List[A]): Any = value.map(underlying.encode)
     }
@@ -237,7 +237,7 @@ object FlagType {
     def typeName: String = name
     // A mapped instance is by construction carried over the wire as its underlying type, so it inherits that
     // wire type — this is what makes `mapped` scalar-backed types evaluatable without any user action.
-    override def wire: WireType               = underlying.wire
+    override def wire: WireType = underlying.wire
     // Kept in step with `wire` for code that still reads the deprecated name.
     @nowarn("cat=deprecation")
     override def wireType: String             = wire.name

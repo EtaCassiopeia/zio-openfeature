@@ -55,7 +55,7 @@ object ProviderInitFailureSpec extends ZIOSpecDefault {
     @scala.annotation.nowarn("msg=deprecated")
     override def getMetadata: Metadata = new Metadata { def getName: String = "ThrowingInitProvider" }
     @scala.annotation.nowarn("msg=deprecated")
-    override def getState: ProviderState = st.get()
+    override def getState: ProviderState                    = st.get()
     override def initialize(ctx: OFEvaluationContext): Unit = {
       st.set(ProviderState.ERROR)
       throw boom
@@ -73,7 +73,7 @@ object ProviderInitFailureSpec extends ZIOSpecDefault {
     @scala.annotation.nowarn("msg=deprecated")
     override def getMetadata: Metadata = new Metadata { def getName: String = "EventDriverProvider" }
     @scala.annotation.nowarn("msg=deprecated")
-    override def getState: ProviderState = st.get()
+    override def getState: ProviderState                    = st.get()
     override def initialize(ctx: OFEvaluationContext): Unit = {
       initGate.await(10, TimeUnit.SECONDS) // tests release this explicitly; the bound is a hung-test guard
       st.set(ProviderState.READY)
@@ -82,7 +82,7 @@ object ProviderInitFailureSpec extends ZIOSpecDefault {
       initGate.countDown()
       st.set(ProviderState.NOT_READY)
     }
-    def release(): Unit = initGate.countDown()
+    def release(): Unit                  = initGate.countDown()
     def fireError(message: String): Unit = {
       st.set(ProviderState.ERROR)
       emitProviderError(ProviderEventDetails.builder().message(message).build())
@@ -125,7 +125,7 @@ object ProviderInitFailureSpec extends ZIOSpecDefault {
       val boom     = new IllegalArgumentException("synthetic init failure")
       val provider = new ThrowingInitProvider(boom)
       val api      = OpenFeatureAPI.createIsolated()
-      val build = ZIO.scoped {
+      val build    = ZIO.scoped {
         FeatureFlags
           .build(
             provider,
@@ -150,7 +150,7 @@ object ProviderInitFailureSpec extends ZIOSpecDefault {
     test("[B2 / case 8a] buildAsync: a throwing getMetadata surfaces a typed failure, not a defect (#242)") {
       val provider = new ThrowingMetadataProvider
       val api      = OpenFeatureAPI.createIsolated()
-      val build = ZIO.scoped {
+      val build    = ZIO.scoped {
         FeatureFlags
           .buildAsync(
             provider,
@@ -178,7 +178,7 @@ object ProviderInitFailureSpec extends ZIOSpecDefault {
     test("[B2 / case 8b] buildAsync: a null provider surfaces a typed failure from setProvider, not a defect (#242)") {
       val nullProvider: dev.openfeature.sdk.FeatureProvider = null
       val api                                               = OpenFeatureAPI.createIsolated()
-      val build = ZIO.scoped {
+      val build                                             = ZIO.scoped {
         FeatureFlags
           .buildAsync(
             nullProvider,
@@ -210,7 +210,7 @@ object ProviderInitFailureSpec extends ZIOSpecDefault {
       ZIO.scoped {
         for {
           statusRef <- SubscriptionRef.make[ProviderStatus](ProviderStatus.NotReady)
-          ff <- FeatureFlags.buildAsync(
+          ff        <- FeatureFlags.buildAsync(
             provider,
             domain = Some(uniqueDomain("async-error")),
             version = None,
@@ -246,7 +246,7 @@ object ProviderInitFailureSpec extends ZIOSpecDefault {
       ZIO.scoped {
         for {
           statusRef <- SubscriptionRef.make[ProviderStatus](ProviderStatus.NotReady)
-          ff <- FeatureFlags.buildAsync(
+          ff        <- FeatureFlags.buildAsync(
             provider,
             domain = Some(uniqueDomain("status-gate")),
             version = None,
@@ -286,7 +286,7 @@ object ProviderInitFailureSpec extends ZIOSpecDefault {
       ZIO.scoped {
         for {
           statusRef <- SubscriptionRef.make[ProviderStatus](ProviderStatus.NotReady)
-          ff <- FeatureFlags.buildAsync(
+          ff        <- FeatureFlags.buildAsync(
             provider,
             domain = Some(uniqueDomain("async-recovery")),
             version = None,
@@ -331,7 +331,7 @@ object ProviderInitFailureSpec extends ZIOSpecDefault {
       ZIO.scoped {
         for {
           statusRef <- SubscriptionRef.make[ProviderStatus](ProviderStatus.Ready)
-          ff <- FeatureFlags.build(
+          ff        <- FeatureFlags.build(
             provider,
             domain = Some(uniqueDomain("classify-unreachable")),
             version = None,

@@ -27,7 +27,7 @@ object ProvidersSpec extends ZIOSpecDefault:
     },
     test("fromAcquireAsync: the verified real provider is swapped in and AcquireStatus turns Live") {
       for
-        real <- TestFeatureProvider.makeNamed("real", Map("kill-switch" -> true, "banner" -> "from-real"))
+        real   <- TestFeatureProvider.makeNamed("real", Map("kill-switch" -> true, "banner" -> "from-real"))
         result <- (Providers.outcome <*> Providers.ready <*> banner)
           .provide(Providers.fallbackFirst(() => real))
       yield assertTrue(result == (Some(AcquireState.Live), true, "from-real"))

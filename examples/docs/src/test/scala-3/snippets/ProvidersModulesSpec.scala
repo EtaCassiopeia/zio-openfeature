@@ -29,7 +29,7 @@ object ProvidersModulesSpec extends ZIOSpecDefault:
         short       <- rejected(OptimizelyProvider.make("abc"))
         spaces      <- rejected(OptimizelyProvider.make("abcd 1234efgh"))
         url         <- rejected(OptimizelyProvider.make("abcd1234efgh5678", "not a url"))
-        polling <- rejected(
+        polling     <- rejected(
           OptimizelyProvider.make(
             OptimizelyProviderConfig("abcd1234efgh5678", pollingInterval = Some(java.time.Duration.ZERO))
           )
@@ -46,7 +46,9 @@ object ProvidersModulesSpec extends ZIOSpecDefault:
     },
     test("Optimizely events are batched by default, with a 3 s shutdown wait") {
       val events = OptimizelyProviderConfig("abcd1234efgh5678").events
-      assertTrue(events == OptimizelyEvents.Batched(10, java.time.Duration.ofSeconds(30), java.time.Duration.ofSeconds(3)))
+      assertTrue(
+        events == OptimizelyEvents.Batched(10, java.time.Duration.ofSeconds(30), java.time.Duration.ofSeconds(3))
+      )
     },
     test("OptimizelyProvider.scoped accepts a well-formed key and shuts the provider down with the scope") {
       ZIO.scoped(OptimizelyProvider.scoped("abcd1234efgh5678")).as(assertCompletes)

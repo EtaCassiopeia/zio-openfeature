@@ -61,7 +61,7 @@ object FactoryMethodsSpec extends ZIOSpecDefault {
       test("version without a domain is reported in clientMetadata (sync)") {
         for {
           provider <- TestFeatureProvider.make(Map("flag" -> true))
-          result <- ZIO.scoped {
+          result   <- ZIO.scoped {
             FeatureFlags
               .fromProvider(provider, FeatureFlagsConfig().withVersion("2.0.0"))
               .build
@@ -78,7 +78,7 @@ object FactoryMethodsSpec extends ZIOSpecDefault {
       test("version without a domain is reported in clientMetadata (async)") {
         for {
           provider <- TestFeatureProvider.make(Map("flag" -> true))
-          result <- ZIO.scoped {
+          result   <- ZIO.scoped {
             FeatureFlags
               .fromProvider(provider, FeatureFlagsConfig(initMode = InitMode.Async).withVersion("2.0.0"))
               .build
@@ -99,7 +99,7 @@ object FactoryMethodsSpec extends ZIOSpecDefault {
         ZIO.scoped {
           for {
             provider <- TestFeatureProvider.make(Map("flag" -> true))
-            ff <- FeatureFlags
+            ff       <- FeatureFlags
               .fromProvider(FeatureFlags.multiProvider(List(provider)), FeatureFlagsConfig())
               .build
               .map(_.get)
@@ -112,7 +112,7 @@ object FactoryMethodsSpec extends ZIOSpecDefault {
         ZIO.scoped {
           for {
             provider <- TestFeatureProvider.make(Map("flag" -> "hello"))
-            ff <- FeatureFlags
+            ff       <- FeatureFlags
               .fromProvider(
                 FeatureFlags.multiProvider(List(provider), new FirstSuccessfulStrategy()),
                 FeatureFlagsConfig()
@@ -127,7 +127,7 @@ object FactoryMethodsSpec extends ZIOSpecDefault {
     suite("fromProviderAsync / async config")(
       test("fromProviderAsync creates a working layer") {
         for {
-          tp <- TestFeatureProvider.make(Map("flag" -> true))
+          tp     <- TestFeatureProvider.make(Map("flag" -> true))
           result <- ZIO.scoped {
             FeatureFlags.fromProviderAsync(tp).build.flatMap { env =>
               val ff = env.get[FeatureFlags]
@@ -144,7 +144,7 @@ object FactoryMethodsSpec extends ZIOSpecDefault {
             override def before(ctx: HookContext, hints: HookHints): UIO[Option[EvaluationContext]] =
               hookCalled.set(true).as(None)
           }
-          tp <- TestFeatureProvider.make(Map("flag" -> true))
+          tp     <- TestFeatureProvider.make(Map("flag" -> true))
           result <- ZIO.scoped {
             FeatureFlags
               .fromProvider(tp, FeatureFlagsConfig(initMode = InitMode.Async).withHooks(List(hook)))
@@ -195,7 +195,7 @@ object FactoryMethodsSpec extends ZIOSpecDefault {
       },
       test("async config with FeatureFlags.multiProvider creates a working layer") {
         for {
-          tp <- TestFeatureProvider.make(Map("flag" -> true))
+          tp     <- TestFeatureProvider.make(Map("flag" -> true))
           result <- ZIO.scoped {
             FeatureFlags
               .fromProvider(FeatureFlags.multiProvider(List(tp)), FeatureFlagsConfig(initMode = InitMode.Async))

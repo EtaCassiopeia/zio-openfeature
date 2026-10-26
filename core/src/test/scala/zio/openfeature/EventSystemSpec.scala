@@ -146,7 +146,7 @@ object EventSystemSpec extends ZIOSpecDefault {
           count <- Ref.make(0)
           provider = new EmittingProvider
           ff <- buildFF(provider)
-          _ <- ff.on(
+          _  <- ff.on(
             ProviderEventType.ConfigurationChanged,
             _ => count.updateAndGet(_ + 1).flatMap(n => if (n == 1) ZIO.dieMessage("handler boom") else ZIO.unit)
           )
@@ -179,7 +179,7 @@ object EventSystemSpec extends ZIOSpecDefault {
         for {
           provider <- ZIO.succeed(new EmittingProvider)
           ff       <- buildFF(provider)
-          _ <- ff.on(
+          _        <- ff.on(
             ProviderEventType.ConfigurationChanged,
             _ => {
               val n = sync.incrementAndGet()
@@ -198,7 +198,7 @@ object EventSystemSpec extends ZIOSpecDefault {
         for {
           state <- FeatureFlagsState.make
           queue <- state.eventHub.subscribe
-          _ <- ZIO.foreachDiscard(0 until 300) { i =>
+          _     <- ZIO.foreachDiscard(0 until 300) { i =>
             state.eventHub.publish(ProviderEvent.ConfigurationChanged(Set(i.toString), ProviderMetadata("p")))
           }
           drained <- queue.takeAll

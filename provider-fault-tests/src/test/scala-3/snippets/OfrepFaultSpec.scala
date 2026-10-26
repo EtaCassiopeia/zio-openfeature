@@ -63,7 +63,7 @@ object OfrepFaultSpec extends ZIOSpecDefault:
         scope <- Scope.make
         flags <- (for
           provider <- OFREPProvider.scoped(config)
-          env <- FeatureFlags
+          env      <- FeatureFlags
             .fromProvider(
               provider,
               FeatureFlagsConfig().withDomain(s"ofrep-direct-$fault").withEvaluationTimeout(evaluationTimeout)

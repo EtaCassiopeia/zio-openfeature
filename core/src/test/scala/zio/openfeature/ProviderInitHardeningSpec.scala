@@ -80,7 +80,7 @@ object ProviderInitHardeningSpec extends ZIOSpecDefault {
       val latch    = new CountDownLatch(1)
       val provider = new BlockingInitProvider(latch)
       val api      = OpenFeatureAPI.createIsolated()
-      val build = ZIO.scoped {
+      val build    = ZIO.scoped {
         FeatureFlags
           .build(
             provider,
@@ -105,7 +105,7 @@ object ProviderInitHardeningSpec extends ZIOSpecDefault {
     test("[A2] sync fromProvider fails if provider reports ERROR after init") {
       val provider = new InitToErrorProvider
       val api      = OpenFeatureAPI.createIsolated()
-      val build = ZIO.scoped {
+      val build    = ZIO.scoped {
         FeatureFlags
           .build(
             provider,
@@ -131,13 +131,13 @@ object ProviderInitHardeningSpec extends ZIOSpecDefault {
     test("[#180] provider is shut down when sync init times out") {
       val latch        = new CountDownLatch(1)
       val shutdownSeen = new java.util.concurrent.atomic.AtomicInteger(0)
-      val provider = new BlockingInitProvider(latch) {
+      val provider     = new BlockingInitProvider(latch) {
         override def shutdown(): Unit = {
           shutdownSeen.incrementAndGet()
           super.shutdown()
         }
       }
-      val api = OpenFeatureAPI.createIsolated()
+      val api   = OpenFeatureAPI.createIsolated()
       val build = ZIO.scoped {
         FeatureFlags
           .build(
@@ -163,13 +163,13 @@ object ProviderInitHardeningSpec extends ZIOSpecDefault {
     } @@ withLiveClock,
     test("[#180] provider is shut down when it reports ERROR after init") {
       val shutdownSeen = new java.util.concurrent.atomic.AtomicInteger(0)
-      val provider = new InitToErrorProvider {
+      val provider     = new InitToErrorProvider {
         override def shutdown(): Unit = {
           shutdownSeen.incrementAndGet()
           super.shutdown()
         }
       }
-      val api = OpenFeatureAPI.createIsolated()
+      val api   = OpenFeatureAPI.createIsolated()
       val build = ZIO.scoped {
         FeatureFlags
           .build(
@@ -197,7 +197,7 @@ object ProviderInitHardeningSpec extends ZIOSpecDefault {
       ZIO.scoped {
         for {
           statusRef <- SubscriptionRef.make[ProviderStatus](ProviderStatus.NotReady)
-          _ <- FeatureFlags.buildAsync(
+          _         <- FeatureFlags.buildAsync(
             provider,
             domain = Some(uniqueDomain("async-watchdog")),
             version = None,

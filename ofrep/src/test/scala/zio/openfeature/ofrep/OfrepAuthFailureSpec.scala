@@ -68,7 +68,7 @@ object OfrepAuthFailureSpec extends ZIOSpecDefault {
             case Left(e: FeatureFlagError.Unauthorized) => Some(e.reason)
             case _                                      => None
           }
-          val cause = typed.left.toOption.flatMap(_.cause)
+          val cause           = typed.left.toOption.flatMap(_.cause)
           val causeIsReported = cause match {
             case Some(c: ProviderReportedError) =>
               c.getMessage == s"authentication/authorization error for flag: $flagKey"
@@ -97,7 +97,7 @@ object OfrepAuthFailureSpec extends ZIOSpecDefault {
           s        <- server
           _        <- stubStatus(s, 401)
           provider <- OFREPProvider.scoped(s"http://localhost:${s.port()}")
-          result <- ZIO.attemptBlocking(
+          result   <- ZIO.attemptBlocking(
             provider.getBooleanEvaluation(flagKey, java.lang.Boolean.FALSE, new ImmutableContext())
           )
         } yield {

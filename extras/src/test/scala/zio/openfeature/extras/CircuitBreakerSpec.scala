@@ -77,7 +77,7 @@ object CircuitBreakerSpec extends ZIOSpecDefault {
     suite("Monotonic reset timing (#263.1)")(
       test("stays rejected before resetTimeout, allowed at/after it — elapsed uses the injected ticker") {
         val ticker = new TestTicker()
-        val cb =
+        val cb     =
           CircuitBreaker(CircuitBreakerConfig(failureThreshold = 1, resetTimeout = 30.seconds), ticker)
         cb.recordFailure() // opens
         ticker.advance(29.seconds)
@@ -93,7 +93,7 @@ object CircuitBreakerSpec extends ZIOSpecDefault {
         // A monotonic nanoTime never runs backward, so open-timing derives solely from ticker deltas:
         // small forward advances keep the circuit open until their sum reaches resetTimeout.
         val ticker = new TestTicker()
-        val cb =
+        val cb     =
           CircuitBreaker(CircuitBreakerConfig(failureThreshold = 1, resetTimeout = 10.seconds), ticker)
         cb.recordFailure()
         ticker.advance(3.seconds)
@@ -110,7 +110,7 @@ object CircuitBreakerSpec extends ZIOSpecDefault {
     suite("Half-open state")(
       test("closes after halfOpenMaxCalls successes") {
         val ticker = new TestTicker()
-        val cb = CircuitBreaker(
+        val cb     = CircuitBreaker(
           CircuitBreakerConfig(failureThreshold = 1, resetTimeout = 1.second, halfOpenMaxCalls = 2),
           ticker
         )
@@ -147,7 +147,7 @@ object CircuitBreakerSpec extends ZIOSpecDefault {
     suite("Probe-slot steal (#263.3)")(
       test("a wedged probe slot is stolen after probeTimeout") {
         val ticker = new TestTicker()
-        val cb = CircuitBreaker(
+        val cb     = CircuitBreaker(
           CircuitBreakerConfig(failureThreshold = 1, resetTimeout = 1.second, probeTimeout = 5.seconds),
           ticker
         )
@@ -167,7 +167,7 @@ object CircuitBreakerSpec extends ZIOSpecDefault {
       },
       test("stealing resets the probe window, so an immediately-following caller is rejected") {
         val ticker = new TestTicker()
-        val cb = CircuitBreaker(
+        val cb     = CircuitBreaker(
           CircuitBreakerConfig(failureThreshold = 1, resetTimeout = 1.second, probeTimeout = 5.seconds),
           ticker
         )

@@ -37,9 +37,9 @@ object FlagTypeLawsSpec extends ZIOSpecDefault {
       // in memory for every Long, but loses precision above 2^53 once it crosses the bridge, because the SDK
       // represents every number as a Double. If a future change made the bridge lossless, this assertion is the
       // thing that should be revisited — it is asserting a limitation, not a desired behaviour.
-      val big   = exactLongRange + 1L
-      val ft    = FlagType[Long]
-      val inMem = ft.decode(ft.encode(big)) == Right(big)
+      val big     = exactLongRange + 1L
+      val ft      = FlagType[Long]
+      val inMem   = ft.decode(ft.encode(big)) == Right(big)
       val bridged = zio.openfeature.internal.ValueBridge
         .valueToAny(zio.openfeature.internal.ValueBridge.anyToValue(ft.encode(big)))
         .map(v => ft.decode(v))

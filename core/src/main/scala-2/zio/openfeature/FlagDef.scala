@@ -36,8 +36,8 @@ package zio.openfeature
   * ==Copying==
   *
   * `flagType` lives in an `implicit` parameter list, so the derived `copy` re-summons a `FlagType[A]` from the call
-  * site rather than reusing this instance. That is invisible for the built-in types (their instances are unique), but
-  * a `FlagDef` built with an explicitly-passed instance will pick up whatever instance is in scope at the `copy` — so
+  * site rather than reusing this instance. That is invisible for the built-in types (their instances are unique), but a
+  * `FlagDef` built with an explicitly-passed instance will pick up whatever instance is in scope at the `copy` — so
   * prefer constructing a new `FlagDef` over `copy` in that case.
   *
   * This type is deliberately left open (not `final`) at the maintainer's request, so downstream wrappers keep the

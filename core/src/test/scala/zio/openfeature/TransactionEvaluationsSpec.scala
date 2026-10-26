@@ -74,7 +74,7 @@ object TransactionEvaluationsSpec extends ZIOSpecDefault {
     ): ZIO[R, Compat.OrError[E, FeatureFlagError], TransactionResult[A]] = ???
     override def transactionEither[R, E, A](o: Map[String, Any], c: EvaluationContext, ce: Boolean, n: NestedPolicy)(
       zio: ZIO[R, E, A]
-    ): ZIO[R, Either[E, FeatureFlagError], TransactionResult[A]] = ???
+    ): ZIO[R, Either[E, FeatureFlagError], TransactionResult[A]]                                         = ???
     override def events: ZStream[Any, Nothing, ProviderEvent]                                            = ???
     override def providerStatus: UIO[ProviderStatus]                                                     = ???
     override def awaitReady(within: Duration): UIO[ProviderStatus]                                       = ???

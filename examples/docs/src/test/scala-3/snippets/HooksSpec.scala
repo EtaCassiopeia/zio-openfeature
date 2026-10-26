@@ -80,10 +80,9 @@ object HooksSpec extends ZIOSpecDefault:
     test("supportedFlagTypes filters evaluations") {
       for
         log <- Ref.make(List.empty[String])
-        _ <- FeatureFlags.addHook(new FeatureHook:
+        _   <- FeatureFlags.addHook(new FeatureHook:
           override def supportedFlagTypes                         = Hooks.stringsOnly.supportedFlagTypes
-          override def before(ctx: HookContext, hints: HookHints) = log.update(_ :+ ctx.flagKey).as(None)
-        )
+          override def before(ctx: HookContext, hints: HookHints) = log.update(_ :+ ctx.flagKey).as(None))
         _   <- FeatureFlags.boolean("on", false)
         _   <- FeatureFlags.string("color", "red")
         out <- log.get
@@ -107,7 +106,7 @@ object HooksSpec extends ZIOSpecDefault:
     test("hook data carries a value from before to finallyAfter") {
       for
         seen <- Ref.make(Option.empty[Long])
-        key = TypedKey[Long]("k")
+        key  = TypedKey[Long]("k")
         hook = new FeatureHook:
           override def before(ctx: HookContext, hints: HookHints) = ZIO.succeed(ctx.hookData.set(key, 7L)).as(None)
           override def finallyAfter(ctx: HookContext, d: Option[FlagResolution[_]], hints: HookHints) =
@@ -122,7 +121,7 @@ object HooksSpec extends ZIOSpecDefault:
       for
         log <- Ref.make(List.empty[String])
         _   <- FeatureFlags.addHook(recorder("c", log))
-        _ <- FeatureFlags.transaction(Map("x" -> true))(
+        _   <- FeatureFlags.transaction(Map("x" -> true))(
           FeatureFlags.boolean("x", false) *> FeatureFlags.boolean("on", false) *> FeatureFlags.boolean("on", false)
         )
         out <- log.get
@@ -153,7 +152,7 @@ object HooksSpec extends ZIOSpecDefault:
     test("finallyAfter gets the error-coded answer, and None when there was no answer") {
       for
         seen <- Ref.make(List.empty[Option[FlagResolution[_]]])
-        _ <- FeatureFlags.addHook(
+        _    <- FeatureFlags.addHook(
           new FeatureHook:
             override def finallyAfter(ctx: HookContext, d: Option[FlagResolution[_]], hints: HookHints) =
               seen.update(_ :+ d)

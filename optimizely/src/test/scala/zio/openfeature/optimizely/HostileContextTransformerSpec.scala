@@ -96,7 +96,7 @@ object HostileContextTransformerSpec extends ZIOSpecDefault {
     },
     test("Instants become ISO-8601 strings that parse back to the exact Instant, extremes included") {
       val instants = List(Instant.MIN, Instant.MAX, Instant.EPOCH, Instant.ofEpochSecond(-1L, 999999999L))
-      val parsed =
+      val parsed   =
         instants.map(i =>
           Instant.parse(ContextTransformer.attributes(new MutableContext("u").add("t", i)).get("t").toString)
         )

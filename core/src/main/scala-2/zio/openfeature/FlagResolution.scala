@@ -55,7 +55,7 @@ object MetadataValue {
   final case class DoubleValue(value: Double)   extends MetadataValue
   final case class FloatValue(value: Float)     extends MetadataValue
 
-  implicit def boolToMetadataValue(value: Boolean): MetadataValue = BooleanValue(value)
+  implicit def boolToMetadataValue(value: Boolean): MetadataValue  = BooleanValue(value)
   implicit def stringToMetadataValue(value: String): MetadataValue = StringValue(value)
   implicit def intToMetadataValue(value: Int): MetadataValue       = IntValue(value)
   implicit def longToMetadataValue(value: Long): MetadataValue     = LongValue(value)
@@ -104,10 +104,10 @@ final case class FlagResolution[+A](
   errorCode: Option[ErrorCode] = None,
   errorMessage: Option[String] = None
 ) {
-  def isError: Boolean                      = errorCode.isDefined || reason == ResolutionReason.Error
-  def isSuccess: Boolean                    = !isError
-  def isDefault: Boolean                    = reason == ResolutionReason.Default
-  def isCached: Boolean                     = reason == ResolutionReason.Cached
+  def isError: Boolean                     = errorCode.isDefined || reason == ResolutionReason.Error
+  def isSuccess: Boolean                   = !isError
+  def isDefault: Boolean                   = reason == ResolutionReason.Default
+  def isCached: Boolean                    = reason == ResolutionReason.Cached
   def map[B](f: A => B): FlagResolution[B] = copy(value = f(value))
 }
 

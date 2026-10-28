@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`track` reaches the providers of a `multiProvider` chain** (#551). The Java SDK's `MultiProvider` does not
+  override `track`, so every tracking event sent through `FeatureFlags.multiProvider` or the default
+  `fromAcquireAsync` compose was silently dropped. Each provider in the chain now receives it. If one throws, the
+  rest still receive it, and `track` fails with the first error, the others attached as suppressed. A failed `track`
+  may already have reached some providers, so retrying it can count the event twice there.
+
 ## [1.2.0] — 2026-10-24
 
 **Contains a security fix.** If you use `zio-openfeature-ofrep`, upgrade. It now pins Jackson 2.22.4, which closes

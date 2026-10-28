@@ -19,9 +19,10 @@ import dev.openfeature.sdk.{
   Metadata,
   OpenFeatureAPI,
   ProviderEvaluation,
+  TrackingEventDetails => OFTrackingEventDetails,
   Value
 }
-import dev.openfeature.sdk.multiprovider.Strategy
+import dev.openfeature.sdk.multiprovider.{FirstMatchStrategy, Strategy}
 
 import scala.jdk.CollectionConverters._
 
@@ -66,6 +67,21 @@ object LongAwareMultiProviderSpec extends ZIOSpecDefault {
       ProviderEvaluations.error[java.lang.Double](d, OFErrorCode.TYPE_MISMATCH, s"$name: integer value")
     override def getObjectEvaluation(k: String, d: Value, c: OFEvaluationContext) =
       ProviderEvaluations.of[Value](d, "DEFAULT")
+  }
+
+  /** A [[LongChild]] recording every `track` it receives as `(event, targeting key, details value)`, and throwing
+    * `fails` (when set) after recording.
+    */
+  private class TrackChild(name: String, fails: Option[Throwable] = None) extends LongChild(name, Map.empty) {
+    val seen  = new ConcurrentLinkedQueue[(String, String, Option[Double])]()
+    val plans = new ConcurrentLinkedQueue[String]()
+    override def track(eventName: String, ctx: OFEvaluationContext, details: OFTrackingEventDetails): Unit = {
+      val value = Option(details).flatMap(d => if (d.getValue.isPresent) Some(d.getValue.get.doubleValue) else None)
+      seen.add((eventName, String.valueOf(ctx.getTargetingKey), value))
+      Option(ctx.getValue("plan")).foreach(v => plans.add(v.asString))
+      fails.foreach(t => throw t)
+    }
+    def events: List[(String, String, Option[Double])] = seen.asScala.toList
   }
 
   /** A provider hook recording `(flag type, client domain, hints)` for every evaluation it sees. */
@@ -232,6 +248,132 @@ object LongAwareMultiProviderSpec extends ZIOSpecDefault {
         val provider = FeatureFlags.multiProvider(List(new LongChild("a", Map.empty)))
         val hooks    = provider.getProviderHooks.size
         assertTrue(provider.isInstanceOf[LongAwareMultiProvider], hooks == 2)
+      }
+    ),
+    suite("track")(
+      test("reaches every child with the caller's context and details") {
+        val a = new TrackChild("a")
+        val b = new TrackChild("b")
+        ZIO.scoped {
+          for {
+            ff <- ffOver(FeatureFlags.multiProvider(List(a, b)))
+            _ <- ff.track(
+              "signup",
+              EvaluationContext("user-1").withAttribute("plan", AttributeValue.string("pro")),
+              TrackingEventDetails(9.5)
+            )
+          } yield assertTrue(
+            a.events == List(("signup", "user-1", Some(9.5))),
+            b.events == List(("signup", "user-1", Some(9.5))),
+            a.plans.asScala.toList == List("pro"),
+            b.plans.asScala.toList == List("pro")
+          )
+        }
+      },
+      test("reaches every child when tracked without details") {
+        val a = new TrackChild("a")
+        val b = new TrackChild("b")
+        ZIO.scoped {
+          for {
+            ff <- ffOver(FeatureFlags.multiProvider(List(a, b)))
+            _  <- ff.track("signup", EvaluationContext("user-2"))
+          } yield assertTrue(
+            a.events == List(("signup", "user-2", None)),
+            b.events == List(("signup", "user-2", None))
+          )
+        }
+      },
+      test("a throwing child does not starve the others, and the call fails with its error") {
+        val boom = new RuntimeException("a: tracking backend down")
+        val a    = new TrackChild("a", Some(boom))
+        val b    = new TrackChild("b")
+        ZIO.scoped {
+          for {
+            ff  <- ffOver(FeatureFlags.multiProvider(List(a, b)))
+            err <- ff.track("signup", EvaluationContext("user-3")).flip
+          } yield assertTrue(
+            a.events == List(("signup", "user-3", None)),
+            b.events == List(("signup", "user-3", None)),
+            err match {
+              case FeatureFlagError.ProviderError(cause) => cause eq boom
+              case _                                     => false
+            }
+          )
+        }
+      },
+      test("several failures surface the first, with the rest suppressed on it") {
+        val first  = new RuntimeException("a failed")
+        val second = new IllegalStateException("c failed")
+        val a      = new TrackChild("a", Some(first))
+        val b      = new TrackChild("b")
+        val c      = new TrackChild("c", Some(second))
+        val chain  = new LongAwareMultiProvider(List[FeatureProvider](a, b, c).asJava, new FirstMatchStrategy())
+        val thrown = scala.util.Try(chain.track("signup", new ImmutableContext("user-4"), null)).failed.toOption
+        assertTrue(
+          thrown.exists(_ eq first),
+          first.getSuppressed.toList == List(second),
+          b.events == List(("signup", "user-4", None))
+        )
+      },
+      test("the same exception thrown by two children is surfaced once, without suppressing itself") {
+        val shared = new RuntimeException("shared backend down")
+        val a      = new TrackChild("a", Some(shared))
+        val b      = new TrackChild("b", Some(shared))
+        val chain  = new LongAwareMultiProvider(List[FeatureProvider](a, b).asJava, new FirstMatchStrategy())
+        val thrown = scala.util.Try(chain.track("signup", new ImmutableContext("user-5"), null)).failed.toOption
+        assertTrue(
+          thrown.exists(_ eq shared),
+          shared.getSuppressed.isEmpty,
+          b.events == List(("signup", "user-5", None))
+        )
+      },
+      test("one exception thrown by two later children is suppressed once") {
+        val first  = new RuntimeException("a failed")
+        val shared = new IllegalStateException("b and c failed")
+        val chain = new LongAwareMultiProvider(
+          List[FeatureProvider](
+            new TrackChild("a", Some(first)),
+            new TrackChild("b", Some(shared)),
+            new TrackChild("c", Some(shared))
+          ).asJava,
+          new FirstMatchStrategy()
+        )
+        val thrown = scala.util.Try(chain.track("signup", new ImmutableContext("user-7"), null)).failed.toOption
+        assertTrue(thrown.exists(_ eq first), first.getSuppressed.toList == List(shared))
+      },
+      test("children rethrowing cached exceptions do not grow the suppressed list across events") {
+        val cachedA = new RuntimeException("a down")
+        val cachedB = new IllegalStateException("b down")
+        val chain = new LongAwareMultiProvider(
+          List[FeatureProvider](new TrackChild("a", Some(cachedA)), new TrackChild("b", Some(cachedB))).asJava,
+          new FirstMatchStrategy()
+        )
+        val ctx = new ImmutableContext("user-8")
+        scala.util.Try(chain.track("one", ctx, null))
+        scala.util.Try(chain.track("two", ctx, null))
+        scala.util.Try(chain.track("three", ctx, null))
+        assertTrue(cachedA.getSuppressed.toList == List(cachedB))
+      },
+      test("the default fromAcquireAsync compose forwards track to the real provider, then the fallback") {
+        val real     = new TrackChild("real")
+        val fallback = new TrackChild("fb")
+        FeatureFlags.defaultAcquireCompose(real, fallback).track("signup", new ImmutableContext("user-9"), null)
+        assertTrue(
+          real.events == List(("signup", "user-9", None)),
+          fallback.events == List(("signup", "user-9", None))
+        )
+      },
+      test("children are offered the event in chain order") {
+        val order = new ConcurrentLinkedQueue[String]()
+        def child(n: String) = new TrackChild(n) {
+          override def track(e: String, c: OFEvaluationContext, d: OFTrackingEventDetails): Unit = { order.add(n); () }
+        }
+        val chain = new LongAwareMultiProvider(
+          List[FeatureProvider](child("x"), child("y"), child("z")).asJava,
+          new FirstMatchStrategy()
+        )
+        chain.track("signup", new ImmutableContext("user-6"), null)
+        assertTrue(order.asScala.toList == List("x", "y", "z"))
       }
     ),
     suite("fromAcquireAsync with the default compose")(

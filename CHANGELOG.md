@@ -14,6 +14,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `fromAcquireAsync` compose was silently dropped. Each provider in the chain now receives it. If one throws, the
   rest still receive it, and `track` fails with the first error, the others attached as suppressed. A failed `track`
   may already have reached some providers, so retrying it can count the event twice there.
+- **`FaultyProvider.release` no longer misses a call that has not parked yet** (#556, testkit). `awaitEntered`
+  returns as soon as a call starts, before it reaches its hang, and `release` only opened hangs already parked, so a
+  release in between was lost and the call stayed parked until the scope closed. A release now reaches every call
+  that entered before it, and `shutdown()` does the same for `HangUntilShutdown`, so `awaitEntered` followed by
+  `release` is race-free. This was behind an intermittent `LifecycleModelSpec` failure in CI.
 
 ## [1.2.0] — 2026-10-24
 

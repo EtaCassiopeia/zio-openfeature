@@ -1,39 +1,43 @@
 # Extras
 
-`zio-openfeature-extras` adds providers you can use without a flag service: flags from `application.conf` or from
-environment variables. It also adds wrappers that make any provider faster or safer: a cache, a circuit breaker, and
-two adapters for awkward third-party providers.
+`zio-openfeature-extras` adds two providers that need no flag service, [HOCON](#hocon-provider) and
+[environment variables](#environment-variable-provider), and four wrappers that make any provider faster or safer.
 
 ```scala
 libraryDependencies += "io.github.etacassiopeia" %% "zio-openfeature-extras" % "<version>"
 ```
 
-| Provider | Use it to |
-|---|---|
-| [`HoconProvider`](#hocon-provider) | read flags from Typesafe Config (`application.conf`) |
-| [`EnvVarProvider`](#environment-variable-provider) | read flags from environment variables |
-| [`CachingProvider`](#caching-provider) | cache another provider's answers for a while |
-| [`CircuitBreakerProvider`](#circuit-breaker-provider) | stop calling a failing provider and fail over fast |
-| [`DeferredProvider`](#deferred-provider) | move a provider's slow constructor off your startup path |
-| [`IntegerWideningLongProvider`](#integer-widening-long-provider) | read `Long` flags from an old provider that has no long resolver |
+All are plain `FeatureProvider`s: pass them to any factory on [Wiring a provider](providers.md), or chain them with
+[`multiProvider`](providers.md#ask-several-providers-in-order), for example environment variables first, then
+`application.conf`.
 
-All of them are plain OpenFeature `FeatureProvider`s: pass them to any factory on
-[Wiring a provider](providers.md), or combine them in a `FeatureFlags.multiProvider` chain.
+| Wrapper | Passes on events | Passes on provider hooks and `track` |
+|---|---|---|
+| [`CachingProvider`](#caching-provider) | if the wrapped provider emits them | yes |
+| [`CircuitBreakerProvider`](#circuit-breaker-provider) | if the wrapped provider emits them | yes |
+| [`DeferredProvider`](#deferred-provider) (takes a function that builds one) | no | yes, once built |
+| [`IntegerWideningLongProvider`](#integer-widening-long-provider) | no | yes |
+
+`CachingProvider` and `CircuitBreakerProvider` take over the wrapped provider's event channel, so don't also register
+that instance with OpenFeature. Both validate their config and offer three constructors:
+
+- `make` fails with `FeatureFlagError.InvalidConfiguration` naming every field out of bounds.
+- `scoped` is `make` plus a finalizer: closing the scope shuts down the wrapper and the wrapped provider (within 10
+  seconds). Registering it with `FeatureFlags` too is safe.
+- `apply` throws `IllegalArgumentException`.
 
 ## HOCON provider
 
-Reads flags from a block of Typesafe Config, `feature-flags` by default:
+Reads flags from a Typesafe Config block, `feature-flags` by default:
 
 ```hocon
 # application.conf
 feature-flags {
   new-checkout = true
   max-items = 50
-  rate-limit = 2.5
   welcome-message = "Hello!"
   settings {
     timeout = 30
-    retries = 3
   }
 }
 ```
@@ -42,233 +46,154 @@ feature-flags {
 --8<-- "Extras.scala:hocon"
 ```
 
-- Booleans, strings, ints, longs and doubles are read as their type. A nested block is an object flag.
-- A key that is present answers with reason `Static`.
-- A value of the wrong type is a `TypeMismatch`; a value Typesafe Config cannot parse is a `ParseError`.
-- HOCON has one number type, so an int, long or double read accepts any number, but only if the value does not
-  change: `1.5` read as an int, `1e300` as a long or `9007199254740993` as a double is a `TypeMismatch`. `2.0` read as
-  an int is `2`.
-- HOCON's automatic conversions apply: a string read of a number or boolean gives its text, and a number or boolean
-  read of a string such as `"42"` or `"true"` parses it.
-- An absent key is `FLAG_NOT_FOUND`: the typed tier fails with `FlagNotFound`, and the total tier serves your default
-  with that error code. Hooks see the `error` stage. Reporting "not here" is what lets a
-  [provider chain](#combining-providers) move on to the next provider.
+- A nested block is an object flag, and a dotted key such as `settings.timeout` resolves the nested path. A present key
+  answers with reason `Static`.
+- A value of the wrong type is a `TypeMismatch`; one Typesafe Config cannot parse is a `ParseError`. HOCON has one
+  number type, so an int read accepts any number whose value survives (`2.0` is `2`, `1.5` is a `TypeMismatch`), and
+  Typesafe's conversions apply (`"42"` parses).
+- An absent key is `FLAG_NOT_FOUND`, so a [provider chain](providers.md#ask-several-providers-in-order) moves on.
 
-`reload()` re-reads the config the provider was built from. If the reload fails, the provider keeps the old config
-and reports `ERROR` until a later reload succeeds:
+!!! warning "A missing path is silent"
+    If the `path` you pass to `HoconProvider(path)` does not exist, the provider starts empty: every flag is
+    `FLAG_NOT_FOUND`, with no error.
+
+`reload()` re-reads the config; on failure the provider keeps the old config and its `getState` reports `ERROR` until a
+reload succeeds. It sends no event, so `FeatureFlags` keeps its status: check `reload()`'s result. A `fromConfig` provider has nothing to re-read.
 
 ```scala
 --8<-- "Extras.scala:hocon-reload"
 ```
 
-A provider made with `fromConfig` has no source to re-read, so its `reload()` keeps the same config.
-
 ## Environment variable provider
 
-Reads each flag from one environment variable. The variable's name is a prefix plus the transformed flag key. By
-default the prefix is `FF_` and the key is upper-cased, with `-` and `.` turned into `_`:
-
-| Flag key | Variable |
-|---|---|
-| `new-checkout` | `FF_NEW_CHECKOUT` |
-| `max-items` | `FF_MAX_ITEMS` |
-| `app.feature.enabled` | `FF_APP_FEATURE_ENABLED` |
+Reads each flag from one variable: a prefix (default `FF_`) plus the upper-cased flag key with `-` and `.` turned into
+`_`, so `new-checkout` reads `FF_NEW_CHECKOUT`.
 
 ```scala
 --8<-- "Extras.scala:env"
 ```
 
-`withLookup` takes any `String => Option[String]`, which is handy in tests.
-
-| Flag type | Accepted values |
-|---|---|
-| Boolean | `true`/`false`, `yes`/`no`, `on`/`off`, `1`/`0` (any case) |
-| Int, Long, Double | anything `toInt`, `toLong` or `toDouble` parses |
-| String | the raw value |
-| Object | the raw value, as a string |
-
-A variable that is set but cannot be parsed is a `ParseError`, so a typo in a deployed value is visible instead of
-quietly serving the default. An unset variable is `FLAG_NOT_FOUND`, exactly like an absent HOCON key.
-
-## Combining providers
-
-`FeatureFlags.multiProvider` chains providers. With the default first-match strategy, each provider is asked in turn
-until one has the flag:
-
-```scala
---8<-- "Extras.scala:chain"
-```
-
-Here `FF_NEW_CHECKOUT=true` overrides `new-checkout = false` in `application.conf`, and a key neither holds falls
-back to the caller's default. The chain moves on only when a provider reports `FLAG_NOT_FOUND`. Any other error ends
-it; use `MultiProviderStrategy.firstSuccessful` if errors should fall through too. See
-[Wiring a provider](providers.md) for the strategies.
+`withLookup` takes any `String => Option[String]`, handy in tests. Booleans accept `true`/`false`, `yes`/`no`,
+`on`/`off` and `1`/`0` in any case; numbers whatever `toInt`, `toLong` or `toDouble` parses; strings and objects the raw
+value. A set but unparsable variable is a `ParseError`, so a typo is visible; an unset one is `FLAG_NOT_FOUND`.
 
 ## Caching provider
 
-Wraps any provider and keeps its answers for a while, using [zio-cache](https://github.com/zio/zio-cache):
+Keeps a provider's answers for a while, using [zio-cache](https://github.com/zio/zio-cache):
 
 ```scala
 --8<-- "Extras.scala:caching"
 ```
 
-- The first evaluation of a flag calls the provider; repeats within `ttl` are served from the cache with reason
-  `Cached`.
-- Entries are keyed by flag key, flag type and evaluation context. Callers who ask for the same entry at the same
-  time share one provider call.
-- Errors are never cached, and neither are `DEFAULT`-reason answers, so a transient failure is retried on the next
-  call.
-- When the cache is full, the least recently used entry goes.
+- Repeats within `ttl` are served from the cache with reason `Cached`. Entries are keyed by flag key, flag type and
+  evaluation context; concurrent callers for the same entry share one provider call, even with different defaults.
+- Errors and `DEFAULT`-reason answers are never cached, so a transient failure is retried.
 
 | `CachingConfig` field | Default | Meaning |
 |---|---|---|
 | `maxEntries` | `1000` | entries kept before the least recently used is evicted; at least `1` |
-| `ttl` | `5.minutes` | how long an entry is served; greater than zero, and `Duration.Infinity` never expires |
-| `contextKeys` | `None` | which context attributes make up the cache key; `None` uses the whole context |
+| `ttl` | `5.minutes` | how long an entry is served; greater than zero, `Duration.Infinity` never expires |
+| `contextKeys` | `None` | context attributes that make up the cache key; `None` uses the whole context |
 
-If your context carries something unique per request, such as a request id, every evaluation becomes its own entry
-and nothing is ever served from the cache. Name the attributes that actually change the answer:
+A per-request attribute such as a request id makes every evaluation its own entry, so nothing is served from cache.
+Name the attributes that change the answer:
 
 ```scala
 --8<-- "Extras.scala:caching-context-keys"
 ```
 
-With `contextKeys` set, the targeting key is left out of the cache key too, and `Some(Set.empty)` caches by flag key
-alone.
+With `contextKeys` set, the targeting key is left out of the cache key too; `Some(Set.empty)` caches by flag key alone.
 
-### Keeping the cache fresh
-
-When the wrapped provider emits `PROVIDER_CONFIGURATION_CHANGED`, the whole cache is cleared, and the event is passed
-on to your `FeatureFlags` event handlers. That needs a provider that emits events (an OpenFeature `EventProvider`). A
-provider that does not, including one wrapped in `DeferredProvider` or `IntegerWideningLongProvider`, can serve a
-changed flag for up to `ttl`. Put `CachingProvider` closest to the event-capable provider, choose `ttl` for how stale
-you can afford to be, or clear the cache yourself:
+When the wrapped provider (an OpenFeature `EventProvider`) emits `PROVIDER_CONFIGURATION_CHANGED`, the whole cache is
+cleared and the event passed on. Any other provider (including one inside `DeferredProvider` or
+`IntegerWideningLongProvider`) can serve a changed flag for up to `ttl`: put `CachingProvider` closest to the
+event-capable provider, pick `ttl` for the staleness you can afford, or clear the cache yourself.
 
 ```scala
 --8<-- "Extras.scala:caching-invalidate"
 ```
 
-Clearing applies to evaluations already in flight too: one that started before the clear still answers its caller, but
-its result is not cached.
-
 ## Circuit breaker provider
 
-A remote provider that is down can make every evaluation wait for a timeout. `CircuitBreakerProvider` notices
-repeated failures and stops calling the provider for a while. While the circuit is open, calls fail at once, and the
-next provider in a `firstSuccessful` chain answers instead:
+`CircuitBreakerProvider` stops calling a failing remote provider, so evaluations stop waiting on timeouts and the next
+provider in a `firstSuccessful` chain answers:
 
 ```scala
 --8<-- "Extras.scala:circuit-breaker"
 ```
 
-![CircuitBreakerProvider wrapping a remote provider, with a fallback behind it in a firstSuccessful MultiProvider: three consecutive failures open the circuit, calls while it is open are rejected at once and answered by the fallback without calling the delegate, and after resetTimeout one probe call succeeds and closes the circuit.](assets/circuit-breaker.svg)
+![CircuitBreakerProvider in a firstSuccessful MultiProvider: consecutive failures open the circuit, the fallback answers while it is open, and after resetTimeout a successful probe closes it.](assets/circuit-breaker.svg)
 
-The circuit has three states:
+```mermaid
+stateDiagram-v2
+    direction LR
+    state "Closed · provider's own status" as Closed
+    state "Open · ERROR" as Open
+    state "Half-open · STALE" as HalfOpen
+    [*] --> Closed
+    Closed --> Open: failures, ERROR / FATAL, STALE, failed initialize
+    Open --> HalfOpen: resetTimeout elapses
+    Open --> Closed: READY, if a poll or event opened it (not failures)
+    HalfOpen --> Closed: halfOpenMaxCalls successful probes
+    HalfOpen --> Open: a probe fails
+```
 
-| State | What happens to an evaluation |
-|---|---|
-| Closed | It goes to the provider. Consecutive failures are counted. |
-| Open | It fails at once, without calling the provider. After `resetTimeout`, the next call becomes a probe. |
-| Half-open | One probe goes to the provider at a time. `halfOpenMaxCalls` successful probes close the circuit; a failed one opens it again. A slow call let through earlier, before the circuit opened, does not count. |
+The state names show the status the breaker reports. It emits `PROVIDER_STALE` when failures open it and
+`PROVIDER_READY` when a probe closes it. After `resetTimeout` the next call is a probe.
 
-Three things open the circuit:
+**What counts as a failure.** A call slower than `evaluationTimeout`, or one that throws or returns `GENERAL`,
+`PROVIDER_NOT_READY` or `PROVIDER_FATAL`. Other answers (`FLAG_NOT_FOUND`, type mismatch, invalid context) prove the
+provider is reachable and reset the count.
 
-- **Failures:** `failureThreshold` consecutive infrastructure failures. A call slower than `evaluationTimeout` counts
-  as one. A failure counts whether the provider throws it or returns it as an error code (`GENERAL`,
-  `PROVIDER_NOT_READY`, `PROVIDER_FATAL`); errors such as `FLAG_NOT_FOUND` only show the provider is reachable.
-- **The provider's state:** at most once per `stateCheckInterval`, the breaker asks the provider for its state. `ERROR`
-  or `FATAL` opens the circuit at once, and `READY` closes a circuit opened this way.
-- **The provider's events:** `PROVIDER_ERROR` opens the circuit and `PROVIDER_READY` closes one opened by state or
-  events. A circuit opened by an event, or by a failed `initialize`, stays open through a polled `READY`, since most
-  providers report `READY` by default when polled; it closes on an event `READY` or after `resetTimeout` and a
-  successful probe. This needs an `EventProvider`; any other provider relies on the first two.
+**Other ways it opens.** At most once per `stateCheckInterval` the breaker polls the provider's state: `ERROR` or
+`FATAL` opens, and a polled `READY` closes a circuit a poll opened. With an `EventProvider`, `PROVIDER_ERROR` opens and
+`PROVIDER_READY` closes a circuit an event or a poll opened. A failed `initialize` opens it too, and a `STALE` provider
+opens it under the default `stalePolicy` (`HalfOpen` sends it straight to half-open, `Ignore` does nothing). A circuit
+opened by failures closes only through `resetTimeout` and a successful probe.
 
-Only failures that say the provider is unhealthy count. A `FLAG_NOT_FOUND`, type mismatch, parse error, missing
-targeting key or invalid context proves the provider answered, so it resets the failure count instead.
+A rejected call fails with a `GeneralError`, for example `Circuit breaker rejected: open for 4210ms due to consecutive
+failures, resets after 30000ms`. The reason is `consecutive failures`, `delegate reported unhealthy state`,
+`delegate state poll reported unhealthy` or, during a half-open probe, `half-open, probe in progress`.
 
 | `CircuitBreakerProviderConfig` field | Default | Meaning |
 |---|---|---|
-| `failureThreshold` | `5` | consecutive failures that open the circuit; at least `1` |
-| `resetTimeout` | `30.seconds` | how long the circuit stays open before a probe; greater than zero, and `Duration.Infinity` means only a `PROVIDER_READY` event (or a polled `READY`, for a circuit a poll opened) closes it |
-| `evaluationTimeout` | `500.millis` | longest wait for one provider call, greater than zero; `Duration.Infinity` disables it |
-| `halfOpenMaxCalls` | `1` | successful probes needed to close the circuit; at least `1` |
-| `stalePolicy` | `StalePolicy.Open` | what a `STALE` provider does: `Open` the circuit, `HalfOpen` it, or `Ignore` it |
-| `stateCheckInterval` | `1.second` | how often the provider's state is polled, zero or more; `Duration.Zero` polls on every call |
+| `failureThreshold` | `5` | consecutive failures that open it; at least `1` |
+| `resetTimeout` | `30.seconds` | how long the circuit stays open before a probe; greater than zero. `Duration.Infinity`: only a `READY` signal closes it, so a circuit opened by failures stays open |
+| `evaluationTimeout` | `500.millis` | longest wait for one call, above zero; `Duration.Infinity` disables it |
+| `halfOpenMaxCalls` | `1` | successful probes that close the circuit; at least `1` |
+| `stalePolicy` | `StalePolicy.Open` | what a `STALE` provider does: `Open`, `HalfOpen` or `Ignore` |
+| `stateCheckInterval` | `1.second` | state poll interval; `Duration.Zero` polls every call, `Duration.Infinity` once |
 
-When failures open the circuit, the breaker emits `PROVIDER_STALE`; when a probe closes it, `PROVIDER_READY`. While it is
-open, it reports its own state as `ERROR`, and `STALE` while half-open.
-
-!!! note "Timeouts and provider hooks"
-    With a finite `evaluationTimeout`, the wrapped provider runs on another thread. If you wrap a whole
-    `MultiProvider`, the hooks of its members then see the domain `"multiprovider"` instead of your client's. Wrap
-    each member in its own breaker instead, or set `evaluationTimeout = Duration.Infinity`, which keeps the call on
-    the caller's thread but means a hung provider blocks the caller and never counts as a failure.
-
-`CircuitBreaker` and `CircuitBreakerConfig` are the state machine behind the provider. `CircuitBreakerConfig` has the
-same `failureThreshold`, `resetTimeout` and `halfOpenMaxCalls`, plus `probeTimeout`: how long a probe may hold the
-half-open slot before another caller can take it. The provider sets it to `evaluationTimeout` plus one second.
-
-### Construction and lifecycle
-
-Both wrappers check their config when you build them. `make` fails with a `FeatureFlagError.InvalidConfiguration`
-naming every field outside the bounds in the tables above, for example
-`CircuitBreakerProviderConfig.failureThreshold must be >= 1, got 0`. The unsafe `apply` constructors throw an
-`IllegalArgumentException` with the same message.
-
-`scoped` is `make` plus a finalizer: when the scope closes, the wrapper is shut down, which shuts down the wrapped
-provider too. Wrap it in `ZLayer.scoped(...)` to get a layer, as the examples above do. It is safe to register a scoped
-wrapper with `FeatureFlags` as well: a wrapper's `shutdown()` runs once, so the wrapped provider is not shut down a
-second time.
+??? note "Timeouts and provider hooks"
+    A finite `evaluationTimeout` runs the wrapped provider on another thread, so a wrapped `MultiProvider`'s members see
+    the hook domain `"multiprovider"`. Wrap each member in its own breaker, or set `evaluationTimeout = Duration.Infinity`
+    (keeps the caller's thread, but a hung provider then blocks the caller without counting as a failure).
 
 ## Deferred provider
 
-Some providers do all their network work in their constructor, which blocks wherever you build them.
-`DeferredProvider` takes a function that builds the provider, and calls it only when OpenFeature initializes the
-provider. With async initialization, that is on the SDK's own thread, so your startup does not wait:
+Some providers do their network work in the constructor, which blocks wherever you build them. `DeferredProvider` takes
+a function that builds the provider and calls it when OpenFeature initializes it, on the SDK's own thread with async
+initialization, so startup does not wait:
 
 ```scala
 --8<-- "Extras.scala:deferred"
 ```
 
-- It reports the name you give it, before and after the real provider exists.
-- Until the real provider is built, evaluations answer `PROVIDER_NOT_READY` with your default.
-- A shutdown during construction shuts the new provider down as soon as it is built.
-- Once the real provider exists, provider hooks and `track` calls go to it.
-- A `DeferredProvider` that was shut down, or failed to start, cannot be started again; build a new one.
-- It does not pass on the wrapped provider's events.
-
-Use `FeatureFlags.fromAcquireAsync` instead if a fallback should answer while the real provider starts; see
-[Wiring a provider](providers.md).
+- Until the real provider is built, evaluations answer `PROVIDER_NOT_READY`. Events are not passed on.
+- After shutdown or a failed start it cannot be restarted; build a new one.
+- To answer from a fallback meanwhile, use [`fromAcquireAsync`](providers.md#start-on-a-fallback-fromacquireasync).
 
 ## Integer widening long provider
 
-`FeatureFlags.long` asks the provider's own long resolver, so 64-bit values are exact. A third-party provider written
-before OpenFeature Java SDK 1.22 has no long resolver, and the SDK's stand-in answers from its double resolver, which
-may reject an integer flag with a type mismatch. Wrap such a provider to read `Long` flags through its integer
-resolver instead:
+`FeatureFlags.long` uses the provider's own long resolver. A provider written before OpenFeature Java SDK 1.22 has none,
+and the SDK's stand-in uses the double resolver, which may reject an integer flag. Wrap such a provider to read `Long` flags through its integer resolver:
 
 ```scala
 --8<-- "Extras.scala:integer-widening"
 ```
 
-- A default that fits in an `Int` is resolved by the integer resolver and widened to `Long`, keeping the reason,
-  variant, error code and metadata.
-- A larger default goes to the provider's long path unchanged, so it is never truncated.
-- If the integer resolver reports a type mismatch, for example because the stored value is a long beyond `Int` range,
-  the evaluation is retried on the long path. A provider that silently truncates such a value instead cannot be
-  detected.
-- It does not pass on the wrapped provider's events.
-
-Every provider shipped with this library already resolves longs natively, so they never need it.
-
-## Wrapping rules
-
-| Wrapper | Takes | Passes on events | Passes on provider hooks and `track` |
-|---|---|---|---|
-| `CachingProvider` | any `FeatureProvider` | yes, if the wrapped provider emits them | yes |
-| `CircuitBreakerProvider` | any `FeatureProvider` | yes, if the wrapped provider emits them | yes |
-| `DeferredProvider` | a function that builds one | no | hooks yes, `track` no |
-| `IntegerWideningLongProvider` | any `FeatureProvider` | no | yes |
-
-`CachingProvider` and `CircuitBreakerProvider` take over the wrapped provider's event channel when initialized. Don't
-also register that same provider instance with OpenFeature directly.
+- A default that fits in an `Int` goes through the integer resolver and is widened; a larger one takes the long path. On
+  a type mismatch (a value beyond `Int` range) the evaluation is retried on the long path. A provider that silently
+  truncates such a value cannot be detected.
+- Events and `getState` are not forwarded: the wrapper always reports `READY`, so a
+  [circuit breaker](#circuit-breaker-provider) around it cannot see the real state.

@@ -111,18 +111,3 @@ object Context:
       FeatureFlags.boolean("new-ui", false)
     }
   // --8<-- [end:context-source]
-
-  // --8<-- [start:request-handler]
-  final case class Request(userId: String, country: String, plan: String)
-
-  def handle(request: Request): ZIO[FeatureFlags, FeatureFlagError, String] =
-    val ctx = EvaluationContext(request.userId)
-      .withAttribute("country", request.country)
-      .withAttribute("plan", request.plan)
-    FeatureFlags.withContext(ctx) {
-      for
-        newUi  <- FeatureFlags.boolean("new-ui", false)
-        banner <- FeatureFlags.string("banner", "none")
-      yield s"newUi=$newUi banner=$banner"
-    }
-  // --8<-- [end:request-handler]

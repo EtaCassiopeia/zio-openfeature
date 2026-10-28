@@ -1,143 +1,176 @@
 # Optimizely
 
 `zio-openfeature-optimizely` serves flags from
-[Optimizely Feature Experimentation](https://www.optimizely.com/products/feature-experimentation/). It is built
-directly on the official Optimizely Java SDK, which downloads your project's datafile and makes every decision
-locally, in your process.
+[Optimizely Feature Experimentation](https://www.optimizely.com/products/feature-experimentation/), built on the
+official Java SDK: it downloads your project's datafile and makes every decision locally.
 
 ```scala
 libraryDependencies += "io.github.etacassiopeia" %% "zio-openfeature-optimizely" % "<version>"
 ```
 
-The Optimizely SDK needs a JSON parser but does not declare one, so this module brings `jackson-databind`. If gson is
-also on your classpath, the SDK prefers it; `-Doptimizely.default_parser=` picks one explicitly. If no parser can be
-found, `OptimizelyProvider.make` fails with `InvalidConfiguration` and says so.
+The module brings `jackson-databind`, which the SDK needs but does not declare; if gson is also present the SDK prefers
+it (`-Doptimizely.default_parser=` picks one). With no parser, `make` fails with `InvalidConfiguration`.
 
 ## Quick start
 
-You need an SDK key: in [app.optimizely.com](https://app.optimizely.com), open your project's
-**Settings → Environments** and copy the key for the environment. Each environment has its own key.
+Copy the SDK key from [app.optimizely.com](https://app.optimizely.com) under **Settings → Environments**; each
+environment has its own.
 
 ```scala
 --8<-- "Optimizely.scala:quick-start"
 ```
 
 !!! warning "Every evaluation needs a targeting key"
-    Optimizely decides per user, so it needs a user id. The provider uses the context's targeting key. Without one,
-    every evaluation answers `TARGETING_KEY_MISSING`: the typed tier fails with `TargetingKeyMissing`, and the total
-    tier serves your default. Set it per call, or once with [`withContext` or the global context](context.md).
+    The context's targeting key is the Optimizely user id. Without one, the typed tier fails with `TargetingKeyMissing`
+    and the total tier serves your default. Set it per call or via [context](context.md).
 
-## What happens at startup
+## Startup
 
-1. `OptimizelyProvider.make(sdkKey)` checks the key, builds the Optimizely client, and the client starts fetching the
-   datafile from `https://cdn.optimizely.com/datafiles/<sdkKey>.json`.
-2. When the provider is initialized, it waits up to `initWait` (25 s) for the datafile. That is shorter than
-   `initTimeout`, so a datafile that never loads is reported with the provider's own error rather than a generic
-   timeout. Once it has one, the provider
-   is `READY`.
-3. `FeatureFlags.fromProviderAsync` does not wait for that. Until the provider is ready, evaluations fail with
-   `ProviderNotReady`. If it is not ready within `initTimeout` (30 s by default), the status becomes `Fatal` and the
-   provider is shut down. `Fatal` is final: install a new provider with `setProvider`, or rebuild the layer.
+`make` validates the key and builds the SDK client, which fetches `https://cdn.optimizely.com/datafiles/<sdkKey>.json`. A key is 6 to 128 characters of `A-Z`, `a-z`, `0-9`, `_` or `-`,
+and not a placeholder such as `YOUR_SDK_KEY`; anything else fails with `InvalidConfiguration`.
 
-The key must be 6 to 128 characters of `A-Z`, `a-z`, `0-9`, `_` or `-`, with no whitespace, and not an obvious
-placeholder such as `YOUR_SDK_KEY` or `changeme`. Anything else fails with `InvalidConfiguration` before the SDK is
-touched.
-
-The provider owns a polling thread and an HTTP client. Registering it with a `FeatureFlags` layer hands those over:
-the layer shuts the provider down when it closes. If the provider might never reach a layer, create it with
-`OptimizelyProvider.scoped` or `OptimizelyProvider.layer`, which shut it down with their scope.
-
-## Fail fast instead
-
-If some flags guard money or safety, serving defaults while Optimizely starts may be wrong. Initialize synchronously:
-the layer build then waits for the datafile, and fails if it does not arrive within `initTimeout`.
-
-```scala
---8<-- "Optimizely.scala:fail-fast"
+```mermaid
+stateDiagram-v2
+    direction LR
+    [*] --> NOT_READY
+    NOT_READY --> READY: datafile loaded
+    NOT_READY --> ERROR: no datafile within initWait
+    ERROR --> NOT_READY: initialize again
+    READY --> STALE: no successful fetch for staleAfter
+    STALE --> READY: a fetch succeeds
+    READY --> NOT_READY: shutdown
+    STALE --> NOT_READY: shutdown
 ```
 
-With async initialization, keep traffic away until the provider is ready by wiring its status into your readiness
-check:
+`initWait` (25 s) is shorter than `initTimeout` (30 s), so a datafile that never loads reports the provider's own
+error. `STALE` still serves the last datafile (see [below](#datafile-updates-and-staleness)); how `FeatureFlags` treats
+each state is in [Lifecycle](lifecycle.md).
+
+The provider owns a polling thread and an HTTP client; a `FeatureFlags` layer shuts it down on close. Otherwise use
+`scoped` or `layer`, which shut it down with their scope:
 
 ```scala
---8<-- "Optimizely.scala:readiness"
+--8<-- "Optimizely.scala:scoped"
 ```
 
-## How flags are read
+`make` and `layer` take the key, the key and a datafile URL, or an `OptimizelyProviderConfig`; `scoped` the key or a
+config.
+
+## Reading flags
 
 | You ask for | You get |
 |---|---|
 | `boolean` | whether the flag is enabled for this user |
-| `string` | the flag variable named `value`; if there is none, the variation key; otherwise your default |
-| `int`, `long`, `double`, `obj` | the flag variable named `value` (a JSON variable for `obj`); if there is none, your default |
+| `string` | the variable `value`; else the variation key; else your default |
+| `int`, `long`, `double`, `obj` | the variable `value`; else your default |
 
-A variable that exists with another type is an error, not your default: reading a double variable as `int`, or the
-string `"42"` as `int`, fails with `TypeMismatch`. Only exact widenings are accepted: an integer variable reads as
-`long` or `double`. A long is read from an integer variable, since Optimizely has no 64-bit one; values beyond the
-`int` range read as `long` but not as `int`. To read a variable with another name,
-put its name in the context attribute `openfeature.variableKey`
+A variable of another type is a `TypeMismatch`, never a silent default or a parse:
+
+Each type accepts its own variables only: `int` an integer within `Int`, `long` any integer, `double` any integer or
+double, `string` a string, `obj` JSON.
+
+To read a variable other than `value`, set the context attribute `openfeature.variableKey`
 (`OptimizelyFeatureProvider.VariableKeyAttribute`):
 
 ```scala
 --8<-- "Optimizely.scala:variables"
 ```
 
-The reason is `TargetingMatch` when the user got a variation and `Default` otherwise, and the variation key is the
-variant. The resolution's metadata carries `optimizely.flagKey` and `optimizely.ruleKey`.
-
-| Error code | When |
-|---|---|
-| `TargetingKeyMissing` | the context has no targeting key |
-| `FlagNotFound` | the datafile has no flag with this key |
-| `ProviderNotReady` | the datafile has not loaded yet, or the provider was shut down |
-| `TypeMismatch` | the variable exists but has another type (for example a double read as `int`) |
-| `General` | the Optimizely SDK failed to decide, including a CMAB experiment whose decision could not be fetched |
-
-**CMAB experiments** (contextual multi-armed bandits) are supported: the provider wires Optimizely's CMAB service, as
-the SDK's own factory does. On a cache miss, deciding a CMAB flag makes a blocking call to Optimizely's CMAB endpoint
-(10 seconds and one retry by default), so give such flags an `evaluationTimeout` you can afford, or put the provider
-behind a `CircuitBreakerProvider`.
-
-Context attributes go to Optimizely as audience attributes. Strings, booleans and numbers pass as they are, and an
-`Instant` becomes its ISO-8601 string. Lists and structures are left out, because no audience condition can match
-them.
-
-## Tracking
-
-`FeatureFlags.track` sends a conversion to Optimizely for the context's targeting key, with the context's attributes.
-The tracking details' attributes become event tags (normalized like audience attributes), and the details' `value`
-becomes the `value` tag. Optimizely's `revenue` metric expects integer cents: pass it as an integer attribute named
-`revenue`; it is never derived from `value`.
-
-`track` fails with a `FeatureFlagError` when the provider is not ready, when the context has no targeting key, or when
-the datafile defines no event with that key (Optimizely itself would drop it with only an INFO log).
-
-## Events
-
-Experiment results in Optimizely come from events the SDK sends from your process: an impression for each decision
-(rollout decisions too, when the project's "send flag decisions" setting is on) and a conversion for each `track`.
-A provider built with `make`, `scoped` or `layer` sends them by default. Each event carries:
-
-- the user id, which is the context's targeting key;
-- the audience attributes derived from the evaluation context (see above);
-- the decision (flag, rule, variation) or the conversion (event key, tags, `value`, `revenue`).
-
-They go to `https://logx.optimizely.com` in batches of 10, or after 30 seconds, whichever comes first, from a
-background thread, over the same HTTP client the provider uses for CMAB. Shutting the provider down sends what is
-queued, waiting up to 3 seconds for the queue and then up to 3 seconds for the requests in flight; events still
-queued after that are dropped.
-
-To send nothing, as earlier releases did, disable them:
-
 ```scala
---8<-- "Optimizely.scala:events"
+--8<-- "Optimizely.scala:object-flag"
 ```
 
-`OptimizelyEvents.Batched(batchSize, flushInterval, closeTimeout)` tunes the batching instead. `closeTimeout` can be
-at most 4 seconds, because it is waited out twice on shutdown and the provider's shutdown is bounded at 10 seconds.
+The reason is `TargetingMatch` when the user got a variation, else `Default`. Metadata carries `optimizely.flagKey` and
+`optimizely.ruleKey`.
+
+| Error code | Likely cause |
+|---|---|
+| `TargetingKeyMissing` | no user id on the context |
+| `FlagNotFound` | misspelled key, or flag missing from this environment |
+| `ProviderNotReady` | datafile not loaded yet, or provider shut down |
+| `TypeMismatch` | the variable has another type |
+| `General` | the SDK failed to decide, including a failed CMAB fetch |
+
+??? note "Things to know"
+    - Context attributes become audience attributes: strings, booleans, numbers as they are, an `Instant` as ISO-8601;
+      lists and structures are left out.
+    - CMAB experiments are supported. On a cache miss, a CMAB decision blocks on Optimizely's CMAB endpoint (up to about
+      10 seconds, one retry), so set an affordable `evaluationTimeout` or add a `CircuitBreakerProvider`.
+
+## Tracking and events
+
+`FeatureFlags.track` ([Tracking](tracking.md)) sends a conversion for the targeting key. Attributes become event tags,
+and `value` the `value` tag. The `revenue` metric expects integer cents: pass an integer attribute
+named `revenue`; it is never derived from `value`.
+
+```scala
+--8<-- "Optimizely.scala:track"
+```
+
+`track` fails when the provider is neither `READY` nor `STALE`, the context has no targeting key, or the datafile has no
+such event.
+
+Providers from `make`, `scoped` and `layer` send an impression per decision (rollouts too, if the project's "send flag
+decisions" setting is on) and a conversion per `track` to `logx.optimizely.com`, batched from a background thread.
+`OptimizelyEvents.Batched` tunes it:
+
+| `Batched` parameter | Default | Meaning |
+|---|---|---|
+| `batchSize` | 10 | events per request; at least 1 |
+| `flushInterval` | 30 s | longest an event waits before its batch is sent; positive |
+| `closeTimeout` | 3 s | on shutdown, the wait for the queue and again for in-flight requests; positive, at most 4 s |
+
+Events still queued when `closeTimeout` runs out are dropped. `OptimizelyEvents.Disabled` sends nothing.
+
+```scala
+--8<-- "Optimizely.scala:events-tuned"
+```
+
 A provider from `fromOptimizelyClient` sends events however its client was built.
 
-## Configuration
+## Datafile updates and staleness
+
+A new datafile revision makes the provider emit `ConfigurationChanged` with an empty set of flag keys (the SDK does not
+say which changed): read again.
+
+```scala
+--8<-- "Optimizely.scala:config-changed"
+```
+
+A failed fetch silently leaves the last datafile in use, unless the staleness watchdog is on. It runs only when you set
+`pollingInterval`: the provider goes `STALE` after `staleAfter` without a successful fetch and `READY` when one
+succeeds, answering from the last datafile meanwhile.
+
+## Startup modes and resilience
+
+| | Async (quick start) | Sync (fail fast) | With a fallback |
+|---|---|---|---|
+| Starts while Optimizely is down | yes; evaluations fail until ready | no, the build fails | yes; the fallback answers |
+| Outage after startup | last datafile | last datafile | last datafile, or the fallback while the breaker is open |
+| Good for | experiments, UI changes | flags guarding money or safety | flags whose default would be wrong |
+
+**Fail fast.** Initialize synchronously; the build fails if the datafile misses `initTimeout`:
+
+```scala
+--8<-- "Optimizely.scala:fail-fast"
+```
+
+**Async.** Gate readiness on the status; `Stale` counts as ready:
+
+```scala
+--8<-- "Optimizely.scala:readiness"
+```
+
+**Fallback.** [`CircuitBreakerProvider`](extras.md#circuit-breaker-provider) opens while it reports `ERROR`, `FATAL` or (by default)
+`STALE`; put a fallback behind it for flags that need a sensible value in an outage:
+
+```scala
+--8<-- "Optimizely.scala:circuit-breaker"
+```
+
+The fallback hides outages, so alert on `Fatal` soon after start (wrong key or unreachable datafile URL) and on `Stale`.
+
+## Configuration reference
 
 ```scala
 --8<-- "Optimizely.scala:config"
@@ -145,83 +178,34 @@ A provider from `fromOptimizelyClient` sends events however its client was built
 
 | `OptimizelyProviderConfig` field | Default | Meaning |
 |---|---|---|
-| `sdkKey` | required | your environment's SDK key |
-| `datafileUrl` | the Optimizely CDN | where to fetch the datafile, such as a self-hosted Agent |
-| `initWait` | 25 s | how long initialization waits for the first datafile; keep it below `initTimeout` |
-| `pollingInterval` | the SDK's, 5 min | how often the datafile is fetched again; setting it also turns on the staleness watchdog |
-| `blockingTimeout` | the SDK's, 10 s | longest the SDK blocks waiting for a config |
-| `staleAfter` | 3 × `pollingInterval` | with the watchdog on, how long without a successful fetch before the provider is `STALE` |
-| `events` | `OptimizelyEvents.Batched()` | send impressions and conversions to Optimizely, or `OptimizelyEvents.Disabled`; see [Events](#events) |
+| `sdkKey` | required | the environment's SDK key |
+| `datafileUrl` | the Optimizely CDN | where to fetch the datafile |
+| `initWait` | 25 s (`OptimizelyProvider.DefaultInitWait`) | first-datafile wait; keep below `initTimeout` |
+| `pollingInterval` | the SDK's, 5 min | datafile fetch interval; setting it turns on the watchdog; positive |
+| `blockingTimeout` | the SDK's, 10 s | longest the SDK blocks for a config; positive |
+| `staleAfter` | 3 × `pollingInterval` | time without a successful fetch before `STALE` (watchdog on); positive |
+| `events` | `OptimizelyEvents.Batched()` | see [Tracking and events](#tracking-and-events) |
 
-`OptimizelyProvider.make(sdkKey, datafileUrl, initWait)` is a shortcut for the first three.
+A non-positive `pollingInterval`, `blockingTimeout` or `staleAfter`, or an out-of-range `Batched` value, fails with
+`InvalidConfiguration`.
 
 ### Self-hosted Optimizely Agent
 
-If you run [Optimizely Agent](https://docs.developers.optimizely.com/feature-experimentation/docs/agent) inside your
-network, fetch the datafile from it:
+To fetch the datafile from an [Optimizely Agent](https://docs.developers.optimizely.com/feature-experimentation/docs/agent)
+in your network, pass its URL (`http` or `https`, with a host).
 
 ```scala
 --8<-- "Optimizely.scala:agent"
 ```
 
-The URL is checked like the key: it must parse, use `http` or `https`, and name a host.
+### Bring your own client
 
-## Datafile updates
-
-The SDK fetches the datafile again every `pollingInterval`. When a new revision arrives, the provider emits
-`ConfigurationChanged`. Its set of changed flags is empty, because the SDK does not say which flags changed: use it as
-a signal, and read the flags again.
-
-```scala
---8<-- "Optimizely.scala:config-changed"
-```
-
-A fetch that fails leaves the last datafile in use, and nothing tells you about it unless the staleness watchdog is on.
-It runs only when you set `pollingInterval`. It marks the provider `STALE` once fetches have failed for `staleAfter`,
-and `READY` again when a fetch succeeds. A stale provider keeps answering from the last datafile.
-
-## With a circuit breaker
-
-Decisions are local, so a slow Optimizely CDN does not slow evaluations down once the datafile is loaded. The
-provider's own state is what matters. `CircuitBreakerProvider` from [Extras](extras.md#circuit-breaker-provider) reads
-it, and opens while the provider reports `ERROR` or `FATAL`, or, by default, `STALE`. Put a fallback behind it for the
-flags that must have a sensible value during an outage:
-
-```scala
---8<-- "Optimizely.scala:circuit-breaker"
-```
-
-The fallback hides Optimizely outages from your callers, so watch Optimizely separately: a flag that falls back looks
-like any other answer.
-
-## Choosing a setup
-
-| | Async (quick start) | Sync (fail fast) | With a fallback |
-|---|---|---|---|
-| Starts while Optimizely is down | yes; evaluations fail until it is ready | no, the build fails | yes; the fallback answers |
-| During an outage after startup | the last datafile keeps answering | the last datafile keeps answering | the last datafile, or the fallback while the breaker is open |
-| Good for | experiments, UI changes | flags that guard money or safety | a few flags whose default would be wrong |
-
-## What to watch
-
-| Signal | Likely cause |
-|---|---|
-| status `Fatal` soon after start, or the sync build fails | wrong SDK key, or the datafile URL is unreachable |
-| status `Stale` (watchdog on) | datafile fetches have been failing for `staleAfter` |
-| resolutions with `TargetingKeyMissing` | a code path evaluates without a user id |
-| resolutions with `FlagNotFound` | the flag key is misspelled, or the flag is missing from this environment |
-
-## Bring your own client
-
-If you already build and manage an `Optimizely` client, wrap it. The provider then never closes the client. Build it
-with a `CmabService` (as `OptimizelyFactory` does) if your project uses CMAB experiments:
+To wrap an `Optimizely` client you manage (the provider never closes it), build it with a `CmabService`, as
+`OptimizelyFactory` does, if you use CMAB experiments:
 
 ```scala
 --8<-- "Optimizely.scala:own-client"
 ```
 
-## Testing
-
-Test your application's flag logic against `TestFeatureProvider`, with no Optimizely key or network; see
-[Testkit](testkit.md). To check the Optimizely wiring itself, point `datafileUrl` at a local HTTP stub that serves a
-datafile; [Testing real providers](testing-real-providers.md) covers fault-testing a real provider.
+To test without Optimizely, use [Testkit](testkit.md); to fault-test the real provider, see
+[Testing real providers](testing-real-providers.md).

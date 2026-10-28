@@ -3,7 +3,12 @@ package snippets
 import zio.*
 import zio.openfeature.*
 import zio.openfeature.extras.{CircuitBreakerProvider, CircuitBreakerProviderConfig, EnvVarProvider}
-import zio.openfeature.optimizely.{OptimizelyEvents, OptimizelyFeatureProvider, OptimizelyProvider, OptimizelyProviderConfig}
+import zio.openfeature.optimizely.{
+  OptimizelyEvents,
+  OptimizelyFeatureProvider,
+  OptimizelyProvider,
+  OptimizelyProviderConfig
+}
 
 /** The code on the Optimizely page. The tests only check the parts that need no network: SDK key validation. */
 object Optimizely:
@@ -34,15 +39,15 @@ object Optimizely:
     )
   // --8<-- [end:config]
 
-  // --8<-- [start:events]
-  val silent: IO[FeatureFlagError.InvalidConfiguration, OptimizelyFeatureProvider] =
+  // --8<-- [start:events-tuned]
+  val batched: IO[FeatureFlagError.InvalidConfiguration, OptimizelyFeatureProvider] =
     OptimizelyProvider.make(
       OptimizelyProviderConfig(
         sdkKey = "abcd1234efgh5678",
-        events = OptimizelyEvents.Disabled // no impressions or conversions leave the process
+        events = OptimizelyEvents.Batched(batchSize = 50, flushInterval = java.time.Duration.ofSeconds(10))
       )
     )
-  // --8<-- [end:events]
+  // --8<-- [end:events-tuned]
 
   // --8<-- [start:agent]
   val selfHosted: IO[FeatureFlagError.InvalidConfiguration, OptimizelyFeatureProvider] =
@@ -61,6 +66,31 @@ object Optimizely:
       EvaluationContext("user-42").withAttribute(OptimizelyFeatureProvider.VariableKeyAttribute, "headline")
     )
   // --8<-- [end:variables]
+
+  // --8<-- [start:object-flag]
+  // An object flag reads a JSON variable; the context names which one
+  val limits: ZIO[FeatureFlags, FeatureFlagError, Map[String, Any]] =
+    FeatureFlags.obj(
+      "rate-limits",
+      default = Map.empty,
+      EvaluationContext("user-42").withAttribute(OptimizelyFeatureProvider.VariableKeyAttribute, "limits")
+    )
+  // --8<-- [end:object-flag]
+
+  // --8<-- [start:track]
+  // Optimizely's revenue metric reads an integer attribute named "revenue", in cents
+  val purchase: ZIO[FeatureFlags, FeatureFlagError, Unit] =
+    FeatureFlags.track(
+      "purchase",
+      EvaluationContext("user-42"),
+      TrackingEventDetails.empty.withValue(49.99).withAttribute("revenue", 4999)
+    )
+  // --8<-- [end:track]
+
+  // --8<-- [start:scoped]
+  val inScope: ZIO[Scope, FeatureFlagError.InvalidConfiguration, OptimizelyFeatureProvider] =
+    OptimizelyProvider.scoped("abcd1234efgh5678") // shut down when the scope closes
+  // --8<-- [end:scoped]
 
   // --8<-- [start:fail-fast]
   def failFast(provider: OptimizelyFeatureProvider): ZLayer[Any, Throwable, FeatureFlags] =

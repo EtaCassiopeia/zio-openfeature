@@ -1,96 +1,107 @@
 # Development
 
+## Where things live
+
+| Directory | What it holds |
+|:----------|:--------------|
+| `core` | The `FeatureFlags` service, context, hooks, transactions, events |
+| `extras` | HOCON and environment-variable providers; caching, circuit-breaker and deferred wrappers |
+| `ofrep`, `optimizely` | The OFREP and Optimizely providers |
+| `testkit` | `TestFeatureProvider` and the test helpers |
+| `conformance`, `conformance-zio-bdd` | The OpenFeature spec's gherkin suite, run with Cucumber and with zio-bdd |
+| `provider-fault-tests` | Real providers under network faults (local only; see [Extra checks](#extra-checks)) |
+| `examples/docs`, `examples/testkit-app`, `examples/ofrep-init-timeout` | Not published. `docs` holds every code sample on this site, with tests that run them; the others are reference apps |
+
+[Under the hood](architecture.md) has the module dependency diagram.
+
 ## Build and test
 
 ```sh
 sbt compile                 # all published modules, Scala 3
 sbt +test                   # Scala 2.13 and 3
 sbt scalafmtAll             # format
-sbt conformance/test        # the OpenFeature spec's gherkin suite, via Cucumber
+sbt conformance/test        # the spec's gherkin suite, via Cucumber
 sbt conformanceZioBdd/test  # the same suite via zio-bdd (JDK 22+)
-sbt mimaReportBinaryIssues  # binary compatibility with the last release
+sbt examplesDocs/test examplesTestkitApp/test   # compile and run the examples
 ```
 
-The `examples/` projects are not published, but CI compiles them:
+Library sources shared by both Scala versions live in `src/main/scala` and `src/test/scala`, and compile on 2.13 and 3,
+so they use braces. Version-specific code goes in `scala-2/` and `scala-3/` next to them. The docs snippets and the
+fault tests are Scala 3 only, so their sources sit in `scala-3/`.
 
-| Project | What it shows |
-|---|---|
-| `examplesDocs` | Every code sample on this site, plus tests that run them |
-| `examplesTestkitApp` | Unit-testing a flag-driven service with `TestFeatureProvider` |
-| `examplesOfrepInitTimeout` | An OFREP-backed app with an init timeout and a circuit breaker |
+The version comes from git: a commit with a `v*` tag is that release, any other commit is the next version with a
+`-SNAPSHOT` suffix. See [RELEASING.md](https://github.com/EtaCassiopeia/zio-openfeature/blob/main/RELEASING.md), which
+also covers the binary-compatibility baselines.
 
-### Mutation testing
+## What CI runs
 
-`sbt core/stryker` runs [stryker4s](https://stryker-mutator.io/docs/stryker4s/getting-started/) on core: it makes
-small deliberate changes to the code (flipping a condition, swapping an operator) and checks that some test fails for
-each. The score and the surviving mutants are in `core/target/stryker4s-report/`. A full run takes hours, so CI runs it
-weekly (the `Mutation testing` workflow, also startable by hand) and never on a pull request; the score is
-informational and never fails the build. To try it on a few files, narrow `mutate` in `stryker4s.conf` locally.
+| Job | Run it locally |
+|:----|:---------------|
+| format | `sbt scalafmtCheckAll scalafmtSbtCheck providerFaultTests/scalafmtCheckAll` (`providerFaultTests` is not aggregated, so format it explicitly) |
+| build and test, JDK 17, 21 and 25, Scala 2.13 and 3 | `sbt +test` |
+| binary compatibility | `sbt +mimaReportBinaryIssues` |
+| published POMs | `sbt +checkPublishedPins +optimizely/checkOptimizelyJsonParser` |
+| examples | `sbt examplesOfrepInitTimeout/compile examplesTestkitApp/test examplesDocs/test` |
+| conformance | `sbt conformance/test conformanceZioBdd/test` |
+| gherkin copies in sync (every push); upstream drift (weekly) | `.github/scripts/check-gherkin-drift.sh mirror`; `.github/scripts/check-gherkin-drift.sh upstream main` |
+| dependency check (weekly) | OWASP Dependency-Check over each module's resolved classpath |
 
-### Property tests
-
-`LifecycleModelSpec` in the testkit generates sequences of lifecycle actions (swaps to providers that start, fail,
-hang or start slowly, provider events, shutdown, an interrupted swap) and runs each against a real `FeatureFlags`,
-checking after every step that the status, the provider name and the evaluations agree with a model written from
-[Lifecycle and events](lifecycle.md). It also checks that the scope closes within 5 seconds and leaves no fiber or
-thread behind. Pull requests run 25 sequences; the weekly `Property tests` workflow (also startable by hand) runs 300.
-Set `LIFECYCLE_MODEL_SAMPLES` to choose the count locally:
-
-```sh
-LIFECYCLE_MODEL_SAMPLES=300 sbt "testkit/testOnly *LifecycleModelSpec"
-```
-
-A failure prints the shrunk sequence. Add it to the spec's `regressions` suite as an explicit list, not as a seed.
-## Provider fault tests
-
-`provider-fault-tests` runs the real OFREP and Optimizely providers through
-[rift-scala](https://github.com/achird-labs/rift-scala)'s in-process TLS intercept proxy, while scripted network
-faults (rejected credentials, `503`, `429`, a connection reset, a stalled response, a truncated or non-JSON body)
-play out. It asserts what the library does about each: a typed error or the fallback's answer, in bounded time. See
-[Testing real providers](testing-real-providers.md) for the approach.
-
-```sh
-sbt providerFaultTests/test    # JDK 22+
-```
-
-It is a dev-machine check, by design:
-
-- It is not aggregated into the root project, so `sbt test` and `sbt +test` never run it.
-- CI only compiles it (`providerFaultTests/Test/compile`). No CI job runs its tests, and none holds a secret for it.
-- It needs JDK 22 or later, for rift's native engine. On a JDK where the engine cannot load, the suites are reported
-  as ignored. The tests make no external network calls: the proxy and the stand-in servers are in-process.
-
-The module enables the `sbt-rift` plugin, which writes a throwaway CA and truststore under
-`provider-fault-tests/target/rift` and points the forked test JVM at them.
+The docs job compiles and tests the samples (`examplesDocs/test`), compiles `providerFaultTests/Test/compile`, checks the
+animations are up to date, and runs `mkdocs build`.
 
 ## The documentation site
 
-The site is built with [MkDocs Material](https://squidfunk.github.io/mkdocs-material/) from `docs/`, and published
-to GitHub Pages from `main`.
+The site is built with [MkDocs Material](https://squidfunk.github.io/mkdocs-material/) from `docs/` and published to
+GitHub Pages from `main`. `strict: true` in `mkdocs.yml` makes a broken link or a missing snippet fail the build.
 
-Code samples are not written in the pages. They live in `examples/docs/src/main/scala-3/snippets/` (and, for the rift
-code on the real-providers page, `provider-fault-tests/src/test/scala-3/snippets/`), between
-`// --8<-- [start:name]` and `// --8<-- [end:name]` markers, and a page includes them with
-`--8<-- "File.scala:name"`. So every sample compiles, and `examples/docs/src/test` runs the ones that can run on
-their own and checks what the page says about them.
+Code samples are not written in the pages. They live in `examples/docs/src/main/scala-3/snippets/` and
+`examples/docs/src/test/scala-3/snippets/` (and, for the rift code, `provider-fault-tests/src/test/scala-3/snippets/`),
+between `// --8<-- [start:name]` and `// --8<-- [end:name]` markers, and a page includes them with
+`--8<-- "File.scala:name"`. So every sample compiles, and the tests run the ones that can run on their own.
 
 ```sh
-sbt examplesDocs/test                      # compile and check the samples
 pip install -r requirements-docs.txt
-mkdocs serve                               # preview at http://127.0.0.1:8000
-mkdocs build --strict                      # what CI runs: fails on broken links and missing snippets
+mkdocs serve                  # preview at http://127.0.0.1:8000
+mkdocs build                  # fails on broken links and missing snippets
 ```
 
 The animations are SVG files generated by the Python scripts in `scripts/visuals/`, one per animation, on top of the
-small toolkit in `hud.py`. Edit the script, not the SVG, then regenerate:
+small toolkit in `hud.py`. Edit the script, not the SVG, then regenerate; CI fails if a committed SVG is out of date:
 
 ```sh
 python3 scripts/visuals/build.py              # all of them
 python3 scripts/visuals/build.py evaluation   # one
 ```
 
-CI fails if a committed SVG is out of date with its script.
+## Extra checks
 
-## Releasing
+Mutation testing and the provider fault tests never run on a pull request; the property tests run a short version there.
 
-See [RELEASING.md](https://github.com/EtaCassiopeia/zio-openfeature/blob/main/RELEASING.md).
+**Mutation testing** makes small deliberate changes to core (flipping a condition, swapping an operator) and checks that
+a test fails for each. The score and surviving mutants land in `core/target/stryker4s-report/`. A full run takes hours,
+so the `Mutation testing` workflow runs weekly (or by hand), and the score never fails the build. To try a few files,
+narrow `mutate` in `stryker4s.conf` locally.
+
+```sh
+sbt core/stryker
+```
+
+**Property tests.** `LifecycleModelSpec` generates sequences of lifecycle actions (swaps to providers that start, fail,
+hang or start slowly, provider events, shutdown, an interrupted swap), runs each against a real `FeatureFlags`, and
+checks after every step that status, provider name and evaluations agree with a model written from
+[Lifecycle and events](lifecycle.md). It also checks the scope closes within 5 seconds and leaves no fiber or thread
+behind. Pull requests run 25 sequences; the weekly `Property tests` workflow runs 300. A failure prints the shrunk
+sequence: add it to the spec's `regressions` suite as an explicit list, not as a seed.
+
+```sh
+LIFECYCLE_MODEL_SAMPLES=300 sbt "testkit/testOnly *LifecycleModelSpec"
+```
+
+**Provider fault tests** run the real OFREP and Optimizely providers through rift's TLS intercept proxy while scripted
+network faults play out; see [Testing real providers](testing-real-providers.md). They are a dev-machine check by
+design: not aggregated into the root project, so `sbt test` never runs them; CI only compiles them; they need JDK 22 or
+later for rift's native engine (the suites are reported as ignored elsewhere); and they make no external network calls.
+
+```sh
+sbt providerFaultTests/test    # JDK 22+
+```

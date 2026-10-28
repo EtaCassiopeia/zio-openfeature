@@ -43,6 +43,9 @@ object RealProviderFaultSpec extends ZIOSpecDefault:
   private val neverFails = FeatureFlags.boolean("my-flag", default = false).exit.map(exit => assertTrue(exit.isSuccess))
 
   // --8<-- [start:suite]
+  // provideShared + sequential: the proxy settings are JVM-wide, so one engine, one test at a time.
+  // clearRules first: rules accumulate on the handle, and an earlier test's rule may match first.
+  // withLiveClock: waits and faults happen in the engine, in real time. embeddedOnly: ignored where it cannot load.
   def spec = suite("real provider under network faults")(
     test("stalled fetch: the fallback answers at once") {
       for

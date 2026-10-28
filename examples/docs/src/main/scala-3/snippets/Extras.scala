@@ -29,17 +29,11 @@ object Extras:
   val fromAMap: EnvVarProvider    = EnvVarProvider.withLookup(Map("FF_NEW_CHECKOUT" -> "true").get)
   // --8<-- [end:env]
 
-  // --8<-- [start:chain]
-  // Environment variables override application.conf; a key neither holds falls back to the caller's default.
-  val layered: ZLayer[Any, Throwable, FeatureFlags] =
-    FeatureFlags.fromProvider(FeatureFlags.multiProvider(List(EnvVarProvider(), HoconProvider())))
-  // --8<-- [end:chain]
-
   // --8<-- [start:caching]
   def cached(remote: FeatureProvider): ZLayer[Any, Throwable | FeatureFlagError, FeatureFlags] =
-    ZLayer.scoped(CachingProvider.scoped(remote, CachingConfig(maxEntries = 1000, ttl = 1.minute))).flatMap { env =>
-      FeatureFlags.fromProvider(env.get[CachingProvider])
-    }
+    ZLayer
+      .scoped(CachingProvider.scoped(remote, CachingConfig(maxEntries = 1000, ttl = 1.minute)))
+      .flatMap(cache => FeatureFlags.fromProvider(cache.get[CachingProvider]))
   // --8<-- [end:caching]
 
   // --8<-- [start:caching-context-keys]
@@ -52,26 +46,22 @@ object Extras:
   // --8<-- [end:caching-invalidate]
 
   // --8<-- [start:circuit-breaker]
+  val breakerConfig: CircuitBreakerProviderConfig = CircuitBreakerProviderConfig(
+    failureThreshold = 3,          // open after 3 consecutive infrastructure failures
+    resetTimeout = 30.seconds,     // then wait 30 s before letting one probe through
+    evaluationTimeout = 200.millis // a call slower than this counts as a failure
+  )
+
+  // While the circuit is open the breaker fails at once, and the next provider answers
   def resilient(remote: FeatureProvider): ZLayer[Any, Throwable | FeatureFlagError, FeatureFlags] =
-    ZLayer
-      .scoped(
-        CircuitBreakerProvider.scoped(
-          remote,
-          CircuitBreakerProviderConfig(
-            failureThreshold = 3,          // open after 3 consecutive infrastructure failures
-            resetTimeout = 30.seconds,     // then wait 30 s before letting one probe through
-            evaluationTimeout = 200.millis // a call slower than this counts as a failure
-          )
-        )
-      )
-      .flatMap { env =>
-        // While the circuit is open, the breaker fails at once and the next provider answers
-        val chain = FeatureFlags.multiProvider(
-          List(env.get[CircuitBreakerProvider], EnvVarProvider()),
+    ZLayer.scoped(CircuitBreakerProvider.scoped(remote, breakerConfig)).flatMap { breaker =>
+      FeatureFlags.fromProvider(
+        FeatureFlags.multiProvider(
+          List(breaker.get[CircuitBreakerProvider], EnvVarProvider()),
           MultiProviderStrategy.firstSuccessful
         )
-        FeatureFlags.fromProvider(chain)
-      }
+      )
+    }
   // --8<-- [end:circuit-breaker]
 
   // --8<-- [start:deferred]

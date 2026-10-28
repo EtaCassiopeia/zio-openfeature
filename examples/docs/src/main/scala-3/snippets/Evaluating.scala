@@ -33,6 +33,11 @@ object Evaluating:
     }
   // --8<-- [end:details]
 
+  // --8<-- [start:metadata]
+  val owner: ZIO[FeatureFlags, FeatureFlagError, Option[String]] =
+    FeatureFlags.booleanDetails("dark-mode", default = false).map(_.metadata.getString("owner"))
+  // --8<-- [end:metadata]
+
   final case class Misconfigured(message: String)
   final case class FlagsUnavailable(error: FeatureFlagError)
 
@@ -71,7 +76,7 @@ object Evaluating:
   // --8<-- [start:options]
   val options: EvaluationOptions =
     EvaluationOptions.empty
-      .withHook(FeatureHook.logging()) // a hook for this call only
+      .withHook(FeatureHook.logging()) // a hook for this call only (withHooks takes a list)
       .withHint("request-id", "r-123") // read-only data for the hooks
       .withTimeout(200.millis)         // or .withoutTimeout
 
@@ -82,6 +87,8 @@ object Evaluating:
   // --8<-- [start:instance-config]
   val instanceConfig: FeatureFlagsConfig =
     FeatureFlagsConfig()
-      .withEvaluationTimeout(500.millis)                         // every evaluation; the default is 1 second
+      .withEvaluationTimeout(500.millis) // every evaluation; the default is 1 second
+      // .withoutEvaluationTimeout                               // or no timeout at all
+      .withMaxAbandonedCalls(128)                                // cap on timed-out calls still running; default 256
       .withFallbackLogging(FallbackLogging.Throttled(5.minutes)) // or FallbackLogging.Off / Always
   // --8<-- [end:instance-config]

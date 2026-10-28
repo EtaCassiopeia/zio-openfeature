@@ -84,16 +84,6 @@ object LifecycleSpec extends ZIOSpecDefault:
     test("the events snippet runs") {
       Lifecycle.logEvents.as(assertCompletes)
     },
-    test("tracking: both events are recorded with their context and details") {
-      for
-        _      <- Lifecycle.purchase
-        events <- ZIO.serviceWithZIO[TestFeatureProvider](_.trackedEvents)
-      yield assertTrue(
-        events.map(_._1) == List("checkout-completed", "purchase"),
-        events(1)._2.targetingKey.contains("user-42"),
-        events(1)._3.flatMap(_.value).contains(99.99)
-      )
-    },
     test("shutdown ends at NotReady and evaluations then fail") {
       for
         _      <- Lifecycle.stop

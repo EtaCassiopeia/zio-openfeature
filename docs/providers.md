@@ -1,45 +1,27 @@
 # Wiring a provider
 
-A `FeatureFlags` layer wraps one [OpenFeature](https://openfeature.dev/) provider: the component that actually holds
-your flags, whether that is a vendor SDK, a config file or an HTTP service. This page shows how to build that layer,
-configure it, combine providers and replace them at runtime.
+A `FeatureFlags` layer wraps one [OpenFeature](https://openfeature.dev/) provider.
 
 ## Use any OpenFeature provider
-
-Pass the provider to `FeatureFlags.fromProvider`, and provide the layer to your program:
 
 ```scala
 --8<-- "Providers.scala:any-provider"
 ```
 
 Any provider written for the [OpenFeature Java SDK](https://openfeature.dev/docs/reference/technologies/server/java)
-works. Some that are ready to use:
-
-| Provider | Dependency |
-|:--|:--|
-| HOCON, environment variables, caching, circuit breaker | `"io.github.etacassiopeia" %% "zio-openfeature-extras" % "<version>"`, see [Extras](extras.md) |
-| [OFREP](https://github.com/open-feature/protocol) (remote evaluation over HTTP) | `"io.github.etacassiopeia" %% "zio-openfeature-ofrep" % "<version>"`, see [OFREP](ofrep.md) |
-| [Optimizely](https://www.optimizely.com/) | `"io.github.etacassiopeia" %% "zio-openfeature-optimizely" % "<version>"`, see [Optimizely](optimizely.md) |
-| [flagd](https://flagd.dev/) | `"dev.openfeature.contrib.providers" % "flagd" % "<version>"` |
-| [LaunchDarkly](https://launchdarkly.com/) | `"dev.openfeature.contrib.providers" % "launchdarkly" % "<version>"` |
-| [Flagsmith](https://flagsmith.com/) | `"dev.openfeature.contrib.providers" % "flagsmith" % "<version>"` |
-| [Flipt](https://flipt.io/) | `"dev.openfeature.contrib.providers" % "flipt" % "<version>"` |
-| [Unleash](https://www.getunleash.io/) | `"dev.openfeature.contrib.providers" % "unleash" % "<version>"` |
-| [ConfigCat](https://configcat.com/) | `"dev.openfeature.contrib.providers" % "configcat" % "<version>"` |
-| [GO Feature Flag](https://gofeatureflag.org/) | `"dev.openfeature.contrib.providers" % "go-feature-flag" % "<version>"` |
-
-The [OpenFeature ecosystem](https://openfeature.dev/ecosystem?instant_search%5BrefinementList%5D%5Btechnology%5D%5B0%5D=Java)
-lists the rest, and [Maven Central](https://central.sonatype.com/search?q=g:dev.openfeature.contrib.providers) has
-their current versions. For tests, use the in-memory `TestFeatureProvider` from the [testkit](testkit.md).
+works, for example [flagd](https://flagd.dev/), [LaunchDarkly](https://launchdarkly.com/) or
+[Flagsmith](https://flagsmith.com/), from `"dev.openfeature.contrib.providers" % "<name>"`. This library adds
+[HOCON, environment variable](extras.md), [OFREP](ofrep.md) and [Optimizely](optimizely.md) providers; for tests use
+`TestFeatureProvider` from the [testkit](testkit.md).
 
 ## Pick a factory
 
 | You want | Use |
 |:--|:--|
-| Start the provider before the app starts, and fail at startup if it cannot | `FeatureFlags.fromProvider(provider)` |
-| Start the app at once, and let the provider become ready in the background | `FeatureFlags.fromProviderAsync(provider)` |
-| A domain, hooks, timeouts, or any other setting | `FeatureFlags.fromProvider(provider, FeatureFlagsConfig(...))` |
-| Several providers asked in order | `FeatureFlags.multiProvider(providers)`, then any factory above |
+| Start the provider first, failing at startup if it cannot | `FeatureFlags.fromProvider(provider)` |
+| Start the app at once; the provider readies in the background | `FeatureFlags.fromProviderAsync(provider)` |
+| A domain, hooks, timeouts or other settings | `FeatureFlags.fromProvider(provider, FeatureFlagsConfig(...))` |
+| Several providers asked in order | [`FeatureFlags.multiProvider(providers)`](#ask-several-providers-in-order), then any factory above |
 | Serve a fallback while a slow provider is built | [`FeatureFlags.fromAcquireAsync`](#start-on-a-fallback-fromacquireasync) |
 | One client per domain, created on demand | [`FeatureFlagRegistry.fromProvider`](#one-client-per-domain-featureflagregistry) |
 
@@ -47,13 +29,7 @@ their current versions. For tests, use the in-memory `TestFeatureProvider` from 
 --8<-- "Providers.scala:shorthands"
 ```
 
-Every factory returns a layer that owns its scope, so you provide it directly with no `Scope`. When the layer is
-released, the instance [shuts down](#shut-down).
-
 ## Configure it with `FeatureFlagsConfig`
-
-`fromProvider(provider, config)` is the one factory with every setting. `FeatureFlagsConfig()` with no changes is
-exactly `fromProvider(provider)`.
 
 ```scala
 --8<-- "Providers.scala:config"
@@ -62,68 +38,55 @@ exactly `fromProvider(provider)`.
 | Field | Default | Setter | What it does |
 |:--|:--|:--|:--|
 | `domain` | none | `withDomain(d)` | Binds the client to a named [domain](#domains). |
-| `version` | none | `withVersion(v)` | Client version, reported by `clientMetadata` and passed to the SDK client. |
-| `initialHooks` | none | `withHooks(list)`, `withHook(h)` | Client-level [hooks](hooks.md) installed from the start. |
-| `evaluationTimeout` | 1 second | `withEvaluationTimeout(d)`, `withoutEvaluationTimeout` | Bounds each evaluation. On timeout the call fails with `ProviderError` wrapping a `TimeoutException`; the provider call keeps running in the background, holding a blocking-pool thread until it returns (see `maxAbandonedCalls`). Per-call override: see [Evaluating flags](evaluating.md). |
-| `initTimeout` | 30 seconds | `withInitTimeout(d)` | Bounds initialization, see [Sync or async start](#sync-or-async-start). |
+| `version` | none | `withVersion(v)` | Reported by `clientMetadata`. |
+| `initialHooks` | none | `withHooks(list)`, `withHook(h)` | Client-level [hooks](hooks.md) from the start. |
+| `evaluationTimeout` | `Default`: 1 second | `withEvaluationTimeout(d)`, `withoutEvaluationTimeout` | Bounds each evaluation (`Default`, `After(d)` or `Disabled`); see [Evaluating flags](evaluating.md). |
+| `initTimeout` | 30 seconds | `withInitTimeout(d)` | Bounds initialization. |
 | `initMode` | `InitMode.Sync` | `withAsyncInit`, `withSyncInit` | [Sync or async start](#sync-or-async-start). |
-| `apiOwnership` | `ApiOwnership.Auto` | `withApiOwnership(o)` | Whether shutdown also stops the OpenFeature API, see [Who shuts down the API](#who-shuts-down-the-api). |
-| `contextSource` | none | `withContextSource(s)` | Ambient context read on every evaluation, see [Evaluation context](context.md). |
-| `fallbackLogging` | one line per flag per minute | `withFallbackLogging(p)` | How `*OrDefault` calls log a served default: `FallbackLogging.Off`, `Always` or `Throttled(window)`. See [Evaluating flags](evaluating.md). |
-| `maxAbandonedCalls` | 256 | `withMaxAbandonedCalls(n)` | Cap on timed-out provider calls still running. At the cap, timed evaluations fail fast with `ProviderError` wrapping a `RejectedExecutionException` instead of parking another thread; `Int.MaxValue` disables it. Must be at least 1. See [Evaluating flags](evaluating.md). |
+| `apiOwnership` | `ApiOwnership.Auto` | `withApiOwnership(o)` | [Whether shutdown stops the API](#who-shuts-down-the-api). |
+| `contextSource` | empty | `withContextSource(s)` | Ambient [context](context.md) read on every evaluation. |
+| `fallbackLogging` | `FallbackLogging.Default` | `withFallbackLogging(p)` | Logging of a served `*OrDefault`: `Off`, `Always` or `Throttled(window)`. |
+| `maxAbandonedCalls` | 256 | `withMaxAbandonedCalls(n)` | Cap on timed-out provider calls still running; beyond it evaluations fail fast with `ProviderError`. At least 1. |
 
 ## Sync or async start
 
-Providers usually need a moment to start: open a connection, download their rules. The layer can wait for that, or
-not.
+|  | Sync (`fromProvider`, default) | Async (`fromProviderAsync`) |
+|:--|:--|:--|
+| The layer is ready | once the provider is `Ready` or `Stale` | at once; evaluations fail with `ProviderNotReady` until then |
+| Slower than `initTimeout` | fails with a `TimeoutException` | status `Fatal`, `Error` event with `ProviderFatal` |
+| `initialize()` fails | fails with a `GeneralError` (`FatalError` for a fatal outcome) carrying the provider's message | status `Error` |
 
-**Sync** (`InitMode.Sync`, the default; `fromProvider`). Building the layer waits until the provider is `Ready` or
-`Stale`. If that takes longer than `initTimeout`, the layer fails with a `TimeoutException`. If the provider ends up in
-any other state, the layer fails with an `IllegalStateException`. Either way the provider is shut down, and a wrong SDK
-key or an unreachable service stops the app at startup instead of serving defaults. Closing the scope after a timeout
-does not wait for a stuck `initialize()`, and the scope-close `api.shutdown()` is itself capped at 15 seconds.
-
-**Async** (`InitMode.Async`; `fromProviderAsync`). The layer is ready at once. Until the provider reports `Ready`,
-evaluations fail with `ProviderNotReady`. If the provider never gets there within `initTimeout`, the status becomes
-`Fatal`: the provider is shut down, an `Error` event with code `ProviderFatal` is published, and evaluations fail with
-`ProviderFatal`. A provider that was ready once and later reports an error is never moved to `Fatal` this way.
-
-Use sync when serving a default is worse than not starting. Use async to start fast, and gate traffic on
-[readiness](lifecycle.md#wait-until-the-provider-is-ready) or answer with the default meanwhile. To start fast *and*
-answer with real values from the first request, put a local provider next to the remote one
-([multi-provider](#ask-several-providers-in-order)) or start on a [fallback](#start-on-a-fallback-fromacquireasync).
-
-[Lifecycle and events](lifecycle.md) has the full set of statuses and what moves between them.
+Use sync when serving a default is worse than not starting: a wrong SDK key then stops the app. Use async to start
+fast and gate traffic on [readiness](lifecycle.md#wait-until-the-provider-is-ready), or use a
+[fallback](#start-on-a-fallback-fromacquireasync).
 
 ## Who shuts down the API
 
-Every instance talks to an OpenFeature API object. Shutting the API down stops every provider registered on it.
-`apiOwnership` says whether this instance may do that when it shuts down:
+Shutting the OpenFeature API down stops every provider registered on it.
 
 | `apiOwnership` | On shutdown |
 |:--|:--|
 | `ApiOwnership.Auto` (default) | `Owned` without a domain, `Shared` with one. |
 | `ApiOwnership.Owned` | Shuts down the API and its providers. |
-| `ApiOwnership.Shared` | Leaves the API and its provider running. Other clients on it keep working. |
-
-The default fits the usual setups: an app with one unnamed client owns the API, while named domains usually share it.
+| `ApiOwnership.Shared` | Leaves the API and provider running for other clients. |
 
 !!! warning
-    A domain client made with `fromProvider(provider, FeatureFlagsConfig().withDomain(d))` uses the process-wide
-    API, which nothing else owns. With the default `Shared` ownership, its provider is never shut down. Use
-    `withApiOwnership(ApiOwnership.Owned)`, or a [`FeatureFlagRegistry`](#one-client-per-domain-featureflagregistry),
-    for providers that hold threads or connections.
+    A domain client with the default ownership (`Auto`, which is `Shared` for a domain client) never shuts its provider down. If the provider holds threads or
+    connections, set `Owned` or use a [`FeatureFlagRegistry`](#one-client-per-domain-featureflagregistry).
+
+```scala
+--8<-- "Providers.scala:owned-domain"
+```
 
 ## Ask several providers in order
 
-`FeatureFlags.multiProvider` combines providers into one, using the Java SDK's `MultiProvider`. Pass the result to any
-factory:
+`FeatureFlags.multiProvider` combines providers into one (the Java SDK's `MultiProvider`). Pass it to any factory:
 
 ```scala
 --8<-- "Providers.scala:multi-provider"
 ```
 
-A strategy decides when the chain moves on to the next provider:
+The strategy decides when the chain moves on:
 
 | Strategy | Moves on when a provider | Stops at |
 |:--|:--|:--|
@@ -134,159 +97,112 @@ A strategy decides when the chain moves on to the next provider:
 --8<-- "Providers.scala:multi-provider-strategy"
 ```
 
-Things to know:
+- A provider must answer `FLAG_NOT_FOUND` for a key it does not hold; reason `DEFAULT` with no error code counts as a
+  match and ends the chain.
+- When no provider has the flag, `firstMatch` gives `FLAG_NOT_FOUND` (the caller's default); `firstSuccessful` gives a
+  `GENERAL` error carrying every provider's error.
+- A custom strategy implements `MultiProviderStrategy.Strategy`. For `track` in a chain, see [Tracking](tracking.md);
+  for a `DeferredProvider` member, see [Extras](extras.md#deferred-provider).
 
-- A provider must answer `FLAG_NOT_FOUND` for a key it does not hold. An answer with reason `DEFAULT` and no error
-  code counts as a match and ends the chain.
-- With `firstMatch`, when no provider has the flag, you get `FLAG_NOT_FOUND` and the caller's default. With
-  `firstSuccessful`, you get a `GENERAL` error carrying every provider's error.
-- Every provider stays in the chain, in order, even if two report the same name.
-- For your own strategy, implement `MultiProviderStrategy.Strategy` (the Java SDK's `Strategy` interface).
-- `Long` flags are read through each provider's own long getter, exact across the whole `Long` range. That holds for
-  `FeatureFlags.multiProvider` and the default `fromAcquireAsync` compose. A `MultiProvider` you build yourself with
-  `new MultiProvider(...)` has no long getter: it reads each provider's double getter instead, which fails integer
-  values with `TYPE_MISMATCH`. Use `FeatureFlags.multiProvider`, or wrap your chain in
-  [`IntegerWideningLongProvider`](extras.md#integer-widening-long-provider) for values in `Int` range.
-- `track` goes to every provider in the chain, whatever the strategy, with the same event, context and details. A
-  provider without tracking support ignores it. If any provider's `track` throws, the others still receive the event,
-  and the call fails with the first error, so a failed `track` may already have reached some providers: retrying it
-  can count the event twice there. `FeatureFlags.multiProvider` and the default `fromAcquireAsync` compose do
-  this; a `new MultiProvider(...)` you build yourself drops every tracking event.
+??? note "Hand-built `MultiProvider`"
+    Unlike `FeatureFlags.multiProvider`, a `new MultiProvider(...)` fails integer values with `TYPE_MISMATCH` (wrap it
+    in [`IntegerWideningLongProvider`](extras.md#integer-widening-long-provider)) and drops `track` events.
 
 ## Start on a fallback: `fromAcquireAsync`
 
-Some providers do their network work in the constructor, so even `fromProviderAsync` blocks until they are built.
-`fromAcquireAsync` takes the provider as an effect instead. The layer starts at once on a fallback provider, and a
-background fiber builds the real one, checks it, initializes it, and then switches to it. The fallback answers every
-evaluation until that moment, and the status is `Ready` the whole time:
+Some providers do network work in the constructor, so even `fromProviderAsync` blocks. `fromAcquireAsync` takes the
+provider as an effect: the layer starts at once on a fallback while a background fiber builds, verifies and initializes
+the real provider, then switches to it. The status is `Ready` throughout:
 
-![fromAcquireAsync: from the first moment evaluations are answered by the fallback provider while a background fiber acquires the real provider, retries after a failed attempt, verifies the candidate knows a sentinel flag, and initializes it while the fallback keeps answering, then switches to it; the status stays Ready throughout, AcquireStatus moves from Constructing to Live, and later evaluations get real values.](assets/acquire.svg)
+![fromAcquireAsync: the fallback answers while a background fiber acquires, verifies and initializes the real provider, then switches to it; the status stays Ready and AcquireStatus moves from Constructing to Live.](assets/acquire.svg)
 
 ```scala
 --8<-- "Providers.scala:acquire"
 ```
 
-The layer's error type is `Nothing`: a real provider that never comes up cannot fail your app. It is retried, reported
-to `onConstructionError`, and the fallback keeps serving.
+The layer's error type is `Nothing`: a real provider that never comes up is retried, reported to
+`onConstructionError`, and the fallback keeps serving.
 
 | Parameter | Default | Meaning |
 |:--|:--|:--|
-| `acquire` | | Builds the real provider. Register cleanup in its `Scope` (for example with `ZIO.acquireRelease`) to have a rejected or unused provider closed. |
-| `fallback` | | Builds a fallback. It runs again for the swap, because the switch shuts the first fallback down, so it must return a fresh instance each time. |
-| `verify` | accept | Checks the real provider before the swap. A failure counts as a failed attempt. |
-| `compose` | `FeatureFlags.defaultAcquireCompose` | Combines real and fallback into the provider that is swapped in. The default asks the real provider first and falls back on any error (`firstSuccessful`). |
+| `acquire` | | Builds the real provider. Register cleanup in its `Scope` so a rejected one is closed. |
+| `fallback` | | Builds a fallback; runs again for the swap, so return a fresh instance each time. |
+| `verify` | accept | Checks the real provider before the swap; a failure is a failed attempt ([below](#verify-the-candidate)). |
+| `compose` | `FeatureFlags.defaultAcquireCompose` | Combines real and fallback into the swapped-in provider. The default asks the real one first and falls back on any error. |
 | `constructionRetry` | `Schedule.recurs(3) && Schedule.exponential(1.second).jittered` | Retries `acquire` plus `verify`. |
 | `constructionTimeout` | 30 seconds | Bounds one attempt. |
 | `onSwapped` | nothing | Runs once the real provider serves. |
-| `onConstructionError` | nothing | Runs once all attempts have failed, or the swap failed. |
-| `evaluationTimeout`, `initTimeout`, `contextSource`, `fallbackLogging` | as in `FeatureFlagsConfig` | The same settings as [above](#configure-it-with-featureflagsconfig). |
+| `onConstructionError` | nothing | Runs when all attempts or the swap failed. |
+| `evaluationTimeout`, `initTimeout` | 1 second, 30 seconds | Plain `Duration`s. |
+| `contextSource`, `fallbackLogging`, `maxAbandonedCalls` | empty, `Default`, 256 | Passed directly, as in the [config table](#configure-it-with-featureflagsconfig); this factory bypasses `FeatureFlagsConfig`. |
 
-**Verify the candidate.** A provider can be built with a wrong key or an empty configuration and still answer, with
-wrong values. `Verify.flagExists[A](key)` asks the candidate for a flag you know exists, and rejects it if the answer
-carries any error code (`Verify.VerificationFailed(key, errorCode, message)`). `Verify.all(check1, check2)` runs several
-checks in order; any `FeatureProvider => Task[Unit]` is a check. The candidate is checked as `acquire` returned it,
-before its `initialize()` runs and without global or ambient context. A provider that only answers after
-`initialize()` must be initialized inside `acquire`.
+### Verify the candidate
 
-**Which provider is serving?** The status is `Ready` from the start, so it cannot tell you. The layer also provides
-`AcquireStatus`, whose state is `Constructing`, then either `Live` or `Failed(cause)`:
+A provider with a wrong key can still answer, with wrong values. `Verify.flagExists[A](key, context)` asks the
+candidate for a flag you know exists and rejects it on any error code (`Verify.VerificationFailed`). `Verify.all`
+chains checks; any `FeatureProvider => Task[Unit]` is one.
+
+```scala
+--8<-- "Providers.scala:acquire-verify"
+```
+
+The check runs before `initialize()` and without global or ambient context, so initialize inside `acquire` a provider
+that only answers afterwards.
+
+### Which provider is serving?
+
+The layer also provides `AcquireStatus`: `Constructing`, then `Live` or `Failed(cause)`.
 
 ```scala
 --8<-- "Providers.scala:acquire-status"
 ```
 
-`AcquireStatus` reports how construction ended, not ongoing health: `Live` stays `Live` if the real provider degrades
-later, and the default `compose` then quietly answers from the fallback. For ongoing health, wrap the real provider in
-a [`CircuitBreakerProvider`](extras.md). A failed swap is reported as `ProviderSwapFailed(error)`.
+`Live` stays `Live` if the real provider degrades later, and the default `compose` then quietly answers from the
+fallback; for ongoing health wrap it in a [`CircuitBreakerProvider`](extras.md#circuit-breaker-provider).
 
-**How the swap works.** Unlike [`setProvider`](#replace-the-provider-at-runtime), the swap never makes evaluations fail
-with `ProviderNotReady`. The OpenFeature SDK only ever sees one provider on this path, an internal switch that starts
-out answering from the fallback. The composed real-plus-fresh-fallback provider is initialized off to the side, bounded
-by `initTimeout`, and the switch routes to it only once that has succeeded; it then shuts the first fallback down. If
-initialization fails or times out, the composed provider is shut down, the fallback keeps serving, and the state
-becomes `Failed(ProviderSwapFailed(...))`. If you call `setProvider` yourself before the switch, your provider wins:
-the acquired one is discarded and the state becomes `Failed`.
-
-If you want plain async start without a fallback for a provider whose constructor blocks, wrap it in a
-[`DeferredProvider`](extras.md) and pass it to `fromProviderAsync`.
+The swap never fails evaluations with `ProviderNotReady`. If initializing the composed provider fails or exceeds
+`initTimeout`, the fallback keeps serving and the state becomes `Failed(ProviderSwapFailed(error))`. If you call
+`setProvider` yourself first, your provider wins and the state becomes `Failed`.
 
 ## Domains
 
-A domain is a name for a client. Providers can be registered per domain, so different parts of an app can use
-different providers. `clientMetadata` tells you which client you have:
+A domain names a client, so different parts of an app can use different providers:
 
 ```scala
 --8<-- "Providers.scala:client-metadata"
 ```
 
-`providerMetadata` returns the name of the provider currently serving.
-
 ### One client per domain: `FeatureFlagRegistry`
 
-`FeatureFlagRegistry` builds clients on demand, one per domain, all on a private OpenFeature API that it owns:
+`FeatureFlagRegistry` builds one client per domain on demand, on a private API it owns:
 
 ```scala
 --8<-- "Providers.scala:registry"
 ```
 
-- `getClient(domain)` builds the client the first time and returns the same instance afterwards. Callers asking for the
-  same domain at once share one build, and a slow domain does not hold up the others.
-- A domain without its own provider uses the default provider. `defaultClient` is the client without a domain.
-- `setProvider(domain, provider)` registers a provider for the domain. If its client already exists, the provider is
-  swapped in.
-- A provider that does not become ready within 30 seconds, or fails, gives `ProviderInitializationFailed`. The next
-  `getClient` tries again.
+- `getClient(domain)` builds the client once and returns the same instance afterwards, even for concurrent callers.
+  `defaultClient` is the client without a domain.
+- A domain without its own provider uses the default one. `setProvider(domain, provider)` registers one, and swaps it in
+  if the client exists.
+- A provider that fails or is not ready within 30 seconds gives `ProviderInitializationFailed`; `getClient` retries.
 - `addZioApiHook(hook)` adds an [API-level hook](hooks.md) to every client, current and future.
-- When the registry's scope closes, it shuts down its API and every provider on it.
+- `fromProvider(defaultProvider)` is the only factory and takes no `FeatureFlagsConfig`: clients get the default
+  timeouts and no version, hooks or context source. Closing the scope shuts down the API and every provider.
 
 ## Replace the provider at runtime
 
-`setProvider` swaps the provider of a running instance. Hooks, context, event handlers and tracked events stay.
+`setProvider` swaps the provider of a running instance; hooks, context and event handlers stay.
 
 ```scala
 --8<-- "Providers.scala:hot-swap"
 ```
 
-What happens:
+![setProvider: the status goes NotReady while the new provider initializes, then Ready; if initialize throws the old provider is restored, and on a timeout the new one stays registered with status Error.](assets/provider-swap.svg)
 
-1. The status becomes `NotReady`. Evaluations that start now fail with `ProviderNotReady`; ones already running
-   finish on the old provider. Swaps are serialized.
-2. The SDK initializes the new provider. `setProvider` waits for this for at most `initTimeout`, the layer's init
-   timeout. Once the new provider is ready, the SDK shuts down the old one.
-3. On success, the status becomes `Ready` and the new provider serves.
-4. If the new provider's `initialize()` throws, `setProvider` fails with `ProviderInitializationFailed`, the previous
-   provider is registered again, and the status returns to `Ready`. If even that fails, the status stays `Error`.
-5. If `initialize()` has not finished within `initTimeout`, `setProvider` fails with `ProviderInitializationFailed`
-   wrapping a `TimeoutException`, and the status becomes `Error`. This swap is not rolled back: the new provider stays
-   registered, and the status becomes `Ready` on its own if it finishes later. The previous provider is not restored,
-   because the SDK would shut it down as soon as the new one became ready.
-
-In every failure case, `setProvider` again with a working provider recovers.
-
-Once a swap has started it finishes, with one of the outcomes above, even if the calling fiber is interrupted: an
-interrupt halfway would leave neither the new provider nor the old one properly in place. So `setProvider(p).timeout(d)`
-returns only when the swap has settled, at most about twice `initTimeout`. A call still waiting for an earlier swap to
-finish can be interrupted at once.
-
-`setProvider` is the only way out of `Fatal`. When you use a wrapper such as `CircuitBreakerProvider`, swap in a new
-wrapper around the new provider, not just the inner provider.
-
-## Shut down
-
-Closing the layer's scope shuts the instance down. You can also call `FeatureFlags.shutdown`. See
-[Lifecycle and events](lifecycle.md#shut-down) for what it releases. Whether the provider stops too depends on
-[API ownership](#who-shuts-down-the-api).
-
-## Older factories
-
-These still compile but are deprecated. Each is a shorthand for a `FeatureFlagsConfig`:
-
-| Deprecated | Write instead |
-|:--|:--|
-| `fromProvider(p, evaluationTimeout)` | `fromProvider(p, FeatureFlagsConfig().withEvaluationTimeout(t))` |
-| `fromProvider(p, evaluationTimeout, initTimeout)` | `fromProvider(p, FeatureFlagsConfig().withEvaluationTimeout(t).withInitTimeout(i))` |
-| `fromProviderWithDomain(p, domain[, version])` | `fromProvider(p, FeatureFlagsConfig().withDomain(d).withVersion(v))` |
-| `fromProviderWithHooks(p, hooks)` | `fromProvider(p, FeatureFlagsConfig().withHooks(hooks))` |
-| `fromMultiProvider(ps[, strategy])` | `fromProvider(FeatureFlags.multiProvider(ps, strategy), FeatureFlagsConfig())` |
-| `fromProviderAsync(p, evaluationTimeout[, initTimeout])` | `fromProvider(p, FeatureFlagsConfig().withAsyncInit.withEvaluationTimeout(t))` |
-| `fromProviderWithDomainAsync`, `fromProviderWithHooksAsync`, `fromMultiProviderAsync` | the same as their sync form, plus `.withAsyncInit` |
+- Evaluations that start during the swap fail with `ProviderNotReady`; running ones finish on the old provider. Swaps are
+  serialized, `setProvider` waits at most `initTimeout`, and a started swap finishes even if the caller is interrupted.
+- If `initialize()` throws, `setProvider` fails with `ProviderInitializationFailed` and the old provider is restored (if
+  that fails too, the status stays `Error`). A timeout fails the same way, wrapping a `TimeoutException`, with no
+  rollback: the SDK would shut the old provider down once the new one became ready.
+- `setProvider` is the only way out of `Fatal`. With a wrapper such as `CircuitBreakerProvider`, swap in a new wrapper
+  around the new provider.

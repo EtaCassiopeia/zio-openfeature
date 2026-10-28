@@ -25,6 +25,7 @@ object Home:
     yield s"checkout=${if enabled then "new" else "old"} limit=$limit banner=$banner"
   // --8<-- [end:at-a-glance]
 
+  // Mirrored by hand in README.md (it cannot include snippets): change both together. Used by no docs page.
   // --8<-- [start:quick-start]
   object MyApp extends ZIOAppDefault:
 

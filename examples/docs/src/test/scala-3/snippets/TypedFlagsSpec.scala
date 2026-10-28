@@ -9,10 +9,8 @@ import snippets.TypedFlags.given
 
 object TypedFlagsSpec extends ZIOSpecDefault:
 
-  // --8<-- [start:laws]
   object LevelLawsSpec extends ZIOSpecDefault:
     def spec = FlagTypeLaws.all(Gen.int.map(Level(_)))
-  // --8<-- [end:laws]
 
   def spec = suite("Typed flags")(
     test("a fixture is read back at the domain type") {

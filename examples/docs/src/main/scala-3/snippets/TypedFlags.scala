@@ -42,8 +42,7 @@ object TypedFlags:
     val PageSize   = FlagDef("page-size", Level(1))
   // --8<-- [end:catalog]
 
-  val ctx: EvaluationContext     = EvaluationContext("user-42")
-  val options: EvaluationOptions = EvaluationOptions.empty.withTimeout(200.millis)
+  val ctx: EvaluationContext = EvaluationContext("user-42")
 
   // --8<-- [start:evaluate]
   val value: ZIO[FeatureFlags, FeatureFlagError, Boolean] = FeatureFlags.value(Flags.CheckoutV2)
@@ -52,15 +51,12 @@ object TypedFlags:
     FeatureFlags.valueDetails(Flags.CheckoutV2)
   val resolution: ZIO[FeatureFlags, Nothing, FlagResolution[Boolean]] = FeatureFlags.resolveOrDefault(Flags.CheckoutV2)
 
-  // Each also takes a context, and the two details forms an EvaluationOptions as well
+  // Each also takes a context, then an EvaluationOptions
   val forUser: ZIO[FeatureFlags, FeatureFlagError, Boolean] = FeatureFlags.value(Flags.CheckoutV2, ctx)
-  val withOptions: ZIO[FeatureFlags, FeatureFlagError, FlagResolution[Boolean]] =
-    FeatureFlags.valueDetails(Flags.CheckoutV2, ctx, options)
 
   // Custom types come back as the domain type
   val plan: ZIO[FeatureFlags, FeatureFlagError, Tier]       = FeatureFlags.value(Flags.Plan)
   val staging: ZIO[FeatureFlags, FeatureFlagError, Rollout] = FeatureFlags.value(Flags.Staging)
-  val pageSize: ZIO[FeatureFlags, FeatureFlagError, Level]  = FeatureFlags.value(Flags.PageSize)
   // --8<-- [end:evaluate]
 
   // --8<-- [start:same-key]
@@ -75,8 +71,7 @@ object TypedFlags:
     name = "RolloutPlan",
     default = RolloutPlan("free", 0),
     decoder = {
-      case m: Map[?, ?] =>
-        val fields = m.asInstanceOf[Map[String, Any]]
+      case fields: Map[String @unchecked, Any @unchecked] => // an object flag is a Map[String, Any]
         for
           tier <- FlagType[String].decode(fields.getOrElse("tier", "free"))
           pct  <- FlagType[Int].decode(fields.getOrElse("percentage", 0)) // numbers arrive as Double

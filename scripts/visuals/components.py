@@ -33,7 +33,7 @@ def build() -> Scene:
                                        (EVENT_Y + 50, "handler", "onConfigurationChanged")])
     column(sc, "flags", "FEATUREFLAGS (ZIO)", [(EVAL_Y - 40, "context · hooks · transaction", "Ref + FiberRef"),
                                                (EVAL_Y + 30, "status gate", None),
-                                               (EVENT_Y - 10, "status machine", "Ready · Stale · Error · Fatal"),
+                                               (EVENT_Y - 10, "status machine", "NotReady … ShuttingDown"),
                                                (EVENT_Y + 50, "event hub", "sliding, 256 events")])
     column(sc, "sdk", "OPENFEATURE SDK", [(EVAL_Y - 40, "Client", "get*Details"),
                                           (EVENT_Y - 10, "event dispatch", "SDK threads")])

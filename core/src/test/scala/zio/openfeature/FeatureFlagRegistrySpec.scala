@@ -196,7 +196,7 @@ object FeatureFlagRegistrySpec extends ZIOSpecDefault {
           client   <- registry.getClient("domain1")
           v1       <- client.string("flag", default = "none")
           result   <- registry.setProvider("domain1", failingProvider).either
-          // #282: after a failed swap the rollback re-registers the previous provider with the SDK, so the client
+          // After a failed swap the rollback re-registers the previous provider with the SDK, so the client
           // routes back to it (status Ready, evaluations return the old provider's values) rather than being stranded
           // on the failed provider.
           status <- client.providerStatus
@@ -213,7 +213,7 @@ object FeatureFlagRegistrySpec extends ZIOSpecDefault {
         )
       }
     },
-    test("getClient for one domain is not blocked by a slow provider init in another (#182)") {
+    test("getClient for one domain is not blocked by a slow provider init in another") {
       ZIO.scoped {
         val slowStarted     = new java.util.concurrent.CountDownLatch(1)
         val slowGate        = new java.util.concurrent.CountDownLatch(1)
@@ -238,7 +238,7 @@ object FeatureFlagRegistrySpec extends ZIOSpecDefault {
         } yield assertTrue(v == "fast", v2 == "slow")
       }
     },
-    test("concurrent getClient calls for the same domain build the client exactly once (#182)") {
+    test("concurrent getClient calls for the same domain build the client exactly once") {
       ZIO.scoped {
         val initCount = new java.util.concurrent.atomic.AtomicInteger(0)
         val provider = new SimpleProvider("Counting", Map("flag" -> true)) {
@@ -256,7 +256,7 @@ object FeatureFlagRegistrySpec extends ZIOSpecDefault {
         )
       }
     },
-    test("failed init surfaces as a typed error and a later getClient can retry (#182)") {
+    test("failed init surfaces as a typed error and a later getClient can retry") {
       ZIO.scoped {
         val defaultProvider = new SimpleProvider("Default", Map("flag" -> "default"))
         val failingProvider = new SimpleProvider("Failing", Map.empty) {
@@ -291,7 +291,7 @@ object FeatureFlagRegistrySpec extends ZIOSpecDefault {
         } yield assertTrue(meta.name == "Billing")
       }
     },
-    test("getClient does not hang when registration throws synchronously; failure is typed and retryable (#242)") {
+    test("getClient does not hang when registration throws synchronously; failure is typed and retryable") {
       ZIO.scoped {
         val defaultProvider = new SimpleProvider("Default", Map("flag" -> "default"))
         // Throws synchronously when the registry reads its metadata / registers it with the SDK — the
@@ -331,9 +331,9 @@ object FeatureFlagRegistrySpec extends ZIOSpecDefault {
         }
       }
     },
-    test("domain provider stays live during use and is shut down only at registry release (#276)") {
-      // #276 claimed the provider is torn down "during setup, while still in use". In fact the registry shuts
-      // registered providers only when its scope closes (release). This test snapshots the shutdown count INSIDE
+    test("domain provider stays live during use and is shut down only at registry release") {
+      // An earlier report claimed the provider is torn down "during setup, while still in use". In fact the registry
+      // shuts registered providers only when its scope closes (release). This test snapshots the shutdown count INSIDE
       // the scope (must be 0 — provider live throughout use) and again AFTER the scope closes (must be 1 — shut
       // exactly once at release). Reading the count via an effect (not a lazily-rendered `assertTrue` expression)
       // is essential: a smart-assertion `shutCount.get()` is evaluated at result-render time, after the finalizer
@@ -357,7 +357,7 @@ object FeatureFlagRegistrySpec extends ZIOSpecDefault {
         afterRelease <- awaitCount(shutCount, 1) // release-time shutdown lands async on the SDK executor
       } yield assertTrue(duringUse._1 == "a", duringUse._2 == 0, afterRelease == 1)
     },
-    test("domain providers stay live during use — two domains, shut only at release (#276)") {
+    test("domain providers stay live during use — two domains, shut only at release") {
       val shutA           = new java.util.concurrent.atomic.AtomicInteger(0)
       val shutB           = new java.util.concurrent.atomic.AtomicInteger(0)
       val defaultProvider = new SimpleProvider("Default", Map("flag" -> "default"))

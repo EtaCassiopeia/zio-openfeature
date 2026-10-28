@@ -9,9 +9,9 @@ import zio.test._
 import zio.test.Assertion._
 import scala.jdk.CollectionConverters._
 
-/** #369: `TestFeatureProvider` answered an absent key with `reason = DEFAULT` and no error code, which reads to a
+/** `TestFeatureProvider` answered an absent key with `reason = DEFAULT` and no error code, which reads to a
   * `MultiProvider` chain as "I answered" — so a chain never fell through past the test provider, and the testkit could
-  * not reproduce the fall-through that #355/#370 fixed for the config providers. An absent key is `FLAG_NOT_FOUND`.
+  * not reproduce the fall-through the config providers already have. An absent key is `FLAG_NOT_FOUND`.
   *
   * The chain tests are the load-bearing ones: the unit assertions pin what each evaluation method reports, but only the
   * chain shows the user-visible consequence, and only the hook test shows the observable cost (an absent key now runs
@@ -19,9 +19,8 @@ import scala.jdk.CollectionConverters._
   *
   * The SECOND provider in each chain is the SDK's own `InMemoryProvider`, deliberately not another
   * `TestFeatureProvider`: up to Java SDK 1.22.x a chain kept only the last of two same-named instances, so the
-  * precedence test would have passed for the wrong reason (#371). SDK 1.23.0 keeps both (#423); distinct names stay so
-  * the spec does not depend on that. Shared test source dir → compiles on 2.13 and 3: braces only, no `given`/`using`,
-  * no `enum`.
+  * precedence test would have passed for the wrong reason. SDK 1.23.0 keeps both; distinct names stay so the spec does
+  * not depend on that. Shared test source dir → compiles on 2.13 and 3: braces only, no `given`/`using`, no `enum`.
   */
 object AbsentKeyChainSpec extends ZIOSpecDefault {
 
@@ -83,7 +82,7 @@ object AbsentKeyChainSpec extends ZIOSpecDefault {
         )
       },
       test("a present key still reports TARGETING_MATCH with no error code on every evaluation method") {
-        // Each stored value has exactly the requested type: the provider does not widen (#457), so an Int read as Long
+        // Each stored value has exactly the requested type: the provider does not widen, so an Int read as Long
         // would be TYPE_MISMATCH rather than a present key.
         for {
           provider <- TestFeatureProvider.make(
@@ -159,8 +158,8 @@ object AbsentKeyChainSpec extends ZIOSpecDefault {
         "a key absent from every provider is FLAG_NOT_FOUND through the client: typed tier fails, total tier serves the default"
       ) {
         // Exercised through `FeatureFlags`, not the raw chain: when every provider reports FLAG_NOT_FOUND the chain
-        // has no value to give and answers null — substituting the caller's default is the SDK client's job. Since #388
-        // the typed tier surfaces that code as a typed failure and the total tier serves the default with the code.
+        // has no value to give and answers null — substituting the caller's default is the SDK client's job.
+        // The typed tier surfaces that code as a typed failure and the total tier serves the default with the code.
         ZIO.scoped {
           for {
             first <- TestFeatureProvider.make

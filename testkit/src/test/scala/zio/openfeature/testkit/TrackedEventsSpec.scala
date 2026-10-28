@@ -4,10 +4,10 @@ import zio._
 import zio.test._
 import zio.openfeature._
 
-// #442: the testkit's own record of what `track` delivered to the provider.
+// The testkit's own record of what `track` delivered to the provider.
 object TrackedEventsSpec extends ZIOSpecDefault {
 
-  def spec = suite("TestFeatureProvider.trackedEvents (#442)")(
+  def spec = suite("TestFeatureProvider.trackedEvents")(
     test("records each track call with the merged context and the details") {
       for {
         _ <- FeatureFlags.setGlobalContext(EvaluationContext.empty.withAttribute("region", "eu"))

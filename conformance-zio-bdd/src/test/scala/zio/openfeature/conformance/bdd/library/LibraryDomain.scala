@@ -5,10 +5,11 @@ import zio.openfeature.{FlagDef, FlagType, WireType}
 /** Domain types and flag definitions shared by the library conformance suites.
   *
   * Each type here exists to exercise one `FlagType` shape:
-  *   - [[Tier]] — a Mirror-derived enum, carried on the wire as a `String` (#366);
-  *   - [[Release]] — a Mirror-derived product, carried on the object path (#366);
-  *   - [[Level]] — `FlagType.mapped` over `Int`, so its wire type is a *numeric* scalar (#361);
-  *   - [[Broken]] — declares a wire type its `encode` does not produce, the mistake #362 turns into a diagnostic.
+  *   - [[Tier]] — a Mirror-derived enum, carried on the wire as a `String`;
+  *   - [[Release]] — a Mirror-derived product, carried on the object path;
+  *   - [[Level]] — `FlagType.mapped` over `Int`, so its wire type is a *numeric* scalar;
+  *   - [[Broken]] — declares a wire type its `encode` does not produce, the mistake `FlagType` turns into a
+  *     diagnostic.
   */
 enum Tier derives FlagType:
   case Free, Premium, Enterprise
@@ -39,7 +40,7 @@ object Broken:
     def decode(value: Any): Either[String, Broken] = Right(Broken(value.toString))
     override def encode(value: Broken): Any        = value.v      // …but encodes to String
 
-/** The `FlagDef`s the feature files name. Keeping them in one place is the point of #357: a key, its type and its
+/** The `FlagDef`s the feature files name. Keeping them in one place is the point: a key, its type and its
   * default are stated once, and every scenario that mentions the flag by name gets all three.
   */
 object Flags:

@@ -4,9 +4,9 @@ import zio._
 import zio.test._
 import zio.openfeature._
 
-/** Pins the registration guarantee fixed in #177: the hub subscription is established before the `on*` registration
-  * effect returns, so an event published immediately afterwards is always delivered (previously the forked stream could
-  * subscribe after the event, silently losing it).
+/** Pins the registration guarantee: the hub subscription is established before the `on*` registration effect returns,
+  * so an event published immediately afterwards is always delivered (previously the forked stream could subscribe after
+  * the event, silently losing it).
   */
 object EventSubscriptionSpec extends ZIOSpecDefault {
 
@@ -16,7 +16,7 @@ object EventSubscriptionSpec extends ZIOSpecDefault {
   private def awaitCount(ref: Ref[Int], atLeast: Int): UIO[Int] =
     ref.get.repeatUntil(_ >= atLeast)
 
-  def spec = suite("Event handler subscription guarantee (#177)")(
+  def spec = suite("Event handler subscription guarantee")(
     test("onConfigurationChanged delivers an event emitted right after registration") {
       for {
         ref          <- Ref.make(0)

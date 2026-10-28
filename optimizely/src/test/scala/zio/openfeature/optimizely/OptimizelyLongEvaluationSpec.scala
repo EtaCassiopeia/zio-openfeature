@@ -58,7 +58,7 @@ object OptimizelyLongEvaluationSpec extends ZIOSpecDefault {
   def spec: Spec[TestEnvironment & Scope, Any] = suite("OptimizelyFeatureProvider long evaluation")(
     test("falls back to the caller's Long default without narrowing it") {
       withMockServer { server =>
-        // `lifecycle_flag`'s `value` variable is a STRING, so reading it as a Long is a TYPE_MISMATCH (#456) and the
+        // `lifecycle_flag`'s `value` variable is a STRING, so reading it as a Long is a TYPE_MISMATCH and the
         // provider must fall back to the caller's default. Seeding the integer read with a narrowed default would return
         // 705032704 for the out-of-range cases.
         val provider = readyProvider(server, readResource("/test-datafile-with-flag.json"))

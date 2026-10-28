@@ -52,7 +52,7 @@ final class HoconProvider private (
       case e: ConfigException.BadValue  => throw new ParseError(s"Flag '$key': ${e.getMessage}")
     }
 
-  /** Read a number and convert it to the getter's type only when nothing is lost (#467).
+  /** Read a number and convert it to the getter's type only when nothing is lost.
     *
     * HOCON has a single number type, so an int, long or double read accepts any number (and, by the HOCON spec's
     * automatic conversions, a string that parses as one). What it must not do is change the value: Typesafe Config's
@@ -91,7 +91,7 @@ final class HoconProvider private (
     case d: java.lang.Double                                                                 => d.doubleValue
   }
 
-  /** A key this config does not contain is `FLAG_NOT_FOUND`, not a `DEFAULT`-reason answer (#355).
+  /** A key this config does not contain is `FLAG_NOT_FOUND`, not a `DEFAULT`-reason answer.
     *
     * That is what lets a `MultiProvider` chain distinguish "not configured here" from "configured to this value" and
     * move on to the next provider, and what lets an operator tell the two apart.

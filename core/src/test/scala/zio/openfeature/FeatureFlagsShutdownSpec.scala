@@ -16,9 +16,9 @@ import zio.test._
 import zio.test.TestAspect.withLiveClock
 import java.util.concurrent.atomic.AtomicBoolean
 
-/** Covers shutdown ownership (#243): `shutdown` on a client that does NOT own its `OpenFeatureAPI` must not tear down
-  * the shared api or its provider (both belong to the api owner) — otherwise it kills sibling clients. A sole-owner
-  * client still shuts the api (which cascades to every provider registered on it).
+/** Covers shutdown ownership: `shutdown` on a client that does NOT own its `OpenFeatureAPI` must not tear down the
+  * shared api or its provider (both belong to the api owner) — otherwise it kills sibling clients. A sole-owner client
+  * still shuts the api (which cascades to every provider registered on it).
   */
 object FeatureFlagsShutdownSpec extends ZIOSpecDefault {
 
@@ -58,7 +58,7 @@ object FeatureFlagsShutdownSpec extends ZIOSpecDefault {
     )
 
   def spec = suite("FeatureFlagsShutdownSpec")(
-    test("shutdown on a non-owning (shared-api) client shuts down neither the shared api nor any provider (#243)") {
+    test("shutdown on a non-owning (shared-api) client shuts down neither the shared api nor any provider") {
       val shutA = new AtomicBoolean(false)
       val shutB = new AtomicBoolean(false)
       val api   = OpenFeatureAPI.createIsolated()
@@ -68,7 +68,7 @@ object FeatureFlagsShutdownSpec extends ZIOSpecDefault {
           _         <- buildShared("B", shutB, owns = false, api)
           _         <- ffA.shutdown
           afterShut <- ffA.providerStatus
-          // A late PROVIDER_READY from the just-shut provider must NOT resurrect the terminal NotReady (#285/#244):
+          // A late PROVIDER_READY from the just-shut provider must NOT resurrect the terminal NotReady:
           // drive it explicitly so the assertion is deterministic instead of racing the SDK event bridge. The event
           // hub is closed post-shutdown, so the publish step interrupts — tolerate it with .exit (as production's
           // runHandler swallows it).
@@ -82,7 +82,7 @@ object FeatureFlagsShutdownSpec extends ZIOSpecDefault {
         )
       }
     } @@ withLiveClock,
-    test("shutdown on a sole-owner client shuts the shared api, cascading to siblings (#243 regression)") {
+    test("shutdown on a sole-owner client shuts the shared api, cascading to siblings") {
       val shutOwn = new AtomicBoolean(false)
       val shutSib = new AtomicBoolean(false)
       val api     = OpenFeatureAPI.createIsolated()

@@ -30,7 +30,7 @@ object ValueRoundTripSpec extends ZIOSpecDefault {
     Gen.double(-1e10, 1e10).filter(d => !d.isWhole && !d.isNaN && !d.isInfinity)
 
   /** Out-of-int-range longs, up to `Long.MaxValue` and down to `Long.MinValue`: the converter carries them as
-    * `java.lang.Long` both ways (#471), so every one must round-trip exactly — no `Double` in between.
+    * `java.lang.Long` both ways, so every one must round-trip exactly — no `Double` in between.
     */
   private val largeLong: Gen[Any, Long] =
     Gen.oneOf(Gen.long(Int.MaxValue.toLong + 1L, Long.MaxValue), Gen.long(Long.MinValue, Int.MinValue.toLong - 1L))
@@ -92,7 +92,7 @@ object ValueRoundTripSpec extends ZIOSpecDefault {
       }
       assertTrue(isNaN)
     },
-    test("LongValue(Long.MaxValue) and LongValue(Long.MinValue) round-trip exactly (#471)") {
+    test("LongValue(Long.MaxValue) and LongValue(Long.MinValue) round-trip exactly") {
       val max = roundTrip(AttributeValue.LongValue(Long.MaxValue))
       val min = roundTrip(AttributeValue.LongValue(Long.MinValue))
       assertTrue(max == AttributeValue.LongValue(Long.MaxValue), min == AttributeValue.LongValue(Long.MinValue))
@@ -181,7 +181,7 @@ object ValueRoundTripSpec extends ZIOSpecDefault {
       )
       check(ctxGen) { ctx =>
         val rt = ContextConverter.fromOpenFeature(ContextConverter.toOpenFeature(ctx))
-        // The exact law: no phantom `targetingKey` attribute on the way back (#497).
+        // The exact law: no phantom `targetingKey` attribute on the way back.
         assertTrue(rt == ctx)
       }
     }

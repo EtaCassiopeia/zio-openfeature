@@ -6,8 +6,8 @@ import dev.openfeature.sdk.{Client => OFClient, FlagEvaluationDetails}
 
 import scala.jdk.CollectionConverters._
 
-/** The evaluation path of a [[FeatureFlagsLive]] (#445): context merging, the readiness gate, transactions, the
-  * provider call with its timeout and abandoned-call cap, and decoding the result.
+/** The evaluation path of a [[FeatureFlagsLive]]: context merging, the readiness gate, transactions, the provider call
+  * with its timeout and abandoned-call cap, and decoding the result.
   */
 final private[openfeature] class Evaluator(
   client: OFClient,
@@ -20,12 +20,12 @@ final private[openfeature] class Evaluator(
 ) {
   import Evaluator.{convertImmutableMetadata, errorFromResolution}
 
-  // Provider calls abandoned by the evaluation timeout that have not returned yet (#437). Each one parks a blocking-pool
+  // Provider calls abandoned by the evaluation timeout that have not returned yet. Each one parks a blocking-pool
   // thread, and that pool is unbounded, so `withTimeout` refuses new timed calls once this reaches `maxAbandonedCalls`.
   // AtomicInteger (not Ref): it is read on every timed evaluation, and decremented from the abandoned call's finalizer.
   private val abandonedCalls = new java.util.concurrent.atomic.AtomicInteger(0)
 
-  /** Abandoned provider calls still running (#437) — for tests. */
+  /** Abandoned provider calls still running — for tests. */
   private[openfeature] def abandonedCallCount: Int = abandonedCalls.get()
 
   // Cache the Scala->Java context conversion by object identity. In the common case every per-call context layer
@@ -48,7 +48,7 @@ final private[openfeature] class Evaluator(
   }
 
   // Context merges per OpenFeature spec: API (global) -> Transaction -> Client -> FiberLocal -> Invocation,
-  // with the pull-based ContextSource slotted between Client and FiberLocal (#353): ambient request identity
+  // with the pull-based ContextSource slotted between Client and FiberLocal: ambient request identity
   // overrides static client/global context, but an explicit `withContext` or a per-call context still wins over it.
   //
   // This is also the reason a ContextSource cannot be a `before` hook. A hook's contribution is merged on TOP of the
@@ -132,7 +132,7 @@ final private[openfeature] class Evaluator(
           case Some(cached) =>
             // The cache holds the WIRE value, so this is the same decode the provider path runs — a custom type's
             // domain value would not decode (decode is wire → domain), and that is what used to make the cache miss on
-            // every read for such types (#359). A `Left` now means a genuine cross-type read of the same key (cached as
+            // every read for such types. A `Left` now means a genuine cross-type read of the same key (cached as
             // Boolean, re-read as String): not an error, just not servable from the cache.
             flagType.decode(cached.wire) match {
               case Right(decoded) =>
@@ -192,7 +192,7 @@ final private[openfeature] class Evaluator(
     val flagType  = FlagType[A]
     val ofContext = toJavaContext(context)
 
-    // The only place a provider call can be abandoned, so the abandoned-call cap (#437) lives here and nowhere else:
+    // The only place a provider call can be abandoned, so the abandoned-call cap lives here and nowhere else:
     // the untimed path cannot abandon a call and never touches the counter.
     def withTimeout[B](effect: Task[B]): Task[B] =
       timeout match {
@@ -241,7 +241,7 @@ final private[openfeature] class Evaluator(
     val evaluation: IO[FeatureFlagError, FlagResolution[A]] =
       ClientEvaluator.evaluateStandard[A](flagType, client, key, default, ofContext) match {
         // The instance declares a scalar wire type its `encode` does not produce — a contract violation, surfaced as
-        // a typed error rather than an opaque ClassCastException from inside the SDK bridge (#360).
+        // a typed error rather than an opaque ClassCastException from inside the SDK bridge.
         case Some(Left(message)) =>
           ZIO.fail(FeatureFlagError.TypeMismatch(key, flagType.typeName, message))
 
@@ -263,7 +263,7 @@ final private[openfeature] class Evaluator(
         // Reference identity to the built-in instance, not a name test: this branch casts the default to
         // `Map[String, Any]` and serves the raw map as `A` past `decode`, which is only sound for that instance. Any
         // other object-backed type, even one named "Object" (`FlagType.from("Object", ...)`), falls through to the
-        // decode branch below so its own `decode` runs (#439).
+        // decode branch below so its own `decode` runs.
         case None if flagType eq FlagType.objectFlagType =>
           withTimeout(
             ZIO.attemptBlocking {
@@ -449,7 +449,7 @@ final private[openfeature] class Evaluator(
         )
       }
       .flatMap { resolution =>
-        // The typed tier fails on a provider-reported error CODE, not only on a thrown one (#388). Most providers report
+        // The typed tier fails on a provider-reported error CODE, not only on a thrown one. Most providers report
         // FLAG_NOT_FOUND / TYPE_MISMATCH / ... as a code on the resolution and never throw, so without this the tier a
         // caller reaches for precisely because a default would be wrong handed the default back with no signal — a
         // fail-closed gate written with `value` was silently fail-open. Promoted HERE, after the hook pipeline, so hooks
@@ -472,8 +472,8 @@ private[openfeature] object Evaluator {
 
   /** Reconstruct a typed error from a resolution that carries an error code — a provider-reported failure
     * (FLAG_NOT_FOUND, TYPE_MISMATCH, ...) returned as a default value rather than thrown. Used both to hand the `error`
-    * hook stage something typed and, since #388, to fail the typed tier itself. `expected` names the flag's type for
-    * `TypeMismatch`; the provider's message becomes `actual`, since the provider is the one that knows what it found.
+    * hook stage something typed and to fail the typed tier itself. `expected` names the flag's type for `TypeMismatch`;
+    * the provider's message becomes `actual`, since the provider is the one that knows what it found.
     * `ProviderNotReady`/`ProviderFatal` codes are normally caught upstream in `evaluateFromClient`; the arms are kept
     * so the mapping is total.
     */
@@ -493,7 +493,7 @@ private[openfeature] object Evaluator {
       case ErrorCode.ProviderNotReady    => FeatureFlagError.ProviderNotReady(ProviderStatus.NotReady)
       case ErrorCode.ProviderFatal       => FeatureFlagError.ProviderFatal
       // The spec has no auth error code, so a provider that reports 401/403 as an evaluation result (the OFREP
-      // contrib) can only say so in the message (#498).
+      // contrib) can only say so in the message.
       case ErrorCode.General =>
         message match {
           case Some(m) if FeatureFlagError.looksLikeAuthFailure(m) =>

@@ -9,9 +9,9 @@ import dev.openfeature.sdk.{EvaluationContext => OFEvaluationContext, FeaturePro
 import java.util.concurrent.{CountDownLatch, RejectedExecutionException, TimeoutException}
 import java.util.concurrent.atomic.AtomicInteger
 
-/** #437: a timed-out provider call is abandoned, not cancelled, and keeps a blocking-pool thread until the provider
-  * returns. Each `FeatureFlags` instance caps how many such calls it tolerates; past the cap, timed evaluations fail
-  * fast with `ProviderError(RejectedExecutionException)` without reaching the provider.
+/** A timed-out provider call is abandoned, not cancelled, and keeps a blocking-pool thread until the provider returns.
+  * Each `FeatureFlags` instance caps how many such calls it tolerates; past the cap, timed evaluations fail fast with
+  * `ProviderError(RejectedExecutionException)` without reaching the provider.
   */
 object AbandonedCallCapSpec extends ZIOSpecDefault {
 
@@ -88,7 +88,7 @@ object AbandonedCallCapSpec extends ZIOSpecDefault {
 
   private val untimed = EvaluationOptions.empty.withoutTimeout
 
-  def spec = suite("AbandonedCallCapSpec (#437)")(
+  def spec = suite("AbandonedCallCapSpec")(
     test("at the cap, the next timed evaluation fails fast without reaching the provider") {
       ZIO.scoped {
         for {

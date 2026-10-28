@@ -34,7 +34,7 @@ import scala.util.Try
   *     isn't a "change" and must not precede PROVIDER_READY, so it suppresses `PROVIDER_CONFIGURATION_CHANGED`;
   *     suppression is by datafile REVISION, not READY timing — the handler emits only when the current revision differs
   *     from the one the provider initialized with (captured at READY), so a late initial-load fire delivered post-READY
-  *     is still suppressed and only genuine later revisions emit (#308).
+  *     is still suppressed and only genuine later revisions emit.
   *   - If the datafile never arrives within `initWait`, or the config is invalid, or the handler can't be registered,
   *     `initialize()` throws (propagated by the OpenFeature SDK as a failed init) and leaves the provider in a `Failed`
   *     state with its handler removed. A subsequent `initialize()` on the same instance cleanly re-attempts (`Failed ->
@@ -67,11 +67,11 @@ final class OptimizelyFeatureProvider private[optimizely] (
   configManager: Option[com.optimizely.ab.config.HttpProjectConfigManager] = None,
   // Present only when the staleness watchdog is enabled (factory-built providers with datafile polling on).
   // When defined, initialize() starts a background daemon that flips READY <-> STALE based on whether datafile
-  // fetches keep succeeding (see the watchdog section below and issue #267). None = watchdog disabled.
+  // fetches keep succeeding (see the watchdog section below). None = watchdog disabled.
   staleness: Option[OptimizelyFeatureProvider.StalenessConfig] = None,
   // Resources the factory built for this provider beyond the Optimizely client itself, closed in order after
   // `Optimizely.close()` when the provider owns the client: `Optimizely.close()` closes neither the CMAB service's
-  // HTTP client (#474) nor the event processor's executor (#453).
+  // HTTP client nor the event processor's executor.
   ownedResources: List[java.io.Closeable] = Nil
 ) extends EventProvider {
 
@@ -87,8 +87,8 @@ final class OptimizelyFeatureProvider private[optimizely] (
   private val initLatchRef = new AtomicReference(new CountDownLatch(1))
   // The datafile revision the provider initialized with (the "initial load"), captured when init reaches READY. The
   // update handler emits CONFIGURATION_CHANGED only for a DIFFERENT revision, so the initial-load fire is suppressed
-  // deterministically — independent of whether that fire or the `optimizely.isValid` READY transition wins the race
-  // (#308). Null until the first successful init of a cycle; reset per init cycle.
+  // deterministically — independent of whether that fire or the `optimizely.isValid` READY transition wins the race.
+  // Null until the first successful init of a cycle; reset per init cycle.
   private val initialRevisionRef = new AtomicReference[String](null)
   // The staleness watchdog's scheduled executor, or null when no watchdog is running. Held so shutdown()/failInitialize
   // can cancel it — its thread is a daemon, so even a missed cancel can never keep the JVM alive.
@@ -138,7 +138,7 @@ final class OptimizelyFeatureProvider private[optimizely] (
       // the datafile REVISION, not READY timing: emit iff the current revision differs from the one the provider
       // initialized with. This is deterministic regardless of whether the initial-load fire or the `optimizely.isValid`
       // fast-path READY transition wins the init race — a late initial-load fire delivered post-READY still matches the
-      // captured initial revision and is suppressed (the #308 bug the old `stateRef == READY` gate leaked).
+      // captured initial revision and is suppressed (the old `stateRef == READY` gate leaked it).
       initLatch.countDown()
       if (OptimizelyFeatureProvider.shouldEmitConfigChange(initialRevisionRef.get(), currentRevision()))
         emitProviderConfigurationChanged(ProviderEventDetails.builder().build())
@@ -174,7 +174,7 @@ final class OptimizelyFeatureProvider private[optimizely] (
 
     // For a manager we own, read its cache: `optimizely.isValid` blocks up to the SDK's blocking timeout while no
     // datafile has loaded, which would stack in front of `initWait` and let the outer FeatureFlags init timeout fire
-    // first, hiding the specific error below (#455). A caller-managed client keeps `isValid`.
+    // first, hiding the specific error below. A caller-managed client keeps `isValid`.
     if (configManager.fold(optimizely.isValid)(_.getCachedConfig != null)) initLatch.countDown()
 
     if (!initLatch.await(initWait.toMillis, TimeUnit.MILLISECONDS))
@@ -184,7 +184,7 @@ final class OptimizelyFeatureProvider private[optimizely] (
 
     if (optimizely.isValid) {
       // Capture the datafile revision that brought us to READY (the initial load) BEFORE announcing READY, so the
-      // update handler can suppress that revision and emit only genuine later ones (#308).
+      // update handler can suppress that revision and emit only genuine later ones.
       initialRevisionRef.set(currentRevision())
       stateRef.set(ProviderState.READY)
       // Guard against a shutdown() that interleaved after the abort re-check above: shutdown sets
@@ -200,7 +200,7 @@ final class OptimizelyFeatureProvider private[optimizely] (
           startWatchdog(cfg)
           // A shutdown that interleaved after we set READY may have run stopWatchdog() before this executor existed
           // (watchdogRef was still null, so it cancelled nothing). Re-check and cancel the just-started executor so it
-          // can't leak — mirrors #265's post-CAS shutdown guards.
+          // can't leak — mirrors the post-CAS shutdown guards elsewhere in the lifecycle.
           if (lifecycle.get() != Lifecycle.Initialized) stopWatchdog()
         }
     } else
@@ -251,7 +251,7 @@ final class OptimizelyFeatureProvider private[optimizely] (
     stateRef.set(ProviderState.NOT_READY)
   }
 
-  // Staleness watchdog (#267)
+  // Staleness watchdog
   //
   // The Optimizely SDK's config-changed notification fires only when the datafile actually CHANGES, so it cannot tell
   // "polling still succeeding but datafile unchanged" from "polling failing". Instead the observing HTTP client (see
@@ -284,7 +284,7 @@ final class OptimizelyFeatureProvider private[optimizely] (
     catch { case scala.util.control.NonFatal(_) => () }
 
   private def tick(cfg: OptimizelyFeatureProvider.StalenessConfig): Unit =
-    // Never fight the #265 lifecycle state machine: only act while genuinely Initialized. If a shutdown or failed init
+    // Never fight the lifecycle state machine: only act while genuinely Initialized. If a shutdown or failed init
     // has moved us elsewhere, do nothing — those paths own the state and the executor is being cancelled anyway.
     if (lifecycle.get() == Lifecycle.Initialized) {
       val idleNanos = System.nanoTime() - cfg.observer.lastSuccessNanos
@@ -317,7 +317,7 @@ final class OptimizelyFeatureProvider private[optimizely] (
     }
 
   // Fallback order: typed variable → variation key (still a meaningful Optimizely-driven answer) → OF default. The
-  // variation-key fallback applies only to an ABSENT variable; one of another type is a TYPE_MISMATCH (#456).
+  // variation-key fallback applies only to an ABSENT variable; one of another type is a TYPE_MISMATCH.
   override def getStringEvaluation(
     key: String,
     defaultValue: String,
@@ -360,7 +360,7 @@ final class OptimizelyFeatureProvider private[optimizely] (
       case l: java.lang.Long    => java.lang.Double.valueOf(l.doubleValue)
     }()
 
-  // Reads the single variable named by `variableKey` (a JSON object), not the whole variables map (#264).
+  // Reads the single variable named by `variableKey` (a JSON object), not the whole variables map.
   override def getObjectEvaluation(
     key: String,
     defaultValue: Value,
@@ -371,7 +371,7 @@ final class OptimizelyFeatureProvider private[optimizely] (
     }()
 
   /** Shared scaffold for variable-backed evaluations. The variable named by `variableKey` is looked up raw and
-    * converted strictly and losslessly by `convert` (#456):
+    * converted strictly and losslessly by `convert`:
     *   - absent → `onAbsent` (by default the OF default with reason `DEFAULT`);
     *   - convertible → the value, with the decision's reason;
     *   - present with another type → the OF default with `TYPE_MISMATCH` — never a parse ("42") or a truncation (1.5).
@@ -431,10 +431,10 @@ final class OptimizelyFeatureProvider private[optimizely] (
   //      HTTP client, which is closed by then, and throw — bug observed by OptimizelyProviderLifecycleSpec.
   //   2. Targeting key — caller-supplied context error; only meaningful once the provider is actually usable.
   //   3. `optimizely.isValid` — defence-in-depth in case state says READY but the SDK silently went invalid.
-  /** Sends the call to Optimizely as a conversion for the context's user (#454). Fails — so `FeatureFlags.track` fails
-    * with a `FeatureFlagError` — when the provider is not ready, when the context has no targeting key (Optimizely
-    * would record user ""), or when the datafile has no event with this key (Optimizely would drop it with an INFO
-    * log). A factory-built provider only delivers conversions once its client has an event dispatcher (#453).
+  /** Sends the call to Optimizely as a conversion for the context's user. Fails — so `FeatureFlags.track` fails with a
+    * `FeatureFlagError` — when the provider is not ready, when the context has no targeting key (Optimizely would
+    * record user ""), or when the datafile has no event with this key (Optimizely would drop it with an INFO log). A
+    * factory-built provider only delivers conversions once its client has an event dispatcher.
     */
   override def track(
     eventName: String,
@@ -456,7 +456,7 @@ final class OptimizelyFeatureProvider private[optimizely] (
   private def decide(key: String, ctx: OFEvaluationContext): Either[String, OptimizelyDecision] = {
     // Extract only the targeting key up front — cheap — and gate on it before normalizing attributes, so the
     // NOT_READY / missing-key / invalid short-circuits don't pay for a full attribute conversion whose result is
-    // discarded (#266).
+    // discarded.
     val userId = ContextTransformer.userId(ctx)
     val state  = stateRef.get()
     // STALE is an evaluable state per OpenFeature semantics: the provider keeps serving the last-known (aging)
@@ -478,8 +478,7 @@ final class OptimizelyFeatureProvider private[optimizely] (
     * `FLAG_KEY_INVALID` symbol so a future formatting tweak doesn't silently re-break this path.
     */
   /** A CMAB experiment whose decision could not be fetched comes back with no variation and an error reason ("Failed to
-    * fetch CMAB data for experiment …", SDK 4.6). That is an evaluation error, not a decision to serve the default
-    * (#474).
+    * fetch CMAB data for experiment …", SDK 4.6). That is an evaluation error, not a decision to serve the default.
     */
   private def cmabFailure(d: OptimizelyDecision): Option[String] =
     if (Option(d.getVariationKey).isDefined) None
@@ -559,7 +558,7 @@ object OptimizelyFeatureProvider {
   )
 
   /** Daemon thread factory for the watchdog. Daemon so a leaked watchdog can never keep the JVM (or a forked test run)
-    * alive — this repo is sensitive to non-daemon thread leaks (see the pre-push hook and #217/#229).
+    * alive — this repo is sensitive to non-daemon thread leaks (see the pre-push hook).
     */
   private val watchdogThreadFactory: ThreadFactory = (r: Runnable) => {
     val t = new Thread(r, "optimizely-staleness-watchdog")
@@ -581,12 +580,12 @@ object OptimizelyFeatureProvider {
     case object Failed extends Lifecycle
   }
 
-  /** Deterministic initial-load suppression (#308): a datafile-update fire emits `PROVIDER_CONFIGURATION_CHANGED` iff
-    * the current datafile revision differs from the revision the provider initialized with. A null `initialRevision`
-    * (the initial-load fire arriving before init captured the revision) or an equal revision (the same initial
-    * datafile, including a post-READY late delivery of the initial-load notification) is suppressed; a null
-    * `currentRevision` (revision indeterminate) is suppressed rather than risk a spurious emit. Only a genuinely
-    * different revision emits.
+  /** Deterministic initial-load suppression: a datafile-update fire emits `PROVIDER_CONFIGURATION_CHANGED` iff the
+    * current datafile revision differs from the revision the provider initialized with. A null `initialRevision` (the
+    * initial-load fire arriving before init captured the revision) or an equal revision (the same initial datafile,
+    * including a post-READY late delivery of the initial-load notification) is suppressed; a null `currentRevision`
+    * (revision indeterminate) is suppressed rather than risk a spurious emit. Only a genuinely different revision
+    * emits.
     */
   private[optimizely] def shouldEmitConfigChange(initialRevision: String, currentRevision: String): Boolean =
     initialRevision != null && currentRevision != null && currentRevision != initialRevision

@@ -17,8 +17,8 @@ import dev.openfeature.sdk.multiprovider.FirstSuccessfulStrategy
 import java.util.concurrent.TimeoutException
 import java.util.concurrent.atomic.AtomicBoolean
 
-/** Gate tests for #253's config-driven factory (`FeatureFlags.fromProvider(provider, config)`). Each test exercises a
-  * combination the pre-#253 factory-overload surface could not express (T1-T5), plus a behavioral-equivalence pin
+/** Gate tests for the config-driven factory (`FeatureFlags.fromProvider(provider, config)`). Each test exercises a
+  * combination the earlier factory-overload surface could not express (T1-T5), plus a behavioral-equivalence pin
   * between the deprecated forwards and the config path (T6).
   *
   * Isolated `OpenFeatureAPI` instances (`OpenFeatureAPI.createIsolated()`) + the `private[openfeature]`
@@ -125,7 +125,7 @@ object FactoryConfigSpec extends ZIOSpecDefault {
         }
       } yield result
     } @@ withLiveClock,
-    test("T4a: Auto + domain — closing the config-layer scope does NOT shut the shared api (#243)") {
+    test("T4a: Auto + domain — closing the config-layer scope does NOT shut the shared api") {
       val shutA = new AtomicBoolean(false)
       val shutB = new AtomicBoolean(false)
       val api   = OpenFeatureAPI.createIsolated()
@@ -329,8 +329,8 @@ object FactoryConfigSpec extends ZIOSpecDefault {
       }
       .orDie
 
-  /** T6, part 2 (#253 review): the first two suite entries pin two representative forwards; these pin the remaining 12
-    * so every deprecated forward is covered, per the design's "each deprecated forward" gate.
+  /** T6, part 2: the first two suite entries pin two representative forwards; these pin the remaining 12 so every
+    * deprecated forward is covered, per the design's "each deprecated forward" gate.
     */
   @scala.annotation.nowarn("cat=deprecation")
   private def t6RemainingForwardsSuite =

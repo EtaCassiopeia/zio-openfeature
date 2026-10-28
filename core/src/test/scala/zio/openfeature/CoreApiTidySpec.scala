@@ -13,7 +13,7 @@ import dev.openfeature.sdk.{
   Value
 }
 
-// #444 (build subset): small API fixes — lazily read provider name in `on`, stackless provider-reported causes,
+// Small API fixes — lazily read provider name in `on`, stackless provider-reported causes,
 // EvaluationOptions on the total tier and `value`, a shared stopwatch for the timing hooks, Long/Instant builder
 // overloads.
 object CoreApiTidySpec extends ZIOSpecDefault {
@@ -54,7 +54,7 @@ object CoreApiTidySpec extends ZIOSpecDefault {
 
   private val fast = EvaluationOptions.empty.withTimeout(50.millis)
 
-  def spec = suite("CoreApiTidySpec (#444)")(
+  def spec = suite("CoreApiTidySpec")(
     test("an on(...) registration built before a swap reports the provider current when it runs") {
       ZIO.scoped {
         for {

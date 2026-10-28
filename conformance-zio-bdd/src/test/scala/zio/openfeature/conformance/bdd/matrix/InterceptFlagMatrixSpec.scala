@@ -8,7 +8,7 @@ import zio.bdd.gherkin.ScenarioMetadata
 import zio.openfeature._
 import zio.openfeature.optimizely.matrix.{InterceptHarness, RecommendationService}
 
-/** Rift intercept (TLS-MITM) suite — exercises the SDK's REAL default-CDN transport path (#280).
+/** Rift intercept (TLS-MITM) suite — exercises the SDK's REAL default-CDN transport path.
   *
   * Unlike [[FlagMatrixSpec]] / [[MatrixHarness]], which override `datafileUrl` to a mock URL and fetch over
   * plain HTTP, this suite leaves `datafileUrl = None` so the Optimizely SDK builds its production URL
@@ -18,7 +18,7 @@ import zio.openfeature.optimizely.matrix.{InterceptHarness, RecommendationServic
   *
   * `scenarioParallelism = 1`: the intercept listener is per-engine, and each scenario stands up its own intercept
   * engine + per-provider `OptimizelyHttpClient` (trusting Rift's CA, routing through the intercept listener) — no
-  * JVM-global proxy/truststore, so nothing leaks across suites (#278).
+  * JVM-global proxy/truststore, so nothing leaks across suites.
   */
 @Suite(
   featureDirs         = Array("conformance-zio-bdd/src/test/resources/features/optimizely-intercept"),

@@ -14,8 +14,8 @@ import zio.openfeature.internal.ProviderEvaluations
 import zio.openfeature.testkit.DifferentialLaws._
 import zio.test._
 
-/** The harness itself (#467): a deliberately wrong oracle is caught, a deviation explains it, and a deviation that
-  * explains nothing fails as stale. Shared test source dir, so braces only.
+/** The harness itself: a deliberately wrong oracle is caught, a deviation explains it, and a deviation that explains
+  * nothing fails as stale. Shared test source dir, so braces only.
   */
 object DifferentialLawsSpec extends ZIOSpecDefault {
 

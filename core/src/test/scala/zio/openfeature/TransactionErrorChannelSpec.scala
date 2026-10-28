@@ -7,7 +7,7 @@ import zio.openfeature.internal.ProviderEvaluations
 import dev.openfeature.sdk.{EvaluationContext => OFEvaluationContext, EventProvider, Metadata, ProviderState, Value}
 import dev.openfeature.sdk.OpenFeatureAPI
 
-/** #255: on Scala 2.13 `transaction`'s error channel erased to `Any` (no union types), disabling typed recovery.
+/** On Scala 2.13 `transaction`'s error channel erased to `Any` (no union types), disabling typed recovery.
   * `transactionEither` gives a uniform, cross-version typed channel `Either[E, FeatureFlagError]` — `Left` is the
   * caller's own error, `Right` is a transaction-machinery error — while `transaction`'s legacy behavior is preserved.
   *

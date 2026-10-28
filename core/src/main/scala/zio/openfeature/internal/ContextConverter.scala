@@ -9,7 +9,7 @@ import java.time.Instant
 private[openfeature] object ContextConverter {
 
   /** The SDK stores the targeting key as the attribute of this name (`MutableContext.setTargetingKey` writes it,
-    * `getTargetingKey` reads it), so the name is reserved at this boundary (#497).
+    * `getTargetingKey` reads it), so the name is reserved at this boundary.
     */
   private val TargetingKey: String = OFEvaluationContext.TARGETING_KEY
 
@@ -19,7 +19,7 @@ private[openfeature] object ContextConverter {
     * When `ctx.targetingKey` is `None`, a `StringValue` attribute of that name becomes the key; any other is dropped.
     */
   def toOpenFeature(ctx: EvaluationContext): OFEvaluationContext = {
-    // Built from a map of `Value`s rather than `MutableContext.add`, which has no Long overload (#471).
+    // Built from a map of `Value`s rather than `MutableContext.add`, which has no Long overload.
     val attributes = ctx.attributes.collect {
       case (k, v) if k != TargetingKey => k -> attributeToValue(v)
     }
@@ -35,8 +35,8 @@ private[openfeature] object ContextConverter {
     case AttributeValue.BoolValue(b)   => new Value(b)
     case AttributeValue.StringValue(s) => new Value(s)
     case AttributeValue.IntValue(i)    => new Value(Integer.valueOf(i))
-    // An int-range long goes as Integer, so provider targeting rules that do `instanceof Integer` match (#249); any
-    // other long as java.lang.Long, exactly (#471).
+    // An int-range long goes as Integer, so provider targeting rules that do `instanceof Integer` match; any
+    // other long as java.lang.Long, exactly.
     case AttributeValue.LongValue(l) =>
       if (l.isValidInt) new Value(Integer.valueOf(l.toInt)) else new Value(java.lang.Long.valueOf(l))
     case AttributeValue.DoubleValue(d)   => new Value(d)
@@ -54,7 +54,7 @@ private[openfeature] object ContextConverter {
   /** Convert an OpenFeature SDK EvaluationContext to a zio-openfeature EvaluationContext.
     *
     * The SDK's `targetingKey` entry is its storage of the key, not a user attribute, so it is left out of the
-    * attributes (#497).
+    * attributes.
     */
   def fromOpenFeature(ctx: OFEvaluationContext): EvaluationContext = {
     val targetingKey = Option(ctx.getTargetingKey)
@@ -74,7 +74,7 @@ private[openfeature] object ContextConverter {
     if (value.isBoolean) AttributeValue.BoolValue(value.asBoolean())
     else if (value.isString) AttributeValue.StringValue(value.asString())
     else if (value.isNumber) value.asObject() match {
-      // Integral boxes convert exactly; only other numbers go through the whole-double check below (#471).
+      // Integral boxes convert exactly; only other numbers go through the whole-double check below.
       case i: java.lang.Integer => AttributeValue.IntValue(i.intValue)
       case l: java.lang.Long =>
         if (l.longValue.isValidInt) AttributeValue.IntValue(l.intValue) else AttributeValue.LongValue(l.longValue)
@@ -100,7 +100,7 @@ private[openfeature] object ContextConverter {
   private def doubleToAttribute(num: Double): AttributeValue = {
     // Long.MaxValue.toDouble rounds up to 2^63 (strictly greater than Long.MaxValue), so .toLong on
     // out-of-range doubles silently saturates. Strict `<` on the upper bound rejects the saturation point.
-    // -0.0 == 0.0, so it is excluded explicitly: as an integer it would lose its sign (#469). Tested via 1 / -0.0 rather
+    // -0.0 == 0.0, so it is excluded explicitly: as an integer it would lose its sign. Tested via 1 / -0.0 rather
     // than a `-0.0` literal, which stryker4s re-prints as `0.0`.
     val negativeZero = num == 0.0 && (1.0 / num).isNegInfinity
     if (!negativeZero && num == num.toLong.toDouble && num >= Long.MinValue.toDouble && num < Long.MaxValue.toDouble) {

@@ -19,10 +19,10 @@ import zio.test.TestAspect.{samples, sequential, timeout, withLiveClock}
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.atomic.AtomicReference
 
-// #449 as a property: lookups parked inside the delegate (generated count, keys and duplication) are in flight when the
-// cache is invalidated, by `invalidateAll` or by a delegate configuration-change event. Evaluations started after the
-// invalidation, and every read after the parked lookups finish, must see the post-invalidation value: nothing computed
-// before the invalidation is served after it.
+// The invalidation race as a property: lookups parked inside the delegate (generated count, keys and duplication) are
+// in flight when the cache is invalidated, by `invalidateAll` or by a delegate configuration-change event. Evaluations
+// started after the invalidation, and every read after the parked lookups finish, must see the post-invalidation value:
+// nothing computed before the invalidation is served after it.
 object CachingInvalidationPropertySpec extends ZIOSpecDefault {
 
   private val Old = "old"
@@ -78,7 +78,7 @@ object CachingInvalidationPropertySpec extends ZIOSpecDefault {
   private def eval(cache: CachingProvider, key: Int): Task[String] =
     ZIO.attemptBlocking(cache.getStringEvaluation(s"flag-$key", "default", ctx).getValue)
 
-  def spec = suite("CachingInvalidationPropertySpec (#449)")(
+  def spec = suite("CachingInvalidationPropertySpec")(
     test("no value computed before an invalidation is served after it completes") {
       check(schedules) { case Schedule(parkedKeys, postKeys, viaEvent) =>
         val delegate = new LatchedProvider(parkedKeys.distinct.size)

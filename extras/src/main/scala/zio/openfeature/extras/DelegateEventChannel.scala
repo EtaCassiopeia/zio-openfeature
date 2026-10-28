@@ -2,7 +2,7 @@ package zio.openfeature.extras
 
 import dev.openfeature.sdk.{EventProvider, EventProviderBridge, FeatureProvider, ProviderEvent, ProviderEventDetails}
 
-/** A wrapper's hold on its delegate's event channel (#450), shared by `CachingProvider` and `CircuitBreakerProvider`.
+/** A wrapper's hold on its delegate's event channel, shared by `CachingProvider` and `CircuitBreakerProvider`.
   *
   * Empty for a delegate that is not an `EventProvider`, so "attached to something that cannot emit" is unrepresentable.
   * `attach` records the attachment only once it has succeeded, and `detach` releases only an attachment this channel

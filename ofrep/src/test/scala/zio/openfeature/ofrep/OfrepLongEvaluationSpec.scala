@@ -11,7 +11,7 @@ import zio.test.TestAspect.{sequential, timeout, withLiveClock}
 
 import java.util.concurrent.{ExecutorService, Executors, ThreadFactory}
 
-/** `FeatureFlags.long` over the OFREP provider (#529). The contrib provider has no `getLongEvaluation`, so the SDK's
+/** `FeatureFlags.long` over the OFREP provider. The contrib provider has no `getLongEvaluation`, so the SDK's
   * double-backed default used to answer every JSON integer flag with TYPE_MISMATCH. `OFREPFeatureProvider` resolves
   * long reads through the object resolver: JSON integers in the `Long` range are served exactly, anything else is
   * TYPE_MISMATCH with the default, and server errors keep their meaning.
@@ -145,7 +145,7 @@ object OfrepLongEvaluationSpec extends ZIOSpecDefault {
         }
       }
     },
-    test("401 fails the typed tier with Unauthorized (#498) and serves the default on the total tier") {
+    test("401 fails the typed tier with Unauthorized and serves the default on the total tier") {
       ZIO.scoped {
         for {
           s     <- server

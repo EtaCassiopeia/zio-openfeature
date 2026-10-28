@@ -7,8 +7,8 @@ import zio.openfeature.internal.ProviderEvaluations
 import dev.openfeature.sdk.{EvaluationContext => OFEvaluationContext, EventProvider, Metadata, ProviderState, Value}
 import dev.openfeature.sdk.OpenFeatureAPI
 
-/** #387: `currentEvaluatedFlags` answers `Map.empty` both outside any transaction and inside one that has evaluated
-  * nothing yet — so audit code that moved outside the transaction boundary would silently record empty flag sets.
+/** `currentEvaluatedFlags` answers `Map.empty` both outside any transaction and inside one that has evaluated nothing
+  * yet — so audit code that moved outside the transaction boundary would silently record empty flag sets.
   * `transactionEvaluations` makes the distinction visible in the type: `None` iff not in a transaction.
   *
   * The method is a concrete default on the `FeatureFlags` trait (so an external implementor is not broken and no MiMa

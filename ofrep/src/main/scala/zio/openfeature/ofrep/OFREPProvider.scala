@@ -13,7 +13,7 @@ import scala.jdk.CollectionConverters._
   * `OfrepProviderOptions`. Prefer this over hand-building `OfrepProviderOptions`: it exposes only the safe knobs, takes
   * plain Scala types (no Guava `ImmutableMap`/`ImmutableList`), and — critically — the factories that consume it always
   * wire in a daemon executor via [[OFREPProvider.daemonOptionsBuilder]] and validate before building, so the contrib
-  * default non-daemon 5-thread pool (a JVM-exit-blocking footgun, see issue #229) is never spawned by this path.
+  * default non-daemon 5-thread pool (a JVM-exit-blocking footgun) is never spawned by this path.
   *
   * @param baseUrl
   *   OFREP endpoint base URL (validated — see
@@ -42,7 +42,7 @@ final case class OFREPProviderConfig(
   * evaluation. The factories here sugar over the contrib provider's static constructors; [[make]], [[scoped]] and
   * [[layer]] return an [[OFREPFeatureProvider]] (a `FeatureProvider`) that you pass to `FeatureFlags.fromProvider` or
   * `FeatureFlags.fromProviderAsync` like any other provider. It wraps the contrib provider (reachable as `.underlying`)
-  * and adds the `getLongEvaluation` the contrib one lacks, so `FeatureFlags.long` reads integer flags exactly (#529).
+  * and adds the `getLongEvaluation` the contrib one lacks, so `FeatureFlags.long` reads integer flags exactly.
   *
   * '''Recommended''': use [[make]] / [[layer]] for validated construction. The legacy throwing factories (`apply`,
   * `fromOptions`) are kept for backwards compatibility but flagged deprecated — they accept any `baseUrl` string and
@@ -64,7 +64,7 @@ object OFREPProvider {
   // `pool-N-thread-K`). Non-daemon threads block JVM exit, and `OfrepProviderOptions.builder().build()` spawns that
   // pool eagerly — so any path that builds options but never constructs/shuts down a provider (e.g. a validation
   // rejection) orphans the pool and can hang `sbt +test`. We always supply our own daemon executor so the contrib
-  // default is never instantiated by code that goes through this wrapper. See issue #229.
+  // default is never instantiated by code that goes through this wrapper.
   private val counter = new AtomicInteger(0)
   private val daemonThreadFactory: ThreadFactory = (r: Runnable) => {
     val t = new Thread(r, s"zio-openfeature-ofrep-${counter.incrementAndGet()}")

@@ -10,7 +10,7 @@ object BehaviorControlsSpec extends ZIOSpecDefault {
 
   def spec = suite("Behavior Controls")(
     suite("imperative API")(
-      // Since #388 the typed tier fails on a provider-reported error code; the total tier serves the default and keeps
+      // The typed tier fails on a provider-reported error code; the total tier serves the default and keeps
       // the code on the resolution. Each control is asserted on both.
       test("setFailing causes a typed failure and an error resolution") {
         for {
@@ -87,7 +87,7 @@ object BehaviorControlsSpec extends ZIOSpecDefault {
           elapsed = Duration.fromNanos(end - start)
         } yield assertTrue(elapsed.toMillis >= 80L)
       },
-      // Recording means "the provider was asked", not "the provider answered" (#457, reversing #106).
+      // Recording means "the provider was asked", not "the provider answered".
       test("failed evaluations are tracked") {
         for {
           tp    <- ZIO.service[TestFeatureProvider]
@@ -100,7 +100,7 @@ object BehaviorControlsSpec extends ZIOSpecDefault {
       }
     ).provide(testLayer),
     suite("TestAspect API")(
-      // Since #388 the typed tier fails on a provider-reported error code, so a behaviour control that makes the provider
+      // The typed tier fails on a provider-reported error code, so a behaviour control that makes the provider
       // answer with a code is observed as a typed failure there — and as an error-coded resolution on the total tier.
       test("withFailures causes a typed failure on the typed tier and an error resolution on the total tier") {
         for {
@@ -157,7 +157,7 @@ object BehaviorControlsSpec extends ZIOSpecDefault {
         } yield assertTrue(p == 1.0)
       } @@ TestFeatureProvider.withFailureProbability(2.0)
     ).provide(testLayer),
-    // A test-level aspect restores the config it found, so it never wipes a suite-level aspect's settings (#457).
+    // A test-level aspect restores the config it found, so it never wipes a suite-level aspect's settings.
     (suite("nested aspects")(
       test("an inner withDelay keeps the outer withErrorMode, during and after the test") {
         for {

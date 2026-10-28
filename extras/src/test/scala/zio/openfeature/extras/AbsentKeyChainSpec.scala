@@ -6,9 +6,9 @@ import zio._
 import zio.openfeature.{FeatureFlagError, FeatureFlags}
 import zio.test._
 
-/** #355: `HoconProvider` and `EnvVarProvider` answered an absent key with `reason = DEFAULT` and no error code, which
-  * reads to a `MultiProvider` chain as "I answered" — so the chain stopped at the first provider instead of trying the
-  * next one. An absent key is `FLAG_NOT_FOUND`.
+/** `HoconProvider` and `EnvVarProvider` answered an absent key with `reason = DEFAULT` and no error code, which reads
+  * to a `MultiProvider` chain as "I answered" — so the chain stopped at the first provider instead of trying the next
+  * one. An absent key is `FLAG_NOT_FOUND`.
   *
   * The chain test below is the load-bearing one: the unit assertions pin the reason each provider reports, but only the
   * chain shows the user-visible consequence, and it is what settles what `FirstMatchStrategy` actually does with a
@@ -33,8 +33,8 @@ object AbsentKeyChainSpec extends ZIOSpecDefault {
     *
     * Up to Java SDK 1.22.x a `MultiProvider` kept only the last of two same-named providers, so a first draft of this
     * spec that used two `HoconProvider`s was worthless: the fall-through test passed before the fix (because the
-    * "first" provider had been discarded, not because fall-through worked). SDK 1.23.0 keeps both (#423); distinct
-    * types stay so the spec does not depend on that.
+    * "first" provider had been discarded, not because fall-through worked). SDK 1.23.0 keeps both; distinct types stay
+    * so the spec does not depend on that.
     *
     * `EnvVarProvider` maps a flag key to `FF_` + uppercase-with-underscores, hence the `FF_`-prefixed lookup keys.
     */
@@ -112,7 +112,7 @@ object AbsentKeyChainSpec extends ZIOSpecDefault {
       ) {
         // Deliberately exercised through `FeatureFlags`, not the raw provider. When every provider reports
         // FLAG_NOT_FOUND the chain itself has no value to give and answers null — substituting the caller's default
-        // is the SDK client's job, not the provider's. Since #388 the typed tier surfaces that code as a typed
+        // is the SDK client's job, not the provider's. The typed tier surfaces that code as a typed
         // `FlagNotFound` and the total tier serves the caller's default; asserting both here is what proves the chain
         // reports the code truthfully rather than ending in a DEFAULT-reason answer.
         val chain = FeatureFlags.multiProvider(List(hoconWithoutKey, envWithoutKeys))

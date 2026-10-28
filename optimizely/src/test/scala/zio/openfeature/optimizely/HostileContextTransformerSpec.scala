@@ -6,10 +6,10 @@ import zio.test._
 import java.time.Instant
 import scala.jdk.CollectionConverters._
 
-/** Hostile-input sweeps through `ContextTransformer.attributes` (#469): the normalisation that feeds Optimizely's
-  * audience evaluator. Scalars must arrive with their exact value and an Optimizely-matchable type (`String`,
-  * `Boolean`, `Number`); collections are dropped by design (#266) and must stay dropped however hostile their content.
-  * Optimizely variable READS are not swept here: their typing is being changed by #456.
+/** Hostile-input sweeps through `ContextTransformer.attributes`: the normalisation that feeds Optimizely's audience
+  * evaluator. Scalars must arrive with their exact value and an Optimizely-matchable type (`String`, `Boolean`,
+  * `Number`); collections are dropped by design and must stay dropped however hostile their content. Optimizely
+  * variable READS are not swept here: they are typed strictly, covered by OptimizelyVariableTypeSpec.
   */
 object HostileContextTransformerSpec extends ZIOSpecDefault {
 
@@ -60,7 +60,7 @@ object HostileContextTransformerSpec extends ZIOSpecDefault {
 
   private val hostileLong: Gen[Any, Long] = Gen.oneOf(Gen.fromIterable(boundaryLongs), Gen.long)
 
-  def spec = suite("ContextTransformer.attributes hostile input (#469)")(
+  def spec = suite("ContextTransformer.attributes hostile input")(
     test("a string value or key survives exactly, including empty, emoji and control characters") {
       check(hostileString, hostileString) { (key, value) =>
         val out = ContextTransformer.attributes(new MutableContext("u").add(key, value))

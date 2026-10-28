@@ -14,8 +14,8 @@ import dev.openfeature.sdk.{
   Value
 }
 
-// #434: interrupting setProvider mid-swap must not leave status stuck at NotReady or the refs half rolled back. The
-// swap body runs to its (bounded, #433) outcome; waiting for the swap lock stays interruptible.
+// Interrupting setProvider mid-swap must not leave status stuck at NotReady or the refs half rolled back. The
+// swap body runs to its (bounded) outcome; waiting for the swap lock stays interruptible.
 object SetProviderInterruptSpec extends ZIOSpecDefault {
 
   private class BoolProvider(name: String, value: Boolean) extends FeatureProvider {
@@ -69,7 +69,7 @@ object SetProviderInterruptSpec extends ZIOSpecDefault {
       _           <- interrupter.join
     } yield ()
 
-  def spec = suite("SetProviderInterruptSpec (#434)")(
+  def spec = suite("SetProviderInterruptSpec")(
     test("interrupted while the new provider initializes, then it succeeds: Ready on the new provider") {
       val next = new GatedProvider("next", failAfterRelease = false)
       ZIO.scoped {

@@ -17,8 +17,8 @@ import dev.openfeature.sdk.{
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.atomic.AtomicReference
 
-/** Covers issues #120 (init timeout) and #121 (verify sync init succeeded). The minimal test providers below avoid
-  * depending on testkit so the spec can live in `core`.
+/** Covers the init timeout and verification that sync init succeeded. The minimal test providers below avoid depending
+  * on testkit so the spec can live in `core`.
   */
 object ProviderInitHardeningSpec extends ZIOSpecDefault {
 
@@ -128,7 +128,7 @@ object ProviderInitHardeningSpec extends ZIOSpecDefault {
         )
       )
     } @@ withLiveClock,
-    test("[#180] provider is shut down when sync init times out") {
+    test("provider is shut down when sync init times out") {
       val latch        = new CountDownLatch(1)
       val shutdownSeen = new java.util.concurrent.atomic.AtomicInteger(0)
       val provider = new BlockingInitProvider(latch) {
@@ -161,7 +161,7 @@ object ProviderInitHardeningSpec extends ZIOSpecDefault {
         shutdownSeen.get() >= 1
       )
     } @@ withLiveClock,
-    test("[#180] provider is shut down when it reports ERROR after init") {
+    test("provider is shut down when it reports ERROR after init") {
       val shutdownSeen = new java.util.concurrent.atomic.AtomicInteger(0)
       val provider = new InitToErrorProvider {
         override def shutdown(): Unit = {

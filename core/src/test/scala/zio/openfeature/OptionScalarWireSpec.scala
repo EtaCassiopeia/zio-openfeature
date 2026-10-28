@@ -17,7 +17,7 @@ import dev.openfeature.sdk.{
   Value
 }
 
-/** #439: evaluation dispatches on the typed [[WireType]] instead of a free-form string.
+/** Evaluation dispatches on the typed [[WireType]] instead of a free-form string.
   *
   *   - `Option[A]` over a scalar `A` resolves through `A`'s resolver. A `None` default is sent as `A`'s zero and read
   *     back as `None` when the provider fell back to it (an error code, or reason `DEFAULT`/`DISABLED`/`ERROR` with the
@@ -43,7 +43,7 @@ object OptionScalarWireSpec extends ZIOSpecDefault {
       p => if (p == Phase.DualWrite) "dual_write" else "off"
     )
 
-  // A legacy instance that spells its wire type in lower case. Before #439 that silently meant "object".
+  // A legacy instance that spells its wire type in lower case. Previously that silently meant "object".
   final case class Code(s: String)
   implicit val codeFlagType: FlagType[Code] = new FlagType[Code] {
     def typeName: String                         = "Code"
@@ -241,7 +241,7 @@ object OptionScalarWireSpec extends ZIOSpecDefault {
     ),
     suite("a None default reads back as None when the provider fell back to it")(
       test("FLAG_NOT_FOUND hands hooks None (not Some(false)) with the error code") {
-        // The typed and details tiers fail on the code (#394); the resolution they fail from is what hooks see.
+        // The typed and details tiers fail on the code; the resolution they fail from is what hooks see.
         withFlags("not-found") { (_, ff) =>
           for {
             seen <- Ref.make[Option[FlagResolution[_]]](None)

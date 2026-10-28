@@ -113,7 +113,7 @@ object CircuitBreakerProviderSpec extends ZIOSpecDefault {
     override def nanos(): Long = currentNanos.get()
   }
 
-  /** A delegate that implements only `FeatureProvider`, never `EventProvider` — the shape #379 is about.
+  /** A delegate that implements only `FeatureProvider`, never `EventProvider` — the shape a plain provider has.
     *
     * Deliberately overrides neither `getState` nor `getLongEvaluation`: it stands in for a pre-1.22 third-party
     * provider, so it exercises the SDK's `READY` state default and its double-backed long default.
@@ -285,7 +285,7 @@ object CircuitBreakerProviderSpec extends ZIOSpecDefault {
         val result     = cb.getBooleanEvaluation("flag", false, ctx)
         assertTrue(result.getValue == true)
       } @@ TestAspect.withLiveClock,
-      test("an infinite timeout evaluates the delegate on the calling thread (#427)") {
+      test("an infinite timeout evaluates the delegate on the calling thread") {
         val seen = new AtomicReference[Thread]()
         val underlying = new FailableProvider(Map("flag" -> true)) {
           override def getBooleanEvaluation(
@@ -584,10 +584,10 @@ object CircuitBreakerProviderSpec extends ZIOSpecDefault {
         assertTrue(stateChecks.get() == 5)
       }
     ),
-    suite("Delegate event propagation (#176)")(
+    suite("Delegate event propagation")(
       test("delegate PROVIDER_ERROR event trips the circuit without an evaluation failure") {
         // Asserts on the breaker directly rather than through an evaluation (which would also poll the delegate's state;
-        // since #447 a polled READY no longer resets an event-driven trip, see CircuitBreakerTripSourceSpec).
+        // a polled READY no longer resets an event-driven trip, see CircuitBreakerTripSourceSpec).
         class EmittingProvider extends FailableProvider(Map("flag" -> true)) {
           def fireError(): Unit = {
             emitProviderError(dev.openfeature.sdk.ProviderEventDetails.builder().message("boom").build())
@@ -944,7 +944,7 @@ object CircuitBreakerProviderSpec extends ZIOSpecDefault {
         assertTrue(elapsed < 1000L)
       } @@ TestAspect.withLiveClock
     ),
-    suite("Plain FeatureProvider delegate (#379)")(
+    suite("Plain FeatureProvider delegate")(
       test("apply accepts a plain FeatureProvider and forwards evaluations") {
         val delegate = new PlainProvider(Map("flag" -> true))
         val cb       = CircuitBreakerProvider(delegate)

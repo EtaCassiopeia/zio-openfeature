@@ -35,7 +35,7 @@ object Fault {
   final case class Delay(duration: Duration, andThen: Fault = Succeed) extends Fault
 
   /** Block until [[FaultyProvider.release]], then call the delegate. `shutdown()` does NOT unblock it: this is a
-    * provider whose `initialize()` ignores shutdown, the shape that wedged the layer in #433.
+    * provider whose `initialize()` ignores shutdown, the shape that wedged the layer.
     */
   case object HangUntilReleased extends Fault
 

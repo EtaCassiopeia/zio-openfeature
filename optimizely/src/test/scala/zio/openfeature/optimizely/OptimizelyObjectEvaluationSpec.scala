@@ -7,7 +7,7 @@ import dev.openfeature.sdk.{ErrorCode, ImmutableContext, MutableStructure, Reaso
 import zio._
 import zio.test._
 
-/** Object-evaluation tests for `OptimizelyFeatureProvider`, guarding the fix for #264.
+/** Object-evaluation tests for `OptimizelyFeatureProvider`, guarding against returning the whole variables map.
   *
   * Before the fix, `getObjectEvaluation` returned the ENTIRE `decision.getVariables` map as a `Structure` and never
   * fell back to the OpenFeature default. It now mirrors the other typed paths: it reads the single variable named by
@@ -45,14 +45,14 @@ object OptimizelyObjectEvaluationSpec extends ZIOSpecDefault {
   }
 
   // Optimizely parses JSON numbers into either Integer or Double depending on which parser it picks: Jackson here
-  // (the module ships it, #431), but a consumer with gson on the classpath gets gson. Accept both representations
+  // (the module ships it), but a consumer with gson on the classpath gets gson. Accept both representations
   // of `10`.
   private def numericEquals(v: Value, expected: Int): Boolean =
     Option(v.asInteger).exists(_.intValue == expected) ||
       Option(v.asDouble).exists(_.doubleValue == expected.toDouble)
 
   def spec: Spec[TestEnvironment & Scope, Any] = suite("OptimizelyFeatureProvider object evaluation")(
-    test("returns the OF default as a TYPE_MISMATCH when the variable is not a JSON object (#264, #456)") {
+    test("returns the OF default as a TYPE_MISMATCH when the variable is not a JSON object") {
       withMockServer { server =>
         // `lifecycle_flag`'s `value` variable is a STRING, so reading it as a Map fails -> the fix must return the
         // supplied default, NOT a Structure wrapping the whole variables map (the old bug).
@@ -62,11 +62,11 @@ object OptimizelyObjectEvaluationSpec extends ZIOSpecDefault {
           val result   = provider.getObjectEvaluation("lifecycle_flag", sentinel, targetedContext)
           val struct   = result.getValue.asStructure
           assertTrue(
-            // Fell back to the caller's default, flagged as a type mismatch (#456)...
+            // Fell back to the caller's default, flagged as a type mismatch...
             result.getReason == Reason.ERROR.name(),
             result.getErrorCode == ErrorCode.TYPE_MISMATCH,
             struct.getValue("sentinel").asString == "dflt",
-            // ...and did NOT smuggle the flag's `value` string back as a whole-map Structure (old #264 behaviour).
+            // ...and did NOT smuggle the flag's `value` string back as a whole-map Structure (the old behaviour).
             struct.getValue("value") == null
           )
         } finally provider.shutdown()

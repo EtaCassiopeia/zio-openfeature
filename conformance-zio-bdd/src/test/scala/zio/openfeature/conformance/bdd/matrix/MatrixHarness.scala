@@ -16,7 +16,7 @@ import zio.openfeature.optimizely.{OptimizelyEvents, OptimizelyProvider, Optimiz
   *
   * The layer is scoped: the mock space is destroyed and the Optimizely client shut down when the
   * scenario ends, so each scenario is fully isolated — no shared state, no polling wait. Rift is an
-  * in-process native engine, so there is no WireMock server or container to manage (#278).
+  * in-process native engine, so there is no WireMock server or container to manage.
   */
 object MatrixHarness {
 
@@ -65,7 +65,7 @@ object MatrixHarness {
                     initWait = java.time.Duration.ofSeconds(5),
                     pollingInterval = Some(java.time.Duration.ofSeconds(3600)), // no polling in tests
                     blockingTimeout = Some(java.time.Duration.ofSeconds(2)),
-                    events = OptimizelyEvents.Disabled // datafile behaviour only; keep events off the network (#453)
+                    events = OptimizelyEvents.Disabled // datafile behaviour only; keep events off the network
                   )
         provider <- OptimizelyProvider.scoped(config).mapError(e => new RuntimeException(e.message))
         domain    = s"flag-matrix-${java.util.UUID.randomUUID()}"

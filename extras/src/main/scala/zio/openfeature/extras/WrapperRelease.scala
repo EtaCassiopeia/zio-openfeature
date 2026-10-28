@@ -2,7 +2,7 @@ package zio.openfeature.extras
 
 import zio._
 
-/** The scope finalizer shared by the wrappers' `scoped` constructors (#451), mirroring OFREP's `releaseOfrep`. */
+/** The scope finalizer shared by the wrappers' `scoped` constructors, mirroring OFREP's `releaseOfrep`. */
 private[extras] object WrapperRelease {
 
   def release(name: String, timeout: Duration)(shutdown: => Unit): UIO[Unit] =

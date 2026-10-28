@@ -20,8 +20,8 @@ import java.util.concurrent.ConcurrentLinkedQueue
 import scala.jdk.CollectionConverters._
 
 /** A wrapper forwards a `MultiProvider`'s `getProviderHooks`, and since Java SDK 1.23.0 those hooks carry the caller's
-  * client metadata to the chain members' own hooks through a thread-local (#423). The members' hooks run once either
-  * way; whether they see the caller's domain depends on whether the wrapper evaluates on the calling thread (#427).
+  * client metadata to the chain members' own hooks through a thread-local. The members' hooks run once either way;
+  * whether they see the caller's domain depends on whether the wrapper evaluates on the calling thread.
   * `DeferredProvider` and `CachingProvider` always do. `CircuitBreakerProvider` does only when `evaluationTimeout` is
   * not finite: a finite timeout needs the delegate on another thread, so the members' hooks see the SDK's fallback
   * domain, "multiprovider".

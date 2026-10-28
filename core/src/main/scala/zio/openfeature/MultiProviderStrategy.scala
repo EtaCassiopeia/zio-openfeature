@@ -17,7 +17,7 @@ object MultiProviderStrategy {
     * A provider signals "I do not have this flag" either by returning the `FLAG_NOT_FOUND` error code or by throwing
     * `FlagNotFoundError`, and only those make the chain move on. A result carrying `reason = DEFAULT` and no error code
     * does '''not''' — it is taken as an answer and ends the chain, which is why a provider must report `FLAG_NOT_FOUND`
-    * for an absent key rather than a default-reason value (#355). Any other evaluation error aborts the chain; use
+    * for an absent key rather than a default-reason value. Any other evaluation error aborts the chain; use
     * [[firstSuccessful]] if you want errors to fall through as well. When every provider reports not-found, the chain
     * answers `FLAG_NOT_FOUND` and the SDK client substitutes the caller's default.
     *
@@ -31,7 +31,7 @@ object MultiProviderStrategy {
     * Note `FLAG_NOT_FOUND` is an error here, so a provider that does not hold the key falls through as well — and if no
     * provider holds it, the chain surfaces `GENERAL` with the aggregated per-provider errors rather than a clean
     * default. That is the shape to expect from the common "primary provider plus a small override provider" pattern
-    * when the primary is failing and the key is not in the override set (#355).
+    * when the primary is failing and the key is not in the override set.
     *
     * A fresh instance is returned each call.
     */

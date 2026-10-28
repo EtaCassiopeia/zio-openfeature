@@ -7,7 +7,7 @@ import zio.test._
 import java.time.Instant
 import scala.jdk.CollectionConverters._
 
-/** Hostile-input property sweeps through the value and context conversions (#469).
+/** Hostile-input property sweeps through the value and context conversions.
   *
   * Tidy fixtures miss untidy bugs: a value past 2^53 passes a round-trip check when both sides round identically. Every
   * property here compares against an INDEPENDENT canonical form (exact `BigDecimal` for numbers, class-tagged strings
@@ -16,7 +16,7 @@ import scala.jdk.CollectionConverters._
   * \+-Infinity, -0.0, subnormals, empty / emoji / control-character / lone-surrogate strings and keys, nulls in lists
   * and maps, deep nesting and very large containers.
   *
-  * Longs beyond +-2^53 are swept separately: they round-trip exactly since #471.
+  * Longs beyond +-2^53 are swept separately: they round-trip exactly.
   */
 object HostileValueSweepSpec extends ZIOSpecDefault {
 
@@ -104,7 +104,7 @@ object HostileValueSweepSpec extends ZIOSpecDefault {
 
   private def asAttr(a: AttributeValue): AttributeValue = a
 
-  /** Attribute trees with hostile leaves and keys. Longs stay within +-2^53 because #471 covers the rest. */
+  /** Attribute trees with hostile leaves and keys. Longs stay within +-2^53 because they round-trip exactly. */
   private def attrGen(depth: Int): Gen[Any, AttributeValue] = {
     val leaf: Gen[Any, AttributeValue] = Gen.oneOf(
       Gen.boolean.map(b => asAttr(AttributeValue.BoolValue(b))),
@@ -240,7 +240,7 @@ object HostileValueSweepSpec extends ZIOSpecDefault {
       if (asList) AttributeValue.ListValue(List(acc)) else AttributeValue.StructValue(Map("k" -> acc))
     }
 
-  def spec = suite("HostileValueSweepSpec (#469)")(
+  def spec = suite("HostileValueSweepSpec")(
     suite("ContextConverter round-trip")(
       test("any string value survives exactly: empty, emoji, control characters, lone surrogates") {
         check(hostileString) { s =>
@@ -249,7 +249,7 @@ object HostileValueSweepSpec extends ZIOSpecDefault {
         }
       },
       test("any string key and the targeting key survive exactly") {
-        // `targetingKey` is the one reserved attribute name (#497); every other key round-trips exactly.
+        // `targetingKey` is the one reserved attribute name; every other key round-trips exactly.
         check(hostileString.filter(_ != "targetingKey"), hostileString) { (key, tk) =>
           val ctx  = EvaluationContext(Some(tk), Map(key -> AttributeValue.BoolValue(true)))
           val back = ContextConverter.fromOpenFeature(ContextConverter.toOpenFeature(ctx))
@@ -273,7 +273,7 @@ object HostileValueSweepSpec extends ZIOSpecDefault {
         val backs = cases.map(l => l -> roundTripAttr(AttributeValue.LongValue(l)).asLong)
         assertTrue(backs.forall { case (l, back) => back.contains(l) })
       },
-      test("every Long beyond +-2^53 survives with its exact value (#471)") {
+      test("every Long beyond +-2^53 survives with its exact value") {
         check(beyondSafeLong) { l =>
           val back = roundTripAttr(AttributeValue.LongValue(l))
           assertTrue(back.asLong.contains(l))
@@ -359,7 +359,7 @@ object HostileValueSweepSpec extends ZIOSpecDefault {
         }
       },
       // Documented on ValueBridge: every number comes back as a Double, so a Long beyond 2^53 does not survive. The
-      // typed Long path no longer crosses here (#333), so this pins the documented behaviour: nearest Double, no more.
+      // typed Long path no longer crosses here, so this pins the documented behaviour: nearest Double, no more.
       test("a Long beyond +-2^53 reads back as its nearest Double (documented ValueBridge contract)") {
         check(beyondSafeLong) { l =>
           val back = ValueBridge.valueToAny(ValueBridge.anyToValue(l))

@@ -18,7 +18,7 @@ import zio.openfeature.optimizely.{OptimizelyEvents, OptimizelyProvider, Optimiz
   *
   * The CDN is simulated by Rift's in-process native HTTP engine — no WireMock server, no mitmproxy
   * container, and no JVM-global `http.proxy*` properties (whose leakage across suites broke sibling
-  * suites under a shared/forked JVM, #278). Each scenario's provider fetches the datafile straight
+  * suites under a shared/forked JVM). Each scenario's provider fetches the datafile straight
   * from the shared space.
   *
   * Per-scenario isolation is still provider-level: each call to [[layerForSharedCdn]] builds a fresh
@@ -76,7 +76,7 @@ object ProxyMatrixHarness {
                    initWait = java.time.Duration.ofSeconds(10),
                    pollingInterval = Some(java.time.Duration.ofSeconds(3600)), // no polling in tests
                    blockingTimeout = Some(java.time.Duration.ofSeconds(5)),
-                   events = OptimizelyEvents.Disabled // datafile behaviour only; keep events off the network (#453)
+                   events = OptimizelyEvents.Disabled // datafile behaviour only; keep events off the network
                  )
         provider <- OptimizelyProvider.scoped(config).mapError(e => new RuntimeException(e.message))
         domain = s"proxy-flag-matrix-${java.util.UUID.randomUUID()}"

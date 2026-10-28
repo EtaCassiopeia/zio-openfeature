@@ -14,10 +14,9 @@ import dev.openfeature.sdk.{
 }
 import java.util.concurrent.CountDownLatch
 
-/** #256 / spec §1.4.10 / §1.1.7: total ("never-fails") evaluation. `*OrDefault` and `resolveOrDefault` MUST NOT fail —
-  * any evaluation error is absorbed into the supplied default. The `UIO` return type is itself the primary guarantee
-  * (the effect has no typed error channel); these tests confirm the runtime behavior on both the success and error
-  * paths.
+/** Spec §1.4.10 / §1.1.7: total ("never-fails") evaluation. `*OrDefault` and `resolveOrDefault` MUST NOT fail — any
+  * evaluation error is absorbed into the supplied default. The `UIO` return type is itself the primary guarantee (the
+  * effect has no typed error channel); these tests confirm the runtime behavior on both the success and error paths.
   */
 object TotalEvaluationSpec extends ZIOSpecDefault {
 

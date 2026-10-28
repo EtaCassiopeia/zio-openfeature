@@ -50,15 +50,15 @@ object FeatureFlagError {
 
   /** The remote provider refused the request because of an authentication or authorization failure (HTTP 401 / 403, an
     * analogous SDK signal, or a provider-reported `GENERAL` evaluation error whose message names an auth failure — the
-    * OFREP contrib provider reports 401/403 this way, #498). Operators should alert on this distinctly from generic
-    * provider errors — it almost always indicates a misconfigured SDK key. Its `toErrorCode` stays `General`, since the
+    * OFREP contrib provider reports 401/403 this way). Operators should alert on this distinctly from generic provider
+    * errors — it almost always indicates a misconfigured SDK key. Its `toErrorCode` stays `General`, since the
     * OpenFeature spec has no auth error code.
     */
   final case class Unauthorized(reason: String) extends FeatureFlagError {
     def message: String = s"Provider rejected request: $reason"
 
     // Write-once, set only by `FeatureFlagError.unauthorized` before the instance escapes. Not a case field, so
-    // `Unauthorized(reason)` patterns, equality and the binary shape stay as they were (#440); and the factory lives
+    // `Unauthorized(reason)` patterns, equality and the binary shape stay as they were; and the factory lives
     // outside the companion because an explicit companion changes its type hierarchy on 2.13. `copy` does not carry it.
     private[FeatureFlagError] var underlying: Option[Throwable] = None
 
@@ -175,7 +175,7 @@ object FeatureFlagError {
 
   // Many HTTP clients' response exceptions (Apache httpclient, Google http-client, ...) carry the status behind a
   // getStatusCode/statusCode accessor. When one is there, it decides — the class name says nothing about which status
-  // it carries, so a 503 must not read as an auth failure (#440).
+  // it carries, so a 503 must not read as an auth failure.
   private val StatusAccessors = List("getStatusCode", "statusCode")
 
   private def httpStatus(t: Throwable): Option[Int] =
@@ -206,12 +206,12 @@ object FeatureFlagError {
   }
 
   // The literal the OFREP contrib provider (0.0.2, internal/Resolver.java) puts in a GENERAL evaluation error for a
-  // 401/403 response. Pinned by OfrepAuthFailureSpec's canary, so a contrib bump that rewords it fails there (#498).
+  // 401/403 response. Pinned by OfrepAuthFailureSpec's canary, so a contrib bump that rewords it fails there.
   private val OfrepAuthPrefix = "authentication/authorization error"
 
   /** Whether an error message names an authentication or authorization failure: a standalone `401`/`403` token,
     * `unauthorized`, `forbidden`, or the OFREP contrib provider's auth literal. Shared by `classify` (thrown
-    * exceptions) and the mapping of provider-reported `GENERAL` evaluation errors, which carry only a message (#498).
+    * exceptions) and the mapping of provider-reported `GENERAL` evaluation errors, which carry only a message.
     */
   private[openfeature] def looksLikeAuthFailure(message: String): Boolean = {
     val msgLow = message.toLowerCase

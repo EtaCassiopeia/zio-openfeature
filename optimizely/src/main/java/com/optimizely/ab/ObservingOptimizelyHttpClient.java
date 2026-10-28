@@ -7,7 +7,7 @@ import org.apache.http.impl.client.CloseableHttpClient;
 
 /**
  * An {@link OptimizelyHttpClient} that observes datafile-fetch outcomes so the OpenFeature provider can detect that
- * datafile polling has stopped succeeding after a successful init (issue #267).
+ * datafile polling has stopped succeeding after a successful init.
  *
  * <p>The Optimizely SDK exposes no public fetch-success/failure callback, but {@code HttpProjectConfigManager} lets you
  * inject a custom {@code OptimizelyHttpClient} via {@code withOptimizelyHttpClient}. This subclass lives in the

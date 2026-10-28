@@ -23,8 +23,8 @@ import dev.openfeature.sdk.{
   * The providers bundled with this library (`HoconProvider`, `EnvVarProvider`, `TestFeatureProvider`,
   * `OptimizelyFeatureProvider`) already implement `getLongEvaluation` natively and never need this wrapper.
   *
-  * `getState` is not forwarded: it is deprecated in 1.22.0 (the SDK owns provider status now, see #332), so the
-  * interface's own default applies rather than this wrapper adding a fresh use of a deprecated API. The delegation law
+  * `getState` is not forwarded: it is deprecated in 1.22.0 (the SDK owns provider status now), so the interface's own
+  * default applies rather than this wrapper adding a fresh use of a deprecated API. The delegation law
   * (`WrapperDelegationSpec`) lists it as handled by the wrapper for the same reason.
   */
 final class IntegerWideningLongProvider(underlying: FeatureProvider) extends FeatureProvider {
@@ -84,7 +84,7 @@ final class IntegerWideningLongProvider(underlying: FeatureProvider) extends Fea
     // null-checks before range-testing, and upstream pins that in `LongDefaultDelegationTest`). Unboxing first
     // would NPE on a path the interface contract allows.
     if (defaultValue != null && defaultValue.longValue().isValidInt) {
-      // The default says nothing about the stored value (#452): a long beyond Int range read with default 0L reaches
+      // The default says nothing about the stored value: a long beyond Int range read with default 0L reaches
       // the integer resolver too. On TYPE_MISMATCH — returned or thrown — retry on the long path, which resolves it.
       val asInt =
         try Some(underlying.getIntegerEvaluation(key, java.lang.Integer.valueOf(defaultValue.intValue()), context))

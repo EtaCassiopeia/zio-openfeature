@@ -7,7 +7,7 @@ import zio._
 import zio.openfeature.{FeatureFlags, FeatureFlagsConfig}
 import zio.test._
 
-// #455: on an unreachable / rejecting CDN, the provider's own "datafile did not load" error is what the caller sees —
+// On an unreachable / rejecting CDN, the provider's own "datafile did not load" error is what the caller sees —
 // not the outer FeatureFlags init timeout — because initialize() no longer blocks on `optimizely.isValid` (which waits
 // up to the SDK's blocking timeout) before its own bounded wait.
 object OptimizelyInitTimeoutSpec extends ZIOSpecDefault {
@@ -15,7 +15,7 @@ object OptimizelyInitTimeoutSpec extends ZIOSpecDefault {
   private def causeText(t: Throwable): String =
     Iterator.iterate(t)(_.getCause).takeWhile(_ != null).take(10).map(e => String.valueOf(e.getMessage)).mkString(" | ")
 
-  def spec = suite("OptimizelyInitTimeoutSpec (#455)")(
+  def spec = suite("OptimizelyInitTimeoutSpec")(
     test("a rejected datafile fetch fails the build with the provider's specific error, within its init wait") {
       val server = new WireMockServer(WireMockConfiguration.options().dynamicPort())
       ZIO.scoped {

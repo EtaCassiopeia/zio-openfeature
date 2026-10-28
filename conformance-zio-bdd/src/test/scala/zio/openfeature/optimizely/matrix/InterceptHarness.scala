@@ -22,7 +22,7 @@ import org.apache.http.impl.client.HttpClients
   *
   * Everything is per-provider-instance — the SDK is handed an `OptimizelyHttpClient` that trusts Rift's CA and
   * routes through the intercept listener. No `javax.net.ssl.trustStore` / `https.proxyHost` system properties are
-  * set, so nothing leaks across suites (the JVM-global-proxy leakage that #278 removed stays gone).
+  * set, so nothing leaks across suites (the JVM-global-proxy leakage stays gone).
   *
   * Lives in package `zio.openfeature.optimizely.matrix` so it can inject the client via the
   * `private[optimizely]` `OptimizelyProvider.scoped(config, httpClient)` seam.
@@ -101,7 +101,7 @@ object InterceptHarness {
                    initWait = java.time.Duration.ofSeconds(10),
                    pollingInterval = Some(java.time.Duration.ofSeconds(3600)),
                    blockingTimeout = Some(java.time.Duration.ofSeconds(5)),
-                   events = OptimizelyEvents.Disabled // datafile behaviour only; keep events off the network (#453)
+                   events = OptimizelyEvents.Disabled // datafile behaviour only; keep events off the network
                  )
         provider <- OptimizelyProvider.scoped(config, Some(optClient)).mapError(e => new RuntimeException(e.message))
         domain    = s"intercept-matrix-${java.util.UUID.randomUUID()}"

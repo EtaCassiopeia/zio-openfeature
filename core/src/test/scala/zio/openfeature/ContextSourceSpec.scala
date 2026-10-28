@@ -13,7 +13,7 @@ import dev.openfeature.sdk.{
   Value
 }
 
-/** #353: `ContextSource` — pull-based ambient evaluation context.
+/** `ContextSource` — pull-based ambient evaluation context.
   *
   * The load-bearing property is the PRECEDENCE SLOT: `global -> transaction -> client -> contextSource -> fiberLocal ->
   * invocation`. Ambient identity must override static client/global context while still losing to `withContext` and to
@@ -63,7 +63,7 @@ object ContextSourceSpec extends ZIOSpecDefault {
       apiOverride = Some(OpenFeatureAPI.createIsolated()),
       evaluationTimeout = Some(5.seconds),
       contextSource = source,
-      recordTracking = true // this spec reads FeatureFlags.trackedEvents (#442)
+      recordTracking = true // this spec reads FeatureFlags.trackedEvents
     )
 
   private def attr(k: String, v: String): EvaluationContext =

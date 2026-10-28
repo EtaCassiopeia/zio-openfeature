@@ -16,8 +16,8 @@ import dev.openfeature.sdk.{
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.atomic.AtomicInteger
 
-/** Init-watchdog escalation (#244): the core fix — a provider that was ever Ready must NOT be Fataled/shut down on a
-  * transient post-Ready error; a never-ready provider is escalated to Fatal, shut down, and reported.
+/** Init-watchdog escalation: the core fix — a provider that was ever Ready must NOT be Fataled/shut down on a transient
+  * post-Ready error; a never-ready provider is escalated to Fatal, shut down, and reported.
   */
 object WatchdogEscalationSpec extends ZIOSpecDefault {
 

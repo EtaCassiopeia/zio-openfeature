@@ -103,7 +103,7 @@ object CachingProviderSpec extends ZIOSpecDefault {
     }
   }
 
-  /** A provider whose every evaluation throws the given exception, to test error-surfacing (#258). */
+  /** A provider whose every evaluation throws the given exception, to test error-surfacing. */
   private def throwing(error: RuntimeException): UIO[FaultyProvider[TestFeatureProvider]] =
     FaultyProvider.make().tap(p => ZIO.foreachDiscard(evaluateOps)(p.script(_, Fault.Throw(error))))
 
@@ -118,7 +118,7 @@ object CachingProviderSpec extends ZIOSpecDefault {
     )
 
   /** A provider that always echoes the caller's default value with reason DEFAULT (as EnvVar/Hocon do for an absent
-    * flag), counting evaluations. Used to prove DEFAULT-reason results are not cached across differing defaults (#259).
+    * flag), counting evaluations. Used to prove DEFAULT-reason results are not cached across differing defaults.
     */
   private class DefaultingProvider extends EventProvider {
     val evaluationCount = new AtomicInteger(0)
@@ -156,7 +156,7 @@ object CachingProviderSpec extends ZIOSpecDefault {
     }
   }
 
-  /** A delegate that implements only `FeatureProvider`, never `EventProvider` — the shape #382 is about.
+  /** A delegate that implements only `FeatureProvider`, never `EventProvider` — the shape a plain provider has.
     *
     * Deliberately defines no `getLongEvaluation`: it stands in for a pre-1.22 third-party provider, so long resolution
     * must fall through its own double-backed SDK default.
@@ -481,7 +481,7 @@ object CachingProviderSpec extends ZIOSpecDefault {
           assertTrue(underlying.evaluationCount.get() == 1)
       }
     ),
-    suite("Delegate event propagation (#176)")(
+    suite("Delegate event propagation")(
       test("delegate CONFIGURATION_CHANGED invalidates the cache") {
         class EmittingProvider extends CountingProvider(Map("flag" -> true)) {
           def fireConfigChanged(): Unit = {
@@ -527,7 +527,7 @@ object CachingProviderSpec extends ZIOSpecDefault {
         } yield assertTrue(seen.contains(dev.openfeature.sdk.ProviderEvent.PROVIDER_STALE))
       }
     ),
-    suite("Failure handling (#175)")(
+    suite("Failure handling")(
       test("a delegate exception is not served from cache — next evaluation retries the delegate") {
         val failFirst = new java.util.concurrent.atomic.AtomicBoolean(true)
         val underlying = new CountingProvider(Map("flag" -> true)) {
@@ -620,7 +620,7 @@ object CachingProviderSpec extends ZIOSpecDefault {
         assertTrue(underlying.evaluationCount.get() == 1)
       }
     ),
-    suite("Plain FeatureProvider delegate (#382)")(
+    suite("Plain FeatureProvider delegate")(
       test("apply accepts a plain FeatureProvider and forwards evaluations") {
         val underlying = new PlainCountingProvider(Map("flag" -> true))
         val cached     = CachingProvider(underlying)
@@ -764,7 +764,7 @@ object CachingProviderSpec extends ZIOSpecDefault {
         } yield assertTrue(underlying.evaluationCount.get() == 1)
       }
     ),
-    suite("cache correctness (#259)")(
+    suite("cache correctness")(
       test("a DEFAULT-reason result is not cached, so differing call-site defaults do not leak") {
         val underlying = new DefaultingProvider
         val cached     = CachingProvider(underlying)
@@ -792,7 +792,7 @@ object CachingProviderSpec extends ZIOSpecDefault {
         )
       }
     ),
-    suite("error surfacing (#258)")(
+    suite("error surfacing")(
       test("a delegate OpenFeatureError surfaces as-is (an Exception), not a zio.FiberFailure") {
         for {
           cached <- throwing(new FlagNotFoundError("flag")).map(p => CachingProvider(p))
@@ -814,7 +814,7 @@ object CachingProviderSpec extends ZIOSpecDefault {
         )
       }
     ),
-    suite("calling thread (#427)")(
+    suite("calling thread")(
       test("a miss evaluates the delegate on the calling thread") {
         val seen = new AtomicReference[Thread]()
         val underlying = new CountingProvider(Map("flag" -> true)) {

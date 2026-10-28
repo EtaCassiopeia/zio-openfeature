@@ -12,7 +12,7 @@ import zio.test._
   *
   * Each test owns its own WireMock instance for isolation; the small per-test startup cost is paid back in
   * test-independence. Tests run sequentially (`TestAspect.sequential`) because the contrib provider 0.0.2's internal
-  * executor handling is order-sensitive — see PR #119 review notes.
+  * executor handling is order-sensitive.
   */
 object OFREPProviderIntegrationSpec extends ZIOSpecDefault {
 

@@ -29,7 +29,7 @@ object RealProviderFaultSpec extends ZIOSpecDefault:
           sdkKey = "fault-test-key",
           datafileUrl = Some("https://cdn.example.com/datafiles/fault-test-key.json"),
           initWait = java.time.Duration.ofSeconds(2),
-          events = OptimizelyEvents.Disabled // datafile behaviour only; keep events off the network (#453)
+          events = OptimizelyEvents.Disabled // datafile behaviour only; keep events off the network
         )
       )
     )

@@ -12,7 +12,7 @@ import java.util.UUID
 import java.util.concurrent.{CountDownLatch, TimeUnit}
 import java.util.concurrent.atomic.{AtomicInteger, AtomicReference}
 
-/** Race and retry tests for `OptimizelyFeatureProvider` covering the three lifecycle defects fixed in #265:
+/** Race and retry tests for `OptimizelyFeatureProvider` covering the three lifecycle defects:
   *   1. A failed `initialize()` leaves the provider retryable (`Failed -> Initialized`) instead of a silent no-op.
   *   1. `shutdown()` racing an in-flight `initialize()` never leaves the provider reporting READY.
   *   1. A handler fire before the provider is READY (the initial datafile load) does not emit a spurious
@@ -26,7 +26,7 @@ object OptimizelyLifecycleRaceSpec extends ZIOSpecDefault {
   private val ValidDatafileV1 = readResource("/test-datafile-with-flag.json")
   private val targetedContext = new ImmutableContext("user-race")
 
-  // Budgets for the #265.1 retry test; `awaitValidDatafile` below explains why recovery is deliberately late.
+  // Budgets for the failed-init retry test; `awaitValidDatafile` below explains why recovery is deliberately late.
   // `RecoveryDelay > RetryInitWait` is the load-bearing relation: it makes the wait a counterfactual rather than
   // belt-and-braces, so deleting the wait fails the test.
   private val RetryInitWait       = java.time.Duration.ofSeconds(2)
@@ -56,7 +56,7 @@ object OptimizelyLifecycleRaceSpec extends ZIOSpecDefault {
 
   /** Blocks until the SDK reports a valid datafile, or the deadline passes; returns whether it recovered.
     *
-    * This is what keeps the retry leg of the #265.1 test off the wall clock (#346). `initialize()` gives the datafile
+    * This is what keeps the retry leg of the failed-init test off the wall clock. `initialize()` gives the datafile
     * only `initWait` to arrive, and that window must contain a whole polling tick — about a second wide, so a
     * multi-second stall of the test JVM (stop-the-world GC, scheduler starvation under a forked-test storm) landing on
     * it exhausted the budget and failed a test whose subject is the `Failed -> Initialized` retry, not its latency.
@@ -74,8 +74,8 @@ object OptimizelyLifecycleRaceSpec extends ZIOSpecDefault {
       awaitValidDatafile(client, deadlineNanos)
     }
 
-  def spec: Spec[TestEnvironment & Scope, Any] = suite("OptimizelyFeatureProvider lifecycle races (#265)")(
-    test("failed init is retryable — a second initialize after the datafile recovers succeeds (#265.1)") {
+  def spec: Spec[TestEnvironment & Scope, Any] = suite("OptimizelyFeatureProvider lifecycle races")(
+    test("failed init is retryable — a second initialize after the datafile recovers succeeds") {
       withMockServer { server =>
         // The datafile source is broken (500) to start; the SDK's continuous poller survives fetch failures (the
         // fetch task catches and logs), so a later re-stub is picked up on a subsequent tick.
@@ -111,7 +111,7 @@ object OptimizelyLifecycleRaceSpec extends ZIOSpecDefault {
           // avoids dropping the poller's keep-alive connections.
           recovery.start()
           // `recovered` pins this test's precondition — the datafile really did come back — not the provider fix
-          // itself; the retry assertions below are what discriminate the #265.1 behaviour.
+          // itself; the retry assertions below are what discriminate the retry behaviour.
           val recovered       = awaitValidDatafile(client, java.lang.System.nanoTime() + RecoveryBudget.toNanos)
           val second          = tryInit(provider) // clean retry from Failed
           val stateAfterRetry = stateOf(provider)
@@ -121,7 +121,7 @@ object OptimizelyLifecycleRaceSpec extends ZIOSpecDefault {
             stateAfterFail == ProviderState.ERROR,
             recoveryFailure.get() == null,
             recovered,
-            // Against the pre-#265 code the retry silently no-ops (matches neither Fresh nor ShutDown) and the
+            // Against the old lifecycle code the retry silently no-ops (matches neither Fresh nor ShutDown) and the
             // provider stays not-ready forever. The fix re-attempts cleanly from the Failed state.
             second.isRight,
             stateAfterRetry == ProviderState.READY,
@@ -133,7 +133,7 @@ object OptimizelyLifecycleRaceSpec extends ZIOSpecDefault {
           finally provider.shutdown()
       }
     },
-    test("handler fire for the initial datafile load emits no CONFIGURATION_CHANGED event (#265.3)") {
+    test("handler fire for the initial datafile load emits no CONFIGURATION_CHANGED event") {
       withMockServer { server =>
         // Serve v1 with a fixed delay so `initialize` registers its handler BEFORE the initial datafile load arrives —
         // the handler therefore genuinely catches the initial-load notification (the case the old code emitted a
@@ -179,11 +179,11 @@ object OptimizelyLifecycleRaceSpec extends ZIOSpecDefault {
           ()
         }
       }
-      // Deterministic since #308: suppression keys on the datafile revision, not READY timing. The initial-load fire
+      // Deterministic: suppression keys on the datafile revision, not READY timing. The initial-load fire
       // carries the same revision the provider initialized with (only v1 is ever served), so it is suppressed whether
       // or not the `optimizely.isValid` fast-path won the READY race — no @@ flaky needed.
     },
-    test("shouldEmitConfigChange suppresses the initial load and emits only genuine revisions (#308)") {
+    test("shouldEmitConfigChange suppresses the initial load and emits only genuine revisions") {
       // Pure discriminator underpinning the fix: emit iff a valid current revision differs from the initial one.
       assertTrue(
         !OptimizelyFeatureProvider.shouldEmitConfigChange(
@@ -195,7 +195,7 @@ object OptimizelyLifecycleRaceSpec extends ZIOSpecDefault {
         OptimizelyFeatureProvider.shouldEmitConfigChange("1", "2")    // genuine later revision -> emit
       )
     },
-    test("shutdown racing initialize never leaves the provider READY (#265.2)") {
+    test("shutdown racing initialize never leaves the provider READY") {
       withMockServer { server =>
         // A delayed datafile keeps initialize in-flight so a concurrent shutdown genuinely interleaves.
         server.stubFor(get(urlEqualTo(DatafilePath)).willReturn(okJson(ValidDatafileV1).withFixedDelay(300)))

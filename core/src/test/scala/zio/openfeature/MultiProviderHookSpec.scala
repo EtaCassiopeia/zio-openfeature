@@ -18,10 +18,11 @@ import dev.openfeature.sdk.{
 import java.util.concurrent.ConcurrentLinkedQueue
 import scala.jdk.CollectionConverters._
 
-/** Since Java SDK 1.23.0 (java-sdk #2005) a `MultiProvider` runs each child provider's own hooks (#423). The SDK hands
-  * those hooks the caller's client metadata through a thread-local that the MultiProvider's `before` hook sets, so the
-  * child evaluation must run on the thread that called the SDK. `FeatureFlags` calls the SDK client once,
-  * synchronously, inside a single blocking effect, which is what these tests pin.
+/** Since Java SDK 1.23.0 (https://github.com/open-feature/java-sdk/issues/2005) a `MultiProvider` runs each child
+  * provider's own hooks. The SDK hands those hooks the caller's client metadata through a thread-local that the
+  * MultiProvider's `before` hook sets, so the child evaluation must run on the thread that called the SDK.
+  * `FeatureFlags` calls the SDK client once, synchronously, inside a single blocking effect, which is what these tests
+  * pin.
   *
   * Shared test source dir → compiles on 2.13 and 3: braces only, no `given`/`using`, no `enum`.
   */

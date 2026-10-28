@@ -4,8 +4,8 @@ import zio._
 import zio.test._
 import zio.stream.ZStream
 
-/** #256: the total (never-fails) methods are concrete on the `FeatureFlags` trait, so they must behave correctly for
-  * ANY `*Details` implementation — including ones that die or get interrupted. The real provider pipeline funnels every
+/** The total (never-fails) methods are concrete on the `FeatureFlags` trait, so they must behave correctly for ANY
+  * `*Details` implementation — including ones that die or get interrupted. The real provider pipeline funnels every
   * failure through `ZIO.attemptBlocking` into the typed channel, so it can never produce a defect; these branches are
   * reachable only via a custom implementation. `BoomFlags` is a minimal such implementation whose `*Details` fail via a
   * configurable `boom` effect (a defect or an interruption).

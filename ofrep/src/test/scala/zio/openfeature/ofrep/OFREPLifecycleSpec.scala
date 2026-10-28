@@ -8,9 +8,9 @@ import zio.test._
 import java.time.Duration
 import java.util.concurrent.{ExecutorService, Executors, ThreadFactory, TimeUnit}
 
-/** Covers the two #268 gaps: the `layer`/`scoped` shutdown finalizer (Fix 1) and the `OFREPProviderConfig` factory (Fix
-  * 2). The load-bearing property throughout is that no construction path leaks a non-daemon pool: if any test here
-  * hangs at suite teardown, a pool was orphaned.
+/** Covers two gaps: the `layer`/`scoped` shutdown finalizer (Fix 1) and the `OFREPProviderConfig` factory (Fix 2). The
+  * load-bearing property throughout is that no construction path leaks a non-daemon pool: if any test here hangs at
+  * suite teardown, a pool was orphaned.
   */
 object OFREPLifecycleSpec extends ZIOSpecDefault {
 

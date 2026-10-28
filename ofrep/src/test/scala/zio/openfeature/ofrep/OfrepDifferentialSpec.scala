@@ -10,14 +10,14 @@ import zio.openfeature.testkit.DifferentialLaws
 import zio.openfeature.testkit.DifferentialLaws._
 import zio.test._
 
-/** The OFREP provider against `TestFeatureProvider` (#526): an in-process WireMock stub serves each generated flag set
-  * in the OFREP wire format (a single-flag success body per key, `404 FLAG_NOT_FOUND` for any other key), and the real
-  * contrib client built by `OFREPProvider.scoped` reads it over HTTP.
+/** The OFREP provider against `TestFeatureProvider`: an in-process WireMock stub serves each generated flag set in the
+  * OFREP wire format (a single-flag success body per key, `404 FLAG_NOT_FOUND` for any other key), and the real contrib
+  * client built by `OFREPProvider.scoped` reads it over HTTP.
   *
   * One stub serves the whole spec; its mappings are replaced for every sample (samples run one after another).
   *
   * The deviations are limits of JSON as a wire format, each with its reason. Anything else is a bug in one of the two
-  * providers. Long reads need none: `OFREPFeatureProvider` serves them from the object resolver, exactly (#529).
+  * providers. Long reads need none: `OFREPFeatureProvider` serves them from the object resolver, exactly.
   */
 object OfrepDifferentialSpec extends ZIOSpecDefault {
 

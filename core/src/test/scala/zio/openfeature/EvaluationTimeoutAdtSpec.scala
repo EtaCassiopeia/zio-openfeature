@@ -15,9 +15,9 @@ import dev.openfeature.sdk.{
 }
 import java.util.concurrent.TimeoutException
 
-/** #251: the per-evaluation timeout is expressed by the `EvaluationTimeout` ADT. `Default` uses the instance's global
-  * timeout (1s unless overridden), `After(d)` bounds a single call, and `Disabled` (via `withoutTimeout`) runs with no
-  * timeout — skipping the timeout scaffolding entirely.
+/** The per-evaluation timeout is expressed by the `EvaluationTimeout` ADT. `Default` uses the instance's global timeout
+  * (1s unless overridden), `After(d)` bounds a single call, and `Disabled` (via `withoutTimeout`) runs with no timeout
+  * — skipping the timeout scaffolding entirely.
   */
 object EvaluationTimeoutAdtSpec extends ZIOSpecDefault {
 

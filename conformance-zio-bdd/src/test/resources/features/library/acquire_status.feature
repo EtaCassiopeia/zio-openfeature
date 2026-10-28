@@ -1,9 +1,9 @@
 Feature: Fallback-first construction reports whether the real provider is live
 
   `fromAcquireAsync` serves a fallback from time zero, so `providerStatus` reads READY before the real
-  provider exists and a readiness probe cannot tell fallback values from real ones. #352/#377 added
-  `AcquireStatus` (Constructing -> Live | Failed) plus an `onSwapped` callback, and #349/#376 added a
-  `verify` step that rejects a candidate which constructed successfully but cannot actually serve —
+  provider exists and a readiness probe cannot tell fallback values from real ones. `AcquireStatus`
+  (Constructing -> Live | Failed) plus an `onSwapped` callback report it, and a
+  `verify` step rejects a candidate which constructed successfully but cannot actually serve —
   the "successful wrong values" case a first-successful chain would otherwise accept silently.
 
   Every scenario here uses `Verify.flagExists[Boolean]("kill.switch")` as the sentinel check and no

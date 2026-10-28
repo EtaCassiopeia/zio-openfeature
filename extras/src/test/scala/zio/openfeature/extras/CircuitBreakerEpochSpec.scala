@@ -4,7 +4,7 @@ import zio._
 import zio.test._
 import java.util.concurrent.atomic.AtomicReference
 
-// #447 part 1: an outcome only counts against the circuit state it was admitted under. A call admitted earlier (in
+// An outcome only counts against the circuit state it was admitted under. A call admitted earlier (in
 // Closed, or a probe whose slot was since stolen) must not close, re-open, or free the probe slot of a later state.
 object CircuitBreakerEpochSpec extends ZIOSpecDefault {
 
@@ -43,7 +43,7 @@ object CircuitBreakerEpochSpec extends ZIOSpecDefault {
     case _                                 => false
   }
 
-  def spec = suite("CircuitBreakerEpochSpec (#447)")(
+  def spec = suite("CircuitBreakerEpochSpec")(
     test("a stale success from a call admitted in Closed does not close a half-open circuit") {
       val (cb, stale, _) = staleClosedPermitWithProbeInFlight()
       val closed         = cb.recordSuccess(stale)

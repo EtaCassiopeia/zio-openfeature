@@ -5,8 +5,8 @@ import zio.test._
 import zio.openfeature._
 import dev.openfeature.sdk.{ErrorCode => OFErrorCode, ImmutableContext}
 
-/** The test provider answers like a real provider (#457): a stored value of the wrong type is `TYPE_MISMATCH`, never a
-  * silent coercion, a truncation, or a `GENERAL` from a failed cast.
+/** The test provider answers like a real provider: a stored value of the wrong type is `TYPE_MISMATCH`, never a silent
+  * coercion, a truncation, or a `GENERAL` from a failed cast.
   */
 object TypeFidelitySpec extends ZIOSpecDefault {
 
@@ -118,7 +118,7 @@ object TypeFidelitySpec extends ZIOSpecDefault {
       }
     ),
     suite("layerFrom readiness")(
-      // #531: the bridge used to get a second, late PROVIDER_READY that overwrote the status as recovery.
+      // The bridge used to get a second, late PROVIDER_READY that overwrote the status as recovery.
       test("a status set right after layerFrom builds is not overwritten by a late PROVIDER_READY") {
         ZIO.scoped {
           for {

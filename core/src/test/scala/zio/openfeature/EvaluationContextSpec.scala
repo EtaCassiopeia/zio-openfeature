@@ -235,12 +235,12 @@ object EvaluationContextSpec extends ZIOSpecDefault {
         val roundTrip = zio.openfeature.internal.ContextConverter.fromOpenFeature(ofCtx)
         assertTrue(roundTrip.targetingKey == None)
       },
-      test("a targeting-key-only context round-trips to itself, with no targetingKey attribute (#497)") {
+      test("a targeting-key-only context round-trips to itself, with no targetingKey attribute") {
         val ctx       = EvaluationContext("u1")
         val roundTrip = ContextConverter.fromOpenFeature(ContextConverter.toOpenFeature(ctx))
         assertTrue(roundTrip == EvaluationContext(Some("u1"), Map.empty))
       },
-      test("an explicit targeting key wins over a targetingKey attribute (#497)") {
+      test("an explicit targeting key wins over a targetingKey attribute") {
         val ctx       = EvaluationContext(Some("u1"), Map("targetingKey" -> AttributeValue.StringValue("other")))
         val ofCtx     = ContextConverter.toOpenFeature(ctx)
         val sdkKey    = ofCtx.getTargetingKey
@@ -252,14 +252,14 @@ object EvaluationContextSpec extends ZIOSpecDefault {
           roundTrip == EvaluationContext(Some("u1"), Map.empty)
         )
       },
-      test("with no targeting key, a string targetingKey attribute becomes the key (#497)") {
+      test("with no targeting key, a string targetingKey attribute becomes the key") {
         val ctx       = EvaluationContext(None, Map("targetingKey" -> AttributeValue.StringValue("u1")))
         val ofCtx     = ContextConverter.toOpenFeature(ctx)
         val sdkKey    = ofCtx.getTargetingKey
         val roundTrip = ContextConverter.fromOpenFeature(ofCtx)
         assertTrue(sdkKey == "u1", roundTrip == EvaluationContext(Some("u1"), Map.empty))
       },
-      test("with no targeting key, a non-string targetingKey attribute is dropped (#497)") {
+      test("with no targeting key, a non-string targetingKey attribute is dropped") {
         val ctx       = EvaluationContext(None, Map("targetingKey" -> AttributeValue.IntValue(1)))
         val ofCtx     = ContextConverter.toOpenFeature(ctx)
         val sdkKey    = Option(ofCtx.getTargetingKey)
@@ -267,7 +267,7 @@ object EvaluationContextSpec extends ZIOSpecDefault {
         val roundTrip = ContextConverter.fromOpenFeature(ofCtx)
         assertTrue(sdkKey.isEmpty, sdkKeys.isEmpty, roundTrip == EvaluationContext.empty)
       },
-      test("a targetingKey entry in an SDK context is never read back as an attribute (#497)") {
+      test("a targetingKey entry in an SDK context is never read back as an attribute") {
         val ofCtx = new dev.openfeature.sdk.MutableContext("u1")
         ofCtx.add("plan", "pro")
         val back = ContextConverter.fromOpenFeature(ofCtx)

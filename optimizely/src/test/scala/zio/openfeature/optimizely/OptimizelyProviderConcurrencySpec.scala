@@ -39,7 +39,7 @@ object OptimizelyProviderConcurrencySpec extends ZIOSpecDefault {
 
   // Build the client like `OptimizelyProvider.buildClient`: `build(true)` skips the blocking initial fetch, and one
   // NotificationCenter is shared by the manager and the client, so the datafile-update notification reaches the
-  // provider's init handler (#455: `initialize()` no longer falls back on a blocking `isValid`). `mgr.stop()` keeps
+  // provider's init handler (`initialize()` does not fall back on a blocking `isValid`). `mgr.stop()` keeps
   // this spec's provider in charge of the poller (started by `initialize()`, stopped by `shutdown()` via
   // `Optimizely.close()`), so it can never become an orphaned "retries forever" thread. The old no-arg `.build()` started a live poller at
   // construction; when WireMock stopped, its Apache HttpClient retried against the dead socket on a thread that

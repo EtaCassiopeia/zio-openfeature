@@ -37,7 +37,7 @@ final class HookStageFailure(stage: String) extends RuntimeException(s"$stage ho
   //   - deprecated:   superseded scenarios retained in the feature file for history, not meant to run.
   //   - immutability: the @immutability scenario asserts evaluation-*context* immutability (spec 1.4.15) and has no
   //                   step definitions here; enabling it needs those steps implemented. It is unrelated to
-  //                   hook-*hints* immutability (spec 4.5.3), which #247 enforces at the type level.
+  //                   hook-*hints* immutability (spec 4.5.3), which the type system enforces.
   // Both runners exclude exactly {deprecated, async, immutability}. @reason-codes-cached (spec 1.4.7) and
   // @evaluation-options (spec 1.5.1) are now enabled: the former via the CachingReasonProvider decorator wrapping the
   // in-memory provider, the latter via the evaluation-options step defs.

@@ -14,7 +14,7 @@ import dev.openfeature.sdk.internal.{AutoCloseableReentrantReadWriteLock, TriCon
   * the same delegate instance directly with an API while it is wrapped is unsupported (the SDK's own attach would
   * fail).
   *
-  * Phase 2 watch-point (#340): re-verify this bridge still applies once the OpenFeature Java SDK ships the spec-v0.9.0
+  * Phase 2 watch-point: re-verify this bridge still applies once the OpenFeature Java SDK ships the spec-v0.9.0
   * provider-event marker — it may change how event attachment/emission works.
   */
 object EventProviderBridge {

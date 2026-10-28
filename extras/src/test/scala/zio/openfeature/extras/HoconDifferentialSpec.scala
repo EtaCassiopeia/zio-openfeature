@@ -7,8 +7,8 @@ import zio.openfeature.testkit.DifferentialLaws
 import zio.openfeature.testkit.DifferentialLaws._
 import zio.test._
 
-/** `HoconProvider` against `TestFeatureProvider` (#467): the generated flag sets are rendered to HOCON text, parsed,
-  * and served by `HoconProvider.fromConfig`.
+/** `HoconProvider` against `TestFeatureProvider`: the generated flag sets are rendered to HOCON text, parsed, and
+  * served by `HoconProvider.fromConfig`.
   *
   * The deviations are limits of what HOCON can represent, each with its reason. Anything else is a bug in one of the
   * two providers.
@@ -67,7 +67,7 @@ object HoconDifferentialSpec extends ZIOSpecDefault {
         isNumberRead(request) && mismatchedButServed(testkit, hocon) &&
           flags.flags.get(request.key).flatMap(exactNumber).exists(n => exactNumber(hocon.value).contains(n)),
       "HOCON has one number type: an int, long or double read of any number is served when the value is unchanged, " +
-        "where the testkit keeps Int, Long and Double apart (#457). Typesafe Config even folds 2.0 into an int."
+        "where the testkit keeps Int, Long and Double apart. Typesafe Config even folds 2.0 into an int."
     ),
     Deviation(
       oracle,

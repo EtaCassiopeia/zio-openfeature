@@ -13,7 +13,7 @@ import dev.openfeature.sdk.{
 }
 import java.util.concurrent.atomic.AtomicInteger
 
-// #443: the factories build with ZLayer.scoped, which owns the layer's scope, so they need no Scope from the caller.
+// The factories build with ZLayer.scoped, which owns the layer's scope, so they need no Scope from the caller.
 object ScopeFreeLayerSpec extends ZIOSpecDefault {
 
   private class FlagProvider(name: String) extends FeatureProvider {
@@ -42,7 +42,7 @@ object ScopeFreeLayerSpec extends ZIOSpecDefault {
     (provider, layer)
   }
 
-  def spec = suite("ScopeFreeLayerSpec (#443)")(
+  def spec = suite("ScopeFreeLayerSpec")(
     test("fromProvider can be provided with no Scope") {
       val (_, layer) = isolated()
       FeatureFlags.boolean("f", false).provide(layer).map(v => assertTrue(v))
@@ -59,7 +59,7 @@ object ScopeFreeLayerSpec extends ZIOSpecDefault {
         ZIO.succeed(new FlagProvider("fallback"))
       )
       // Evaluates right after the layer builds, racing the background swap: that must never answer
-      // `ProviderNotReady` (#512).
+      // `ProviderNotReady`.
       (AcquireStatus.get *> FeatureFlags.boolean("f", false)).provide(layer).map(v => assertTrue(v))
     },
     test("FeatureFlagRegistry.fromProvider can be provided with no Scope") {

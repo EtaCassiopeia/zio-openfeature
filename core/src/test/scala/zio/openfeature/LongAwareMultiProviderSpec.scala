@@ -26,7 +26,7 @@ import dev.openfeature.sdk.multiprovider.{FirstMatchStrategy, Strategy}
 
 import scala.jdk.CollectionConverters._
 
-/** #533: the SDK's `MultiProvider` has no `getLongEvaluation`, so a long read went through each child's double getter.
+/** The SDK's `MultiProvider` has no `getLongEvaluation`, so a long read went through each child's double getter.
   * `FeatureFlags.multiProvider` and `defaultAcquireCompose` build a [[LongAwareMultiProvider]], whose long reads run
   * the strategy over each child's own long getter, through the child's provider hooks.
   *
@@ -130,7 +130,7 @@ object LongAwareMultiProviderSpec extends ZIOSpecDefault {
 
   private val big = 5000000000L
 
-  def spec = suite("LongAwareMultiProviderSpec (#533)")(
+  def spec = suite("LongAwareMultiProviderSpec")(
     suite("through FeatureFlags.multiProvider")(
       test("firstMatch serves the first child's exact long") {
         val a = new LongChild("a", Map("n" -> Holds(big)))

@@ -4,7 +4,7 @@ import zio.test._
 import zio.openfeature.internal.ProviderStatusMachine
 import zio.openfeature.internal.ProviderStatusMachine.{Context, Signal}
 
-/** Pure, exhaustive coverage of the centralized provider-status transition table (#244). */
+/** Pure, exhaustive coverage of the centralized provider-status transition table. */
 object ProviderStatusMachineSpec extends ZIOSpecDefault {
 
   import ProviderStatus._

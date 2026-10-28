@@ -14,8 +14,8 @@ import dev.openfeature.sdk.{
   Value
 }
 
-/** #438 / spec 4.3.2: hook data is created per evaluation and never shared between hooks — including hooks inside a
-  * user-built `FeatureHook.compose` that is registered once and reused across (concurrent) evaluations.
+/** Spec 4.3.2: hook data is created per evaluation and never shared between hooks — including hooks inside a user-built
+  * `FeatureHook.compose` that is registered once and reused across (concurrent) evaluations.
   */
 object ComposeHookDataSpec extends ZIOSpecDefault {
 
@@ -82,7 +82,7 @@ object ComposeHookDataSpec extends ZIOSpecDefault {
   private def allOwnTokens(seen: List[(String, Option[String])]): Boolean =
     seen.size == keys.size && seen.forall { case (key, read) => read.contains(key) }
 
-  def spec = suite("ComposeHookDataSpec (#438)")(
+  def spec = suite("ComposeHookDataSpec")(
     test("a composite registered once isolates HookData across concurrent evaluations") {
       ZIO.scoped {
         for {

@@ -17,8 +17,8 @@ import zio._
 import zio.test._
 import java.util.concurrent.CopyOnWriteArrayList
 
-/** #261: the caching / circuit-breaker decorators must forward the delegate's `getProviderHooks` and `track` — the Java
-  * SDK's `FeatureProvider` defines both as no-op defaults, so a decorator that doesn't override them silently drops the
+/** The caching / circuit-breaker decorators must forward the delegate's `getProviderHooks` and `track` — the Java SDK's
+  * `FeatureProvider` defines both as no-op defaults, so a decorator that doesn't override them silently drops the
   * delegate's provider hooks (telemetry/validation) and discards tracking events.
   */
 object ProviderDelegationSpec extends ZIOSpecDefault {
@@ -54,7 +54,7 @@ object ProviderDelegationSpec extends ZIOSpecDefault {
   private val ctx     = new ImmutableContext()
   private val details = new MutableTrackingEventDetails()
 
-  def spec = suite("provider decorator delegation (#261)")(
+  def spec = suite("provider decorator delegation")(
     test("CachingProvider forwards getProviderHooks and track to the delegate") {
       val delegate = new HookedTrackingProvider
       val cached   = CachingProvider(delegate)
@@ -74,14 +74,14 @@ object ProviderDelegationSpec extends ZIOSpecDefault {
         delegate.tracked.contains("purchase")
       )
     },
-    test("DeferredProvider forwards track to the delegate once initialized (#448)") {
+    test("DeferredProvider forwards track to the delegate once initialized") {
       val delegate = new HookedTrackingProvider
       val deferred = DeferredProvider("deferred")(() => delegate)
       deferred.initialize(ctx)
       deferred.track("purchase", ctx, details)
       assertTrue(delegate.tracked.contains("purchase"))
     },
-    test("DeferredProvider.track before initialize is a no-op (#448)") {
+    test("DeferredProvider.track before initialize is a no-op") {
       val delegate = new HookedTrackingProvider
       val deferred = DeferredProvider("deferred")(() => delegate)
       deferred.track("purchase", ctx, details)

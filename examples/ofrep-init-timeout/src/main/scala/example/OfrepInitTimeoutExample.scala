@@ -18,7 +18,7 @@ import zio.openfeature.ofrep.OFREPProvider
   *
   * '''On `CircuitBreakerProvider`:''' this used to say the breaker required an `EventProvider` and that wrapping
   * the OFREP contrib provider — which extends `FeatureProvider` directly — needed a hand-rolled adapter. That is
-  * no longer true: since #379 the breaker (and since #382 `CachingProvider`) takes a plain `FeatureProvider`, so
+  * no longer true: the breaker and `CachingProvider` now take a plain `FeatureProvider`, so
   * the OFREP provider can be wrapped directly and no adapter is needed. The only thing a plain delegate gives up
   * is the event-driven trip; failure-count and state polling work unchanged. See `docs/optimizely.md` for a
   * circuit-breaker composition example.

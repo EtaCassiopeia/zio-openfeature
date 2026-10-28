@@ -12,7 +12,7 @@ import dev.openfeature.sdk.{
   Value
 }
 
-// #442: a production instance must not retain tracked events (their merged contexts routinely hold PII).
+// A production instance must not retain tracked events (their merged contexts routinely hold PII).
 @scala.annotation.nowarn("cat=deprecation")
 object TrackRecordingSpec extends ZIOSpecDefault {
 
@@ -48,7 +48,7 @@ object TrackRecordingSpec extends ZIOSpecDefault {
       apiOverride = Some(OpenFeatureAPI.createIsolated())
     )
 
-  def spec = suite("TrackRecordingSpec (#442)")(
+  def spec = suite("TrackRecordingSpec")(
     test("a fromProvider instance retains no tracked events") {
       trackThrice.provide(isolated(FeatureFlagsConfig())).map(events => assertTrue(events.isEmpty))
     },

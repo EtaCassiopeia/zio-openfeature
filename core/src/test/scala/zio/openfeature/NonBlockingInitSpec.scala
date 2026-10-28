@@ -142,10 +142,11 @@ object NonBlockingInitSpec extends ZIOSpecDefault {
             .flatMap { ff =>
               for {
                 _ <- errP.await
-                // #282: setProvider's rollback now re-registers the fallback with the SDK, so evaluations route back to
+                // `setProvider`'s rollback now re-registers the fallback with the SDK, so evaluations route back to
                 // the FALLBACK — not the failed provider. The fallback ("fb") returns false, so the evaluation must be
-                // Right(false), not the failed provider's true. (Pre-#282 this could return the failed provider's
-                // value; asserting the value, not just evaluability, is the original evidence case for this bug.)
+                // Right(false), not the failed provider's true. (Before that rollback this could return the
+                // failed provider's value; asserting the value, not just evaluability, is the original evidence case
+                // for this bug.)
                 v <- ff.boolean("x", true).either
               } yield assertTrue(v == Right(false))
             }
@@ -182,7 +183,7 @@ object NonBlockingInitSpec extends ZIOSpecDefault {
               ctx      <- ff.globalContext
               createdN <- ZIO.succeed(created.get())
               // The SDK's ProviderRepository.shutDownOld runs the old fallback's shutdown() asynchronously on its
-              // task executor, so poll for the count rather than reading immediately (which could race it, #320).
+              // task executor, so poll for the count rather than reading immediately (which could race it).
               fbDown <- Live.live(ZIO.succeed(fbShutdowns.get()).repeatUntil(_ >= 1).timeout(5.seconds))
             } yield assertTrue(
               swapped.contains(Right(true)),
@@ -221,7 +222,7 @@ object NonBlockingInitSpec extends ZIOSpecDefault {
         r <- released.get
       } yield assertTrue(r == 1)
     },
-    // #349 verify: runs against the bare candidate, before the swap, and gates it
+    // Verify: runs against the bare candidate, before the swap, and gates it
     test("fromAcquireAsync: verify runs against the bare candidate before the swap and gates it") {
       val real                                 = new FixedBoolProvider("real", true)
       val fallback                             = ZIO.succeed[FeatureProvider](new FixedBoolProvider("fb", false))
@@ -258,7 +259,7 @@ object NonBlockingInitSpec extends ZIOSpecDefault {
         }
       } yield result
     },
-    // #349 verify failure = attempt failure: candidate released, retry advances, terminal error reported
+    // Verify failure = attempt failure: candidate released, retry advances, terminal error reported
     test(
       "fromAcquireAsync: verify failure releases the candidate, advances the retry, and reports the terminal error"
     ) {
@@ -303,7 +304,7 @@ object NonBlockingInitSpec extends ZIOSpecDefault {
         }
       } yield result
     },
-    // #349: rejected candidates are released promptly; the winning one lives until layer close
+    // Rejected candidates are released promptly; the winning one lives until layer close
     test("fromAcquireAsync: a candidate that passes verify after earlier rejections is swapped in and kept alive") {
       val fallback = ZIO.succeed[FeatureProvider](new FixedBoolProvider("fb", false))
       for {
@@ -339,7 +340,7 @@ object NonBlockingInitSpec extends ZIOSpecDefault {
         afterClose == 3     // the winner is released at layer close, not before
       )
     },
-    // #349: the documented wiring — Verify.flagExists as the verify argument — end to end
+    // The documented wiring — Verify.flagExists as the verify argument — end to end
     test("fromAcquireAsync: Verify.flagExists gates the swap on the sentinel flag") {
       // Answers FLAG_NOT_FOUND for every key until `known` is set, then answers `true` (like a provider whose config
       // has finally arrived).
@@ -383,7 +384,7 @@ object NonBlockingInitSpec extends ZIOSpecDefault {
         swapped.contains(Right(true)) // sentinel resolves → swap lands
       )
     },
-    // #349: layer release while verify is in flight closes the child scope exactly once
+    // Layer release while verify is in flight closes the child scope exactly once
     test("fromAcquireAsync: layer release during verify releases the in-flight candidate exactly once") {
       val fallback = ZIO.succeed[FeatureProvider](new FixedBoolProvider("fb", false))
       for {
@@ -406,7 +407,7 @@ object NonBlockingInitSpec extends ZIOSpecDefault {
         r <- released.get
       } yield assertTrue(r == 1)
     },
-    // #349: a candidate whose swap fails is released promptly, not at layer close
+    // A candidate whose swap fails is released promptly, not at layer close
     test("fromAcquireAsync: swap failure releases the accepted candidate before layer close") {
       val fallback = ZIO.succeed[FeatureProvider](new FixedBoolProvider("fb", false))
       val badCompose: (FeatureProvider, FeatureProvider) => FeatureProvider = (_, _) =>
@@ -430,7 +431,7 @@ object NonBlockingInitSpec extends ZIOSpecDefault {
         afterClose <- released.get
       } yield assertTrue(liveCount == 1, afterClose == 1)
     },
-    // #349: acquire + verify share the per-attempt constructionTimeout
+    // Acquire + verify share the per-attempt constructionTimeout
     test("fromAcquireAsync: verify is bounded by constructionTimeout") {
       val fallback = ZIO.succeed[FeatureProvider](new FixedBoolProvider("fb", false))
       for {
@@ -470,7 +471,7 @@ object NonBlockingInitSpec extends ZIOSpecDefault {
         }
       } yield result
     },
-    // #352: Constructing until the swap, Live after; onSwapped runs once Live is observable
+    // Constructing until the swap, Live after; onSwapped runs once Live is observable
     test("acquireStatus: Constructing until the swap, Live after, onSwapped runs once Live is observable") {
       val fallback = ZIO.succeed[FeatureProvider](new FixedBoolProvider("fb", false))
       for {
@@ -510,7 +511,7 @@ object NonBlockingInitSpec extends ZIOSpecDefault {
         }
       } yield result
     },
-    // #352: verify rejections and retries do not leave Constructing; Live only once acquired AND verified AND swapped
+    // `verify` rejections and retries do not leave Constructing; Live only once acquired AND verified AND swapped
     test("acquireStatus: stays Constructing across verify rejections and retries, then Live") {
       val fallback = ZIO.succeed[FeatureProvider](new FixedBoolProvider("fb", false))
       for {
@@ -541,7 +542,7 @@ object NonBlockingInitSpec extends ZIOSpecDefault {
         }
       } yield result
     },
-    // #352: terminal failure → Failed(cause), set before onConstructionError, and terminal
+    // Terminal failure → Failed(cause), set before onConstructionError, and terminal
     test("acquireStatus: terminal acquire failure sets Failed(cause) before onConstructionError and stays Failed") {
       val fallback = ZIO.succeed[FeatureProvider](new FixedBoolProvider("fb", false))
       val boom     = new RuntimeException("boom")
@@ -577,7 +578,7 @@ object NonBlockingInitSpec extends ZIOSpecDefault {
         }
       } yield result
     },
-    // #352: verified-but-swap-failed → Failed, and onConstructionError still fires (compat)
+    // Verified-but-swap-failed → Failed, and onConstructionError still fires (compat)
     test("acquireStatus: swap failure sets Failed and still fires onConstructionError") {
       val fallback = ZIO.succeed[FeatureProvider](new FixedBoolProvider("fb", false))
       val badCompose: (FeatureProvider, FeatureProvider) => FeatureProvider = (_, _) =>
@@ -607,7 +608,7 @@ object NonBlockingInitSpec extends ZIOSpecDefault {
         }
       } yield result
     },
-    // #352: verify rejecting on EVERY attempt → Failed(verify's error) once the schedule is exhausted
+    // `verify` rejecting on EVERY attempt → Failed(verify's error) once the schedule is exhausted
     test("acquireStatus: verify failing on every attempt sets Failed with verify's error") {
       val fallback                             = ZIO.succeed[FeatureProvider](new FixedBoolProvider("fb", false))
       val verifyErr                            = new RuntimeException("verify always rejects")
@@ -633,7 +634,7 @@ object NonBlockingInitSpec extends ZIOSpecDefault {
         }
       } yield result
     },
-    // #352: a DEFECT in construction (not a typed failure) still resolves to Failed and reaches onConstructionError,
+    // A DEFECT in construction (not a typed failure) still resolves to Failed and reaches onConstructionError,
     // instead of killing the fiber with the state stuck at Constructing forever
     test("acquireStatus: a defect during acquire sets Failed(cause) and fires onConstructionError") {
       val fallback = ZIO.succeed[FeatureProvider](new FixedBoolProvider("fb", false))
@@ -665,7 +666,7 @@ object NonBlockingInitSpec extends ZIOSpecDefault {
         }
       } yield result
     },
-    // #352: changes emits the current state first, then transitions — a late subscriber is not left waiting
+    // `changes` emits the current state first, then transitions — a late subscriber is not left waiting
     test("acquireStatus: changes emits the current state first and then transitions") {
       val fallback = ZIO.succeed[FeatureProvider](new FixedBoolProvider("fb", false))
       for {
@@ -692,7 +693,7 @@ object NonBlockingInitSpec extends ZIOSpecDefault {
         }
       } yield result
     },
-    // #352: the layer provides BOTH services, and the widened output still ascribes to the old type
+    // The layer provides BOTH services, and the widened output still ascribes to the old type
     test(
       "acquireStatus: layer provides FeatureFlags and AcquireStatus and still ascribes to URLayer[Scope, FeatureFlags]"
     ) {

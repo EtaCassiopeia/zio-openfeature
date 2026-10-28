@@ -1,6 +1,6 @@
 Feature: Pull-based ambient evaluation context
 
-  #353/#373 added `ContextSource`: an effect consulted once per evaluation for ambient context, for
+  `ContextSource` is an effect consulted once per evaluation for ambient context, for
   applications that carry request identity outside the ZIO environment. Its precedence slot is fixed
   and is the reason this belongs in the library rather than in a `before` hook —
   global -> transaction -> client -> contextSource -> fiberLocal -> invocation.

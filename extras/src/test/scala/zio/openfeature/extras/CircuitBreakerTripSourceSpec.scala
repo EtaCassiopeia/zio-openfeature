@@ -15,7 +15,7 @@ import zio._
 import zio.test._
 import java.util.concurrent.atomic.{AtomicInteger, AtomicReference}
 
-// #447 part 2: since SDK 1.22 `FeatureProvider.getState()` defaults to READY, so a delegate that reports health only
+// Since SDK 1.22 `FeatureProvider.getState()` defaults to READY, so a delegate that reports health only
 // through events polls as READY forever. A polled READY must not undo a trip that an event caused.
 object CircuitBreakerTripSourceSpec extends ZIOSpecDefault {
 
@@ -62,7 +62,7 @@ object CircuitBreakerTripSourceSpec extends ZIOSpecDefault {
   private def rejected(cb: CircuitBreakerProvider): Boolean =
     scala.util.Try(cb.getBooleanEvaluation("flag", false, ctx)).isFailure
 
-  def spec = suite("CircuitBreakerTripSourceSpec (#447)")(
+  def spec = suite("CircuitBreakerTripSourceSpec")(
     test("an event-driven trip survives a polled READY from a delegate whose getState is the SDK default") {
       val delegate = new EventOnlyProvider
       val ticker   = new ManualTicker

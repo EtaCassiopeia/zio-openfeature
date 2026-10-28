@@ -21,7 +21,7 @@ import java.util.concurrent.atomic.AtomicReference
 /** Broader provider-initialization failure coverage complementing [[ProviderInitHardeningSpec]]. Where the latter
   * targets workstream A1/A2 (init timeout + sync-state verification), this spec targets workstream B2 — proving the
   * library's behaviour across the full grid of init outcomes the OpenFeature spec calls out, including the typed-error
-  * classifier landing the right `FeatureFlagError` case (#123).
+  * classifier landing the right `FeatureFlagError` case.
   *
   * Cases covered here:
   *   1. Sync `initialize()` throws synchronously → layer build fails with the thrown exception. 5. Async provider fires
@@ -147,7 +147,7 @@ object ProviderInitFailureSpec extends ZIOSpecDefault {
         result.left.exists(t => Option(t.getMessage).exists(_.contains("synthetic init failure")))
       )
     } @@ withLiveClock,
-    test("[B2 / case 8a] buildAsync: a throwing getMetadata surfaces a typed failure, not a defect (#242)") {
+    test("[B2 / case 8a] buildAsync: a throwing getMetadata surfaces a typed failure, not a defect") {
       val provider = new ThrowingMetadataProvider
       val api      = OpenFeatureAPI.createIsolated()
       val build = ZIO.scoped {
@@ -175,7 +175,7 @@ object ProviderInitFailureSpec extends ZIOSpecDefault {
         }
       )
     } @@ withLiveClock,
-    test("[B2 / case 8b] buildAsync: a null provider surfaces a typed failure from setProvider, not a defect (#242)") {
+    test("[B2 / case 8b] buildAsync: a null provider surfaces a typed failure from setProvider, not a defect") {
       val nullProvider: dev.openfeature.sdk.FeatureProvider = null
       val api                                               = OpenFeatureAPI.createIsolated()
       val build = ZIO.scoped {
@@ -322,7 +322,7 @@ object ProviderInitFailureSpec extends ZIOSpecDefault {
       // The OpenFeature Java SDK catches provider exceptions and returns a `FlagEvaluationDetails` with `errorCode`
       // populated (rather than propagating the throw). That means our `classify` doesn't fire on provider throws via
       // the Boolean/String/Int/Double evaluation paths — the SDK has already swallowed the throwable, so what the typed
-      // tier promotes (#388) is the GENERAL code, i.e. a `ProviderError`, not an `Unreachable`. The classifier IS still
+      // tier promotes is the GENERAL code, i.e. a `ProviderError`, not an `Unreachable`. The classifier IS still
       // exercised end-to-end through provider HTTP failures (see the OFREP failure-mode suite); it's also unit-tested
       // in `FeatureFlagErrorSpec`. This test documents the boundary.
       val boom     = new java.net.UnknownHostException("flags.example.com")

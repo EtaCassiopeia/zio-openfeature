@@ -8,7 +8,7 @@ import org.apache.http.impl.client.HttpClients;
 /**
  * Test-only {@link OptimizelyHttpClient} that sends every request, whatever its URL, to a plain-HTTP server on
  * localhost. The SDK posts events to a fixed {@code https://logx.optimizely.com} endpoint; routing them to a local
- * WireMock lets a test run the real {@code AsyncEventHandler} without the network (#453). It lives in the
+ * WireMock lets a test run the real {@code AsyncEventHandler} without the network. It lives in the
  * {@code com.optimizely.ab} package to reach the package-private {@code OptimizelyHttpClient(CloseableHttpClient)}
  * constructor, as {@link ObservingOptimizelyHttpClient} does.
  */

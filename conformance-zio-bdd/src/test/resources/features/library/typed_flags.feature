@@ -1,9 +1,9 @@
 Feature: Typed flag definitions and wire-type dispatch
 
-  This file pins `FlagDef` as a first-class key/type/default (#357), evaluation
-  dispatching on `FlagType.wire` rather than `typeName` (#361), the diagnostic for a codec that
-  declares a wire type its `encode` does not produce (#362), Mirror-based derivation for enums and
-  case classes (#366), and `decode` running on the value extracted from the provider (#356).
+  This file pins `FlagDef` as a first-class key/type/default, evaluation
+  dispatching on `FlagType.wire` rather than `typeName`, the diagnostic for a codec that
+  declares a wire type its `encode` does not produce, Mirror-based derivation for enums and
+  case classes, and `decode` running on the value extracted from the provider.
 
   Scenario: A Mirror-derived enum flag is resolved through the provider's string resolver
     Given a test provider

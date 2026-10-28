@@ -91,12 +91,12 @@ final case class CircuitBreakerProviderConfig(
   *     `OpenFeatureAPI` while it is wrapped. This mechanism requires an `EventProvider` delegate — see below.
   *
   * '''Plain providers''': the delegate is a `FeatureProvider`, so a provider that does not extend `EventProvider` can
-  * be wrapped too (#379). Only the event-driven mechanism needs the richer type, and it degrades cleanly: nothing is
-  * attached, no delegate events arrive, and the breaker relies on the failure-count and state-driven mechanisms exactly
-  * as it already does for an `EventProvider` that never emits. Every other part of the delegate's surface — all six
+  * be wrapped too. Only the event-driven mechanism needs the richer type, and it degrades cleanly: nothing is attached,
+  * no delegate events arrive, and the breaker relies on the failure-count and state-driven mechanisms exactly as it
+  * already does for an `EventProvider` that never emits. Every other part of the delegate's surface — all six
   * resolvers, both `initialize` overloads, `isDomainScoped`, `getProviderHooks`, `track`, `shutdown`, `getMetadata` and
   * `getState` — is `FeatureProvider` surface and is forwarded unchanged. The delegate is held as given, with no adapter
-  * interposed, so no hand-mirrored forwarding layer exists to fall behind the SDK (#333).
+  * interposed, so no hand-mirrored forwarding layer exists to fall behind the SDK.
   *
   * In open state, after `resetTimeout` elapses, the circuit transitions to half-open and allows a single probe
   * evaluation through. On success the circuit closes; on failure it re-opens.
@@ -157,7 +157,7 @@ final class CircuitBreakerProvider private (
       checkDelegateState()
     } catch {
       // An External trip: a failed initialize is not undone by the next getState() poll, which for most providers is
-      // the SDK's READY default (#447). It recovers through the reset-timeout probe or an event READY.
+      // the SDK's READY default. It recovers through the reset-timeout probe or an event READY.
       case e: Exception =>
         breaker.trip()
         throw e
@@ -173,8 +173,8 @@ final class CircuitBreakerProvider private (
 
   private val shutdownRan = new AtomicBoolean(false)
 
-  // `super.shutdown()` (EventProvider's) last: it is what stops this wrapper's own event emitter (#450). It waits up to
-  // a few seconds for in-flight emissions to drain. Idempotent (#451): a wrapper that is both scoped and registered
+  // `super.shutdown()` (EventProvider's) last: it is what stops this wrapper's own event emitter. It waits up to
+  // a few seconds for in-flight emissions to drain. Idempotent: a wrapper that is both scoped and registered
   // with `FeatureFlags` is shut down by the SDK and by the scope finalizer, and the delegate must see only the first.
   override def shutdown(): Unit =
     if (shutdownRan.compareAndSet(false, true)) {
@@ -185,7 +185,7 @@ final class CircuitBreakerProvider private (
 
   // Forward the delegate's provider hooks and tracking so wrapping a provider in a circuit breaker doesn't silently
   // drop its telemetry/validation hooks or discard `track` events. `track` is fire-and-forget, so it passes through
-  // without consulting the circuit. See #261.
+  // without consulting the circuit.
   override def getProviderHooks = underlying.getProviderHooks
 
   override def track(eventName: String, context: OFEvaluationContext, details: TrackingEventDetails): Unit =
@@ -262,7 +262,7 @@ final class CircuitBreakerProvider private (
   }
 
   // Every outcome is recorded against the permit the call was admitted under, so a slow call admitted in an earlier
-  // circuit state cannot close, re-open or free the probe slot of the current one (#447).
+  // circuit state cannot close, re-open or free the probe slot of the current one.
   private def executeWithTimeout[A](
     permit: CircuitBreaker.Permit,
     evaluate: () => ProviderEvaluation[A]
@@ -277,14 +277,14 @@ final class CircuitBreakerProvider private (
             .disconnect // detach so timeout completes without waiting for the blocking call
             .timeoutFail(new java.util.concurrent.TimeoutException("Evaluation timed out"))(config.evaluationTimeout)
         // No timeout to enforce, so stay on the calling thread: the SDK's MultiProvider hands hook context to its
-        // resolvers through a thread-local, which another thread cannot see (#427).
+        // resolvers through a thread-local, which another thread cannot see.
         case _ => ZIO.attempt(evaluate())
       }
       val result = Unsafe.unsafe { implicit u =>
         runtime.unsafe.run(guarded).getOrThrowFiberFailure()
       }
       // A provider may report failure by returning an error code instead of throwing (the contrib OFREP resolver does
-      // for network errors), so a returned evaluation is classified exactly like a thrown error (#446). It is passed
+      // for network errors), so a returned evaluation is classified exactly like a thrown error. It is passed
       // back unchanged either way.
       classify(result.getErrorCode) match {
         case Outcome.Success   => if (breaker.recordSuccess(permit)) safeEmitReady()
@@ -376,7 +376,7 @@ final class CircuitBreakerProvider private (
 
   // A poll trips with OpenReason.Polled, and a polled READY clears only such a trip: since SDK 1.22 `getState()`
   // defaults to READY, so a delegate that reports health only by event would otherwise have its event-driven trip
-  // undone by the next poll (#447).
+  // undone by the next poll.
   private def doCheckDelegateState(): Unit =
     scala.util.Try(delegateState()).toOption match {
       case None => breaker.trip(OpenReason.Polled)

@@ -13,7 +13,7 @@ import zio.test._
 /** `IntegerWideningLongProvider` restores pre-1.22.0 Long routing for third-party providers that never overrode
   * `getLongEvaluation`. Without it, such a provider inherits the SDK's double-backed default, so an integer-stored flag
   * is resolved by its *double* resolver — which is exactly what the old hand-rolled routing in `ClientEvaluator`
-  * existed to avoid (#333).
+  * existed to avoid.
   */
 object IntegerWideningLongProviderSpec extends ZIOSpecDefault {
 

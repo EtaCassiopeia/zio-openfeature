@@ -1,6 +1,6 @@
 Feature: Served-default fallback logging
 
-  #350/#378: the total tier (`*OrDefault` / `resolveOrDefault`) logs every served-default fallback at
+  The total tier (`*OrDefault` / `resolveOrDefault`) logs every served-default fallback at
   warn, rate-limited per flag key by the `FallbackLogging` policy. Before this, a provider-reported
   problem that made the library serve the default said nothing at all, and an absorbed defect was
   logged on every occurrence.

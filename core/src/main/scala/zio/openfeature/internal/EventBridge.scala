@@ -8,8 +8,8 @@ import dev.openfeature.sdk.{Client => OFClient, ProviderEvent => JavaProviderEve
 
 import scala.jdk.CollectionConverters._
 
-/** The event bridge of a [[FeatureFlagsLive]] (#445): the status-machine glue, the Java SDK event handlers that drive
-  * it, and the ZIO-side event subscriptions (`onProviderReady`, `on`, ...).
+/** The event bridge of a [[FeatureFlagsLive]]: the status-machine glue, the Java SDK event handlers that drive it, and
+  * the ZIO-side event subscriptions (`onProviderReady`, `on`, ...).
   */
 final private[openfeature] class EventBridge(
   client: OFClient,
@@ -24,7 +24,7 @@ final private[openfeature] class EventBridge(
   private[openfeature] val swapInProgress = new java.util.concurrent.atomic.AtomicBoolean(false)
 
   // Set once the provider has ever been usable (Ready/Stale). Gates the init watchdog: a provider that was Ready and
-  // later dipped to a transient Error must never be escalated to Fatal (the core #244 bug).
+  // later dipped to a transient Error must never be escalated to Fatal.
   private[openfeature] val everReady = new java.util.concurrent.atomic.AtomicBoolean(false)
 
   // Set when an explicit `shutdown` has run to completion: the final NotReady is terminal for bridge events; only
@@ -37,10 +37,10 @@ final private[openfeature] class EventBridge(
   private[openfeature] val bridgeDeregister =
     new java.util.concurrent.atomic.AtomicReference[() => Unit](() => ())
 
-  /** The single door to statusRef (#244). Every status write except the sync-build seed and the testkit's shared-ref
-    * control surface goes through here. `SubscriptionRef` is a `Ref.Synchronized`, so `modify` serializes
-    * read-decide-write against every other signal. Returns Some(next) iff a transition happened, so callers can attach
-    * transition-gated side effects (watchdog shutdown, latch release).
+  /** The single door to statusRef. Every status write except the sync-build seed and the testkit's shared-ref control
+    * surface goes through here. `SubscriptionRef` is a `Ref.Synchronized`, so `modify` serializes read-decide-write
+    * against every other signal. Returns Some(next) iff a transition happened, so callers can attach transition-gated
+    * side effects (watchdog shutdown, latch release).
     */
   private[openfeature] def applySignal(signal: Signal): UIO[Option[ProviderStatus]] =
     state.statusRef.modify { current =>
@@ -70,10 +70,10 @@ final private[openfeature] class EventBridge(
   // *different* provider, so it must be allowed to drive status. The current name is indeterminate when it is the
   // "unknown" fallback the factories stamp for metadata-less providers, or for a provider like the SDK's MultiProvider
   // whose metadata name only materializes inside initialize() (so the async build captured "unknown", while the
-  // provider's own later events carry the real name). Same-named swaps are indistinguishable — see "Known limitation"
-  // in #244.
+  // provider's own later events carry the real name). Same-named swaps are indistinguishable (a known limitation of
+  // the identity guard).
   //
-  // Phase 2 watch-point (#340): re-verify this identity-guard behaviour once the OpenFeature Java SDK ships the
+  // Phase 2 watch-point: re-verify this identity-guard behaviour once the OpenFeature Java SDK ships the
   // spec-v0.9.0 provider-event marker — it may offer a more direct way to attribute an event to its emitting provider.
   private def fromCurrentProvider(details: EventDetails): Boolean = {
     val eventName   = details.getProviderName
@@ -92,7 +92,7 @@ final private[openfeature] class EventBridge(
   }
 
   // Event metadata is optional, so a payload that cannot be read must not drop the event: it is published with empty
-  // metadata — but the failure is logged rather than vanishing (#444).
+  // metadata — but the failure is logged rather than vanishing.
   private def extractEventMetadata(details: EventDetails): UIO[FlagMetadata] =
     ZIO
       .attempt {
@@ -106,7 +106,7 @@ final private[openfeature] class EventBridge(
           .as(FlagMetadata.empty)
       )
 
-  // Bridge event bodies as pure effects (#244), so tests can drive them directly with a builder-constructed
+  // Bridge event bodies as pure effects, so tests can drive them directly with a builder-constructed
   // EventDetails. The Java-side Consumers registered in startEventBridge are thin wrappers that run these via
   // `runHandler`. Events are ALWAYS published for observers; identity/machine gating applies only to the status
   // transition and the onReady latch.
@@ -117,8 +117,8 @@ final private[openfeature] class EventBridge(
       // Refresh a still-"unknown" provider name from the event's stamped name when the READY is from the current
       // provider. A lazy-metadata provider (notably the SDK's MultiProvider) only builds its metadata name inside
       // initialize(), so the async build captured the "unknown" fallback; the provider's own READY carries the real
-      // name. Refreshing restores accurate providerMetadata and re-enables the event-identity guard for such providers
-      // (#297). `compareAndSet` from the fallback only: it never clobbers a real name set by a concurrent swap.
+      // name. Refreshing restores accurate providerMetadata and re-enables the event-identity guard for such providers.
+      // `compareAndSet` from the fallback only: it never clobbers a real name set by a concurrent swap.
       val refreshName = ZIO.succeed {
         val eventName = details.getProviderName
         if (current && eventName != null)
@@ -219,8 +219,8 @@ final private[openfeature] class EventBridge(
 
   // Event Handlers - return cancellation effects per OpenFeature spec 5.2.7
 
-  /** Runs `zio` with this library's FiberRefs reset (#436). A handler outlives the call that registered it, so it must
-    * not carry that call's transaction (whose overrides it would keep applying, and whose finished state it would keep
+  /** Runs `zio` with this library's FiberRefs reset. A handler outlives the call that registered it, so it must not
+    * carry that call's transaction (whose overrides it would keep applying, and whose finished state it would keep
     * recording into) or its fiber-local context. Other FiberRefs — log annotations, ones a ContextSource reads — are
     * still inherited.
     */
@@ -327,7 +327,7 @@ final private[openfeature] class EventBridge(
   // errorMessage, eventMetadata, ...), not a narrowed reconstruction. Associated-state events (Ready/Error/Stale) still
   // fire immediately when the provider is already in that state (spec 5.3.3), using a synthetic event that reflects the
   // current state (there is no original event to replay for an already-reached state). All invocations are isolated.
-  // Suspended so the provider name is read when the registration runs, not when the effect is built (#444).
+  // Suspended so the provider name is read when the registration runs, not when the effect is built.
   def on(eventType: ProviderEventType, handler: ProviderEvent => UIO[Unit]): UIO[UIO[Unit]] =
     ZIO.suspendSucceed {
       val metadata = ProviderMetadata(providerNameRef.get())

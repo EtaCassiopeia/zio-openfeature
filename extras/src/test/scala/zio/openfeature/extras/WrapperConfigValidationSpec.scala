@@ -7,7 +7,7 @@ import zio._
 import zio.test._
 import java.util.concurrent.atomic.AtomicInteger
 
-// #451: the wrappers validate their config on every construction path, and `scoped` shuts the delegate down once.
+// The wrappers validate their config on every construction path, and `scoped` shuts the delegate down once.
 object WrapperConfigValidationSpec extends ZIOSpecDefault {
 
   /** A plain delegate that counts shutdowns. */
@@ -90,7 +90,7 @@ object WrapperConfigValidationSpec extends ZIOSpecDefault {
     ("ttl = -1s", CachingConfig(ttl = minusOneSecond), "CachingConfig.ttl must be > 0, got PT-1S")
   )
 
-  def spec = suite("WrapperConfigValidation (#451)")(
+  def spec = suite("WrapperConfigValidation")(
     suite("CircuitBreakerProvider.make")(
       invalidBreakerConfigs.map { case (label, config, expected) =>
         test(s"rejects $label") {

@@ -31,8 +31,8 @@ private[optimizely] object ContextTransformer {
   def attributes(ctx: OFEvaluationContext): java.util.Map[String, Object] =
     normalize(Option(ctx).map(_.asObjectMap()).getOrElse(java.util.Collections.emptyMap[String, AnyRef]()))
 
-  /** Event tags for an Optimizely conversion (#454): the tracking details' fields, normalized like attributes, plus
-    * `value` from `details.getValue` (written last, so it wins over a `value` field). `revenue` passes through as is —
+  /** Event tags for an Optimizely conversion: the tracking details' fields, normalized like attributes, plus `value`
+    * from `details.getValue` (written last, so it wins over a `value` field). `revenue` passes through as is —
     * Optimizely reads it as integer cents, which a generic number cannot promise, so it is never derived from `value`.
     * Null details give no tags.
     */

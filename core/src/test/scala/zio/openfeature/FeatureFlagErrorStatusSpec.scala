@@ -13,7 +13,7 @@ import dev.openfeature.sdk.{
   Value
 }
 
-// #440: classify by the HTTP status an exception carries, not by its class name; keep the original throwable on
+// Classify by the HTTP status an exception carries, not by its class name; keep the original throwable on
 // Unauthorized; name the flag-scoped predicate for what it is.
 @scala.annotation.nowarn("cat=deprecation")
 object FeatureFlagErrorStatusSpec extends ZIOSpecDefault {
@@ -55,7 +55,7 @@ object FeatureFlagErrorStatusSpec extends ZIOSpecDefault {
     override def getObjectEvaluation(k: String, d: Value, c: OFEvaluationContext) = ProviderEvaluations.of(d, "DEFAULT")
   }
 
-  def spec = suite("FeatureFlagErrorStatusSpec (#440)")(
+  def spec = suite("FeatureFlagErrorStatusSpec")(
     test("a provider's track failing with an HTTP 503 surfaces as ProviderError, not Unauthorized") {
       ZIO.scoped {
         for {

@@ -109,7 +109,7 @@ object HookErrorRoutingSpec extends ZIOSpecDefault {
         for {
           log   <- Ref.make[List[String]](Nil)
           ff    <- buildFF(List(recordingHook(log)))
-          v     <- ff.boolean("missing", default = false).either // the typed tier now fails on the code (#388)
+          v     <- ff.boolean("missing", default = false).either // the typed tier now fails on the code
           calls <- log.get
         } yield assertTrue(
           v == Left(FeatureFlagError.FlagNotFound("missing")),
@@ -255,7 +255,7 @@ object HookErrorRoutingSpec extends ZIOSpecDefault {
         } yield assertTrue(!calls.contains("error"), calls.contains("finallyAfter"), got.contains(None))
       }
     },
-    test("a defect in a before hook still hands `finallyAfter` no details (settled in #19)") {
+    test("a defect in a before hook still hands `finallyAfter` no details") {
       ZIO.scoped {
         for {
           log <- Ref.make[List[String]](Nil)

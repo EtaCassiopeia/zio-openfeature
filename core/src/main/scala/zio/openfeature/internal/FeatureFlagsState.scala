@@ -45,7 +45,7 @@ object FeatureFlagsState {
       // the latest change; dropping the *newest* on a burst (as `Hub.dropping` does) could hide the final change.
       eventHub <- ZIO.acquireRelease(Hub.sliding[ProviderEvent](EventHubCapacity))(
         _.shutdown
-      ) // ends `events` consumers on scope close (#435)
+      ) // ends `events` consumers on scope close
       statusRef <- SubscriptionRef.make[ProviderStatus](ProviderStatus.NotReady)
       trackRec  <- Ref.make(Chunk.empty[(String, EvaluationContext, Option[TrackingEventDetails])])
     } yield FeatureFlagsState(

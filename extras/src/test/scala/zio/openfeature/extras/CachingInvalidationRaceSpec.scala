@@ -17,7 +17,7 @@ import zio.test._
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.atomic.{AtomicInteger, AtomicReference}
 
-// #449: zio-cache writes a lookup's result unconditionally when it completes, so a miss in flight across
+// `zio-cache` writes a lookup's result unconditionally when it completes, so a miss in flight across
 // `invalidateAll` used to write the pre-invalidation value back and serve it as CACHED for the whole TTL.
 object CachingInvalidationRaceSpec extends ZIOSpecDefault {
 
@@ -79,7 +79,7 @@ object CachingInvalidationRaceSpec extends ZIOSpecDefault {
       next     <- ZIO.attemptBlocking(cache.getBooleanEvaluation("flag", false, ctx))
     } yield (first, (next.getValue.booleanValue(), next.getReason))
 
-  def spec = suite("CachingInvalidationRaceSpec (#449)")(
+  def spec = suite("CachingInvalidationRaceSpec")(
     test("a miss in flight across invalidateAll does not repopulate the cache with the old value") {
       val delegate = new GatedProvider
       val cache    = CachingProvider(delegate)

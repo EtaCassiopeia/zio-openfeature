@@ -94,7 +94,7 @@ object OptimizelyProviderLifecycleSpec extends ZIOSpecDefault {
         )
       }
     },
-    test("initialize after shutdown fails loudly when the client was closed (#185)") {
+    test("initialize after shutdown fails loudly when the client was closed") {
       withMockServer { server =>
         server.stubFor(get(urlEqualTo(DatafilePath)).willReturn(okJson(ValidDatafile)))
         val client   = OptimizelyTestSupport.wiredClient(datafileUrl(server), "lifecycle-key")
@@ -112,7 +112,7 @@ object OptimizelyProviderLifecycleSpec extends ZIOSpecDefault {
         )
       }
     },
-    test("initialize after shutdown re-initializes when the client is caller-managed (#185)") {
+    test("initialize after shutdown re-initializes when the client is caller-managed") {
       withMockServer { server =>
         server.stubFor(get(urlEqualTo(DatafilePath)).willReturn(okJson(ValidDatafile)))
         val client   = OptimizelyTestSupport.wiredClient(datafileUrl(server), "lifecycle-key")

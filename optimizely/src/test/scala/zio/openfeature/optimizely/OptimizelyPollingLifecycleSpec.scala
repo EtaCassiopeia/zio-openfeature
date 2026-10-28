@@ -7,10 +7,9 @@ import dev.openfeature.sdk.ImmutableContext
 import zio._
 import zio.test._
 
-/** Pins the datafile-polling lifecycle fixed in #208: constructing a factory-built provider does not block and fetches
-  * at most once before `initialize()` (the SDK starts its poller at construction, #455); polling stops at
-  * `shutdown()`/scope close, so no background retry loop against an unreachable CDN or bad keys (403) survives the
-  * provider's lifecycle.
+/** Pins the datafile-polling lifecycle: constructing a factory-built provider does not block and fetches at most once
+  * before `initialize()` (the SDK starts its poller at construction); polling stops at `shutdown()`/scope close, so no
+  * background retry loop against an unreachable CDN or bad keys (403) survives the provider's lifecycle.
   */
 object OptimizelyPollingLifecycleSpec extends ZIOSpecDefault {
 
@@ -45,7 +44,7 @@ object OptimizelyPollingLifecycleSpec extends ZIOSpecDefault {
     try { provider.initialize(emptyContext); Right(()) }
     catch { case t: Throwable => Left(t) }
 
-  def spec: Spec[TestEnvironment & Scope, Any] = suite("Optimizely datafile polling lifecycle (#208)")(
+  def spec: Spec[TestEnvironment & Scope, Any] = suite("Optimizely datafile polling lifecycle")(
     test("make does not block, and fetches at most once before initialize, even against a 403 CDN") {
       withMockServer { server =>
         server.stubFor(get(urlEqualTo(DatafilePath)).willReturn(aResponse().withStatus(403)))
@@ -93,18 +92,18 @@ object OptimizelyPollingLifecycleSpec extends ZIOSpecDefault {
           // Settle before baselining. Two windows can still move the count after `shutdown()`
           // returns without any post-shutdown poll being initiated: the SDK may dispatch a fetch in
           // the instant before the poller is cancelled (the same race test 1 documents with its
-          // `requests <= 1`, #211), and WireMock appends to its serve-event journal when it *serves*
+          // `requests <= 1`), and WireMock appends to its serve-event journal when it *serves*
           // the request, so one already in flight is recorded moments later. Absorbing those
           // stragglers into the baseline keeps the assertion below strict rather than trading it for
           // a tolerance: a straggler lands promptly, while a genuinely surviving poller keeps firing
           // every 200ms and still puts 3+ events into the observation window. Do not remove this
-          // sleep — the flake it fixes only reproduces under module-level load (#341).
+          // sleep — the flake it fixes only reproduces under module-level load.
           _         <- sleepBlocking(300.millis)
           afterStop <- ZIO.succeed(requestCount(server))
           _         <- sleepBlocking(700.millis)
           afterWait <- ZIO.succeed(requestCount(server))
         } yield assertTrue(
-          // The SDK starts its poller at construction (#455), so the first fetch can land before initialize().
+          // The SDK starts its poller at construction, so the first fetch can land before initialize().
           beforeInit <= 1,
           initResult.isRight,
           whileActive >= 3,
@@ -132,7 +131,7 @@ object OptimizelyPollingLifecycleSpec extends ZIOSpecDefault {
           // Scope is closed: the failed provider must not keep retrying the 403 endpoint in the background.
           // Settle first, for the same reason as the shutdown baseline above — a fetch in flight at scope
           // close is journalled moments later. Only ever raises `duringInit`, so `duringInit >= 1` below is
-          // unaffected. Do not remove (#211, #341).
+          // unaffected. Do not remove.
           _          <- sleepBlocking(300.millis)
           duringInit <- ZIO.succeed(requestCount(server))
           _          <- sleepBlocking(700.millis)
@@ -162,7 +161,7 @@ object OptimizelyPollingLifecycleSpec extends ZIOSpecDefault {
           }
           // Settle before baselining, as above: the layer finalizer's shutdown can leave a fetch in
           // flight that WireMock journals moments later. Only ever raises `afterRelease`, so the
-          // `afterRelease >= 1` assertion is unaffected. Do not remove (#211, #341).
+          // `afterRelease >= 1` assertion is unaffected. Do not remove.
           _            <- sleepBlocking(300.millis)
           afterRelease <- ZIO.succeed(requestCount(server))
           _            <- sleepBlocking(700.millis)

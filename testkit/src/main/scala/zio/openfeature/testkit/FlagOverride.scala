@@ -2,7 +2,7 @@ package zio.openfeature.testkit
 
 import zio.openfeature.FlagDef
 
-/** A type-checked flag value for a test fixture (#351).
+/** A type-checked flag value for a test fixture.
   *
   * `TestFeatureProvider`'s key-based `setFlag[A](key, value)` accepts anything, so a fixture can pin a value production
   * could never decode: the test passes against the fixture and production fails with `TYPE_MISMATCH`. Building the

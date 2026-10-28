@@ -11,11 +11,11 @@ import dev.openfeature.sdk.multiprovider.{Strategy, FirstMatchStrategy, FirstSuc
   *
   *   - '''Typed tier''' — `boolean`/`string`/`int`/`long`/`double`/`obj`/`value`, every `*Details`, and the `FlagDef`
   *     overloads. Return `IO[FeatureFlagError, _]` and '''fail''' whenever the evaluation cannot produce a real value:
-  *     a provider that throws, a decode that rejects the payload, and — since #388 — a provider that answers with an
-  *     '''error code''' on the resolution (`FLAG_NOT_FOUND`, `TYPE_MISMATCH`, `PARSE_ERROR`, …), which is how most
-  *     providers report problems. The code is mapped to the matching [[FeatureFlagError]] (`FlagNotFound(key)`,
-  *     `TypeMismatch(key, expected, actual)`, …). Reach for this tier when a default would be ''wrong'' — a fail-closed
-  *     gate written with `value` actually fails closed.
+  *     a provider that throws, a decode that rejects the payload, and a provider that answers with an '''error code'''
+  *     on the resolution (`FLAG_NOT_FOUND`, `TYPE_MISMATCH`, `PARSE_ERROR`, …), which is how most providers report
+  *     problems. The code is mapped to the matching [[FeatureFlagError]] (`FlagNotFound(key)`, `TypeMismatch(key,
+  *     expected, actual)`, …). Reach for this tier when a default would be ''wrong'' — a fail-closed gate written with
+  *     `value` actually fails closed.
   *   - '''Total tier''' — `*OrDefault` and `resolveOrDefault`. Return `UIO[_]` and '''never fail''': the caller's
   *     default is served and, on `resolveOrDefault`, the returned [[FlagResolution]] says why (`reason = Error`,
   *     `errorCode`, `errorMessage`). This is the OpenFeature spec's §1.4.10 "always return the default" contract, and
@@ -163,7 +163,7 @@ trait FeatureFlags {
   def valueOrDefault[A: FlagType](key: String, default: A, ctx: EvaluationContext = EvaluationContext.empty): UIO[A] =
     totalResolution(valueDetails(key, default, ctx), key, default).map(_.value)
 
-  // The same, with per-call EvaluationOptions (#444). Spelled without defaults: the overloads above already carry the
+  // The same, with per-call EvaluationOptions. Spelled without defaults: the overloads above already carry the
   // `ctx` default, and Scala allows default arguments on only one overload of a method.
 
   def booleanOrDefault(
@@ -208,7 +208,7 @@ trait FeatureFlags {
   ): UIO[FlagResolution[A]] =
     totalResolution(valueDetails(key, default, ctx, options), key, default)
 
-  // Typed flag definition overloads (#347)
+  // Typed flag definition overloads
   //
   // Each delegates to the key-based generic tier above, passing `flag.default` as the evaluation default and
   // `flag.flagType` as the decoding instance. There is no new evaluation machinery here, and no new failure mode:
@@ -321,7 +321,7 @@ trait FeatureFlags {
                 )
               logFallback(key, served, defect = Some(cause.stripFailures)).as(served)
           },
-      // Since #388 a provider-reported error CODE fails the typed tier, so it arrives on the `Fail` branch above; this
+      // A provider-reported error CODE fails the typed tier, so it arrives on the `Fail` branch above; this
       // branch is reached only by a resolution with `reason = Error` and no code — still a served-default fallback, so
       // it still gets the breadcrumb.
       resolved =>
@@ -392,11 +392,11 @@ trait FeatureFlags {
   /** The flags the current transaction has evaluated so far — `Map.empty` both when there is no transaction and when
     * there is one that has evaluated nothing yet. That ambiguity is deliberate for a convenience read but is the wrong
     * shape for an audit record ("which flags shaped this request"), where an empty answer must not be mistaken for a
-    * real one: prefer [[transactionEvaluations]], which answers `None` outside a transaction (#387).
+    * real one: prefer [[transactionEvaluations]], which answers `None` outside a transaction.
     */
   def currentEvaluatedFlags: UIO[Map[String, FlagEvaluation[_]]]
 
-  /** The current transaction's evaluations, or `None` when this fiber is not inside a transaction at all (#387).
+  /** The current transaction's evaluations, or `None` when this fiber is not inside a transaction at all.
     *
     * `Some(Map.empty)` is a real answer — a transaction that has evaluated nothing yet — and `None` is a different one:
     * there is no transaction, so the question does not apply. [[currentEvaluatedFlags]] returns `Map.empty` for both,
@@ -773,7 +773,7 @@ object FeatureFlags {
   ): ZIO[FeatureFlags, FeatureFlagError, FlagResolution[A]] =
     ZIO.serviceWithZIO(_.valueDetails(key, default, ctx, options))
 
-  // Service Accessors - typed flag definitions (#347)
+  // Service Accessors - typed flag definitions
   //
   // No `implicit val` is needed here (unlike the trait methods): the `FlagDef` carries its own `FlagType`, and the
   // trait overload it delegates to takes no context bound.
@@ -1059,7 +1059,7 @@ object FeatureFlags {
       fallbackLogging
     )
 
-  /** [[build]], optionally keeping tracked events for `trackedEvents` (testkit only, #442). */
+  /** [[build]], optionally keeping tracked events for `trackedEvents` (testkit only). */
   private[openfeature] def buildWithTracking(
     provider: OFFeatureProvider,
     domain: Option[String],
@@ -1235,7 +1235,7 @@ object FeatureFlags {
     *
     * Uses `setProvider` (non-blocking) instead of `setProviderAndWait`. The provider initializes in the background;
     * evaluations fail with `ProviderNotReady` until the event bridge receives a `PROVIDER_READY` event. The bridge is
-    * attached before the provider is registered, so that event cannot be missed and arrives exactly once (#531).
+    * attached before the provider is registered, so that event cannot be missed and arrives exactly once.
     */
   private[openfeature] def buildAsync(
     provider: OFFeatureProvider,
@@ -1266,7 +1266,7 @@ object FeatureFlags {
       fallbackLogging
     )
 
-  /** [[buildAsync]], optionally keeping tracked events for `trackedEvents` (testkit only, #442). */
+  /** [[buildAsync]], optionally keeping tracked events for `trackedEvents` (testkit only). */
   private[openfeature] def buildAsyncWithTracking(
     provider: OFFeatureProvider,
     domain: Option[String],
@@ -1428,12 +1428,11 @@ object FeatureFlags {
     *     swap, and the swap itself never interrupts service. The SDK sees one provider for the life of the layer, an
     *     internal switch that delegates to the fallback; the real provider is composed and **initialized off to the
     *     side**, bounded by `initTimeout`, and only then does the switch start routing to it. There is no SDK
-    *     `setProvider` on this path, so neither this library nor the SDK reports `NotReady` at any point (#512).
-    *     Because `providerStatus` therefore cannot tell fallback from real, the layer also provides an
-    *     [[AcquireStatus]] whose [[AcquireState]] is `Constructing` until the real provider is acquired, verified
-    *     **and** swapped in (`Live`), or the construction fails terminally (`Failed(cause)`, set just before
-    *     `onConstructionError` runs). `onSwapped` is the success-side twin of `onConstructionError`: it runs once
-    *     `Live` is observable.
+    *     `setProvider` on this path, so neither this library nor the SDK reports `NotReady` at any point. Because
+    *     `providerStatus` therefore cannot tell fallback from real, the layer also provides an [[AcquireStatus]] whose
+    *     [[AcquireState]] is `Constructing` until the real provider is acquired, verified **and** swapped in (`Live`),
+    *     or the construction fails terminally (`Failed(cause)`, set just before `onConstructionError` runs).
+    *     `onSwapped` is the success-side twin of `onConstructionError`: it runs once `Live` is observable.
     *   - Each attempt runs `acquire` and then `verify` on the acquired candidate, the pair bounded by
     *     `constructionTimeout` and retried with `constructionRetry`. A `verify` failure is an attempt failure exactly
     *     like an `acquire` failure: the candidate is released, the schedule advances, the fallback keeps serving. On
@@ -1494,16 +1493,16 @@ object FeatureFlags {
     evaluationTimeout: Duration = DefaultEvaluationTimeout,
     initTimeout: Duration = DefaultInitTimeout,
     // Taken directly rather than via `FeatureFlagsConfig`, because this factory bypasses config entirely — a
-    // config-only surface would leave the fallback-first path with no way to supply an ambient context (#353).
+    // config-only surface would leave the fallback-first path with no way to supply an ambient context.
     contextSource: ContextSource = ContextSource.empty,
     // Last, so every existing positional call site keeps compiling; `compose` stays the one mid-list parameter a
-    // caller plausibly passes positionally (#349, #352).
+    // caller plausibly passes positionally.
     verify: OFFeatureProvider => Task[Unit] = _ => ZIO.unit,
     onSwapped: UIO[Unit] = ZIO.unit,
     // Its own parameter, not a config field: this factory bypasses `FeatureFlagsConfig`, and it is exactly the
-    // fallback-first path where a served-default log storm during an outage matters most (#350).
+    // fallback-first path where a served-default log storm during an outage matters most.
     fallbackLogging: FallbackLogging = FallbackLogging.Default,
-    // Its own parameter for the same reason as `fallbackLogging` (#437).
+    // Its own parameter for the same reason as `fallbackLogging`.
     maxAbandonedCalls: Int = DefaultMaxAbandonedCalls
   ): URLayer[Any, FeatureFlags with AcquireStatus] =
     FeatureFlagsFactories.fromAcquireAsync(
@@ -1522,7 +1521,7 @@ object FeatureFlags {
       maxAbandonedCalls
     )
 
-  // Binary-compatibility bridge for callers compiled against 1.1.2, before `maxAbandonedCalls` (#437). Package-private,
+  // Binary-compatibility bridge for callers compiled against 1.1.2, before `maxAbandonedCalls`. Package-private,
   // so source callers never see it, but public in bytecode, so an already-compiled call still links. No defaults: a
   // call needing one resolves to the full overload above.
   private[openfeature] def fromAcquireAsync(

@@ -140,7 +140,7 @@ object HookHints {
   * §4.4.8) — what the total tier serves — rather than the resolution `after` rejected.
   *
   * Provider-level hooks are not modeled here: they run inside the Java SDK evaluation call, per the OpenFeature
-  * architecture (see #167). Java `dev.openfeature.sdk.Hook` instances can be registered at the Java API level via
+  * architecture. Java `dev.openfeature.sdk.Hook` instances can be registered at the Java API level via
   * `FeatureFlags.addApiHook` and likewise run inside the SDK.
   */
 trait FeatureHook {
@@ -167,8 +167,8 @@ object FeatureHook {
 
   val noop: FeatureHook = new FeatureHook {}
 
-  /** Per-evaluation timing for the timing hooks (#444): `start` in `before`, `elapsed` in a later stage. Kept in the
-    * hook's own HookData, so it never leaks between hooks or evaluations.
+  /** Per-evaluation timing for the timing hooks: `start` in `before`, `elapsed` in a later stage. Kept in the hook's
+    * own HookData, so it never leaks between hooks or evaluations.
     */
   final private class Stopwatch(name: String) {
     private val startKey = TypedKey[Long](s"$name.startTime")

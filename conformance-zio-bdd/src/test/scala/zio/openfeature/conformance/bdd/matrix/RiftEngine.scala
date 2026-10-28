@@ -8,7 +8,7 @@ import zio.bdd.mock.rift.embedded.EmbeddedRift
   * (no Docker, no separate process), so the flag-matrix suites can stand up an Optimizely-CDN stub
   * by pointing the provider straight at a mock space's `baseUri` — replacing the old
   * WireMock-server + mitmproxy-container setup (and the JVM-global `http.proxy*` properties it
-  * leaked across suites, #278).
+  * leaked across suites).
   *
   * Built once and never explicitly closed: the native engine lives for the JVM and is reclaimed at
   * process exit. That is safe here precisely because the module now forks its test JVM (see

@@ -16,7 +16,7 @@ import java.util.concurrent.atomic.AtomicReference
 
 import scala.jdk.CollectionConverters._
 
-// #441: tracking attributes are converted to OpenFeature values by type — AttributeValue included — and an unsupported
+// Tracking attributes are converted to OpenFeature values by type — AttributeValue included — and an unsupported
 // type fails `track` instead of being sent as its toString.
 @scala.annotation.nowarn("cat=deprecation")
 object TrackingAttributesSpec extends ZIOSpecDefault {
@@ -64,7 +64,7 @@ object TrackingAttributesSpec extends ZIOSpecDefault {
 
   final private case class NotAnAttribute(n: Int)
 
-  def spec = suite("TrackingAttributesSpec (#441)")(
+  def spec = suite("TrackingAttributesSpec")(
     test("an AttributeValue string arrives as the string, not its toString") {
       ZIO.scoped(trackAndCapture(TrackingEventDetails.empty.withAttribute("plan", AttributeValue.string("pro")))).map {
         d => assertTrue(d.getValue("plan").asString == "pro")

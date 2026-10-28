@@ -14,9 +14,9 @@ import dev.openfeature.sdk.{
 }
 import java.util.concurrent.CountDownLatch
 
-/** #254: transaction overrides (and cached evaluations) resolve purely locally and must still succeed while the
-  * provider is NotReady / Fatal / shutting down — that fallback role is the whole point of overrides. Only evaluations
-  * that must reach the provider stay behind the readiness gate.
+/** Transaction overrides (and cached evaluations) resolve purely locally and must still succeed while the provider is
+  * NotReady / Fatal / shutting down — that fallback role is the whole point of overrides. Only evaluations that must
+  * reach the provider stay behind the readiness gate.
   */
 object TransactionOverrideFallbackSpec extends ZIOSpecDefault {
 

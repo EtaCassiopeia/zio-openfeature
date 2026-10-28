@@ -6,16 +6,16 @@ import com.optimizely.ab.notification.NotificationCenter
 
 import java.util.concurrent.TimeUnit
 
-/** Shared setup for the WireMock-backed Optimizely specs (#541). */
+/** Shared setup for the WireMock-backed Optimizely specs. */
 object OptimizelyTestSupport {
 
   /** initWait for a datafile load the test expects to succeed. The wait ends as soon as the datafile arrives, so a long
-    * window costs nothing on a passing test and absorbs JVM stalls under parallel builds (#541).
+    * window costs nothing on a passing test and absorbs JVM stalls under parallel builds.
     */
   val InitWait: java.time.Duration = java.time.Duration.ofSeconds(15)
 
   /** Socket timeout for the datafile fetch. WireMock runs in the test JVM, so a stall delays its answer too; with 5s, a
-    * load was still lost under parallel builds (#541). Matching [[InitWait]] lets the fetch use the whole window.
+    * load was still lost under parallel builds. Matching [[InitWait]] lets the fetch use the whole window.
     */
   val SocketTimeoutMillis: Int = InitWait.toMillis.toInt
 

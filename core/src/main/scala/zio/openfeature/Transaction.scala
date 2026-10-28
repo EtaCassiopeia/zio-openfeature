@@ -84,10 +84,10 @@ final private[openfeature] case class TransactionState(
 
   /** A usable cache hit. An error-CODED evaluation is RECORDED (so `TransactionResult` still shows the key was asked
     * for and how it failed) but never SERVED: a cache hit is reported as a clean `CACHED` value with no error code, so
-    * serving one would turn a `FlagNotFound` on the first read into a successful default on the second (#388). The next
-    * read goes back to the provider, exactly as a read outside a transaction would. The predicate is `errorCode`,
-    * exactly the condition the typed tier fails on — a `reason = Error` resolution WITHOUT a code is served as a
-    * success there and stays cacheable here.
+    * serving one would turn a `FlagNotFound` on the first read into a successful default on the second. The next read
+    * goes back to the provider, exactly as a read outside a transaction would. The predicate is `errorCode`, exactly
+    * the condition the typed tier fails on — a `reason = Error` resolution WITHOUT a code is served as a success there
+    * and stays cacheable here.
     */
   def getCachedEvaluation(key: String): UIO[Option[TransactionState.Cached]] =
     if (cacheEvaluations) evaluated.get.map(_.get(key).filterNot(_.evaluation.resolution.errorCode.isDefined))
@@ -110,7 +110,7 @@ private[openfeature] object TransactionState {
 
   /** A recorded evaluation plus the WIRE form of its value. The evaluation carries the domain value (what callers see
     * in `TransactionResult`); the wire form is what a same-key re-read decodes, because `FlagType.decode` is wire →
-    * domain and feeding it the domain value only works for the built-ins, where the two coincide (#359).
+    * domain and feeding it the domain value only works for the built-ins, where the two coincide.
     */
   final case class Cached(evaluation: FlagEvaluation[_], wire: Any)
 

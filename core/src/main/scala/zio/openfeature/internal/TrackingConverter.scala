@@ -5,8 +5,8 @@ import zio.openfeature.{AttributeValue, TrackingEventDetails}
 
 import scala.jdk.CollectionConverters._
 
-/** Converts [[TrackingEventDetails]] to the SDK's tracking details by type (#441). Total: an attribute it cannot
-  * represent is reported, never sent as its `toString`. `null` and `None` attributes are dropped.
+/** Converts [[TrackingEventDetails]] to the SDK's tracking details by type. Total: an attribute it cannot represent is
+  * reported, never sent as its `toString`. `null` and `None` attributes are dropped.
   */
 private[openfeature] object TrackingConverter {
 

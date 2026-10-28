@@ -19,8 +19,8 @@ import zio.test.TestAspect.{sequential, timeout, withLiveClock}
   *     back to callers as a successful `FlagResolution[A]` whose `errorCode` is set — operators are expected to alert
   *     on resolutions with non-empty `errorCode`.
   *   - Network-level failures (connection refused, connection reset): the contrib provider's HTTP client throws
-  *     synchronously, the throw bubbles out of `attemptBlocking`, and `FeatureFlagError.classify` (#123) maps it to a
-  *     typed error — `Unreachable` for known network exception types, `ProviderError` otherwise.
+  *     synchronously, the throw bubbles out of `attemptBlocking`, and `FeatureFlagError.classify` maps it to a typed
+  *     error — `Unreachable` for known network exception types, `ProviderError` otherwise.
   *   - Slow responses: when an evaluation timeout is configured on the `FeatureFlags` layer, slow responses surface as
   *     `ProviderError(TimeoutException)`.
   *
@@ -86,7 +86,7 @@ object OFREPFailureModeSpec extends ZIOSpecDefault {
             )
         )
         withFeatureFlags(server) { ff =>
-          // Since #388 the typed tier surfaces the provider's error code as a typed failure; the total tier is where
+          // The typed tier surfaces the provider's error code as a typed failure; the total tier is where
           // the operator-actionable resolution (default value + code) lives.
           val (typed, total) = Unsafe.unsafe { implicit u =>
             Runtime.default.unsafe
@@ -116,7 +116,7 @@ object OFREPFailureModeSpec extends ZIOSpecDefault {
             )
         )
         withFeatureFlags(server) { ff =>
-          // Since #388 the typed tier surfaces the provider's error code as a typed failure; the total tier is where
+          // The typed tier surfaces the provider's error code as a typed failure; the total tier is where
           // the operator-actionable resolution (default value + code) lives.
           val (typed, total) = Unsafe.unsafe { implicit u =>
             Runtime.default.unsafe

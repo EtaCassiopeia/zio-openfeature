@@ -67,15 +67,15 @@ import java.util.concurrent.{ExecutorService, Executors, ThreadFactory, TimeUnit
   * @param blockingTimeout
   *   Upper bound on the SDK's internal blocking `getConfig()` waits; `None` uses the SDK default (10 seconds)
   * @param staleAfter
-  *   Staleness watchdog threshold (#267). After the provider is READY, if datafile poll fetches stop succeeding for
-  *   this long the provider transitions to `PROVIDER_STALE` (and back to `PROVIDER_READY` once fetches resume). The
-  *   watchdog is only active when datafile polling is enabled (`pollingInterval` is `Some`) — with polling off there is
-  *   nothing to observe and no watchdog runs. When polling is on and this is `None`, the threshold defaults to `3 ×
+  *   Staleness watchdog threshold. After the provider is READY, if datafile poll fetches stop succeeding for this long
+  *   the provider transitions to `PROVIDER_STALE` (and back to `PROVIDER_READY` once fetches resume). The watchdog is
+  *   only active when datafile polling is enabled (`pollingInterval` is `Some`) — with polling off there is nothing to
+  *   observe and no watchdog runs. When polling is on and this is `None`, the threshold defaults to `3 ×
   *   pollingInterval`. Must be positive.
   * @param events
-  *   What happens to the impression and conversion events the SDK produces (#453). The default,
-  *   [[OptimizelyEvents.Batched]], sends them to Optimizely in batches, as the SDK's own default factory does: without
-  *   them, experiments show no visitors and `track` conversions are lost. [[OptimizelyEvents.Disabled]] drops them.
+  *   What happens to the impression and conversion events the SDK produces. The default, [[OptimizelyEvents.Batched]],
+  *   sends them to Optimizely in batches, as the SDK's own default factory does: without them, experiments show no
+  *   visitors and `track` conversions are lost. [[OptimizelyEvents.Disabled]] drops them.
   */
 final case class OptimizelyProviderConfig(
   sdkKey: String,
@@ -126,7 +126,7 @@ object OptimizelyProvider {
   /** Default time the underlying `OptimizelyFeatureProvider.initialize()` will wait for the first datafile load before
     * declaring the provider failed. It is deliberately shorter than the `FeatureFlags` default `initTimeout` (30
     * seconds), so a datafile that never loads is reported with the provider's own error ("datafile did not load …")
-    * rather than the generic outer timeout (#455).
+    * rather than the generic outer timeout.
     */
   val DefaultInitWait: java.time.Duration = java.time.Duration.ofSeconds(25)
 
@@ -192,7 +192,7 @@ object OptimizelyProvider {
   ): IO[FeatureFlagError.InvalidConfiguration, OptimizelyFeatureProvider] =
     makeWithParserProbe(config, httpClient, DefaultConfigParser.getInstance(), eventHandler)
 
-  /** Test seam: [[make]] with the JSON-parser lookup injected, so a missing parser can be simulated (#431). */
+  /** Test seam: [[make]] with the JSON-parser lookup injected, so a missing parser can be simulated. */
   private[optimizely] def makeWithParserProbe(
     config: OptimizelyProviderConfig,
     httpClient: Option[com.optimizely.ab.OptimizelyHttpClient],
@@ -263,7 +263,7 @@ object OptimizelyProvider {
       )
     }
 
-  /** Fail construction when the Optimizely SDK has no JSON parser to read a datafile with (#431).
+  /** Fail construction when the Optimizely SDK has no JSON parser to read a datafile with.
     *
     * The SDK resolves its parser once, in a lazy holder's static initialiser, so a missing parser surfaces as a
     * `LinkageError` — `ExceptionInInitializerError` on the first lookup, `NoClassDefFoundError` after — rather than an
@@ -379,7 +379,7 @@ object OptimizelyProvider {
     // never set this, so the SDK builds its default client.
     httpClient: Option[com.optimizely.ab.OptimizelyHttpClient],
     // Present when the staleness watchdog is enabled: the HTTP client is wrapped so every successful datafile fetch
-    // advances this observer's timestamp (#267). Wrapping preserves the wrapped client's exact behaviour — for the
+    // advances this observer's timestamp. Wrapping preserves the wrapped client's exact behaviour — for the
     // production path that is the SDK default client, so nothing about how fetches are performed changes.
     fetchObserver: Option[OptimizelyFeatureProvider.FetchObserver],
     events: OptimizelyEvents,
@@ -431,11 +431,11 @@ object OptimizelyProvider {
     // completion is safe: `initialize()` registers the update-notification handler before calling
     // `configManager.start()` itself, and `start()` is idempotent (a no-op if already started), so the first fetch
     // either completes before `initialize()` runs — caught by `initialize()`'s `optimizely.isValid` fallback check
-    // — or is still in flight and finishes normally afterward. See #237.
+    // — or is still in flight and finishes normally afterward.
     val configManager = configBuilder.build(true)
     // CMAB experiments decide through a CmabService (SDK 4.6). Without one the SDK serves a placeholder "$" variation
     // and logs a WARN on every build. Wired like `OptimizelyFactory.newDefaultInstance`, except that this provider owns
-    // the CMAB HTTP client so it can close it: `Optimizely.close()` does not (#474).
+    // the CMAB HTTP client so it can close it: `Optimizely.close()` does not.
     val cmabHttpClient = com.optimizely.ab.OptimizelyHttpClient.builder().build()
     val cmabService = com.optimizely.ab.cmab.service.DefaultCmabService
       .builder()
@@ -447,8 +447,8 @@ object OptimizelyProvider {
         .withConfigManager(configManager)
         .withNotificationCenter(notificationCenter)
         .withCmabService(cmabService)
-    // Without an event processor the SDK falls back to a no-op handler and drops every impression and conversion
-    // (#453). `Batched` wires what `OptimizelyFactory.newDefaultInstance` does, a batch processor in front of an async
+    // Without an event processor the SDK falls back to a no-op handler and drops every impression and conversion.
+    // `Batched` wires what `OptimizelyFactory.newDefaultInstance` does, a batch processor in front of an async
     // handler, without the factory itself: it also starts an ODP manager and reads global `PropertyUtils` state.
     val eventExecutor = events match {
       case OptimizelyEvents.Disabled => None

@@ -41,7 +41,7 @@ final class EnvVarProvider private (
 
   override def getState: ProviderState = ProviderState.READY
 
-  /** An unset environment variable is `FLAG_NOT_FOUND`, not a `DEFAULT`-reason answer (#355).
+  /** An unset environment variable is `FLAG_NOT_FOUND`, not a `DEFAULT`-reason answer.
     *
     * That is what lets a `MultiProvider` chain distinguish "not set here" from "set to this value" and move on to the
     * next provider. The message names the resolved environment variable, since that is what an operator has to set.
@@ -67,7 +67,7 @@ final class EnvVarProvider private (
           case "true" | "1" | "yes" | "on"  => ProviderEvaluations.of(java.lang.Boolean.TRUE, "STATIC")
           case "false" | "0" | "no" | "off" => ProviderEvaluations.of(java.lang.Boolean.FALSE, "STATIC")
           // Set-but-unparsable: surface a spec PARSE_ERROR rather than silently returning the default (worse, the old
-          // code labeled that fallback STATIC, claiming it came from the environment). See #262.
+          // code labeled that fallback STATIC, claiming it came from the environment).
           case _ => throw new ParseError(s"Env var ${envKey(key)}='$v' is not a valid boolean for flag '$key'")
         }
       case None =>

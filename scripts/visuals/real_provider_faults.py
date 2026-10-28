@@ -71,5 +71,5 @@ def build() -> Scene:
                                                  (t + 0.4, APP_X + 60, TOP + 92 + i * 22), (t + 0.5, APP_X + 60, TOP + 92 + i * 22, 0)]),
                        w=72))
         sc.add(f'<text x="{APP_X + 14}" y="{TOP + 96 + i * 22}" class="log" style="{sc.shown([(t + 0.45, 11.9)], 0.2)}">'
-               f'<tspan fill="{DIM}">my-flag →</tspan> <tspan fill="{GREEN}">true</tspan></text>')
+               f'<tspan fill="{DIM}">fallback →</tspan> <tspan fill="{GREEN}">true</tspan></text>')
     return sc

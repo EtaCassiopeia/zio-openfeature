@@ -33,15 +33,14 @@ object Ofrep:
     )
   // --8<-- [end:config]
 
-  // --8<-- [start:timeouts]
-  def bounded(provider: OFREPFeatureProvider): ZLayer[Any, Throwable, FeatureFlags] =
-    FeatureFlags.fromProvider(
-      provider,
-      FeatureFlagsConfig(initMode = InitMode.Async)
-        .withEvaluationTimeout(500.millis) // each evaluation is an HTTP call; give up on it after 500 ms
-        .withInitTimeout(5.seconds)        // status goes Fatal if the provider is not usable by then
-    )
-  // --8<-- [end:timeouts]
+  // --8<-- [start:lifecycle]
+  // `make` leaves shutdown to the FeatureFlags layer you register the provider with; `scoped` and `layer` own it
+  val inScope: ZIO[Scope, FeatureFlagError.InvalidConfiguration, OFREPFeatureProvider] =
+    OFREPProvider.scoped(OFREPProviderConfig(baseUrl = "https://flags.example.com"))
+
+  val asLayer: ZLayer[Any, FeatureFlagError.InvalidConfiguration, OFREPFeatureProvider] =
+    OFREPProvider.layer("https://flags.example.com")
+  // --8<-- [end:lifecycle]
 
   // --8<-- [start:circuit-breaker]
   val resilient: ZLayer[Any, Throwable | FeatureFlagError, FeatureFlags] =

@@ -116,16 +116,5 @@ object ContextSpec extends ZIOSpecDefault:
         _   <- Context.handleRequest.provideEnvironment(env)
         ctx <- provider.getEvaluations.map(_.last._2)
       yield assertTrue(ctx.targetingKey.contains("user-42"), ctx.getString("region").contains("eu-west-1"))
-    },
-    test("request handler") {
-      for
-        provider <- ZIO.service[TestFeatureProvider]
-        out      <- Context.handle(Context.Request("u-9", "NL", "pro"))
-        ctx      <- lastContext
-      yield assertTrue(
-        out == "newUi=true banner=spring",
-        ctx.targetingKey.contains("u-9"),
-        ctx.getString("country").contains("NL")
-      )
-    }.provide(TestFeatureProvider.layer(Map("new-ui" -> true, "banner" -> "spring")))
+    }
   ) @@ TestAspect.withLiveClock

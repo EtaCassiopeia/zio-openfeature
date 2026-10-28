@@ -73,6 +73,13 @@ object EvaluatingSpec extends ZIOSpecDefault:
         res      <- bounded
       yield assertTrue(res.value, options.timeout == EvaluationTimeout.After(200.millis))
     }.provide(empty),
+    test("metadata the provider does not set reads as None") {
+      for
+        provider <- ZIO.service[TestFeatureProvider]
+        _        <- provider.setFlag("dark-mode", true)
+        o        <- owner
+      yield assertTrue(o.isEmpty)
+    }.provide(empty),
     test("classify sorts provider exceptions") {
       assertTrue(
         FeatureFlagError.classify(new java.net.ConnectException("refused")).isInstanceOf[FeatureFlagError.Unreachable],

@@ -43,6 +43,15 @@ object Providers:
     )
   // --8<-- [end:config]
 
+  // --8<-- [start:owned-domain]
+  // A domain client shares the process-wide API by default; `Owned` makes shutdown stop its provider
+  def checkoutClient(provider: FeatureProvider): ZLayer[Any, Throwable, FeatureFlags] =
+    FeatureFlags.fromProvider(
+      provider,
+      FeatureFlagsConfig().withDomain("checkout").withApiOwnership(ApiOwnership.Owned)
+    )
+  // --8<-- [end:owned-domain]
+
   // --8<-- [start:multi-provider]
   // Ask `overrides` first; a flag it does not hold falls through to `remote`
   def layered(overrides: FeatureProvider, remote: FeatureProvider): ZLayer[Any, Throwable, FeatureFlags] =
@@ -71,8 +80,18 @@ object Providers:
     )
   // --8<-- [end:acquire]
 
+  // --8<-- [start:acquire-verify]
+  // Reject a candidate unless it knows both sentinel flags
+  val checks: FeatureProvider => Task[Unit] =
+    Verify.all(Verify.flagExists[Boolean]("kill-switch"), Verify.flagExists[String]("banner"))
+
+  // Ask the real provider first, and fall through to the fallback only when it lacks the flag
+  val compose: (FeatureProvider, FeatureProvider) => FeatureProvider =
+    (real, fallback) => FeatureFlags.multiProvider(List(real, fallback))
+  // --8<-- [end:acquire-verify]
+
   // --8<-- [start:acquire-status]
-  // A readiness probe that turns true only once the real provider is serving
+  // True only once the real provider is serving (`isLive`: the state is `Live`)
   val ready: URIO[AcquireStatus, Boolean] =
     AcquireStatus.get.map(_.isLive)
 
@@ -99,8 +118,9 @@ object Providers:
   // --8<-- [start:hot-swap]
   def swap(next: FeatureProvider): ZIO[FeatureFlags, FeatureFlagError, Unit] =
     FeatureFlags.setProvider(next).catchSome { case e: FeatureFlagError.ProviderInitializationFailed =>
-      // The previous provider is back in place and still serving
-      ZIO.logWarning(s"kept the old provider: ${e.message}")
+      // If initialize() threw, the previous provider is back and still serving.
+      // If it timed out, the new provider stays registered and the status is Error until it finishes.
+      ZIO.logWarning(s"swap failed: ${e.message}")
     }
   // --8<-- [end:hot-swap]
 

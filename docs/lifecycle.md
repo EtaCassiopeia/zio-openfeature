@@ -7,55 +7,46 @@ uses the status to decide whether an evaluation may run, and publishes the provi
 
 ## Statuses
 
-| `ProviderStatus` | Meaning | An evaluation |
+| `ProviderStatus` | An evaluation | Entered by |
 |:--|:--|:--|
-| `NotReady` | Starting, being swapped, or shut down | fails with `ProviderNotReady(NotReady)` |
-| `Ready` | Serving | runs |
-| `Stale` | Serving data that may be out of date | runs |
-| `Error` | The provider reported an error it may recover from | runs |
-| `Fatal` | The provider cannot recover | fails with `ProviderFatal` |
-| `ShuttingDown` | `shutdown` is in progress | fails with `ProviderNotReady(ShuttingDown)` |
+| `NotReady` | fails with `ProviderNotReady(NotReady)` | start, a `setProvider` swap in progress, or shutdown complete |
+| `Ready` | runs | a `READY` event |
+| `Stale` | runs | a `STALE` event, from `Ready` only |
+| `Error` | runs: the provider usually serves its last good values or answers with an error code | an `ERROR` event |
+| `Fatal` | fails with `ProviderFatal` | an `ERROR` event with code `ProviderFatal`, or `initTimeout` passing before the provider was ever ready |
+| `ShuttingDown` | fails with `ProviderNotReady(ShuttingDown)` | `shutdown` in progress |
 
-`Error` still evaluates on purpose: providers in that state usually keep serving their last good values, or answer
-with an error code of their own. `status.canEvaluate` is true for `Ready` and `Stale`, and `status.isRecoverable` is
-false only for `Fatal`.
-
-## What changes the status
-
-| Cause | Change |
-|:--|:--|
-| The provider reports `READY` | `NotReady`, `Stale` or `Error` → `Ready` |
-| The provider reports `STALE` | `Ready` → `Stale` |
-| The provider reports `ERROR` | `NotReady`, `Ready` or `Stale` → `Error` |
-| The provider reports `ERROR` with code `ProviderFatal` | any status except `ShuttingDown` → `Fatal` |
-| Async start: `initTimeout` passes before the provider was ever ready | `NotReady` or `Error` → `Fatal` |
-| [`setProvider`](providers.md#replace-the-provider-at-runtime) | any → `NotReady` while it runs, then `Ready` (`Error` if neither the new nor the old provider can serve, or if the new provider is still initializing at `initTimeout`) |
-| [`fromAcquireAsync`](providers.md#start-on-a-fallback-fromacquireasync) switching from the fallback to the real provider | none: the status stays `Ready`, and the fallback answers until the switch |
-| `shutdown` | any → `ShuttingDown` → `NotReady` |
-
-`Fatal` stays until `setProvider` installs a new provider. Events that arrive during a swap, or after a shutdown, do
-not change the status. How the start works, and how long it may take, is set on the
-[factory](providers.md#sync-or-async-start).
+- `Fatal` and `ShuttingDown` ignore both `READY` and `ERROR`. `Fatal` stays until
+  [`setProvider`](providers.md#replace-the-provider-at-runtime) installs a new provider.
+- Events that arrive during a swap or after a shutdown do not change the status.
+- `status.canEvaluate` is true for `Ready` and `Stale`; `status.isRecoverable` is false only for `Fatal`.
+- [`fromAcquireAsync`](providers.md#start-on-a-fallback-fromacquireasync) never changes the status when it switches from
+  its fallback to the real provider. How the start works, and how long it may take, is set on the
+  [factory](providers.md#sync-or-async-start).
 
 ## Wait until the provider is ready
 
-`awaitReady(within)` waits until the status is `Ready` or `Stale`, stops early on `Fatal`, and gives up after `within`.
-It returns the status at that moment, so it never fails. It does not poll, and any number of fibers can wait at once.
+`awaitReady(within)` waits until the status is `Ready` or `Stale`, and gives up after `within`. It returns the status at
+that moment, so it never fails. It also returns early on `Fatal`, and on an instance that is shutting down or shut
+down. It does not poll, and any number of fibers can wait at once.
 
 ```scala
 --8<-- "Lifecycle.scala:readiness"
 ```
 
-## Answer while the provider is not ready
+!!! warning
+    With `fromAcquireAsync`, `providerStatus` reads `Ready` from the start, so `awaitReady` is the wrong probe. Use
+    `AcquireStatus` (see [Start on a fallback](providers.md#start-on-a-fallback-fromacquireasync)).
 
 With an [async start](providers.md#sync-or-async-start), evaluations fail with `ProviderNotReady` until the provider is
-ready. Serve the default meanwhile:
+ready. Serve the default meanwhile (the `*OrDefault` calls do this for every error, see
+[Evaluating flags](evaluating.md)):
 
 ```scala
 --8<-- "Lifecycle.scala:not-ready"
 ```
 
-The `*OrDefault` calls do this for every error, see [Evaluating flags](evaluating.md).
+`providerMetadata` and `clientMetadata` return the provider's `name` and the client's `domain` and `version`.
 
 ## React to events
 
@@ -74,24 +65,20 @@ Register a handler for the events you care about. Each registration returns an e
 | `on(eventType, handler)` | the whole `ProviderEvent` | as the matching handler above |
 
 - The subscription is in place before registration returns, so no later event is missed. An event that arrives while
-  you register may reach the handler twice. Make handlers idempotent.
-- A handler that dies is logged, and keeps its subscription.
-- One provider initialization produces one `Ready` event; a later `Ready` means the provider recovered.
+  you register may reach the handler twice: make handlers idempotent.
 - When the status already matches, the handler gets a payload that describes the current state, not the event that
   caused it.
-- A handler does not run inside the transaction or `withContext` block it was registered from, even though it may
-  have been registered there: its evaluations see neither the transaction's overrides nor that fiber-local context.
+- A handler that dies is logged, and keeps its subscription.
+- A handler does not run inside the transaction or `withContext` block it was registered from: its evaluations see
+  neither the transaction's overrides nor that fiber-local context.
 
-### Scoping a handler
+!!! tip "Scope a handler"
+    A handler keeps running until you run its canceller or the instance shuts down. To tie it to a scope, hand the
+    canceller to `acquireRelease`; the same shape works for every `on*` method.
 
-Every registration returns its canceller, and the handler keeps running until you run it or the instance shuts down.
-To tie a handler to a scope, hand the canceller to `acquireRelease`:
-
-```scala
---8<-- "Lifecycle.scala:scoped-handler"
-```
-
-The same shape works for every `on*` method.
+    ```scala
+    --8<-- "Lifecycle.scala:scoped-handler"
+    ```
 
 ## Read the event stream
 
@@ -101,58 +88,24 @@ The same shape works for every `on*` method.
 --8<-- "Lifecycle.scala:events"
 ```
 
-| `ProviderEvent` | Fields |
+| `ProviderEvent` (`eventType`) | Fields |
 |:--|:--|
 | `Ready` | `providerMetadata`, `eventMetadata` |
 | `Error` | `error`, `providerMetadata`, `errorCode`, `errorMessage`, `eventMetadata` |
 | `Stale` | `reason`, `providerMetadata`, `eventMetadata` |
 | `ConfigurationChanged` | `changedFlags`, `providerMetadata`, `eventMetadata` |
-| `Reconnecting` | `providerMetadata`, `eventMetadata` |
+| `Reconnecting` [^1] | `providerMetadata`, `eventMetadata` |
 
-Every event has `eventType` (a `ProviderEventType`), `metadata` and `eventMeta` (the provider's extra
-`FlagMetadata`), and `isError` / `isHealthy`.
+Every event has `eventType` (a `ProviderEventType` with the same five cases), `metadata`, `eventMeta` (the provider's
+extra `FlagMetadata`), and `isError` / `isHealthy`.
 
-!!! note
-    `Reconnecting` exists for completeness with the specification, which defines it for client-side providers. The
-    Java SDK has no such event, so a server-side provider never sends it.
+[^1]: The specification defines `Reconnecting` for client-side providers. The Java SDK has no such event, so a
+    server-side provider never sends it.
 
-### Which bundled providers send events
-
-| Provider | Sends |
-|:--|:--|
-| `OptimizelyFeatureProvider`, from `OptimizelyProvider.make` ([Optimizely](optimizely.md)) | `READY` and `STALE` when its datafile goes stale and recovers, `CONFIGURATION_CHANGED` on a new datafile |
-| `CircuitBreakerProvider` ([Extras](extras.md)) | its own `READY` and `STALE` when the breaker changes, plus the wrapped provider's events if it sends any |
-| `CachingProvider` ([Extras](extras.md)) | the wrapped provider's events, if it sends any |
-| `TestFeatureProvider` ([Testkit](testkit.md)) | whatever the test emits with `emitEvent` |
-| `HoconProvider`, `EnvVarProvider`, `DeferredProvider`, `IntegerWideningLongProvider` | nothing |
-
-The Java SDK itself sends `READY` or `ERROR` when a provider's initialization finishes, for every provider.
-
-## Track user actions
-
-`track` sends an event, such as a conversion, to the provider, for experiments and analytics:
-
-```scala
---8<-- "Lifecycle.scala:tracking"
-```
-
-| Call | Sends |
-|:--|:--|
-| `track(name)` | the event name |
-| `track(name, context)` | the event name and a targeting context |
-| `track(name, details)` | the event name and `TrackingEventDetails` |
-| `track(name, context, details)` | all three |
-
-The context is merged with the global, client and ambient context exactly as for an evaluation (see
-[Evaluation context](context.md)). `TrackingEventDetails` has an optional numeric `value` and `attributes`. Attribute
-values can be the plain types `withAttribute` accepts for a context, any `AttributeValue`, `Option`s of these, and nested
-`List`s and `Map`s; a `null` or `None` attribute is dropped. Any other type fails the call with
-`FeatureFlagError.InvalidContext` before anything is sent. A provider that does not support tracking ignores the call. A
-provider error fails the call with a `FeatureFlagError`.
-
-Tracked events are not kept by the instance: their merged contexts routinely hold personal data. To assert on tracking
-in a test, use the testkit's `TestFeatureProvider.trackedEvents`, which lists what the provider received (see
-[Testkit](testkit.md)). `FeatureFlags.trackedEvents` is deprecated, and is empty except on testkit-built instances.
+The Java SDK sends `READY` or `ERROR` when any provider's initialization finishes. Beyond that, the
+[Optimizely](optimizely.md) provider and the [Extras](extras.md) `CircuitBreakerProvider` send their own events (the
+breaker and `CachingProvider` also pass on the wrapped provider's), and the [testkit](testkit.md) provider sends what a test emits with `emitEvent`. The HOCON,
+environment-variable, deferred and long-widening providers send none.
 
 ## Shut down
 
@@ -161,6 +114,5 @@ in a test, use the testkit's `TestFeatureProvider.trackedEvents`, which lists wh
 ```
 
 Shutdown moves the status to `ShuttingDown` and then `NotReady`, and evaluations fail from then on. It clears the
-client hooks and ZIO API-level hooks, the global and client context and the tracked events, and ends the event stream and every
-handler. Whether it also stops the provider depends on
-[who owns the API](providers.md#who-shuts-down-the-api).
+client and ZIO API hooks and the global and client context, and ends the event stream and every handler. Whether it
+also stops the provider depends on [who owns the API](providers.md#who-shuts-down-the-api).

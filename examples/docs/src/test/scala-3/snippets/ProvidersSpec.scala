@@ -67,6 +67,12 @@ object ProvidersSpec extends ZIOSpecDefault:
         status == ProviderStatus.Ready
       )
     }.provide(TestFeatureProvider.layer(Map("banner" -> "from-first"))),
+    test("owned domain: the client is built on the domain") {
+      for
+        provider <- TestFeatureProvider.make
+        client   <- FeatureFlags.clientMetadata.provide(Providers.checkoutClient(provider))
+      yield assertTrue(client.domain.contains("checkout"))
+    },
     test("config: domain and version show up in clientMetadata") {
       for
         provider <- TestFeatureProvider.make

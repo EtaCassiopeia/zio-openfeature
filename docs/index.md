@@ -4,7 +4,7 @@ ZIO OpenFeature gives Scala applications type-safe feature flags as ZIO effects.
 [OpenFeature](https://openfeature.dev) Java SDK, so it works with any OpenFeature provider: LaunchDarkly, flagd,
 Flagsmith, Flipt, OFREP, Optimizely, or one of the providers that ship with it.
 
-![One flag evaluation through the pipeline. The context is merged and the before hooks run in order. A transaction override answers at the transaction stage without calling the provider; otherwise the status gate is checked and the provider is called with a timeout. The answer returns through the after hooks, or the error hooks when it carries an error code, then finallyAfter. For a flag the provider does not know, the typed tier fails with FlagNotFound and the total tier serves the default.](assets/evaluation.svg)
+![One flag evaluation through the pipeline: context merge, before hooks, transaction override or status gate and provider call, then after or error hooks and finallyAfter, for a plain read, a transaction override and a missing flag.](assets/evaluation.svg)
 
 ## At a glance
 
@@ -14,30 +14,12 @@ Flagsmith, Flipt, OFREP, Optimizely, or one of the providers that ship with it.
 
 ## What you get
 
-Two ways to read a flag
-:   The **typed tier** (`boolean`, `value`, …) fails with a `FeatureFlagError` when a flag cannot be read, so a
-    fail-closed gate stays closed. The **total tier** (`booleanOrDefault`, …) never fails and serves your default,
-    with the reason on the result. [Read more](evaluating.md).
-
-Flags as typed values
-:   Declare a flag once with `FlagDef`, and read enums, case classes and newtypes, not just strings and numbers.
-    [Read more](typed-flags.md).
-
-Targeting context in layers
-:   Global, client, per-request and per-call attributes merge in a fixed order, and ambient identity (MDC, tracing
-    tags) can be pulled in on every evaluation. [Read more](context.md).
-
-Hooks, transactions and events
-:   ZIO-native hooks for logging, metrics and validation; scoped overrides that record every flag a block of code
-    read; provider status and change events as a `ZStream`. [Hooks](hooks.md), [transactions](transactions.md),
-    [lifecycle and events](lifecycle.md).
-
-Production wiring
-:   Sync or async start-up with timeouts, hot provider swaps, a fallback provider while the real one is built, and
-    resilience wrappers (caching, circuit breaker). [Read more](providers.md).
-
-A testkit
-:   An in-memory provider to test flag-driven code without a network. [Read more](testkit.md).
+- **Two tiers.** `boolean`, `value`, … fail with a typed error; `booleanOrDefault`, … never fail. [Evaluating flags](evaluating.md)
+- **Typed flags.** One `FlagDef` per flag, with enums and case classes as values. [Typed flags](typed-flags.md)
+- **Layered context.** Global, client, scoped and per-call attributes, plus ambient identity. [Evaluation context](context.md)
+- **Hooks, transactions, events.** [Hooks](hooks.md), [transactions](transactions.md), [lifecycle and events](lifecycle.md)
+- **Production wiring.** Async start-up, hot swaps, fallbacks, caching, circuit breaker. [Providers](providers.md)
+- **Testkit.** An in-memory provider for flag-driven code. [Testkit](testkit.md)
 
 ## Modules
 
@@ -49,8 +31,8 @@ A testkit
 | `zio-openfeature-optimizely` | A provider for Optimizely Feature Experimentation |
 | `zio-openfeature-testkit` | `TestFeatureProvider` and test helpers |
 
-Scala 3.3.8+ and 2.13.18+, ZIO 2.1.27+, JDK 11+ (CI tests 17, 21 and 25). It implements the server-side (dynamic context) paradigm of the
-OpenFeature specification v0.9.0; see [spec compliance](spec-compliance.md).
+The library implements the server-side (dynamic context) paradigm of the OpenFeature specification; see
+[spec compliance](spec-compliance.md) for the supported versions.
 
 [Get started](getting-started.md){ .md-button .md-button--primary }
 [How it works](architecture.md){ .md-button }

@@ -265,13 +265,13 @@ object TestkitSpec extends ZIOSpecDefault:
     @scala.annotation.nowarn("msg=deprecated")
     override def getMetadata: Metadata = new Metadata:
       override def getName: String = "counting"
-    override def getProviderHooks: java.util.List[Hook[?]]             = inner.getProviderHooks
+    override def getProviderHooks: java.util.List[Hook[?]] = inner.getProviderHooks
     @scala.annotation.nowarn("msg=deprecated")
-    override def getState: ProviderState                               = inner.getState
-    override def initialize(ctx: Ctx): Unit                            = inner.initialize(ctx)
-    override def initialize(ctx: Ctx, domain: String): Unit            = inner.initialize(ctx, domain)
-    override def isDomainScoped(): Boolean                             = inner.isDomainScoped()
-    override def shutdown(): Unit                                      = inner.shutdown()
+    override def getState: ProviderState                                            = inner.getState
+    override def initialize(ctx: Ctx): Unit                                         = inner.initialize(ctx)
+    override def initialize(ctx: Ctx, domain: String): Unit                         = inner.initialize(ctx, domain)
+    override def isDomainScoped(): Boolean                                          = inner.isDomainScoped()
+    override def shutdown(): Unit                                                   = inner.shutdown()
     override def track(name: String, ctx: Ctx, details: TrackingEventDetails): Unit = inner.track(name, ctx, details)
     override def getBooleanEvaluation(key: String, default: java.lang.Boolean, ctx: Ctx) =
       counted(inner.getBooleanEvaluation(key, default, ctx))
@@ -318,7 +318,6 @@ object TestkitSpec extends ZIOSpecDefault:
   )
   // --8<-- [end:differential]
 
-  // --8<-- [start:caching-reason]
   val cachingReason = test("CachingReasonProvider reports CACHED on a repeat") {
     for
       provider <- TestFeatureProvider.make(Map("flag" -> true))
@@ -328,13 +327,12 @@ object TestkitSpec extends ZIOSpecDefault:
         .provide(layer)
     yield assertTrue(reasons == ResolutionReason.Cached)
   }
-  // --8<-- [end:caching-reason]
 
   // --8<-- [start:fault-injection]
   val faultInjection = suite("when the provider itself misbehaves")(
     test("an initialize() that never returns fails the layer at the init timeout") {
       for
-        faulty <- FaultyProvider.scoped(Map("flag" -> true)) // the scope releases any hang left parked
+        faulty <- FaultyProvider.scoped(Map("flag" -> true))            // the scope releases any hang left parked
         _      <- faulty.script(Op.Initialize, Fault.HangUntilReleased) // ignores shutdown(), like a stuck SDK
         error  <- FeatureFlags.fromProvider(faulty, FeatureFlagsConfig().withInitTimeout(200.millis)).build.flip
       yield assertTrue(error.isInstanceOf[java.util.concurrent.TimeoutException])

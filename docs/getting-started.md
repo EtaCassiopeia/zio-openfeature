@@ -2,40 +2,35 @@
 
 ## Install
 
-Add the core module, plus whichever others you need, to `build.sbt`. Replace `<version>` with the latest release
-shown on [Maven Central](https://central.sonatype.com/artifact/io.github.etacassiopeia/zio-openfeature-core_3).
+Replace `<version>` with the latest release on
+[Maven Central](https://central.sonatype.com/artifact/io.github.etacassiopeia/zio-openfeature-core_3).
 
 ```scala
-// The FeatureFlags service, on top of the OpenFeature Java SDK
-libraryDependencies += "io.github.etacassiopeia" %% "zio-openfeature-core" % "<version>"
-
-// Optional providers
-libraryDependencies += "io.github.etacassiopeia" %% "zio-openfeature-extras"     % "<version>" // HOCON, env vars, caching, circuit breaker
-libraryDependencies += "io.github.etacassiopeia" %% "zio-openfeature-ofrep"      % "<version>" // OpenFeature Remote Evaluation Protocol
-libraryDependencies += "io.github.etacassiopeia" %% "zio-openfeature-optimizely" % "<version>" // Optimizely Feature Experimentation
-
-// An in-memory provider for tests
-libraryDependencies += "io.github.etacassiopeia" %% "zio-openfeature-testkit" % "<version>" % Test
+libraryDependencies ++= Seq(
+  "io.github.etacassiopeia" %% "zio-openfeature-core"       % "<version>",
+  "io.github.etacassiopeia" %% "zio-openfeature-extras"     % "<version>", // HOCON, env vars, caching, circuit breaker
+  "io.github.etacassiopeia" %% "zio-openfeature-ofrep"      % "<version>", // OpenFeature Remote Evaluation Protocol
+  "io.github.etacassiopeia" %% "zio-openfeature-optimizely" % "<version>", // Optimizely Feature Experimentation
+  "io.github.etacassiopeia" %% "zio-openfeature-testkit"    % "<version>" % Test // in-memory provider for tests
+)
 ```
 
-The library is published for Scala 3.3 (3.3.8 or later) and Scala 2.13 (2.13.18 or later), needs ZIO 2.1.27 or
-later and Java 11 or later. The examples on this site
-use Scala 3 syntax.
+Only `core` is required. It is published for Scala 3.3.8+ and 2.13.18+, and needs ZIO 2.1.27+ and Java 11+. The
+examples on this site use Scala 3 syntax.
 
 ??? note "Trying unreleased changes"
     Every commit on `main` publishes the next version with a `-SNAPSHOT` suffix (for example `1.2.1-SNAPSHOT` after
-    `v1.2.0`). Add the snapshots resolver to use it:
+    `v1.2.0`). Add the snapshots resolver to use it. Snapshots change without notice; pin a release for anything you
+    ship.
 
     ```scala
     resolvers += "Sonatype Central Snapshots" at "https://central.sonatype.com/repository/maven-snapshots/"
     ```
 
-    Snapshots change without notice. Pin a released version for anything you ship.
-
 ## Your first flag
 
-`FeatureFlags` is a ZIO service. Ask it for a flag by key, with the value to use when the flag is not set. Here the
-service runs on the testkit's in-memory provider, so the program needs nothing else to run:
+`FeatureFlags` is a ZIO service. Ask it for a flag by key, with the value to use when the flag is not set. Here it runs
+on the testkit's in-memory provider, so nothing else is needed:
 
 ```scala
 --8<-- "GettingStarted.scala:first-flag"
@@ -43,39 +38,33 @@ service runs on the testkit's in-memory provider, so the program needs nothing e
 
 ## Use a real provider
 
-Your flags live in a flag service, which OpenFeature reaches through a *provider*. Any OpenFeature Java provider works:
-pass it to `FeatureFlags.fromProvider`, and the program itself does not change.
+Any OpenFeature Java provider works: pass it to `FeatureFlags.fromProvider`, and the program does not change. For
+flagd, add `"dev.openfeature.contrib.providers" % "flagd" % "<version>"` and pass `new FlagdProvider()`; the
+[OpenFeature ecosystem](https://openfeature.dev/ecosystem) lists the rest.
 
 ```scala
 --8<-- "GettingStarted.scala:real-provider"
 ```
 
-For flagd, for example, add `"dev.openfeature.contrib.providers" % "flagd" % "<version>"` and pass
-`new FlagdProvider()`. The [OpenFeature ecosystem](https://openfeature.dev/ecosystem) lists the providers.
-[Wiring a provider](providers.md) covers the other ways to build the layer: async start-up, timeouts, named domains
-and several providers at once.
+[Wiring a provider](providers.md) covers async start-up, timeouts, named domains and several providers at once.
 
-## When a flag cannot be read
+## Two ways to read a flag
 
-A flag may be missing, have the wrong type, or the provider may be down. Every evaluation method comes in two tiers, and
-you pick the one that fits the call site:
+The typed tier fails when the flag cannot be read; the total tier serves your default. See
+[Evaluating flags](evaluating.md#two-tiers).
 
 ```scala
 --8<-- "GettingStarted.scala:two-tiers"
 ```
 
-The **typed tier** fails with a `FeatureFlagError` saying what went wrong. Use it when a default would be the wrong
-answer. The **total tier** never fails: it serves your default and logs why. See [Evaluating flags](evaluating.md).
-
 ## Declare a flag once
 
-A key, a type and a default written out at every call site can drift apart. A `FlagDef` states them once:
+A `FlagDef` states a flag's key, type and default in one place, so call sites cannot disagree. See
+[Typed flags](typed-flags.md).
 
 ```scala
 --8<-- "GettingStarted.scala:flag-def"
 ```
-
-Definitions also work with your own enums and case classes. See [Typed flags](typed-flags.md).
 
 ## Where next
 

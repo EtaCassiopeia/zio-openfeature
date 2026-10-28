@@ -21,9 +21,11 @@ theme:
     - content.code.copy
     - content.action.edit
     - navigation.footer
-    - navigation.indexes
+    - navigation.instant
     - navigation.sections
+    - navigation.tabs
     - navigation.top
+    - search.highlight
     - search.suggest
   palette:
     - media: "(prefers-color-scheme: light)"
@@ -81,16 +83,20 @@ nav:
       - Evaluation context: context.md
       - Hooks: hooks.md
       - Transactions: transactions.md
+      - Tracking events: tracking.md
+  - Providers:
       - Wiring a provider: providers.md
       - Lifecycle and events: lifecycle.md
-  - Providers:
       - Extras: extras.md
       - OFREP: ofrep.md
       - Optimizely: optimizely.md
   - Testing:
       - Testkit: testkit.md
+      - Testing providers and wrappers: testing-providers.md
       - Testing real providers: testing-real-providers.md
-  - Under the hood: architecture.md
-  - Spec compliance: spec-compliance.md
-  - API reference: https://javadoc.io/doc/io.github.etacassiopeia/zio-openfeature-core_3
-  - Development: development.md
+  - Reference:
+      - Under the hood: architecture.md
+      - Spec compliance: spec-compliance.md
+      - API reference: https://javadoc.io/doc/io.github.etacassiopeia/zio-openfeature-core_3
+  - Contributing:
+      - Development: development.md

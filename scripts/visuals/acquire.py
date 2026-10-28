@@ -1,5 +1,5 @@
 """fromAcquireAsync: the fallback answers from the start while a background fiber builds, verifies and initializes the
-real provider, then switches to it. Status stays Ready throughout (#512)."""
+real provider, then switches to it. Status stays Ready throughout."""
 
 from hud import AMBER, CYAN, DIM, GREEN, RED, TEXT, Scene
 

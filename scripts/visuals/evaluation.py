@@ -20,7 +20,7 @@ LABELS = {
     "before": ("before hooks", "in order"),
     "transaction": ("transaction", "override · cache"),
     "status": ("status gate", "fail fast?"),
-    "provider": ("provider", "1 s timeout"),
+    "provider": ("provider", "default 1 s timeout"),
     "after": ("after · error", "reverse order"),
     "finally": ("finallyAfter", "always runs"),
 }

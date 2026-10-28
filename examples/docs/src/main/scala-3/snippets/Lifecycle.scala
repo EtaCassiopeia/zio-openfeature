@@ -58,14 +58,6 @@ object Lifecycle:
       .unit
   // --8<-- [end:events]
 
-  // --8<-- [start:tracking]
-  val purchase: ZIO[FeatureFlags, FeatureFlagError, Unit] =
-    val user    = EvaluationContext("user-42")
-    val details = TrackingEventDetails(99.99).withAttribute("currency", "EUR")
-    FeatureFlags.track("checkout-completed") *>     // event name only
-      FeatureFlags.track("purchase", user, details) // with targeting context and details
-  // --8<-- [end:tracking]
-
   // --8<-- [start:shutdown]
   // Also runs on its own when the layer's scope closes
   val stop: URIO[FeatureFlags, Unit] = FeatureFlags.shutdown

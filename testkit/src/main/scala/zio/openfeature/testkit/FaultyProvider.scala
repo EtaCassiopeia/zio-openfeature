@@ -1,7 +1,7 @@
 package zio.openfeature.testkit
 
 import java.time.Instant
-import java.util.concurrent.{ConcurrentHashMap, ConcurrentLinkedQueue, CountDownLatch}
+import java.util.concurrent.{ConcurrentHashMap, ConcurrentLinkedQueue}
 import java.util.concurrent.atomic.AtomicReference
 
 import scala.jdk.CollectionConverters._
@@ -35,12 +35,14 @@ object Fault {
   final case class Delay(duration: Duration, andThen: Fault = Succeed) extends Fault
 
   /** Block until [[FaultyProvider.release]], then call the delegate. `shutdown()` does NOT unblock it: this is a
-    * provider whose `initialize()` ignores shutdown, the shape that wedged the layer.
+    * provider whose `initialize()` ignores shutdown, the shape that wedged the layer. A release that comes after the
+    * call entered but before it reached the hang (say, during a preceding [[Delay]]) still lets it through.
     */
   case object HangUntilReleased extends Fault
 
   /** Block until `shutdown()` is called (or [[FaultyProvider.release]]), then call the delegate: the common "wait for
-    * the first config, shutdown aborts the wait" shape.
+    * the first config, shutdown aborts the wait" shape. As with [[HangUntilReleased]], a shutdown or release after the
+    * call entered counts even if it came before the call reached the hang.
     */
   case object HangUntilShutdown extends Fault
 
@@ -120,11 +122,15 @@ final class FaultyProvider[+P <: FeatureProvider] private (val delegate: P, name
 
   import FaultyProvider.{Call, Outcome}
 
-  private val scripts            = new ConcurrentHashMap[Op, AtomicReference[Chunk[Fault]]]()
-  private val recorded           = new ConcurrentLinkedQueue[Call]()
-  private val parked             = ConcurrentHashMap.newKeySet[CountDownLatch]()
-  private val parkedTillShutdown = ConcurrentHashMap.newKeySet[CountDownLatch]()
-  @volatile private var closed   = false
+  private val scripts  = new ConcurrentHashMap[Op, AtomicReference[Chunk[Fault]]]()
+  private val recorded = new ConcurrentLinkedQueue[Call]()
+  // A call takes its tickets when it enters, so a release or shutdown() between the entry (what awaitEntered sees) and
+  // the call reaching its hang still lets it through. `release` opens both gates; `shutdown()` only the second.
+  private val released           = new Gate
+  private val releasedOrShutdown = new Gate
+
+  /** The tickets a call took when it entered. */
+  final private case class Entry(released: Int, releasedOrShutdown: Int)
 
   // Guarded by `entryLock`: how many calls of each op have started, for `awaitEntered`.
   private val entryLock = new Object
@@ -147,7 +153,9 @@ final class FaultyProvider[+P <: FeatureProvider] private (val delegate: P, name
   /** How many calls of `op` have started, including ones still running or parked. */
   def entered(op: Op): UIO[Int] = ZIO.succeed(entryLock.synchronized(entries.getOrElse(op, 0)))
 
-  /** Wait until at least `n` calls of `op` have started, e.g. until `initialize()` is parked on a hang. */
+  /** Wait until at least `n` calls of `op` have started. A [[release]] (or `shutdown()`) after this returns reaches
+    * those calls even if they have not parked on their hang yet.
+    */
   def awaitEntered(op: Op, n: Int = 1): UIO[Unit] =
     ZIO.attemptBlockingInterrupt {
       entryLock.synchronized {
@@ -155,14 +163,13 @@ final class FaultyProvider[+P <: FeatureProvider] private (val delegate: P, name
       }
     }.orDie
 
-  /** Unpark every call currently parked on a hang. Later hangs park again. */
-  def release: UIO[Unit] = ZIO.succeed(openAll(parked))
+  /** Unpark every call that entered before this release, including one still on its way to its hang. A call that enters
+    * later parks again.
+    */
+  def release: UIO[Unit] = ZIO.succeed { released.open(); releasedOrShutdown.open() }
 
   /** Release everything and make every later hang return at once. The finalizer of [[FaultyProvider.scoped]]. */
-  private[testkit] def close: UIO[Unit] = ZIO.succeed { closed = true; openAll(parked) }
-
-  private def openAll(latches: java.util.Set[CountDownLatch]): Unit =
-    latches.asScala.foreach(_.countDown())
+  private[testkit] def close: UIO[Unit] = ZIO.succeed { released.close(); releasedOrShutdown.close() }
 
   private def nextFault(op: Op): Fault =
     Option(scripts.get(op)) match {
@@ -171,38 +178,31 @@ final class FaultyProvider[+P <: FeatureProvider] private (val delegate: P, name
         ref.getAndUpdate(s => if (s.size > 1) s.tail else s).headOption.getOrElse(Fault.Succeed)
     }
 
-  private def hang(onShutdown: Boolean): Unit = {
-    val latch = new CountDownLatch(1)
-    parked.add(latch)
-    if (onShutdown) parkedTillShutdown.add(latch)
-    if (closed) latch.countDown() // checked after registering, so a concurrent close cannot be missed
-    try latch.await()
-    finally {
-      parked.remove(latch)
-      parkedTillShutdown.remove(latch)
-      ()
-    }
-  }
+  private def hang(onShutdown: Boolean, entry: Entry): Unit =
+    if (onShutdown) releasedOrShutdown.await(entry.releasedOrShutdown) else released.await(entry.released)
 
-  private def applyFault[A](fault: Fault, body: => A): A = fault match {
+  private def applyFault[A](fault: Fault, entry: Entry, body: => A): A = fault match {
     case Fault.Succeed                     => body
     case Fault.Throw(error)                => throw error
-    case Fault.Delay(duration, andThen)    => Thread.sleep(duration.toMillis); applyFault(andThen, body)
-    case Fault.HangUntilReleased           => hang(onShutdown = false); body
-    case Fault.HangUntilShutdown           => hang(onShutdown = true); body
-    case Fault.Emit(event, details, after) => emit(event, details); applyFault(after, body)
+    case Fault.Delay(duration, andThen)    => Thread.sleep(duration.toMillis); applyFault(andThen, entry, body)
+    case Fault.HangUntilReleased           => hang(onShutdown = false, entry); body
+    case Fault.HangUntilShutdown           => hang(onShutdown = true, entry); body
+    case Fault.Emit(event, details, after) => emit(event, details); applyFault(after, entry, body)
   }
 
   private def run[A](op: Op, flagKey: Option[String], arguments: Any*)(body: => A): A = {
     val args      = Chunk.fromIterable(arguments)
     val startedAt = Instant.now()
     val thread    = Thread.currentThread().getName
-    entryLock.synchronized {
+    // Read before the entry is announced, so anything that waited on awaitEntered and then released is seen.
+    val entry = entryLock.synchronized {
+      val seen = Entry(released.ticket(), releasedOrShutdown.ticket())
       entries.update(op, entries.getOrElse(op, 0) + 1)
       entryLock.notifyAll()
+      seen
     }
     try {
-      val result = applyFault(nextFault(op), body)
+      val result = applyFault(nextFault(op), entry, body)
       recorded.add(Call(op, flagKey, thread, startedAt, Outcome.Returned, args))
       result
     } catch {
@@ -228,7 +228,7 @@ final class FaultyProvider[+P <: FeatureProvider] private (val delegate: P, name
 
   /** Unparks every [[Fault.HangUntilShutdown]] first, then applies the [[Op.Shutdown]] script. */
   override def shutdown(): Unit = {
-    openAll(parkedTillShutdown)
+    releasedOrShutdown.open()
     run(Op.Shutdown, None)(delegate.shutdown())
   }
 

@@ -57,8 +57,8 @@ Prefer the scoped factories: a failing test then still frees parked threads. `de
 |:--------|:--------|
 | `calls`, `calls(op)` | every completed call, in completion order; a hung call appears once it is released |
 | `entered(op)` | how many calls of `op` have started, including ones still parked |
-| `awaitEntered(op, n)` | waits until `n` calls (default 1) have started, e.g. until `initialize()` is parked |
-| `release` | unparks every call parked now |
+| `awaitEntered(op, n)` | waits until `n` calls (default 1) have started; a `release` after it reaches them |
+| `release` | unparks every call that entered before it, even one not yet parked; later calls park again |
 
 Each `Call` has `op`, `flagKey` (the event name for `track`), `thread`, `startedAt`, `outcome` (`Outcome.Returned` or
 `Outcome.Threw(error)`) and `arguments`.

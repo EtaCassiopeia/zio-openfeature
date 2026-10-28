@@ -120,6 +120,57 @@ object FaultyProviderSpec extends ZIOSpecDefault {
         value = joined.exists(_.getValue.booleanValue())
       } yield assertTrue(value)
     },
+    // The delay holds the call between entering (what awaitEntered sees) and parking on the hang.
+    test("a release after a call entered but before it parked still unparks it") {
+      for {
+        fp     <- FaultyProvider.scoped()
+        _      <- fp.script(Op.Initialize, Fault.Delay(300.millis, Fault.HangUntilReleased))
+        init   <- ZIO.attemptBlocking(fp.initialize(ctx)).fork
+        _      <- fp.awaitEntered(Op.Initialize)
+        _      <- fp.release
+        joined <- init.join.timeout(2.seconds)
+        calls  <- fp.calls(Op.Initialize)
+      } yield assertTrue(joined.isDefined, calls.map(_.outcome) == Chunk(FaultyProvider.Outcome.Returned))
+    },
+    test("a shutdown() after a call entered but before it parked still opens HangUntilShutdown") {
+      for {
+        fp     <- FaultyProvider.scoped(Map("b" -> true))
+        _      <- fp.script(Op.EvaluateBoolean, Fault.Delay(300.millis, Fault.HangUntilShutdown))
+        eval   <- ZIO.attemptBlocking(fp.getBooleanEvaluation("b", java.lang.Boolean.FALSE, ctx)).fork
+        _      <- fp.awaitEntered(Op.EvaluateBoolean)
+        _      <- ZIO.attemptBlocking(fp.shutdown())
+        joined <- eval.join.timeout(2.seconds)
+      } yield assertTrue(joined.exists(_.getValue.booleanValue()))
+    },
+    test("a release before a call enters does not release the call's later hang") {
+      for {
+        fp     <- FaultyProvider.scoped()
+        _      <- fp.script(Op.Initialize, Fault.HangUntilReleased)
+        _      <- fp.release
+        init   <- ZIO.attemptBlocking(fp.initialize(ctx)).fork
+        _      <- fp.awaitEntered(Op.Initialize)
+        _      <- ZIO.sleep(300.millis)
+        parked <- init.poll
+        _      <- fp.release
+        joined <- init.join.timeout(5.seconds)
+      } yield assertTrue(parked.isEmpty, joined.isDefined)
+    },
+    test("a call that enters after a release parks again") {
+      for {
+        fp     <- FaultyProvider.scoped()
+        _      <- fp.script(Op.Initialize, Fault.HangUntilReleased)
+        first  <- ZIO.attemptBlocking(fp.initialize(ctx)).fork
+        _      <- fp.awaitEntered(Op.Initialize)
+        _      <- fp.release
+        done   <- first.join.timeout(5.seconds)
+        second <- ZIO.attemptBlocking(fp.initialize(ctx)).fork
+        _      <- fp.awaitEntered(Op.Initialize, 2)
+        _      <- ZIO.sleep(300.millis)
+        parked <- second.poll
+        _      <- fp.release
+        joined <- second.join.timeout(5.seconds)
+      } yield assertTrue(done.isDefined, parked.isEmpty, joined.isDefined)
+    },
     test("Emit fires the event through the SDK, then applies andThen") {
       val api       = OpenFeatureAPI.createIsolated()
       val domain    = s"emit-${java.util.UUID.randomUUID()}"

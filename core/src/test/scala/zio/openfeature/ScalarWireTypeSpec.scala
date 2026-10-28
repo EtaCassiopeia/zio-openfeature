@@ -15,13 +15,13 @@ import dev.openfeature.sdk.{
   Value
 }
 
-/** #356: a custom `FlagType[A]` whose wire representation is a *scalar* (an enum-valued flag stored as a string, a
-  * newtype over an int) had no working evaluation path — dispatch was on `typeName`, so a domain `typeName` fell to the
-  * object path and asked the provider for an object it does not have, while forcing `typeName = "String"` hit a
+/** A custom `FlagType[A]` whose wire representation is a *scalar* (an enum-valued flag stored as a string, a newtype
+  * over an int) had no working evaluation path — dispatch was on `typeName`, so a domain `typeName` fell to the object
+  * path and asked the provider for an object it does not have, while forcing `typeName = "String"` hit a
   * `ClassCastException` on `default.asInstanceOf[String]`.
   *
-  * The fix added `FlagType.wireType` (now `FlagType.wire`, #439), dispatches on it, sends `encode(default)`, and
-  * decodes the extracted wire value with a `Left` becoming `TypeMismatch`.
+  * The fix added `FlagType.wireType` (now `FlagType.wire`), dispatches on it, sends `encode(default)`, and decodes the
+  * extracted wire value with a `Left` becoming `TypeMismatch`.
   *
   * Shared (cross-compiled) test source dir → must compile on 2.13 and 3: braces only, no `given`/`using`, no `enum`.
   */
@@ -102,8 +102,8 @@ object ScalarWireTypeSpec extends ZIOSpecDefault {
   implicit val regionFlagType: FlagType[Region] =
     FlagType.from[Region]("Region", Region.Us, Region.parse, Region.render)
 
-  /** #360: an instance that declares a scalar `wireType` its `encode` does not actually produce. This is the mistake
-    * the `wireType` scaladoc warns about, and it is reachable at a documented extension point, so it must surface as a
+  /** An instance that declares a scalar `wireType` its `encode` does not actually produce. This is the mistake the
+    * `wireType` scaladoc warns about, and it is reachable at a documented extension point, so it must surface as a
     * diagnostic typed error rather than an opaque `ClassCastException` from inside the SDK bridge.
     */
   final case class Broken(v: String)
@@ -168,9 +168,9 @@ object ScalarWireTypeSpec extends ZIOSpecDefault {
       else ProviderEvaluations.of[Value](d, "DEFAULT")
   }
 
-  /** Returns `null` from the string resolver, to pin the one built-in behaviour change in #356: `decode` now runs on
-    * the extracted value, so a null string becomes a typed `TypeMismatch` where it previously flowed through as a
-    * `null` value.
+  /** Returns `null` from the string resolver, to pin the one built-in behaviour change: `decode` now runs on the
+    * extracted value, so a null string becomes a typed `TypeMismatch` where it previously flowed through as a `null`
+    * value.
     */
   private class NullStringProvider extends EventProvider {
     override def getMetadata: Metadata                      = new Metadata { def getName: String = "NullString" }
@@ -233,7 +233,7 @@ object ScalarWireTypeSpec extends ZIOSpecDefault {
       )
       assertTrue(names == List("Boolean", "String", "Int", "Long", "Float", "Double", "Object"))
     },
-    test("Option takes its element's wire (#439); List stays on the object path") {
+    test("Option takes its element's wire; List stays on the object path") {
       assertTrue(
         FlagType[Option[Int]].wire == WireType.Int,
         FlagType[Option[String]].wire == WireType.String,
@@ -431,7 +431,7 @@ object ScalarWireTypeSpec extends ZIOSpecDefault {
     },
     test("a null String from the provider now fails with TypeMismatch instead of yielding null") {
       ZIO.scoped {
-        // The one built-in behaviour change in #356: `decode` now runs on the extracted value, and
+        // The one built-in behaviour change: `decode` now runs on the extracted value, and
         // `FlagType[String].decode(null)` is a Left. Previously `null.asInstanceOf[String]` flowed through
         // as a null flag value. Erroring matches what the object path already does.
         build(new NullStringProvider, "null-str").flatMap { ff =>

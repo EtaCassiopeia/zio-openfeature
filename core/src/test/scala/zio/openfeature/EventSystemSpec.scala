@@ -93,7 +93,7 @@ object EventSystemSpec extends ZIOSpecDefault {
         } yield ev match {
           // The old generic `on` rebuilt Error as `Error(e, m)`, dropping the errorMessage field and eventMetadata; the
           // fix passes the original event, so both survive. The error code survives too since SDK 1.23.0, whose emit
-          // path stopped dropping it (java-sdk #2015, #423).
+          // path stopped dropping it (https://github.com/open-feature/java-sdk/issues/2015).
           case ProviderEvent.Error(err, _, code, msg, em) =>
             assertTrue(
               err.getMessage == "boom",
@@ -106,7 +106,7 @@ object EventSystemSpec extends ZIOSpecDefault {
       }
     },
     test("a provider-emitted PROVIDER_FATAL error code moves the status to Fatal and stops evaluations") {
-      // Up to SDK 1.22.x the emit path dropped the code, so this read Error and the provider kept being called (#423).
+      // Up to SDK 1.22.x the emit path dropped the code, so this read Error and the provider kept being called.
       ZIO.scoped {
         for {
           received <- Promise.make[Nothing, ProviderEvent]

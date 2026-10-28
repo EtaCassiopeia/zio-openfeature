@@ -2,7 +2,7 @@ package zio.openfeature
 
 import zio.UIO
 
-/** A pull-based source of ambient evaluation context, consulted once per evaluation (#353).
+/** A pull-based source of ambient evaluation context, consulted once per evaluation.
   *
   * The library already covers the '''push''' direction: `withContext` and the fiber-local context carry identity down
   * into a scope. A `ContextSource` covers the '''pull''' direction — "consult this effect for ambient context at

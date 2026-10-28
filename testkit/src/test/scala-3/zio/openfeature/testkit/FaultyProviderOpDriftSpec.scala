@@ -4,9 +4,9 @@ import dev.openfeature.sdk.{EventProvider, FeatureProvider}
 import java.lang.reflect.{Method, Modifier}
 import zio.test.*
 
-/** SDK drift guard for [[FaultyProvider]] (#463): every public method of `FeatureProvider` and `EventProvider`, except
-  * the `emit*` family, must have an [[Op]] and an override in `FaultyProvider`. A method the SDK adds would otherwise
-  * fall through to its interface default, unscripted and unrecorded.
+/** SDK drift guard for [[FaultyProvider]]: every public method of `FeatureProvider` and `EventProvider`, except the
+  * `emit*` family, must have an [[Op]] and an override in `FaultyProvider`. A method the SDK adds would otherwise fall
+  * through to its interface default, unscripted and unrecorded.
   */
 object FaultyProviderOpDriftSpec extends ZIOSpecDefault:
 
@@ -42,7 +42,7 @@ object FaultyProviderOpDriftSpec extends ZIOSpecDefault:
       .distinct
       .sortBy(render)
 
-  def spec = suite("FaultyProvider Op drift (#463)")(
+  def spec = suite("FaultyProvider Op drift")(
     test("every FeatureProvider / EventProvider method has an Op") {
       val unmapped = surface.filterNot(s => methodOp.contains(s._1))
       assertTrue(unmapped.isEmpty) ?? s"no Op for: ${unmapped.map(render).mkString(", ")}"

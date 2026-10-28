@@ -18,7 +18,7 @@ import zio._
 import zio.test._
 import java.util.concurrent.CopyOnWriteArrayList
 
-// #450: the wrappers' event plumbing — shutdown must stop their own emitter, and a failed attach must not later detach
+// The wrappers' event plumbing — shutdown must stop their own emitter, and a failed attach must not later detach
 // the wrapper that legitimately owns the delegate.
 object WrapperEventChannelSpec extends ZIOSpecDefault {
 
@@ -79,7 +79,7 @@ object WrapperEventChannelSpec extends ZIOSpecDefault {
       )
     } yield assertTrue(second.isLeft, reEmitted.contains(true))
 
-  def spec = suite("WrapperEventChannelSpec (#450)")(
+  def spec = suite("WrapperEventChannelSpec")(
     test("CachingProvider.shutdown stops its own event emitter") {
       shutdownStopsEmission(CachingProvider(new EmittingDelegate))
     },

@@ -19,8 +19,8 @@ import java.util.concurrent.atomic.AtomicReference
 /** Spec §3.1.2 / §1.3.4: int-range `Long`s must not be silently coerced to `Double`. A small long in the context
   * reaches providers as an `Integer` (so `instanceof Integer` targeting rules match).
   *
-  * Flag *evaluation* changed with SDK 1.22.0 (#333). `ff.long` now calls the native `client.getLongDetails`, so the
-  * provider's own `getLongEvaluation` decides the result instead of this library choosing a resolver for it:
+  * Flag *evaluation* changed with SDK 1.22.0. `ff.long` now calls the native `client.getLongDetails`, so the provider's
+  * own `getLongEvaluation` decides the result instead of this library choosing a resolver for it:
   *   - a provider that overrides it resolves the full 64-bit range **exactly** (was: silently lossy past 2^53);
   *   - one that does not inherits the SDK's double-backed default, which answers from `getDoubleEvaluation` and returns
   *     a loud `TYPE_MISMATCH` outside ±(2^53−1) rather than a quietly wrong number.
@@ -152,7 +152,7 @@ object LongCoercionSpec extends ZIOSpecDefault {
         } yield assertTrue(seen.get() == "Integer")
       }
     },
-    test("an out-of-int-range Long context attribute reaches the provider as a Long (#471)") {
+    test("an out-of-int-range Long context attribute reaches the provider as a Long") {
       val seen = new AtomicReference[String]("unset")
       ZIO.scoped {
         for {
@@ -191,7 +191,7 @@ object LongCoercionSpec extends ZIOSpecDefault {
           total <- ff.resolveOrDefault[Long]("flag", default = Long.MaxValue)
         } yield assertTrue(
           // The SDK refuses to answer rather than silently truncating through a Double, and the typed tier surfaces
-          // that refusal as a typed failure (#388)...
+          // that refusal as a typed failure...
           det.left.exists(_.isInstanceOf[FeatureFlagError.TypeMismatch]),
           // ...while the total tier still hands the caller's own default back untouched, with the code.
           total.errorCode.contains(ErrorCode.TypeMismatch),

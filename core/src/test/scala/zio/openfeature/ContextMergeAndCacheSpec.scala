@@ -15,9 +15,8 @@ import dev.openfeature.sdk.{
 }
 import java.util.concurrent.atomic.AtomicReference
 
-/** #252: per-evaluation context merging short-circuits the empty-layer case (identity, no allocation) and the
-  * Scala->Java conversion is cached by identity — while still being correct (no stale context after
-  * `setGlobalContext`).
+/** Per-evaluation context merging short-circuits the empty-layer case (identity, no allocation) and the Scala->Java
+  * conversion is cached by identity — while still being correct (no stale context after `setGlobalContext`).
   */
 object ContextMergeAndCacheSpec extends ZIOSpecDefault {
 
@@ -82,7 +81,7 @@ object ContextMergeAndCacheSpec extends ZIOSpecDefault {
       val m         = keyOnly.merge(attrsOnly)
       assertTrue(m.targetingKey.contains("user-1"), m.getString("b").contains("1"))
     },
-    test("a provider sees the explicit targeting key, not a targetingKey attribute (#497)") {
+    test("a provider sees the explicit targeting key, not a targetingKey attribute") {
       val seen = new AtomicReference[String]("unset")
       val ctx  = EvaluationContext("u1").withAttribute("targetingKey", AttributeValue.StringValue("x"))
       ZIO.scoped {

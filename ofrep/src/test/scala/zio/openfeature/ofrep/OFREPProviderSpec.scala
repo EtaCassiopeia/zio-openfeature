@@ -119,7 +119,7 @@ object OFREPProviderSpec extends ZIOSpecDefault {
       test("rejects options with bad scheme") {
         // Use daemonOptionsBuilder() instead of OfrepProviderOptions.builder(): `make` validates and rejects the
         // ftp scheme BEFORE constructing a provider, so shutdown() never runs. The contrib default builder would
-        // orphan a non-daemon 5-thread pool here and hang `sbt +test` (issue #229).
+        // orphan a non-daemon 5-thread pool here and hang `sbt +test`.
         val opts = OFREPProvider.daemonOptionsBuilder().baseUrl("ftp://flags.example.com").build()
         for {
           result <- OFREPProvider.make(opts).either

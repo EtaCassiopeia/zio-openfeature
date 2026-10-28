@@ -46,7 +46,7 @@ object RecommendationServiceSpec extends ZIOSpecDefault {
           initWait = OptimizelyTestSupport.InitWait,
           pollingInterval = Some(java.time.Duration.ofSeconds(3600)),
           blockingTimeout = Some(java.time.Duration.ofSeconds(2)),
-          events = OptimizelyEvents.Disabled // nothing here is about events; keep them off the network (#453)
+          events = OptimizelyEvents.Disabled // nothing here is about events; keep them off the network
         )
         provider <- OptimizelyProvider.scoped(config).mapError(e => new RuntimeException(e.message))
         // A domain config (not the plain fromProvider) so each call gets its own named slot on the global

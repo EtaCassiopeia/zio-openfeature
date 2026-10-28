@@ -13,7 +13,7 @@ import dev.openfeature.sdk.{
   ProviderEventDetails
 }
 
-/** Model-based property test of the provider lifecycle (#464).
+/** Model-based property test of the provider lifecycle.
   *
   * A generated sequence of lifecycle actions (swaps to providers that start fine, fail, hang or start slowly; provider
   * events; shutdown; interrupting a swap; releasing hung initializations) runs against a real `FeatureFlags` on an
@@ -513,22 +513,22 @@ object LifecycleModelSpec extends ZIOSpecDefault {
 
   import Action._
 
-  def spec: Spec[TestEnvironment with Scope, Any] = suite("LifecycleModelSpec (#464)")(
+  def spec: Spec[TestEnvironment with Scope, Any] = suite("LifecycleModelSpec")(
     test("every generated lifecycle sequence agrees with the documented contract") {
       check(genActions) { actions =>
         runCase(actions).map(found => assertTrue(report(actions, found) == ""))
       }
     } @@ TestAspect.samples(samples) @@ TestAspect.shrinks(50) @@ TestAspect.timeout((samples * 30).seconds),
     suite("regressions")(
-      // Found by the generated test with the #434 fix (`swap.uninterruptible` in FeatureFlagsLive.setProvider)
+      // Found by the generated test with `swap.uninterruptible` (in FeatureFlagsLive.setProvider)
       // reverted: the interrupt killed the swap mid-registration, so it never reached its timeout outcome and the
       // instance stayed NotReady with no swap in flight.
       regression(
-        "an interrupted parked swap still settles to Error at initTimeout (#434)",
+        "an interrupted parked swap still settles to Error at initTimeout",
         List(SetProvider(Kind.HangingInit), InterruptSwap)
       ),
       regression(
-        "a swap timed out at initTimeout leaves Error, and a later swap recovers (#433)",
+        "a swap timed out at initTimeout leaves Error, and a later swap recovers",
         List(SetProvider(Kind.HangingInit), SetProvider(Kind.Good), Evaluate)
       ),
       regression(

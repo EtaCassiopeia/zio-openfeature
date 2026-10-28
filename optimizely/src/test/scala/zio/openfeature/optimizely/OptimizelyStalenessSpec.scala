@@ -11,7 +11,7 @@ import java.util.UUID
 import java.util.concurrent.atomic.{AtomicInteger, AtomicReference}
 import java.util.concurrent.{CountDownLatch, TimeUnit}
 
-/** Staleness watchdog tests for `OptimizelyFeatureProvider` (#267).
+/** Staleness watchdog tests for `OptimizelyFeatureProvider`.
   *
   * After a successful init, the Optimizely SDK's `HttpProjectConfigManager` keeps polling the datafile but surfaces no
   * signal when those polls start failing — it just serves an aging datafile. The provider adds a watchdog that observes
@@ -82,7 +82,7 @@ object OptimizelyStalenessSpec extends ZIOSpecDefault {
           pollingInterval = Some(java.time.Duration.ofMillis(500)),
           blockingTimeout = Some(java.time.Duration.ofSeconds(2)),
           staleAfter = Some(java.time.Duration.ofSeconds(2)),
-          events = OptimizelyEvents.Disabled // nothing here is about events; keep them off the network (#453)
+          events = OptimizelyEvents.Disabled // nothing here is about events; keep them off the network
         )
         val provider = makeProvider(config)
         val api      = OpenFeatureAPI.getInstance()

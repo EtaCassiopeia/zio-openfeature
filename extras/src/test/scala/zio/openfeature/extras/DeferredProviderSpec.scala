@@ -46,14 +46,14 @@ object DeferredProviderSpec extends ZIOSpecDefault {
   }
 
   def spec = suite("DeferredProviderSpec")(
-    test("initialize after shutdown fails with FatalError instead of silently reporting ready (#448)") {
+    test("initialize after shutdown fails with FatalError instead of silently reporting ready") {
       val dp = DeferredProvider("d")(() => new RecordingProvider(true))
       dp.initialize(ctx)
       dp.shutdown()
       val thrown = scala.util.Try(dp.initialize(ctx)).failed.toOption
       assertTrue(thrown.exists(_.isInstanceOf[dev.openfeature.sdk.exceptions.FatalError]))
     },
-    test("initialize after a failed start fails with FatalError (#448)") {
+    test("initialize after a failed start fails with FatalError") {
       val attempts = new AtomicInteger(0)
       val dp = DeferredProvider("d") { () =>
         attempts.incrementAndGet()
@@ -74,7 +74,7 @@ object DeferredProviderSpec extends ZIOSpecDefault {
       dp.initialize(ctx)
       assertTrue(inits.get() == 1, dp.getBooleanEvaluation("flag", false, ctx).getValue.booleanValue())
     },
-    test("re-registering a shut-down DeferredProvider does not leave the layer Ready (#448)") {
+    test("re-registering a shut-down DeferredProvider does not leave the layer Ready") {
       val dp = DeferredProvider("d")(() => new RecordingProvider(true))
       dp.initialize(ctx)
       dp.shutdown()
@@ -112,7 +112,7 @@ object DeferredProviderSpec extends ZIOSpecDefault {
       } yield assertTrue(
         sd == 1,
         st == ProviderState.NOT_READY,
-        // The overtaken initialize must not report success, or the SDK would mark the provider ready (#448).
+        // The overtaken initialize must not report success, or the SDK would mark the provider ready.
         init.left.toOption.exists(_.isInstanceOf[dev.openfeature.sdk.exceptions.FatalError])
       )
     } @@ TestAspect.withLiveClock,

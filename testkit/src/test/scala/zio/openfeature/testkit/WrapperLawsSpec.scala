@@ -66,7 +66,7 @@ object WrapperLawsSpec extends ZIOSpecDefault {
     override def isDomainScoped(): Boolean = true
   }
 
-  /** Drops the domain: `initialize(ctx, domain)` forwards to `initialize(ctx)`, the #448 shape. */
+  /** Drops the domain: `initialize(ctx, domain)` forwards to `initialize(ctx)`, a domain-ignoring wrapper. */
   final class DropsDomain(d: FeatureProvider) extends Complete(d) {
     override def initialize(c: EvaluationContext, domain: String): Unit = d.initialize(c)
   }
@@ -80,7 +80,7 @@ object WrapperLawsSpec extends ZIOSpecDefault {
   private def faultyAround(inner: FeatureProvider): FeatureProvider =
     Unsafe.unsafe(implicit u => Runtime.default.unsafe.run(FaultyProvider.wrap(inner)).getOrThrowFiberFailure())
 
-  def spec = suite("WrapperLaws (#466)")(
+  def spec = suite("WrapperLaws")(
     suite("the law itself")(
       test("a wrapper that forgets track fails on Track") {
         for {

@@ -35,27 +35,27 @@ object ContextTransformerSpec extends ZIOSpecDefault {
         out.attributes.get("score") == java.lang.Double.valueOf(42d)
       )
     },
-    test("integral numbers are preserved as Integer, not coerced to Double (#266)") {
+    test("integral numbers are preserved as Integer, not coerced to Double") {
       val ctx = new MutableContext("u").add("age", java.lang.Integer.valueOf(30))
       val out = ContextTransformer.transform(ctx)
       val age = out.attributes.get("age")
       assertTrue(age.isInstanceOf[java.lang.Integer], age == java.lang.Integer.valueOf(30))
     },
-    test("an Instant attribute becomes an ISO-8601 string Optimizely can match (#266)") {
+    test("an Instant attribute becomes an ISO-8601 string Optimizely can match") {
       val instant = java.time.Instant.parse("2024-01-15T00:00:00Z")
       val ctx     = new MutableContext("u").add("signupDate", instant)
       val out     = ContextTransformer.transform(ctx)
       val v       = out.attributes.get("signupDate")
       assertTrue(v.isInstanceOf[String], v == "2024-01-15T00:00:00Z")
     },
-    test("a list attribute is dropped — Optimizely cannot match a collection (#266)") {
+    test("a list attribute is dropped — Optimizely cannot match a collection") {
       val list = java.util.Arrays.asList(new Value("a"), new Value("b"))
       val ctx  = new MutableContext("u").add("tags", list)
       val out  = ContextTransformer.transform(ctx)
       // Previously this passed through a java.util.List that evaluated every audience condition to UNKNOWN.
       assertTrue(!out.attributes.containsKey("tags"))
     },
-    test("a structure attribute is dropped — Optimizely cannot match it (#266)") {
+    test("a structure attribute is dropped — Optimizely cannot match it") {
       val struct = Structure.mapToStructure(
         java.util.Map.of("city", "NYC".asInstanceOf[Object], "zip", "10001".asInstanceOf[Object])
       )

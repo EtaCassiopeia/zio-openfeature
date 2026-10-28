@@ -13,7 +13,7 @@ import dev.openfeature.sdk.{FeatureProvider => OFFeatureProvider, OpenFeatureAPI
 import java.util.concurrent.TimeoutException
 
 /** The bodies of the [[FeatureFlags]] factories. `object FeatureFlags` keeps every signature, its ScalaDoc and its
-  * default arguments, and forwards here (#445).
+  * default arguments, and forwards here.
   */
 private[openfeature] object FeatureFlagsFactories {
 
@@ -31,7 +31,7 @@ private[openfeature] object FeatureFlagsFactories {
     }
 
   /** The instance both builds return, constructed before its provider is registered so its event bridge can be attached
-    * first (#531). The SDK client does not need a registered provider: it resolves the slot's provider per call.
+    * first. The SDK client does not need a registered provider: it resolves the slot's provider per call.
     */
   private def makeInstance(
     provider: OFFeatureProvider,
@@ -85,7 +85,7 @@ private[openfeature] object FeatureFlagsFactories {
       recordTracking
     )
 
-  /** Whether the event bridge can be attached before `provider` is registered (#531).
+  /** Whether the event bridge can be attached before `provider` is registered.
     *
     * The SDK reaches a client handler with a provider's PROVIDER_READY two ways: the emission after `initialize()`
     * returns, and a replay when the handler is added while the slot's provider is already READY (`addHandler`). The
@@ -152,7 +152,7 @@ private[openfeature] object FeatureFlagsFactories {
       recordTracking = false
     )
 
-  /** [[build]], optionally keeping tracked events for `trackedEvents` (testkit only, #442). */
+  /** [[build]], optionally keeping tracked events for `trackedEvents` (testkit only). */
   def buildWithTracking(
     provider: OFFeatureProvider,
     domain: Option[String],
@@ -192,11 +192,11 @@ private[openfeature] object FeatureFlagsFactories {
         recordTracking,
         unreadableNameIsUnknown = true
       )
-      // The bridge is attached before the provider initializes, so exactly one PROVIDER_READY reaches it (#531). See
+      // The bridge is attached before the provider initializes, so exactly one PROVIDER_READY reaches it. See
       // `attachesBeforeRegistration`.
       early <- attachesBeforeRegistration(api, domain, provider)
       _     <- ZIO.when(early)(ff.startEventBridge)
-      // Non-blocking registration plus a bounded wait (#433): `setProviderAndWait` would hold the SDK's API write
+      // Non-blocking registration plus a bounded wait: `setProviderAndWait` would hold the SDK's API write
       // lock across `initialize()`, so after a timeout the finalizer's `api.shutdown()` would block on that lock for
       // as long as `initialize()` hangs. On any init failure the provider itself is shut down (best-effort) so it
       // doesn't keep threads/connections alive — this also covers the domain/registry paths where no API finalizer
@@ -233,7 +233,7 @@ private[openfeature] object FeatureFlagsFactories {
       }
       config.initMode match {
         // The `WithTracking` variants, not `build`/`buildAsync`: those keep their released signatures (they are
-        // package-private but compiled into the published testkit), so newer knobs like `maxAbandonedCalls` (#437)
+        // package-private but compiled into the published testkit), so newer knobs like `maxAbandonedCalls`
         // reach the instance only through these.
         case InitMode.Sync =>
           buildWithTracking(
@@ -288,7 +288,7 @@ private[openfeature] object FeatureFlagsFactories {
         addShutdownFinalizer = false,
         apiOverride = api,
         onReady = onReady,
-        // These overloads exist for the testkit, whose instances keep tracked events for assertions (#442).
+        // These overloads exist for the testkit, whose instances keep tracked events for assertions.
         recordTracking = true
       )
     )
@@ -297,7 +297,7 @@ private[openfeature] object FeatureFlagsFactories {
     *
     * Uses `setProvider` (non-blocking) instead of `setProviderAndWait`. The provider initializes in the background;
     * evaluations fail with `ProviderNotReady` until the event bridge receives a `PROVIDER_READY` event. The bridge is
-    * attached before the provider is registered, so that event cannot be missed and arrives exactly once (#531).
+    * attached before the provider is registered, so that event cannot be missed and arrives exactly once.
     */
   def buildAsync(
     provider: OFFeatureProvider,
@@ -329,7 +329,7 @@ private[openfeature] object FeatureFlagsFactories {
       recordTracking = false
     )
 
-  /** [[buildAsync]], optionally keeping tracked events for `trackedEvents` (testkit only, #442). */
+  /** [[buildAsync]], optionally keeping tracked events for `trackedEvents` (testkit only). */
   def buildAsyncWithTracking(
     provider: OFFeatureProvider,
     domain: Option[String],
@@ -369,7 +369,7 @@ private[openfeature] object FeatureFlagsFactories {
         unreadableNameIsUnknown = false
       )
       // As in the sync build: attach the bridge before the provider initializes, so exactly one PROVIDER_READY
-      // reaches it (#531) — the post-init emission, or the SDK's replay for a provider that is already ready.
+      // reaches it — the post-init emission, or the SDK's replay for a provider that is already ready.
       early <- attachesBeforeRegistration(api, domain, provider)
       _     <- ZIO.when(early)(ff.startEventBridge)
       // `ZIO.attempt` (not `ZIO.succeed`) so a synchronous throw from registration — a null provider, or a provider
@@ -385,7 +385,7 @@ private[openfeature] object FeatureFlagsFactories {
         case None    => ZIO.attempt(api.setProvider(provider))
       }).tapError(_ => ff.stopEventBridge)
       _ <- ZIO.unless(early)(ff.startEventBridge)
-      // Init watchdog (#244): after initTimeout, escalate to Fatal ONLY if the provider never became usable
+      // Init watchdog: after initTimeout, escalate to Fatal ONLY if the provider never became usable
       // (`everReady` gate inside the machine), shutting it down and releasing the onReady latch. A provider that was
       // Ready and later dipped to a transient Error is left running. The fiber is forked into the layer's Scope, so
       // it is also interrupted when the layer is released.
@@ -410,7 +410,7 @@ private[openfeature] object FeatureFlagsFactories {
         addShutdownFinalizer = false,
         apiOverride = api,
         onReady = onReady,
-        // These overloads exist for the testkit, whose instances keep tracked events for assertions (#442).
+        // These overloads exist for the testkit, whose instances keep tracked events for assertions.
         recordTracking = true
       )
     )
@@ -438,7 +438,7 @@ private[openfeature] object FeatureFlagsFactories {
         // Build immediately on a fresh fallback. An in-memory fallback whose init fails is a programming bug, not a
         // recoverable condition, so a failed build is a defect (`orDie`) — this is what makes the layer a `URLayer`.
         firstFallback <- fallback
-        // The one provider the SDK ever sees on this path (#512): it delegates to the fallback until the real provider
+        // The one provider the SDK ever sees on this path: it delegates to the fallback until the real provider
         // is initialized, then is flipped to the composed stack. No SDK swap, so no NotReady window.
         switch = new SwitchableProvider(firstFallback)
         state <- SubscriptionRef.make[AcquireState](AcquireState.Constructing)

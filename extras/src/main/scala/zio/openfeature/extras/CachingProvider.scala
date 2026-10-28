@@ -53,7 +53,7 @@ final private[extras] class CacheKey(
   val flagKey: String,
   val flagType: String,
   val contextFingerprint: String,
-  // Invalidation epoch (#449): zio-cache writes a finished lookup back unconditionally, so a lookup in flight across
+  // Invalidation epoch: zio-cache writes a finished lookup back unconditionally, so a lookup in flight across
   // an invalidation would repopulate the cleared map. Keying by epoch strands that write under a key no later read uses.
   val generation: Long,
   val evaluate: () => ProviderEvaluation[Any]
@@ -87,7 +87,7 @@ final private[extras] class CacheKey(
   * with an `OpenFeatureAPI` while it is wrapped. This requires an `EventProvider` delegate — see below.
   *
   * '''Plain providers''': the delegate is a `FeatureProvider`, so a provider that does not extend `EventProvider` can
-  * be wrapped too (#382). Only the event integration needs the richer type; everything else — all six resolvers, both
+  * be wrapped too. Only the event integration needs the richer type; everything else — all six resolvers, both
   * `initialize` overloads, `isDomainScoped`, `getProviderHooks`, `track`, `shutdown`, `getMetadata` and `getState` — is
   * `FeatureProvider` surface and is forwarded unchanged. The delegate is held as given, with no adapter interposed.
   *
@@ -123,7 +123,7 @@ final class CachingProvider private (
   override def getState: ProviderState = underlying.getState
 
   // Forward the delegate's provider hooks and tracking so wrapping a provider in caching doesn't silently drop its
-  // telemetry/validation hooks or discard `track` events (spec: a decorator must not swallow these). See #261.
+  // telemetry/validation hooks or discard `track` events (spec: a decorator must not swallow these).
   override def getProviderHooks = underlying.getProviderHooks
 
   override def track(eventName: String, context: OFEvaluationContext, details: TrackingEventDetails): Unit =
@@ -158,8 +158,8 @@ final class CachingProvider private (
 
   private val shutdownRan = new AtomicBoolean(false)
 
-  // `super.shutdown()` (EventProvider's) last: it is what stops this wrapper's own event emitter (#450). It waits up to
-  // a few seconds for in-flight emissions to drain. Idempotent (#451): a wrapper that is both scoped and registered
+  // `super.shutdown()` (EventProvider's) last: it is what stops this wrapper's own event emitter. It waits up to
+  // a few seconds for in-flight emissions to drain. Idempotent: a wrapper that is both scoped and registered
   // with `FeatureFlags` is shut down by the SDK and by the scope finalizer, and the delegate must see only the first.
   override def shutdown(): Unit =
     if (shutdownRan.compareAndSet(false, true)) {
@@ -214,7 +214,7 @@ final class CachingProvider private (
     // `ran` is flipped inside the lookup thunk, which zio-cache invokes ONLY on a miss (a hit returns the stored value
     // without calling it). Reading it after `get` tells us hit-vs-miss atomically — no separate `cache.contains` that
     // could disagree with `get` if the entry expires between the two, and one cache operation per evaluation instead of
-    // two (#259).
+    // two.
     val ran = new AtomicBoolean(false)
     val ck = new CacheKey(
       key,
@@ -234,14 +234,14 @@ final class CachingProvider private (
             // Don't retain error results (errorCode set) OR DEFAULT-reason results: a DEFAULT resolution means the flag
             // was absent and the delegate echoed THIS caller's default value, which the cache key does not include —
             // keeping it would serve one call site's default to another (under a CACHED label) for the whole TTL. Both
-            // are still returned to this caller, but re-evaluated next time (#259).
+            // are still returned to this caller, but re-evaluated next time.
             .tap(r => ZIO.when(r.getErrorCode != null || r.getReason == DefaultReason)(cache.invalidate(ck)))
             .map(_.asInstanceOf[ProviderEvaluation[A]])
             .map(r => if (ran.get()) r else withCachedReason(r))
         ) match {
         // Rethrow the original error as an `OpenFeatureError` (an `Exception`) rather than letting
         // `getOrThrowFiberFailure` raise a `zio.FiberFailure` (a `Throwable`) that would escape the SDK's
-        // `catch (Exception)` and be thrown into application code (spec: evaluation must never throw). See #258.
+        // `catch (Exception)` and be thrown into application code (spec: evaluation must never throw).
         case Exit.Success(value) => value
         case Exit.Failure(cause) => throw FiberFailures.toOpenFeatureError(cause)
       }
@@ -332,7 +332,7 @@ object CachingProvider {
         // The key carries the delegate call for this evaluation; zio-cache deduplicates concurrent
         // lookups for the same logical key, so the delegate runs once per miss. The lookup stays on the
         // calling thread (no blocking-pool hop): the SDK's MultiProvider hands hook context to its
-        // resolvers through a thread-local, which another thread cannot see (#427).
+        // resolvers through a thread-local, which another thread cannot see.
         Lookup[CacheKey, Any, Throwable, ProviderEvaluation[Any]](ck => ZIO.attempt(ck.evaluate()))
       )
     } yield new CachingProvider(underlying, config, cache, rt)

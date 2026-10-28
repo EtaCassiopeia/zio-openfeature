@@ -7,7 +7,7 @@ import dev.openfeature.sdk.{EvaluationContext => OFEvaluationContext, EventProvi
 import dev.openfeature.sdk.OpenFeatureAPI
 import java.util.concurrent.CopyOnWriteArrayList
 
-/** #386: an inner `transaction`/`transactionEither` can opt into running inside the enclosing transaction
+/** An inner `transaction`/`transactionEither` can opt into running inside the enclosing transaction
   * (`NestedPolicy.Reuse`) instead of failing with `NestedTransactionNotAllowed` (`NestedPolicy.Fail`, still the
   * default). The natural composition — a per-request transaction as middleware, a handler wrapping a sub-operation in
   * its own — must not fail the request, and must not require every wrapper to hand-roll an `inTransaction` guard.

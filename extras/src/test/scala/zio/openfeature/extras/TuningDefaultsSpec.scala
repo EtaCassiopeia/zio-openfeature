@@ -3,11 +3,11 @@ package zio.openfeature.extras
 import zio._
 import zio.test._
 
-// #462: the tuning defaults now come from named constants; their values must not have moved, and the two circuit
+// The tuning defaults now come from named constants; their values must not have moved, and the two circuit
 // breaker configs must keep agreeing.
 object TuningDefaultsSpec extends ZIOSpecDefault {
 
-  def spec = suite("TuningDefaultsSpec (#462)")(
+  def spec = suite("TuningDefaultsSpec")(
     test("CircuitBreakerConfig defaults are unchanged") {
       assertTrue(CircuitBreakerConfig() == CircuitBreakerConfig(5, 30.seconds, 1, 1.second))
     },
@@ -32,7 +32,7 @@ object TuningDefaultsSpec extends ZIOSpecDefault {
       val c = CachingConfig()
       assertTrue(c.maxEntries == 1000, c.ttl == 5.minutes)
     },
-    test("FeatureFlags timeout defaults are unchanged, and the config uses the abandoned-call cap default (#437)") {
+    test("FeatureFlags timeout defaults are unchanged, and the config uses the abandoned-call cap default") {
       val config = zio.openfeature.FeatureFlagsConfig()
       assertTrue(
         zio.openfeature.FeatureFlags.DefaultEvaluationTimeout == 1.second,

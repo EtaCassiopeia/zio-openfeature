@@ -21,8 +21,8 @@ import dev.openfeature.sdk.{
   *
   * The contrib provider (0.0.2) does not override `getLongEvaluation`, so the SDK's default answers a long read from
   * `getDoubleEvaluation`, and the contrib double resolver serves only values Jackson parsed as a `Double`: every JSON
-  * integer flag read with `FeatureFlags.long` came back `TYPE_MISMATCH` (#529). This wrapper resolves long reads
-  * through the object resolver instead, which keeps the parsed number exact:
+  * integer flag read with `FeatureFlags.long` came back `TYPE_MISMATCH`. This wrapper resolves long reads through the
+  * object resolver instead, which keeps the parsed number exact:
   *   - an `Integer` or `Long` value is served exactly, with the response's reason, variant and metadata;
   *   - any other value (a `Double`, including a whole one such as `2.0`, a string, a structure, or an integer beyond
   *     the `Long` range) is `TYPE_MISMATCH` with the caller's default. Nothing is widened or truncated;

@@ -6,7 +6,7 @@ import org.apache.http.impl.client.CloseableHttpClient;
  * Test-only factory that wraps a fully-configured Apache {@link CloseableHttpClient} in an
  * {@link OptimizelyHttpClient}. It lives in the {@code com.optimizely.ab} package specifically so it can
  * call the package-private {@code OptimizelyHttpClient(CloseableHttpClient)} constructor — the same
- * technique the production {@link ObservingOptimizelyHttpClient} uses (issue #267).
+ * technique the production {@link ObservingOptimizelyHttpClient} uses.
  *
  * <p>The SDK's public {@code OptimizelyHttpClient.Builder} exposes only connection-pool / timeout /
  * retry knobs — no custom {@code SSLContext} or proxy. The Rift TLS-MITM intercept test needs both (trust

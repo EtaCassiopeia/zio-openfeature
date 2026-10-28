@@ -14,9 +14,9 @@ import dev.openfeature.sdk.{
 }
 import java.util.concurrent.CountDownLatch
 
-/** #347: `FlagDef[A]` makes key + type + default a single first-class value, with evaluation overloads that delegate to
-  * the existing generic tier. The load-bearing guarantee is that `FlagDef.default` — never `FlagType[A].defaultValue` —
-  * is the value passed down as the evaluation default.
+/** `FlagDef[A]` makes key + type + default a single first-class value, with evaluation overloads that delegate to the
+  * existing generic tier. The load-bearing guarantee is that `FlagDef.default` — never `FlagType[A].defaultValue` — is
+  * the value passed down as the evaluation default.
   *
   * This spec lives in the shared (cross-compiled) test source dir, so it must compile on 2.13 and 3: braces only, no
   * `given`/`using`, and no explicit implicit-argument application.

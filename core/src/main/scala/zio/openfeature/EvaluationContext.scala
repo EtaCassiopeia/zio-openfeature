@@ -8,7 +8,7 @@ package zio.openfeature
   *   - with no `targetingKey`, a `StringValue` attribute of that name becomes the key; a non-string one is dropped.
   *
   * A context read back from the SDK never carries a `targetingKey` attribute, so any context without that attribute
-  * round-trips through the SDK unchanged (#497).
+  * round-trips through the SDK unchanged.
   */
 final case class EvaluationContext(
   targetingKey: Option[String],

@@ -14,7 +14,7 @@ import dev.openfeature.sdk.{
   Value
 }
 
-// #435: scope close ends event consumers; awaitReady() never waits forever on a shut-down instance; an interrupted
+// Scope close ends event consumers; awaitReady() never waits forever on a shut-down instance; an interrupted
 // shutdown still completes.
 object LifecycleTeardownSpec extends ZIOSpecDefault {
 
@@ -47,7 +47,7 @@ object LifecycleTeardownSpec extends ZIOSpecDefault {
       apiOverride = Some(OpenFeatureAPI.createIsolated())
     )
 
-  def spec = suite("LifecycleTeardownSpec (#435)")(
+  def spec = suite("LifecycleTeardownSpec")(
     test("closing the layer's scope ends an events stream consumer") {
       for {
         scope    <- Scope.make

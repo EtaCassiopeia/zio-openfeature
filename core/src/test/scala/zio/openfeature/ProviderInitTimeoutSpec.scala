@@ -16,7 +16,7 @@ import dev.openfeature.sdk.{
 }
 import dev.openfeature.sdk.exceptions.FatalError
 
-// #433: a provider whose initialize() never returns must not wedge setProvider, the sync build's scope close, or
+// A provider whose initialize() never returns must not wedge setProvider, the sync build's scope close, or
 // fromAcquireAsync. Every timing assertion runs on the live clock: the code under test must bound itself even when
 // the test's own TestClock is frozen.
 object ProviderInitTimeoutSpec extends ZIOSpecDefault {
@@ -84,7 +84,7 @@ object ProviderInitTimeoutSpec extends ZIOSpecDefault {
       end   <- Clock.nanoTime
     } yield (a, (end - start) / 1000000L)
 
-  def spec = suite("ProviderInitTimeoutSpec (#433)")(
+  def spec = suite("ProviderInitTimeoutSpec")(
     test("a swap whose initialize() never returns fails at the init timeout with status Error; the API stays usable") {
       val stuck = new StuckProvider("stuck")
       bounded("timed-out swap") {
@@ -259,7 +259,7 @@ object ProviderInitTimeoutSpec extends ZIOSpecDefault {
           status <- ff.providerStatus
           meta   <- ff.providerMetadata
           value  <- ff.boolean("x", true)
-          // #512: the stuck composite never reached the SDK, so the first fallback is still the one serving.
+          // The stuck composite never reached the SDK, so the first fallback is still the one serving.
           firstShutdowns <- ZIO.succeed(firstFallback.shutdowns.get())
         } yield assertTrue(
           firstShutdowns == 0,

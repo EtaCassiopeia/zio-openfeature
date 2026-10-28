@@ -40,18 +40,18 @@ final private[openfeature] class FeatureFlagsLive(
   fallbackLogLimiter: FallbackLogLimiter,
   onReady: Option[java.util.concurrent.CountDownLatch] = None,
   evaluationTimeout: Option[Duration] = Some(FeatureFlags.DefaultEvaluationTimeout),
-  // Pull-based ambient context (#353), consulted per evaluation and per `track` in `effectiveContext`.
+  // Pull-based ambient context, consulted per evaluation and per `track` in `effectiveContext`.
   contextSource: ContextSource = ContextSource.empty,
-  // Bounds a hot swap's provider initialization, and its rollback re-registration, exactly as it bounds the build (#433).
+  // Bounds a hot swap's provider initialization, and its rollback re-registration, exactly as it bounds the build.
   initTimeout: Duration = FeatureFlags.DefaultInitTimeout,
-  // Cap on provider calls abandoned by the evaluation timeout and still running (#437); see `withTimeout`.
+  // Cap on provider calls abandoned by the evaluation timeout and still running; see `withTimeout`.
   maxAbandonedCalls: Int = FeatureFlags.DefaultMaxAbandonedCalls,
-  // Whether `track` keeps a copy of each event and its merged context for `trackedEvents` (#442). Only testkit-built
+  // Whether `track` keeps a copy of each event and its merged context for `trackedEvents`. Only testkit-built
   // instances set it: a production instance must not retain contexts, which routinely hold PII.
   recordTracking: Boolean = false
 ) extends FeatureFlags {
 
-  // The total tier's served-default breadcrumb, under this instance's `FallbackLogging` policy (#350). Lives here, not
+  // The total tier's served-default breadcrumb, under this instance's `FallbackLogging` policy. Lives here, not
   // in `FeatureFlagsState`: the trait's `totalResolution` reaches state only through this hook.
   override protected def logFallback[A](
     key: String,
@@ -60,7 +60,7 @@ final private[openfeature] class FeatureFlagsLive(
   ): UIO[Unit] =
     fallbackLogLimiter.log(key, resolution, defect)
 
-  // The collaborators this instance delegates to (#445). It keeps lifecycle and state: construction, the provider
+  // The collaborators this instance delegates to. It keeps lifecycle and state: construction, the provider
   // swap, shutdown and status.
   private val eventBridge  = new EventBridge(client, providerNameRef, state, onReady)
   private val hookPipeline = new HookPipeline(state, providerNameRef, domain, version)
@@ -74,7 +74,7 @@ final private[openfeature] class FeatureFlagsLive(
     hookPipeline
   )
 
-  /** Abandoned provider calls still running (#437) — for tests. */
+  /** Abandoned provider calls still running — for tests. */
   private[openfeature] def abandonedCallCount: Int = evaluator.abandonedCallCount
 
   private def swapInProgress    = eventBridge.swapInProgress
@@ -104,8 +104,8 @@ final private[openfeature] class FeatureFlagsLive(
     ()
   }
 
-  /** Remove the bridge's SDK handlers now, rather than at scope close: a failed build must leave none behind (#531).
-    * The registry builds into its own long-lived scope, so its finalizer alone would keep a failed client's handlers.
+  /** Remove the bridge's SDK handlers now, rather than at scope close: a failed build must leave none behind. The
+    * registry builds into its own long-lived scope, so its finalizer alone would keep a failed client's handlers.
     */
   private[openfeature] def stopEventBridge: UIO[Unit] =
     // `removeHandler` for a handler that is absent is a no-op, and this runs on a failure path whose own error must
@@ -220,7 +220,7 @@ final private[openfeature] class FeatureFlagsLive(
             zio.mapError(Left(_): Either[E, FeatureFlagError]).flatMap(enclosing.toResult)
         }
       case None =>
-        // Not nested: `nested` is irrelevant and this is exactly the pre-#386 path.
+        // Not nested: `nested` is irrelevant and this is exactly the plain, non-nested path.
         for {
           txState  <- TransactionState.make(overrides, context, cacheEvaluations)
           result   <- state.transactionRef.locally(Some(txState))(zio).mapError(Left(_): Either[E, FeatureFlagError])
@@ -249,8 +249,8 @@ final private[openfeature] class FeatureFlagsLive(
   override def providerStatus: UIO[ProviderStatus] =
     state.statusRef.get
 
-  /** Re-register `oldProvider` with the SDK iff the failed swap left the SDK routing to `newProvider` (#282). Returns
-    * true iff the SDK is verified to route to `oldProvider` afterwards.
+  /** Re-register `oldProvider` with the SDK iff the failed swap left the SDK routing to `newProvider`. Returns true iff
+    * the SDK is verified to route to `oldProvider` afterwards.
     *
     * The Java SDK binds the new provider's state manager into the domain/default slot before calling its `initialize()`
     * and does not revert that binding when init throws, so after a failed swap the SDK client still routes evaluations
@@ -291,9 +291,9 @@ final private[openfeature] class FeatureFlagsLive(
       }
     }
 
-  /** Best-effort teardown of the failed new provider when rollback itself failed and left it unbound (#282). On a
-    * successful rollback the SDK's `shutDownOld` already does this; this covers only the rollback-failure path. If the
-    * failed provider is somehow still bound, do nothing.
+  /** Best-effort teardown of the failed new provider when rollback itself failed and left it unbound. On a successful
+    * rollback the SDK's `shutDownOld` already does this; this covers only the rollback-failure path. If the failed
+    * provider is somehow still bound, do nothing.
     */
   private def cleanupUnboundFailedProvider(newProvider: OFFeatureProvider): UIO[Unit] =
     (for {
@@ -308,9 +308,9 @@ final private[openfeature] class FeatureFlagsLive(
       .tapErrorCause(c => ZIO.logWarningCause("cleanupUnboundFailedProvider: best-effort teardown failed", c))
       .ignore
 
-  /** Async-init watchdog escalation (#244). Only when the machine actually transitions (the provider never became
-    * usable — the `everReady` gate) does it shut the provider down, publish a terminal Error event with code
-    * PROVIDER_FATAL, and release the onReady latch. A provider that was ever Ready is left running.
+  /** Async-init watchdog escalation. Only when the machine actually transitions (the provider never became usable — the
+    * `everReady` gate) does it shut the provider down, publish a terminal Error event with code PROVIDER_FATAL, and
+    * release the onReady latch. A provider that was ever Ready is left running.
     */
   private[openfeature] def escalateInitTimeout(provider: OFFeatureProvider, initTimeout: Duration): UIO[Unit] =
     applySignal(Signal.InitTimeout).flatMap {
@@ -345,7 +345,7 @@ final private[openfeature] class FeatureFlagsLive(
     // subsequent transition — no polling. `runHead` completes on the first evaluable-or-Fatal status. On timeout
     // (`None`) or an exhausted stream we return the then-current status, so every path yields a real status.
     // A shut-down instance never becomes evaluable again, so ShuttingDown and the terminal NotReady stop the wait too
-    // (#435) — otherwise `awaitReady()` on a shut-down instance would wait forever.
+    // — otherwise `awaitReady()` on a shut-down instance would wait forever.
     state.statusRef.changes
       .filter(s =>
         s.canEvaluate || s == ProviderStatus.Fatal || s == ProviderStatus.ShuttingDown || shutdownCompleted.get()
@@ -435,9 +435,9 @@ final private[openfeature] class FeatureFlagsLive(
         _ <- providerRef.set(newProvider)
         _ <- ZIO.succeed(providerNameRef.set(newName))
         // 3. Register new provider with Java SDK (shuts down old once the new one is READY), bounded by initTimeout.
-        //    Non-blocking registration plus a bounded wait (#433): `setProviderAndWait` would hold the SDK's API write
+        //    Non-blocking registration plus a bounded wait: `setProviderAndWait` would hold the SDK's API write
         //    lock across `initialize()`, so a hanging provider would wedge this swap, the rollback below and
-        //    `api.shutdown()`. Phase 2 watch-point #340: re-verify READY detection against the SDK's spec-v0.9.0
+        //    `api.shutdown()`. Phase 2 watch-point: re-verify READY detection against the SDK's spec-v0.9.0
         //    provider-event marker once shipped.
         _ <- ProviderRegistration
           .registerAndAwait(api, domain, newProvider, initTimeout)
@@ -457,7 +457,7 @@ final private[openfeature] class FeatureFlagsLive(
                 )
             case _ =>
               // Roll back refs FIRST so the identity guard again reflects the previous provider and record the failure
-              // via the machine, THEN reconcile the SDK client routing (#282): the SDK binds the new provider before
+              // via the machine, THEN reconcile the SDK client routing: the SDK binds the new provider before
               // init and does not revert on a failed init, so evaluations would keep hitting the failed provider while
               // our refs point back at the old one. Re-registering the old provider restores routing; on success we
               // restore Ready (the previous provider is serving again), on failure we log loudly and leave status Error.
@@ -486,9 +486,9 @@ final private[openfeature] class FeatureFlagsLive(
         //    immediate visibility.
         _ <- applySignal(Signal.SwapSucceeded)
       } yield ()
-      // The swap runs to its outcome even if the caller is interrupted (#434): an interrupt mid-registration would skip
+      // The swap runs to its outcome even if the caller is interrupted: an interrupt mid-registration would skip
       // both the success signal and the rollback, leaving status NotReady with the refs on a provider that may or may not
-      // end up bound. The region is bounded — registration and rollback each wait at most `initTimeout` (#433) — and
+      // end up bound. The region is bounded — registration and rollback each wait at most `initTimeout` — and
       // waiting for `swapLock` above stays interruptible.
       // The gate must drop on every exit (success, failure, interruption) or bridge events would be suppressed forever.
       swap.uninterruptible
@@ -501,11 +501,11 @@ final private[openfeature] class FeatureFlagsLive(
         }
     }
 
-  /** `fromAcquireAsync`'s swap (#512): flip the registered [[SwitchableProvider]] to `next`, an already-initialized
-    * provider, without going through the SDK — so status never leaves `Ready` and the SDK never refuses an evaluation.
-    * Serialized with [[setProvider]] by `swapLock`. Returns `false`, changing nothing, when `switch` is no longer the
-    * registered provider (a user `setProvider` replaced it first); the caller then owns `next`. On `true` the replaced
-    * delegate has been shut down (bounded).
+  /** `fromAcquireAsync`'s swap: flip the registered [[SwitchableProvider]] to `next`, an already-initialized provider,
+    * without going through the SDK — so status never leaves `Ready` and the SDK never refuses an evaluation. Serialized
+    * with [[setProvider]] by `swapLock`. Returns `false`, changing nothing, when `switch` is no longer the registered
+    * provider (a user `setProvider` replaced it first); the caller then owns `next`. On `true` the replaced delegate
+    * has been shut down (bounded).
     */
   private[openfeature] def switchProvider(switch: SwitchableProvider, next: OFFeatureProvider): Task[Boolean] =
     swapLock
@@ -536,7 +536,7 @@ final private[openfeature] class FeatureFlagsLive(
       }
 
   /** The API's evaluation context, which the SDK passes to `initialize()`; `fromAcquireAsync` initializes its composed
-    * stack itself and passes the same (#512).
+    * stack itself and passes the same.
     */
   private[openfeature] def apiEvaluationContext: dev.openfeature.sdk.EvaluationContext = api.getEvaluationContext
 
@@ -558,8 +558,8 @@ final private[openfeature] class FeatureFlagsLive(
     // ShuttingDown rejects evaluations for the duration of the teardown (checkProviderStatus); the terminal state
     // after teardown is NotReady. The machine keeps both terminal: while ShuttingDown no bridge event transitions,
     // and ShutdownCompleted makes the final NotReady stick against a late event from the dying provider.
-    // Uninterruptible (#435): an interrupt halfway would leave ShuttingDown for good, with the API half torn down. The
-    // region is bounded — the API shutdown waits at most its own timeout (#433).
+    // Uninterruptible: an interrupt halfway would leave ShuttingDown for good, with the API half torn down. The
+    // region is bounded — the API shutdown waits at most its own timeout.
     (applySignal(Signal.ShutdownStarted) *>
       // Deregister the bridge handlers BEFORE tearing down the API so no emitter thread races the teardown (the scope
       // finalizer also calls this — the SDK's removeHandler is idempotent). It takes the SDK's lock, so off the core pool.
@@ -574,7 +574,7 @@ final private[openfeature] class FeatureFlagsLive(
       // non-owning instance — a registry/domain client that shares its API, and possibly its provider, with sibling
       // clients — must NOT shut the API or the provider: both belong to whatever owns the API (e.g. the registry,
       // which shuts every registered provider exactly once when its own scope closes). Shutting the API here would
-      // kill sibling clients (the #243 bug); shutting the provider directly would kill siblings that share it (the
+      // kill sibling clients; shutting the provider directly would kill siblings that share it (the
       // registry falls back to one shared default provider) and double-shut a provider the API still has registered.
       // A non-owning `shutdown` therefore releases only this instance's own state (status/hooks/contexts/event hub,
       // torn down above); retire such clients via whatever owns the API (e.g. the registry).
@@ -605,7 +605,7 @@ final private[openfeature] class FeatureFlagsLive(
     details: Option[TrackingEventDetails]
   ): IO[FeatureFlagError, Unit] =
     // Convert before anything is recorded or sent: an attribute the SDK cannot represent is a caller mistake, so it
-    // fails here as InvalidContext rather than inside the SDK call, where `classify` would blame the provider (#441).
+    // fails here as InvalidContext rather than inside the SDK call, where `classify` would blame the provider.
     ZIO
       .foreach(details)(d =>
         ZIO.fromEither(TrackingConverter.toOpenFeature(d)).mapError(FeatureFlagError.InvalidContext(_))
@@ -648,7 +648,7 @@ final private[openfeature] class FeatureFlagsLive(
 
 private[openfeature] object FeatureFlagsLive {
 
-  // Per-call states for the abandoned-call cap (#437), see `withTimeout`.
+  // Per-call states for the abandoned-call cap, see `withTimeout`.
   private[openfeature] val CallRunning   = 0
   private[openfeature] val CallDone      = 1
   private[openfeature] val CallAbandoned = 2

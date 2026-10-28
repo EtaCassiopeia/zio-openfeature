@@ -12,7 +12,7 @@ import com.optimizely.ab.optimizelydecision.OptimizelyDecideOption
 import dev.openfeature.sdk.{ErrorCode, ImmutableContext, Reason}
 import zio.test._
 
-// #474: Optimizely SDK 4.6.0 — CMAB experiments decide through a CmabService, a CMAB fetch failure is an evaluation
+// Optimizely SDK 4.6.0 — CMAB experiments decide through a CmabService, a CMAB fetch failure is an evaluation
 // ERROR (not a silent DEFAULT), and event payloads serialize with this build's Jackson.
 object OptimizelyCmabSpec extends ZIOSpecDefault {
 
@@ -49,7 +49,7 @@ object OptimizelyCmabSpec extends ZIOSpecDefault {
 
   private val user = new ImmutableContext("user-1")
 
-  def spec = suite("OptimizelyCmabSpec (#474)")(
+  def spec = suite("OptimizelyCmabSpec")(
     test("a CMAB experiment serves the variation the CMAB service chose") {
       withProvider(stub(() => new CmabDecision("410", "uuid-1"))) { provider =>
         val eval = provider.getBooleanEvaluation("cmab_flag", false, user)

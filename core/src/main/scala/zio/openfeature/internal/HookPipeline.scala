@@ -3,8 +3,8 @@ package zio.openfeature.internal
 import zio._
 import zio.openfeature._
 
-/** The hook pipeline of a [[FeatureFlagsLive]] (#445): orders the API, client and invocation hooks and runs their
-  * stages around one evaluation.
+/** The hook pipeline of a [[FeatureFlagsLive]]: orders the API, client and invocation hooks and runs their stages
+  * around one evaluation.
   */
 final private[openfeature] class HookPipeline(
   state: FeatureFlagsState,

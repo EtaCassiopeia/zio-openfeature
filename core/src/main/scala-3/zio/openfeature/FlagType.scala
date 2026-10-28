@@ -34,8 +34,8 @@ trait FlagType[A]:
     * '''If you override this with a scalar, [[encode]] must return the matching boxed type''': `java.lang.Boolean`,
     * `String`, `java.lang.Integer`, `java.lang.Long`, `java.lang.Float` or `java.lang.Double` respectively. The pairing
     * is not checked at compile time; at evaluation time a mismatch fails with a `TypeMismatch` that names the domain
-    * type, the declared wire type, and the type `encode` actually produced (#360). [[FlagType.mapped]] gets the pairing
-    * right by construction, so prefer it where it fits.
+    * type, the declared wire type, and the type `encode` actually produced. [[FlagType.mapped]] gets the pairing right
+    * by construction, so prefer it where it fits.
     */
   @nowarn("cat=deprecation")
   def wire: WireType = WireType.fromName(wireType)
@@ -158,7 +158,7 @@ object FlagType:
     def underlying: FlagType[A] = elem
     def typeName: String        = s"Option[${underlying.typeName}]"
     // Resolved through the element's resolver, so `Option[String]` reaches the provider's string method. A `None`
-    // default is sent as a sentinel and read back as `None` by evaluation (see `OptionalFlagType`, #439).
+    // default is sent as a sentinel and read back as `None` by evaluation (see `OptionalFlagType`).
     override def wire: WireType = underlying.wire
     def defaultValue: Option[A] = None
     def decode(value: Any): Either[String, Option[A]] = value match
@@ -167,7 +167,7 @@ object FlagType:
       case Some(v) => underlying.decode(v).map(Some(_))
       case other   => underlying.decode(other).map(Some(_))
     // Carried as the underlying wire value or null — exactly what `decode` accepts back. The inherited identity
-    // `encode` would hand `Some(domainValue)` to `decode`, breaking the round-trip law for `Option[Custom]` (#359).
+    // `encode` would hand `Some(domainValue)` to `decode`, breaking the round-trip law for `Option[Custom]`.
     override def encode(value: Option[A]): Any = value match
       case Some(a) => underlying.encode(a)
       case None    => null
@@ -210,7 +210,7 @@ object FlagType:
     def decode(value: Any): Either[String, A] = decoder(value)
     override def encode(value: A): Any        = encoder(value)
 
-  /** Derives a `FlagType[A]` from `A`'s structure (#348). Scala 3 only — the 2.13 twin keeps `from`/`mapped`.
+  /** Derives a `FlagType[A]` from `A`'s structure. Scala 3 only — the 2.13 twin keeps `from`/`mapped`.
     *
     * {{{
     * enum Plan derives FlagType:

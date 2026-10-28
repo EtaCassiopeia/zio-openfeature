@@ -23,7 +23,7 @@ object LibraryProviders {
 
   private def meta(nm: String): Metadata = new Metadata { def getName: String = nm }
 
-  /** Answers `null` from the string resolver. #356 runs `FlagType.decode` on the extracted value, so this must surface
+  /** Answers `null` from the string resolver. `FlagType.decode` runs on the extracted value, so this must surface
     * as a typed `TypeMismatch` instead of flowing through as a `null` flag value.
     */
   final class NullStringProvider extends FeatureProvider {
@@ -45,7 +45,7 @@ object LibraryProviders {
 
   /** Records the default each resolver was handed and answers `FLAG_NOT_FOUND` for every key.
     *
-    * #364: the object path used to send an empty `Value` rather than the caller's default and to lose the provider's
+    * The object path used to send an empty `Value` rather than the caller's default and to lose the provider's
     * error code on the way back. `sawObjectDefault` is the only place the first half is observable.
     */
   final class DefaultRecordingProvider extends FeatureProvider {
@@ -79,7 +79,7 @@ object LibraryProviders {
 
   /** A third-party provider written against SDK &lt; 1.22.0: it has no `getLongEvaluation` override, so the interface
     * default routes `Long` through its *double* resolver. The two resolvers answer different values, which is what
-    * makes the routing observable end-to-end (#333).
+    * makes the routing observable end-to-end.
     */
   final class LegacyLongProvider extends FeatureProvider {
     @scala.annotation.nowarn("msg=deprecated")
@@ -99,7 +99,7 @@ object LibraryProviders {
   }
 
   /** Constructs successfully but knows no flags at all — the "constructed ≠ healthy" case `verify` exists to reject
-    * (#349). Every key answers `FLAG_NOT_FOUND`, including the sentinel a `Verify.flagExists` check probes for.
+    * Every key answers `FLAG_NOT_FOUND`, including the sentinel a `Verify.flagExists` check probes for.
     */
   final class EmptyProvider(nm: String) extends FeatureProvider {
     private def missing[T](k: String, d: T): ProviderEvaluation[T] =

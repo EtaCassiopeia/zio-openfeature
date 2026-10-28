@@ -7,7 +7,7 @@ import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicReference
 import scala.jdk.CollectionConverters._
 
-// #447 as properties. Two views of the same invariants:
+// The stale-permit invariants as properties. Two views of the same invariants:
 //   - a sequential schedule where any permit can be settled late, in any order, against a manual clock (exact check:
 //     a stale permit leaves the state untouched), and
 //   - real fibers with injected delays against the system ticker (linearisation-independent checks only).
@@ -197,7 +197,7 @@ object CircuitBreakerPropertySpec extends ZIOSpecDefault {
           .as(violations.asScala.toList)
       }
 
-  def spec = suite("CircuitBreakerPropertySpec (#447)")(
+  def spec = suite("CircuitBreakerPropertySpec")(
     test("sequential schedules: stale permits are no-ops, slots stay bounded, only the probe closes") {
       check(configs, Gen.listOfBounded(5, 80)(steps)) { (config, schedule) =>
         val violations = runSequential(config, schedule)

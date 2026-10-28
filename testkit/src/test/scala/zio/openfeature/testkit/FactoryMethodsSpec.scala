@@ -10,9 +10,9 @@ import zio.openfeature._
   * These tests must run sequentially because they share the singleton's default provider slot. Isolated from other
   * specs to avoid cross-test contamination.
   *
-  * Exercises the `FeatureFlagsConfig`-driven `fromProvider(provider, config)` factory (#253). The behavioral
-  * equivalence between this and the now-deprecated overloads it replaced is pinned separately, under
-  * `@nowarn("cat=deprecation")`, by `FactoryConfigSpec`'s T6 suite.
+  * Exercises the `FeatureFlagsConfig`-driven `fromProvider(provider, config)` factory. The behavioral equivalence
+  * between this and the now-deprecated overloads it replaced is pinned separately, under `@nowarn("cat=deprecation")`,
+  * by `FactoryConfigSpec`'s T6 suite.
   */
 object FactoryMethodsSpec extends ZIOSpecDefault {
 
@@ -57,7 +57,7 @@ object FactoryMethodsSpec extends ZIOSpecDefault {
           }
         } yield result
       },
-      // #461: a version without a domain is passed to the SDK client and reported, in both init modes.
+      // A version without a domain is passed to the SDK client and reported, in both init modes.
       test("version without a domain is reported in clientMetadata (sync)") {
         for {
           provider <- TestFeatureProvider.make(Map("flag" -> true))

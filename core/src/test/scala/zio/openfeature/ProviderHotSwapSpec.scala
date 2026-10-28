@@ -235,7 +235,7 @@ object ProviderHotSwapSpec extends ZIOSpecDefault {
           assertTrue(vi == 42) && assertTrue(vd == 3.14)
       }
     },
-    test("failed swap rolls back routing and status to the previous provider (#282)") {
+    test("failed swap rolls back routing and status to the previous provider") {
       // The core regression: after a failed swap, evaluations must route back to provider A (not the failed
       // provider), status must be Ready, and metadata must name A — the SDK client routing is reconciled, not just
       // the internal providerRef.
@@ -258,7 +258,7 @@ object ProviderHotSwapSpec extends ZIOSpecDefault {
           assertTrue(m.name == "A")
       }
     },
-    test("stale PROVIDER_READY from the old provider does not mark status Ready mid-swap (#181)") {
+    test("stale PROVIDER_READY from the old provider does not mark status Ready mid-swap") {
       // The old provider emits READY while the new provider's initialize() is still blocked. Without the
       // swap-in-progress guard, the event bridge would flip NotReady => Ready while the swap is in flight.
       ZIO.scoped {
@@ -309,7 +309,7 @@ object ProviderHotSwapSpec extends ZIOSpecDefault {
           assertTrue(m.name == "C")
       }
     },
-    test("no-domain failed swap rolls back routing and status (#282)") {
+    test("no-domain failed swap rolls back routing and status") {
       // The rollback branches on `domain`; exercise the default-slot (no-domain) path.
       ZIO.scoped {
         val providerA = new SimpleProvider("A", Map("flag" -> true))
@@ -329,7 +329,7 @@ object ProviderHotSwapSpec extends ZIOSpecDefault {
           assertTrue(m.name == "A")
       }
     },
-    test("failed swap re-initializes the previous provider exactly once more (#282)") {
+    test("failed swap re-initializes the previous provider exactly once more") {
       // Pins the documented re-init caveat: rollback re-registers the old provider, so its initialize() runs a second
       // time (once at build, once at rollback).
       ZIO.scoped {
@@ -348,7 +348,7 @@ object ProviderHotSwapSpec extends ZIOSpecDefault {
         } yield assertTrue(n == 2)
       }
     },
-    test("failed swap re-attaches the previous EventProvider so its events still flow (#282)") {
+    test("failed swap re-attaches the previous EventProvider so its events still flow") {
       // The detach->re-register round-trip must not sever event propagation: after rollback, A can still emit a
       // configuration-changed event that reaches subscribers.
       ZIO.scoped {
@@ -371,7 +371,7 @@ object ProviderHotSwapSpec extends ZIOSpecDefault {
         } yield assertTrue(ev.eventType == ProviderEventType.ConfigurationChanged)
       }
     },
-    test("failed swap eventually shuts the failed provider down (#282)") {
+    test("failed swap eventually shuts the failed provider down") {
       // On a successful rollback the SDK's shutDownOld tears down the failed provider (async).
       ZIO.scoped {
         val failShutdowns = new java.util.concurrent.atomic.AtomicInteger(0)
@@ -391,7 +391,7 @@ object ProviderHotSwapSpec extends ZIOSpecDefault {
         } yield assertTrue(failShutdowns.get() >= 1)
       }
     },
-    test("rollback failure: old provider re-init throws leaves status Error, surfaces original error, no hang (#282)") {
+    test("rollback failure: old provider re-init throws leaves status Error, surfaces original error, no hang") {
       // When the old provider's re-initialize() throws, rollback fails: setProvider still reports the ORIGINAL swap
       // failure, status stays Error, and the call completes (no hang). The SDK slot was rebound to the old provider
       // before its failing init ran, so evaluations still route to it.
@@ -427,7 +427,7 @@ object ProviderHotSwapSpec extends ZIOSpecDefault {
           assertTrue(m.name == "A")
       }
     },
-    test("shared provider bound to two domains: failed swap on one leaves the shared provider intact (#282)") {
+    test("shared provider bound to two domains: failed swap on one leaves the shared provider intact") {
       // Decision-2 guard: one provider instance bound to two domains of the same API. A failed swap on domain 1 must
       // NOT detach or re-initialize the shared provider (its READY manager on domain 2 is reused), so its events on
       // domain 2 keep flowing and its init count does not grow.

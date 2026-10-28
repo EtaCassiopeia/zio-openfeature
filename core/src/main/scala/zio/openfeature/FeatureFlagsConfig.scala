@@ -67,16 +67,16 @@ object InitMode {
 /** Who owns the underlying `OpenFeatureAPI`'s lifecycle — i.e. whether this instance's scope closing (or an explicit
   * `shutdown` call) also shuts down the API, and with it every provider registered on it.
   *
-  * '''Auto (default) truth table''' — mirrors the pre-#253 implicit behavior, now made explicit:
+  * '''Auto (default) truth table''' — mirrors the earlier implicit behavior, now made explicit:
   *
   *   - `domain.isEmpty` -> [[ApiOwnership.Owned]]: this is a sole-owner client on the process-global (or
   *     caller-supplied) API. Nobody else can reasonably be sharing an unnamed default client, so scope close /
   *     `shutdown` tears down the API (and its provider) — matching `FeatureFlags.fromProvider`'s historical
   *     `addShutdownFinalizer = true`.
   *   - `domain.isDefined` -> [[ApiOwnership.Shared]]: a named domain almost always means multiple domain clients are
-  *     sharing one process-global `OpenFeatureAPI` (see #243). If a domain client shut the API down, every sibling
-  *     domain's provider would die with it. So by default a domain-scoped client leaves the API alone; the API's actual
-  *     owner (e.g. `FeatureFlagRegistry`, or whoever constructed it) is responsible for shutting it down once.
+  *     sharing one process-global `OpenFeatureAPI`. If a domain client shut the API down, every sibling domain's
+  *     provider would die with it. So by default a domain-scoped client leaves the API alone; the API's actual owner
+  *     (e.g. `FeatureFlagRegistry`, or whoever constructed it) is responsible for shutting it down once.
   *
   * Override the default when the truth table doesn't match your topology:
   *

@@ -5,14 +5,14 @@ import zio._
 import zio.openfeature._
 import zio.test._
 
-/** #371: every `TestFeatureProvider` reported the same metadata name and there was no way to change it. This library's
+/** Every `TestFeatureProvider` reported the same metadata name and there was no way to change it. This library's
   * event-identity guard compares that name across a `setProvider` swap, and up to Java SDK 1.22.x a `MultiProvider`
   * also kept only the last of two same-named children — so two test providers could not coexist wherever identity
   * matters. `makeNamed` gives them distinct names.
   *
   * The chain tests carry their own evidence: fall-through asserts that the first provider was actually consulted rather
   * than only that the value looks right, because a value assertion alone cannot see a collapsed chain. Since SDK 1.23.0
-  * (#423) same-named children coexist too, which the DEFAULT-named tests pin.
+  * same-named children coexist too, which the DEFAULT-named tests pin.
   *
   * Shared test source dir → compiles on 2.13 and 3: braces only, no `given`/`using`, no `enum`.
   */
@@ -123,7 +123,7 @@ object NamedProviderSpec extends ZIOSpecDefault {
       test("two DEFAULT-named providers coexist since SDK 1.23.0, and the first wins a key both hold") {
         // Up to SDK 1.22.x the MultiProvider keyed its children by metadata name, so this pair collapsed to the second
         // one and `first` was never consulted: the value and `sawFirst` both catch that. A chain that dropped `second`
-        // instead is caught by the fall-through test below (#423).
+        // instead is caught by the fall-through test below.
         ZIO.scoped {
           for {
             first     <- TestFeatureProvider.make(Map("shadowed" -> "from-first"))

@@ -7,7 +7,7 @@ import zio.test._
 import zio.openfeature._
 import dev.openfeature.sdk.{FeatureProvider, OpenFeatureAPI}
 
-// The #433 (stuck initialize), #434 (interrupted swap) and #435 (teardown) scenarios, re-expressed with FaultyProvider.
+// The stuck-initialize, interrupted-swap and teardown scenarios, re-expressed with FaultyProvider.
 // core's regression specs keep their hand-rolled providers (core cannot depend on testkit); these pin the same
 // behaviour through the public fault-injection surface, including an initialize() that ignores shutdown().
 object LifecycleFaultSpec extends ZIOSpecDefault {
@@ -47,8 +47,8 @@ object LifecycleFaultSpec extends ZIOSpecDefault {
   private def bounded[E, A](label: String)(effect: ZIO[Scope, E, A]): ZIO[Any, Any, A] =
     ZIO.scoped(effect).timeoutFail(s"$label did not complete within $testBound")(testBound)
 
-  def spec = suite("LifecycleFaultSpec (#463)")(
-    suite("stuck initialize (#433)")(
+  def spec = suite("LifecycleFaultSpec")(
+    suite("stuck initialize")(
       test("a swap whose initialize() ignores shutdown fails at the init timeout with status Error") {
         bounded("timed-out swap") {
           for {
@@ -151,7 +151,7 @@ object LifecycleFaultSpec extends ZIOSpecDefault {
         }
       }
     ),
-    suite("interrupted swap (#434)")(
+    suite("interrupted swap")(
       test("interrupted while the new provider initializes, then it succeeds: Ready on the new provider") {
         bounded("interrupted swap") {
           for {
@@ -199,7 +199,7 @@ object LifecycleFaultSpec extends ZIOSpecDefault {
         }
       }
     ),
-    suite("teardown (#435)")(
+    suite("teardown")(
       test("closing the scope completes within the SDK's bound even though the provider's shutdown() hangs") {
         for {
           hanging <- FaultyProvider.make(name = "hanging")

@@ -13,7 +13,7 @@ import zio.test._
 /** Failure-mode integration suite for the Optimizely provider, driven by a WireMock server impersonating the Optimizely
   * CDN. Each test owns its own WireMock instance so the stubs are isolated.
   *
-  * What this spec covers (issue #136):
+  * What this spec covers:
   *   - Happy path: valid datafile → provider reaches READY.
   *   - 403 / 404 / 500: HTTP errors → provider fails to initialize.
   *   - Slow response past `initWait` → provider fails to initialize.

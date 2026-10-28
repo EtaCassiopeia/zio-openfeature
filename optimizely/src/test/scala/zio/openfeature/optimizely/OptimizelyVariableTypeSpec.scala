@@ -9,7 +9,7 @@ import zio.test._
 
 import scala.jdk.CollectionConverters._
 
-// #456: a variable that exists with another type is a TYPE_MISMATCH, not the caller's default with reason DEFAULT; an
+// A variable that exists with another type is a TYPE_MISMATCH, not the caller's default with reason DEFAULT; an
 // absent variable stays DEFAULT. Conversions are strict and lossless (no "42" -> 42, no 1.5 -> 1).
 object OptimizelyVariableTypeSpec extends ZIOSpecDefault {
 
@@ -67,7 +67,7 @@ object OptimizelyVariableTypeSpec extends ZIOSpecDefault {
       assertTrue(matched(e, value))
     }
 
-  def spec = suite("OptimizelyVariableTypeSpec (#456)")(
+  def spec = suite("OptimizelyVariableTypeSpec")(
     test("integer: a string variable is a TYPE_MISMATCH") {
       mismatch(_.getIntegerEvaluation(Flag, intDefault, variable("s")), intDefault)
     },

@@ -4,8 +4,8 @@ import dev.openfeature.sdk.exceptions.{FlagNotFoundError, GeneralError, OpenFeat
 import zio._
 import zio.test._
 
-/** #258: `FiberFailures.toOpenFeatureError` is the contract that keeps a synchronously-run provider effect from ever
-  * throwing a non-`Exception` into the SDK. `CachingProvider` only ever feeds it a `Fail(throwable)` cause, so these
+/** `FiberFailures.toOpenFeatureError` is the contract that keeps a synchronously-run provider effect from ever throwing
+  * a non-`Exception` into the SDK. `CachingProvider` only ever feeds it a `Fail(throwable)` cause, so these
   * same-package unit tests exercise the die / interrupt / empty-cause branches directly to prove the helper ALWAYS
   * yields an `OpenFeatureError` (⊂ `Exception`).
   */

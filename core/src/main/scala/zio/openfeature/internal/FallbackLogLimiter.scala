@@ -89,9 +89,9 @@ final private[openfeature] class FallbackLogLimiter private (
     }
   }
 
-  /** The abandoned-call cap's rejection warning (#437), in one bucket shared by every key: a hung provider rejects
-    * every timed evaluation, so a per-key bucket would still storm the log. Like a defect it is an operational signal,
-    * not a served-default line, so `Off` bounds it at [[FallbackLogging.Default]]'s window rather than silencing it.
+  /** The abandoned-call cap's rejection warning, in one bucket shared by every key: a hung provider rejects every timed
+    * evaluation, so a per-key bucket would still storm the log. Like a defect it is an operational signal, not a
+    * served-default line, so `Off` bounds it at [[FallbackLogging.Default]]'s window rather than silencing it.
     */
   def logRejection(message: String): UIO[Unit] =
     admit(boundedPolicy, RejectionKey).flatMap {

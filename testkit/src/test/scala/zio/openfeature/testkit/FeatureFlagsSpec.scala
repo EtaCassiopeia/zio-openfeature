@@ -21,7 +21,7 @@ object FeatureFlagsSpec extends ZIOSpecDefault {
         } yield assertTrue(result == true)
       }.provide(testLayer(Map("dark-mode" -> true))),
       test("boolean fails with FlagNotFound when the flag is absent; booleanOrDefault serves the default") {
-        // Since #388 the typed tier fails on the provider's FLAG_NOT_FOUND code; the total tier is where the caller's
+        // The typed tier fails on the provider's FLAG_NOT_FOUND code; the total tier is where the caller's
         // default is served (see `stringDetails reports FLAG_NOT_FOUND when not found`).
         for {
           typed <- FeatureFlags.boolean("missing-flag", default = false).either

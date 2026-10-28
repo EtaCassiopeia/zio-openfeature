@@ -6,7 +6,7 @@ import zio.openfeature.testkit.DifferentialLaws
 import zio.openfeature.testkit.DifferentialLaws._
 import zio.test._
 
-/** `EnvVarProvider` against `TestFeatureProvider` (#467).
+/** `EnvVarProvider` against `TestFeatureProvider`.
   *
   * An environment variable holds text, so this oracle runs on the boolean / string / int / double subset of the wire
   * types, each flag rendered with `toString`. The deviations are the consequences of holding text instead of a typed

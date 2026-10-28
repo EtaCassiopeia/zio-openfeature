@@ -55,11 +55,11 @@ final case class LibraryWorld(
   testProvider: Option[TestFeatureProvider] = None,
   chainedProviders: List[TestFeatureProvider] = Nil,
   recorder: Option[LibraryProviders.DefaultRecordingProvider] = None,
-  // pull-based ambient context (#353/#373)
+  // pull-based ambient context
   ambient: Option[Ref[EvaluationContext]] = None,
-  // fallback logging (#350)
+  // fallback logging
   logSink: Option[LogSink] = None,
-  // fallback-first construction (#349/#352)
+  // fallback-first construction
   acquireStatus: Option[AcquireStatus] = None,
   swapped: Option[Ref[Boolean]] = None,
   constructionError: Option[Ref[Option[Throwable]]] = None,

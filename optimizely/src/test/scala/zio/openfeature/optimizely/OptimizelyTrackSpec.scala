@@ -13,7 +13,7 @@ import zio.test._
 import java.util.concurrent.CopyOnWriteArrayList
 import scala.jdk.CollectionConverters._
 
-// #454: OptimizelyFeatureProvider sends `track` calls to Optimizely as conversions instead of dropping them.
+// OptimizelyFeatureProvider sends `track` calls to Optimizely as conversions instead of dropping them.
 object OptimizelyTrackSpec extends ZIOSpecDefault {
 
   private val DatafilePath = "/datafiles/track-key.json"
@@ -48,7 +48,7 @@ object OptimizelyTrackSpec extends ZIOSpecDefault {
   private def user(attrs: (String, String)*): ImmutableContext =
     new ImmutableContext("user-1", attrs.map { case (k, v) => k -> new Value(v) }.toMap.asJava)
 
-  def spec = suite("OptimizelyTrackSpec (#454)")(
+  def spec = suite("OptimizelyTrackSpec")(
     test("a track call is sent as a conversion with the user, attributes, value, revenue and tags") {
       withProvider() { (provider, events) =>
         val details = new MutableTrackingEventDetails(12.5).add("revenue", Integer.valueOf(1999)).add("sku", "x")

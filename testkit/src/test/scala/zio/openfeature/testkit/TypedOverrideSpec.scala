@@ -6,7 +6,7 @@ import zio.openfeature.{FeatureFlags, FlagDef, FlagType}
 import zio.openfeature.testkit.FlagOverride.Ops
 import zio.test._
 
-/** #351: typed test fixtures built from a `FlagDef` rather than a bare key.
+/** Typed test fixtures built from a `FlagDef` rather than a bare key.
   *
   * The key-based `setFlag[A](key, value)` accepts anything, so a fixture can pin a value production could never decode
   * — the test passes and production fails with `TYPE_MISMATCH`. A `FlagDef`-based fixture is checked against the flag's

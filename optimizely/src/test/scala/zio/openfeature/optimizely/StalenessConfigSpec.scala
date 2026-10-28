@@ -2,7 +2,7 @@ package zio.openfeature.optimizely
 
 import zio.test._
 
-// #462: the staleness watchdog derivation, now from named constants — values unchanged.
+// The staleness watchdog derivation, now from named constants — values unchanged.
 object StalenessConfigSpec extends ZIOSpecDefault {
 
   private def derive(poll: java.time.Duration, staleAfter: Option[java.time.Duration] = None) =
@@ -10,7 +10,7 @@ object StalenessConfigSpec extends ZIOSpecDefault {
       OptimizelyProviderConfig(sdkKey = "staleness-key", pollingInterval = Some(poll), staleAfter = staleAfter)
     )
 
-  def spec = suite("StalenessConfigSpec (#462)")(
+  def spec = suite("StalenessConfigSpec")(
     test("without staleAfter: stale after 3 polling intervals, checked every polling interval") {
       val c = derive(java.time.Duration.ofSeconds(10))
       assertTrue(

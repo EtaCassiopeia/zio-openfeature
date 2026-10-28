@@ -44,7 +44,7 @@ object FaultyProviderSpec extends ZIOSpecDefault {
       end   <- Clock.nanoTime
     } yield (a, (end - start) / 1000000L)
 
-  def spec = suite("FaultyProviderSpec (#463)")(
+  def spec = suite("FaultyProviderSpec")(
     test("an op with no script delegates to the wrapped provider") {
       for {
         fp      <- FaultyProvider.scoped(Map("b" -> true, "s" -> "hello"), name = "faulty")

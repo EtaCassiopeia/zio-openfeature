@@ -6,7 +6,7 @@ import zio.test._
 
 import scala.jdk.CollectionConverters._
 
-// #471: a Long attribute beyond the int range reaches the OpenFeature SDK as a java.lang.Long (not a lossy Double), at
+// A Long attribute beyond the int range reaches the OpenFeature SDK as a java.lang.Long (not a lossy Double), at
 // the top level and nested, and a Long arriving from the SDK converts back to LongValue.
 object LongAttributeConversionSpec extends ZIOSpecDefault {
 
@@ -15,7 +15,7 @@ object LongAttributeConversionSpec extends ZIOSpecDefault {
   private def sent(attr: AttributeValue): Value =
     ContextConverter.toOpenFeature(EvaluationContext(None, Map("k" -> attr))).getValue("k")
 
-  def spec = suite("LongAttributeConversionSpec (#471)")(
+  def spec = suite("LongAttributeConversionSpec")(
     test("a top-level out-of-int-range Long arrives as a java.lang.Long with its exact value") {
       val v = sent(AttributeValue.LongValue(Big))
       assertTrue(v.asObject.isInstanceOf[java.lang.Long], v.asLong.longValue == Big)
@@ -28,7 +28,7 @@ object LongAttributeConversionSpec extends ZIOSpecDefault {
       val v = sent(AttributeValue.StructValue(Map("n" -> AttributeValue.LongValue(Big)))).asStructure.getValue("n")
       assertTrue(v.asObject.isInstanceOf[java.lang.Long], v.asLong.longValue == Big)
     },
-    test("an int-range Long still arrives as a java.lang.Integer (#249)") {
+    test("an int-range Long still arrives as a java.lang.Integer") {
       assertTrue(sent(AttributeValue.LongValue(42L)).asObject.isInstanceOf[java.lang.Integer])
     },
     test("a Long arriving from the SDK converts back to LongValue, not DoubleValue") {

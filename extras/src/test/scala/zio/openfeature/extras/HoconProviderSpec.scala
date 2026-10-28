@@ -48,7 +48,7 @@ object HoconProviderSpec extends ZIOSpecDefault {
       },
       test("returns the caller's default with FLAG_NOT_FOUND for a missing key") {
         // The value is still the caller's default; the reason is no longer DEFAULT, so a MultiProvider chain and an
-        // operator can both tell "not configured here" from "configured to this value" (#355).
+        // operator can both tell "not configured here" from "configured to this value".
         val result = provider.getBooleanEvaluation("missing", true, ctx)
         assertTrue(result.getValue == true) &&
         assertTrue(result.getErrorCode == dev.openfeature.sdk.ErrorCode.FLAG_NOT_FOUND)
@@ -130,7 +130,7 @@ object HoconProviderSpec extends ZIOSpecDefault {
         }
       }
     ),
-    suite("number reads never change the value (#467)")(
+    suite("number reads never change the value")(
       test("a fraction read as an int or a long is TYPE_MISMATCH, not truncated") {
         val asInt  = mismatch(numbers.getIntegerEvaluation("fraction", 0, ctx))
         val asLong = mismatch(numbers.getLongEvaluation("fraction", 0L, ctx))
@@ -172,7 +172,7 @@ object HoconProviderSpec extends ZIOSpecDefault {
         assertTrue(r.getValue == true)
       }
     ),
-    suite("reload (#260)")(
+    suite("reload")(
       test("fromConfig reload preserves the injected config instead of discarding it to the classpath") {
         val cfg = ConfigFactory.parseString("only-here = true")
         val p   = HoconProvider.fromConfig(cfg)

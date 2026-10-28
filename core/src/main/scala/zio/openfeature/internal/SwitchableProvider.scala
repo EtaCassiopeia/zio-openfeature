@@ -16,7 +16,7 @@ import dev.openfeature.sdk.{
   Value
 }
 
-/** The one provider `fromAcquireAsync` registers with the SDK for the life of its layer (#512).
+/** The one provider `fromAcquireAsync` registers with the SDK for the life of its layer.
   *
   * Swapping through the SDK's `setProvider` opens a window where every typed evaluation fails with `ProviderNotReady`:
   * the SDK binds the new provider to the slot before it initializes it, and refuses evaluations while the slot is

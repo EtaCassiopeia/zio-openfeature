@@ -206,7 +206,7 @@ object FallbackLogLimiterSpec extends ZIOSpecDefault {
           logs.forall(!_.contains("suppressed"))
         )
       },
-      test("logRejection shares one bucket across keys and is bounded, not silenced, under Off (#437)") {
+      test("logRejection shares one bucket across keys and is bounded, not silenced, under Off") {
         for {
           base  <- baseline
           l     <- FallbackLogLimiter.make(FallbackLogging.Off)

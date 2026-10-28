@@ -10,7 +10,7 @@ import dev.openfeature.sdk.{ErrorCode => OFErrorCode, ImmutableContext, MutableC
 object TestFeatureProviderSpec extends ZIOSpecDefault {
 
   def spec = suite("TestFeatureProviderSpec")(
-    suite("#272 testkit DX")(
+    suite("testkit DX")(
       test("G1: getEvaluations returns the library EvaluationContext (no Java SDK type leak)") {
         for {
           provider <- TestFeatureProvider.make

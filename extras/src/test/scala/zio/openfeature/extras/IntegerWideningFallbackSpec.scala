@@ -14,7 +14,7 @@ import dev.openfeature.sdk.exceptions.TypeMismatchError
 import zio.test._
 import java.util.concurrent.atomic.AtomicInteger
 
-// #452: the integer-vs-long route was picked from the caller's DEFAULT, so a stored long beyond Int range read with a
+// The integer-vs-long route was picked from the caller's DEFAULT, so a stored long beyond Int range read with a
 // small default went down the integer resolver and failed TYPE_MISMATCH (or was narrowed).
 object IntegerWideningFallbackSpec extends ZIOSpecDefault {
 
@@ -53,7 +53,7 @@ object IntegerWideningFallbackSpec extends ZIOSpecDefault {
   private val ctx  = new ImmutableContext("user")
   private val zero = java.lang.Long.valueOf(0L)
 
-  def spec = suite("IntegerWideningFallbackSpec (#452)")(
+  def spec = suite("IntegerWideningFallbackSpec")(
     test(
       "a stored long beyond Int range read with a small default falls back when the integer path returns TYPE_MISMATCH"
     ) {

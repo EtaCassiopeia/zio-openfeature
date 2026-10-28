@@ -18,7 +18,7 @@ import dev.openfeature.sdk.{
 
 import scala.jdk.CollectionConverters._
 
-// #512: fromAcquireAsync swaps the real provider in without an SDK `setProvider`, so status never leaves Ready and no
+// `fromAcquireAsync` swaps the real provider in without an SDK `setProvider`, so status never leaves Ready and no
 // evaluation fails with ProviderNotReady while the real provider initializes.
 object AcquireNoNotReadyWindowSpec extends ZIOSpecDefault {
 
@@ -100,7 +100,7 @@ object AcquireNoNotReadyWindowSpec extends ZIOSpecDefault {
   private def poll(read: => Int, expected: Int): UIO[Int] =
     ZIO.succeed(read).repeatUntil(_ == expected).timeout(bound).map(_.getOrElse(read))
 
-  def spec = suite("AcquireNoNotReadyWindowSpec (#512)")(
+  def spec = suite("AcquireNoNotReadyWindowSpec")(
     test("evaluations during a blocked initialize all answer the fallback and status never leaves Ready") {
       val gate      = new CountDownLatch(1)
       val real      = new TestProvider("real", true, initGate = Some(gate))

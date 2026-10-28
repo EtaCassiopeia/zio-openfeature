@@ -59,16 +59,16 @@ private[openfeature] object ClientEvaluator {
     * scalar's SDK method. The default sent down is `flagType.encode(default)` — already the wire value — and the result
     * is run back through `flagType.decode`.
     *
-    * `Option[A]` over a scalar `A` resolves through `A`'s resolver (#439). A `None` default encodes to `null`, which
-    * the scalar evaluators would unbox to `false`/`0`, so `A`'s own zero (`underlying.encode(underlying.defaultValue)`)
-    * is sent as a sentinel instead. The result reads back as `None` when the resolution carries an error code, or when
-    * its reason is `DEFAULT`, `DISABLED` or `ERROR` and the value is the sentinel: the provider served the default it
-    * was handed. A provider that serves exactly the zero value with one of those reasons therefore reads as `None`.
+    * `Option[A]` over a scalar `A` resolves through `A`'s resolver. A `None` default encodes to `null`, which the
+    * scalar evaluators would unbox to `false`/`0`, so `A`'s own zero (`underlying.encode(underlying.defaultValue)`) is
+    * sent as a sentinel instead. The result reads back as `None` when the resolution carries an error code, or when its
+    * reason is `DEFAULT`, `DISABLED` or `ERROR` and the value is the sentinel: the provider served the default it was
+    * handed. A provider that serves exactly the zero value with one of those reasons therefore reads as `None`.
     *
     *   - `None` — the wire type is `Object`; the caller uses the object path.
     *   - `Some(Right(erased))` — dispatch resolved.
     *   - `Some(Left(message))` — the instance is internally inconsistent: it declares a scalar wire type that its
-    *     `encode` does not produce. The caller reports this as a typed `TypeMismatch` (#360).
+    *     `encode` does not produce. The caller reports this as a typed `TypeMismatch`.
     */
   def evaluateStandard[A](
     flagType: FlagType[A],
@@ -80,7 +80,7 @@ private[openfeature] object ClientEvaluator {
     // `wireClass` is the box the chosen evaluator will unbox. The `asInstanceOf[T]` below is erased, so a mismatch
     // does NOT fail here — it fails later inside the evaluator's bridge method as a bare ClassCastException carrying
     // no flag key and no hint about the wire/encode mismatch. Checking the box up front is what turns that
-    // programmer error at a documented extension point into an actionable typed failure (#360).
+    // programmer error at a documented extension point into an actionable typed failure.
     def erased[T](ev: ClientEvaluator[T], wireClass: Class[_]): Either[String, Erased[A]] = {
       val encoded = flagType.encode(default)
       val (wire, extract) = flagType match {
@@ -171,8 +171,9 @@ private[openfeature] object ClientEvaluator {
   // Going native trades that silent precision loss for either an exact 64-bit result (providers that override
   // `getLongEvaluation`) or a loud TYPE_MISMATCH from the SDK's double-backed default. Every provider this library
   // ships overrides it: the OFREP contrib provider does not, which is why the ofrep factories return
-  // `OFREPFeatureProvider`, whose override resolves long reads through the contrib object resolver (#529). It also makes SDK-level `LongHook`s and `FlagValueType.LONG` observable, which the
-  // hand-rolled routing hid. A third-party provider that does NOT override `getLongEvaluation` can be wrapped in
+  // `OFREPFeatureProvider`, whose override resolves long reads through the contrib object resolver. It also makes
+  // SDK-level `LongHook`s and `FlagValueType.LONG` observable, which the hand-rolled routing hid.
+  // A third-party provider that does NOT override `getLongEvaluation` can be wrapped in
   // `zio.openfeature.extras.IntegerWideningLongProvider` to restore the old int-range behaviour.
   implicit val longEvaluator: ClientEvaluator[Long] = new ClientEvaluator[Long] {
     def evaluate(

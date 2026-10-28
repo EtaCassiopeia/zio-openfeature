@@ -19,9 +19,9 @@ import zio.openfeature._
   *   - Kill-switch absent or on → serve variant (or "default" if also absent).
   *   - `recommendation_rate_limit` integer variable — audience-gated; FlagNotFound → 10 (conservative default).
   *
-  * NOTE: since #388 the typed tier (`boolean`/`string`/`int`) FAILS with a typed `FeatureFlagError` when the provider
-  * reports an error code — `FlagNotFound` for an absent flag — so the decision that cares WHY (the kill switch: absent
-  * vs. broken) reads the typed error, and the two that only want a value-or-default use the total tier.
+  * NOTE: the typed tier (`boolean`/`string`/`int`) FAILS with a typed `FeatureFlagError` when the provider reports an
+  * error code — `FlagNotFound` for an absent flag — so the decision that cares WHY (the kill switch: absent vs. broken)
+  * reads the typed error, and the two that only want a value-or-default use the total tier.
   */
 final class RecommendationService(flags: FeatureFlags) {
 

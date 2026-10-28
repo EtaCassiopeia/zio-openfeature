@@ -1,6 +1,6 @@
 Feature: Native 64-bit flag evaluation
 
-  #333/#339 moved `Long` evaluation onto the SDK 1.22.0 native long surface: the provider's own
+  `Long` evaluation runs on the SDK 1.22.0 native long surface: the provider's own
   `getLongEvaluation` decides the result, so the full 64-bit range is exact instead of being routed
   through an integer or double resolver and silently losing precision beyond 2^53. The change is
   observable three ways — exactness, the `FlagValueType.Long` hooks now see, and what happens to a

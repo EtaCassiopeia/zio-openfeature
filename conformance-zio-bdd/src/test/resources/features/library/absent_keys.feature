@@ -1,11 +1,11 @@
 Feature: An absent flag key reports FLAG_NOT_FOUND
 
   Before this, a provider that did not hold a key answered with the caller's default and a DEFAULT
-  reason, which ends a `MultiProvider` chain rather than letting it advance. #370 (config providers)
-  and #374 (the testkit provider) make an absent key `FLAG_NOT_FOUND`; #364 additionally sends the
-  caller's own default down the object path and keeps the provider's error code on the way back.
+  reason, which ends a `MultiProvider` chain rather than letting it advance. The config providers
+  and the testkit provider now make an absent key `FLAG_NOT_FOUND`; the object path additionally sends the
+  caller's own default and keeps the provider's error code on the way back.
 
-  How the two tiers surface it (#388): the TYPED tier (`value` / `*Details`) fails with a typed
+  How the two tiers surface it: the TYPED tier (`value` / `*Details`) fails with a typed
   `FlagNotFound` — the tier a caller reaches for precisely because a default would be wrong must not
   hand one back silently — while the TOTAL tier (`*OrDefault` / `resolveOrDefault`) serves the
   caller's default with `errorCode = FLAG_NOT_FOUND` and `reason = ERROR`.

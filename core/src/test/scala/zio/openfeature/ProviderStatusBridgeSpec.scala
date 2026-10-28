@@ -16,9 +16,9 @@ import dev.openfeature.sdk.{
 }
 import java.util.concurrent.CountDownLatch
 
-/** Bridge-level tests (#244): provider-identity gating, PROVIDER_FATAL mapping, terminal-state stickiness, and truthful
-  * event payloads. Handlers are driven directly via the extracted `onReadyEvent`/`onErrorEvent`/ `onStaleEvent` methods
-  * with builder-constructed `EventDetails`, so no SDK emitter thread is involved.
+/** Bridge-level tests: provider-identity gating, PROVIDER_FATAL mapping, terminal-state stickiness, and truthful event
+  * payloads. Handlers are driven directly via the extracted `onReadyEvent`/`onErrorEvent`/ `onStaleEvent` methods with
+  * builder-constructed `EventDetails`, so no SDK emitter thread is involved.
   */
 object ProviderStatusBridgeSpec extends ZIOSpecDefault {
 
@@ -124,7 +124,7 @@ object ProviderStatusBridgeSpec extends ZIOSpecDefault {
         }
       } yield out
     },
-    test("lazy-metadata provider: a READY event refreshes providerNameRef from unknown to the real name (#297)") {
+    test("lazy-metadata provider: a READY event refreshes providerNameRef from unknown to the real name") {
       // buildAsync captured "unknown" for a LateMetadataProvider (metadata name only materializes after init). When
       // the provider's own READY arrives stamped with the real name, providerNameRef must be refreshed so
       // providerMetadata reports the real name AND the identity guard regains discrimination.
@@ -222,7 +222,7 @@ object ProviderStatusBridgeSpec extends ZIOSpecDefault {
         }
       } yield out
     },
-    // --- Duplicate-event behaviour, pinned ahead of spec v0.9.0 Phase 2 (#332) ---
+    // --- Duplicate-event behaviour, pinned ahead of spec v0.9.0 Phase 2 ---
     //
     // These two are characterization tests: they pass today and are expected to. Their job is to make a future
     // change visible rather than to prove a fix. Under spec v0.9.0 providers emit their own lifecycle events while

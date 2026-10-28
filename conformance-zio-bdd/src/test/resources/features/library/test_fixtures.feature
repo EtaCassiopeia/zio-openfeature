@@ -1,12 +1,12 @@
 Feature: Typed test fixtures and distinctly-named test providers
 
-  #351/#372 added `FlagDef := value` fixtures: the value is type-checked against the flag's declared
+  `FlagDef := value` fixtures work like this: the value is type-checked against the flag's declared
   type and stored through `flagType.encode`, so a test reads it back through the same decode path
-  production uses. #375 added `makeNamed`, because the `setProvider` event-identity guard keys
+  production uses. `makeNamed` exists because the `setProvider` event-identity guard keys
   providers by their metadata name, so two default-named test providers are indistinguishable to it.
   (A `MultiProvider` chain also kept only the last same-named provider before Java SDK 1.23.0.)
 
-  # Read through the integer resolver: the test provider serves a value only as its stored type (#457), so this also
+  # Read through the integer resolver: the test provider serves a value only as its stored type, so this also
   # proves the override was stored as the Int wire value rather than a `Level`.
   Scenario: A typed override stores the flag's wire value, not its domain value
     Given a test provider seeded with the typed override MaxItems set to 250

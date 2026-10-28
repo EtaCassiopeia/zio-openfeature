@@ -14,10 +14,10 @@ import dev.openfeature.sdk.{
   Value
 }
 
-/** #348: `FlagType.derived` via `Mirror`.
+/** `FlagType.derived` via `Mirror`.
   *
   *   - a sum of singleton cases (an `enum` without parameters) derives a String codec over the case labels — which is
-  *     only evaluatable because #356 made dispatch key on the wire type (`wire`);
+  *     only evaluatable because dispatch keys on the wire type (`wire`);
   *   - a product derives a `Map[String, Any]` codec, field-by-field through each field's own `FlagType`.
   *
   * This spec lives in `core/src/test/scala-3/` rather than the shared test dir, because `enum` and `derives` do not
@@ -114,7 +114,7 @@ object FlagTypeDerivedSpec extends ZIOSpecDefault:
   def spec = suite("FlagTypeDerivedSpec")(
     // --- sum of singletons ---
     test("a derived enum reports its own typeName and a String wire") {
-      // A String wire is the whole reason a derived enum is evaluatable at all (#356).
+      // A String wire is the whole reason a derived enum is evaluatable at all.
       assertTrue(planFt.typeName == "Plan", planFt.wire == WireType.String)
     },
     test("a derived enum encodes to its canonical case label") {
@@ -232,7 +232,7 @@ object FlagTypeDerivedSpec extends ZIOSpecDefault:
       )
       assertTrue(errors.nonEmpty)
     },
-    // --- integration: derivation + #356 wire dispatch + #364 object path ---
+    // --- integration: derivation + wire dispatch + object path ---
     test("a derived ENUM flag evaluates through the provider's string resolver") {
       ZIO.scoped {
         // Only reachable if wireType routed this to getStringEvaluation. The object path would not yield Enterprise.
@@ -241,7 +241,7 @@ object FlagTypeDerivedSpec extends ZIOSpecDefault:
         }
       }
     },
-    test("Option over a derived ENUM resolves through the string resolver to Some (#439)") {
+    test("Option over a derived ENUM resolves through the string resolver to Some") {
       ZIO.scoped {
         // On the object path `DerivedProvider` echoes the default back, which would read as None.
         build(new DerivedProvider("premium"), "opt-enum").flatMap { ff =>
@@ -268,7 +268,7 @@ object FlagTypeDerivedSpec extends ZIOSpecDefault:
     test("a derived PRODUCT flag evaluates through the object path and receives its encoded default") {
       ZIO.scoped {
         // The provider echoes the object default it was handed, so a successful decode proves the caller's
-        // default was encoded and sent (the #364 fix) and that the derived codec reads it back.
+        // default was encoded and sent and that the derived codec reads it back.
         val provider = new DerivedProvider("unused")
         build(provider, "product").flatMap { ff =>
           ff.value[Rollout]("rollout.flag", Rollout("gold", 99, Some("hi"))).map { r =>

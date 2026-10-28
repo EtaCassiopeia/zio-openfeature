@@ -45,7 +45,7 @@ private[extras] object OpenReason {
   /** The delegate said it is unhealthy by event. Cleared by an event READY, or the reset-timeout probe. */
   case object External extends OpenReason
 
-  /** A poll of the delegate's `getState()` said it is unhealthy. Also cleared by a later polled READY (#447). */
+  /** A poll of the delegate's `getState()` said it is unhealthy. Also cleared by a later polled READY. */
   case object Polled extends OpenReason
 }
 
@@ -59,7 +59,7 @@ private[extras] object CircuitState {
 
 /** @param epoch
   *   bumped on every circuit transition (not on Closed failure-count changes), so an outcome recorded against a
-  *   [[CircuitBreaker.Permit]] from an earlier state can be recognised as stale and ignored (#447).
+  *   [[CircuitBreaker.Permit]] from an earlier state can be recognised as stale and ignored.
   */
 final private[extras] case class CircuitBreakerState(
   circuit: CircuitState,
@@ -280,7 +280,7 @@ final class CircuitBreaker private[extras] (
     */
   def reset(): Unit = resetIf(r => r == OpenReason.External || r == OpenReason.Polled)
 
-  /** Reset only a circuit that `reason` opened (#447: a polled READY must not undo an event-driven trip). */
+  /** Reset only a circuit that `reason` opened (a polled READY must not undo an event-driven trip). */
   private[extras] def resetIfOpenedBy(reason: OpenReason): Unit = resetIf(_ == reason)
 
   private def resetIf(opener: OpenReason => Boolean): Unit = {
@@ -334,7 +334,7 @@ object CircuitBreaker {
   val DefaultHalfOpenMaxCalls: Int  = 1
   val DefaultProbeTimeout: Duration = 1.second
 
-  /** Proof that a call was admitted, tied to the circuit state that admitted it (#447). */
+  /** Proof that a call was admitted, tied to the circuit state that admitted it. */
   final private[extras] case class Permit(epoch: Long)
 
   /** @throws IllegalArgumentException

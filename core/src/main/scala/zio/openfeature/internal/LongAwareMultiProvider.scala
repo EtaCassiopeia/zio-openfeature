@@ -20,8 +20,7 @@ import dev.openfeature.sdk.multiprovider.{MultiProvider, Strategy}
 import scala.jdk.CollectionConverters._
 import scala.util.Try
 
-/** The SDK's `MultiProvider` with a `getLongEvaluation` that runs the strategy over each child's own long getter
-  * (#533).
+/** The SDK's `MultiProvider` with a `getLongEvaluation` that runs the strategy over each child's own long getter.
   *
   * The SDK's `MultiProvider` (1.23.0) overrides the boolean, string, integer, double and object getters but not the
   * long one, so a long read falls to the interface default, which goes through `getDoubleEvaluation`: each child's

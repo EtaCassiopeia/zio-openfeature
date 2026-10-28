@@ -11,7 +11,7 @@ import dev.openfeature.sdk.{FeatureProvider => OFFeatureProvider}
 /** Transactions, served-default logging, fallback-first construction, and typed-fixture rejection. */
 trait LibraryLifecycleSteps { self: ZIOSteps[Any, LibraryWorld] =>
 
-  // Transactions (#365) ----------------------------------------------------------------------------
+  // Transactions ----------------------------------------------------------------------------
 
   /** Reads the same flag twice inside one transaction. The second read must be served from the transaction's cache —
     * decoded back out of the *wire* value it stored — so the provider sees exactly one evaluation.
@@ -79,7 +79,7 @@ trait LibraryLifecycleSteps { self: ZIOSteps[Any, LibraryWorld] =>
     }
   }
 
-  // Served-default logging (#350) ---------------------------------------------------------------------
+  // Served-default logging ---------------------------------------------------------------------
 
   private def servedDefaultLines(w: LibraryWorld): List[String] =
     w.logSink.map(_.all).getOrElse(Nil).filter(_.contains("fell back to its default"))
@@ -107,7 +107,7 @@ trait LibraryLifecycleSteps { self: ZIOSteps[Any, LibraryWorld] =>
     }
   }
 
-  // Fallback-first construction (#349/#352) -------------------------------------------------------------
+  // Fallback-first construction -------------------------------------------------------------
 
   Given("a fallback-first instance whose real provider " / string) { (outcome: String) =>
     for {
@@ -193,7 +193,7 @@ trait LibraryLifecycleSteps { self: ZIOSteps[Any, LibraryWorld] =>
     }
   }
 
-  // Typed fixtures (#351) ---------------------------------------------------------------------------------
+  // Typed fixtures ---------------------------------------------------------------------------------
 
   When("two typed overrides for the same key are used to seed a provider") {
     ZIO

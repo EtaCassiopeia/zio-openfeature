@@ -4,7 +4,7 @@ import zio._
 import zio.test._
 import zio.openfeature._
 
-/** #458: `RecordingHook` records the real ZIO hook pipeline, stage by stage. Shared test source dir → 2.13 and 3. */
+/** `RecordingHook` records the real ZIO hook pipeline, stage by stage. Shared test source dir → 2.13 and 3. */
 object RecordingHookSpec extends ZIOSpecDefault {
 
   private def stage(call: HookCall): String = call match {

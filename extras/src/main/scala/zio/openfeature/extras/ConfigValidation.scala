@@ -3,8 +3,8 @@ package zio.openfeature.extras
 import zio._
 import zio.openfeature.FeatureFlagError
 
-/** Bounds checks for the wrapper configs (#451). Each violation names the config class, the field, the rule and the
-  * offending value, and every violation of a config is reported together.
+/** Bounds checks for the wrapper configs. Each violation names the config class, the field, the rule and the offending
+  * value, and every violation of a config is reported together.
   *
   * The checks live here rather than on the config companions: an explicit companion of a case class drops the
   * `AbstractFunctionN` parent Scala 2.13 gives the synthetic one, which breaks binary compatibility.

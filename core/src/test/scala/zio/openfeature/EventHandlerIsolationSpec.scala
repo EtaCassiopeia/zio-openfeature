@@ -15,7 +15,7 @@ import dev.openfeature.sdk.{
 
 import scala.jdk.CollectionConverters._
 
-/** #436: an event handler must not inherit the transaction or fiber context of the fiber that registered it. */
+/** An event handler must not inherit the transaction or fiber context of the fiber that registered it. */
 object EventHandlerIsolationSpec extends ZIOSpecDefault {
 
   /** Every boolean is `true`; every string echoes the evaluation's targeting key (or "<none>"). */
@@ -52,7 +52,7 @@ object EventHandlerIsolationSpec extends ZIOSpecDefault {
       evaluationTimeout = Some(5.seconds)
     )
 
-  def spec = suite("EventHandlerIsolationSpec (#436)")(
+  def spec = suite("EventHandlerIsolationSpec")(
     test("a handler registered inside a transaction does not apply its overrides to later events") {
       ZIO.scoped {
         for {
@@ -85,7 +85,7 @@ object EventHandlerIsolationSpec extends ZIOSpecDefault {
         } yield assertTrue(who == "<none>")
       }
     },
-    // #472: acquireRelease runs its acquire uninterruptibly; the handler fiber must still be cancellable
+    // `acquireRelease` runs its acquire uninterruptibly; the handler fiber must still be cancellable
     test("a handler registered in acquireRelease is cancelled when its scope closes") {
       ZIO.scoped {
         for {

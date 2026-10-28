@@ -33,12 +33,12 @@ object EnvVarProviderSpec extends ZIOSpecDefault {
       },
       test("returns the caller's default with FLAG_NOT_FOUND for a missing key") {
         // The value is still the caller's default; the reason is no longer DEFAULT, so a MultiProvider chain and an
-        // operator can both tell "not set here" from "set to this value" (#355).
+        // operator can both tell "not set here" from "set to this value".
         val result = provider.getBooleanEvaluation("missing", true, ctx)
         assertTrue(result.getValue == true) &&
         assertTrue(result.getErrorCode == dev.openfeature.sdk.ErrorCode.FLAG_NOT_FOUND)
       },
-      test("throws ParseError for a set-but-unparseable value (#262)") {
+      test("throws ParseError for a set-but-unparseable value") {
         // Previously this returned the default labeled STATIC, falsely claiming it came from the environment.
         ZIO
           .attempt(provider.getBooleanEvaluation("bad-bool", false, ctx))
@@ -61,7 +61,7 @@ object EnvVarProviderSpec extends ZIOSpecDefault {
         val result = provider.getIntegerEvaluation("max-items", 10, ctx)
         assertTrue(result.getValue == 50)
       },
-      test("throws ParseError for a set-but-unparseable value (#262)") {
+      test("throws ParseError for a set-but-unparseable value") {
         // Set-but-unparsable must surface as PARSE_ERROR, not silently collapse to the default (which is
         // indistinguishable from the variable being unset).
         ZIO
@@ -75,7 +75,7 @@ object EnvVarProviderSpec extends ZIOSpecDefault {
         val result = provider.getDoubleEvaluation("rate-limit", 1.0, ctx)
         assertTrue(result.getValue == 2.5)
       },
-      test("throws ParseError for a set-but-unparseable value (#262)") {
+      test("throws ParseError for a set-but-unparseable value") {
         ZIO
           .attempt(provider.getDoubleEvaluation("bad-number", 1.0, ctx))
           .flip

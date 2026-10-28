@@ -6,9 +6,9 @@ import zio.openfeature.FeatureFlagError
 import zio.test._
 
 /** Validation-only spec. End-to-end behaviour (datafile fetch, decisions, lifecycle, failure modes) is covered by the
-  * forthcoming WireMock-backed integration spec (#136). Construction here uses real network calls, so we never let
-  * `make()` return a provider that would actually start the Optimizely poller — every "accepts" test stops at the
-  * validation boundary by short-circuiting to a dedicated helper.
+  * forthcoming WireMock-backed integration spec. Construction here uses real network calls, so we never let `make()`
+  * return a provider that would actually start the Optimizely poller — every "accepts" test stops at the validation
+  * boundary by short-circuiting to a dedicated helper.
   */
 object OptimizelyProviderSpec extends ZIOSpecDefault {
 
@@ -90,9 +90,9 @@ object OptimizelyProviderSpec extends ZIOSpecDefault {
         )
       }
     ),
-    // #431: core-api picks a JSON parser at runtime and declares none. Without one, `DefaultConfigParser`'s lazy
+    // `core-api` picks a JSON parser at runtime and declares none. Without one, `DefaultConfigParser`'s lazy
     // holder fails to initialise, which surfaces as a LinkageError — not an Exception — on first and later calls.
-    suite("JSON parser probe (#431)")(
+    suite("JSON parser probe")(
       test("maps ExceptionInInitializerError (first failed lookup) to InvalidConfiguration with the root cause") {
         for {
           result <- OptimizelyProvider
@@ -121,7 +121,7 @@ object OptimizelyProviderSpec extends ZIOSpecDefault {
           result <- OptimizelyProvider.requireJsonParser(new JacksonConfigParser()).either
         } yield assertTrue(result == Right(()))
       },
-      // Not the #431 gate — WireMock puts Jackson on the Test classpath either way; `checkOptimizelyJsonParser`
+      // Not the parser gate — WireMock puts Jackson on the Test classpath either way; `checkOptimizelyJsonParser`
       // owns what consumers resolve. This pins which parser these specs run against.
       test("the Test classpath's parser is Jackson") {
         // Hoisted: Scala 2.13's assertTrue macro cannot type a Java static call inline.

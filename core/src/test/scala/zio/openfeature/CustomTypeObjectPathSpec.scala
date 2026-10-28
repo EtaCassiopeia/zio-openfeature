@@ -16,7 +16,7 @@ import dev.openfeature.sdk.{
 }
 
 /** The object-backed custom-type evaluation path (`FeatureFlagsLive`, the `case None` fall-through) had two defects,
-  * both surfaced by the pre-implementation audit on #348:
+  * both surfaced by the pre-implementation audit of derived flag types:
   *
   *   1. the caller's default never reached the provider — an empty `Value()` was sent instead of `encode(default)`, so
   *      a provider could not serve the caller's default on a miss; 2. anything that failed to extract was relabelled
@@ -108,7 +108,7 @@ object CustomTypeObjectPathSpec extends ZIOSpecDefault {
         }
       }
     },
-    test("FLAG_NOT_FOUND on the object path fails the partial tier with FlagNotFound, as the scalar path does (#388)") {
+    test("FLAG_NOT_FOUND on the object path fails the partial tier with FlagNotFound, as the scalar path does") {
       ZIO.scoped {
         build(new ObjProvider(notFound), "notfound2").flatMap { ff =>
           // Both paths agree: a provider-reported code is a typed failure on the typed tier — and it is FlagNotFound,

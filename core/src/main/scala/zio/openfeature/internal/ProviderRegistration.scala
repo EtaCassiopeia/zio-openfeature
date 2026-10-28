@@ -17,7 +17,7 @@ import dev.openfeature.sdk.exceptions.{FatalError, GeneralError}
 import zio._
 
 /** Registers a provider and waits, bounded, for its initialization outcome — without holding the SDK's API write lock
-  * across `initialize()` (#433).
+  * across `initialize()`.
   *
   * `setProviderAndWait` holds that lock for the whole of `initialize()`, so a hanging provider wedges every later
   * `setProvider`, rollback re-registration and `api.shutdown()` behind it, and a timeout around it cannot release the
@@ -78,7 +78,7 @@ private[openfeature] object ProviderRegistration {
     registerThenAwait(api, domain, provider, timeout)(ZIO.unit)
 
   /** [[registerAndAwait]], running `afterRegister` once the slot is bound to `provider` and before the wait. The build
-    * uses it to attach its event bridge to a slot that already holds the new provider (#531).
+    * uses it to attach its event bridge to a slot that already holds the new provider.
     */
   def registerThenAwait[R](
     api: OpenFeatureAPI,

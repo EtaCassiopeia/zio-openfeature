@@ -11,8 +11,8 @@ import zio.test._
 import zio.test.TestAspect.{sequential, timeout, withLiveClock}
 
 /** The OFREP contrib provider does not throw on a 401/403: it returns an evaluation with `errorCode = GENERAL` and the
-  * message "authentication/authorization error for flag: <key>". Core maps that message to `Unauthorized` (#498). The
-  * canary pins the upstream literal, so a contrib bump that rewords it fails here rather than silently in production.
+  * message "authentication/authorization error for flag: <key>". Core maps that message to `Unauthorized`. The canary
+  * pins the upstream literal, so a contrib bump that rewords it fails here rather than silently in production.
   *
   * Tests run sequentially because the contrib provider 0.0.2 has order-sensitive internal executor handling.
   */

@@ -104,7 +104,7 @@ object VerifySpec extends ZIOSpecDefault {
         )
       }
     },
-    test("flagExists probes an Option through its element's getter and a List through the object getter (#439)") {
+    test("flagExists probes an Option through its element's getter and a List through the object getter") {
       val p = new RecordingProvider(RecordingProvider.Mode.Found)
       for {
         _  <- Verify.flagExists[Option[String]]("os").apply(p)

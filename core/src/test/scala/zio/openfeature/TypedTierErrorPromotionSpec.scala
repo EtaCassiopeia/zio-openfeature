@@ -14,7 +14,7 @@ import dev.openfeature.sdk.{
   Value
 }
 
-/** #388: the typed tier (`value`/`valueDetails`/every `*Details`) fails with the `FeatureFlagError` mapped from a
+/** The typed tier (`value`/`valueDetails`/every `*Details`) fails with the `FeatureFlagError` mapped from a
   * resolution's `errorCode` when one is present. Most providers report FLAG_NOT_FOUND / TYPE_MISMATCH / ... as a code
   * on the resolution rather than by throwing, and the tier a caller reaches for *because a default would be wrong* used
   * to hand back the default anyway with no signal — a fail-closed gate written with `value` silently became fail-open.

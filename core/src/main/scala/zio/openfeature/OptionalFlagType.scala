@@ -1,6 +1,6 @@
 package zio.openfeature
 
-/** Marks the built-in `FlagType[Option[A]]`, so evaluation can recognise it on the scalar path (#439).
+/** Marks the built-in `FlagType[Option[A]]`, so evaluation can recognise it on the scalar path.
   *
   * `Option[A]` over a scalar `A` resolves through `A`'s resolver, but a `None` default has no scalar form and `decode`
   * never sees the resolution's reason. Evaluation therefore sends `underlying.encode(underlying.defaultValue)` as a

@@ -2,8 +2,8 @@ package zio.openfeature.internal
 
 import zio.openfeature.ProviderStatus
 
-/** Pure provider-status state machine (#244). Every status write in FeatureFlagsLive and the async init watchdog goes
-  * through `transition`, so the legal-transition table lives in exactly one place.
+/** Pure provider-status state machine. Every status write in FeatureFlagsLive and the async init watchdog goes through
+  * `transition`, so the legal-transition table lives in exactly one place.
   */
 private[openfeature] object ProviderStatusMachine {
 
@@ -28,7 +28,7 @@ private[openfeature] object ProviderStatusMachine {
     case object ShutdownCompleted               extends Signal
 
     /** setProvider: a failed hot-swap was rolled back and the previous provider re-registered with the SDK, verified to
-      * be routing again (#282). Same transition as a successful swap outcome, applied by `setProvider` itself once the
+      * be routing again. Same transition as a successful swap outcome, applied by `setProvider` itself once the
       * rollback re-registration confirms the old provider is bound.
       */
     case object RollbackSucceeded extends Signal
@@ -64,7 +64,7 @@ private[openfeature] object ProviderStatusMachine {
       case _ if ctx.swapInProgress || ctx.shutdownCompleted => None
 
       // Watchdog: escalate ONLY a provider that never became usable. Ready-then-transient-Error must
-      // never be Fataled (the core #244 bug).
+      // never be Fataled.
       case Signal.InitTimeout =>
         current match {
           case NotReady | Error if !ctx.everReady => Some(Fatal)

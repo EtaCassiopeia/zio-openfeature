@@ -13,7 +13,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.{CopyOnWriteArrayList, CountDownLatch, Executors, TimeUnit}
 import scala.jdk.CollectionConverters._
 
-// #453: factory-built providers send impressions and conversions to Optimizely, batched, unless events are disabled.
+// Factory-built providers send impressions and conversions to Optimizely, batched, unless events are disabled.
 object OptimizelyEventDispatchSpec extends ZIOSpecDefault {
 
   private val DatafilePath = "/datafiles/events-key.json"
@@ -81,7 +81,7 @@ object OptimizelyEventDispatchSpec extends ZIOSpecDefault {
   private def rejected(events: OptimizelyEvents): UIO[Option[String]] =
     OptimizelyProvider.make(OptimizelyProviderConfig("events-key", events = events)).flip.option.map(_.map(_.message))
 
-  def spec: Spec[TestEnvironment & Scope, Any] = suite("OptimizelyEventDispatchSpec (#453)")(
+  def spec: Spec[TestEnvironment & Scope, Any] = suite("OptimizelyEventDispatchSpec")(
     test("a decision is sent as an impression for the user, flushed when the provider closes") {
       ZIO.scoped {
         for {

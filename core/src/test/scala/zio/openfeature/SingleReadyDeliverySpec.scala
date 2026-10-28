@@ -18,7 +18,7 @@ import dev.openfeature.sdk.{
 }
 import dev.openfeature.sdk.exceptions.GeneralError
 
-// #531: the event bridge is attached before the provider is registered, so one initialization delivers exactly one
+// The event bridge is attached before the provider is registered, so one initialization delivers exactly one
 // PROVIDER_READY to it. It used to be attached afterwards, where the SDK's post-init emission and its replay for an
 // already-ready provider could both reach it, in either order. Each READY from the current provider counts down the
 // `onReady` latch once, so a latch of 2 left at 1 means exactly one delivery.

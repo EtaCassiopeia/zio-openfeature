@@ -74,7 +74,7 @@ object CircuitBreakerSpec extends ZIOSpecDefault {
         assertTrue(cb.tryAcquire == GateResult.Allowed)
       }
     ),
-    suite("Monotonic reset timing (#263.1)")(
+    suite("Monotonic reset timing")(
       test("stays rejected before resetTimeout, allowed at/after it — elapsed uses the injected ticker") {
         val ticker = new TestTicker()
         val cb =
@@ -144,7 +144,7 @@ object CircuitBreakerSpec extends ZIOSpecDefault {
         assertTrue(second == GateResult.Rejected)
       }
     ),
-    suite("Probe-slot steal (#263.3)")(
+    suite("Probe-slot steal")(
       test("a wedged probe slot is stolen after probeTimeout") {
         val ticker = new TestTicker()
         val cb = CircuitBreaker(
@@ -246,7 +246,7 @@ object CircuitBreakerSpec extends ZIOSpecDefault {
         assertTrue(cb.isOpen)
       }
     ),
-    suite("Probe outcome after acquisition (#263.3b)")(
+    suite("Probe outcome after acquisition")(
       test("recordFailure on an acquired probe re-opens the circuit") {
         // Mirrors the provider's VirtualMachineError catch, which calls breaker.recordFailure() before re-throwing:
         // a probe that dies after winning the CAS must re-open the circuit rather than wedge it half-open.

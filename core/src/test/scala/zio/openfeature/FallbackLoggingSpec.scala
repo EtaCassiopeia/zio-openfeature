@@ -14,8 +14,8 @@ import dev.openfeature.sdk.{
   Value
 }
 
-/** #350: served-default fallbacks in the total tier are logged at warn, rate-limited per key, according to
-  * `FallbackLogging` — plumbed through `FeatureFlagsConfig` and, separately, `fromAcquireAsync`.
+/** Served-default fallbacks in the total tier are logged at warn, rate-limited per key, according to `FallbackLogging`
+  * — plumbed through `FeatureFlagsConfig` and, separately, `fromAcquireAsync`.
   */
 object FallbackLoggingSpec extends ZIOSpecDefault {
 

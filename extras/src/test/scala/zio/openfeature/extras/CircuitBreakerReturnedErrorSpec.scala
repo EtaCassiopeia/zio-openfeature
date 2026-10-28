@@ -16,7 +16,7 @@ import zio._
 import zio.test._
 import java.util.concurrent.atomic.{AtomicInteger, AtomicReference}
 
-// #446: a delegate may report failure by RETURNING an error-coded evaluation instead of throwing (the contrib OFREP
+// A delegate may report failure by RETURNING an error-coded evaluation instead of throwing (the contrib OFREP
 // resolver does this for network errors). The breaker must classify those exactly like thrown errors.
 object CircuitBreakerReturnedErrorSpec extends ZIOSpecDefault {
 
@@ -78,7 +78,7 @@ object CircuitBreakerReturnedErrorSpec extends ZIOSpecDefault {
     assertTrue(rejected, delegate.evaluationCount.get() == before, cb.getState == ProviderState.ERROR)
   }
 
-  def spec = suite("CircuitBreakerReturnedErrorSpec (#446)")(
+  def spec = suite("CircuitBreakerReturnedErrorSpec")(
     test("returned GENERAL errors open the circuit; the next call does not reach the delegate") {
       opensOn(ErrorCode.GENERAL)
     },

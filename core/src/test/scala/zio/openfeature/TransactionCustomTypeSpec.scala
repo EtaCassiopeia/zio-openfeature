@@ -13,10 +13,10 @@ import dev.openfeature.sdk.{
 }
 import java.util.concurrent.atomic.AtomicInteger
 
-/** #359: the transaction machinery fed `FlagType.decode` — a WIRE → domain function — DOMAIN values in two places, and
-  * read a `Left` as "not this type". For the built-ins `decode` is idempotent on domain values, which hid it; for a
-  * custom type whose wire form differs (a `mapped` enum, a `from` object type) the in-transaction cache never hit and
-  * an override could only be given in its wire form.
+/** The transaction machinery fed `FlagType.decode` — a WIRE → domain function — DOMAIN values in two places, and read a
+  * `Left` as "not this type". For the built-ins `decode` is idempotent on domain values, which hid it; for a custom
+  * type whose wire form differs (a `mapped` enum, a `from` object type) the in-transaction cache never hit and an
+  * override could only be given in its wire form.
   *
   * The fix caches `encode(value)` next to each evaluation and decodes THAT on re-read (symmetric with the provider
   * path), accepts an override in either its wire or its domain form, and stops discarding the decode reason.
@@ -313,7 +313,7 @@ object TransactionCustomTypeSpec extends ZIOSpecDefault {
         ff.transaction() {
           ff.value[Option[Phase]]("opt.phase", None).zip(ff.value[Option[Phase]]("opt.phase", None))
         }.map { tx =>
-          // Option takes Phase's string wire (#439), so the string resolver answers "dual_write".
+          // Option takes Phase's string wire, so the string resolver answers "dual_write".
           assertTrue(p.stringCalls.get() == 1, tx.result == ((Some(Phase.DualWrite), Some(Phase.DualWrite))))
         }
       }

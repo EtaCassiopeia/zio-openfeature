@@ -13,9 +13,9 @@ import dev.openfeature.sdk.{
   Value
 }
 
-/** #438 / spec 4.3.2 as a property: N (generated) concurrent evaluations with generated delays go through a hook
-  * registered once, plain or composed. Each writes its own unique token in `before` and must read back exactly that
-  * token in `after` and `finallyAfter`, however the evaluations interleave.
+/** Spec 4.3.2 as a property: N (generated) concurrent evaluations with generated delays go through a hook registered
+  * once, plain or composed. Each writes its own unique token in `before` and must read back exactly that token in
+  * `after` and `finallyAfter`, however the evaluations interleave.
   */
 object HookDataIsolationPropertySpec extends ZIOSpecDefault {
 
@@ -78,7 +78,7 @@ object HookDataIsolationPropertySpec extends ZIOSpecDefault {
       shape  <- shapes
     } yield (n, delays, shape)
 
-  def spec = suite("HookDataIsolationPropertySpec (#438)")(
+  def spec = suite("HookDataIsolationPropertySpec")(
     test("every concurrent evaluation reads back exactly its own HookData token") {
       check(schedules) { case (n, delays, shape) =>
         val keys = (1 to n).map(i => s"flag-$i").toList

@@ -5,7 +5,8 @@ import zio.test._
 import zio.test.TestAspect.sequential
 import zio.openfeature._
 
-/** SDK 1.22.0 supplies the bound domain to `FeatureProvider.initialize(ctx, domain)` (java-sdk#1982).
+/** SDK 1.22.0 supplies the bound domain to `FeatureProvider.initialize(ctx, domain)`
+  * (https://github.com/open-feature/java-sdk/issues/1982).
   *
   * This library already registers providers with `setProviderAndWait(domain, provider)`, so the domain should reach the
   * provider with no API change on our side — but "should" is the whole reason to pin it: nothing else in the codebase

@@ -59,7 +59,7 @@ final class TestFeatureProvider private (
   // tests can assert what a domain-registered client actually delivered — there is no other observation point.
   private val boundDomainRef: AtomicReference[Option[String]] = new AtomicReference(None)
 
-  // What `track` delivered, after the SDK merged the context (#442). Bounded, so a long test run that tracks per request
+  // What `track` delivered, after the SDK merged the context. Bounded, so a long test run that tracks per request
   // cannot grow it without limit.
   private val tracked =
     new java.util.concurrent.ConcurrentLinkedDeque[(String, OFEvaluationContext, Option[OFTracking])]()
@@ -153,8 +153,8 @@ final class TestFeatureProvider private (
     }
 
   /** A scalar getter serves a stored value only when its runtime type is exactly the getter's boxed type; anything else
-    * is `TYPE_MISMATCH` with the caller's default, as a real provider answers (#457). No coercion, no parsing, no
-    * truncation and no widening — `Int` is not served as a `Long`, nor `Long` as an `Int`.
+    * is `TYPE_MISMATCH` with the caller's default, as a real provider answers. No coercion, no parsing, no truncation
+    * and no widening — `Int` is not served as a `Long`, nor `Long` as an `Int`.
     *
     * The one exception is a `Float` read through the double getter: `FlagType[Float]` encodes to a `Float` and the SDK
     * has no float surface, so that is the only way a typed `FlagDef[Float]` fixture can be served at all.
@@ -262,7 +262,7 @@ final class TestFeatureProvider private (
   def removeFlag(key: String): UIO[Unit] =
     ZIO.succeed(flags.remove(key)).unit
 
-  // Typed fixture helpers (#351)
+  // Typed fixture helpers
   //
   // These take a `FlagDef[A]` instead of a bare key, so the value is checked against the flag's declared type and is
   // stored through `flagType.encode` — the test then reads it back through the same decode path production uses. The
@@ -401,11 +401,11 @@ final class TestFeatureProvider private (
   def evaluationCount(flagKey: String): UIO[Int] =
     ZIO.succeed(evaluations.asScala.count(_._1 == flagKey))
 
-  /** Check if a flag was evaluated, by its definition (#351). */
+  /** Check if a flag was evaluated, by its definition. */
   def wasEvaluated[A](flag: FlagDef[A]): UIO[Boolean] =
     wasEvaluated(flag.key)
 
-  /** Count how many times a flag was evaluated, by its definition (#351). */
+  /** Count how many times a flag was evaluated, by its definition. */
   def evaluationCount[A](flag: FlagDef[A]): UIO[Int] =
     evaluationCount(flag.key)
 
@@ -526,7 +526,7 @@ object TestFeatureProvider {
   }
 
   /** Applies `modify` for the test and afterwards restores the config it found — not the defaults — so a test-level
-    * aspect nested in a suite-level one leaves the suite's settings in place (#457).
+    * aspect nested in a suite-level one leaves the suite's settings in place.
     */
   private def behaviorAspect(
     modify: BehaviorConfig => BehaviorConfig
@@ -535,7 +535,7 @@ object TestFeatureProvider {
       ZIO.serviceWith[TestFeatureProvider](tp => tp.behaviorRef.getAndUpdate(c => modify(c)))
     )(previous => ZIO.serviceWith[TestFeatureProvider](_.behaviorRef.set(previous)))
 
-  // Flag overrides — TestAspects (#458)
+  // Flag overrides — TestAspects
 
   /** Aspect that pins these typed flag values for the duration of the test.
     *
@@ -644,7 +644,7 @@ object TestFeatureProvider {
     } yield provider
   }
 
-  // Typed fixture factories (#351)
+  // Typed fixture factories
   //
   // Every untyped factory gets a `FlagOverride*` twin, so reaching for another factory after learning `layer` does not
   // suddenly drop back to `Map[String, Any]`. Each delegates through `toFlagMap`, so typed and untyped fixtures build
@@ -725,8 +725,8 @@ object TestFeatureProvider {
 
     /** Blocking `fromProviderWithDomain`, then wait for the provider's `PROVIDER_READY`. The build attaches the event
       * bridge before registering the provider, so exactly one READY reaches it: the one the Java SDK dispatches,
-      * asynchronously, once `initialize()` returns (#531). Waiting for it keeps a `setStatus()` made straight after the
-      * build from being overwritten by that late event. `what` names the wait in the timeout message.
+      * asynchronously, once `initialize()` returns. Waiting for it keeps a `setStatus()` made straight after the build
+      * from being overwritten by that late event. `what` names the wait in the timeout message.
       */
     final case class Sync(what: String) extends LayerMode { val domainPrefix = "test-" }
 

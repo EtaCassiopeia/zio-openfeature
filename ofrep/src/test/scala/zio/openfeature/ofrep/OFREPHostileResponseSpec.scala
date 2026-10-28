@@ -12,16 +12,17 @@ import java.util.concurrent.atomic.AtomicInteger
 import scala.util.Try
 import scala.jdk.CollectionConverters._
 
-/** Hostile-input sweeps through OFREP response decoding (#469), against a WireMock stub.
+/** Hostile-input sweeps through OFREP response decoding, against a WireMock stub.
   *
   * Each property serves a generated JSON value and asserts the decoded result is EXACT or a typed error (a populated
   * `errorCode` with the caller's default) -- never a silently rounded, truncated or stringified answer. Strings are
   * sent with every UTF-16 unit `\\u`-escaped so any generated string (lone surrogates, NUL, line separators) is valid
   * JSON. NaN and Infinity are not JSON and are therefore not sent.
   *
-  * Object keys follow two contracts (#534): a well-formed key round-trips exactly, and a key holding an unpaired UTF-16
-  * surrogate is a `PARSE_ERROR` (Jackson 2.22.4 rejects it, jackson-core #1683). String values with lone surrogates
-  * still decode, an asymmetry that is upstream's and pinned here so a change to it shows up.
+  * Object keys follow two contracts: a well-formed key round-trips exactly, and a key holding an unpaired UTF-16
+  * surrogate is a `PARSE_ERROR` (Jackson 2.22.4 rejects it, https://github.com/FasterXML/jackson-core/issues/1683).
+  * String values with lone surrogates still decode, an asymmetry that is upstream's and pinned here so a change to it
+  * shows up.
   */
 object OFREPHostileResponseSpec extends ZIOSpecDefault {
 

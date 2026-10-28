@@ -12,9 +12,13 @@ import dev.openfeature.sdk.{
   Hook => OFHook,
   HookContext => OFHookContext,
   MultiProviderHookExecutor,
-  ProviderEvaluation
+  ProviderEvaluation,
+  TrackingEventDetails => OFTrackingEventDetails
 }
 import dev.openfeature.sdk.multiprovider.{MultiProvider, Strategy}
+
+import scala.jdk.CollectionConverters._
+import scala.util.Try
 
 /** The SDK's `MultiProvider` with a `getLongEvaluation` that runs the strategy over each child's own long getter
   * (#533).
@@ -26,8 +30,9 @@ import dev.openfeature.sdk.multiprovider.{MultiProvider, Strategy}
   * This subclass adds the missing getter with public SDK API only, mirroring what the SDK does for the other five
   * types: a provider hook records the caller's client metadata and hints in a thread-local (`before`) and clears it
   * (`finallyAfter`), and each child is evaluated through `MultiProviderHookExecutor`, so the child's own provider hooks
-  * run and see `FlagValueType.LONG` and the caller's client. Initialization, shutdown, events, metadata and the other
-  * five getters are inherited unchanged.
+  * run and see `FlagValueType.LONG` and the caller's client. It also forwards `track` to every child, which the SDK's
+  * `MultiProvider` drops. Initialization, shutdown, events, metadata and the other five getters are inherited
+  * unchanged.
   */
 final private[openfeature] class LongAwareMultiProvider(
   providers: java.util.List[OFFeatureProvider],
@@ -68,6 +73,22 @@ final private[openfeature] class LongAwareMultiProvider(
   }
 
   override def getProviderHooks: java.util.List[OFHook[_]] = hooks
+
+  // The SDK's MultiProvider inherits FeatureProvider's no-op `track`, so the event would reach no child. Tracking has no
+  // result for a strategy to pick, so every child is offered it, and one throwing child must not starve the rest: the
+  // first failure is rethrown once all have run, carrying the others as suppressed.
+  override def track(eventName: String, ctx: OFEvaluationContext, details: OFTrackingEventDetails): Unit = {
+    val failures = children.asScala.toList.flatMap(child => Try(child.track(eventName, ctx, details)).failed.toOption)
+    failures.headOption.foreach { first =>
+      // Children may rethrow shared or cached instances: a Throwable cannot suppress itself, and one already suppressed
+      // by an earlier call must not be added again, or a cached exception's list grows with every event.
+      failures.tail
+        .filterNot(f => (f eq first) || first.getSuppressed.exists(_ eq f))
+        .distinct
+        .foreach(first.addSuppressed)
+      throw first
+    }
+  }
 
   override def getLongEvaluation(
     key: String,

@@ -147,6 +147,11 @@ Things to know:
   `new MultiProvider(...)` has no long getter: it reads each provider's double getter instead, which fails integer
   values with `TYPE_MISMATCH`. Use `FeatureFlags.multiProvider`, or wrap your chain in
   [`IntegerWideningLongProvider`](extras.md#integer-widening-long-provider) for values in `Int` range.
+- `track` goes to every provider in the chain, whatever the strategy, with the same event, context and details. A
+  provider without tracking support ignores it. If any provider's `track` throws, the others still receive the event,
+  and the call fails with the first error, so a failed `track` may already have reached some providers: retrying it
+  can count the event twice there. `FeatureFlags.multiProvider` and the default `fromAcquireAsync` compose do
+  this; a `new MultiProvider(...)` you build yourself drops every tracking event.
 
 ## Start on a fallback: `fromAcquireAsync`
 

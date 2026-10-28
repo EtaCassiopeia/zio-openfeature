@@ -1134,6 +1134,9 @@ object FeatureFlags {
     * has no long getter, so a long read goes through each child's double getter, which this library's providers answer
     * with `TYPE_MISMATCH` for integer values. Build the chain here, or wrap a bare one in
     * `zio.openfeature.extras.IntegerWideningLongProvider` for Int-range values.
+    *
+    * `track` goes to every child, in order, whatever the strategy; a bare `new MultiProvider(...)` drops it. If a child
+    * throws, the rest still receive the event and the call fails with the first error.
     */
   def multiProvider(
     providers: List[OFFeatureProvider],

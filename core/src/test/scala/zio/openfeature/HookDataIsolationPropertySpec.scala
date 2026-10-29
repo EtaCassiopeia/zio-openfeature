@@ -1,8 +1,10 @@
 package zio.openfeature
 
+import zio.openfeature.testsupport.PropertyBudget
+
 import zio._
 import zio.test._
-import zio.test.TestAspect.{samples, sequential, timeout, withLiveClock}
+import zio.test.TestAspect.{sequential, withLiveClock}
 import zio.openfeature.internal.ProviderEvaluations
 import dev.openfeature.sdk.{
   EvaluationContext => OFEvaluationContext,
@@ -108,5 +110,5 @@ object HookDataIsolationPropertySpec extends ZIOSpecDefault {
         }
       }
     }
-  ) @@ sequential @@ withLiveClock @@ samples(20) @@ timeout(2.minutes)
+  ) @@ sequential @@ withLiveClock @@ PropertyBudget(20) @@ PropertyBudget.timeout(2.minutes)
 }

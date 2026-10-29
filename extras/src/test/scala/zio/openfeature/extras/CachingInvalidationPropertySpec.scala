@@ -1,5 +1,7 @@
 package zio.openfeature.extras
 
+import zio.openfeature.testsupport.PropertyBudget
+
 import zio.openfeature.internal.ProviderEvaluations
 
 import dev.openfeature.sdk.{
@@ -15,7 +17,7 @@ import dev.openfeature.sdk.{
 }
 import zio._
 import zio.test._
-import zio.test.TestAspect.{samples, sequential, timeout, withLiveClock}
+import zio.test.TestAspect.{sequential, withLiveClock}
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.atomic.AtomicReference
 
@@ -104,5 +106,5 @@ object CachingInvalidationPropertySpec extends ZIOSpecDefault {
         } yield assertTrue(post.forall(_ == New), afterAll.forall(_ == New))
       }
     }
-  ) @@ sequential @@ withLiveClock @@ samples(20) @@ timeout(2.minutes)
+  ) @@ sequential @@ withLiveClock @@ PropertyBudget(20) @@ PropertyBudget.timeout(2.minutes)
 }

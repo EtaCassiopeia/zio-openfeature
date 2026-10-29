@@ -1,4 +1,6 @@
 package zio.openfeature
+
+import zio.openfeature.testsupport.PropertyBudget
 import zio.openfeature.internal.ProviderEvaluations
 
 import dev.openfeature.sdk.{
@@ -11,7 +13,7 @@ import dev.openfeature.sdk.{
 }
 import zio._
 import zio.test._
-import zio.test.TestAspect.{withLiveClock, timeout, samples}
+import zio.test.TestAspect.{withLiveClock, timeout}
 
 /** Stress-tests hot-swap under concurrent evaluation load.
   *
@@ -168,7 +170,7 @@ object ProviderHotSwapStressSpec extends ZIOSpecDefault {
           }
         }
       }
-    } @@ samples(10) @@ withLiveClock @@ timeout(60.seconds),
+    } @@ PropertyBudget(10) @@ withLiveClock @@ PropertyBudget.timeout(60.seconds),
     test("50 concurrent setProvider calls — all serialized, final provider coherent") {
       val api    = OpenFeatureAPI.createIsolated()
       val domain = s"concurrent-swap-${java.util.UUID.randomUUID()}"

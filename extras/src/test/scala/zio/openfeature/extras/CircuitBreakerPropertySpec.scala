@@ -1,8 +1,10 @@
 package zio.openfeature.extras
 
+import zio.openfeature.testsupport.PropertyBudget
+
 import zio._
 import zio.test._
-import zio.test.TestAspect.{samples, timeout, withLiveClock}
+import zio.test.TestAspect.{timeout, withLiveClock}
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicReference
 import scala.jdk.CollectionConverters._
@@ -203,11 +205,11 @@ object CircuitBreakerPropertySpec extends ZIOSpecDefault {
         val violations = runSequential(config, schedule)
         assertTrue(violations.isEmpty)
       }
-    } @@ samples(200),
+    } @@ PropertyBudget(200),
     test("concurrent fibers with injected delays keep the same invariants") {
       check(configs.map(_.copy(resetTimeout = 3.millis, probeTimeout = 3.millis)), fiberScripts) { (config, scripts) =>
         runConcurrent(config, scripts).map(violations => assertTrue(violations.isEmpty))
       }
-    } @@ samples(30)
+    } @@ PropertyBudget(30)
   ) @@ withLiveClock @@ timeout(2.minutes)
 }

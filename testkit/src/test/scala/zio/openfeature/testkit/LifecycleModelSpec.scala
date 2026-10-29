@@ -1,5 +1,7 @@
 package zio.openfeature.testkit
 
+import zio.openfeature.testsupport.PropertyBudget
+
 import scala.jdk.CollectionConverters._
 
 import zio._
@@ -24,9 +26,9 @@ import dev.openfeature.sdk.{
   * only check the code against itself. Where the docs say nothing (which provider `providerMetadata` names while a swap
   * is parked, how an evaluation in `Error` ends), the model asserts nothing.
   *
-  * PR CI runs 25 cases; the weekly `Property tests` workflow sets `LIFECYCLE_MODEL_SAMPLES` to run more. A failing
-  * sequence is checked in under `regressions` as an explicit list, never as a seed (zio-test's seeds are not stable
-  * across versions).
+  * PR CI runs 25 cases; the nightly `Property tests` workflow scales that with `ZOF_PBT_SCALE`. A failing sequence is
+  * checked in under `regressions` as an explicit list, never as a seed (zio-test's seeds are not stable across
+  * versions).
   */
 object LifecycleModelSpec extends ZIOSpecDefault {
 
@@ -499,12 +501,7 @@ object LifecycleModelSpec extends ZIOSpecDefault {
 
   val genActions: Gen[Any, List[Action]] = Gen.listOfBounded(1, 12)(genAction).map(afterShutdownNoSwaps)
 
-  private val samples: Int =
-    sys.env
-      .get("LIFECYCLE_MODEL_SAMPLES")
-      .flatMap(s => scala.util.Try(s.trim.toInt).toOption)
-      .filter(_ > 0)
-      .getOrElse(25)
+  private val baseSamples = 25
 
   private def regression(name: String, actions: List[Action]) =
     test(name) {
@@ -518,7 +515,7 @@ object LifecycleModelSpec extends ZIOSpecDefault {
       check(genActions) { actions =>
         runCase(actions).map(found => assertTrue(report(actions, found) == ""))
       }
-    } @@ TestAspect.samples(samples) @@ TestAspect.shrinks(50) @@ TestAspect.timeout((samples * 30).seconds),
+    } @@ PropertyBudget(baseSamples) @@ TestAspect.shrinks(50) @@ PropertyBudget.timeout((baseSamples * 30).seconds),
     suite("regressions")(
       // Found by the generated test with `swap.uninterruptible` (in FeatureFlagsLive.setProvider)
       // reverted: the interrupt killed the swap mid-registration, so it never reached its timeout outcome and the

@@ -1,5 +1,7 @@
 package zio.openfeature
 
+import zio.openfeature.testsupport.PropertyBudget
+
 import dev.openfeature.sdk.Value
 import zio.openfeature.internal.{ContextConverter, TrackingConverter, ValueBridge}
 import zio.test._
@@ -451,5 +453,5 @@ object HostileValueSweepSpec extends ZIOSpecDefault {
         assertTrue(bigOk, deepOk)
       }
     )
-  ) @@ TestAspect.samples(100)
+  ) @@ PropertyBudget(100)
 }

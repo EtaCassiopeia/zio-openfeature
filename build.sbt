@@ -196,7 +196,10 @@ lazy val commonSettings = Seq(
   // Baseline against each module's last release (see the ThisBuild MiMa note above). Bump the version to the previous
   // release version when cutting a new one, per `RELEASING.md`.
   mimaPreviousArtifacts := Set(organization.value %% moduleName.value % "1.2.0"),
-  checkPublishedPins    := checkPublishedPinsTask.value
+  checkPublishedPins    := checkPublishedPinsTask.value,
+  // Test helpers every module's specs share (the property-test budget), compiled into each module's tests rather than
+  // published or depended on.
+  Test / unmanagedSourceDirectories += (LocalRootProject / baseDirectory).value / "test-support" / "src" / "test" / "scala"
 ) ++ crossVersionSourceDirs ++ lintSettings
 
 // Shared body for `checkPublishedPins`, so the published modules and the aggregating root cannot drift.

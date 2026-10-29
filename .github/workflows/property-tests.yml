@@ -1,28 +1,41 @@
 name: Property tests
 
-# Scheduled long run of the lifecycle model-based property test (#464). PR CI runs 25 generated sequences; this runs
-# 300, to reach rarer interleavings of swaps, provider events, shutdown and interrupts. Not a PR gate. A failure
-# prints the shrunk sequence: check it in as an explicit example in the spec's `regressions` suite.
+# Nightly deep run of every property test: each test tagged `property` (through the shared `PropertyBudget` aspect)
+# runs with its sample count multiplied by ZOF_PBT_SCALE and a fresh random seed. PR CI runs the same tests at their
+# base counts and zio-test's fixed seed. Not a PR gate. The seed is printed in the job summary: replay a failure with
+# `ZOF_PBT_SCALE=10 ZOF_PBT_SEED=<seed> sbt "<module>/testOnly -- -tags property"`, then check the shrunk case in as an
+# explicit regression example (seeds are not stable across zio-test versions).
 
 on:
   schedule:
-    # Sundays 05:00 UTC, after the mutation run.
-    - cron: '0 5 * * 0'
+    # Every night at 04:00 UTC.
+    - cron: '0 4 * * *'
   workflow_dispatch:
+    inputs:
+      scale:
+        description: Sample multiplier
+        default: "10"
+      seed:
+        description: Random seed (empty for a fresh one)
+        default: ""
 
 permissions:
   contents: read
 
-# Force any JavaScript action still bundled with Node 20 to run on Node 24 (see ci.yml, #164).
+# Force any JavaScript action still bundled with Node 20 to run on Node 24 (see ci.yml).
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
-  lifecycle-model:
+  property:
+    name: property (${{ matrix.module }})
     runs-on: ubuntu-latest
-    # Each sequence takes a few seconds at most (a hung swap gives up at the spec's 2 s init timeout); this bound only
-    # catches a wedged runner.
+    # The heaviest module (the lifecycle model) runs about ten minutes at 10x; this bound only catches a wedged runner.
     timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        module: [core, extras, testkit, ofrep, optimizely]
     steps:
       - uses: actions/checkout@v7
       - name: Set up JDK 21
@@ -33,7 +46,25 @@ jobs:
           cache: sbt
       - name: Setup sbt
         uses: sbt/setup-sbt@v1
-      - name: Run the lifecycle model with 300 sequences
+      - name: Pick the scale and seed
+        id: budget
+        shell: bash
         env:
-          LIFECYCLE_MODEL_SAMPLES: "300"
-        run: sbt "testkit/testOnly *LifecycleModelSpec"
+          INPUT_SCALE: ${{ github.event.inputs.scale }}
+          INPUT_SEED: ${{ github.event.inputs.seed }}
+        run: |
+          scale="${INPUT_SCALE:-10}"
+          seed="${INPUT_SEED:-$(( (RANDOM << 30) ^ (RANDOM << 15) ^ RANDOM ))}"
+          echo "scale=$scale" >> "$GITHUB_OUTPUT"
+          echo "seed=$seed" >> "$GITHUB_OUTPUT"
+          {
+            echo "## Property tests (${{ matrix.module }})"
+            echo
+            echo "- scale: $scale, seed: \`$seed\`"
+            echo "- replay: \`ZOF_PBT_SCALE=$scale ZOF_PBT_SEED=$seed sbt \"${{ matrix.module }}/testOnly -- -tags property\"\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Run the property tests
+        env:
+          ZOF_PBT_SCALE: ${{ steps.budget.outputs.scale }}
+          ZOF_PBT_SEED: ${{ steps.budget.outputs.seed }}
+        run: sbt "${{ matrix.module }}/testOnly -- -tags property"

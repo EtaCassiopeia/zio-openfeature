@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A half-open circuit breaker no longer rejects a caller that should have been its probe** (#577). Claiming the probe
+  slot is a compare-and-swap, and losing it was taken to mean another caller had become the probe. A concurrent,
+  unrelated change to the breaker's state (a success or a reachability signal recorded at the same moment) also makes
+  it lose, so the caller was rejected while no probe was running, delaying recovery by one call. It now re-reads the
+  state and decides again. Found by the new Lincheck check of the breaker.
 - **`finallyAfter` gets the evaluation details when the provider's value does not decode** (#572). A custom type served
   a value its `FlagType` rejects (say `"purple"` for a `Color`) correctly returned `TYPE_MISMATCH` to the caller, but
   the `finallyAfter` hook saw `None`, as if the provider had not answered (spec 4.3.8 requires the details). It now

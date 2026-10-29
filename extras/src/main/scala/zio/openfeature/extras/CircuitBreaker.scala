@@ -114,28 +114,36 @@ final class CircuitBreaker private[extras] (
   /** Like [[tryAcquire]], but returns the permit the call was admitted under. Record the call's outcome with that
     * permit, so it only counts if the circuit is still in the state that admitted it.
     */
+  @scala.annotation.tailrec
   private[extras] def acquire(): Option[CircuitBreaker.Permit] = {
     val state = stateRef.get()
     state.circuit match {
-      case Closed => Some(CircuitBreaker.Permit(state.epoch))
-
-      case open: Open =>
-        if (ticker.nanos() - open.sinceNanos >= config.resetTimeout.toNanos) startProbe(state, successes = 0)
-        else None
-
-      case ho: HalfOpen =>
-        if (!ho.probing) startProbe(state, ho.successes)
-        // Steal a wedged probe slot: a probe that won the CAS but died without recording an outcome would otherwise
-        // pin the circuit half-open forever. After probeTimeout, let a fresh caller take the slot; the new epoch makes
-        // the abandoned probe's late outcome stale.
-        else if (ticker.nanos() - ho.probeStartNanos >= config.probeTimeout.toNanos) startProbe(state, ho.successes)
-        else None
+      case Closed  => Some(CircuitBreaker.Permit(state.epoch))
+      case circuit =>
+        probeFrom(circuit) match {
+          case None            => None
+          case Some(successes) =>
+            val next = transition(state, HalfOpen(successes, probing = true, probeStartNanos = ticker.nanos()))
+            if (stateRef.compareAndSet(state, next)) Some(CircuitBreaker.Permit(next.epoch))
+            // Losing the swap rules this caller out only when another one took the probe. Any other change (a recorded
+            // success, a reachability signal) can leave the slot free, so decide again on the state as it now is.
+            else acquire()
+        }
     }
   }
 
-  private def startProbe(state: CircuitBreakerState, successes: Int): Option[CircuitBreaker.Permit] = {
-    val next = transition(state, HalfOpen(successes, probing = true, probeStartNanos = ticker.nanos()))
-    if (stateRef.compareAndSet(state, next)) Some(CircuitBreaker.Permit(next.epoch)) else None
+  /** The success count a probe starts from, when `circuit` lets the next caller become the probe. */
+  private def probeFrom(circuit: CircuitState): Option[Int] = circuit match {
+    case Closed     => None
+    case open: Open =>
+      if (ticker.nanos() - open.sinceNanos >= config.resetTimeout.toNanos) Some(0) else None
+    case ho: HalfOpen =>
+      if (!ho.probing) Some(ho.successes)
+      // Steal a wedged probe slot: a probe that won the CAS but died without recording an outcome would otherwise
+      // pin the circuit half-open forever. After probeTimeout, let a fresh caller take the slot; the new epoch makes
+      // the abandoned probe's late outcome stale.
+      else if (ticker.nanos() - ho.probeStartNanos >= config.probeTimeout.toNanos) Some(ho.successes)
+      else None
   }
 
   private def transition(

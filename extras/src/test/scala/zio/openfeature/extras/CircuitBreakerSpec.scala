@@ -16,6 +16,20 @@ object CircuitBreakerSpec extends ZIOSpecDefault {
     override def nanos(): Long = current.get()
   }
 
+  /** A ticker whose next read first lets `interfere` change the breaker's state. The breaker reads the clock after it
+    * reads its state and before it swaps it, so this lands a change exactly where a caller on another thread could.
+    */
+  final private class InterferingTicker extends TestTicker {
+    @volatile var interfere: () => Unit = () => ()
+
+    override def nanos(): Long = {
+      val change = interfere
+      interfere = () => ()
+      change()
+      super.nanos()
+    }
+  }
+
   def spec = suite("CircuitBreaker")(
     suite("Closed state")(
       test("allows calls when closed") {
@@ -259,6 +273,52 @@ object CircuitBreakerSpec extends ZIOSpecDefault {
         assertTrue(probe == GateResult.Allowed) &&
         assertTrue(cb.isOpen) &&
         assertTrue(cb.tryAcquire == GateResult.Rejected)
+      }
+    ),
+    suite("Probe claim racing another state change")(
+      test("a half-open caller still probes when a success lands between its read and its swap") {
+        val ticker = new InterferingTicker()
+        val cb     = CircuitBreaker(CircuitBreakerConfig(halfOpenMaxCalls = 3), ticker)
+        cb.trip()
+        cb.transitionToHalfOpen()
+        ticker.interfere = () => { val _ = cb.recordSuccess() }
+        assertTrue(cb.tryAcquire == GateResult.Allowed) &&
+        assertTrue(cb.currentState match {
+          case CircuitState.HalfOpen(1, true, _) => true
+          case _                                 => false
+        })
+      },
+      test("an open circuit past its reset timeout still admits a probe when it turns half-open meanwhile") {
+        val ticker = new InterferingTicker()
+        val cb     = CircuitBreaker(CircuitBreakerConfig(failureThreshold = 1, resetTimeout = 1.second), ticker)
+        val _      = cb.recordFailure()
+        ticker.advance(2.seconds)
+        ticker.interfere = () => cb.transitionToHalfOpen()
+        assertTrue(cb.tryAcquire == GateResult.Allowed) && assertTrue(cb.isHalfOpen)
+      },
+      test("a caller stealing a wedged probe slot still probes when a reachability signal frees it meanwhile") {
+        val ticker = new InterferingTicker()
+        val cb     = CircuitBreaker(
+          CircuitBreakerConfig(failureThreshold = 1, resetTimeout = 1.second, probeTimeout = 5.seconds),
+          ticker
+        )
+        val _ = cb.recordFailure()
+        ticker.advance(2.seconds)
+        val wedged = cb.tryAcquire
+        ticker.advance(6.seconds)
+        ticker.interfere = () => cb.recordReachable()
+        assertTrue(wedged == GateResult.Allowed) &&
+        assertTrue(cb.tryAcquire == GateResult.Allowed) &&
+        assertTrue(cb.tryAcquire == GateResult.Rejected)
+      },
+      test("a caller that loses the probe to another caller is still rejected") {
+        val ticker = new InterferingTicker()
+        val cb     = CircuitBreaker(CircuitBreakerConfig(), ticker)
+        cb.trip()
+        cb.transitionToHalfOpen()
+        val rival = new AtomicReference[GateResult](GateResult.Rejected)
+        ticker.interfere = () => rival.set(cb.tryAcquire)
+        assertTrue(cb.tryAcquire == GateResult.Rejected) && assertTrue(rival.get() == GateResult.Allowed)
       }
     )
   )

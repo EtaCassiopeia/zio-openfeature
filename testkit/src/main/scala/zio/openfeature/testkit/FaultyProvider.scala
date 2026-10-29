@@ -120,7 +120,7 @@ object Op {
   */
 final class FaultyProvider[+P <: FeatureProvider] private (val delegate: P, name: String) extends EventProvider {
 
-  import FaultyProvider.{Call, Outcome}
+  import FaultyProvider.{Call, Entry, Outcome}
 
   private val scripts  = new ConcurrentHashMap[Op, AtomicReference[Chunk[Fault]]]()
   private val recorded = new ConcurrentLinkedQueue[Call]()
@@ -128,9 +128,6 @@ final class FaultyProvider[+P <: FeatureProvider] private (val delegate: P, name
   // the call reaching its hang still lets it through. `release` opens both gates; `shutdown()` only the second.
   private val released           = new Gate
   private val releasedOrShutdown = new Gate
-
-  /** The tickets a call took when it entered. */
-  final private case class Entry(released: Int, releasedOrShutdown: Int)
 
   // Guarded by `entryLock`: how many calls of each op have started, for `awaitEntered`.
   private val entryLock = new Object
@@ -281,6 +278,9 @@ final class FaultyProvider[+P <: FeatureProvider] private (val delegate: P, name
 }
 
 object FaultyProvider {
+
+  /** The tickets a call took when it entered. */
+  final private case class Entry(released: Int, releasedOrShutdown: Int)
 
   /** The metadata name of a provider built without an explicit one. */
   final val DefaultName: String = "FaultyProvider"

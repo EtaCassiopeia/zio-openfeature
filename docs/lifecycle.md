@@ -22,6 +22,11 @@ uses the status to decide whether an evaluation may run, and publishes the provi
 - A `READY` event counts only once the Java SDK itself reports the provider ready; the SDK can send one while a
   provider shared with another domain is still initializing. A client registered on a provider that is already
   initialized, or that already failed, takes that state at once, since no event follows.
+- The Java SDK delivers a provider's events with no ordering between them, so an `ERROR` followed quickly by a
+  `READY` can reach this library in either order. Each `READY`, `STALE` or `ERROR` therefore applies the state the
+  SDK reports for the provider when the event is handled, not the event's own type, within the rules above (`Stale`
+  only from `Ready`, `Fatal` final). An `ERROR` with code `ProviderFatal` always makes the status `Fatal`. The event
+  itself reaches your handlers as sent.
 - `status.canEvaluate` is true for `Ready` and `Stale`; `status.isRecoverable` is false only for `Fatal`.
 - [`fromAcquireAsync`](providers.md#start-on-a-fallback-fromacquireasync) never changes the status when it switches from
   its fallback to the real provider. How the start works, and how long it may take, is set on the

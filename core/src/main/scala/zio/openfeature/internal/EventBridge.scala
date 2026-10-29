@@ -4,7 +4,12 @@ import zio._
 import zio.stream._
 import zio.openfeature._
 import zio.openfeature.internal.ProviderStatusMachine.Signal
-import dev.openfeature.sdk.{Client => OFClient, ProviderEvent => JavaProviderEvent, EventDetails}
+import dev.openfeature.sdk.{
+  Client => OFClient,
+  ProviderEvent => JavaProviderEvent,
+  ProviderState => JavaProviderState,
+  EventDetails
+}
 
 import scala.jdk.CollectionConverters._
 
@@ -109,7 +114,8 @@ final private[openfeature] class EventBridge(
   // Bridge event bodies as pure effects, so tests can drive them directly with a builder-constructed
   // EventDetails. The Java-side Consumers registered in startEventBridge are thin wrappers that run these via
   // `runHandler`. Events are ALWAYS published for observers; identity/machine gating applies only to the status
-  // transition and the onReady latch.
+  // transition and the onReady latch. The one exception is a PROVIDER_READY the SDK itself does not back with a ready
+  // state (see `onSdkReadyEvent`): that one is not delivered at all.
 
   private[openfeature] def onReadyEvent(details: EventDetails): UIO[Unit] = extractEventMetadata(details).flatMap {
     em =>
@@ -130,6 +136,24 @@ final private[openfeature] class EventBridge(
         state.eventHub.publish(ProviderEvent.Ready(eventProviderMetadata(details), em)).unit *>
         ZIO.succeed(if (current) onReady.foreach(_.countDown()))
   }
+
+  // The SDK's PROVIDER_READY, applied only once the SDK itself reports this client's slot usable. It sends READY to
+  // every domain bound to a provider when ANY registration of it finishes its init call — including a registration that
+  // reused a manager still initializing for another domain, which returns at once while the state is NOT_READY. The
+  // SDK sets the state before dispatching an event, so a real READY always finds it READY (or STALE); an unconfirmed
+  // one is dropped, and the READY the SDK sends when the shared initialization completes takes its place.
+  private[openfeature] def onSdkReadyEvent(details: EventDetails): UIO[Unit] =
+    ZIO
+      .attempt(client.getProviderState)
+      .map(s => s == JavaProviderState.READY || s == JavaProviderState.STALE)
+      .catchAllCause(c =>
+        // The state cannot be read: fall back to the event, as the identity guard does for an unknown provider.
+        ZIO.logWarningCause("event bridge: could not confirm PROVIDER_READY against the SDK state", c).as(true)
+      )
+      .flatMap { confirmed =>
+        if (confirmed) onReadyEvent(details)
+        else ZIO.logDebug("event bridge: dropped a PROVIDER_READY sent while the provider is still initializing")
+      }
 
   private[openfeature] def onErrorEvent(details: EventDetails): UIO[Unit] = extractEventMetadata(details).flatMap {
     em =>
@@ -171,7 +195,7 @@ final private[openfeature] class EventBridge(
       // effect so a synchronous throw while building them on the Java emitter thread becomes a defect caught by
       // `runHandler`'s `catchAllCause`, rather than escaping to kill the SDK's dispatch thread.
       val readyHandler: java.util.function.Consumer[EventDetails] =
-        details => runHandler(runtime, "PROVIDER_READY")(ZIO.suspendSucceed(onReadyEvent(details)))
+        details => runHandler(runtime, "PROVIDER_READY")(ZIO.suspendSucceed(onSdkReadyEvent(details)))
 
       val errorHandler: java.util.function.Consumer[EventDetails] =
         details => runHandler(runtime, "PROVIDER_ERROR")(ZIO.suspendSucceed(onErrorEvent(details)))

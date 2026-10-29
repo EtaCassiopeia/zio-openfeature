@@ -19,6 +19,9 @@ uses the status to decide whether an evaluation may run, and publishes the provi
 - `Fatal` and `ShuttingDown` ignore both `READY` and `ERROR`. `Fatal` stays until
   [`setProvider`](providers.md#replace-the-provider-at-runtime) installs a new provider.
 - Events that arrive during a swap or after a shutdown do not change the status.
+- A `READY` event counts only once the Java SDK itself reports the provider ready; the SDK can send one while a
+  provider shared with another domain is still initializing. A client registered on a provider that is already
+  initialized, or that already failed, takes that state at once, since no event follows.
 - `status.canEvaluate` is true for `Ready` and `Stale`; `status.isRecoverable` is false only for `Fatal`.
 - [`fromAcquireAsync`](providers.md#start-on-a-fallback-fromacquireasync) never changes the status when it switches from
   its fallback to the real provider. How the start works, and how long it may take, is set on the

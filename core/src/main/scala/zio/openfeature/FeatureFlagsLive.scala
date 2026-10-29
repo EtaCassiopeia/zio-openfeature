@@ -622,12 +622,14 @@ final private[openfeature] class FeatureFlagsLive(
     ZIO
       .attemptBlocking {
         val bound = domain.fold(api.getProvider())(d => api.getProvider(d))
-        (bound eq newProvider) && {
-          val st = client.getProviderState
-          st == JavaProviderState.READY || st == JavaProviderState.STALE
+        if (bound eq newProvider) client.getProviderState match {
+          case JavaProviderState.READY => Some(Signal.EventReady)
+          case JavaProviderState.STALE => Some(Signal.EventStale)
+          case _                       => None
         }
+        else None
       }
-      .flatMap(ready => ZIO.when(ready)(applySignal(Signal.EventReady)).unit)
+      .flatMap(signal => ZIO.foreachDiscard(signal)(applySignal))
       .catchAllCause(c => ZIO.logWarningCause("setProvider: could not re-check a timed-out provider's state", c))
 
   /** Take the SDK's state for this instance's slot once `provider` is registered there. A registration that reuses an

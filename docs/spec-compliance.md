@@ -41,7 +41,7 @@ and runs them on every build, twice: the `conformance` module runs them with Cuc
 | Shut down (§1.6.1) | when the layer's `Scope` closes, or `FeatureFlags.shutdown` |
 | Domains | `FeatureFlagsConfig().withDomain(d)` (and `.withVersion(v)` for the client version); `FeatureFlagRegistry` for many domains |
 | Provider and client metadata | `providerMetadata`, `clientMetadata` |
-| Provider status (§1.7) | `providerStatus`: `NotReady`, `Ready`, `Stale`, `Error`, `Fatal`, plus `ShuttingDown` |
+| Provider status (§1.7) | `providerStatus`: `NotReady`, `Ready`, `Stale`, `Error`, `Fatal`, plus `ShuttingDown`; a `STALE` event moves any status but `Fatal` and `ShuttingDown` to `Stale`, as §5.3.5 maps it |
 | Several providers | `FeatureFlags.multiProvider` (the SDK's `MultiProvider`) |
 | **Evaluation context (§3)** | |
 | Targeting key and attributes | `EvaluationContext(targetingKey)`, `.withAttribute(...)` |

@@ -20,6 +20,7 @@ EDGES = [
     ("Stale", "Ready", "READY", (548, 196)),
     ("Ready", "Error", "ERROR", (512, 292)),
     ("Error", "Ready", "READY", (548, 232)),
+    ("Error", "Stale", "STALE", (690, 222)),
     ("NotReady", "Fatal", "init timeout", (148, 300)),
     ("Ready", "ShuttingDown", "shutdown", (408, 300)),
     ("ShuttingDown", "NotReady", "done", (262, 340)),
@@ -89,7 +90,8 @@ def build() -> Scene:
         "events move the status · the status gates every evaluation",
         "Ready, Stale and Error evaluate · NotReady and ShuttingDown fail with ProviderNotReady · Fatal with ProviderFatal",
         "Provider status: the provider starts NotReady and evaluations fail; a READY event makes it Ready; STALE and "
-        "ERROR events move it to Stale or Error, where evaluations still run; READY brings it back; shutdown passes "
+        "ERROR events move it to Stale or Error, where evaluations still run, and STALE also leads from Error to "
+        "Stale; READY brings it back; shutdown passes "
         "through ShuttingDown to NotReady. Fatal, reached by an init timeout before the first Ready or a fatal error, "
         "fails every evaluation until setProvider installs a new provider.",
     )

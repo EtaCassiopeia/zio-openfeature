@@ -3,7 +3,7 @@
 A provider starts, becomes ready, may go stale or fail, and is shut down. `FeatureFlags` tracks this as a status,
 uses the status to decide whether an evaluation may run, and publishes the provider's events to your code.
 
-![Provider status: the provider starts NotReady and evaluations fail; a READY event makes it Ready; STALE and ERROR events move it to Stale or Error, where evaluations still run; READY brings it back; shutdown passes through ShuttingDown to NotReady. Fatal, reached by an init timeout before the first Ready or a fatal error, fails every evaluation until setProvider installs a new provider.](assets/lifecycle.svg)
+![Provider status: the provider starts NotReady and evaluations fail; a READY event makes it Ready; STALE and ERROR events move it to Stale or Error, where evaluations still run, and STALE also leads from Error to Stale; READY brings it back; shutdown passes through ShuttingDown to NotReady. Fatal, reached by an init timeout before the first Ready or a fatal error, fails every evaluation until setProvider installs a new provider.](assets/lifecycle.svg)
 
 ## Statuses
 
@@ -11,7 +11,7 @@ uses the status to decide whether an evaluation may run, and publishes the provi
 |:--|:--|:--|
 | `NotReady` | fails with `ProviderNotReady(NotReady)` | start, a `setProvider` swap in progress, or shutdown complete |
 | `Ready` | runs | a `READY` event |
-| `Stale` | runs | a `STALE` event, from `Ready` only |
+| `Stale` | runs | a `STALE` event, or the SDK reporting `STALE` for the provider, from `NotReady`, `Ready` or `Error` |
 | `Error` | runs: the provider usually serves its last good values or answers with an error code | an `ERROR` event |
 | `Fatal` | fails with `ProviderFatal` | an `ERROR` event with code `ProviderFatal`, or `initTimeout` passing before the provider was ever ready |
 | `ShuttingDown` | fails with `ProviderNotReady(ShuttingDown)` | `shutdown` in progress |
@@ -24,9 +24,10 @@ uses the status to decide whether an evaluation may run, and publishes the provi
   initialized, or that already failed, takes that state at once, since no event follows.
 - The Java SDK delivers a provider's events with no ordering between them, so an `ERROR` followed quickly by a
   `READY` can reach this library in either order. Each `READY`, `STALE` or `ERROR` therefore applies the state the
-  SDK reports for the provider when the event is handled, not the event's own type, within the rules above (`Stale`
-  only from `Ready`, `Fatal` final). An `ERROR` with code `ProviderFatal` always makes the status `Fatal`. The event
-  itself reaches your handlers as sent.
+  SDK reports for the provider when the event is handled, not the event's own type, within the rules above (`Fatal`
+  final). An `ERROR` with code `ProviderFatal` always makes the status `Fatal`. Any other event handled while the
+  SDK still reports `NOT_READY` for the provider changes nothing: it comes from another registration, such as a replaced
+  provider with the same name. Either way the event itself reaches your handlers as sent.
 - `status.canEvaluate` is true for `Ready` and `Stale`; `status.isRecoverable` is false only for `Fatal`.
 - [`fromAcquireAsync`](providers.md#start-on-a-fallback-fromacquireasync) never changes the status when it switches from
   its fallback to the real provider. How the start works, and how long it may take, is set on the

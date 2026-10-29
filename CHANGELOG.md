@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A `STALE` event now moves an `Error` status to `Stale`** (#613, spec compliance). The status left `Error` only on
+  a `READY`, so a provider that recovered from an error to cached data, or a `multiProvider` chain whose failing member
+  recovered while another stayed stale, reported `Error` while the SDK and the provider's own events said `STALE`. The
+  specification maps `PROVIDER_STALE` to `STALE` from any status, and `Stale` is now entered from `NotReady`, `Ready`
+  and `Error`; `Fatal` and `ShuttingDown` stay final. A client built on a provider the SDK already reports `STALE` is
+  now `Stale` at once instead of `NotReady` until the init watchdog made it `Fatal`. An event handled while the SDK
+  still reports `NOT_READY` for the provider no longer changes the status: it comes from another registration, such
+  as a replaced provider with the same name.
 - **`CachingProvider` no longer hands one caller another caller's failure** (#586). Concurrent callers for one key
   share a single delegate call, and zio-cache gives all of them its outcome. When that call failed, for instance with
   the `InterruptedException` a `CircuitBreakerProvider` timeout causes on the thread running it, a caller that had

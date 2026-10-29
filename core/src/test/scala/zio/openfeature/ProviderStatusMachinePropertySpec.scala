@@ -77,9 +77,13 @@ object ProviderStatusMachinePropertySpec extends ZIOSpecDefault {
       "error event is error" ->
         (sig != Signal.EventError(false) || blocked || sticky ||
           (next.forall(_ == ProviderStatus.Error) && (cur == ProviderStatus.Error || next.isDefined))),
-      "stale only from ready" ->
+      "stale from every non-final status" ->
         (sig != Signal.EventStale || blocked ||
-          (if (cur == ProviderStatus.Ready) next.contains(ProviderStatus.Stale) else unchanged(cur, next))),
+          (cur match {
+            case ProviderStatus.NotReady | ProviderStatus.Ready | ProviderStatus.Error =>
+              next.contains(ProviderStatus.Stale)
+            case _ => unchanged(cur, next)
+          })),
       "events never enter fatal except by a fatal error" ->
         (!isEvent || sig == Signal.EventError(true) || !next.contains(ProviderStatus.Fatal) ||
           cur == ProviderStatus.Fatal)

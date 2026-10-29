@@ -78,14 +78,18 @@ object MultiProviderEventsSpec extends ZIOSpecDefault {
           a <- FaultyProvider.scoped(Map("flag" -> true), name = "a")
           b <- FaultyProvider.scoped(Map("flag" -> true), name = "b")
           chain = FeatureFlags.multiProvider(List(a, b))
-          ff    <- build(chain)
-          seen  <- recorded(ff)
-          _     <- emit(a, OFProviderEvent.PROVIDER_STALE)
-          _     <- emit(b, OFProviderEvent.PROVIDER_ERROR)
-          _     <- emit(b, OFProviderEvent.PROVIDER_READY)
-          after <- ZIO.succeed(chainState(chain))
-          got   <- seen.get
+          ff     <- build(chain)
+          seen   <- recorded(ff)
+          _      <- emit(a, OFProviderEvent.PROVIDER_STALE)
+          _      <- emit(b, OFProviderEvent.PROVIDER_ERROR)
+          mid    <- ff.providerStatus.repeatUntil(_ == ProviderStatus.Error).timeout(2.seconds)
+          _      <- emit(b, OFProviderEvent.PROVIDER_READY)
+          after  <- ZIO.succeed(chainState(chain))
+          got    <- seen.get
+          status <- ff.providerStatus.repeatUntil(_ == ProviderStatus.Stale).timeout(2.seconds)
         } yield assertTrue(
+          mid.contains(ProviderStatus.Error),
+          status.contains(ProviderStatus.Stale),
           kinds(got) == Chunk(ProviderEventType.Stale, ProviderEventType.Error, ProviderEventType.Stale),
           // The re-emitted event carries the details of the child event that changed the aggregate.
           got.lastOption.collect { case e: ProviderEvent.Stale => e.reason }.contains("PROVIDER_READY"),

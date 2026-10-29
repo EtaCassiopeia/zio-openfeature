@@ -51,10 +51,13 @@ any type that has one. `Option[A]` is fetched with `A`'s resolver and reads `Non
 --8<-- "TypedFlags.scala:derived"
 ```
 
-- An **enum** with parameterless cases is stored as a **string** holding the case name; reading ignores case, and an
-  unknown name fails with `TypeMismatch` instead of serving the default. A case with parameters does not compile.
+- An **enum** with parameterless cases is stored as a **string** holding the case name. Reading ignores case, but an
+  exact match wins when two names differ only by case; an unknown name fails with `TypeMismatch` instead of serving the
+  default. A case with parameters does not compile.
 - A **case class** is stored as an **object**, each field through its own `FlagType`. Unknown keys are ignored. A
-  missing key takes the field's Scala default, else `None` for an `Option`, else fails naming the field.
+  missing key takes the default declared on the case class itself (never one an overload of `apply` declares), else
+  `None` for an `Option`, else fails naming the field. Defaults are not read for a case class compiled by Scala 2.13
+  (one from a library built for 2.13): its missing fields follow the last two rules.
 
 `FlagType.derived` is not a `given`, so it never competes with the built-in instances: use `derives`, or write
 `given FlagType[X] = FlagType.derived[X]`.

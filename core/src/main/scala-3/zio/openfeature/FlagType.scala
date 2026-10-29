@@ -292,7 +292,9 @@ object FlagType:
 
     def decode(value: Any): Either[String, A] = value match
       case str: String =>
-        labels.indexWhere(_.equalsIgnoreCase(str)) match
+        // Exact first, so two labels that differ only by case each decode back to themselves.
+        val exact = labels.indexOf(str)
+        (if exact >= 0 then exact else labels.indexWhere(_.equalsIgnoreCase(str))) match
           case -1 => Left(s"Unknown $name: '$str' (expected one of ${labels.mkString(", ")})")
           case i  => Right(cases(i))
       case null  => Left(s"Cannot convert null to $name")
@@ -305,26 +307,25 @@ object FlagType:
     mirror: Mirror.ProductOf[A]
   ): FlagType[A] = new FlagType[A]:
 
-    // For a case class the Mirror IS the companion object, so Scala-declared field defaults are reachable as
-    // `apply$default$N`. Probed by name rather than by catching NoSuchMethodException, so a type with no defaults
+    // For a case class compiled by Scala 3 the Mirror IS the companion object, so the constructor's field defaults are
+    // reachable as `$lessinit$greater$default$N` (one compiled by 2.13 gets an anonymous Mirror, whose defaults are
+    // not reachable this way). Probed by name rather than by catching NoSuchMethodException, so a type with no defaults
     // costs nothing and no exception is swallowed.
     // Matched by EXACT name, never by suffix. `<methodName>$default$<n>` is the scheme for every defaulted
     // parameter on the class, not just the constructor's — so a companion holding an unrelated defaulted method
     // (`def parse(raw: String, strict: Boolean = true)` emits `parse$default$2`) would be picked up by position and
     // supply that method's default as field 2's, either throwing from `fromProduct` or, when the types happen to
-    // agree, decoding a silently wrong value. Both constructor names are tried because either may be the one
-    // emitted. Resolved once per instance, so only `invoke` is per-decode.
+    // agree, decoding a silently wrong value. Only the constructor's own getter (`<init>`, encoded
+    // `$lessinit$greater`) is read: `apply$default$<n>` is also what a user's defaulted overload of `apply` emits,
+    // and Scala allows defaults on that overload exactly when the constructor has none. Resolved once per instance,
+    // so only `invoke` is per-decode.
     private val defaults: Vector[Option[() => Any]] =
       val byName = mirror.getClass.getMethods.iterator
         .filter(_.getParameterCount == 0)
         .map(m => m.getName -> m)
         .toMap
       labels.indices.map { i =>
-        val n = i + 1
-        byName
-          .get(s"apply$$default$$$n")
-          .orElse(byName.get(s"$$lessinit$$greater$$default$$$n"))
-          .map(m => () => m.invoke(mirror))
+        byName.get(s"$$lessinit$$greater$$default$$${i + 1}").map(m => () => m.invoke(mirror))
       }.toVector
 
     def typeName: String = name
@@ -354,7 +355,12 @@ object FlagType:
         .foldLeft[Either[String, List[Any]]](Right(Nil)) { (acc, i) =>
           acc.flatMap(values => fieldValue(payload, i).map(_ :: values))
         }
-        .map(values => mirror.fromProduct(Tuple.fromArray(values.reverse.toArray)))
+        .flatMap(values =>
+          // Guarded like the default read: a constructor check (`require`) or a field instance that decodes to the wrong
+          // runtime type must fail inside the `Either` contract, not escape `decode`.
+          Try(mirror.fromProduct(Tuple.fromArray(values.reverse.toArray))).toEither.left
+            .map(e => s"$name: cannot construct from the decoded fields: $e")
+        )
 
     private def fieldValue(payload: Map[String, Any], index: Int): Either[String, Any] =
       val label = labels(index)

@@ -53,6 +53,31 @@ object FlagTypeDerivedSpec extends ZIOSpecDefault:
   object Poisoned:
     def parse(raw: String, strict: Boolean = true): Poisoned = Poisoned(raw, if strict then "strict" else "lax")
 
+  /** A user overload of `apply` with a default emits `apply$default$2` too — the very name of a synthetic `apply`'s
+    * default getter. `label` itself has no default, so a missing key must still be a Left.
+    */
+  final case class Labelled(name: String, label: String) derives FlagType
+  object Labelled:
+    def apply(id: Int, label: String = "OVERLOAD-DEFAULT"): Labelled = new Labelled(id.toString, label)
+
+  /** The same, with the overload's default of another type than the field: it must never reach `fromProduct`. */
+  final case class Weighted(tier: String, pct: Int) derives FlagType
+  object Weighted:
+    def apply(tier: String, pct: Long = 99L): Weighted = new Weighted(tier, pct.toInt)
+
+  /** A real constructor default next to a user overload of `apply` (Scala allows defaults on only one of them). */
+  final case class Tuned(name: String, level: Int = 3) derives FlagType
+  object Tuned:
+    def apply(level: Long): Tuned = new Tuned("from-level", level.toInt)
+
+  /** A constructor that rejects some values. */
+  final case class Percent(value: Int) derives FlagType:
+    require(value >= 0, "a percentage is never negative")
+
+  /** Two labels that differ only by case. */
+  enum Switch derives FlagType:
+    case On, ON
+
   /** Answers the string resolver with a fixed variant and echoes the object default back, so a derived enum can be
     * shown to take the STRING path while a derived product takes the OBJECT path and receives its encoded default.
     */
@@ -284,5 +309,26 @@ object FlagTypeDerivedSpec extends ZIOSpecDefault:
           }
         }
       }
+    },
+    test("a missing field with no constructor default is a Left, whatever defaults an apply overload declares") {
+      assertTrue(FlagType[Labelled].decode(Map("name" -> "n")).isLeft)
+    },
+    test("decode never throws: an overload default of another type never reaches the constructor") {
+      val decoded = scala.util.Try(FlagType[Weighted].decode(Map("tier" -> "gold")))
+      assertTrue(decoded.isSuccess, decoded.toOption.exists(_.isLeft))
+    },
+    test("a missing field takes the constructor default when the companion also overloads apply") {
+      assertTrue(FlagType[Tuned].decode(Map("name" -> "n")) == Right(Tuned("n", 3)))
+    },
+    test("decode never throws: a value the constructor rejects is a Left") {
+      val decoded = scala.util.Try(FlagType[Percent].decode(Map("value" -> -1)))
+      assertTrue(decoded.isSuccess, decoded.toOption.exists(_.left.exists(_.contains("never negative"))))
+    },
+    test("an enum whose labels differ only by case decodes each one back to itself") {
+      val ft = FlagType[Switch]
+      assertTrue(
+        Switch.values.toList.map(s => ft.decode(ft.encode(s))) == Switch.values.toList.map(Right(_)),
+        ft.decode("on") == Right(Switch.On)
+      )
     }
   ) @@ sequential @@ withLiveClock

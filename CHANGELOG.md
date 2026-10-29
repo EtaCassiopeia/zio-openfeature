@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`finallyAfter` gets the evaluation details when the provider's value does not decode** (#572). A custom type served
+  a value its `FlagType` rejects (say `"purple"` for a `Color`) correctly returned `TYPE_MISMATCH` to the caller, but
+  the `finallyAfter` hook saw `None`, as if the provider had not answered (spec 4.3.8 requires the details). It now
+  gets the same resolution the total tier serves: the default, reason `ERROR`, code `TYPE_MISMATCH`, same message.
+  A failure with no answer (not ready, timeout, a throw) still gives `None`.
 - **The total tier keeps the provider's variant, flag metadata and message on an error-coded answer** (#571).
   `resolveOrDefault` and the `*OrDefault` methods rebuilt the served resolution from the typed tier's failure, so a
   provider's `FLAG_NOT_FOUND` with variant `v-err`, metadata `source` and message `"flag archived"` came back with no

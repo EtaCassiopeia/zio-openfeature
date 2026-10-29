@@ -87,7 +87,17 @@ final private[openfeature] class HookPipeline(
             finallyCtxRef.set((stageCtx, hints, None)) *>
               evaluate(effectiveCtx)
                 .tapBoth(
-                  err => composedHook.error(stageCtx, err, hints),
+                  err =>
+                    (err match {
+                      // A value that does not decode is the one failure that comes after the provider answered, so
+                      // `finallyAfter` gets the evaluation details: the same error resolution the total tier serves.
+                      // Every other failure (not ready, timeout, a throw) means no answer, and stays `None`.
+                      case mismatch: FeatureFlagError.TypeMismatch =>
+                        val served = FlagResolution
+                          .error(hookCtx.flagKey, hookCtx.defaultValue, ErrorCode.TypeMismatch, mismatch.message)
+                        finallyCtxRef.set((stageCtx, hints, Some(served)))
+                      case _ => ZIO.unit
+                    }) *> composedHook.error(stageCtx, err, hints),
                   // A returned resolution can still be *abnormal* execution — it carries an error code (FLAG_NOT_FOUND,
                   // TYPE_MISMATCH, ...) that the Java SDK surfaces as a default value plus a code rather than a throw.
                   // Per spec §4.3.6/§4.4.6 that is the `error` stage's domain, NOT `after`: run `error` for an

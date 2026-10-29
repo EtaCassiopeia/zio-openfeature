@@ -106,6 +106,13 @@ ZOF_PBT_SCALE=10 ZOF_PBT_SEED=<seed> sbt "core/testOnly -- -tags property"
 A new property test takes `@@ PropertyBudget(n)` from `zio.openfeature.testsupport` (compiled into every module's
 tests), so the nightly run picks it up.
 
+**Linearizability checks.** `CircuitBreakerLincheckSpec` runs the circuit breaker's operations from several threads
+under [Lincheck](https://github.com/JetBrains/lincheck)'s model checker, which explores thread interleavings and checks
+every outcome matches some sequential order of the same calls. It belongs to the property run, so pull requests check
+a small sample and the nightly run ten times more. It suits a lock-free structure driven by plain threads; state held in
+a ZIO `Ref` is atomic by construction, and an effect running on ZIO's own scheduler is outside what the model checker
+controls. A deliberately racy counter in the same spec must fail, so a checker that stopped seeing races fails too.
+
 **Provider fault tests** run the real OFREP and Optimizely providers through rift's TLS intercept proxy while scripted
 network faults play out; see [Testing real providers](testing-real-providers.md). They are a dev-machine check by
 design: not aggregated into the root project, so `sbt test` never runs them; CI only compiles them; they need JDK 22 or

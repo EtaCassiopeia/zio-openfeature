@@ -300,8 +300,13 @@ lazy val extras = (project in file("extras"))
     libraryDependencies ++= Seq(
       "dev.zio"     %% "zio"       % zioVersion,
       "dev.zio"     %% "zio-cache" % "0.2.8",
-      "com.typesafe" % "config"    % "1.4.9"
-    )
+      "com.typesafe" % "config"    % "1.4.9",
+      // Linearizability checks of the lock-free state machines. Test scope only.
+      "org.jetbrains.lincheck" % "lincheck" % "3.7" % Test
+    ),
+    // Lincheck's model checker instruments classes through a dynamically attached agent; JDK 21+ warns about that
+    // unless it is enabled explicitly.
+    Test / javaOptions += "-XX:+EnableDynamicAgentLoading"
   )
 
 // Patched, aligned Jackson family for the OFREP provider's transitive HTTP stack. Applied to `ofrep` both as

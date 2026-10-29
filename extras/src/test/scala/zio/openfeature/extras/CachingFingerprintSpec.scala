@@ -1,5 +1,7 @@
 package zio.openfeature.extras
 
+import zio.openfeature.testsupport.PropertyBudget
+
 import java.time.Instant
 
 import dev.openfeature.sdk.{
@@ -121,7 +123,7 @@ object CachingFingerprintSpec extends ZIOSpecDefault {
       check(contextGen, contextGen) { (a, b) =>
         ZIO.scoped(servedSecond(a, b)).map(assertTrue(_))
       }
-    }
+    } @@ PropertyBudget(200)
   )
 
   // A small pool of values whose renderings coincide across types, so generated pairs collide often.

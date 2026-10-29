@@ -90,16 +90,21 @@ sbt core/stryker
 sbt extras/stryker
 ```
 
-**Property tests.** `LifecycleModelSpec` generates sequences of lifecycle actions (swaps to providers that start, fail,
-hang or start slowly, provider events, shutdown, an interrupted swap), runs each against a real `FeatureFlags`, and
-checks after every step that status, provider name and evaluations agree with a model written from
-[Lifecycle and events](lifecycle.md). It also checks the scope closes within 5 seconds and leaves no fiber or thread
-behind. Pull requests run 25 sequences; the weekly `Property tests` workflow runs 300. A failure prints the shrunk
-sequence: add it to the spec's `regressions` suite as an explicit list, not as a seed.
+**Property tests** generate inputs and check an invariant over each: value and context round trips, hostile values,
+cache keys, the circuit breaker, hook ordering, the status machine, and `LifecycleModelSpec`, which runs generated
+sequences of lifecycle actions (swaps to providers that start, fail, hang or start slowly, provider events, shutdown,
+an interrupted swap) against a real `FeatureFlags` and checks every step against a model written from
+[Lifecycle and events](lifecycle.md). Each such test carries the shared `PropertyBudget(n)` aspect: pull requests run
+its base count with zio-test's fixed seed, and the nightly `Property tests` workflow runs every one at 10× with a fresh
+seed, printed in the job summary. Replay a nightly failure with the same scale and seed, then check the shrunk case in
+as an explicit example (seeds are not stable across zio-test versions):
 
 ```sh
-LIFECYCLE_MODEL_SAMPLES=300 sbt "testkit/testOnly *LifecycleModelSpec"
+ZOF_PBT_SCALE=10 ZOF_PBT_SEED=<seed> sbt "core/testOnly -- -tags property"
 ```
+
+A new property test takes `@@ PropertyBudget(n)` from `zio.openfeature.testsupport` (compiled into every module's
+tests), so the nightly run picks it up.
 
 **Provider fault tests** run the real OFREP and Optimizely providers through rift's TLS intercept proxy while scripted
 network faults play out; see [Testing real providers](testing-real-providers.md). They are a dev-machine check by

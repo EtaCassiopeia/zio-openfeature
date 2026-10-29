@@ -1,8 +1,10 @@
 package zio.openfeature
 
+import zio.openfeature.testsupport.PropertyBudget
+
 import zio._
 import zio.test._
-import zio.test.TestAspect.{samples, sequential, withLiveClock}
+import zio.test.TestAspect.{sequential, withLiveClock}
 import zio.openfeature.internal.ProviderEvaluations
 import dev.openfeature.sdk.{EvaluationContext => OFEvaluationContext, FeatureProvider, Metadata, OpenFeatureAPI, Value}
 
@@ -150,7 +152,7 @@ object AbandonedCallCapSpec extends ZIOSpecDefault {
           } yield assertTrue(drained, after == 0)
         }
       }
-    } @@ samples(25),
+    } @@ PropertyBudget(25),
     test("a caller interrupted mid-call abandons it too, and it counts") {
       ZIO.scoped {
         for {

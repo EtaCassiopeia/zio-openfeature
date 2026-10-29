@@ -1,5 +1,7 @@
 package zio.openfeature
 
+import zio.openfeature.testsupport.PropertyBudget
+
 import zio.test._
 import zio.openfeature.internal.ContextConverter
 import scala.jdk.CollectionConverters._
@@ -337,7 +339,7 @@ object EvaluationContextSpec extends ZIOSpecDefault {
           val expected = layers.flatMap(_._2).lastOption
           assertTrue(Option(ContextConverter.toOpenFeature(merged).getTargetingKey) == expected)
         }
-      }
+      } @@ PropertyBudget(100)
     )
   )
 }

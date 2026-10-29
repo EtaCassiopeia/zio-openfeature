@@ -1,5 +1,7 @@
 package zio.openfeature.ofrep
 
+import zio.openfeature.testsupport.PropertyBudget
+
 import com.github.tomakehurst.wiremock.WireMockServer
 import com.github.tomakehurst.wiremock.client.WireMock._
 import com.github.tomakehurst.wiremock.core.WireMockConfiguration
@@ -382,5 +384,5 @@ object OFREPHostileResponseSpec extends ZIOSpecDefault {
         } yield assertTrue(got == want)
       }
     }
-  ) @@ TestAspect.samples(40) @@ TestAspect.sequential @@ TestAspect.withLiveClock @@ TestAspect.timeout(2.minutes)
+  ) @@ PropertyBudget(40) @@ TestAspect.sequential @@ TestAspect.withLiveClock @@ TestAspect.timeout(2.minutes)
 }

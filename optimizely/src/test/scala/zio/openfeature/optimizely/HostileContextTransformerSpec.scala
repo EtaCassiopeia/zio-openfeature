@@ -1,5 +1,7 @@
 package zio.openfeature.optimizely
 
+import zio.openfeature.testsupport.PropertyBudget
+
 import dev.openfeature.sdk.{ImmutableContext, MutableContext, Structure, Value}
 import zio.test._
 
@@ -118,5 +120,5 @@ object HostileContextTransformerSpec extends ZIOSpecDefault {
       val ok  = (0 until 5000).forall(i => out.get(s"k$i\u0000😀") == java.lang.Integer.valueOf(i))
       assertTrue(ok, out.asScala.count { case (k, _) => k.startsWith("k") } == 5000)
     }
-  ) @@ TestAspect.samples(100)
+  ) @@ PropertyBudget(100)
 }

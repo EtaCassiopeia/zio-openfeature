@@ -1,5 +1,7 @@
 package zio.openfeature
 
+import zio.openfeature.testsupport.PropertyBudget
+
 import zio._
 import zio.openfeature.internal.ContextConverter
 import zio.test._
@@ -185,5 +187,5 @@ object ValueRoundTripSpec extends ZIOSpecDefault {
         assertTrue(rt == ctx)
       }
     }
-  ) @@ TestAspect.samples(200)
+  ) @@ PropertyBudget(200)
 }

@@ -32,7 +32,8 @@ throwing, which is how most providers report a missing flag. Use it for gates th
 
 The **total tier** never fails and serves your default. Each method has an `*OrDefault` twin (`booleanOrDefault`,
 `stringOrDefault`, …, `valueOrDefault[A]`), and `resolveOrDefault[A]` returns the full resolution, so you can still see
-why:
+why. When the provider itself answered with an error code, that resolution keeps the provider's variant, flag metadata
+and message, with your default as the value:
 
 ```scala
 --8<-- "Evaluating.scala:total"

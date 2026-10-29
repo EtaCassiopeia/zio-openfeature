@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The total tier keeps the provider's variant, flag metadata and message on an error-coded answer** (#571).
+  `resolveOrDefault` and the `*OrDefault` methods rebuilt the served resolution from the typed tier's failure, so a
+  provider's `FLAG_NOT_FOUND` with variant `v-err`, metadata `source` and message `"flag archived"` came back with no
+  variant, empty metadata and `"Flag 'x' not found"`. The served resolution now carries the provider's own fields
+  (spec 1.4), with your default as the value and reason `ERROR`; the typed tier is unchanged. The fallback log line
+  quotes the provider's message too. A custom `FeatureFlags` implementation whose `*Details` succeed with an error
+  code is now served the same way: the default as the value and reason `ERROR`, where it used to pass through as is.
 - **Case-insensitive matching no longer depends on the JVM's default locale** (#570). Ten conversions used
   `toUpperCase`/`toLowerCase` without a locale. Under a Turkish or Azeri default locale `i` upper-cases to `İ` and `I`
   lower-cases to `ı`, so `EnvVarProvider` looked up `FF_İS_ENABLED` for `is-enabled` and reported every key containing

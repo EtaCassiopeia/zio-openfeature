@@ -2,7 +2,7 @@ package zio.openfeature
 
 import zio._
 import zio.stream._
-import zio.openfeature.internal.{FallbackLogLimiter, FeatureFlagsFactories, LongAwareMultiProvider}
+import zio.openfeature.internal.{Evaluator, FallbackLogLimiter, FeatureFlagsFactories, LongAwareMultiProvider}
 import dev.openfeature.sdk.{FeatureProvider => OFFeatureProvider, OpenFeatureAPI}
 import dev.openfeature.sdk.multiprovider.{Strategy, FirstMatchStrategy, FirstSuccessfulStrategy}
 
@@ -139,29 +139,57 @@ trait FeatureFlags {
   // propagated, so cancellation still works. The non-total methods above remain for callers who want to handle errors.
 
   def booleanOrDefault(key: String, default: Boolean, ctx: EvaluationContext = EvaluationContext.empty): UIO[Boolean] =
-    totalResolution(booleanDetails(key, default, ctx), key, default).map(_.value)
+    totalResolution(
+      resolutionForTotal(key, default, ctx, EvaluationOptions.empty)(booleanDetails(key, default, ctx)),
+      key,
+      default
+    ).map(_.value)
 
   def stringOrDefault(key: String, default: String, ctx: EvaluationContext = EvaluationContext.empty): UIO[String] =
-    totalResolution(stringDetails(key, default, ctx), key, default).map(_.value)
+    totalResolution(
+      resolutionForTotal(key, default, ctx, EvaluationOptions.empty)(stringDetails(key, default, ctx)),
+      key,
+      default
+    ).map(_.value)
 
   def intOrDefault(key: String, default: Int, ctx: EvaluationContext = EvaluationContext.empty): UIO[Int] =
-    totalResolution(intDetails(key, default, ctx), key, default).map(_.value)
+    totalResolution(
+      resolutionForTotal(key, default, ctx, EvaluationOptions.empty)(intDetails(key, default, ctx)),
+      key,
+      default
+    ).map(_.value)
 
   def longOrDefault(key: String, default: Long, ctx: EvaluationContext = EvaluationContext.empty): UIO[Long] =
-    totalResolution(longDetails(key, default, ctx), key, default).map(_.value)
+    totalResolution(
+      resolutionForTotal(key, default, ctx, EvaluationOptions.empty)(longDetails(key, default, ctx)),
+      key,
+      default
+    ).map(_.value)
 
   def doubleOrDefault(key: String, default: Double, ctx: EvaluationContext = EvaluationContext.empty): UIO[Double] =
-    totalResolution(doubleDetails(key, default, ctx), key, default).map(_.value)
+    totalResolution(
+      resolutionForTotal(key, default, ctx, EvaluationOptions.empty)(doubleDetails(key, default, ctx)),
+      key,
+      default
+    ).map(_.value)
 
   def objOrDefault(
     key: String,
     default: Map[String, Any],
     ctx: EvaluationContext = EvaluationContext.empty
   ): UIO[Map[String, Any]] =
-    totalResolution(objDetails(key, default, ctx), key, default).map(_.value)
+    totalResolution(
+      resolutionForTotal(key, default, ctx, EvaluationOptions.empty)(objDetails(key, default, ctx)),
+      key,
+      default
+    ).map(_.value)
 
   def valueOrDefault[A: FlagType](key: String, default: A, ctx: EvaluationContext = EvaluationContext.empty): UIO[A] =
-    totalResolution(valueDetails(key, default, ctx), key, default).map(_.value)
+    totalResolution(
+      resolutionForTotal(key, default, ctx, EvaluationOptions.empty)(valueDetails(key, default, ctx)),
+      key,
+      default
+    ).map(_.value)
 
   // The same, with per-call EvaluationOptions. Spelled without defaults: the overloads above already carry the
   // `ctx` default, and Scala allows default arguments on only one overload of a method.
@@ -172,19 +200,39 @@ trait FeatureFlags {
     ctx: EvaluationContext,
     options: EvaluationOptions
   ): UIO[Boolean] =
-    totalResolution(booleanDetails(key, default, ctx, options), key, default).map(_.value)
+    totalResolution(
+      resolutionForTotal(key, default, ctx, options)(booleanDetails(key, default, ctx, options)),
+      key,
+      default
+    ).map(_.value)
 
   def stringOrDefault(key: String, default: String, ctx: EvaluationContext, options: EvaluationOptions): UIO[String] =
-    totalResolution(stringDetails(key, default, ctx, options), key, default).map(_.value)
+    totalResolution(
+      resolutionForTotal(key, default, ctx, options)(stringDetails(key, default, ctx, options)),
+      key,
+      default
+    ).map(_.value)
 
   def intOrDefault(key: String, default: Int, ctx: EvaluationContext, options: EvaluationOptions): UIO[Int] =
-    totalResolution(intDetails(key, default, ctx, options), key, default).map(_.value)
+    totalResolution(
+      resolutionForTotal(key, default, ctx, options)(intDetails(key, default, ctx, options)),
+      key,
+      default
+    ).map(_.value)
 
   def longOrDefault(key: String, default: Long, ctx: EvaluationContext, options: EvaluationOptions): UIO[Long] =
-    totalResolution(longDetails(key, default, ctx, options), key, default).map(_.value)
+    totalResolution(
+      resolutionForTotal(key, default, ctx, options)(longDetails(key, default, ctx, options)),
+      key,
+      default
+    ).map(_.value)
 
   def doubleOrDefault(key: String, default: Double, ctx: EvaluationContext, options: EvaluationOptions): UIO[Double] =
-    totalResolution(doubleDetails(key, default, ctx, options), key, default).map(_.value)
+    totalResolution(
+      resolutionForTotal(key, default, ctx, options)(doubleDetails(key, default, ctx, options)),
+      key,
+      default
+    ).map(_.value)
 
   def objOrDefault(
     key: String,
@@ -192,10 +240,18 @@ trait FeatureFlags {
     ctx: EvaluationContext,
     options: EvaluationOptions
   ): UIO[Map[String, Any]] =
-    totalResolution(objDetails(key, default, ctx, options), key, default).map(_.value)
+    totalResolution(
+      resolutionForTotal(key, default, ctx, options)(objDetails(key, default, ctx, options)),
+      key,
+      default
+    ).map(_.value)
 
   def valueOrDefault[A: FlagType](key: String, default: A, ctx: EvaluationContext, options: EvaluationOptions): UIO[A] =
-    totalResolution(valueDetails(key, default, ctx, options), key, default).map(_.value)
+    totalResolution(
+      resolutionForTotal(key, default, ctx, options)(valueDetails(key, default, ctx, options)),
+      key,
+      default
+    ).map(_.value)
 
   /** Total details variant: like [[valueDetails]] but never fails — an evaluation error yields a `FlagResolution` whose
     * `reason` is `Error`, `value` is `default`, and `errorCode`/`errorMessage` describe the failure (spec §1.4.10).
@@ -206,7 +262,11 @@ trait FeatureFlags {
     ctx: EvaluationContext = EvaluationContext.empty,
     options: EvaluationOptions = EvaluationOptions.empty
   ): UIO[FlagResolution[A]] =
-    totalResolution(valueDetails(key, default, ctx, options), key, default)
+    totalResolution(
+      resolutionForTotal(key, default, ctx, options)(valueDetails(key, default, ctx, options)),
+      key,
+      default
+    )
 
   // Typed flag definition overloads
   //
@@ -290,7 +350,7 @@ trait FeatureFlags {
     valueDetails(flag.key, flag.default, ctx, options)
   }
 
-  private def totalResolution[A](
+  private def totalResolution[A: FlagType](
     details: IO[FeatureFlagError, FlagResolution[A]],
     key: String,
     default: A
@@ -321,12 +381,35 @@ trait FeatureFlags {
                 )
               logFallback(key, served, defect = Some(cause.stripFailures)).as(served)
           },
-      // A provider-reported error CODE fails the typed tier, so it arrives on the `Fail` branch above; this
-      // branch is reached only by a resolution with `reason = Error` and no code — still a served-default fallback, so
-      // it still gets the breadcrumb.
+      // An error-coded resolution arrives here when `resolutionForTotal` returns the provider's own answer: it is
+      // served with the caller's default, keeping the variant, flag metadata and message the provider gave. A
+      // resolution with `reason = Error` and no code is likewise a served-default fallback and gets the breadcrumb.
       resolved =>
-        if (resolved.isError) logFallback(key, resolved, defect = None).as(resolved) else ZIO.succeed(resolved)
+        resolved.errorCode match {
+          case Some(code) =>
+            val served = resolved.copy(
+              value = default,
+              reason = ResolutionReason.Error,
+              errorMessage = resolved.errorMessage.orElse(
+                Some(Evaluator.errorFromResolution(key, code, None, FlagType[A].typeName).message)
+              )
+            )
+            logFallback(key, served, defect = None).as(served)
+          case None =>
+            if (resolved.isError) logFallback(key, resolved, defect = None).as(resolved) else ZIO.succeed(resolved)
+        }
     )
+
+  /** The resolution the total tier serves from. By default the typed tier's, whose provider-reported error codes arrive
+    * as failures; an implementation that can return the provider's own error resolution instead — its variant, flag
+    * metadata and message — overrides this.
+    */
+  private[openfeature] def resolutionForTotal[A: FlagType](
+    key: String,
+    default: A,
+    ctx: EvaluationContext,
+    options: EvaluationOptions
+  )(typed: => IO[FeatureFlagError, FlagResolution[A]]): IO[FeatureFlagError, FlagResolution[A]] = typed
 
   /** The total tier's breadcrumb for a served-default fallback: called by `totalResolution` with the resolution about
     * to be served and, for an absorbed defect, its cause. Logging only — it never affects the resolution. The default

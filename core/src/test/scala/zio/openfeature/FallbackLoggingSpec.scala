@@ -122,7 +122,9 @@ object FallbackLoggingSpec extends ZIOSpecDefault {
         } yield assertTrue(
           v1,                // resolution unchanged: default served
           first.length == 2, // one line per key
-          first.exists(m => m.contains("'hot'") && m.contains("FlagNotFound") && m.contains("not found")),
+          first.exists(m =>
+            m.contains("'hot'") && m.contains("FlagNotFound") && m.contains("does not exist")
+          ), // the provider's own message
           first.exists(m => m.contains("'other'") && m.contains("7")),
           first.forall(!_.contains("suppressed")),
           all.length == 3,

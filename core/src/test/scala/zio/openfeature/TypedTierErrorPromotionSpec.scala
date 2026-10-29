@@ -176,7 +176,7 @@ object TypedTierErrorPromotionSpec extends ZIOSpecDefault {
         } yield assertTrue(v == true, d.value == true, d.errorCode.isEmpty, d.reason == ResolutionReason.Static)
       )
     },
-    // --- the total tier is unchanged in what it serves --------------------------------------------------------------
+    // --- the total tier serves the default, with the provider's own error details ---------------------------------
     test("total tier: valueOrDefault serves the default; resolveOrDefault carries the code and reason Error") {
       withFF((ff, _) =>
         for {
@@ -187,7 +187,7 @@ object TypedTierErrorPromotionSpec extends ZIOSpecDefault {
           r.value == true,
           r.errorCode.contains(ErrorCode.FlagNotFound),
           r.reason == ResolutionReason.Error,
-          r.errorMessage.contains("Flag 'not-found' not found")
+          r.errorMessage.contains("no such flag") // the provider's own message
         )
       )
     },

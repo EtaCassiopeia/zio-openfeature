@@ -1,6 +1,7 @@
 package zio.openfeature.ofrep
 
 import com.github.tomakehurst.wiremock.WireMockServer
+import com.github.tomakehurst.wiremock.client.ResponseDefinitionBuilder
 import com.github.tomakehurst.wiremock.client.WireMock._
 import com.github.tomakehurst.wiremock.core.WireMockConfiguration
 import com.github.tomakehurst.wiremock.http.Fault
@@ -21,7 +22,9 @@ import zio.test.TestAspect.{sequential, timeout, withLiveClock}
   *     synchronously, the throw bubbles out of `attemptBlocking`, and `FeatureFlagError.classify` maps it to a typed
   *     error — `Unreachable` for known network exception types, `ProviderError` otherwise.
   *   - Slow responses: when an evaluation timeout is configured on the `FeatureFlags` layer, slow responses surface as
-  *     `ProviderError(TimeoutException)`.
+  *     `ProviderError(TimeoutException)`, whether the server stalls before answering or dribbles the body out.
+  *   - Broken responses (random bytes, a malformed chunk, an empty response, truncated JSON, an HTML page served with
+  *     status 200): a typed error or an error-coded resolution, never a silent default.
   *
   * Tests run sequentially because the contrib provider 0.0.2 has order-sensitive internal executor handling.
   */
@@ -33,6 +36,13 @@ object OFREPFailureModeSpec extends ZIOSpecDefault {
     try body(server)
     finally server.stop()
   }
+
+  /** Wait for the async initialization to finish, so a cold first test does not evaluate before `PROVIDER_READY`. */
+  private def awaitReady(ff: FeatureFlags): Task[Unit] =
+    ff.providerStatus
+      .repeat(Schedule.recurUntil[ProviderStatus](_ == ProviderStatus.Ready) && Schedule.spaced(20.millis))
+      .timeoutFail(new IllegalStateException("the OFREP provider did not become ready"))(10.seconds)
+      .unit
 
   private def baseUrl(server: WireMockServer): String = s"http://localhost:${server.port()}"
 
@@ -58,8 +68,7 @@ object OFREPFailureModeSpec extends ZIOSpecDefault {
                 case None => FeatureFlags.fromProviderAsync(provider).build
               }
               ff = env.get[FeatureFlags]
-              // Wait briefly so PROVIDER_READY fires before we start evaluating.
-              _ <- ZIO.sleep(100.millis)
+              _ <- awaitReady(ff)
               r <- ZIO.attempt(body(ff))
             } yield r
           }
@@ -68,7 +77,81 @@ object OFREPFailureModeSpec extends ZIOSpecDefault {
       .getOrThrowFiberFailure()
   }
 
+  private def details(ff: FeatureFlags, key: String): Either[FeatureFlagError, FlagResolution[Boolean]] =
+    Unsafe.unsafe { implicit u =>
+      Runtime.default.unsafe
+        .run(ff.booleanDetails(key, default = false).either.withClock(Clock.ClockLive))
+        .getOrThrowFiberFailure()
+    }
+
+  /** The failure surfaced: a typed error, or a resolution carrying an error code. Never a silent default. */
+  private def flagged(result: Either[FeatureFlagError, FlagResolution[Boolean]]): Boolean =
+    result.fold(_ => true, _.errorCode.isDefined)
+
+  private def parseError(result: Either[FeatureFlagError, FlagResolution[Boolean]]): Boolean =
+    result match {
+      case Left(_: FeatureFlagError.ParseError) => true
+      case _                                    => false
+    }
+
+  // Responses a proxy, a crashing server or a half-dead connection can hand back in place of an OFREP answer.
+  // Each pairs the response with what must come back: a body that arrives but does not parse is a `ParseError`.
+  private val brokenResponses
+    : List[(String, ResponseDefinitionBuilder, Either[FeatureFlagError, FlagResolution[Boolean]] => Boolean)] = List(
+    ("random bytes, then the connection closes", aResponse().withFault(Fault.RANDOM_DATA_THEN_CLOSE), flagged),
+    ("a malformed chunk", aResponse().withFault(Fault.MALFORMED_RESPONSE_CHUNK), flagged),
+    ("an empty response", aResponse().withFault(Fault.EMPTY_RESPONSE), flagged),
+    ("truncated JSON", okJson("""{"key":"broken","value":tr"""), parseError),
+    (
+      "an HTML page with status 200",
+      aResponse()
+        .withStatus(200)
+        .withHeader("Content-Type", "text/html")
+        .withBody("<html><body><h1>Gateway</h1></body></html>"),
+      parseError
+    )
+  )
+
+  private def stubBroken(server: WireMockServer, response: ResponseDefinitionBuilder): Unit = {
+    val _ = server.stubFor(post(urlEqualTo("/ofrep/v1/evaluate/flags/broken")).willReturn(response))
+  }
+
   def spec = suite("OFREP failure-mode integration (WireMock)")(
+    suite("broken responses surface as failures, not as a silent default")(
+      brokenResponses.map { case (name, response, expected) =>
+        test(name) {
+          withMockServer { server =>
+            stubBroken(server, response)
+            // Evaluate inside the scope: `assertTrue` is lazy, so an expression left in it would run after shutdown.
+            val result = withFeatureFlags(server, evaluationTimeout = Some(5.seconds))(details(_, "broken"))
+            assertTrue(expected(result))
+          }
+        }
+      }: _*
+    ),
+    test("a response dribbled out slower than the evaluation timeout fails with a timeout") {
+      withMockServer { server =>
+        stubBroken(
+          server,
+          okJson("""{"key":"broken","value":true,"reason":"TARGETING_MATCH"}""").withChunkedDribbleDelay(10, 3000)
+        )
+        val result = withFeatureFlags(server, evaluationTimeout = Some(500.millis))(details(_, "broken"))
+        assertTrue(result match {
+          case Left(FeatureFlagError.ProviderError(t)) => t.isInstanceOf[java.util.concurrent.TimeoutException]
+          case _                                       => false
+        })
+      }
+    },
+    test("a response dribbled out within the evaluation timeout is served") {
+      withMockServer { server =>
+        stubBroken(
+          server,
+          okJson("""{"key":"broken","value":true,"reason":"TARGETING_MATCH"}""").withChunkedDribbleDelay(5, 300)
+        )
+        val result = withFeatureFlags(server, evaluationTimeout = Some(5.seconds))(details(_, "broken"))
+        assertTrue(result.exists(r => r.value && r.errorCode.isEmpty))
+      }
+    },
     test(
       "[B1] 401 -> typed failure on the typed tier; the total tier's FlagResolution carries a non-empty errorCode (operator-actionable)"
     ) {
@@ -202,7 +285,7 @@ object OFREPFailureModeSpec extends ZIOSpecDefault {
                       )
                       .build
                     ff = env.get[FeatureFlags]
-                    _      <- ZIO.sleep(100.millis)
+                    _      <- awaitReady(ff)
                     before <- ff.booleanDetails("probe", default = false).either
                     _      <- ZIO.attempt(server.stop())
                     after  <- ff.booleanDetails("probe", default = false).either

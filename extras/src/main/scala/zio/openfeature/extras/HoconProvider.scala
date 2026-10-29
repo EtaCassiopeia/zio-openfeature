@@ -230,7 +230,15 @@ object HoconProvider {
 
   /** Create from a specific `Config` object. An injected config has no external source, so `reload()` keeps it as-is
     * rather than discarding it — use `apply(path)` for a reloadable classpath-backed provider.
+    *
+    * The config is resolved here, as `ConfigFactory.load` resolves the one `apply` reads, so one built with
+    * `ConfigFactory.parseString` that uses substitutions reads normally.
+    *
+    * @throws com.typesafe.config.ConfigException.UnresolvedSubstitution
+    *   if a required substitution cannot be resolved
     */
-  def fromConfig(config: Config): HoconProvider =
-    new HoconProvider(new AtomicReference(config), () => config)
+  def fromConfig(config: Config): HoconProvider = {
+    val resolved = config.resolve()
+    new HoconProvider(new AtomicReference(resolved), () => resolved)
+  }
 }

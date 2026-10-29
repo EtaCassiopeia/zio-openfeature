@@ -1,0 +1,5 @@
+# Tests the nightly flake hunt (scripts/flake-report.py, .github/workflows/flake-hunt.yml) may see change outcome,
+# each with the issue tracking it. Listed ones are still reported, but do not fail the run. Remove an entry when its
+# issue is fixed. One per line: `<suite class>` or `<suite class>::<test name>`, then `# <tracking issue>`; an entry
+# without a tracking note does not count as tracked.
+zio.openfeature.extras.NestedWrapperTimeoutSpec # #586: CachingProvider shares an interrupted load with the next caller

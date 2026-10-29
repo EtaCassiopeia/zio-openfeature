@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`HoconProvider.fromConfig` resolves the config it is given** (#583). A config built with `ConfigFactory.parseString`
+  that used substitutions (`limit = ${base}`, `x = ${?ENV_VAR}`) was taken unresolved, so every read of it threw
+  Typesafe Config's `NotResolved`, reported as a `GENERAL` error rather than the flag's value. `fromConfig` now
+  resolves it, as `ConfigFactory.load` does for `HoconProvider(path)`; a required substitution that cannot be resolved
+  fails at construction instead. Found by the new fuzz targets.
+
 - **A half-open circuit breaker no longer rejects a caller that should have been its probe** (#577). Claiming the probe
   slot is a compare-and-swap, and losing it was taken to mean another caller had become the probe. A concurrent,
   unrelated change to the breaker's state (a success or a reachability signal recorded at the same moment) also makes

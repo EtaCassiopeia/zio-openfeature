@@ -170,6 +170,20 @@ object HoconProviderSpec extends ZIOSpecDefault {
         val p   = HoconProvider.fromConfig(cfg)
         val r   = p.getBooleanEvaluation("flag", false, ctx)
         assertTrue(r.getValue == true)
+      },
+      test("fromConfig resolves substitutions, so a config parsed without resolve() still reads") {
+        val cfg = ConfigFactory.parseString(
+          "base = 10\nlimit = ${base}\noptional = ${?ZIO_OPENFEATURE_SURELY_UNSET}\nflag = true"
+        )
+        val p = HoconProvider.fromConfig(cfg)
+        assertTrue(
+          p.getBooleanEvaluation("flag", false, ctx).getValue == true,
+          p.getIntegerEvaluation("limit", 0, ctx).getValue == 10
+        )
+      },
+      test("fromConfig rejects a substitution it cannot resolve when constructed, not on every read") {
+        val cfg = ConfigFactory.parseString("limit = ${ZIO_OPENFEATURE_SURELY_UNSET}")
+        assertTrue(scala.util.Try(HoconProvider.fromConfig(cfg)).isFailure)
       }
     ),
     suite("reload")(

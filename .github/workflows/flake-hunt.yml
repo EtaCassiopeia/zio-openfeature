@@ -1,0 +1,70 @@
+name: Flake hunt
+
+# Nightly: runs the whole suite five times on two CPUs and reports every test whose outcome changed between runs, and
+# every suite that went missing from a run (a crash or a hang). Load-dependent flakes otherwise turn up by chance in PR
+# CI; two CPUs make the scheduling squeeze that exposes them routine. Never a PR check.
+#
+# A finding fails the run unless .github/flaky-tests.txt lists it with a tracking issue, so a new flake is noticed.
+
+on:
+  schedule:
+    # 01:00 UTC daily, before the property run.
+    - cron: '0 1 * * *'
+  workflow_dispatch:
+    inputs:
+      runs:
+        description: 'How many times to run the suite'
+        required: false
+        type: number
+        default: 5
+
+permissions:
+  contents: read
+
+# Force any JavaScript action still bundled with Node 20 to run on Node 24 (see ci.yml).
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  hunt:
+    runs-on: ubuntu-latest
+    # Five runs of at most 30 minutes each, plus the compile.
+    timeout-minutes: 200
+    steps:
+      - uses: actions/checkout@v7
+      - name: Set up JDK 21
+        uses: actions/setup-java@v6
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: sbt
+      - name: Setup sbt
+        uses: sbt/setup-sbt@v1
+      - name: Compile once
+        run: sbt Test/compile
+      - name: Run the suite repeatedly on two CPUs
+        env:
+          RUNS: ${{ inputs.runs || 5 }}
+        run: |
+          # `taskset` pins sbt and the test JVMs it forks to two CPUs; the JVM sizes its pools from that too.
+          # A failing run is the point, so it does not stop the loop. A run that hangs is cut off at 30 minutes, so the
+          # report still gets written; the suites it never finished show up as missing from that run.
+          for i in $(seq 1 "$RUNS"); do
+            find . -path ./.git -prune -o -type d -name test-reports -path '*/target/*' -print0 | xargs -0 rm -rf
+            timeout 30m taskset -c 0,1 sbt test > "run-$i.log" 2>&1 || echo "run $i had failures or timed out"
+            mkdir -p "runs/$i"
+            find . -path ./runs -prune -o -name 'TEST-*.xml' -path '*/target/test-reports/*' -print0 \
+              | xargs -0 -I{} cp {} "runs/$i/"
+          done
+      - name: Report
+        if: always()
+        run: python3 scripts/flake-report.py runs/* --known .github/flaky-tests.txt --summary "$GITHUB_STEP_SUMMARY"
+      - name: Upload the runs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: flake-hunt
+          path: |
+            runs/
+            run-*.log
+          if-no-files-found: warn

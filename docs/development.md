@@ -92,7 +92,20 @@ python3 scripts/visuals/build.py evaluation   # one
 
 ## Extra checks
 
-Mutation testing and the provider fault tests never run on a pull request; the property tests run a short version there.
+Mutation testing, the flake hunt, fuzzing and the provider fault tests never run on a pull request; the property tests
+run a short version there.
+
+**Flake hunt.** The nightly `Flake hunt` workflow runs the whole suite five times on two CPUs and compares the JUnit
+reports with `scripts/flake-report.py`: a test that failed in one run and passed in another, one that failed in every
+run, and a suite missing from a run (a crash or hang) are all reported in the job summary. A finding fails the run
+unless `.github/flaky-tests.txt` lists it with its tracking issue; remove the entry when the issue is fixed.
+
+**Fuzzing.** The `fuzz` module (not aggregated, compiled in CI) holds [Jazzer](https://github.com/CodeIntelligenceTesting/jazzer)
+targets for the code that reads untrusted input: environment variable values, HOCON text, and OFREP responses served by
+a local server. Each typed read must return an evaluation or throw an `OpenFeatureError`; anything else is a finding.
+The weekly `Fuzzing` workflow runs each target for five minutes from the corpus in `fuzz/corpus/<target>/` and uploads
+findings with a Java reproducer, plus new corpus entries to fold back in by hand. The command to run one locally is in
+the comment on the module in the build.
 
 **Mutation testing** makes small deliberate changes to `core` and `extras` (flipping a condition, swapping an
 operator) and checks that a test fails for each. A full run takes hours, so the `Mutation testing` workflow runs weekly

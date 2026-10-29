@@ -3,7 +3,7 @@ package zio.openfeature.optimizely
 import com.github.tomakehurst.wiremock.WireMockServer
 import com.github.tomakehurst.wiremock.client.WireMock._
 import com.github.tomakehurst.wiremock.core.WireMockConfiguration
-import dev.openfeature.sdk.{ErrorCode, ImmutableContext, Reason, Value}
+import dev.openfeature.sdk.{ErrorCode, ImmutableContext, Value}
 import zio._
 import zio.test._
 

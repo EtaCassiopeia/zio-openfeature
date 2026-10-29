@@ -3,7 +3,6 @@ package zio.openfeature.internal
 import zio.openfeature.{AttributeValue, EvaluationContext}
 import dev.openfeature.sdk.{EvaluationContext => OFEvaluationContext, MutableContext, Value, Structure}
 import scala.jdk.CollectionConverters._
-import java.time.Instant
 
 /** Internal utility for converting between zio-openfeature and OpenFeature SDK evaluation contexts. */
 private[openfeature] object ContextConverter {

@@ -2,7 +2,6 @@ package zio.openfeature.optimizely
 
 import dev.openfeature.sdk.{MutableContext, Structure, Value}
 import zio.test._
-import scala.jdk.CollectionConverters._
 
 /** Unit tests for `ContextTransformer.transform`. Optimizely's audience evaluator matches only `String`, `Boolean`, and
   * `Number` attributes, so the transformer normalizes an OpenFeature context accordingly: integral numbers stay

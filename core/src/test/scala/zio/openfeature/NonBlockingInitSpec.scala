@@ -9,12 +9,11 @@ import dev.openfeature.sdk.{
   FeatureProvider,
   Metadata,
   OpenFeatureAPI,
-  ProviderEvaluation,
   ProviderState,
   Value
 }
 import java.util.concurrent.CountDownLatch
-import java.util.concurrent.atomic.{AtomicInteger, AtomicReference}
+import java.util.concurrent.atomic.AtomicInteger
 
 object NonBlockingInitSpec extends ZIOSpecDefault {
 

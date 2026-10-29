@@ -1,6 +1,5 @@
 package zio.openfeature.ofrep
 
-import dev.openfeature.contrib.providers.ofrep.OfrepProvider
 import zio._
 import zio.openfeature.FeatureFlagError
 import zio.test._

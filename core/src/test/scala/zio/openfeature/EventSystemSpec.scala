@@ -11,7 +11,6 @@ import dev.openfeature.sdk.{
   ImmutableMetadata,
   Metadata,
   OpenFeatureAPI,
-  ProviderEvaluation,
   ProviderEventDetails,
   ProviderState,
   Value

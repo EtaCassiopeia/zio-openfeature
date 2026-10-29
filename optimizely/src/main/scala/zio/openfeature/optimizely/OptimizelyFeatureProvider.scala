@@ -141,7 +141,7 @@ final class OptimizelyFeatureProvider private[optimizely] (
       // captured initial revision and is suppressed (the old `stateRef == READY` gate leaked it).
       initLatch.countDown()
       if (OptimizelyFeatureProvider.shouldEmitConfigChange(initialRevisionRef.get(), currentRevision()))
-        emitProviderConfigurationChanged(ProviderEventDetails.builder().build())
+        emitProviderConfigurationChanged(ProviderEventDetails.builder().build()): Unit
     }
     // Optimizely's NotificationManager returns a non-positive id when registration fails (e.g. a duplicate handler
     // is already present). Without the handler we'd silently never count down the latch via the datafile-update
@@ -159,7 +159,7 @@ final class OptimizelyFeatureProvider private[optimizely] (
     if (lifecycle.get() == Lifecycle.ShutDown) {
       val handle = notificationHandle.getAndSet(-1)
       if (handle > 0) {
-        Try(optimizely.getNotificationCenter.removeNotificationListener(handle))
+        val _ = Try(optimizely.getNotificationCenter.removeNotificationListener(handle))
         ()
       }
       stateRef.set(ProviderState.NOT_READY)
@@ -225,7 +225,7 @@ final class OptimizelyFeatureProvider private[optimizely] (
     stopWatchdog()
     val handle = notificationHandle.getAndSet(-1)
     if (handle > 0) {
-      Try(optimizely.getNotificationCenter.removeNotificationListener(handle))
+      val _ = Try(optimizely.getNotificationCenter.removeNotificationListener(handle))
       ()
     }
     stateRef.set(ProviderState.ERROR)
@@ -241,11 +241,11 @@ final class OptimizelyFeatureProvider private[optimizely] (
     val handle = notificationHandle.getAndSet(-1)
     if (handle > 0) {
       // Removing the handler is best-effort; if the notification center is already shut down we ignore.
-      Try(optimizely.getNotificationCenter.removeNotificationListener(handle))
+      val _ = Try(optimizely.getNotificationCenter.removeNotificationListener(handle))
       ()
     }
     if (closeOnShutdown) {
-      Try(optimizely.close())
+      val _ = Try(optimizely.close())
       ownedResources.foreach(r => Try(r.close()))
     }
     stateRef.set(ProviderState.NOT_READY)

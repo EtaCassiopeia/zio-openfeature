@@ -9,7 +9,6 @@ import dev.openfeature.sdk.{
   EvaluationContext => OFEvaluationContext,
   FeatureProvider,
   Metadata,
-  OpenFeatureAPI,
   ProviderState,
   Value
 }

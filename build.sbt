@@ -94,10 +94,43 @@ ThisBuild / scalacOptions ++= Seq(
 ThisBuild / scalacOptions ++= {
   CrossVersion.partialVersion(scalaVersion.value) match {
     case Some((2, _)) => Seq("-Xsource:3", "-Wconf:cat=scala3-migration:w")
-    case Some((3, _)) => Seq("-Xfatal-warnings", "-Yretain-trees")
-    case _            => Seq()
+    // A discarded value is how a ZIO effect gets built and silently never run, so main code may not discard one
+    // without saying so (`: Unit`, `.unit`, `val _ =`). Unused imports, privates and locals are dead code. Unused
+    // parameters are not checked: default hook stages and SDK overrides ignore theirs by design.
+    case Some((3, _)) =>
+      Seq(
+        "-Xfatal-warnings",
+        "-Yretain-trees",
+        "-Wnonunit-statement",
+        "-Wvalue-discard",
+        "-Wunused:imports,privates,locals"
+      )
+    case _ => Seq()
   }
 }
+
+// Tests discard results all the time (a provider call made for its side effect), so there only a discarded ZIO effect
+// fails the build: that is a test step that silently never runs. On 2.13, main code is held to zero warnings too, and
+// the Scala 3 migration hints that only test code triggers are silenced.
+lazy val lintSettings = Seq(
+  // Test inherits Compile's options; on 2.13 only main code is held to zero warnings. On Scala 3 the last matching
+  // `-Wconf` rule wins, so the effect-type errors come after the catch-all silencing.
+  Test / scalacOptions := {
+    val inherited = (Test / scalacOptions).value
+    CrossVersion.partialVersion(scalaVersion.value) match {
+      case Some((2, _)) => inherited.filterNot(_ == "-Werror") :+ "-Wconf:cat=scala3-migration:s"
+      case Some((3, _)) =>
+        inherited :+ "-Wconf:id=E175:s,id=E176:s,id=E175&msg=.*type zio\\.(ZIO|UIO|URIO|IO|Task|RIO)\\b.*:e,id=E176&msg=.*type zio\\.(ZIO|UIO|URIO|IO|Task|RIO)\\b.*:e"
+      case _ => inherited
+    }
+  },
+  Compile / scalacOptions ++= {
+    CrossVersion.partialVersion(scalaVersion.value) match {
+      case Some((2, _)) => Seq("-Werror")
+      case _            => Seq()
+    }
+  }
+)
 
 // Coverage is opt-in (`sbt coverage test coverageReport`), never wired into CI. No fail-on-minimum gate is set:
 // under the pinned sbt-scoverage 2.0.9, coverage instrumentation fails to compile the testkit module on Scala 3.3.4
@@ -164,7 +197,7 @@ lazy val commonSettings = Seq(
   // release version when cutting a new one, per `RELEASING.md`.
   mimaPreviousArtifacts := Set(organization.value %% moduleName.value % "1.2.0"),
   checkPublishedPins    := checkPublishedPinsTask.value
-) ++ crossVersionSourceDirs
+) ++ crossVersionSourceDirs ++ lintSettings
 
 // Shared body for `checkPublishedPins`, so the published modules and the aggregating root cannot drift.
 // `Def.taskIf`, not `Def.task`: a `.value` is a dependency declaration rather than a call, so under `Def.task`
@@ -391,6 +424,7 @@ lazy val testkit = (project in file("testkit"))
 // JUnit test stack stays out of the published `testkit` artifact's dependency surface. The `.feature` files are
 // vendored under src/test/resources (pinned to an upstream spec commit) so the build is hermetic.
 lazy val conformance = (project in file("conformance"))
+  .settings(lintSettings)
   .dependsOn(core, testkit)
   .settings(
     name               := "zio-openfeature-conformance",
@@ -422,6 +456,7 @@ lazy val riftNativesClassifier: Option[String] = {
 }
 
 lazy val conformanceZioBdd = (project in file("conformance-zio-bdd"))
+  .settings(lintSettings)
   // `extras` for the library suites: they evaluate against `HoconProvider`, `EnvVarProvider` and
   // `IntegerWideningLongProvider`.
   .dependsOn(core, testkit, extras)
@@ -498,6 +533,7 @@ lazy val riftEngineDependencies: Seq[ModuleID] = {
 }
 
 lazy val providerFaultTests = (project in file("provider-fault-tests"))
+  .settings(lintSettings)
   .enablePlugins(RiftTlsPlugin)
   .dependsOn(core, extras, ofrep, optimizely)
   // Scala 3 only, and the sources live in `scala-3/` because `.scalafmt.conf` pins `src/test/scala/**` to the scala213

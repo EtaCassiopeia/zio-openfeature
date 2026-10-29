@@ -128,7 +128,7 @@ final private[openfeature] class EventBridge(
       val refreshName = ZIO.succeed {
         val eventName = details.getProviderName
         if (current && eventName != null)
-          providerNameRef.compareAndSet(FeatureFlags.UnknownProviderName, eventName)
+          providerNameRef.compareAndSet(FeatureFlags.UnknownProviderName, eventName): Unit
         ()
       }
       refreshName *>

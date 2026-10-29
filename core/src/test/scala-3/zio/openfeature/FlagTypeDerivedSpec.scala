@@ -10,7 +10,6 @@ import dev.openfeature.sdk.{
   Metadata,
   OpenFeatureAPI,
   ProviderState,
-  Structure,
   Value
 }
 

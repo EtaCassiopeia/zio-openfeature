@@ -1,7 +1,6 @@
 package zio.openfeature
 
 import zio.test._
-import zio.test.Assertion._
 import zio.openfeature.internal.ContextConverter
 import scala.jdk.CollectionConverters._
 

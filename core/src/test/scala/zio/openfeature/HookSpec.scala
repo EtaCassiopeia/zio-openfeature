@@ -2,7 +2,6 @@ package zio.openfeature
 
 import zio._
 import zio.test._
-import zio.test.Assertion._
 
 object HookSpec extends ZIOSpecDefault {
 

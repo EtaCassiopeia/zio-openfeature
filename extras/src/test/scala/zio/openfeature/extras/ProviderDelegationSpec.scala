@@ -7,7 +7,6 @@ import dev.openfeature.sdk.{
   ImmutableContext,
   Metadata,
   MutableTrackingEventDetails,
-  ProviderEvaluation,
   ProviderState,
   TrackingEventDetails,
   Value

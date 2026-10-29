@@ -129,7 +129,11 @@ lazy val lintSettings = Seq(
       case Some((2, _)) => Seq("-Werror")
       case _            => Seq()
     }
-  }
+  },
+  // The doc task inherits the compiler options, but its warnings are about how links render, not about the code:
+  // overloaded names, links into another module and links to Java classes. Kept fatal, they failed every release's
+  // `packageDoc` on 2.13 while compiling stayed green.
+  Compile / doc / scalacOptions := (Compile / doc / scalacOptions).value.filterNot(_ == "-Werror")
 )
 
 // Coverage is opt-in (`sbt coverage test coverageReport coverageAggregate`), so ordinary builds stay uninstrumented.

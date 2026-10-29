@@ -159,7 +159,7 @@ object SingleReadyDeliverySpec extends ZIOSpecDefault {
           provider <- ZIO.succeed(new BoolProvider("shared"))
           _        <- ZIO.attemptBlocking(api.setProviderAndWait(provider))
           latch    <- ZIO.succeed(new CountDownLatch(2))
-          ff <- FeatureFlags.buildAsync(
+          ff       <- FeatureFlags.buildAsync(
             provider,
             domain = Some(domain()),
             version = None,
@@ -195,7 +195,7 @@ object SingleReadyDeliverySpec extends ZIOSpecDefault {
           _     <- ZIO.attemptBlocking(api.setProviderAndWait(new BoolProvider("default")))
           gated <- ZIO.succeed(new GatedProvider("gated"))
           latch <- ZIO.succeed(new CountDownLatch(2))
-          ff <- FeatureFlags.buildAsync(
+          ff    <- FeatureFlags.buildAsync(
             gated,
             domain = Some(domain()),
             version = None,
@@ -220,7 +220,7 @@ object SingleReadyDeliverySpec extends ZIOSpecDefault {
           dom       <- ZIO.succeed(domain())
           statusRef <- SubscriptionRef.make[ProviderStatus](ProviderStatus.NotReady)
           latch     <- ZIO.succeed(new CountDownLatch(1))
-          exit <- FeatureFlags
+          exit      <- FeatureFlags
             .fromProviderWithDomain(new ErrorEmittingProvider("same"), dom, statusRef, Some(api), Some(latch))
             .build
             .exit

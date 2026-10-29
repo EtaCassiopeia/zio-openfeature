@@ -53,7 +53,7 @@ object OFREPFailureModeSpec extends ZIOSpecDefault {
           .scoped {
             for {
               provider <- OFREPProvider.make(baseUrl(server))
-              env <- evaluationTimeout match {
+              env      <- evaluationTimeout match {
                 case Some(d) =>
                   FeatureFlags
                     .fromProvider(provider, FeatureFlagsConfig(initMode = InitMode.Async).withEvaluationTimeout(d))
@@ -198,7 +198,7 @@ object OFREPFailureModeSpec extends ZIOSpecDefault {
                 .scoped {
                   for {
                     provider <- OFREPProvider.make(baseUrl(server))
-                    env <- FeatureFlags
+                    env      <- FeatureFlags
                       .fromProvider(
                         provider,
                         FeatureFlagsConfig(initMode = InitMode.Async).withEvaluationTimeout(1.second)

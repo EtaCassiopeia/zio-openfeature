@@ -216,7 +216,7 @@ final class CachingProvider private (
     // could disagree with `get` if the entry expires between the two, and one cache operation per evaluation instead of
     // two.
     val ran = new AtomicBoolean(false)
-    val ck = new CacheKey(
+    val ck  = new CacheKey(
       key,
       flagType,
       contextFingerprint(context),
@@ -324,8 +324,8 @@ object CachingProvider {
     config: CachingConfig = CachingConfig()
   ): IO[FeatureFlagError.InvalidConfiguration, CachingProvider] =
     for {
-      _  <- ZIO.fromEither(ConfigValidation.caching(config))
-      rt <- ZIO.runtime[Any]
+      _     <- ZIO.fromEither(ConfigValidation.caching(config))
+      rt    <- ZIO.runtime[Any]
       cache <- Cache.make(
         config.maxEntries,
         config.ttl,

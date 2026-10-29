@@ -27,8 +27,8 @@ object VerifySpec extends ZIOSpecDefault {
     private def answer[T](getter: String, key: String, d: T): ProviderEvaluation[T] = {
       lastCall.set(s"$getter:$key")
       mode match {
-        case RecordingProvider.Mode.Found   => ProviderEvaluations.of(d, "STATIC")
-        case RecordingProvider.Mode.Default => ProviderEvaluations.of(d, "DEFAULT")
+        case RecordingProvider.Mode.Found    => ProviderEvaluations.of(d, "STATIC")
+        case RecordingProvider.Mode.Default  => ProviderEvaluations.of(d, "DEFAULT")
         case RecordingProvider.Mode.NotFound =>
           ProviderEvaluations.error(d, OFErrorCode.FLAG_NOT_FOUND, s"no flag $key")
         case RecordingProvider.Mode.Mismatch => ProviderEvaluations.error(d, OFErrorCode.TYPE_MISMATCH, "wrong type")
@@ -141,7 +141,7 @@ object VerifySpec extends ZIOSpecDefault {
     },
     test("flagExists passes the supplied evaluation context to the provider") {
       val seen = new AtomicReference[String]("")
-      val p = new RecordingProvider(RecordingProvider.Mode.Found) {
+      val p    = new RecordingProvider(RecordingProvider.Mode.Found) {
         override def getBooleanEvaluation(k: String, d: java.lang.Boolean, c: OFEvaluationContext) = {
           seen.set(c.getTargetingKey)
           super.getBooleanEvaluation(k, d, c)

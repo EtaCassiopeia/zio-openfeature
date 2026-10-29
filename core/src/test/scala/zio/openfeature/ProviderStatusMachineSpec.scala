@@ -95,7 +95,7 @@ object ProviderStatusMachineSpec extends ZIOSpecDefault {
     suite("bridge events gated by swap/shutdown context")(
       test("every Event* is a no-op when swapInProgress") {
         val eventSignals = List(Signal.EventReady, Signal.EventError(false), Signal.EventError(true), Signal.EventStale)
-        val checks = for {
+        val checks       = for {
           signal <- eventSignals
           status <- allStatuses
         } yield assertTrue(t(status, signal, Context(everReady = false, swapInProgress = true, false)).isEmpty)
@@ -103,7 +103,7 @@ object ProviderStatusMachineSpec extends ZIOSpecDefault {
       },
       test("every Event* is a no-op when shutdownCompleted") {
         val eventSignals = List(Signal.EventReady, Signal.EventError(false), Signal.EventError(true), Signal.EventStale)
-        val checks = for {
+        val checks       = for {
           signal <- eventSignals
           status <- allStatuses
         } yield assertTrue(t(status, signal, Context(everReady = false, false, shutdownCompleted = true)).isEmpty)

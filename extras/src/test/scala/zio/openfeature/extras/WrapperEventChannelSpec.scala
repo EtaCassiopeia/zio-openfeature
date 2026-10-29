@@ -63,14 +63,14 @@ object WrapperEventChannelSpec extends ZIOSpecDefault {
 
   private def failedAttachKeepsOwner(make: EmittingDelegate => EventProvider with FeatureProvider): Task[TestResult] =
     for {
-      delegate <- ZIO.succeed(new EmittingDelegate)
-      owner    <- ZIO.succeed(make(delegate))
-      intruder <- ZIO.succeed(make(delegate))
-      _        <- ZIO.attemptBlocking(owner.initialize(ctx))
-      seen     <- ZIO.succeed(record(owner))
-      second   <- ZIO.attemptBlocking(intruder.initialize(ctx)).either // the delegate is already attached
-      _        <- ZIO.attemptBlocking(intruder.shutdown())
-      _        <- ZIO.attemptBlocking(delegate.configChanged())
+      delegate  <- ZIO.succeed(new EmittingDelegate)
+      owner     <- ZIO.succeed(make(delegate))
+      intruder  <- ZIO.succeed(make(delegate))
+      _         <- ZIO.attemptBlocking(owner.initialize(ctx))
+      seen      <- ZIO.succeed(record(owner))
+      second    <- ZIO.attemptBlocking(intruder.initialize(ctx)).either // the delegate is already attached
+      _         <- ZIO.attemptBlocking(intruder.shutdown())
+      _         <- ZIO.attemptBlocking(delegate.configChanged())
       reEmitted <- Live.live(
         ZIO
           .succeed(seen.contains(ProviderEvent.PROVIDER_CONFIGURATION_CHANGED))

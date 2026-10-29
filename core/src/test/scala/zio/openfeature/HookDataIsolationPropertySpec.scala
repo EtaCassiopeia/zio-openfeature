@@ -85,7 +85,7 @@ object HookDataIsolationPropertySpec extends ZIOSpecDefault {
         ZIO.scoped {
           for {
             seen <- Ref.make(Map.empty[String, Read])
-            ff <- FeatureFlags.build(
+            ff   <- FeatureFlags.build(
               new InstantProvider,
               domain = Some(s"hookdata-prop-${java.util.UUID.randomUUID()}"),
               version = None,

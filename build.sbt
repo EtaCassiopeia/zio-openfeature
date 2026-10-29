@@ -38,8 +38,8 @@ ThisBuild / organization       := "io.github.etacassiopeia"
 // Tags should follow SemVer: v0.1.0, v1.0.0, etc.
 // Snapshots are automatically versioned as: 0.1.0+3-abcd1234-SNAPSHOT
 
-ThisBuild / homepage := Some(url("https://github.com/EtaCassiopeia/zio-openfeature"))
-ThisBuild / licenses := List("Apache-2.0" -> url("https://www.apache.org/licenses/LICENSE-2.0"))
+ThisBuild / homepage   := Some(url("https://github.com/EtaCassiopeia/zio-openfeature"))
+ThisBuild / licenses   := List("Apache-2.0" -> url("https://www.apache.org/licenses/LICENSE-2.0"))
 ThisBuild / developers := List(
   Developer(
     id = "EtaCassiopeia",
@@ -73,7 +73,7 @@ ThisBuild / version := {
     scala.util.Try(cmd.!!).toOption.map(_.trim).filter(_.nonEmpty)
   git("git describe --tags --exact-match") match {
     case Some(tag) => tag.stripPrefix("v") // on a release tag → exact release version
-    case None =>
+    case None      =>
       val lastTag = git("git describe --tags --abbrev=0").map(_.stripPrefix("v")).getOrElse("0.0.0")
       // bump the final numeric run of the last tag (RC2 -> RC3, 0.5.2 -> 0.5.3, 1.0.0 -> 1.0.1)
       val next = """(\d+)(\D*)$""".r.replaceAllIn(lastTag, m => (m.group(1).toInt + 1).toString + m.group(2))
@@ -186,7 +186,7 @@ lazy val checkPublishedPinsTask = Def.taskIf {
       ((d \ "groupId").text.trim, (d \ "artifactId").text.trim) -> ((d \ "version").text.trim, inherited)
     }.toMap
     val (sv, sbv) = (scalaVersion.value, scalaBinaryVersion.value)
-    val problems = overrides.flatMap { m =>
+    val problems  = overrides.flatMap { m =>
       val artifact = CrossVersion(m.crossVersion, sv, sbv).fold(m.name)(rename => rename(m.name))
       declared.get((m.organization, artifact)) match {
         // Declared at a scope no consumer inherits. The pin then governs this build alone and there is nothing
@@ -278,7 +278,7 @@ lazy val extras = (project in file("extras"))
     libraryDependencies ++= Seq(
       "dev.zio"     %% "zio"       % zioVersion,
       "dev.zio"     %% "zio-cache" % "0.2.8",
-      "com.typesafe" % "config"    % "1.4.3"
+      "com.typesafe" % "config"    % "1.4.9"
     )
   )
 
@@ -431,7 +431,7 @@ lazy val conformance = (project in file("conformance"))
 // The `rift-java-natives` classifier for the JVM running the build. `None` on a host with no published natives
 // (e.g. Windows): the dependency is then omitted and `EmbeddedRift.requireAvailable` fails the suites loudly.
 lazy val riftNativesClassifier: Option[String] = {
-  val os = System.getProperty("os.name").toLowerCase
+  val os   = System.getProperty("os.name").toLowerCase
   val arch = System.getProperty("os.arch").toLowerCase match {
     case "arm64"         => "aarch64"
     case "amd64" | "x64" => "x86_64"
@@ -515,9 +515,8 @@ lazy val riftEngineDependencies: Seq[ModuleID] = {
   val major = scala.util.Try(spec.stripPrefix("1.").takeWhile(_.isDigit).toInt).getOrElse(0)
   if (major >= 22)
     ("io.github.achird-labs" % "rift-java-embedded" % riftJavaInterceptVersion % Test) +:
-      riftNativesClassifier.toSeq.map(c =>
-        ("io.github.achird-labs" % "rift-java-natives" % riftJavaInterceptVersion % Test).classifier(c)
-      )
+      riftNativesClassifier.toSeq
+        .map(c => ("io.github.achird-labs" % "rift-java-natives" % riftJavaInterceptVersion % Test).classifier(c))
   else Seq.empty
 }
 

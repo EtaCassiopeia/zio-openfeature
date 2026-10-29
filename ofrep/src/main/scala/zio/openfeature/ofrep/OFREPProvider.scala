@@ -65,7 +65,7 @@ object OFREPProvider {
   // pool eagerly — so any path that builds options but never constructs/shuts down a provider (e.g. a validation
   // rejection) orphans the pool and can hang `sbt +test`. We always supply our own daemon executor so the contrib
   // default is never instantiated by code that goes through this wrapper.
-  private val counter = new AtomicInteger(0)
+  private val counter                            = new AtomicInteger(0)
   private val daemonThreadFactory: ThreadFactory = (r: Runnable) => {
     val t = new Thread(r, s"zio-openfeature-ofrep-${counter.incrementAndGet()}")
     t.setDaemon(true)

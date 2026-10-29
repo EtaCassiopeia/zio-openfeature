@@ -49,14 +49,16 @@ object OptimizelyFaultSpec extends ZIOSpecDefault:
 
   private def syncTest(fault: Fault) =
     test(
-      s"fromProvider, $fault: the layer ${if fault == Fault.Healthy then "builds" else "fails with the provider's error"}"
+      s"fromProvider, $fault: the layer ${
+          if fault == Fault.Healthy then "builds" else "fails with the provider's error"
+        }"
     ) {
       for
         _     <- Fault.install(fault, host, healthy)
         scope <- Scope.make
         timed <- (for
           provider <- OptimizelyProvider.scoped(config)
-          built <- FeatureFlags
+          built    <- FeatureFlags
             .fromProvider(
               provider,
               FeatureFlagsConfig().withDomain(s"optimizely-sync-$fault").withInitTimeout(initTimeout)

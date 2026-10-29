@@ -57,14 +57,14 @@ object Fault:
       handle <- ZIO.service[InterceptHandle]
       _      <- handle.clearRules
       _      <- engine.deleteAll
-      served = (response: IsResponseBuilder) => handle.rule(host).serve(response).unit
+      served       = (response: IsResponseBuilder) => handle.rule(host).serve(response).unit
       imposterWith = (name: String, response: IsResponseBuilder) =>
         engine.create(imposter(name).stub(onRequest.reply(response))).flatMap(handle.rule(host).redirectTo(_)).unit
       _ <- fault match
-        case Fault.Healthy => served(ok.header("Content-Type", jsonType).json(healthy))
+        case Fault.Healthy      => served(ok.header("Content-Type", jsonType).json(healthy))
         case Fault.Unauthorized =>
           served(status(401).header("Content-Type", jsonType).json("""{"error":"unauthorized"}"""))
-        case Fault.Forbidden => served(status(403).header("Content-Type", jsonType).json("""{"error":"forbidden"}"""))
+        case Fault.Forbidden   => served(status(403).header("Content-Type", jsonType).json("""{"error":"forbidden"}"""))
         case Fault.Unavailable =>
           served(status(503).header("Content-Type", jsonType).json("""{"error":"unavailable"}"""))
         case Fault.RateLimited =>
@@ -74,6 +74,6 @@ object Fault:
         case Fault.NotJson   => served(ok.header("Content-Type", jsonType).text("<html>captive portal</html>"))
         case Fault.Truncated => served(ok.header("Content-Type", jsonType).text(healthy.take(healthy.length / 2)))
         case Fault.Reset     => imposterWith("reset", ok.withTcpFault(TcpFaultKind.ConnectionResetByPeer))
-        case Fault.Stalled =>
+        case Fault.Stalled   =>
           imposterWith("stalled", ok.header("Content-Type", jsonType).json(healthy).after(stallFor))
     yield ()

@@ -41,7 +41,7 @@ private[openfeature] object ContextConverter {
       if (l.isValidInt) new Value(Integer.valueOf(l.toInt)) else new Value(java.lang.Long.valueOf(l))
     case AttributeValue.DoubleValue(d)   => new Value(d)
     case AttributeValue.InstantValue(dt) => new Value(dt)
-    case AttributeValue.ListValue(list) =>
+    case AttributeValue.ListValue(list)  =>
       val javaList = list.map(attributeToValue).asJava
       new Value(javaList)
     case AttributeValue.StructValue(map) =>
@@ -76,7 +76,7 @@ private[openfeature] object ContextConverter {
     else if (value.isNumber) value.asObject() match {
       // Integral boxes convert exactly; only other numbers go through the whole-double check below.
       case i: java.lang.Integer => AttributeValue.IntValue(i.intValue)
-      case l: java.lang.Long =>
+      case l: java.lang.Long    =>
         if (l.longValue.isValidInt) AttributeValue.IntValue(l.intValue) else AttributeValue.LongValue(l.longValue)
       case _ => doubleToAttribute(value.asDouble())
     }

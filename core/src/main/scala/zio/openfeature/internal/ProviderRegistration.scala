@@ -181,9 +181,9 @@ private[openfeature] object ProviderRegistration {
       // equals and binds that registration's instance.
       if (bound != provider) throw new RegistrationSuperseded
       stateClient.getProviderState match {
-        case ProviderState.READY | ProviderState.STALE => ()
+        case ProviderState.READY | ProviderState.STALE            => ()
         case failed @ (ProviderState.ERROR | ProviderState.FATAL) =>
-          val error = awaitInitError(lastError)
+          val error   = awaitInitError(lastError)
           val message =
             error.map(_.message).filter(_.nonEmpty).getOrElse(s"Provider entered $failed during initialization")
           if (failed == ProviderState.FATAL || error.exists(_.fatal)) throw new FatalError(message)

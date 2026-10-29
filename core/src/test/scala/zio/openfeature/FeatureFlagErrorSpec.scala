@@ -200,7 +200,7 @@ object FeatureFlagErrorSpec extends ZIOSpecDefault {
       },
       test("UnknownHostException is classified as Unreachable") {
         val cause = new java.net.UnknownHostException("flags.example.com")
-        val ok = FeatureFlagError.classify(cause) match {
+        val ok    = FeatureFlagError.classify(cause) match {
           case FeatureFlagError.Unreachable(t) => t eq cause
           case _                               => false
         }
@@ -208,7 +208,7 @@ object FeatureFlagErrorSpec extends ZIOSpecDefault {
       },
       test("ConnectException is classified as Unreachable") {
         val cause = new java.net.ConnectException("connection refused")
-        val ok = FeatureFlagError.classify(cause) match {
+        val ok    = FeatureFlagError.classify(cause) match {
           case FeatureFlagError.Unreachable(t) => t eq cause
           case _                               => false
         }
@@ -216,7 +216,7 @@ object FeatureFlagErrorSpec extends ZIOSpecDefault {
       },
       test("NoRouteToHostException is classified as Unreachable") {
         val cause = new java.net.NoRouteToHostException("no route")
-        val ok = FeatureFlagError.classify(cause) match {
+        val ok    = FeatureFlagError.classify(cause) match {
           case _: FeatureFlagError.Unreachable => true
           case _                               => false
         }
@@ -224,7 +224,7 @@ object FeatureFlagErrorSpec extends ZIOSpecDefault {
       },
       test("RuntimeException with 401 in message is classified as Unauthorized") {
         val cause = new RuntimeException("HTTP 401: Unauthorized")
-        val ok = FeatureFlagError.classify(cause) match {
+        val ok    = FeatureFlagError.classify(cause) match {
           case FeatureFlagError.Unauthorized(reason) => reason.contains("401")
           case _                                     => false
         }
@@ -232,7 +232,7 @@ object FeatureFlagErrorSpec extends ZIOSpecDefault {
       },
       test("RuntimeException with forbidden in message is classified as Unauthorized") {
         val cause = new RuntimeException("Forbidden")
-        val ok = FeatureFlagError.classify(cause) match {
+        val ok    = FeatureFlagError.classify(cause) match {
           case _: FeatureFlagError.Unauthorized => true
           case _                                => false
         }
@@ -240,7 +240,7 @@ object FeatureFlagErrorSpec extends ZIOSpecDefault {
       },
       test("SocketTimeoutException falls through to ProviderError (timeout != unreachable)") {
         val cause = new java.net.SocketTimeoutException("read timed out")
-        val ok = FeatureFlagError.classify(cause) match {
+        val ok    = FeatureFlagError.classify(cause) match {
           case FeatureFlagError.ProviderError(t) => t eq cause
           case _                                 => false
         }
@@ -248,7 +248,7 @@ object FeatureFlagErrorSpec extends ZIOSpecDefault {
       },
       test("generic RuntimeException falls through to ProviderError") {
         val cause = new RuntimeException("something broke")
-        val ok = FeatureFlagError.classify(cause) match {
+        val ok    = FeatureFlagError.classify(cause) match {
           case FeatureFlagError.ProviderError(t) => t eq cause
           case _                                 => false
         }

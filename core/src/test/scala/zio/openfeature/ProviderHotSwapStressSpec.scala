@@ -153,7 +153,7 @@ object ProviderHotSwapStressSpec extends ZIOSpecDefault {
               evaluationTimeout = Some(5.seconds)
             )
             evalFibers <- ZIO.foreach(1 to evaluators)(_ => ZIO.foreach(1 to EvalsPerFiber)(_ => runOne(ff)).fork)
-            _ <- ZIO.foreachDiscard(swaps) {
+            _          <- ZIO.foreachDiscard(swaps) {
               case Some(v) => ff.setProvider(new ConstantProvider(s"good-$v", v)).either.ignore
               case None    => ff.setProvider(new FailingInitProvider).either.ignore
             }

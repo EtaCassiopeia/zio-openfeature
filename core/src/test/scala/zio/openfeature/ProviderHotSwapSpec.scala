@@ -240,7 +240,7 @@ object ProviderHotSwapSpec extends ZIOSpecDefault {
       // provider), status must be Ready, and metadata must name A — the SDK client routing is reconciled, not just
       // the internal providerRef.
       ZIO.scoped {
-        val providerA = new SimpleProvider("A", Map("flag" -> true))
+        val providerA       = new SimpleProvider("A", Map("flag" -> true))
         val failingProvider = new SimpleProvider("Failing", Map("flag" -> false)) {
           override def initialize(ctx: OFEvaluationContext): Unit =
             throw new RuntimeException("Initialization failed")
@@ -289,7 +289,7 @@ object ProviderHotSwapSpec extends ZIOSpecDefault {
     },
     test("recovery after failed swap") {
       ZIO.scoped {
-        val providerA = new SimpleProvider("A", Map("flag" -> true))
+        val providerA       = new SimpleProvider("A", Map("flag" -> true))
         val failingProvider = new SimpleProvider("Failing", Map.empty) {
           override def initialize(ctx: OFEvaluationContext): Unit =
             throw new RuntimeException("fail")
@@ -312,7 +312,7 @@ object ProviderHotSwapSpec extends ZIOSpecDefault {
     test("no-domain failed swap rolls back routing and status") {
       // The rollback branches on `domain`; exercise the default-slot (no-domain) path.
       ZIO.scoped {
-        val providerA = new SimpleProvider("A", Map("flag" -> true))
+        val providerA       = new SimpleProvider("A", Map("flag" -> true))
         val failingProvider = new SimpleProvider("Failing", Map("flag" -> false)) {
           override def initialize(ctx: OFEvaluationContext): Unit =
             throw new RuntimeException("Initialization failed")
@@ -356,7 +356,7 @@ object ProviderHotSwapSpec extends ZIOSpecDefault {
           def fireConfigChanged(): Unit =
             emitProviderConfigurationChanged(dev.openfeature.sdk.ProviderEventDetails.builder().build())
         }
-        val providerA = new EmittingProvider
+        val providerA       = new EmittingProvider
         val failingProvider = new SimpleProvider("Failing", Map.empty) {
           override def initialize(ctx: OFEvaluationContext): Unit =
             throw new RuntimeException("Initialization failed")
@@ -374,8 +374,8 @@ object ProviderHotSwapSpec extends ZIOSpecDefault {
     test("failed swap eventually shuts the failed provider down") {
       // On a successful rollback the SDK's shutDownOld tears down the failed provider (async).
       ZIO.scoped {
-        val failShutdowns = new java.util.concurrent.atomic.AtomicInteger(0)
-        val providerA     = new SimpleProvider("A", Map("flag" -> true))
+        val failShutdowns   = new java.util.concurrent.atomic.AtomicInteger(0)
+        val providerA       = new SimpleProvider("A", Map("flag" -> true))
         val failingProvider = new SimpleProvider("Failing", Map.empty) {
           override def initialize(ctx: OFEvaluationContext): Unit =
             throw new RuntimeException("Initialization failed")
@@ -384,7 +384,7 @@ object ProviderHotSwapSpec extends ZIOSpecDefault {
         for {
           ff <- buildWithDomain(providerA)
           _  <- ff.setProvider(failingProvider).either
-          _ <- ZIO
+          _  <- ZIO
             .succeed(failShutdowns.get())
             .repeatUntil(_ >= 1)
             .timeoutFail(new RuntimeException("failed provider never shut down"))(5.seconds)
@@ -407,7 +407,7 @@ object ProviderHotSwapSpec extends ZIOSpecDefault {
             throw new RuntimeException("original swap failure")
         }
         for {
-          ff <- buildWithDomain(providerA)
+          ff     <- buildWithDomain(providerA)
           result <- ff
             .setProvider(failingProvider)
             .either
@@ -435,10 +435,10 @@ object ProviderHotSwapSpec extends ZIOSpecDefault {
         val sharedInit = new java.util.concurrent.atomic.AtomicInteger(0)
         class SharedProvider extends SimpleProvider("Shared", Map("flag" -> true)) {
           override def initialize(ctx: OFEvaluationContext): Unit = { sharedInit.incrementAndGet(); () }
-          def fireConfigChanged(): Unit =
+          def fireConfigChanged(): Unit                           =
             emitProviderConfigurationChanged(dev.openfeature.sdk.ProviderEventDetails.builder().build())
         }
-        val shared = new SharedProvider
+        val shared          = new SharedProvider
         val failingProvider = new SimpleProvider("Failing", Map.empty) {
           override def initialize(ctx: OFEvaluationContext): Unit =
             throw new RuntimeException("Initialization failed")
@@ -456,7 +456,7 @@ object ProviderHotSwapSpec extends ZIOSpecDefault {
           received <- Queue.unbounded[ProviderEvent]
           _        <- ff2.on(ProviderEventType.ConfigurationChanged, e => received.offer(e).unit)
           _        <- ZIO.attemptBlocking(shared.fireConfigChanged()).orDie
-          ev <- received.take.timeoutFail(new RuntimeException("domain-2 events severed by domain-1 rollback"))(
+          ev       <- received.take.timeoutFail(new RuntimeException("domain-2 events severed by domain-1 rollback"))(
             5.seconds
           )
           initAfter = sharedInit.get()

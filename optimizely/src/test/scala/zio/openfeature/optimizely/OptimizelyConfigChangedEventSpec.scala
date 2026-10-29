@@ -51,7 +51,7 @@ object OptimizelyConfigChangedEventSpec extends ZIOSpecDefault {
       withMockServer { server =>
         server.stubFor(get(urlEqualTo(DatafilePath)).willReturn(okJson(ValidDatafileV1)))
         val datafileUrl = s"http://localhost:${server.port()}$DatafilePath"
-        val provider = Unsafe.unsafe { implicit u =>
+        val provider    = Unsafe.unsafe { implicit u =>
           Runtime.default.unsafe
             .run(OptimizelyProvider.make("struct-check-key", Some(datafileUrl), OptimizelyTestSupport.InitWait))
             .getOrThrowFiberFailure()

@@ -105,7 +105,7 @@ object FeatureFlagErrorStatusSpec extends ZIOSpecDefault {
       }
     },
     test("Unauthorized built from a reason alone has no cause, and still matches by reason") {
-      val u = FeatureFlagError.Unauthorized("bad key")
+      val u       = FeatureFlagError.Unauthorized("bad key")
       val matched = u match {
         case FeatureFlagError.Unauthorized(r) => r == "bad key"
       }

@@ -38,7 +38,7 @@ private[optimizely] object ContextTransformer {
     */
   def eventTags(details: dev.openfeature.sdk.TrackingEventDetails): java.util.Map[String, Object] =
     Option(details) match {
-      case None => new java.util.HashMap[String, Object]()
+      case None    => new java.util.HashMap[String, Object]()
       case Some(d) =>
         val tags = normalize(d.asObjectMap())
         if (d.getValue.isPresent) tags.put("value", java.lang.Double.valueOf(d.getValue.get.doubleValue))

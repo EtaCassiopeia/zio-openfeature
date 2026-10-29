@@ -173,7 +173,7 @@ final class FaultyProvider[+P <: FeatureProvider] private (val delegate: P, name
 
   private def nextFault(op: Op): Fault =
     Option(scripts.get(op)) match {
-      case None => Fault.Succeed
+      case None      => Fault.Succeed
       case Some(ref) =>
         ref.getAndUpdate(s => if (s.size > 1) s.tail else s).headOption.getOrElse(Fault.Succeed)
     }

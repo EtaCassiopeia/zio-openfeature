@@ -181,7 +181,7 @@ object FaultyProviderSpec extends ZIOSpecDefault {
           for {
             fp <- FaultyProvider.scoped()
             _  <- ZIO.attemptBlocking(api.setProviderAndWait(domain, fp))
-            _ <- ZIO.succeed(
+            _  <- ZIO.succeed(
               api.onProviderConfigurationChanged((_: EventDetails) => delivered.countDown())
             )
             _ <- fp.script(
@@ -239,7 +239,7 @@ object FaultyProviderSpec extends ZIOSpecDefault {
     test("scoped releases a hang still parked when the scope closes, and later hangs return at once") {
       for {
         parkedFiber <- Promise.make[Nothing, Fiber[Throwable, Unit]]
-        fp <- ZIO.scoped {
+        fp          <- ZIO.scoped {
           for {
             fp    <- FaultyProvider.scoped()
             _     <- fp.script(Op.Initialize, Fault.HangUntilReleased)

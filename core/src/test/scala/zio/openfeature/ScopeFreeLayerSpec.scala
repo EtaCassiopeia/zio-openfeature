@@ -36,7 +36,7 @@ object ScopeFreeLayerSpec extends ZIOSpecDefault {
   }
 
   private def isolated(config: FeatureFlagsConfig = FeatureFlagsConfig()) = {
-    val provider = new FlagProvider("scope-free")
+    val provider                                    = new FlagProvider("scope-free")
     val layer: ZLayer[Any, Throwable, FeatureFlags] =
       FeatureFlags.fromProvider(provider, config, statusRef = None, apiOverride = Some(OpenFeatureAPI.createIsolated()))
     (provider, layer)

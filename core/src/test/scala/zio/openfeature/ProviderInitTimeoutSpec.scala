@@ -162,13 +162,13 @@ object ProviderInitTimeoutSpec extends ZIOSpecDefault {
         .ensuring(ZIO.succeed(stuck.release()))
     },
     test("the scope-close API shutdown is bounded even though finalizers run uninterruptibly") {
-      val api = OpenFeatureAPI.createIsolated()
+      val api          = OpenFeatureAPI.createIsolated()
       val slowShutdown = new BoolProvider("slow-shutdown", true) {
         override def shutdown(): Unit = Thread.sleep(4000)
       }
       Live.live(
         for {
-          _ <- ZIO.attemptBlocking(api.setProviderAndWait(slowShutdown))
+          _     <- ZIO.attemptBlocking(api.setProviderAndWait(slowShutdown))
           timed <- elapsedMillis(
             ZIO.scoped(ZIO.addFinalizer(ProviderRegistration.boundedApiShutdown(api, 300.millis)))
           )
@@ -218,7 +218,7 @@ object ProviderInitTimeoutSpec extends ZIOSpecDefault {
         .live(
           for {
             waiter <- ProviderRegistration.registerAndAwait(api, Some(domain), stuck, 10.seconds).either.fork
-            _ <- ZIO
+            _      <- ZIO
               .attemptBlocking(api.getProvider(domain))
               .repeatUntil(_ eq stuck)
               .timeoutFail("first registration never bound")(5.seconds)
@@ -232,8 +232,8 @@ object ProviderInitTimeoutSpec extends ZIOSpecDefault {
         .ensuring(ZIO.succeed(stuck.release()) *> ZIO.attemptBlocking(api.shutdown()).ignore)
     },
     test("fromAcquireAsync with a stuck real provider keeps the fallback serving and reports the failure") {
-      val firstFallback = new BoolProvider("fb", false)
-      val fallbacks     = new java.util.concurrent.ConcurrentLinkedQueue[BoolProvider]()
+      val firstFallback                          = new BoolProvider("fb", false)
+      val fallbacks                              = new java.util.concurrent.ConcurrentLinkedQueue[BoolProvider]()
       val fallback: URIO[Scope, FeatureProvider] = ZIO.succeed {
         val fb = if (fallbacks.isEmpty) firstFallback else new BoolProvider("fb", false)
         fallbacks.add(fb)
@@ -244,7 +244,7 @@ object ProviderInitTimeoutSpec extends ZIOSpecDefault {
       bounded("fromAcquireAsync") {
         for {
           errP <- Promise.make[Nothing, Throwable]
-          env <- FeatureFlags
+          env  <- FeatureFlags
             .fromAcquireAsync(
               acquire,
               fallback,

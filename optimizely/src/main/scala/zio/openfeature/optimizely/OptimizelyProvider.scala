@@ -437,7 +437,7 @@ object OptimizelyProvider {
     // and logs a WARN on every build. Wired like `OptimizelyFactory.newDefaultInstance`, except that this provider owns
     // the CMAB HTTP client so it can close it: `Optimizely.close()` does not.
     val cmabHttpClient = com.optimizely.ab.OptimizelyHttpClient.builder().build()
-    val cmabService = com.optimizely.ab.cmab.service.DefaultCmabService
+    val cmabService    = com.optimizely.ab.cmab.service.DefaultCmabService
       .builder()
       .withClient(new com.optimizely.ab.cmab.DefaultCmabClient(cmabHttpClient))
       .build()
@@ -451,7 +451,7 @@ object OptimizelyProvider {
     // `Batched` wires what `OptimizelyFactory.newDefaultInstance` does, a batch processor in front of an async
     // handler, without the factory itself: it also starts an ODP manager and reads global `PropertyUtils` state.
     val eventExecutor = events match {
-      case OptimizelyEvents.Disabled => None
+      case OptimizelyEvents.Disabled         => None
       case batched: OptimizelyEvents.Batched =>
         val closeTimeoutMs = math.max(1L, batched.closeTimeout.toMillis)
         // The handler shares the CMAB HTTP client, so the provider owns a single HTTP client.
@@ -466,7 +466,7 @@ object OptimizelyProvider {
             .build()
         )
         // An executor the provider owns, so it can shut it down: `BatchEventProcessor.close()` does not (see make).
-        val executor = Executors.newSingleThreadExecutor(EventProcessorThreadFactory)
+        val executor  = Executors.newSingleThreadExecutor(EventProcessorThreadFactory)
         val processor = BatchEventProcessor
           .builder()
           .withEventHandler(handler)
@@ -551,8 +551,8 @@ object OptimizelyProvider {
   private[optimizely] def validateEvents(events: OptimizelyEvents): IO[FeatureFlagError.InvalidConfiguration, Unit] = {
     def fail(reason: String) = ZIO.fail(FeatureFlagError.InvalidConfiguration(reason))
     events match {
-      case null                      => fail("Optimizely events is null")
-      case OptimizelyEvents.Disabled => ZIO.unit
+      case null                                                             => fail("Optimizely events is null")
+      case OptimizelyEvents.Disabled                                        => ZIO.unit
       case OptimizelyEvents.Batched(batchSize, flushInterval, closeTimeout) =>
         if (batchSize < 1) fail(s"Optimizely events.batchSize must be at least 1: $batchSize")
         else if (flushInterval == null) fail("Optimizely events.flushInterval is null")

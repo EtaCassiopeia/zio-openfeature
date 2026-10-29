@@ -81,8 +81,8 @@ object CachingInvalidationPropertySpec extends ZIOSpecDefault {
   def spec = suite("CachingInvalidationPropertySpec")(
     test("no value computed before an invalidation is served after it completes") {
       check(schedules) { case Schedule(parkedKeys, postKeys, viaEvent) =>
-        val delegate = new LatchedProvider(parkedKeys.distinct.size)
-        val cache    = CachingProvider(delegate)
+        val delegate               = new LatchedProvider(parkedKeys.distinct.size)
+        val cache                  = CachingProvider(delegate)
         val invalidate: Task[Unit] =
           if (viaEvent) ZIO.attemptBlocking(delegate.configChanged())
           else cache.invalidateAll

@@ -40,7 +40,7 @@ object RecommendationServiceSpec extends ZIOSpecDefault {
           s
         })(s => ZIO.succeed(s.stop()))
         dataUrl = s"http://localhost:${server.port()}$DatafilePath"
-        config = OptimizelyProviderConfig(
+        config  = OptimizelyProviderConfig(
           sdkKey = SdkKey,
           datafileUrl = Some(dataUrl),
           initWait = OptimizelyTestSupport.InitWait,

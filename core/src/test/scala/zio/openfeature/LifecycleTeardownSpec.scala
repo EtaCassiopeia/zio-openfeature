@@ -70,7 +70,7 @@ object LifecycleTeardownSpec extends ZIOSpecDefault {
     test("a fiber already parked in awaitReady() returns when the instance shuts down") {
       val entered = new CountDownLatch(1)
       val release = new CountDownLatch(1)
-      val gated = new BoolProvider() {
+      val gated   = new BoolProvider() {
         override def initialize(ctx: OFEvaluationContext): Unit = { entered.countDown(); release.await() }
       }
       ZIO

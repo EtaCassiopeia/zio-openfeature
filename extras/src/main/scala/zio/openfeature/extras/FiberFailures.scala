@@ -17,10 +17,10 @@ private[extras] object FiberFailures {
     case ff: zio.FiberFailure =>
       ff.cause.failureOption match {
         case Some(t: Throwable) => t
-        case _ =>
+        case _                  =>
           ff.cause.dieOption match {
             case Some(t) => t
-            case None =>
+            case None    =>
               if (ff.cause.isInterrupted) new TimeoutException("Evaluation was interrupted")
               else ff
           }

@@ -38,8 +38,8 @@ object SetProviderInterruptSpec extends ZIOSpecDefault {
 
   /** initialize() signals `entered`, then waits for `release`; afterwards it succeeds or throws. */
   private class GatedProvider(name: String, failAfterRelease: Boolean) extends BoolProvider(name, true) {
-    val entered = new CountDownLatch(1)
-    val release = new CountDownLatch(1)
+    val entered                                             = new CountDownLatch(1)
+    val release                                             = new CountDownLatch(1)
     override def initialize(ctx: OFEvaluationContext): Unit = {
       entered.countDown()
       release.await()

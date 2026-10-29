@@ -77,8 +77,8 @@ object WrapperLaws {
       "wrapper-law-targeting-key",
       Map[String, Value]("wrapper-law-attribute" -> new Value("wrapper-law-attribute-value")).asJava
     )
-  private val domain    = "wrapper-law-domain"
-  private val eventName = "wrapper-law-event"
+  private val domain              = "wrapper-law-domain"
+  private val eventName           = "wrapper-law-event"
   private def details: OFTracking =
     new MutableTrackingEventDetails(java.lang.Double.valueOf(42.5))
       .add("wrapper-law-detail", "wrapper-law-detail-value")
@@ -101,14 +101,14 @@ object WrapperLaws {
     case Op.GetMetadata      => primed("getMetadata.getName")(_.getMetadata.getName)
     case Op.GetProviderHooks => primed("getProviderHooks")(_.getProviderHooks)
     case Op.GetState         => primed("getState")(_.getState)
-    case Op.Initialize =>
+    case Op.Initialize       =>
       Chunk(
         Invocation("initialize(ctx)", primed = false, _.initialize(context), Chunk(context)),
         Invocation("initialize(ctx, domain)", primed = false, _.initialize(context, domain), Chunk(context, domain))
       )
     case Op.Shutdown       => primed("shutdown")(_.shutdown())
     case Op.IsDomainScoped => primed("isDomainScoped")(_.isDomainScoped())
-    case Op.Track =>
+    case Op.Track          =>
       val d = details
       primed("track", eventName, context, d)(_.track(eventName, context, d))
     case Op.EvaluateBoolean =>
@@ -152,7 +152,7 @@ object WrapperLaws {
     ZIO.scoped {
       for {
         recorder <- FaultyProvider.scoped()
-        wrapper <- ZIO.acquireRelease(ZIO.attempt(wrap(recorder))) { w =>
+        wrapper  <- ZIO.acquireRelease(ZIO.attempt(wrap(recorder))) { w =>
           if (op == Op.Shutdown) ZIO.unit else ZIO.attemptBlocking(w.shutdown()).orDie
         }
         _      <- ZIO.attemptBlocking(wrapper.initialize(context, domain)).when(invocation.primed)

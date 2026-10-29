@@ -96,7 +96,7 @@ jobs:
   # for a new module when you add one.
   mima:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
       - name: Set up JDK 21
@@ -109,6 +109,10 @@ jobs:
         uses: sbt/setup-sbt@v1
       - name: Check binary compatibility
         run: sbt +mimaReportBinaryIssues
+      # The release publishes each module's API docs for both Scala versions, and nothing else on a PR builds them: a
+      # doc failure would otherwise first show up as a failed snapshot publish on main.
+      - name: Build the API docs
+        run: sbt +packageDoc
 
   # A `dependencyOverrides` pin is resolution-only and never reaches the published POM, so a version pinned only that
   # way protects this build and no consumer — #402, where a `jackson-core` security pin reached zero of them. The

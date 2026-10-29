@@ -203,13 +203,22 @@ final private class FeatureFlagRegistryLive(
   // holds a STATIC write lock for the whole blocking initialization, serializing provider startup across
   // every domain (and every OpenFeatureAPI instance in the JVM) — the async `setProvider` only holds it
   // for the registration itself, so domains genuinely initialize in parallel.
+  //
+  // A provider whose last initialization failed is initialized again first: registering it would otherwise reuse the
+  // SDK's failed registration and replay its error. Each build then owns a child of the registry scope. A successful
+  // client lives until the registry closes; a failed one is released at once, since its event bridge and init watchdog
+  // would otherwise outlive it, and the watchdog would later shut down the provider a retry brought up.
   private def buildClient(domain: Option[String]): IO[FeatureFlagError, FeatureFlags] =
     for {
       provider <- domain match {
         case Some(d) => providers.get.map(_.getOrElse(d, defaultProvider))
         case None    => ZIO.succeed(defaultProvider)
       }
-      client <- scope
+      _ <- ProviderRegistration
+        .retryFailedInitialization(api, domain, provider, FeatureFlags.DefaultInitTimeout)
+        .mapError(t => FeatureFlagError.ProviderInitializationFailed(t))
+      child  <- scope.fork
+      client <- child
         .extend[Any](
           FeatureFlags.buildAsync(
             provider,
@@ -222,7 +231,8 @@ final private class FeatureFlagRegistryLive(
           )
         )
         .mapError(t => FeatureFlagError.ProviderInitializationFailed(t))
-      _ <- awaitReady(client)
+        .tap(awaitReady)
+        .onError(cause => child.close(Exit.failCause(cause)))
     } yield client
 
   /** Wait for the freshly registered provider to become usable, failing typed on error states or timeout.

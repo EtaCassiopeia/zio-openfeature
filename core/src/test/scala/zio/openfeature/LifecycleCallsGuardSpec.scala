@@ -17,8 +17,10 @@ object LifecycleCallsGuardSpec extends ZIOSpecDefault {
   private val providerCall = """\.(shutdown\(\)|initialize\()""".r
 
   // ProviderRegistration holds the bounded helpers. SwitchableProvider is itself a provider: its initialize() and
-  // shutdown() forward to its delegate, and are only ever invoked by the SDK or by those helpers.
-  private val allowed = Set("ProviderRegistration.scala", "SwitchableProvider.scala")
+  // shutdown() forward to its delegate, and are only ever invoked by the SDK or by those helpers. ProviderStateAccess is
+  // an SDK shim that re-runs a failed initialize() through the SDK's state manager; only ProviderRegistration's bounded
+  // helper calls it.
+  private val allowed = Set("ProviderRegistration.scala", "SwitchableProvider.scala", "ProviderStateAccess.scala")
 
   private def code(line: String): String = {
     val trimmed = line.trim

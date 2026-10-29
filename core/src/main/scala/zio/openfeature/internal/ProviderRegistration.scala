@@ -12,7 +12,8 @@ import dev.openfeature.sdk.{
   FeatureProvider => OFFeatureProvider,
   OpenFeatureAPI,
   ProviderEvent => JavaProviderEvent,
-  ProviderState
+  ProviderState,
+  ProviderStateAccess
 }
 import dev.openfeature.sdk.exceptions.{FatalError, GeneralError}
 import zio._
@@ -139,6 +140,22 @@ private[openfeature] object ProviderRegistration {
       .forkDaemon
       .flatMap(_.join)
       .catchAllCause(_ => ZIO.unit) // a failure is already logged by tapErrorCause above
+
+  /** Run `provider`'s initialization again when its registration in `domain`'s slot (the default slot for `None`) is
+    * `ERROR` because its last `initialize()` failed: the SDK would otherwise reuse that registration and never call
+    * `initialize()` again. Anything else — another provider in the slot, `FATAL`, a provider that is initializing or
+    * initialized once — is left alone. Fails with what `initialize()` throws, or a `TimeoutException` after `timeout`.
+    */
+  def retryFailedInitialization(
+    api: OpenFeatureAPI,
+    domain: Option[String],
+    provider: OFFeatureProvider,
+    timeout: Duration
+  ): Task[Unit] =
+    ZIO
+      .attemptBlocking(ProviderStateAccess.retryFailedInit(api, domain.orNull, provider))
+      .disconnect
+      .timeoutFail(new TimeoutException(s"Provider initialization exceeded $timeout"))(timeout)
 
   /** How long a failure path the caller is waiting on gives the failed provider's `shutdown()`: the initialization
     * budget the caller already granted that provider, capped at [[DefaultShutdownTimeout]].

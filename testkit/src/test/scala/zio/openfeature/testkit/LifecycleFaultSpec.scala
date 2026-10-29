@@ -211,10 +211,11 @@ object LifecycleFaultSpec extends ZIOSpecDefault {
           interrupted = calls.exists(_.exists(_.outcome.isInstanceOf[FaultyProvider.Outcome.Threw]))
         } yield assertTrue(timed._2 < 10000L, interrupted)
       },
-      test("a fiber parked in awaitReady() returns when the instance shuts down mid-swap") {
+      // The shutdown waits for the swap to time out (status Error, which does not end the wait) and then ends it.
+      test("a fiber parked in awaitReady() during a swap returns when the instance shuts down") {
         bounded("awaitReady during shutdown") {
           for {
-            ff     <- old.flatMap(buildIsolated(_, timeout = 10.seconds))
+            ff     <- old.flatMap(buildIsolated(_, timeout = 1.second))
             gated  <- FaultyProvider.scoped(name = "gated")
             _      <- gated.script(Op.Initialize, Fault.HangUntilReleased)
             swap   <- ff.setProvider(gated).either.fork // holds the instance NotReady while `gated` initializes

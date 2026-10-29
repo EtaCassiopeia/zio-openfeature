@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A shutdown during a provider swap stays `NotReady`** (#565). `shutdown()` did not wait for an in-flight
+  `setProvider`, so a swap parked in `initialize()` that finished after the teardown moved the status to `Ready`
+  (init released) or `Error` (init timed out), although `NotReady` is documented as final. Deterministic on a shared
+  instance (registry or domain client), a narrow race on an owning one. `shutdown` now waits for in-flight and queued
+  swaps to settle, each bounded by `initTimeout`, then tears down.
 - **`HoconProvider.fromConfig` resolves the config it is given** (#583). A config built with `ConfigFactory.parseString`
   that used substitutions (`limit = ${base}`, `x = ${?ENV_VAR}`) was taken unresolved, so every read of it threw
   Typesafe Config's `NotResolved`, reported as a `GENERAL` error rather than the flag's value. `fromConfig` now

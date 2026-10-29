@@ -21,6 +21,7 @@ import dev.openfeature.sdk.{
   EventProviderAccess,
   OpenFeatureAPI,
   ProviderStateAccess,
+  ProviderEvent => JavaProviderEvent,
   ProviderState => JavaProviderState
 }
 
@@ -99,6 +100,9 @@ final private[openfeature] class FeatureFlagsLive(
   private[openfeature] def onErrorEvent(details: EventDetails): UIO[Unit] = eventBridge.onErrorEvent(details)
 
   private[openfeature] def onStaleEvent(details: EventDetails): UIO[Unit] = eventBridge.onStaleEvent(details)
+
+  private[openfeature] def onSdkEvent(event: JavaProviderEvent, details: EventDetails): UIO[Unit] =
+    eventBridge.onSdkEvent(event, details)
 
   private[openfeature] def startEventBridge: ZIO[Scope, Nothing, Unit] = eventBridge.startEventBridge
 

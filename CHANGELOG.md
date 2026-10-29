@@ -16,6 +16,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   alive. An instance that owns its API now shuts it down in those cases, and the status stays `Error` until a later
   `setProvider`. Installing that previous provider again fails with a clear error until the new one has settled, and
   works after that.
+- **A provider's ERROR then READY no longer leaves the status on `Error`** (#601). The Java SDK runs a provider's
+  event handlers with no ordering between them, so the two events were often applied as READY then ERROR, and the
+  status stayed `Error` until the next event while the provider served normally (11 of 30 rounds in a local repro).
+  The status now follows the SDK's own state for the provider as of each event, which the SDK updates before it runs
+  the event's handlers, so it settles on what the SDK reports. A `ProviderFatal` error still always makes it `Fatal`.
+  A `READY` that finds the provider in `ERROR` is now delivered to handlers instead of dropped.
 - **A shutdown during a provider swap stays `NotReady`** (#565). `shutdown()` did not wait for an in-flight
   `setProvider`, so a swap parked in `initialize()` that finished after the teardown moved the status to `Ready`
   (init released) or `Error` (init timed out), although `NotReady` is documented as final. Deterministic on a shared

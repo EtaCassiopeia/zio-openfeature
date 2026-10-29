@@ -48,24 +48,61 @@ final private[openfeature] class EventBridge(
     * side effects (watchdog shutdown, latch release).
     */
   private[openfeature] def applySignal(signal: Signal): UIO[Option[ProviderStatus]] =
-    state.statusRef.modify { current =>
-      val ctx = ProviderStatusMachine.Context(everReady.get(), swapInProgress.get(), shutdownCompleted.get())
-      ProviderStatusMachine.transition(current, signal, ctx) match {
-        case Some(next) =>
-          // Update the linearization-point flags INSIDE the serialized modify (SubscriptionRef is a
-          // Ref.Synchronized, so the function runs under exclusive access). The writes are idempotent and depend only
-          // on `signal`/`next`, so there is no read-stale window for a concurrent applySignal — closing the tap-lag
-          // gap where a pending `everReady` write could let the watchdog Fatal an already-Ready provider.
-          if (next == ProviderStatus.Ready || next == ProviderStatus.Stale) everReady.set(true)
-          signal match {
-            case Signal.ShutdownCompleted => shutdownCompleted.set(true)
-            case Signal.SwapStarted       => shutdownCompleted.set(false)
-            case _                        => ()
-          }
-          (Some(next), next)
-        case None => (None, current)
+    state.statusRef.modify(transition(_, signal))
+
+  /** [[applySignal]] for an event the SDK delivered: the signal is the one the SDK's own state for this client's slot
+    * implies, read inside the serialized write, and `own` (the event's signal) only while the slot is `NOT_READY` or
+    * unreadable, or when the event is a fatal error. The SDK runs a provider's handlers with no ordering between them,
+    * but writes the slot state before running the event's handlers; so whichever handler applies last reads the final
+    * state, and an ERROR handled after the READY that followed it cannot leave the status on Error. Returns the signal
+    * applied and the transition.
+    */
+  private def applySdkSignal(own: Signal): UIO[(Signal, Option[ProviderStatus])] =
+    state.statusRef
+      .modify { current =>
+        // A fatal error is final whatever the slot reports by the time its handler runs.
+        val (signal, unreadable) =
+          if (own == Signal.EventError(true)) (own, None)
+          else
+            try (signalForSlot(client.getProviderState).getOrElse(own), None)
+            catch { case scala.util.control.NonFatal(e) => (own, Some(e)) }
+        val (transitioned, next) = transition(current, signal)
+        ((signal, transitioned, unreadable), next)
       }
+      .flatMap { case (signal, transitioned, unreadable) =>
+        ZIO
+          .foreachDiscard(unreadable)(e =>
+            ZIO.logWarningCause("event bridge: could not read the SDK state; applying the event as sent", Cause.die(e))
+          )
+          .as((signal, transitioned))
+      }
+
+  private def signalForSlot(slot: JavaProviderState): Option[Signal] = slot match {
+    case JavaProviderState.READY => Some(Signal.EventReady)
+    case JavaProviderState.STALE => Some(Signal.EventStale)
+    case JavaProviderState.ERROR => Some(Signal.EventError(false))
+    case JavaProviderState.FATAL => Some(Signal.EventError(true))
+    case _                       => None
+  }
+
+  private def transition(current: ProviderStatus, signal: Signal): (Option[ProviderStatus], ProviderStatus) = {
+    val ctx = ProviderStatusMachine.Context(everReady.get(), swapInProgress.get(), shutdownCompleted.get())
+    ProviderStatusMachine.transition(current, signal, ctx) match {
+      case Some(next) =>
+        // Update the linearization-point flags INSIDE the serialized modify (SubscriptionRef is a
+        // Ref.Synchronized, so the function runs under exclusive access). The writes are idempotent and depend only
+        // on `signal`/`next`, so there is no read-stale window for a concurrent applySignal — closing the tap-lag
+        // gap where a pending `everReady` write could let the watchdog Fatal an already-Ready provider.
+        if (next == ProviderStatus.Ready || next == ProviderStatus.Stale) everReady.set(true)
+        signal match {
+          case Signal.ShutdownCompleted => shutdownCompleted.set(true)
+          case Signal.SwapStarted       => shutdownCompleted.set(false)
+          case _                        => ()
+        }
+        (Some(next), next)
+      case None => (None, current)
     }
+  }
 
   // The SDK stamps every dispatched event with the emitting provider's metadata name — or NULL when the provider has
   // no metadata/name (verified sdk-1.21.0, OpenFeatureAPI.runHandlersForProvider). An event whose name differs from
@@ -115,10 +152,17 @@ final private[openfeature] class EventBridge(
   // EventDetails. The Java-side Consumers registered in startEventBridge are thin wrappers that run these via
   // `runHandler`. Events are ALWAYS published for observers; identity/machine gating applies only to the status
   // transition and the onReady latch. The one exception is a PROVIDER_READY the SDK itself does not back with a ready
-  // state (see `onSdkReadyEvent`): that one is not delivered at all.
+  // state (see `onSdkEvent`): that one is not delivered at all. With `fromSdk` the status signal comes from the
+  // SDK's state for the slot (`applySdkSignal`); without it, from the event type.
 
-  private[openfeature] def onReadyEvent(details: EventDetails): UIO[Unit] = extractEventMetadata(details).flatMap {
-    em =>
+  /** The status signal for an event from the current provider; None for one from another provider. */
+  private def applyFor(current: Boolean, fromSdk: Boolean, own: Signal): UIO[Option[(Signal, Option[ProviderStatus])]] =
+    if (!current) ZIO.none
+    else if (fromSdk) applySdkSignal(own).asSome
+    else applySignal(own).map(t => Some((own, t)))
+
+  private[openfeature] def onReadyEvent(details: EventDetails, fromSdk: Boolean = false): UIO[Unit] =
+    extractEventMetadata(details).flatMap { em =>
       val current = fromCurrentProvider(details)
       // Refresh a still-"unknown" provider name from the event's stamped name when the READY is from the current
       // provider. A lazy-metadata provider (notably the SDK's MultiProvider) only builds its metadata name inside
@@ -132,52 +176,63 @@ final private[openfeature] class EventBridge(
         ()
       }
       refreshName *>
-        (if (current) applySignal(Signal.EventReady) else ZIO.none) *>
-        state.eventHub.publish(ProviderEvent.Ready(eventProviderMetadata(details), em)).unit *>
-        ZIO.succeed(if (current) onReady.foreach(_.countDown()))
+        applyFor(current, fromSdk, Signal.EventReady).flatMap { applied =>
+          state.eventHub.publish(ProviderEvent.Ready(eventProviderMetadata(details), em)) *>
+            // The latch counts READY deliveries from the current provider.
+            ZIO.succeed(onReady.foreach(_.countDown())).when(applied.nonEmpty)
+        }.unit
+    }
+
+  /** A provider event as the SDK delivers it, with the status signal taken from the SDK's state for the slot.
+    *
+    * A PROVIDER_READY found while this client's slot is still `NOT_READY` is dropped. The SDK sends READY to every
+    * domain bound to a provider when ANY registration of it finishes its init call — including a registration that
+    * reused a manager still initializing for another domain, which returns at once while the state is NOT_READY. The
+    * SDK sets the state before dispatching an event, so a real READY never finds it NOT_READY; the READY the SDK sends
+    * when the shared initialization completes takes the dropped one's place. A READY found with the slot in another
+    * state is delivered, and the status follows that state.
+    */
+  private[openfeature] def onSdkEvent(event: JavaProviderEvent, details: EventDetails): UIO[Unit] = event match {
+    case JavaProviderEvent.PROVIDER_READY =>
+      ZIO
+        .attempt(client.getProviderState)
+        .map(_ != JavaProviderState.NOT_READY)
+        .catchAllCause(c =>
+          // The state cannot be read: fall back to the event, as the identity guard does for an unknown provider.
+          ZIO.logWarningCause("event bridge: could not confirm PROVIDER_READY against the SDK state", c).as(true)
+        )
+        .flatMap { confirmed =>
+          if (confirmed) onReadyEvent(details, fromSdk = true)
+          else ZIO.logDebug("event bridge: dropped a PROVIDER_READY sent while the provider is still initializing")
+        }
+    case JavaProviderEvent.PROVIDER_ERROR => onErrorEvent(details, fromSdk = true)
+    case JavaProviderEvent.PROVIDER_STALE => onStaleEvent(details, fromSdk = true)
+    case _                                => ZIO.unit
   }
 
-  // The SDK's PROVIDER_READY, applied only once the SDK itself reports this client's slot usable. It sends READY to
-  // every domain bound to a provider when ANY registration of it finishes its init call — including a registration that
-  // reused a manager still initializing for another domain, which returns at once while the state is NOT_READY. The
-  // SDK sets the state before dispatching an event, so a real READY always finds it READY (or STALE); an unconfirmed
-  // one is dropped, and the READY the SDK sends when the shared initialization completes takes its place.
-  private[openfeature] def onSdkReadyEvent(details: EventDetails): UIO[Unit] =
-    ZIO
-      .attempt(client.getProviderState)
-      .map(s => s == JavaProviderState.READY || s == JavaProviderState.STALE)
-      .catchAllCause(c =>
-        // The state cannot be read: fall back to the event, as the identity guard does for an unknown provider.
-        ZIO.logWarningCause("event bridge: could not confirm PROVIDER_READY against the SDK state", c).as(true)
-      )
-      .flatMap { confirmed =>
-        if (confirmed) onReadyEvent(details)
-        else ZIO.logDebug("event bridge: dropped a PROVIDER_READY sent while the provider is still initializing")
-      }
-
-  private[openfeature] def onErrorEvent(details: EventDetails): UIO[Unit] = extractEventMetadata(details).flatMap {
-    em =>
+  private[openfeature] def onErrorEvent(details: EventDetails, fromSdk: Boolean = false): UIO[Unit] =
+    extractEventMetadata(details).flatMap { em =>
       val error     = new RuntimeException(Option(details.getMessage).getOrElse("Provider error"))
       val errorCode = Option(details.getErrorCode).map(ErrorCodeConverter.fromJava)
       val fatal     = errorCode.contains(ErrorCode.ProviderFatal)
-      (if (fromCurrentProvider(details)) applySignal(Signal.EventError(fatal)) else ZIO.none).flatMap { transitioned =>
+      applyFor(fromCurrentProvider(details), fromSdk, Signal.EventError(fatal)).flatMap { applied =>
         // A Fatal transition must release latch waiters (registry handshake, awaitReady seeds) so they observe Fatal
         // instead of stalling the full timeout.
-        ZIO.succeed(onReady.foreach(_.countDown())).when(transitioned.contains(ProviderStatus.Fatal))
+        ZIO.succeed(onReady.foreach(_.countDown())).when(applied.exists(_._2.contains(ProviderStatus.Fatal)))
       } *>
         state.eventHub
           .publish(
             ProviderEvent.Error(error, eventProviderMetadata(details), errorCode, Option(details.getMessage), em)
           )
           .unit
-  }
+    }
 
-  private[openfeature] def onStaleEvent(details: EventDetails): UIO[Unit] = extractEventMetadata(details).flatMap {
-    em =>
+  private[openfeature] def onStaleEvent(details: EventDetails, fromSdk: Boolean = false): UIO[Unit] =
+    extractEventMetadata(details).flatMap { em =>
       val reason = Option(details.getMessage).getOrElse("Provider stale")
-      (if (fromCurrentProvider(details)) applySignal(Signal.EventStale) else ZIO.none) *>
+      applyFor(fromCurrentProvider(details), fromSdk, Signal.EventStale) *>
         state.eventHub.publish(ProviderEvent.Stale(reason, eventProviderMetadata(details), em)).unit
-  }
+    }
 
   // Bridge Java SDK provider events to ZIO event system
   private[openfeature] def startEventBridge: ZIO[Scope, Nothing, Unit] = {
@@ -195,13 +250,22 @@ final private[openfeature] class EventBridge(
       // effect so a synchronous throw while building them on the Java emitter thread becomes a defect caught by
       // `runHandler`'s `catchAllCause`, rather than escaping to kill the SDK's dispatch thread.
       val readyHandler: java.util.function.Consumer[EventDetails] =
-        details => runHandler(runtime, "PROVIDER_READY")(ZIO.suspendSucceed(onSdkReadyEvent(details)))
+        details =>
+          runHandler(runtime, "PROVIDER_READY")(
+            ZIO.suspendSucceed(onSdkEvent(JavaProviderEvent.PROVIDER_READY, details))
+          )
 
       val errorHandler: java.util.function.Consumer[EventDetails] =
-        details => runHandler(runtime, "PROVIDER_ERROR")(ZIO.suspendSucceed(onErrorEvent(details)))
+        details =>
+          runHandler(runtime, "PROVIDER_ERROR")(
+            ZIO.suspendSucceed(onSdkEvent(JavaProviderEvent.PROVIDER_ERROR, details))
+          )
 
       val staleHandler: java.util.function.Consumer[EventDetails] =
-        details => runHandler(runtime, "PROVIDER_STALE")(ZIO.suspendSucceed(onStaleEvent(details)))
+        details =>
+          runHandler(runtime, "PROVIDER_STALE")(
+            ZIO.suspendSucceed(onSdkEvent(JavaProviderEvent.PROVIDER_STALE, details))
+          )
 
       val configHandler: java.util.function.Consumer[EventDetails] = details =>
         runHandler(runtime, "PROVIDER_CONFIGURATION_CHANGED")(

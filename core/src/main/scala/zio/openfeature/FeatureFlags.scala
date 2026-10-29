@@ -599,6 +599,11 @@ trait FeatureFlags {
     * with `ProviderNotReady(ShuttingDown)`) and ends at `NotReady`. Client-level and ZIO API-level hooks, the global
     * and client contexts, and the tracked-events recorder are cleared, and the event hub is shut down.
     *
+    * A shutdown called while a [[setProvider]] swap is in flight, or queued, waits for those swaps to settle (each is
+    * bounded by the init timeout) before it starts, so the final `NotReady` is never overwritten by a swap's outcome.
+    * Waiting for an earlier swap to finish can be interrupted, which cancels the shutdown before it has changed
+    * anything; once it starts, it runs to completion.
+    *
     * Provider/API teardown depends on ownership. An instance created by a sole-owner factory (e.g. `fromProvider` /
     * `fromProviderAsync`) shuts down the underlying OpenFeature API, and with it its provider. An instance that shares
     * its API with siblings — a client obtained from `FeatureFlagRegistry`, or any domain-scoped client — leaves the

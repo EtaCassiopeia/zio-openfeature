@@ -144,8 +144,9 @@ object LifecycleModelSpec extends ZIOSpecDefault {
       case Action.EmitReady        => onReady
       case Action.EmitError(fatal) => onError(fatal)
       case Action.EmitStale        => onStale
-      // "Shutdown moves the status to ShuttingDown and then NotReady, and evaluations fail from then on."
-      case Action.Shutdown => copy(status = NotReady, shutDown = true)
+      // "A shutdown called while a provider swap is in flight waits for that swap to finish first"; then "Shutdown
+      // moves the status to ShuttingDown and then NotReady, and evaluations fail from then on."
+      case Action.Shutdown => settle.copy(status = NotReady, shutDown = true)
       case Action.Evaluate => this
       // "Once a swap has started it finishes, with one of the outcomes above, even if the calling fiber is interrupted"
       case Action.InterruptSwap => this
@@ -336,7 +337,16 @@ object LifecycleModelSpec extends ZIOSpecDefault {
         val wait    = if (run.model.swap.nonEmpty || run.model.shutDown) MaybeEventWait else EventWait
         emit(run.providers(emitter), action, tag) *>
           awaitEvent(sut, wait)(_.eventMeta.getString(TagKey).contains(tag)).as(run)
-      case Action.Shutdown => sut.ff.shutdown.as(run)
+      // Returns only once a parked swap has settled; the model's own step settles it.
+      case Action.Shutdown =>
+        for {
+          _       <- sut.ff.shutdown
+          settled <- ZIO.foreach(run.swapFiber.toList ++ run.interrupters)(_.await.timeout(SwapBound))
+          late =
+            if (settled.exists(_.isEmpty))
+              Chunk(s"$where: the parked swap did not settle within $SwapBound of shutdown returning")
+            else Chunk.empty
+        } yield run.copy(swapFiber = None, interrupters = Nil, violations = run.violations ++ late)
       case Action.Evaluate =>
         val expected = run.model.serving
         ZIO

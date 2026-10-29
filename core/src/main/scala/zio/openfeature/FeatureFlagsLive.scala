@@ -608,26 +608,31 @@ final private[openfeature] class FeatureFlagsLive(
     // and ShutdownCompleted makes the final NotReady stick against a late event from the dying provider.
     // Uninterruptible: an interrupt halfway would leave ShuttingDown for good, with the API half torn down. The
     // region is bounded — the API shutdown waits at most its own timeout.
-    (applySignal(Signal.ShutdownStarted) *>
-      // Deregister the bridge handlers BEFORE tearing down the API so no emitter thread races the teardown (the scope
-      // finalizer also calls this — the SDK's removeHandler is idempotent). It takes the SDK's lock, so off the core pool.
-      ZIO.attemptBlocking(bridgeDeregister.get()()).ignore *>
-      state.hooksRef.set(List.empty) *>
-      state.zioApiHooksRef.set(List.empty) *>
-      state.globalContextRef.set(EvaluationContext.empty) *>
-      state.clientContextRef.set(EvaluationContext.empty) *>
-      state.trackRecorder.set(Chunk.empty) *>
-      state.eventHub.shutdown *>
-      // Only tear down the provider/API when this instance solely owns the API (the sole-owner factories). A
-      // non-owning instance — a registry/domain client that shares its API, and possibly its provider, with sibling
-      // clients — must NOT shut the API or the provider: both belong to whatever owns the API (e.g. the registry,
-      // which shuts every registered provider exactly once when its own scope closes). Shutting the API here would
-      // kill sibling clients; shutting the provider directly would kill siblings that share it (the
-      // registry falls back to one shared default provider) and double-shut a provider the API still has registered.
-      // A non-owning `shutdown` therefore releases only this instance's own state (status/hooks/contexts/event hub,
-      // torn down above); retire such clients via whatever owns the API (e.g. the registry).
-      ZIO.when(ownsApi)(ProviderRegistration.boundedApiShutdown(api)) *>
-      applySignal(Signal.ShutdownCompleted).unit).uninterruptible
+    // Serialized with swaps by `swapLock`: a swap's outcome signals are never gated, so one that settled after the
+    // teardown would move the status out of the final NotReady. A shutdown during a swap therefore waits for it to
+    // settle (each swap is bounded by `initTimeout`); waiting for the permit stays interruptible, as in `setProvider`.
+    swapLock.withPermit(
+      (applySignal(Signal.ShutdownStarted) *>
+        // Deregister the bridge handlers BEFORE tearing down the API so no emitter thread races the teardown (the scope
+        // finalizer also calls this — the SDK's removeHandler is idempotent). It takes the SDK's lock, so off the core pool.
+        ZIO.attemptBlocking(bridgeDeregister.get()()).ignore *>
+        state.hooksRef.set(List.empty) *>
+        state.zioApiHooksRef.set(List.empty) *>
+        state.globalContextRef.set(EvaluationContext.empty) *>
+        state.clientContextRef.set(EvaluationContext.empty) *>
+        state.trackRecorder.set(Chunk.empty) *>
+        state.eventHub.shutdown *>
+        // Only tear down the provider/API when this instance solely owns the API (the sole-owner factories). A
+        // non-owning instance — a registry/domain client that shares its API, and possibly its provider, with sibling
+        // clients — must NOT shut the API or the provider: both belong to whatever owns the API (e.g. the registry,
+        // which shuts every registered provider exactly once when its own scope closes). Shutting the API here would
+        // kill sibling clients; shutting the provider directly would kill siblings that share it (the
+        // registry falls back to one shared default provider) and double-shut a provider the API still has registered.
+        // A non-owning `shutdown` therefore releases only this instance's own state (status/hooks/contexts/event hub,
+        // torn down above); retire such clients via whatever owns the API (e.g. the registry).
+        ZIO.when(ownsApi)(ProviderRegistration.boundedApiShutdown(api)) *>
+        applySignal(Signal.ShutdownCompleted).unit).uninterruptible
+    )
 
   // Tracking API
 

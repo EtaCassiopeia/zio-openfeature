@@ -36,7 +36,10 @@ object LifecycleTeardownSpec extends ZIOSpecDefault {
       ProviderEvaluations.of(default, "DEFAULT")
   }
 
-  private def buildIsolated(provider: FeatureProvider): ZIO[Scope, Throwable, FeatureFlags] =
+  private def buildIsolated(
+    provider: FeatureProvider,
+    initTimeout: Duration = FeatureFlags.DefaultInitTimeout
+  ): ZIO[Scope, Throwable, FeatureFlags] =
     FeatureFlags.build(
       provider,
       domain = Some(s"teardown-${java.util.UUID.randomUUID()}"),
@@ -44,7 +47,8 @@ object LifecycleTeardownSpec extends ZIOSpecDefault {
       initialHooks = Nil,
       statusRef = None,
       addShutdownFinalizer = true,
-      apiOverride = Some(OpenFeatureAPI.createIsolated())
+      apiOverride = Some(OpenFeatureAPI.createIsolated()),
+      initTimeout = initTimeout
     )
 
   def spec = suite("LifecycleTeardownSpec")(
@@ -67,7 +71,8 @@ object LifecycleTeardownSpec extends ZIOSpecDefault {
         } yield assertTrue(status.contains(ProviderStatus.NotReady))
       }
     },
-    test("a fiber already parked in awaitReady() returns when the instance shuts down") {
+    // The shutdown waits for the swap to time out (status Error, which does not end the wait) and then ends it.
+    test("a fiber already parked in awaitReady() during a swap returns when the instance shuts down") {
       val entered = new CountDownLatch(1)
       val release = new CountDownLatch(1)
       val gated   = new BoolProvider() {
@@ -76,7 +81,7 @@ object LifecycleTeardownSpec extends ZIOSpecDefault {
       ZIO
         .scoped {
           for {
-            ff     <- buildIsolated(new BoolProvider)
+            ff     <- buildIsolated(new BoolProvider, initTimeout = 1.second)
             swap   <- ff.setProvider(gated).either.fork // holds the instance NotReady while `gated` initializes
             _      <- ZIO.attemptBlocking(entered.await()).orDie
             waiter <- ff.awaitReady().fork

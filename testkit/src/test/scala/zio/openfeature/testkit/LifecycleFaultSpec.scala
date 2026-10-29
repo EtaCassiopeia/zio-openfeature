@@ -248,6 +248,126 @@ object LifecycleFaultSpec extends ZIOSpecDefault {
           } yield assertTrue(status == ProviderStatus.NotReady)
         }
       }
+    ),
+    // A provider whose shutdown() waits on whatever its hung initialize() holds (an HTTP client mid-connect, a poller
+    // joining its thread): every failure path must give up on that shutdown instead of waiting for it.
+    suite("blocking provider shutdown")(
+      test("a sync build whose init hangs fails near its init timeout even when shutdown() blocks") {
+        bounded("sync build, blocking shutdown") {
+          for {
+            stuck     <- FaultyProvider.scoped(name = "stuck")
+            _         <- stuck.script(Op.Initialize, Fault.HangUntilReleased)
+            _         <- stuck.script(Op.Shutdown, Fault.HangUntilReleased)
+            timed     <- elapsedMillis(ZIO.scoped(buildShared(stuck).either).disconnect.timeout(8.seconds))
+            shutdowns <- stuck.entered(Op.Shutdown)
+          } yield
+            // init timeout + at most the same again for the abandoned shutdown, far below the 15s shutdown cap
+            assertTrue(timed._1.exists(_.isLeft), timed._2 < 2000L, shutdowns == 1)
+        }
+      },
+      test("a failed sync build still shuts the provider down before it returns") {
+        bounded("sync build, failed init") {
+          for {
+            failing   <- FaultyProvider.scoped(name = "failing")
+            _         <- failing.script(Op.Initialize, Fault.Throw(new RuntimeException("init failed")))
+            res       <- ZIO.scoped(buildShared(failing).either)
+            shutdowns <- failing.calls(Op.Shutdown)
+          } yield assertTrue(res.isLeft, shutdowns.size == 1)
+        }
+      },
+      test("a failed sync build reports the init failure even when shutdown() throws") {
+        bounded("sync build, throwing shutdown") {
+          for {
+            failing <- FaultyProvider.scoped(name = "failing")
+            _       <- failing.script(Op.Initialize, Fault.Throw(new RuntimeException("init failed")))
+            _       <- failing.script(Op.Shutdown, Fault.Throw(new RuntimeException("shutdown failed")))
+            res     <- ZIO.scoped(buildShared(failing).either)
+          } yield assertTrue(res.left.exists(e => String.valueOf(e.getMessage).contains("init failed")))
+        }
+      },
+      test("the init watchdog publishes Fatal, releases its latch, and lets the scope close while shutdown() blocks") {
+        bounded("watchdog, blocking shutdown") {
+          for {
+            stuck  <- FaultyProvider.scoped(name = "stuck-async")
+            _      <- stuck.script(Op.Initialize, Fault.HangUntilReleased)
+            _      <- stuck.script(Op.Shutdown, Fault.HangUntilReleased)
+            events <- Queue.unbounded[ProviderEvent]
+            latch = new java.util.concurrent.CountDownLatch(1)
+            scope <- Scope.make
+            ff    <- scope.extend[Any](
+              FeatureFlags.buildAsync(
+                stuck,
+                domain = Some(isolatedDomain),
+                version = None,
+                initialHooks = Nil,
+                statusRef = None,
+                addShutdownFinalizer = false,
+                apiOverride = Some(OpenFeatureAPI.createIsolated()),
+                onReady = Some(latch),
+                initTimeout = initTimeout
+              )
+            )
+            _        <- ff.on(ProviderEventType.Error, e => events.offer(e).unit)
+            status   <- ff.providerStatus.repeatUntil(_ == ProviderStatus.Fatal).timeout(10.seconds)
+            fatal    <- events.take.timeout(10.seconds)
+            released <- ZIO.attemptBlocking(latch.await(10, java.util.concurrent.TimeUnit.SECONDS))
+            _        <- stuck.awaitEntered(Op.Shutdown)
+            closed   <- scope.close(Exit.unit).disconnect.timeout(10.seconds)
+          } yield assertTrue(
+            status.isDefined,
+            fatal.exists {
+              case e: ProviderEvent.Error => e.errorCode.contains(ErrorCode.ProviderFatal)
+              case _                      => false
+            },
+            released,
+            closed.isDefined
+          )
+        }
+      },
+      test("setProvider returns when rollback fails and the failed provider's shutdown() blocks") {
+        bounded("rollback cleanup, blocking shutdown") {
+          for {
+            // The first initialize() serves the build; the second, the rollback's re-registration, fails.
+            previous <- FaultyProvider.scoped(Map("x" -> false), name = "previous")
+            _    <- previous.script(Op.Initialize, Fault.Succeed, Fault.Throw(new RuntimeException("re-init failed")))
+            next <- FaultyProvider.scoped(Map("x" -> true), name = "next")
+            _    <- next.script(Op.Initialize, Fault.Throw(new RuntimeException("init failed")))
+            _    <- next.script(Op.Shutdown, Fault.HangUntilReleased)
+            res  <- ZIO.scoped {
+              for {
+                ff        <- buildIsolated(previous)
+                res       <- elapsedMillis(ff.setProvider(next).either).disconnect.timeout(8.seconds)
+                reInits   <- previous.entered(Op.Initialize)
+                shutdowns <- next.entered(Op.Shutdown)
+                // Let the scope's API shutdown through.
+                _ <- next.script(Op.Shutdown, Fault.Succeed) *> next.release
+              } yield (res, reInits, shutdowns)
+            }
+          } yield assertTrue(
+            res._1.exists(_._1.isLeft),
+            res._1.exists(_._2 < 3000L),
+            res._2 == 2, // the rollback re-registration ran, and failed
+            res._3 == 1  // the rollback cleanup, not the scope's API shutdown, called it
+          )
+        }
+      }
     )
   ) @@ TestAspect.sequential @@ TestAspect.withLiveClock @@ TestAspect.timeout(120.seconds)
+
+  private def isolatedDomain: String = s"lifecycle-fault-${java.util.UUID.randomUUID()}"
+
+  // A sync build on an API this instance does not own, so no API finalizer runs: only the build's own failure path
+  // shuts the provider down.
+  private def buildShared(provider: FeatureProvider): ZIO[Scope, Throwable, ZEnvironment[FeatureFlags]] =
+    FeatureFlags
+      .fromProvider(
+        provider,
+        FeatureFlagsConfig()
+          .withInitTimeout(initTimeout)
+          .withDomain(isolatedDomain)
+          .withApiOwnership(ApiOwnership.Shared),
+        statusRef = None,
+        apiOverride = Some(OpenFeatureAPI.createIsolated())
+      )
+      .build
 }

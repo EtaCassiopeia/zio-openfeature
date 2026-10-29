@@ -482,14 +482,18 @@ final class OptimizelyFeatureProvider private[optimizely] (
     */
   private def cmabFailure(d: OptimizelyDecision): Option[String] =
     if (Option(d.getVariationKey).isDefined) None
-    else Option(d.getReasons).map(_.asScala.toList).getOrElse(Nil).find(_.toLowerCase.contains("failed to fetch cmab"))
+    else
+      Option(d.getReasons)
+        .map(_.asScala.toList)
+        .getOrElse(Nil)
+        .find(_.toLowerCase(java.util.Locale.ROOT).contains("failed to fetch cmab"))
 
   private def isFlagNotFound(d: OptimizelyDecision): Boolean =
     if (Option(d.getVariationKey).isDefined) false
     else {
       val errs = Option(d.getReasons).map(_.asScala.toList).getOrElse(Nil)
       errs.exists { reason =>
-        val lower = reason.toLowerCase
+        val lower = reason.toLowerCase(java.util.Locale.ROOT)
         lower.contains("no flag was found") || lower.contains("flag_key_invalid")
       }
     }

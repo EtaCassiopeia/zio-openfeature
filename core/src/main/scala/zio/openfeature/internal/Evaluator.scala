@@ -279,7 +279,7 @@ final private[openfeature] class Evaluator(
                 FlagResolution(
                   value = value.asInstanceOf[A],
                   variant = Option(details.getVariant),
-                  reason = toResolutionReason(details.getReason),
+                  reason = Evaluator.toResolutionReason(details.getReason),
                   metadata = metadata,
                   flagKey = key,
                   errorCode = Option(details.getErrorCode).map(ErrorCodeConverter.fromJava),
@@ -307,7 +307,7 @@ final private[openfeature] class Evaluator(
                     FlagResolution(
                       value = value,
                       variant = Option(details.getVariant),
-                      reason = toResolutionReason(details.getReason),
+                      reason = Evaluator.toResolutionReason(details.getReason),
                       metadata = metadata,
                       flagKey = key,
                       errorCode = providerError,
@@ -348,7 +348,7 @@ final private[openfeature] class Evaluator(
                         FlagResolution(
                           value = empty,
                           variant = Option(details.getVariant),
-                          reason = toResolutionReason(details.getReason),
+                          reason = Evaluator.toResolutionReason(details.getReason),
                           metadata = metadata,
                           flagKey = key,
                           errorCode = providerError,
@@ -381,32 +381,12 @@ final private[openfeature] class Evaluator(
       FlagResolution(
         value = details.getValue,
         variant = Option(details.getVariant),
-        reason = toResolutionReason(details.getReason),
+        reason = Evaluator.toResolutionReason(details.getReason),
         metadata = metadata,
         flagKey = key,
         errorCode = Option(details.getErrorCode).map(ErrorCodeConverter.fromJava),
         errorMessage = Option(details.getErrorMessage)
       )
-    }
-
-  private def toResolutionReason(reason: String): ResolutionReason =
-    Option(reason) match {
-      // `Unknown` is reserved for a genuinely absent reason. A non-null but unrecognized reason is a provider-specific
-      // one and must be passed through verbatim (spec 1.4.7), not collapsed — otherwise Optimizely/flagd custom reasons
-      // are lost to hooks, analytics, and debugging.
-      case None    => ResolutionReason.Unknown
-      case Some(r) =>
-        r.toUpperCase match {
-          case "STATIC"          => ResolutionReason.Static
-          case "DEFAULT"         => ResolutionReason.Default
-          case "TARGETING_MATCH" => ResolutionReason.TargetingMatch
-          case "SPLIT"           => ResolutionReason.Split
-          case "CACHED"          => ResolutionReason.Cached
-          case "DISABLED"        => ResolutionReason.Disabled
-          case "STALE"           => ResolutionReason.Stale
-          case "ERROR"           => ResolutionReason.Error
-          case _                 => ResolutionReason.Other(r)
-        }
     }
 
   private def toFlagMetadata(metadata: dev.openfeature.sdk.ImmutableMetadata): UIO[FlagMetadata] =
@@ -469,6 +449,26 @@ final private[openfeature] class Evaluator(
 }
 
 private[openfeature] object Evaluator {
+
+  private[openfeature] def toResolutionReason(reason: String): ResolutionReason =
+    Option(reason) match {
+      // `Unknown` is reserved for a genuinely absent reason. A non-null but unrecognized reason is a provider-specific
+      // one and must be passed through verbatim (spec 1.4.7), not collapsed — otherwise Optimizely/flagd custom reasons
+      // are lost to hooks, analytics, and debugging.
+      case None    => ResolutionReason.Unknown
+      case Some(r) =>
+        r.toUpperCase(java.util.Locale.ROOT) match {
+          case "STATIC"          => ResolutionReason.Static
+          case "DEFAULT"         => ResolutionReason.Default
+          case "TARGETING_MATCH" => ResolutionReason.TargetingMatch
+          case "SPLIT"           => ResolutionReason.Split
+          case "CACHED"          => ResolutionReason.Cached
+          case "DISABLED"        => ResolutionReason.Disabled
+          case "STALE"           => ResolutionReason.Stale
+          case "ERROR"           => ResolutionReason.Error
+          case _                 => ResolutionReason.Other(r)
+        }
+    }
 
   /** Reconstruct a typed error from a resolution that carries an error code — a provider-reported failure
     * (FLAG_NOT_FOUND, TYPE_MISMATCH, ...) returned as a default value rather than thrown. Used both to hand the `error`

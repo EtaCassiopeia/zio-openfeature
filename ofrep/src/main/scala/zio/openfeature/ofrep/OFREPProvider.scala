@@ -258,7 +258,7 @@ object OFREPProvider {
           .attempt(java.net.URI.create(trimmed))
           .mapError(t => invalid(s"malformed baseUrl '$trimmed': ${t.getMessage}"))
           .flatMap { uri =>
-            val scheme = Option(uri.getScheme).map(_.toLowerCase).getOrElse("")
+            val scheme = Option(uri.getScheme).map(_.toLowerCase(java.util.Locale.ROOT)).getOrElse("")
             val host   = Option(uri.getHost).getOrElse("")
             if (!AllowedSchemes.contains(scheme))
               ZIO.fail(invalid(s"unsupported scheme '$scheme' in baseUrl '$trimmed' (expected http or https)"))

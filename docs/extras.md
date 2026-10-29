@@ -67,7 +67,7 @@ reload succeeds. It sends no event, so `FeatureFlags` keeps its status: check `r
 ## Environment variable provider
 
 Reads each flag from one variable: a prefix (default `FF_`) plus the upper-cased flag key with `-` and `.` turned into
-`_`, so `new-checkout` reads `FF_NEW_CHECKOUT`.
+`_`, so `new-checkout` reads `FF_NEW_CHECKOUT`, whatever the JVM's default locale.
 
 ```scala
 --8<-- "Extras.scala:env"

@@ -522,7 +522,7 @@ object OptimizelyProvider {
     if (raw == null) fail("Optimizely sdkKey is null")
     else {
       val trimmed = raw.trim
-      val lower   = trimmed.toLowerCase
+      val lower   = trimmed.toLowerCase(java.util.Locale.ROOT)
       if (trimmed.isEmpty) fail("Optimizely sdkKey is empty")
       else if (trimmed != raw) fail(s"Optimizely sdkKey has surrounding whitespace: '$raw'")
       else if (raw.exists(_.isWhitespace)) fail(s"Optimizely sdkKey contains whitespace: '$raw'")
@@ -581,7 +581,7 @@ object OptimizelyProvider {
           .attempt(java.net.URI.create(trimmed))
           .mapError(t => FeatureFlagError.InvalidConfiguration(s"malformed datafileUrl '$trimmed': ${t.getMessage}"))
           .flatMap { uri =>
-            val scheme = Option(uri.getScheme).map(_.toLowerCase).getOrElse("")
+            val scheme = Option(uri.getScheme).map(_.toLowerCase(java.util.Locale.ROOT)).getOrElse("")
             val host   = Option(uri.getHost).getOrElse("")
             if (!AllowedDatafileSchemes.contains(scheme))
               fail(s"unsupported scheme '$scheme' in datafileUrl '$trimmed' (expected http or https)")

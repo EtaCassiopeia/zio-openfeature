@@ -63,7 +63,7 @@ final class EnvVarProvider private (
   ): ProviderEvaluation[java.lang.Boolean] =
     lookup(key) match {
       case Some(v) =>
-        v.toLowerCase match {
+        v.toLowerCase(java.util.Locale.ROOT) match {
           case "true" | "1" | "yes" | "on"  => ProviderEvaluations.of(java.lang.Boolean.TRUE, "STATIC")
           case "false" | "0" | "no" | "off" => ProviderEvaluations.of(java.lang.Boolean.FALSE, "STATIC")
           // Set-but-unparsable: surface a spec PARSE_ERROR rather than silently returning the default (worse, the old
@@ -149,7 +149,7 @@ final class EnvVarProvider private (
 
 object EnvVarProvider {
 
-  val defaultKeyTransform: String => String = _.toUpperCase.replace("-", "_").replace(".", "_")
+  val defaultKeyTransform: String => String = _.toUpperCase(java.util.Locale.ROOT).replace("-", "_").replace(".", "_")
 
   def apply(
     prefix: String = "FF_",

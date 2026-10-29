@@ -198,16 +198,24 @@ private[openfeature] object FeatureFlagsFactories {
       _     <- ZIO.when(early)(ff.startEventBridge)
       // Non-blocking registration plus a bounded wait: `setProviderAndWait` would hold the SDK's API write
       // lock across `initialize()`, so after a timeout the finalizer's `api.shutdown()` would block on that lock for
-      // as long as `initialize()` hangs. On any init failure the provider itself is shut down (best-effort) so it
-      // doesn't keep threads/connections alive — this also covers the domain/registry paths where no API finalizer
-      // is registered — and the bridge's handlers are removed so a failed build leaves none behind.
+      // as long as `initialize()` hangs. On any init failure the provider itself is shut down (best-effort, bounded,
+      // since a provider stuck in `initialize()` often cannot shut down either) so it doesn't keep threads/connections
+      // alive — this also covers the domain/registry paths where no API finalizer is registered — and the bridge's
+      // handlers are removed so a failed build leaves none behind.
       verified <- (ProviderRegistration.registerThenAwait(api, domain, provider, initTimeout)(
         ZIO.unless(early)(ff.startEventBridge).unit
       ) *> verifyInitState(provider) <*
         // A provider whose metadata name only exists once it has initialized (the SDK's MultiProvider) was stamped
         // with the "unknown" fallback; now that it has, record its real name.
         refreshProviderName(provider, ff))
-        .tapError(_ => ff.stopEventBridge *> ZIO.attemptBlocking(provider.shutdown()).ignore)
+        .tapError(_ =>
+          ff.stopEventBridge *>
+            ProviderRegistration.boundedProviderShutdown(
+              provider,
+              "build (failed initialization)",
+              ProviderRegistration.failedProviderShutdownTimeout(initTimeout)
+            )
+        )
       // Only seed status when the caller didn't hand us a shared ref (testkit shares one). Routed through
       // `seedStatus` so the machine's `everReady` flag records a Ready/Stale seed.
       _ <- statusRef.fold(ff.seedStatus(verified))(_ => ZIO.unit)
@@ -386,9 +394,9 @@ private[openfeature] object FeatureFlagsFactories {
       }).tapError(_ => ff.stopEventBridge)
       _ <- ZIO.unless(early)(ff.startEventBridge)
       // Init watchdog: after initTimeout, escalate to Fatal ONLY if the provider never became usable
-      // (`everReady` gate inside the machine), shutting it down and releasing the onReady latch. A provider that was
-      // Ready and later dipped to a transient Error is left running. The fiber is forked into the layer's Scope, so
-      // it is also interrupted when the layer is released.
+      // (`everReady` gate inside the machine): publish the Error event, release the onReady latch, then shut the
+      // provider down, bounded. A provider that was Ready and later dipped to a transient Error is left running. The
+      // fiber is forked into the layer's Scope, so it is also interrupted when the layer is released.
       _ <- (ZIO.sleep(initTimeout) *> ff.escalateInitTimeout(provider, initTimeout)).forkScoped
     } yield ff
 
@@ -497,13 +505,9 @@ private[openfeature] object FeatureFlagsFactories {
               ProviderRegistration.boundedProviderShutdown(composed, "fromAcquireAsync (discarded provider)") *>
                 candidate.close(Exit.failCause(cause))
             // Initialize the composed stack ourselves, where the SDK's `setProvider` used to, bounded the same way. The
-            // fallback keeps serving throughout. `.disconnect` lets the timeout fire even though a blocking
-            // `initialize()` cannot be interrupted; it may keep running in the background, and the shutdown above is
-            // best-effort against it.
-            _ <- ZIO
-              .attemptBlocking(composed.initialize(ff.apiEvaluationContext))
-              .disconnect
-              .timeoutFail(new TimeoutException(s"Provider initialization exceeded $initTimeout"))(initTimeout)
+            // fallback keeps serving throughout; the shutdown above is best-effort against an init still running.
+            _ <- ProviderRegistration
+              .boundedInitialize(composed, ff.apiEvaluationContext, initTimeout)
               .zipRight(verifyInitState(composed))
               .mapError(e => ProviderSwapFailed(FeatureFlagError.ProviderInitializationFailed(e)))
               .onError(discard)

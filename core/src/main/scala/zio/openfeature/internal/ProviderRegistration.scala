@@ -7,6 +7,7 @@ import scala.util.Try
 
 import dev.openfeature.sdk.{
   ErrorCode,
+  EvaluationContext => OFEvaluationContext,
   EventDetails,
   FeatureProvider => OFFeatureProvider,
   OpenFeatureAPI,
@@ -120,7 +121,8 @@ private[openfeature] object ProviderRegistration {
 
   /** A single provider's `shutdown()`, bounded and best-effort, with the same daemon-fiber shape as
     * [[boundedApiShutdown]] so it also runs from a finalizer carrying a pending interrupt. A failure or timeout is
-    * logged under `label`, never raised: the provider is out of service either way.
+    * logged under `label`, never raised: the provider is out of service either way. An abandoned call keeps running, so
+    * a later `api.shutdown()` may call the same provider's `shutdown()` while it is still in progress.
     */
   def boundedProviderShutdown(
     provider: OFFeatureProvider,
@@ -137,6 +139,23 @@ private[openfeature] object ProviderRegistration {
       .forkDaemon
       .flatMap(_.join)
       .catchAllCause(_ => ZIO.unit) // a failure is already logged by tapErrorCause above
+
+  /** How long a failure path the caller is waiting on gives the failed provider's `shutdown()`: the initialization
+    * budget the caller already granted that provider, capped at [[DefaultShutdownTimeout]].
+    */
+  def failedProviderShutdownTimeout(initTimeout: Duration): Duration =
+    initTimeout.min(DefaultShutdownTimeout)
+
+  /** A provider's `initialize()` run by us rather than by the SDK, failing with a `TimeoutException` after `timeout`.
+    * `.disconnect` lets the timeout fire although a blocking `initialize()` cannot be interrupted; the call may keep
+    * running in the background, and a failure it reports after the timeout is still logged.
+    */
+  def boundedInitialize(provider: OFFeatureProvider, context: OFEvaluationContext, timeout: Duration): Task[Unit] =
+    ZIO
+      .attemptBlocking(provider.initialize(context))
+      .tapError(e => ZIO.logWarning(s"provider initialize failed: $e"))
+      .disconnect
+      .timeoutFail(new TimeoutException(s"Provider initialization exceeded $timeout"))(timeout)
 
   private def register(api: OpenFeatureAPI, domain: Option[String], provider: OFFeatureProvider): Unit =
     domain match {

@@ -299,8 +299,17 @@ final private[openfeature] class FeatureFlagsLive(
     (for {
       bound <- ZIO.attemptBlocking(domain.fold(api.getProvider())(d => api.getProvider(d)))
       _     <- ZIO.when(bound ne newProvider)(
-        ZIO.attemptBlocking(newProvider.shutdown()).ignore *>
-          ZIO.attemptBlocking(EventProviderAccess.deregisterGlobalProvider(api, newProvider)).ignore
+        ProviderRegistration.boundedProviderShutdown(
+          newProvider,
+          "setProvider (rollback failed)",
+          ProviderRegistration.failedProviderShutdownTimeout(initTimeout)
+        ) *>
+          ZIO
+            .attemptBlocking(EventProviderAccess.deregisterGlobalProvider(api, newProvider))
+            .tapErrorCause(c =>
+              ZIO.logWarningCause("setProvider (rollback failed): deregistering its events failed", c)
+            )
+            .ignore
       )
     } yield ())
       // Log if even the best-effort teardown's own precondition read fails, so a leaked provider/thread from this
@@ -309,25 +318,26 @@ final private[openfeature] class FeatureFlagsLive(
       .ignore
 
   /** Async-init watchdog escalation. Only when the machine actually transitions (the provider never became usable — the
-    * `everReady` gate) does it shut the provider down, publish a terminal Error event with code PROVIDER_FATAL, and
-    * release the onReady latch. A provider that was ever Ready is left running.
+    * `everReady` gate) does it publish a terminal Error event with code PROVIDER_FATAL, release the onReady latch, and
+    * shut the provider down, in that order: a provider stuck in `initialize()` often cannot shut down either, and the
+    * event and the latch must not wait on it. A provider that was ever Ready is left running.
     */
   private[openfeature] def escalateInitTimeout(provider: OFFeatureProvider, initTimeout: Duration): UIO[Unit] =
     applySignal(Signal.InitTimeout).flatMap {
       case Some(_) =>
         val msg = s"Provider initialization exceeded $initTimeout"
-        ZIO.attemptBlocking(provider.shutdown()).ignore *>
-          state.eventHub
-            .publish(
-              ProviderEvent.Error(
-                new java.util.concurrent.TimeoutException(msg),
-                ProviderMetadata(providerNameRef.get()),
-                Some(ErrorCode.ProviderFatal),
-                Some(msg)
-              )
+        state.eventHub
+          .publish(
+            ProviderEvent.Error(
+              new java.util.concurrent.TimeoutException(msg),
+              ProviderMetadata(providerNameRef.get()),
+              Some(ErrorCode.ProviderFatal),
+              Some(msg)
             )
-            .unit *>
-          ZIO.succeed(onReady.foreach(_.countDown()))
+          )
+          .unit *>
+          ZIO.succeed(onReady.foreach(_.countDown())) *>
+          ProviderRegistration.boundedProviderShutdown(provider, "init watchdog")
       case None => ZIO.unit
     }
 

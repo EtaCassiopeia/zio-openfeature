@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A provider that can't shut down no longer hangs startup, the init watchdog or `setProvider`** (#561). A provider
+  stuck in `initialize()` (an unreachable backend, a lock held by a hung connect) often blocks in `shutdown()` too.
+  Three failure paths waited for that `shutdown()` without a bound: a failed sync build never returned, whatever
+  `initTimeout` said; the async init watchdog reached `Fatal` but never published its `Error` event or released
+  `awaitReady`, and closing the scope hung; and a `setProvider` whose rollback failed never returned. The build and
+  `setProvider` now give that shutdown at most `initTimeout` (capped at 15 seconds) and then abandon it; the watchdog
+  publishes its event and releases `awaitReady` first, and no longer holds up closing the scope. A test now fails the
+  build if lifecycle code calls a provider's `shutdown()` or `initialize()` directly instead of through the bounded
+  helpers.
+
 ## [1.2.1] — 2026-10-28
 
 **A patch release with two fixes. Nothing to change when upgrading:** MiMa is green against 1.2.0 and no public

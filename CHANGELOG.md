@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Three defects in Scala 3 `FlagType` derivation** (#567).
+  - A missing field could take a default from a user's overload of `apply`. Scala names that overload's default getter
+    `apply$default$<n>`, the same as the synthetic `apply`'s, so `Labelled(name, label)` with an absent `label` decoded
+    to the overload's default instead of failing. Only the constructor's own defaults are read now.
+  - When that overload's default had another type than the field, `decode` threw `ClassCastException` instead of
+    returning a `Left`. Building the value is now guarded like reading a default is.
+  - An enum with two labels that differ only by case (`On`, `ON`) decoded both to the first. An exact match now wins.
 - **`CachingProvider` no longer serves one context's cached result to another** (#566). The cache key wrote each
   context attribute as its text, so attributes that differ only in type shared a key: `"30"` and `30`, `"true"` and
   `true`, an int and a long, a string and an instant, a null and `"null"`, and lists of each. A provider that targets

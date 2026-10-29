@@ -51,7 +51,7 @@ jobs:
         if: always()
         shell: bash
         run: |
-          report=$(find ${{ matrix.module }}/target/stryker4s-report -name report.json 2>/dev/null | head -1)
+          report=$(find ${{ matrix.module }}/target/stryker4s-report -name report.json 2>/dev/null | head -1 || true)
           if [ -z "$report" ]; then
             echo "## Mutation testing (${{ matrix.module }})" >> "$GITHUB_STEP_SUMMARY"
             echo "- no report: see the log" >> "$GITHUB_STEP_SUMMARY"

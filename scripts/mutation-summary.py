@@ -41,7 +41,8 @@ def main(argv):
 
     total, detected, valid = score(mutants)
     logic, _, logic_valid = score([m for m in mutants if m["mutatorName"] != "StringLiteral"])
-    passed = total >= floor
+    # A report with nothing to score is a broken run, not a perfect one.
+    passed = valid > 0 and total >= floor
 
     out = [
         f"## Mutation testing ({module})",
@@ -55,9 +56,10 @@ def main(argv):
     if survivors:
         out += ["| File | Line | Mutator | Replacement | Status |", "|---|---|---|---|---|"]
         for path in sorted(survivors, key=lambda p: (-len(survivors[p]), p)):
-            name = path.split("/")[-1]
+            # From the source root, so the scala/ and scala-3/ variants of a file stay apart.
+            name = path.split("src/main/")[-1]
             for line, mutator, replacement, status in sorted(survivors[path]):
-                shown = replacement.replace("|", "\\|").replace("\n", " ")[:60]
+                shown = replacement.replace("|", "\\|").replace("`", "'").replace("\n", " ")[:60]
                 out.append(f"| {name} | {line} | {mutator} | `{shown}` | {status} |")
         out.append("")
 

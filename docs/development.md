@@ -113,6 +113,16 @@ a small sample and the nightly run ten times more. It suits a lock-free structur
 a ZIO `Ref` is atomic by construction, and an effect running on ZIO's own scheduler is outside what the model checker
 controls. A deliberately racy counter in the same spec must fail, so a checker that stopped seeing races fails too.
 
+**Fault schedules over wrapper stacks.** `WrapperStackFaultSpec` (extras) generates a stack of up to three wrappers
+(cache, circuit breaker, deferred construction, a multi-provider chain) over a `FaultyProvider`, scripts faults into its
+initialization, evaluations and shutdown (throws, delays, hangs, `ERROR`/`STALE`/`READY` events, a blocking
+`shutdown()`), and drives a real `FeatureFlags` through it. Every case must build or fail with a typed error, answer
+each `booleanOrDefault` within a bound, pass a provider-reported error through to the status, serve the flag and
+report `Ready` once the faults stop, and close its scope
+without leaking a fiber or a non-daemon thread (`LeakCheck` in `zio.openfeature.testsupport`). It is a property test,
+so the nightly run multiplies its budget. `OFREPFailureModeSpec` covers the HTTP side in CI with WireMock: dribbled
+bodies, random bytes, malformed chunks, empty responses, truncated JSON and an HTML page served with status 200.
+
 **Provider fault tests** run the real OFREP and Optimizely providers through rift's TLS intercept proxy while scripted
 network faults play out; see [Testing real providers](testing-real-providers.md). They are a dev-machine check by
 design: not aggregated into the root project, so `sbt test` never runs them; CI only compiles them; they need JDK 22 or

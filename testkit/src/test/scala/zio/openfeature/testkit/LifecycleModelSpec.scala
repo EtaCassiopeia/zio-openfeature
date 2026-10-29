@@ -1,8 +1,7 @@
 package zio.openfeature.testkit
 
 import zio.openfeature.testsupport.PropertyBudget
-
-import scala.jdk.CollectionConverters._
+import zio.openfeature.testsupport.LeakCheck.{awaitNoLeaks, snapshot}
 
 import zio._
 import zio.test._
@@ -411,40 +410,6 @@ object LifecycleModelSpec extends ZIOSpecDefault {
       }
       settled <- settle(sut, last, "end of sequence")
     } yield settled.violations).catchAllCause(c => ZIO.succeed(Chunk(s"the harness failed: ${c.prettyPrint}")))
-
-  // Leaks: root fibers and live non-daemon threads that were not there before the case
-
-  final case class Baseline(fibers: Set[FiberId], threads: Set[Thread])
-
-  private def liveNonDaemonThreads: UIO[Set[Thread]] =
-    ZIO.succeed(Thread.getAllStackTraces.keySet.asScala.filter(t => t.isAlive && !t.isDaemon).toSet)
-
-  private def liveRoots: UIO[Chunk[Fiber.Runtime[_, _]]] =
-    Fiber.roots.flatMap(ZIO.filter(_)(_.status.map(_ != Fiber.Status.Done)))
-
-  def snapshot: UIO[Baseline] =
-    for {
-      roots   <- liveRoots
-      threads <- liveNonDaemonThreads
-    } yield Baseline(roots.map(_.id).toSet, threads)
-
-  private def leaks(baseline: Baseline): UIO[List[String]] =
-    for {
-      roots   <- liveRoots
-      threads <- liveNonDaemonThreads
-    } yield roots.filterNot(f => baseline.fibers(f.id)).map(f => s"leaked fiber ${f.id.threadName}").toList ++
-      (threads -- baseline.threads).map(t => s"leaked non-daemon thread '${t.getName}'").toList
-
-  /** The leaks still present once `within` has passed, or none as soon as there are none. */
-  def awaitNoLeaks(baseline: Baseline, within: Duration): UIO[List[String]] = {
-    // A plain deadline loop: `timeout` races in forked root fibers, which the check itself would report.
-    def loop(deadline: Long): UIO[List[String]] =
-      leaks(baseline).flatMap { found =>
-        if (found.isEmpty) ZIO.succeed(Nil)
-        else Clock.nanoTime.flatMap(now => if (now >= deadline) ZIO.succeed(found) else loop(deadline).delay(50.millis))
-      }
-    Clock.nanoTime.flatMap(now => loop(now + within.toNanos))
-  }
 
   /** Run one sequence; returns every violation, including a slow scope close and leaks after it. */
   def runCase(actions: List[Action]): UIO[Chunk[String]] =

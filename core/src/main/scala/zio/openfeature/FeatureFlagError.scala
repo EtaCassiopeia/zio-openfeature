@@ -157,11 +157,12 @@ object FeatureFlagError {
   def classify(t: Throwable): FeatureFlagError = {
     val msg = Option(t.getMessage).getOrElse("")
     t match {
-      case _: java.net.UnknownHostException                                                   => Unreachable(t)
-      case _: java.net.NoRouteToHostException                                                 => Unreachable(t)
-      case _: java.net.ConnectException                                                       => Unreachable(t)
-      case _: java.nio.channels.ClosedChannelException if msg.toLowerCase.contains("connect") => Unreachable(t)
-      case _                                                                                  =>
+      case _: java.net.UnknownHostException   => Unreachable(t)
+      case _: java.net.NoRouteToHostException => Unreachable(t)
+      case _: java.net.ConnectException       => Unreachable(t)
+      case _: java.nio.channels.ClosedChannelException if msg.toLowerCase(java.util.Locale.ROOT).contains("connect") =>
+        Unreachable(t)
+      case _ =>
         httpStatus(t) match {
           case Some(status) if AuthStatuses.contains(status) => unauthorized(extractAuthReason(t, msg), t)
           case Some(_)                                       => ProviderError(t)
@@ -214,7 +215,7 @@ object FeatureFlagError {
     * exceptions) and the mapping of provider-reported `GENERAL` evaluation errors, which carry only a message.
     */
   private[openfeature] def looksLikeAuthFailure(message: String): Boolean = {
-    val msgLow = message.toLowerCase
+    val msgLow = message.toLowerCase(java.util.Locale.ROOT)
     AuthStatusToken.matcher(msgLow).find() ||
     msgLow.contains("unauthorized") ||
     msgLow.contains("forbidden") ||

@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Case-insensitive matching no longer depends on the JVM's default locale** (#570). Ten conversions used
+  `toUpperCase`/`toLowerCase` without a locale. Under a Turkish or Azeri default locale `i` upper-cases to `İ` and `I`
+  lower-cases to `ı`, so `EnvVarProvider` looked up `FF_İS_ENABLED` for `is-enabled` and reported every key containing
+  an `i` as `FLAG_NOT_FOUND`; a provider reason `"disabled"` mapped to `Other("disabled")`; `FORBIDDEN` and
+  `UNAUTHORIZED` errors were not classified as auth failures; and the OFREP and Optimizely providers' URL-scheme and
+  message checks were affected the same way. All now use `Locale.ROOT`, and a test fails the build on a new
+  conversion without it.
 - **A more specific context layer's `targetingKey` attribute is no longer outranked by a less specific explicit key**
   (#569). `EvaluationContext.merge` kept the higher layer's explicit key but ignored its `targetingKey` string
   attribute, which only became the key after merging. So an invocation context of

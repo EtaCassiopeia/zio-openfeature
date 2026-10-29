@@ -22,6 +22,16 @@ object EnvVarProviderSpec extends ZIOSpecDefault {
 
   def spec = suite("EnvVarProvider")(
     suite("boolean evaluation")(
+      test("finds a key containing 'i' under a Turkish default locale") {
+        // Switched only around the synchronous call, so no other suite sees it.
+        val previous = java.util.Locale.getDefault
+        java.util.Locale.setDefault(new java.util.Locale("tr", "TR"))
+        val result =
+          try
+            EnvVarProvider.withLookup(Map("FF_IS_ENABLED" -> "TRUE").get).getBooleanEvaluation("is-enabled", false, ctx)
+          finally java.util.Locale.setDefault(previous)
+        assertTrue(result.getErrorCode == null, result.getValue.booleanValue)
+      },
       test("returns true for 'true'") {
         val result = provider.getBooleanEvaluation("new-checkout", false, ctx)
         assertTrue(result.getValue == true) &&

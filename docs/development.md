@@ -8,7 +8,7 @@
 | `extras` | HOCON and environment-variable providers; caching, circuit-breaker and deferred wrappers |
 | `ofrep`, `optimizely` | The OFREP and Optimizely providers |
 | `testkit` | `TestFeatureProvider` and the test helpers |
-| `conformance`, `conformance-zio-bdd` | The OpenFeature spec's gherkin suite, run with Cucumber and with zio-bdd |
+| `conformance`, `conformance-zio-bdd` | The OpenFeature spec's gherkin suite, run with Cucumber and with zio-bdd; `conformance-zio-bdd` also runs the provider TCK |
 | `provider-fault-tests` | Real providers under network faults (local only; see [Extra checks](#extra-checks)) |
 | `examples/docs`, `examples/testkit-app`, `examples/ofrep-init-timeout` | Not published. `docs` holds every code sample on this site, with tests that run them; the others are reference apps |
 
@@ -21,7 +21,7 @@ sbt compile                 # all published modules, Scala 3
 sbt +test                   # Scala 2.13 and 3
 sbt scalafmtAll             # format
 sbt conformance/test        # the spec's gherkin suite, via Cucumber
-sbt conformanceZioBdd/test  # the same suite via zio-bdd (JDK 22+)
+sbt conformanceZioBdd/test  # the same suite via zio-bdd, and the provider TCK (JDK 22+)
 sbt examplesDocs/test examplesTestkitApp/test   # compile and run the examples
 ```
 
@@ -44,10 +44,26 @@ also covers the binary-compatibility baselines.
 | examples | `sbt examplesOfrepInitTimeout/compile examplesTestkitApp/test examplesDocs/test` |
 | conformance | `sbt conformance/test conformanceZioBdd/test` |
 | gherkin copies in sync (every push); upstream drift (weekly) | `.github/scripts/check-gherkin-drift.sh mirror`; `.github/scripts/check-gherkin-drift.sh upstream main` |
+| provider TCK upstream drift (weekly) | `.github/scripts/check-provider-tck-drift.sh upstream main` |
 | dependency check (weekly) | OWASP Dependency-Check over each module's resolved classpath |
 
 The docs job compiles and tests the samples (`examplesDocs/test`), compiles `providerFaultTests/Test/compile`, checks the
 animations are up to date, and runs `mkdocs build`.
+
+### The provider TCK
+
+`conformance-zio-bdd` also runs the OpenFeature provider conformance suite (TCK), vendored unchanged in
+`src/test/resources/features/provider-tck/` with its canonical flag set; its README holds the pin. The TCK tests a
+provider rather than this library, so it drives each provider through a plain OpenFeature client. In CI it runs against
+`HoconProvider`, `EnvVarProvider`, and `CachingProvider`, `CircuitBreakerProvider` and `DeferredProvider` over
+`HoconProvider`, one suite each in `zio.openfeature.conformance.bdd.tck`.
+
+A provider declares what it supports by leaving the TCK's capability tags out of its suite's `excludeTags`; a scenario
+under a withheld capability is reported as ignored, never as passed. `TckBackends` says why each one is withheld. What a
+declared or mandatory scenario still fails is a reviewed `KnownFailure` in that provider's list, naming the flag, the
+check, the outcome it gives instead and why. The assertion must then fail with exactly that outcome: a known failure
+that starts passing, or fails some other way, fails the suite until its entry is updated. The
+weekly `Provider TCK drift` workflow files an issue when upstream moves.
 
 ## The documentation site
 

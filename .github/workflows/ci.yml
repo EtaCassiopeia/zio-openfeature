@@ -33,6 +33,9 @@ jobs:
       # it belongs up here beside the mirror check rather than behind the multi-minute sbt setup.
       - name: Check the gherkin pin parses from the README
         run: .github/scripts/check-gherkin-drift.sh print-pin
+      # Same reason for the provider TCK's pin: its scheduled drift job passes `main` too.
+      - name: Check the provider TCK pin parses from the README
+        run: .github/scripts/check-provider-tck-drift.sh print-pin
       - name: Set up JDK 21
         uses: actions/setup-java@v6
         with:

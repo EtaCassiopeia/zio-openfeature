@@ -132,11 +132,10 @@ lazy val lintSettings = Seq(
   }
 )
 
-// Coverage is opt-in (`sbt coverage test coverageReport`), never wired into CI. No fail-on-minimum gate is set:
-// under the pinned sbt-scoverage 2.0.9, coverage instrumentation fails to compile the testkit module on Scala 3.3.4
-// (the instrumenter cannot rewrite `<FromJavaObject>` terms from the OpenFeature Java SDK), so an enforced 80% gate
-// would be an unrunnable, always-red trap. The Scala Steward automation (.github/workflows/scala-steward.yml) will
-// surface the sbt-scoverage 2.3.x bump; once instrumentation compiles again, a coverage CI job can be reintroduced.
+// Coverage is opt-in (`sbt coverage test coverageReport coverageAggregate`), so ordinary builds stay uninstrumented.
+// The weekly `Coverage` workflow runs it on Scala 3 and reports per module (scripts/coverage-summary.py); there is no
+// minimum yet. Instrumentation compiles every module on Scala 3.3.8: the old failure on the Java SDK's
+// `<FromJavaObject>` terms (scoverage 2.0.9, Scala 3.3.4) no longer reproduces.
 ThisBuild / coverageEnabled := false
 
 // Binary-compatibility check via sbt-mima. The API is frozen as of `1.0.0`, so each module baselines against its

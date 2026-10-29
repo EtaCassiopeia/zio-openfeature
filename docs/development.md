@@ -46,6 +46,7 @@ also covers the binary-compatibility baselines.
 | gherkin copies in sync (every push); upstream drift (weekly) | `.github/scripts/check-gherkin-drift.sh mirror`; `.github/scripts/check-gherkin-drift.sh upstream main` |
 | provider TCK upstream drift (weekly) | `.github/scripts/check-provider-tck-drift.sh upstream main` |
 | dependency check (weekly) | OWASP Dependency-Check over each module's resolved classpath |
+| coverage (weekly, report only) | `sbt coverage test coverageReport coverageAggregate`, then `python3 scripts/coverage-summary.py .` for the per-module table |
 
 The docs job compiles and tests the samples (`examplesDocs/test`), compiles `providerFaultTests/Test/compile`, checks the
 animations are up to date, and runs `mkdocs build`.

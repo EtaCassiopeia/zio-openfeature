@@ -1,0 +1,50 @@
+name: Coverage
+
+# Weekly statement and branch coverage per module, measured with scoverage on Scala 3 and written to the job summary,
+# with the files that have the most uncovered statements. A report, not a gate: there is no minimum yet. Never a PR
+# check: an instrumented run of the whole suite is slower than the plain one, and the figure moves too little per PR
+# to read there.
+
+on:
+  schedule:
+    # Sundays 02:00 UTC, before the mutation run.
+    - cron: '0 2 * * 0'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Force any JavaScript action still bundled with Node 20 to run on Node 24 (see ci.yml).
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  coverage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+      - name: Set up JDK 21
+        uses: actions/setup-java@v6
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: sbt
+      - name: Setup sbt
+        uses: sbt/setup-sbt@v1
+      - name: Run the suite instrumented
+        # `shell: bash` runs with pipefail, so the build's exit status survives the `tee`.
+        shell: bash
+        run: sbt coverage test coverageReport coverageAggregate 2>&1 | tee coverage.log
+      - name: Coverage per module
+        if: always()
+        run: python3 scripts/coverage-summary.py . --summary "$GITHUB_STEP_SUMMARY"
+      - name: Upload the reports
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: scoverage-report
+          path: |
+            target/scala-*/scoverage-report/
+            */target/scala-*/scoverage-report/
+          if-no-files-found: warn

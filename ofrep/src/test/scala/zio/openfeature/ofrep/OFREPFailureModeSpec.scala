@@ -4,7 +4,6 @@ import com.github.tomakehurst.wiremock.WireMockServer
 import com.github.tomakehurst.wiremock.client.WireMock._
 import com.github.tomakehurst.wiremock.core.WireMockConfiguration
 import com.github.tomakehurst.wiremock.http.Fault
-import dev.openfeature.sdk.ImmutableContext
 import zio._
 import zio.openfeature._
 import zio.test._
@@ -27,8 +26,6 @@ import zio.test.TestAspect.{sequential, timeout, withLiveClock}
   * Tests run sequentially because the contrib provider 0.0.2 has order-sensitive internal executor handling.
   */
 object OFREPFailureModeSpec extends ZIOSpecDefault {
-
-  private val emptyContext = new ImmutableContext()
 
   private def withMockServer[A](body: WireMockServer => A): A = {
     val server = new WireMockServer(WireMockConfiguration.options().dynamicPort())

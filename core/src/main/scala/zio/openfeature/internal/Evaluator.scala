@@ -90,7 +90,7 @@ final private[openfeature] class Evaluator(
     key: String,
     default: A,
     context: EvaluationContext,
-    timeout: Option[Duration] = None
+    timeout: Option[Duration]
   ): IO[FeatureFlagError, FlagResolution[A]] =
     // The provider-readiness gate (`checkProviderStatus`) applies only where the value must actually come from the
     // provider. A transaction override or a cached evaluation resolves purely locally and MUST still succeed while the
@@ -108,7 +108,7 @@ final private[openfeature] class Evaluator(
     default: A,
     context: EvaluationContext,
     txState: TransactionState,
-    timeout: Option[Duration] = None
+    timeout: Option[Duration]
   ): IO[FeatureFlagError, FlagResolution[A]] = {
     val flagType = FlagType[A]
     // First check for explicit overrides
@@ -175,7 +175,7 @@ final private[openfeature] class Evaluator(
     default: A,
     context: EvaluationContext,
     txState: TransactionState,
-    timeout: Option[Duration] = None
+    timeout: Option[Duration]
   ): IO[FeatureFlagError, FlagResolution[A]] =
     for {
       resolution <- evaluateFromClient(key, default, context, timeout)
@@ -187,7 +187,7 @@ final private[openfeature] class Evaluator(
     key: String,
     default: A,
     context: EvaluationContext,
-    timeout: Option[Duration] = None
+    timeout: Option[Duration]
   ): IO[FeatureFlagError, FlagResolution[A]] = {
     val flagType  = FlagType[A]
     val ofContext = toJavaContext(context)
@@ -208,14 +208,14 @@ final private[openfeature] class Evaluator(
               val call    = new java.util.concurrent.atomic.AtomicInteger(FeatureFlagsLive.CallRunning)
               val abandon = ZIO.succeed {
                 if (call.compareAndSet(FeatureFlagsLive.CallRunning, FeatureFlagsLive.CallAbandoned))
-                  abandonedCalls.incrementAndGet()
+                  abandonedCalls.incrementAndGet(): Unit
               }.unit
               effect
                 // Before `.disconnect`, so the finalizer runs on the disconnected fiber when the provider finally
                 // returns, however long after the caller moved on.
                 .ensuring(ZIO.succeed {
                   if (!call.compareAndSet(FeatureFlagsLive.CallRunning, FeatureFlagsLive.CallDone))
-                    abandonedCalls.decrementAndGet()
+                    abandonedCalls.decrementAndGet(): Unit
                 })
                 .disconnect
                 .timeoutFail(new java.util.concurrent.TimeoutException(s"Evaluation of '$key' timed out after $d"))(d)
@@ -399,7 +399,6 @@ final private[openfeature] class Evaluator(
   // The Scala <-> SDK `Value` conversions live in `internal.ValueBridge` so that `testkit.FlagTypeLaws` can check a
   // `FlagType` against the bridge this code actually crosses, rather than against a copy that could drift from it.
   // Kept as local aliases so call sites read unchanged.
-  private def anyToObject(value: Any): Object                                = ValueBridge.anyToObject(value)
   private def anyToValue(value: Any): dev.openfeature.sdk.Value              = ValueBridge.anyToValue(value)
   private def valueToMap(value: dev.openfeature.sdk.Value): Map[String, Any] = ValueBridge.valueToMap(value)
   private def valueToAny(value: dev.openfeature.sdk.Value): Option[Any]      = ValueBridge.valueToAny(value)

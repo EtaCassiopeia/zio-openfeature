@@ -41,7 +41,7 @@ private[optimizely] object ContextTransformer {
       case None    => new java.util.HashMap[String, Object]()
       case Some(d) =>
         val tags = normalize(d.asObjectMap())
-        if (d.getValue.isPresent) tags.put("value", java.lang.Double.valueOf(d.getValue.get.doubleValue))
+        if (d.getValue.isPresent) tags.put("value", java.lang.Double.valueOf(d.getValue.get.doubleValue)): Unit
         tags
     }
 
@@ -59,7 +59,7 @@ private[optimizely] object ContextTransformer {
       val converted = convert(v)
       // null means either an unset attribute or an unmatchable type (list/structure) — omit it rather than pass an
       // attribute Optimizely can only ever evaluate to UNKNOWN.
-      if (converted != null) out.put(k, converted)
+      if (converted != null) out.put(k, converted): Unit
     }
     out
   }

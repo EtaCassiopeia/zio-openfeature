@@ -4,13 +4,13 @@ import zio._
 import zio.stream.SubscriptionRef
 import zio.bdd.core.Suite
 import zio.bdd.core.Assertions.assertTrue
-import zio.bdd.core.step.{State, ZIOSteps}
+import zio.bdd.core.step.ZIOSteps
 import zio.openfeature._
 // zio-bdd's Hooks trait defines `type FeatureHook = URIO[R, Unit]`, which shadows the OpenFeature hook trait; alias it.
 import zio.openfeature.FeatureHook as OFFeatureHook
 import zio.openfeature.testkit.{CachingReasonProvider, TestFeatureProvider}
 import zio.schema.{DeriveSchema, Schema}
-import dev.openfeature.sdk.{EvaluationContext => OFEvaluationContext, OpenFeatureAPI}
+import dev.openfeature.sdk.OpenFeatureAPI
 import dev.openfeature.sdk.providers.memory.InMemoryProvider
 
 /** Data-table row types (zio-bdd's `table[T]` maps a gherkin table to `List[T]` via a zio-schema record). */

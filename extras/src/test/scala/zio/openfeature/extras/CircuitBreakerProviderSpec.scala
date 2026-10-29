@@ -511,9 +511,8 @@ object CircuitBreakerProviderSpec extends ZIOSpecDefault {
         val cb = CircuitBreakerProvider(underlying, config, clock)
         // Trip via state
         underlying.setState(ProviderState.ERROR)
-        val tryResult       = scala.util.Try(cb.getBooleanEvaluation("flag", false, ctx))
-        val stateAfterTrip  = cb.getState
-        val underlyingState = underlying.getState
+        val tryResult      = scala.util.Try(cb.getBooleanEvaluation("flag", false, ctx))
+        val stateAfterTrip = cb.getState
         // Delegate recovers
         underlying.setState(ProviderState.READY)
         val result = cb.getBooleanEvaluation("flag", false, ctx)

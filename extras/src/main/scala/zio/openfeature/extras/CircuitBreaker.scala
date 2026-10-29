@@ -350,7 +350,7 @@ object CircuitBreaker {
     config: CircuitBreakerConfig,
     ticker: Ticker
   ): CircuitBreaker = {
-    ConfigValidation.orThrow(ConfigValidation.circuitBreaker(config))
+    val _     = ConfigValidation.orThrow(ConfigValidation.circuitBreaker(config))
     val state = new AtomicReference(CircuitBreakerState(CircuitState.Closed, consecutiveFailures = 0))
     new CircuitBreaker(config, state, ticker)
   }

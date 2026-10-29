@@ -66,7 +66,7 @@ final class TestFeatureProvider private (
 
   override def track(eventName: String, context: OFEvaluationContext, details: OFTracking): Unit = {
     tracked.addLast((eventName, context, Option(details)))
-    while (tracked.size > FeatureFlagsState.MaxTrackedEvents) tracked.pollFirst()
+    while (tracked.size > FeatureFlagsState.MaxTrackedEvents) tracked.pollFirst(): Unit
     ()
   }
 
@@ -348,17 +348,21 @@ final class TestFeatureProvider private (
       ZIO.succeed {
         event match {
           case ProviderEvent.Ready(_, em) =>
-            emitProviderReady(ProviderEventDetails.builder().eventMetadata(toJavaMetadata(em)).build())
+            emitProviderReady(ProviderEventDetails.builder().eventMetadata(toJavaMetadata(em)).build()): Unit
           case ProviderEvent.Error(_, _, errorCode, errorMessage, em) =>
-            val builder = ProviderEventDetails.builder()
-            errorMessage.foreach(builder.message(_))
-            errorCode.foreach(ec => builder.errorCode(ErrorCodeConverter.toJava(ec)))
-            builder.eventMetadata(toJavaMetadata(em))
-            emitProviderError(builder.build())
+            // Unset message / error code are null in the SDK builder, so passing null is the same as not setting them.
+            emitProviderError(
+              ProviderEventDetails
+                .builder()
+                .message(errorMessage.orNull)
+                .errorCode(errorCode.map(ErrorCodeConverter.toJava).orNull)
+                .eventMetadata(toJavaMetadata(em))
+                .build()
+            ): Unit
           case ProviderEvent.Stale(reason, _, em) =>
             emitProviderStale(
               ProviderEventDetails.builder().message(reason).eventMetadata(toJavaMetadata(em)).build()
-            )
+            ): Unit
           case ProviderEvent.ConfigurationChanged(changedFlags, _, em) =>
             emitProviderConfigurationChanged(
               ProviderEventDetails
@@ -366,7 +370,7 @@ final class TestFeatureProvider private (
                 .flagsChanged(changedFlags.toList.asJava)
                 .eventMetadata(toJavaMetadata(em))
                 .build()
-            )
+            ): Unit
           case ProviderEvent.Reconnecting(_, _) =>
             () // No Java SDK equivalent for reconnecting
         }

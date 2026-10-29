@@ -36,7 +36,7 @@ final private[extras] class DelegateEventChannel(
   def detach(): Unit =
     eventDelegate.foreach { ev =>
       attached.synchronized {
-        if (attached.getAndSet(false)) scala.util.Try(EventProviderBridge.detach(ev))
+        if (attached.getAndSet(false)) scala.util.Try(EventProviderBridge.detach(ev)): Unit
       }
       ()
     }

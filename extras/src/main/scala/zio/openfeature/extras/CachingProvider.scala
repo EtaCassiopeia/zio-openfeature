@@ -381,7 +381,7 @@ object CachingProvider {
     *   if `config` breaks the bounds documented on [[CachingConfig]]
     */
   def apply(underlying: FeatureProvider, config: CachingConfig = CachingConfig()): CachingProvider = {
-    ConfigValidation.orThrow(ConfigValidation.caching(config))
+    val _  = ConfigValidation.orThrow(ConfigValidation.caching(config))
     val rt = Runtime.default
     Unsafe.unsafe { implicit u =>
       rt.unsafe.run(make(underlying, config)).getOrThrowFiberFailure()

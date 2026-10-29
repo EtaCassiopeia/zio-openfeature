@@ -2,7 +2,6 @@ package zio.openfeature.testkit
 
 import zio._
 import zio.test._
-import zio.test.Assertion._
 import zio.openfeature._
 
 /** Tests for public factory methods that use the global OpenFeatureAPI singleton.

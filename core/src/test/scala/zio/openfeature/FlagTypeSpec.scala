@@ -1,7 +1,6 @@
 package zio.openfeature
 
 import zio.test._
-import zio.test.Assertion._
 
 object FlagTypeSpec extends ZIOSpecDefault {
 

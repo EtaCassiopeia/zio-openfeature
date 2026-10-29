@@ -20,18 +20,6 @@ object OptimizelyProviderSpec extends ZIOSpecDefault {
       )
     }
 
-  // Exercises validateSdkKey indirectly via the public factory's effect channel, but with a junk URL so that — even
-  // if validation passes — the actual Optimizely client construction never starts a real poller. The two-arg `make`
-  // validates the SDK key first, so this is safe for sdkKey tests.
-  private def validateOnly(
-    sdkKey: String,
-    datafileUrl: String = "http://invalid.local:1/datafile.json"
-  ): IO[FeatureFlagError.InvalidConfiguration, Unit] =
-    OptimizelyProvider
-      .make(sdkKey, datafileUrl = Some(datafileUrl), initWait = java.time.Duration.ofMillis(50))
-      .unit
-      .catchAll(e => ZIO.fail(e))
-
   def spec: Spec[TestEnvironment & Scope, Any] = suite("OptimizelyProvider.make — input validation")(
     suite("sdkKey")(
       test("rejects null") {

@@ -301,9 +301,9 @@ final class CircuitBreakerProvider private (
         throw FiberFailures.unwrap(e)
       // Record the failure before re-throwing: a probe dying with e.g. OOM after winning the half-open CAS must
       // re-open the circuit, not leave it wedged "half-open, probe in progress".
-      case e: VirtualMachineError => breaker.recordFailure(permit); throw e
+      case e: VirtualMachineError => val _ = breaker.recordFailure(permit); throw e
       case e: LinkageError        =>
-        breaker.recordFailure(permit)
+        val _ = breaker.recordFailure(permit)
         throw e
       case e: Throwable =>
         val didOpen = breaker.recordFailure(permit)
@@ -393,11 +393,11 @@ final class CircuitBreakerProvider private (
   // --- Event emission ---
 
   private def safeEmitReady(): Unit =
-    try emitProviderReady(dev.openfeature.sdk.ProviderEventDetails.builder().build())
+    try emitProviderReady(dev.openfeature.sdk.ProviderEventDetails.builder().build()): Unit
     catch { case _: Exception => () }
 
   private def safeEmitStale(message: String): Unit =
-    try emitProviderStale(dev.openfeature.sdk.ProviderEventDetails.builder().message(message).build())
+    try emitProviderStale(dev.openfeature.sdk.ProviderEventDetails.builder().message(message).build()): Unit
     catch { case _: Exception => () }
 }
 
@@ -470,7 +470,7 @@ object CircuitBreakerProvider {
     config: CircuitBreakerProviderConfig,
     ticker: Ticker
   ): CircuitBreakerProvider = {
-    ConfigValidation.orThrow(ConfigValidation.circuitBreakerProvider(config))
+    val _       = ConfigValidation.orThrow(ConfigValidation.circuitBreakerProvider(config))
     val rt      = Runtime.default
     val breaker = CircuitBreaker(config.toCircuitBreakerConfig, ticker)
     new CircuitBreakerProvider(underlying, config, breaker, rt)

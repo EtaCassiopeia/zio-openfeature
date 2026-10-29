@@ -10,7 +10,6 @@ import dev.openfeature.sdk.{
   EventProvider,
   Metadata,
   OpenFeatureAPI,
-  ProviderEvaluation,
   ProviderEventDetails,
   ProviderState,
   Value

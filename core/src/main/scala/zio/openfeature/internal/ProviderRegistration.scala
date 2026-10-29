@@ -195,7 +195,7 @@ private[openfeature] object ProviderRegistration {
 
   // Never let handler cleanup replace the registration's own outcome.
   private def removeHandler(api: OpenFeatureAPI, handler: java.util.function.Consumer[EventDetails]): Unit = {
-    Try(api.removeHandler(JavaProviderEvent.PROVIDER_ERROR, handler))
+    val _ = Try(api.removeHandler(JavaProviderEvent.PROVIDER_ERROR, handler))
     ()
   }
 

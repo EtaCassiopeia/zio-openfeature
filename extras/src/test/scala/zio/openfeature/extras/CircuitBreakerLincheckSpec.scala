@@ -24,6 +24,8 @@ class CircuitBreakerLincheckTest {
   @Operation def recordFailure(): Boolean = breaker.recordFailure()
   @Operation def recordReachable(): Unit  = breaker.recordReachable()
   @Operation def trip(): Unit             = breaker.trip()
+  @Operation def tripStale(): Unit        = breaker.trip(OpenReason.External, stale = true)
+  @Operation def tripPolledStale(): Unit  = breaker.trip(OpenReason.Polled, stale = true)
   @Operation def reset(): Unit            = breaker.reset()
   @Operation def toHalfOpen(): Unit       = breaker.transitionToHalfOpen()
   @Operation def state(): String          = breaker.currentState.toString

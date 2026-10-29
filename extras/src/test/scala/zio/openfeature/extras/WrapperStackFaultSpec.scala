@@ -122,15 +122,12 @@ object WrapperStackFaultSpec extends ZIOSpecDefault {
   /** Whether a layer passes its delegate's events on: the SDK's MultiProvider and DeferredProvider do not. */
   private def forwardsEvents(layer: Layer): Boolean = layer == Layer.Cache || layer == Layer.Breaker
 
-  /** Whether the build may fail: initialization fails or hangs past the init timeout, or it reports `STALE` where a
-    * circuit breaker sees it. Under the default `StalePolicy.Open` that opens the breaker, which then reports `ERROR`,
-    * and a synchronous build rejects a provider in `ERROR` once it has initialized.
+  /** Whether the build may fail: initialization fails or hangs past the init timeout. A `STALE` at startup does not
+    * fail it, even where a circuit breaker sees it and opens: an open circuit reports the `STALE` that opened it.
     */
   private def buildMayFail(c: Case): Boolean = c.init match {
-    case _: Fault.Throw | Fault.HangUntilReleased         => true
-    case Fault.Emit(OFProviderEvent.PROVIDER_STALE, _, _) =>
-      c.layers.zipWithIndex.exists { case (l, i) => l == Layer.Breaker && c.layers.take(i).forall(forwardsEvents) }
-    case _ => false
+    case _: Fault.Throw | Fault.HangUntilReleased => true
+    case _                                        => false
   }
 
   private def drive(c: Case): ZIO[Scope, Nothing, Chunk[String]] =

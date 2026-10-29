@@ -51,8 +51,13 @@ private[extras] object OpenReason {
 
 sealed private[extras] trait CircuitState extends Product with Serializable
 private[extras] object CircuitState {
-  case object Closed                                          extends CircuitState
-  final case class Open(sinceNanos: Long, reason: OpenReason) extends CircuitState
+  case object Closed extends CircuitState
+
+  /** @param stale
+    *   the delegate's STALE opened it, and nothing worse since: the breaker then reports the delegate as STALE, not
+    *   ERROR
+    */
+  final case class Open(sinceNanos: Long, reason: OpenReason, stale: Boolean = false) extends CircuitState
   // probeStartNanos records when the in-flight probe acquired the slot; it only matters when probing == true.
   final case class HalfOpen(successes: Int, probing: Boolean, probeStartNanos: Long) extends CircuitState
 }
@@ -266,19 +271,22 @@ final class CircuitBreaker private[extras] (
   /** Force the circuit open (external signal, e.g., delegate provider reported ERROR). */
   def trip(): Unit = trip(OpenReason.External)
 
-  /** Open the circuit for `reason`. An event trip also takes over an open circuit a poll had tripped, so a later polled
-    * READY cannot undo what the delegate said by event.
+  /** Open the circuit for `reason`; `stale` when the delegate's STALE is the cause. An event trip also takes over an
+    * open circuit a poll had tripped, so a later polled READY cannot undo what the delegate said by event. A trip that
+    * is not for STALE marks an open circuit as no longer merely stale.
     */
-  private[extras] def trip(reason: OpenReason): Unit = {
+  private[extras] def trip(reason: OpenReason, stale: Boolean = false): Unit = {
     var done = false
     while (!done) {
       val state = stateRef.get()
       state.circuit match {
-        case Open(since, OpenReason.Polled) if reason == OpenReason.External =>
-          done = stateRef.compareAndSet(state, transition(state, Open(since, OpenReason.External)))
+        case Open(since, OpenReason.Polled, wasStale) if reason == OpenReason.External =>
+          done = stateRef.compareAndSet(state, transition(state, Open(since, OpenReason.External, wasStale && stale)))
+        case open @ Open(_, _, true) if !stale =>
+          done = stateRef.compareAndSet(state, transition(state, open.copy(stale = false)))
         case _: Open => done = true
         case _       =>
-          done = stateRef.compareAndSet(state, transition(state, Open(ticker.nanos(), reason)))
+          done = stateRef.compareAndSet(state, transition(state, Open(ticker.nanos(), reason, stale)))
       }
     }
   }
@@ -296,7 +304,7 @@ final class CircuitBreaker private[extras] (
     while (!done) {
       val state = stateRef.get()
       state.circuit match {
-        case Open(_, reason) if opener(reason) =>
+        case Open(_, reason, _) if opener(reason) =>
           done = stateRef.compareAndSet(state, transition(state, Closed, failures = 0))
         case _ => done = true
       }

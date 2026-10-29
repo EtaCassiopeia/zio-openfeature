@@ -131,7 +131,7 @@ provider in a `firstSuccessful` chain answers:
 stateDiagram-v2
     direction LR
     state "Closed · provider's own status" as Closed
-    state "Open · ERROR" as Open
+    state "Open · ERROR, or STALE if a STALE opened it" as Open
     state "Half-open · STALE" as HalfOpen
     [*] --> Closed
     Closed --> Open: failures, ERROR / FATAL, STALE, failed initialize
@@ -154,9 +154,17 @@ provider is reachable and reset the count.
 opens it under the default `stalePolicy` (`HalfOpen` sends it straight to half-open, `Ignore` does nothing). A circuit
 opened by failures closes only through `resetTimeout` and a successful probe.
 
+**What an open circuit reports.** `ERROR`, except when the provider's `STALE` opened it: then it reports `STALE`,
+the provider's own health, while it still rejects calls. A later `ERROR` or `FATAL` from the provider, or a failed
+probe, makes it report `ERROR`. At startup this decides whether a synchronous build accepts the stack: under the
+default `Open` policy a provider that is `STALE` while it starts builds with status `Stale`, and its calls are rejected
+until the circuit closes as described above. Under `HalfOpen` and `Ignore` it builds as the provider reports and
+nothing is rejected.
+
 A rejected call fails with a `GeneralError`, for example `Circuit breaker rejected: open for 4210ms due to consecutive
 failures, resets after 30000ms`. The reason is `consecutive failures`, `delegate reported unhealthy state`,
-`delegate state poll reported unhealthy` or, during a half-open probe, `half-open, probe in progress`.
+`delegate reported STALE`, `delegate state poll reported unhealthy`, `delegate state poll reported STALE` or, during a
+half-open probe, `half-open, probe in progress`.
 
 | `CircuitBreakerProviderConfig` field | Default | Meaning |
 |---|---|---|

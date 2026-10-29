@@ -521,14 +521,14 @@ object CircuitBreakerProviderSpec extends ZIOSpecDefault {
         assertTrue(result.getValue == true) &&
         assertTrue(cb.getState == ProviderState.READY)
       },
-      test("stalePolicy Open trips the circuit on STALE state") {
+      test("stalePolicy Open trips the circuit on STALE state, which it reports as STALE") {
         val underlying = new FailableProvider(Map("flag" -> true))
         val config     = CircuitBreakerProviderConfig(stalePolicy = StalePolicy.Open)
         val cb         = CircuitBreakerProvider(underlying, config)
         underlying.setState(ProviderState.STALE)
         val result = scala.util.Try(cb.getBooleanEvaluation("flag", false, ctx))
         assertTrue(result.isFailure) &&
-        assertTrue(cb.getState == ProviderState.ERROR)
+        assertTrue(cb.getState == ProviderState.STALE)
       },
       test("stalePolicy Ignore keeps circuit closed on STALE state") {
         val underlying = new FailableProvider(Map("flag" -> true))

@@ -305,7 +305,14 @@ lazy val extras = (project in file("extras"))
     ),
     // Lincheck's model checker instruments classes through a dynamically attached agent; JDK 21+ warns about that
     // unless it is enabled explicitly.
-    Test / javaOptions += "-XX:+EnableDynamicAgentLoading"
+    Test / javaOptions += "-XX:+EnableDynamicAgentLoading",
+    // CircuitState.Open gained the stale flag. The type is private[extras], which Scala 2.13 emits as public bytecode.
+    mimaBinaryIssueFilters ++= Seq(
+      ProblemFilters.exclude[DirectMissingMethodProblem]("zio.openfeature.extras.CircuitState#Open.copy"),
+      ProblemFilters.exclude[DirectMissingMethodProblem]("zio.openfeature.extras.CircuitState#Open.this"),
+      ProblemFilters.exclude[DirectMissingMethodProblem]("zio.openfeature.extras.CircuitState#Open.apply"),
+      ProblemFilters.exclude[MissingTypesProblem]("zio.openfeature.extras.CircuitState$Open$")
+    )
   )
 
 // Patched, aligned Jackson family for the OFREP provider's transitive HTTP stack. Applied to `ofrep` both as

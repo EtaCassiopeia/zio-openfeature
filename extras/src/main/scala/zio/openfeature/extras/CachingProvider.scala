@@ -100,7 +100,9 @@ final private[extras] class CacheKey(
   * invalidates its entry, so the next evaluation retries the delegate instead of replaying a transient error for the
   * remainder of the TTL. `DEFAULT`-reason results are likewise not retained — a `DEFAULT` resolution echoes the
   * caller's own default value, which the cache key does not capture, so caching it would serve one call site's default
-  * to another.
+  * to another. A caller that joined another caller's in-flight evaluation is not handed its failure either (one a
+  * timeout's thread interrupt caused, say): unless its own thread is interrupted, it evaluates the delegate once more
+  * itself, on the calling thread. A failure of that second evaluation is its answer.
   *
   * Caveat: because concurrent lookups deduplicate by cache key (which excludes the default value), N simultaneous
   * callers evaluating the same absent flag with DIFFERENT defaults all await the single in-flight evaluation and so
@@ -248,28 +250,37 @@ final class CachingProvider private (
       generation.get(),
       () => { ran.set(true); evaluate.asInstanceOf[ProviderEvaluation[Any]] }
     )
-    Unsafe.unsafe { implicit u =>
-      runtime.unsafe
-        .run(
-          cache
-            .get(ck)
-            // zio-cache stores the completed lookup Exit, failures included. Without this invalidation a
-            // single transient delegate exception would be replayed for the rest of the TTL.
-            .onError(_ => cache.invalidate(ck))
-            // Don't retain error results (errorCode set) OR DEFAULT-reason results: a DEFAULT resolution means the flag
-            // was absent and the delegate echoed THIS caller's default value, which the cache key does not include —
-            // keeping it would serve one call site's default to another (under a CACHED label) for the whole TTL. Both
-            // are still returned to this caller, but re-evaluated next time.
-            .tap(r => ZIO.when(r.getErrorCode != null || r.getReason == DefaultReason)(cache.invalidate(ck)))
-            .map(_.asInstanceOf[ProviderEvaluation[A]])
-            .map(r => if (ran.get()) r else withCachedReason(r))
-        ) match {
-        // Rethrow the original error as an `OpenFeatureError` (an `Exception`) rather than letting
-        // `getOrThrowFiberFailure` raise a `zio.FiberFailure` (a `Throwable`) that would escape the SDK's
-        // `catch (Exception)` and be thrown into application code (spec: evaluation must never throw).
-        case Exit.Success(value) => value
-        case Exit.Failure(cause) => throw FiberFailures.toOpenFeatureError(cause)
-      }
+    val lookup =
+      cache
+        .get(ck)
+        // zio-cache stores the completed lookup Exit, failures included. Without this invalidation a
+        // single transient delegate exception would be replayed for the rest of the TTL.
+        .onError(_ => cache.invalidate(ck))
+        // Don't retain error results (errorCode set) OR DEFAULT-reason results: a DEFAULT resolution means the flag
+        // was absent and the delegate echoed THIS caller's default value, which the cache key does not include —
+        // keeping it would serve one call site's default to another (under a CACHED label) for the whole TTL. Both
+        // are still returned to this caller, but re-evaluated next time.
+        .tap(r => ZIO.when(r.getErrorCode != null || r.getReason == DefaultReason)(cache.invalidate(ck)))
+    def run(effect: Task[ProviderEvaluation[Any]]): Exit[Throwable, ProviderEvaluation[Any]] =
+      Unsafe.unsafe(implicit u => runtime.unsafe.run(effect))
+    // zio-cache hands every caller that joined an in-flight lookup that lookup's outcome, failures included — among
+    // them an `InterruptedException` from a thread a timeout interrupted (a circuit breaker's), which was never this
+    // caller's. A failure this caller did not produce (`ran` still false) is retried once with its own evaluation,
+    // unless this thread is itself interrupted; a failure of its own lookup, or of the retry, is its answer. The retry
+    // is a second run rather than a recovery inside the first: a joiner resumes on a ZIO executor once the lookup it
+    // waited on completes, and the delegate must be evaluated on the calling thread.
+    val outcome = run(lookup) match {
+      case Exit.Failure(_) if !ran.get() && !Thread.currentThread().isInterrupted => run(cache.invalidate(ck) *> lookup)
+      case first                                                                  => first
+    }
+    outcome match {
+      case Exit.Success(value) =>
+        val r = value.asInstanceOf[ProviderEvaluation[A]]
+        if (ran.get()) r else withCachedReason(r)
+      // Rethrow the original error as an `OpenFeatureError` (an `Exception`) rather than letting
+      // `getOrThrowFiberFailure` raise a `zio.FiberFailure` (a `Throwable`) that would escape the SDK's
+      // `catch (Exception)` and be thrown into application code (spec: evaluation must never throw).
+      case Exit.Failure(cause) => throw FiberFailures.toOpenFeatureError(cause)
     }
   }
 

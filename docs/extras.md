@@ -87,7 +87,8 @@ Keeps a provider's answers for a while, using [zio-cache](https://github.com/zio
 
 - Repeats within `ttl` are served from the cache with reason `Cached`. Entries are keyed by flag key, flag type and
   evaluation context; concurrent callers for the same entry share one provider call, even with different defaults.
-- Errors and `DEFAULT`-reason answers are never cached, so a transient failure is retried.
+- Errors and `DEFAULT`-reason answers are never cached, so a transient failure is retried. A caller that shared
+  another caller's provider call is not handed that call's failure: it evaluates once more itself, on its own thread.
 
 | `CachingConfig` field | Default | Meaning |
 |---|---|---|

@@ -18,14 +18,15 @@ import scala.jdk.CollectionConverters._
 private[openfeature] object ValueBridge {
 
   def anyToObject(value: Any): Object = value match {
-    case b: Boolean     => java.lang.Boolean.valueOf(b)
-    case s: String      => s
-    case i: Int         => java.lang.Integer.valueOf(i)
-    case l: Long        => java.lang.Long.valueOf(l)
-    case d: Double      => java.lang.Double.valueOf(d)
-    case f: Float       => java.lang.Float.valueOf(f)
-    case list: List[_]  => list.map(anyToObject).asJava
-    case map: Map[_, _] =>
+    case b: Boolean           => java.lang.Boolean.valueOf(b)
+    case s: String            => s
+    case i: Int               => java.lang.Integer.valueOf(i)
+    case l: Long              => java.lang.Long.valueOf(l)
+    case d: Double            => java.lang.Double.valueOf(d)
+    case f: Float             => java.lang.Float.valueOf(f)
+    case t: java.time.Instant => t
+    case list: List[_]        => list.map(anyToObject).asJava
+    case map: Map[_, _]       =>
       map.asInstanceOf[Map[String, Any]].map { case (k, v) => k -> anyToObject(v) }.asJava
     case null  => null
     case other => other.toString
@@ -41,16 +42,17 @@ private[openfeature] object ValueBridge {
     // string "Some(x)". `None` becomes an empty Value; as a STRUCTURE member that then reads back as an absent key
     // (and so as `None`) — note it is `valueToMap` below that drops it, NOT the SDK: `Structure.mapToStructure`
     // stores an empty `Value` rather than filtering the entry.
-    case Some(inner)    => anyToValue(inner)
-    case None           => new dev.openfeature.sdk.Value()
-    case b: Boolean     => new dev.openfeature.sdk.Value(b)
-    case s: String      => new dev.openfeature.sdk.Value(s)
-    case i: Int         => new dev.openfeature.sdk.Value(i)
-    case l: Long        => new dev.openfeature.sdk.Value(l)
-    case d: Double      => new dev.openfeature.sdk.Value(d)
-    case f: Float       => new dev.openfeature.sdk.Value(f.toDouble)
-    case list: List[_]  => new dev.openfeature.sdk.Value(list.map(anyToValue).asJava)
-    case map: Map[_, _] =>
+    case Some(inner)          => anyToValue(inner)
+    case None                 => new dev.openfeature.sdk.Value()
+    case b: Boolean           => new dev.openfeature.sdk.Value(b)
+    case s: String            => new dev.openfeature.sdk.Value(s)
+    case i: Int               => new dev.openfeature.sdk.Value(i)
+    case l: Long              => new dev.openfeature.sdk.Value(l)
+    case d: Double            => new dev.openfeature.sdk.Value(d)
+    case f: Float             => new dev.openfeature.sdk.Value(f.toDouble)
+    case t: java.time.Instant => new dev.openfeature.sdk.Value(t)
+    case list: List[_]        => new dev.openfeature.sdk.Value(list.map(anyToValue).asJava)
+    case map: Map[_, _]       =>
       new dev.openfeature.sdk.Value(
         dev.openfeature.sdk.Structure.mapToStructure(
           map

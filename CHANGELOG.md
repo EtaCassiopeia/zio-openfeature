@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A `Float` flag beyond `Float` range is `TYPE_MISMATCH`, not `Infinity`, and `Instant` values survive the bridge**
+  (#568). A provider's `Double` was narrowed to `Float` before `FlagType[Float]` could check its range, so `1e300`
+  read as `Infinity`. The decoder now sees the overflowing `Double` and rejects it; in-range values are unchanged. A
+  custom `FlagType` on the `Float` wire therefore receives a `Double`, not `Float.PositiveInfinity`, for such a value.
+  Separately, an `Instant` handed to the provider (a default, a map member, a `TestFeatureProvider` fixture) was
+  turned into its text, so a `FlagType[Instant]` read failed with `TypeMismatch`. It now stays an `Instant`.
 - **Three defects in Scala 3 `FlagType` derivation** (#567).
   - A missing field could take a default from a user's overload of `apply`. Scala names that overload's default getter
     `apply$default$<n>`, the same as the synthetic `apply`'s, so `Labelled(name, label)` with an absent `label` decoded

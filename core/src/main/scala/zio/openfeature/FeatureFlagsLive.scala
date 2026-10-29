@@ -562,6 +562,34 @@ final private[openfeature] class FeatureFlagsLive(
       .flatMap(ready => ZIO.when(ready)(applySignal(Signal.EventReady)).unit)
       .catchAllCause(c => ZIO.logWarningCause("setProvider: could not re-check a timed-out provider's state", c))
 
+  /** Take the SDK's state for this instance's slot once `provider` is registered there. A registration that reuses an
+    * existing one — the same provider already initialized, or failed, for another domain — sends no lifecycle event, so
+    * without this the status would wait out the init timeout, and the watchdog would then shut down a provider other
+    * domains are serving. A fresh registration is still `NOT_READY` here and is left to its events; a state that an
+    * event also reports is applied twice, which the machine absorbs.
+    */
+  private[openfeature] def reconcileRegistration(provider: OFFeatureProvider): UIO[Unit] =
+    ZIO
+      .attemptBlocking {
+        val bound = domain.fold(api.getProvider())(d => api.getProvider(d))
+        // `==`, as the SDK matches a provider to its existing registration.
+        if (bound == provider) Some(client.getProviderState) else None
+      }
+      .flatMap {
+        // Status only: the onReady latch counts READY deliveries, which come from the bridge.
+        case Some(JavaProviderState.READY) => applySignal(Signal.EventReady).unit
+        case Some(JavaProviderState.STALE) => applySignal(Signal.EventStale).unit
+        case Some(JavaProviderState.ERROR) => applySignal(Signal.EventError(false)).unit
+        case Some(JavaProviderState.FATAL) =>
+          applySignal(Signal.EventError(true)).flatMap(t =>
+            ZIO.succeed(onReady.foreach(_.countDown())).when(t.contains(ProviderStatus.Fatal))
+          )
+        // NOT_READY: a fresh registration, which its own events will move on.
+        case _ => ZIO.unit
+      }
+      .unit
+      .catchAllCause(c => ZIO.logWarningCause("could not read the SDK state of a new registration", c))
+
   // Shutdown API (spec 1.6.1, 1.6.2)
 
   override def shutdown: UIO[Unit] =

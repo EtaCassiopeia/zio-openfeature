@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A client's status follows the SDK's own state, not just its events** (#563). Two cases went wrong, both with a
+  provider shared between domains (a `FeatureFlagRegistry`'s default provider, or one passed to several domains):
+  - A second domain's client was reported `Ready` while the shared provider was still initializing for the first,
+    because the SDK sends `READY` to every domain bound to a provider as soon as any registration of it returns, and
+    a registration that reuses a provider mid-initialization returns at once. Every evaluation through that client
+    failed with `ProviderNotReady`. A `READY` now counts only once the SDK reports the provider ready.
+  - A client registered on a provider that another domain had already initialized, or that had already failed, got no
+    event at all: it stayed `NotReady` for the whole init timeout, and its init watchdog then shut down the provider
+    the other domain was still serving. Such a client now takes the provider's state at once.
 - **`FeatureFlagRegistry` retries a provider that failed to initialize, and a failed client no longer leaks** (#562).
   The Java SDK reuses a registered provider's state and initializes it only while it is not ready, so after one
   failed `initialize()` every later `getClient` (or `defaultClient`) replayed the error in about a millisecond without

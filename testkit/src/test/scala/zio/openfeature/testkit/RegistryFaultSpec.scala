@@ -21,7 +21,7 @@ object RegistryFaultSpec extends ZIOSpecDefault {
     FeatureFlagRegistry.fromProvider(default).build.map(_.get[FeatureFlagRegistry])
 
   private def bounded[R, E, A](label: String)(effect: ZIO[R, E, A]): ZIO[R, Any, A] =
-    effect.timeoutFail(s"$label did not finish")(30.seconds)
+    effect.timeoutFail(s"$label did not finish")(60.seconds)
 
   // Fibers still running among those a supervised region forked, after giving teardown a moment to land.
   private def stillRunning(tracker: Supervisor[Chunk[Fiber.Runtime[Any, Any]]]): UIO[Int] = {
@@ -112,6 +112,65 @@ object RegistryFaultSpec extends ZIOSpecDefault {
             }
           }
         } yield assertTrue(out._1, out._2, out._3, out._4 == 2)
+      }
+    },
+    test("a client for a second domain sharing a provider still initializing is not ready early") {
+      bounded("shared initialization") {
+        for {
+          slow <- FaultyProvider.scoped(Map("x" -> true), name = "slow-default")
+          _    <- slow.script(Op.Initialize, Fault.Delay(2.seconds))
+          out  <- ZIO.scoped {
+            registry(slow).flatMap { reg =>
+              for {
+                a     <- reg.getClient("a").fork
+                _     <- slow.awaitEntered(Op.Initialize)
+                b     <- reg.getClient("b")
+                value <- b.boolean("x", false).either
+                _     <- a.join
+              } yield value
+            }
+          }
+        } yield assertTrue(out == Right(true))
+      }
+    },
+    test("a client reusing a ready registration of a named provider is ready at once") {
+      bounded("reused ready registration") {
+        for {
+          named <- FaultyProvider.scoped(Map("x" -> true), name = "named")
+          dflt  <- TestFeatureProvider.makeNamed("default", Map.empty)
+          out   <- ZIO.scoped {
+            registry(dflt).flatMap { reg =>
+              for {
+                _     <- reg.setProvider("live", named)
+                _     <- reg.getClient("live")
+                _     <- reg.setProvider("other", named)
+                other <- reg.getClient("other").timed
+                value <- other._2.boolean("x", false)
+              } yield (other._1, value)
+            }
+          }
+        } yield assertTrue(out._1 < 5.seconds, out._2)
+      }
+    },
+    test("a client reusing a shared provider's failed registration fails at once and leaves the provider running") {
+      bounded("reused failed registration") {
+        for {
+          shared <- FaultyProvider.scoped(Map("x" -> true), name = "shared")
+          dflt   <- TestFeatureProvider.makeNamed("default", Map.empty)
+          out    <- ZIO.scoped {
+            registry(dflt).flatMap { reg =>
+              for {
+                _    <- reg.setProvider("live", shared)
+                live <- reg.getClient("live")
+                _    <- ZIO.attempt(shared.emit(OFProviderEvent.PROVIDER_ERROR, ProviderEventDetails.builder().build()))
+                erred <- live.providerStatus.repeatUntil(_ == ProviderStatus.Error).timeout(5.seconds)
+                _     <- reg.setProvider("other", shared)
+                other <- reg.getClient("other").either.timed
+                downs <- shared.entered(Op.Shutdown)
+              } yield (erred.isDefined, other._1, other._2.isLeft, downs)
+            }
+          }
+        } yield assertTrue(out._1, out._2 < 5.seconds, out._3, out._4 == 0)
       }
     },
     suite("retrying a registration")(

@@ -393,6 +393,7 @@ private[openfeature] object FeatureFlagsFactories {
         case None    => ZIO.attempt(api.setProvider(provider))
       }).tapError(_ => ff.stopEventBridge)
       _ <- ZIO.unless(early)(ff.startEventBridge)
+      _ <- ff.reconcileRegistration(provider)
       // Init watchdog: after initTimeout, escalate to Fatal ONLY if the provider never became usable
       // (`everReady` gate inside the machine): publish the Error event, release the onReady latch, then shut the
       // provider down, bounded. A provider that was Ready and later dipped to a transient Error is left running. The

@@ -14,6 +14,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the `InterruptedException` a `CircuitBreakerProvider` timeout causes on the thread running it, a caller that had
   only joined it failed too, with an error from an evaluation that was not its own. Such a caller now evaluates the
   delegate once more itself; a failure of its own evaluation is still its answer, and failures are still never cached.
+- **A `STALE` provider at startup no longer fails a synchronous build under a default `CircuitBreakerProvider`**
+  (#603). Under the default `StalePolicy.Open`, the provider's `STALE` opened the circuit, and an open circuit reported
+  `ERROR`, which a synchronous build rejects, while an async build of the same stack started. A circuit that a `STALE`
+  opened now reports `STALE` (it still rejects calls until `resetTimeout` or the provider's `READY`); one opened by
+  failures, `ERROR`, `FATAL` or a failed `initialize` still reports `ERROR`.
 - **A timed-out swap no longer leaks the previous provider** (#564). When `setProvider`'s new provider did not finish
   initializing within `initTimeout`, the SDK kept it bound and dropped the previous provider from the slot, shutting it
   down only if the new one later became ready. If the new one failed instead, or was still initializing at shutdown,

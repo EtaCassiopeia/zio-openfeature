@@ -125,8 +125,11 @@ final class CircuitBreakerProvider private (
     case CircuitState.Closed =>
       try delegateState()
       catch { case _: Exception => ProviderState.ERROR }
-    case _: CircuitState.Open     => ProviderState.ERROR
-    case _: CircuitState.HalfOpen => ProviderState.STALE
+    // A circuit the delegate's STALE opened reports the delegate's health, not the rejection: STALE is evaluable for
+    // the SDK, so a stack that is serving last-known data does not fail a build the way an ERROR would.
+    case CircuitState.Open(_, _, true) => ProviderState.STALE
+    case _: CircuitState.Open          => ProviderState.ERROR
+    case _: CircuitState.HalfOpen      => ProviderState.STALE
   }
 
   private val channel = new DelegateEventChannel(underlying, onDelegateEvent)
@@ -140,7 +143,7 @@ final class CircuitBreakerProvider private (
       case JavaProviderEvent.PROVIDER_READY => breaker.reset()
       case JavaProviderEvent.PROVIDER_STALE =>
         config.stalePolicy match {
-          case StalePolicy.Open     => breaker.trip()
+          case StalePolicy.Open     => breaker.trip(OpenReason.External, stale = true)
           case StalePolicy.HalfOpen => breaker.transitionToHalfOpen()
           case StalePolicy.Ignore   => ()
         }
@@ -246,12 +249,14 @@ final class CircuitBreakerProvider private (
       case Some(permit) => executeWithTimeout(permit, evaluate)
       case None         =>
         val detail = breaker.currentState match {
-          case CircuitState.Open(sinceNanos, reason) =>
+          case CircuitState.Open(sinceNanos, reason, stale) =>
             val ago   = java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(breaker.ticker.nanos() - sinceNanos)
             val cause = reason match {
-              case OpenReason.Failures => "consecutive failures"
-              case OpenReason.External => "delegate reported unhealthy state"
-              case OpenReason.Polled   => "delegate state poll reported unhealthy"
+              case OpenReason.Failures          => "consecutive failures"
+              case OpenReason.External if stale => "delegate reported STALE"
+              case OpenReason.External          => "delegate reported unhealthy state"
+              case OpenReason.Polled if stale   => "delegate state poll reported STALE"
+              case OpenReason.Polled            => "delegate state poll reported unhealthy"
             }
             s"open for ${ago}ms due to $cause, resets after ${config.resetTimeout.toMillis}ms"
           case CircuitState.HalfOpen(_, _, _) => "half-open, probe in progress"
@@ -383,7 +388,7 @@ final class CircuitBreakerProvider private (
       case Some(state) =>
         if (state == ProviderState.ERROR || state == ProviderState.FATAL) breaker.trip(OpenReason.Polled)
         else if (state == ProviderState.STALE) config.stalePolicy match {
-          case StalePolicy.Open     => breaker.trip(OpenReason.Polled)
+          case StalePolicy.Open     => breaker.trip(OpenReason.Polled, stale = true)
           case StalePolicy.HalfOpen => breaker.transitionToHalfOpen()
           case StalePolicy.Ignore   => ()
         }

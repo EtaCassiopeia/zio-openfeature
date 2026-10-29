@@ -22,7 +22,9 @@ available: `withTargetingKey`, `withAttributes(...)`, `withoutAttribute(key)`, `
 attributes.
 
 `targetingKey` is a reserved attribute name: the SDK stores the key as that attribute, so an explicit targeting key
-wins over an attribute of that name, and a context read back in a hook never has such an attribute.
+wins over an attribute of that name, and a context read back in a hook never has such an attribute. Across merged
+layers the more specific layer's key wins whichever form it takes: a `targetingKey` string attribute on the
+invocation context beats an explicit key on the global one.
 
 ### Attribute types
 

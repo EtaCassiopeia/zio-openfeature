@@ -63,6 +63,63 @@ object TypeFidelitySpec extends ZIOSpecDefault {
           l  <- FeatureFlags.long("l", 0L)
           d  <- FeatureFlags.double("d", 0.0)
         } yield assertTrue(b == true, s == "hello", i == 42, l == 5000000000L, d == 2.5)
+      },
+      test("a double beyond Float range read as Float is TYPE_MISMATCH, never Infinity") {
+        for {
+          tp    <- ZIO.service[TestFeatureProvider]
+          _     <- tp.setFlags(Map("f" -> 1e300, "neg" -> -1e300))
+          typed <- FeatureFlags.value[Float]("f", 0f).either
+          negT  <- FeatureFlags.value[Float]("neg", 0f).either
+          total <- FeatureFlags.resolveOrDefault[Float]("f", default = 0.5f)
+        } yield assertTrue(
+          isTypeMismatch(typed),
+          isTypeMismatch(negT),
+          total.errorCode.contains(ErrorCode.TypeMismatch),
+          total.value == 0.5f
+        )
+      },
+      test("a custom Float-wire type still receives a Float for every in-range value") {
+        // Accepts only a Float: a Double reaching it would be a TYPE_MISMATCH.
+        implicit val floatOnly: FlagType[Float] = new FlagType[Float] {
+          def typeName: String                          = "FloatOnly"
+          override def wire: WireType                   = WireType.Float
+          def defaultValue: Float                       = 0f
+          def decode(value: Any): Either[String, Float] = value match {
+            case f: Float => Right(f)
+            case other    => Left(s"not a Float: $other")
+          }
+        }
+        for {
+          tp  <- ZIO.service[TestFeatureProvider]
+          _   <- tp.setFlags(Map("small" -> 2.5, "max" -> Float.MaxValue.toDouble))
+          sm  <- FeatureFlags.value[Float]("small", 0f).either
+          max <- FeatureFlags.value[Float]("max", 0f).either
+        } yield assertTrue(sm == Right(2.5f), max == Right(Float.MaxValue))
+      },
+      test("Float reads at and inside the range edge keep their value") {
+        for {
+          tp  <- ZIO.service[TestFeatureProvider]
+          _   <- tp.setFlags(Map("max" -> Float.MaxValue.toDouble, "small" -> 2.5, "neg" -> -1.0e30))
+          max <- FeatureFlags.value[Float]("max", 0f)
+          sm  <- FeatureFlags.value[Float]("small", 0f)
+          neg <- FeatureFlags.value[Float]("neg", 0f)
+        } yield assertTrue(max == Float.MaxValue, sm == 2.5f, neg == -1.0e30f)
+      },
+      test("an Instant flag reads back as an Instant, not as its text") {
+        val t                                                 = java.time.Instant.parse("2026-01-01T00:00:00Z")
+        implicit val instantType: FlagType[java.time.Instant] = FlagType.from[java.time.Instant](
+          "Instant",
+          java.time.Instant.EPOCH,
+          {
+            case i: java.time.Instant => Right(i)
+            case other                => Left(s"not an Instant: $other")
+          }
+        )
+        for {
+          tp   <- ZIO.service[TestFeatureProvider]
+          _    <- tp.setFlag("t", t)
+          read <- FeatureFlags.value[java.time.Instant]("t", java.time.Instant.EPOCH).either
+        } yield assertTrue(read == Right(t))
       }
     ).provide(TestFeatureProvider.layer),
     suite("on the provider directly")(

@@ -76,6 +76,8 @@ remove it.
 - A clean answer runs `after`, then `finallyAfter`.
 - An answer with an error code (`FLAG_NOT_FOUND`, `TYPE_MISMATCH`, ...) runs `error`, not `after`, on both
   [tiers](evaluating.md): `booleanOrDefault` serves your default, and the hooks still see the error.
+- An answer whose value does not decode to your type runs `error`, and `finallyAfter` gets the resolution the total
+  tier serves: your default, reason `ERROR`, code `TYPE_MISMATCH`.
 - A failure without an answer (provider not ready, timeout, exception) runs `error`, and `finallyAfter` gets `None`.
   Hooks run before the status check, so a not-ready provider still runs `before`, `error` and `finallyAfter`.
 - Interrupting the evaluation from outside, for example with `.timeout` around your call, does not run `error`;

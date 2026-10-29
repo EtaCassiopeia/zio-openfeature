@@ -105,6 +105,56 @@ object TypeFidelitySpec extends ZIOSpecDefault {
           neg <- FeatureFlags.value[Float]("neg", 0f)
         } yield assertTrue(max == Float.MaxValue, sm == 2.5f, neg == -1.0e30f)
       },
+      test(
+        "finallyAfter sees the served error resolution when the provider answered with a value that does not decode"
+      ) {
+        implicit val color: FlagType[String] = FlagType.from[String](
+          "Color",
+          "red",
+          {
+            case s: String if Set("red", "green")(s) => Right(s)
+            case other                               => Left(s"unknown color $other")
+          }
+        )
+        val seen = new java.util.concurrent.atomic.AtomicReference[Option[Option[FlagResolution[_]]]](None)
+        val hook = new FeatureHook {
+          override def finallyAfter(ctx: HookContext, d: Option[FlagResolution[_]], h: HookHints): UIO[Unit] =
+            ZIO.succeed(seen.set(Some(d)))
+        }
+        for {
+          tp    <- ZIO.service[TestFeatureProvider]
+          _     <- tp.setFlag("c", "purple")
+          total <- FeatureFlags.resolveOrDefault[String]("c", "red", EvaluationContext.empty, EvaluationOptions(hook))
+          hooked = seen.get.flatten
+        } yield assertTrue(
+          total.errorCode.contains(ErrorCode.TypeMismatch),
+          hooked.exists(_.errorCode.contains(ErrorCode.TypeMismatch)),
+          hooked.exists(_.value == "red"),
+          hooked.exists(_.reason == ResolutionReason.Error),
+          hooked.flatMap(_.errorMessage) == total.errorMessage
+        )
+      },
+      test("finallyAfter still gets None when the provider never answered") {
+        val seen = new java.util.concurrent.atomic.AtomicReference[Option[Option[FlagResolution[_]]]](None)
+        val hook = new FeatureHook {
+          override def finallyAfter(ctx: HookContext, d: Option[FlagResolution[_]], h: HookHints): UIO[Unit] =
+            ZIO.succeed(seen.set(Some(d)))
+        }
+        for {
+          tp <- ZIO.service[TestFeatureProvider]
+          _  <- tp.setFlag("slow", true)
+          _  <- tp.setDelay(2.seconds)
+          _  <- FeatureFlags
+            .resolveOrDefault[Boolean](
+              "slow",
+              false,
+              EvaluationContext.empty,
+              EvaluationOptions(hook).withTimeout(50.millis)
+            )
+            .timeout(10.seconds)
+            .ensuring(tp.setDelay(Duration.Zero))
+        } yield assertTrue(seen.get == Some(None))
+      } @@ TestAspect.withLiveClock,
       test("an Instant flag reads back as an Instant, not as its text") {
         val t                                                 = java.time.Instant.parse("2026-01-01T00:00:00Z")
         implicit val instantType: FlagType[java.time.Instant] = FlagType.from[java.time.Instant](

@@ -19,6 +19,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `ERROR`, which a synchronous build rejects, while an async build of the same stack started. A circuit that a `STALE`
   opened now reports `STALE` (it still rejects calls until `resetTimeout` or the provider's `READY`); one opened by
   failures, `ERROR`, `FATAL` or a failed `initialize` still reports `ERROR`.
+- **A `multiProvider` chain reports its members' status** (#602, spec compliance). The SDK's `MultiProvider` never
+  attaches to its members, so their events went nowhere: a member's `ERROR` left the chain `Ready`, and `awaitReady`,
+  health checks and a circuit breaker above the chain never saw it. The chain now does what the specification's
+  Multi-Provider appendix prescribes: it tracks each member's status, takes the worst as its own and as its
+  `getState` (`FATAL` > `NOT_READY` > `ERROR` > `STALE` > `READY`), re-emits a member's status event when that changes
+  its own status, and always re-emits a configuration change. Under `firstSuccessful` a member's `Fatal` now makes the chain
+  `Fatal`.
 - **A timed-out swap no longer leaks the previous provider** (#564). When `setProvider`'s new provider did not finish
   initializing within `initTimeout`, the SDK kept it bound and dropped the previous provider from the slot, shutting it
   down only if the new one later became ready. If the new one failed instead, or was still initializing at shutdown,

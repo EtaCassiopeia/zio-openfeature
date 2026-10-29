@@ -61,6 +61,7 @@ and runs them on every build, twice: the `conformance` module runs them with Cuc
 | Add and remove handlers | `onProviderReady`, `onProviderError`, `onProviderStale`, `onConfigurationChanged`, or `on(eventType, handler)`; each returns an effect that removes the handler |
 | Run a handler at once if the provider is already in that state (§5.3.3) | yes |
 | All events as a stream | `FeatureFlags.events`, a `ZStream` |
+| Multi-Provider status and events (Appendix A) | `FeatureFlags.multiProvider`: the worst member status, `FATAL` > `NOT_READY` > `ERROR` > `STALE` > `READY`; a member's status event re-emitted only when it changes that, a configuration change always. See [Providers](providers.md#ask-several-providers-in-order). |
 | **Tracking (§6)** | |
 | Track an event, optionally with context and details | `track(name)`, `track(name, ctx)`, `track(name, details)`, `track(name, ctx, details)`; details are `TrackingEventDetails(value, attributes)`. See [Tracking events](tracking.md). |
 

@@ -119,8 +119,10 @@ object WrapperStackFaultSpec extends ZIOSpecDefault {
     Clock.nanoTime.flatMap(now => loop(now + within.toNanos))
   }
 
-  /** Whether a layer passes its delegate's events on: the SDK's MultiProvider and DeferredProvider do not. */
-  private def forwardsEvents(layer: Layer): Boolean = layer == Layer.Cache || layer == Layer.Breaker
+  /** Whether a layer passes its delegate's events on: DeferredProvider does not. A one-member multi-provider chain
+    * passes on every status change of its member, since each changes the chain's own status.
+    */
+  private def forwardsEvents(layer: Layer): Boolean = layer != Layer.Deferred
 
   /** Whether the build may fail: initialization fails or hangs past the init timeout. A `STALE` at startup does not
     * fail it, even where a circuit breaker sees it and opens: an open circuit reports the `STALE` that opened it.
@@ -180,8 +182,7 @@ object WrapperStackFaultSpec extends ZIOSpecDefault {
       _ <- inner.script(Op.EvaluateBoolean)
       _ <- inner.release
       // An error the provider reports reaches the status through every wrapper, so the recovery below is a real one.
-      // Not past a layer that forwards no events: the SDK's MultiProvider forwards no child event, and
-      // DeferredProvider documents that it does not forward its delegate's.
+      // Not past a layer that forwards no events: DeferredProvider documents that it does not forward its delegate's.
       //
       // The SDK hands a provider's events to their handlers on a thread pool, in no fixed order, so two events emitted
       // back to back can land in either order and leave the status on the first. Each event here is therefore emitted

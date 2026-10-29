@@ -107,6 +107,15 @@ The strategy decides when the chain moves on:
   `GENERAL` error carrying every provider's error.
 - A custom strategy implements `MultiProviderStrategy.Strategy`. For `track` in a chain, see [Tracking](tracking.md);
   for a `DeferredProvider` member, see [Extras](extras.md#deferred-provider).
+- The chain's status is the worst of its members' (`Fatal`, then `NotReady`, `Error`, `Stale`, `Ready`), as the
+  specification's Multi-Provider appendix prescribes. Once the chain has initialized, a member's `READY`, `STALE` or
+  `ERROR` event reaches your handlers, with that member's details, only when it changes the chain's status; its
+  configuration changes always do. Under `firstSuccessful` one `Fatal` member therefore makes the whole chain `Fatal`,
+  although another member could answer. A member that sends no events (not an `EventProvider`, such as a
+  `DeferredProvider`) counts as `Ready` once the chain has initialized.
+- The chain takes over its members' event channels, as the SDK does for a registered provider. A member whose channel
+  something else already holds (it is also registered with an API, sits in another chain, or appears twice in this
+  one) keeps it, and counts in this chain as a member that sends no events.
 
 ??? note "Hand-built `MultiProvider`"
     Unlike `FeatureFlags.multiProvider`, a `new MultiProvider(...)` fails integer values with `TYPE_MISMATCH` (wrap it

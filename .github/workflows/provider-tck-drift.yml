@@ -1,0 +1,89 @@
+name: Provider TCK drift
+
+# Detects the vendored OpenFeature provider TCK falling behind upstream. Scheduled, never a PR gate:
+# upstream moving is not a PR author's doing. Upstream marks the TCK experimental, so a change there
+# is a decision to review (re-vendor, then revisit each provider's capabilities and known failures),
+# not something to absorb automatically.
+
+on:
+  schedule:
+    # Mondays 06:30 UTC, beside the gherkin drift check.
+    - cron: '30 6 * * 1'
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'open-feature/spec ref to compare against (default: main)'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  drift:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Check for upstream drift
+        id: drift
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REF: ${{ inputs.ref || 'main' }}
+        run: |
+          set +e
+          .github/scripts/check-provider-tck-drift.sh upstream "$REF" --report drift-report.md
+          status=$?
+          set -e
+          # Only the bare exit code is published. 0 means checked and clean, 1 means drift (handled
+          # below); anything else means the check did not run, which must fail rather than read as clean.
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          if [ "$status" -eq 0 ]; then
+            echo "no drift against $REF"
+          elif [ "$status" -ne 1 ]; then
+            echo "::error::provider TCK drift check could not run against $REF (exit $status)"
+            exit 1
+          fi
+
+      - name: File or update the drift issue
+        if: steps.drift.outputs.status == '1'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REF: ${{ inputs.ref || 'main' }}
+          RUN_ID: ${{ github.run_id }}
+          TITLE: Provider TCK drifted from upstream spec
+        run: |
+          set -o pipefail
+          existing=$(gh issue list --state open --search "\"$TITLE\" in:title" --json number,title \
+            | jq -r --arg title "$TITLE" '[.[] | select(.title == $title)] | .[0].number // empty')
+
+          {
+            echo "The vendored provider TCK no longer matches \`open-feature/spec@$REF\`."
+            echo
+            echo "Re-vendor per \`conformance-zio-bdd/src/test/resources/features/provider-tck/README.md\`,"
+            echo "update the pin, run \`sbt conformanceZioBdd/test\`, and revisit each provider's declared"
+            echo "capabilities and known failures in \`zio.openfeature.conformance.bdd.tck\`."
+            echo
+            echo "Reproduce locally: \`.github/scripts/check-provider-tck-drift.sh upstream $REF\`"
+            echo
+            cat drift-report.md
+            echo
+            echo "_Filed by the \`Provider TCK drift\` workflow (run $RUN_ID)._"
+          } > issue-body.md
+
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body-file issue-body.md
+          else
+            gh issue create --title "$TITLE" --body-file issue-body.md \
+              --label spec-compliance --label needs-triage
+          fi
+
+      - name: Fail if drift was found
+        if: steps.drift.outputs.status == '1'
+        env:
+          REF: ${{ inputs.ref || 'main' }}
+        run: |
+          echo "::error::vendored provider TCK drifted from open-feature/spec@$REF"
+          exit 1

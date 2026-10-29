@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A more specific context layer's `targetingKey` attribute is no longer outranked by a less specific explicit key**
+  (#569). `EvaluationContext.merge` kept the higher layer's explicit key but ignored its `targetingKey` string
+  attribute, which only became the key after merging. So an invocation context of
+  `withAttributes("targetingKey" -> "invocation-user")` over a global `EvaluationContext("global-user")` reached the
+  provider as `global-user`, inverting the spec's precedence (3.2.3). Each layer's key now counts in either form.
 - **A `Float` flag beyond `Float` range is `TYPE_MISMATCH`, not `Infinity`, and `Instant` values survive the bridge**
   (#568). A provider's `Double` was narrowed to `Float` before `FlagType[Float]` could check its range, so `1e300`
   read as `Infinity`. The decoder now sees the overflowing `Double` and rejects it; in-range values are unchanged. A

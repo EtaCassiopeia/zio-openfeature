@@ -21,9 +21,15 @@ final case class EvaluationContext(
     else if (isEmpty) other
     else
       EvaluationContext(
-        targetingKey = other.targetingKey.orElse(targetingKey),
+        // Each side's key in either form it may take, so a more specific layer's `targetingKey` attribute is not
+        // outranked by a less specific layer's explicit key once the attributes are flattened together.
+        targetingKey = other.effectiveTargetingKey.orElse(effectiveTargetingKey),
         attributes = EvaluationContext.mergeAttributes(attributes, other.attributes)
       )
+
+  // The key this layer sets on its own: the explicit one, else a string `targetingKey` attribute.
+  private def effectiveTargetingKey: Option[String] =
+    targetingKey.orElse(attributes.get("targetingKey").collect { case AttributeValue.StringValue(s) => s })
 
   def withTargetingKey(key: String): EvaluationContext =
     copy(targetingKey = Some(key))

@@ -7,6 +7,22 @@ import scala.jdk.CollectionConverters._
 
 object EvaluationContextSpec extends ZIOSpecDefault {
 
+  private def attrKey(key: String): EvaluationContext =
+    EvaluationContext.withAttributes("targetingKey" -> AttributeValue.StringValue(key))
+
+  // A context layer and the key it sets, if any: none, an explicit key, a string attribute, or a non-string attribute
+  // (which sets nothing). Every layer also carries an unrelated attribute, so it is never empty.
+  private val layerGen: Gen[Any, (EvaluationContext, Option[String])] =
+    Gen.elements("a", "b", "c").flatMap { k =>
+      val base = EvaluationContext.withAttributes("other" -> AttributeValue.StringValue(k))
+      Gen.elements(
+        (base, None),
+        (base.withTargetingKey(s"field-$k"), Some(s"field-$k")),
+        (base.withAttribute("targetingKey", AttributeValue.StringValue(s"attr-$k")), Some(s"attr-$k")),
+        (base.withAttribute("targetingKey", AttributeValue.IntValue(1)), None)
+      )
+    }
+
   def spec = suite("EvaluationContextSpec")(
     suite("Construction")(
       test("empty creates empty context") {
@@ -292,6 +308,36 @@ object EvaluationContextSpec extends ZIOSpecDefault {
         val ofCtx     = zio.openfeature.internal.ContextConverter.toOpenFeature(ctx)
         val roundTrip = zio.openfeature.internal.ContextConverter.fromOpenFeature(ofCtx)
         assertTrue(roundTrip.get("n") == Some(AttributeValue.IntValue(42)))
+      }
+    ),
+    suite("targeting key precedence across merged layers")(
+      test("a more specific layer's targetingKey attribute beats a less specific layer's explicit key") {
+        val merged = EvaluationContext("global-user").merge(attrKey("invocation-user"))
+        assertTrue(ContextConverter.toOpenFeature(merged).getTargetingKey == "invocation-user")
+      },
+      test("a more specific layer's explicit key beats a less specific layer's targetingKey attribute") {
+        val merged = attrKey("global-user").merge(EvaluationContext("invocation-user"))
+        assertTrue(ContextConverter.toOpenFeature(merged).getTargetingKey == "invocation-user")
+      },
+      test("within one layer the explicit key still beats the attribute") {
+        val one = EvaluationContext("explicit").withAttribute("targetingKey", AttributeValue.StringValue("attr"))
+        assertTrue(ContextConverter.toOpenFeature(EvaluationContext.empty.merge(one)).getTargetingKey == "explicit")
+      },
+      test("a non-string targetingKey attribute never replaces a key") {
+        val merged = EvaluationContext("global-user").merge(
+          EvaluationContext.withAttributes(
+            "targetingKey" -> AttributeValue.IntValue(7),
+            "plan"         -> AttributeValue.StringValue("pro")
+          )
+        )
+        assertTrue(ContextConverter.toOpenFeature(merged).getTargetingKey == "global-user")
+      },
+      test("whatever form each layer uses, the most specific layer that sets a key wins") {
+        check(Gen.listOfN(4)(layerGen)) { layers =>
+          val merged   = layers.map(_._1).foldLeft(EvaluationContext.empty)(_ merge _)
+          val expected = layers.flatMap(_._2).lastOption
+          assertTrue(Option(ContextConverter.toOpenFeature(merged).getTargetingKey) == expected)
+        }
       }
     )
   )

@@ -107,7 +107,7 @@ ThisBuild / scalacOptions ++= {
 ThisBuild / coverageEnabled := false
 
 // Binary-compatibility check via sbt-mima. The API is frozen as of `1.0.0`, so each module baselines against its
-// own most recent release — currently `1.1.2` (see `mimaPreviousArtifacts` in `commonSettings`):
+// own most recent release — currently `1.2.0` (see `mimaPreviousArtifacts` in `commonSettings`):
 // `sbt mimaReportBinaryIssues` catches
 // accidental breaking changes on every PR, and an intentional break is whitelisted with a `mimaBinaryIssueFilters`
 // rule scoped to the specific symbol — see https://github.com/lightbend/mima for the filter API. Bump the baseline
@@ -162,7 +162,7 @@ lazy val commonSettings = Seq(
   ),
   // Baseline against each module's last release (see the ThisBuild MiMa note above). Bump the version to the previous
   // release version when cutting a new one, per `RELEASING.md`.
-  mimaPreviousArtifacts := Set(organization.value %% moduleName.value % "1.1.2"),
+  mimaPreviousArtifacts := Set(organization.value %% moduleName.value % "1.2.0"),
   checkPublishedPins    := checkPublishedPinsTask.value
 ) ++ crossVersionSourceDirs
 
@@ -251,20 +251,6 @@ lazy val core = (project in file("core"))
       "dev.zio"        %% "zio"         % zioVersion,
       "dev.zio"        %% "zio-streams" % zioVersion,
       "dev.openfeature" % "sdk"         % openFeatureSdkVersion
-    ),
-    // #437 added `maxAbandonedCalls` as the last field of the public case class `FeatureFlagsConfig`, which changes
-    // its constructor, `apply` and `copy` signatures, and on 2.13 drops the companion's synthetic `AbstractFunction9`
-    // parent. Intentional: callers must recompile (noted in the CHANGELOG).
-    // The same change keeps `FeatureFlags.fromAcquireAsync`'s 1.1.2 signature as a package-private bridge on the
-    // companion object, which is what Scala callers link against. Scala 2.13 emits no static forwarder for a
-    // package-private method, so the forwarder on the `FeatureFlags` interface (a Java-only entry point) is gone there.
-    // Delete these once the MiMa baseline moves past the release that ships #437.
-    mimaBinaryIssueFilters ++= Seq(
-      ProblemFilters.exclude[DirectMissingMethodProblem]("zio.openfeature.FeatureFlagsConfig.apply"),
-      ProblemFilters.exclude[DirectMissingMethodProblem]("zio.openfeature.FeatureFlagsConfig.this"),
-      ProblemFilters.exclude[DirectMissingMethodProblem]("zio.openfeature.FeatureFlagsConfig.copy"),
-      ProblemFilters.exclude[MissingTypesProblem]("zio.openfeature.FeatureFlagsConfig$"),
-      ProblemFilters.exclude[DirectMissingMethodProblem]("zio.openfeature.FeatureFlags.fromAcquireAsync")
     )
   )
 
@@ -342,15 +328,6 @@ lazy val optimizely = (project in file("optimizely"))
   .settings(
     name := "zio-openfeature-optimizely",
     commonSettings,
-    // #453: `events` was added as the last, defaulted field of `OptimizelyProviderConfig`. Source compatible, but the
-    // case class's six-argument constructor, `apply` and `copy` are gone, so callers must recompile. Delete these when
-    // the baseline moves past the release that ships #453.
-    mimaBinaryIssueFilters ++= Seq(
-      ProblemFilters.exclude[DirectMissingMethodProblem]("zio.openfeature.optimizely.OptimizelyProviderConfig.this"),
-      ProblemFilters.exclude[DirectMissingMethodProblem]("zio.openfeature.optimizely.OptimizelyProviderConfig.apply"),
-      ProblemFilters.exclude[DirectMissingMethodProblem]("zio.openfeature.optimizely.OptimizelyProviderConfig.copy"),
-      ProblemFilters.exclude[MissingTypesProblem]("zio.openfeature.optimizely.OptimizelyProviderConfig$")
-    ),
     libraryDependencies ++= Seq(
       "dev.zio" %% "zio" % zioVersion,
       // NOTE: on a core-api/core-httpclient upgrade, re-verify `com/optimizely/ab/ObservingOptimizelyHttpClient.java`

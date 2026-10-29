@@ -19,8 +19,8 @@ Only `core` is required. It is published for Scala 3.3.8+ and 2.13.18+, and need
 examples on this site use Scala 3 syntax.
 
 ??? note "Trying unreleased changes"
-    Every commit on `main` publishes the next version with a `-SNAPSHOT` suffix (for example `1.2.1-SNAPSHOT` after
-    `v1.2.0`). Add the snapshots resolver to use it. Snapshots change without notice; pin a release for anything you
+    Every commit on `main` publishes the next version with a `-SNAPSHOT` suffix (for example `1.2.2-SNAPSHOT` after
+    `v1.2.1`). Add the snapshots resolver to use it. Snapshots change without notice; pin a release for anything you
     ship.
 
     ```scala

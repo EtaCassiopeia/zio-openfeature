@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.1] — 2026-10-28
+
+**A patch release with two fixes. Nothing to change when upgrading:** MiMa is green against 1.2.0 and no public
+signature changed.
+- **`track` now reaches every provider of a `multiProvider` chain.** In 1.2.0 it was dropped without an error, so
+  tracking events sent through a chain never arrived.
+- **testkit: `FaultyProvider.release` no longer misses a call that hasn't parked yet**, so `awaitEntered` followed by
+  `release` is race-free.
+
 ### Fixed
 
 - **`track` reaches the providers of a `multiProvider` chain** (#551). The Java SDK's `MultiProvider` does not
@@ -19,6 +28,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   release in between was lost and the call stayed parked until the scope closed. A release now reaches every call
   that entered before it, and `shutdown()` does the same for `HangUntilShutdown`, so `awaitEntered` followed by
   `release` is race-free. This was behind an intermittent `LifecycleModelSpec` failure in CI.
+
+### Dependencies
+
+- **Typesafe `config` 1.4.3 → 1.4.9** in `zio-openfeature-extras`, the only published dependency that moved. Build
+  plugins, sbt (1.13.0) and scalafmt (3.11.5) were updated as well; none of them reach the published artifacts.
 
 ## [1.2.0] — 2026-10-24
 
@@ -1726,7 +1740,8 @@ promotes `[Unreleased]` to the new version section when a release tag is cut.
 
 Internal refactors that don't change behaviour or surface area don't need a CHANGELOG entry. When in doubt: write one.
 
-[Unreleased]: https://github.com/EtaCassiopeia/zio-openfeature/compare/v1.2.0...HEAD
+[Unreleased]: https://github.com/EtaCassiopeia/zio-openfeature/compare/v1.2.1...HEAD
+[1.2.1]: https://github.com/EtaCassiopeia/zio-openfeature/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/EtaCassiopeia/zio-openfeature/compare/v1.1.2...v1.2.0
 [1.1.2]: https://github.com/EtaCassiopeia/zio-openfeature/compare/v1.1.1...v1.1.2
 [1.1.1]: https://github.com/EtaCassiopeia/zio-openfeature/compare/v1.1.0...v1.1.1

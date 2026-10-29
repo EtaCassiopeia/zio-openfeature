@@ -565,6 +565,28 @@ lazy val providerFaultTests = (project in file("provider-fault-tests"))
     Test / parallelExecution := false
   )
 
+// Coverage-guided fuzzing with Jazzer of the code that reads untrusted input: environment variables, HOCON, and OFREP
+// responses. Like `providerFaultTests`, NOT in the root aggregate: `sbt test` never runs it, CI only compiles it, and
+// the weekly `Fuzzing` workflow runs each target for a few minutes from the corpus in `fuzz/corpus/`. Run one locally
+// (the forked JVM runs in `fuzz/`, so paths are relative to it; create `fuzz/target/corpus-envvar` first):
+//   sbt "fuzz/Test/runMain com.code_intelligence.jazzer.Jazzer --target_class=zio.openfeature.fuzz.EnvVarFuzz
+//        --instrumentation_includes=zio.openfeature.**:dev.openfeature.contrib.** --reproducer_path=target
+//        -artifact_prefix=target/
+//        target/corpus-envvar corpus/envvar -max_total_time=60"
+lazy val fuzz = (project in file("fuzz"))
+  .settings(lintSettings)
+  .dependsOn(core, extras, ofrep)
+  .settings(
+    name                                          := "zio-openfeature-fuzz",
+    publish / skip                                := true,
+    crossScalaVersions                            := Seq(scala3Version),
+    libraryDependencies += "com.code-intelligence" % "jazzer" % "0.30.0" % Test,
+    dependencyOverrides ++= jacksonPins,
+    Test / fork := true,
+    // Jazzer instruments classes through an agent it attaches at startup; JDK 21+ warns about that unless enabled.
+    Test / javaOptions += "-XX:+EnableDynamicAgentLoading"
+  )
+
 // Reference applications. Not published; their value is staying compilable so the README and `examples/README.md`
 // snippets are guaranteed to work against the current public API.
 lazy val examplesCommon = Seq(

@@ -1,0 +1,76 @@
+name: Fuzzing
+
+# Weekly coverage-guided fuzzing with Jazzer of the code that reads untrusted input: environment variable values, HOCON
+# text, and OFREP responses (fuzz/src/test/scala/zio/openfeature/fuzz/FuzzTargets.scala). The invariant: every typed
+# read returns an evaluation or throws an OpenFeatureError; anything else is a finding. Never a PR check.
+#
+# Each target starts from its checked-in corpus in fuzz/corpus/<target>. Inputs that reach new code are written to a
+# scratch corpus and uploaded, to fold back into the checked-in one by hand. A finding fails the run and uploads the
+# crashing input and a Java reproducer.
+
+on:
+  schedule:
+    # Saturdays 04:00 UTC.
+    - cron: '0 4 * * 6'
+  workflow_dispatch:
+    inputs:
+      seconds:
+        description: 'How long to fuzz each target'
+        required: false
+        type: number
+        default: 300
+
+permissions:
+  contents: read
+
+# Force any JavaScript action still bundled with Node 20 to run on Node 24 (see ci.yml).
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  fuzz:
+    name: fuzz (${{ matrix.corpus }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: EnvVarFuzz
+            corpus: envvar
+          - target: HoconFuzz
+            corpus: hocon
+          - target: OfrepFuzz
+            corpus: ofrep
+    steps:
+      - uses: actions/checkout@v7
+      - name: Set up JDK 21
+        uses: actions/setup-java@v6
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: sbt
+      - name: Setup sbt
+        uses: sbt/setup-sbt@v1
+      - name: Fuzz
+        env:
+          TARGET: ${{ matrix.target }}
+          CORPUS: ${{ matrix.corpus }}
+          SECONDS_EACH: ${{ inputs.seconds || 300 }}
+        # The forked JVM runs in fuzz/, so its paths are relative to that directory. The first corpus directory is where
+        # Jazzer writes new inputs; the checked-in one after it is only read.
+        run: |
+          mkdir -p "fuzz/target/corpus-$CORPUS" fuzz/target/findings
+          sbt "fuzz/Test/runMain com.code_intelligence.jazzer.Jazzer --target_class=zio.openfeature.fuzz.$TARGET \
+            --instrumentation_includes=zio.openfeature.**:dev.openfeature.contrib.** \
+            --reproducer_path=target/findings -artifact_prefix=target/findings/ \
+            target/corpus-$CORPUS corpus/$CORPUS -max_total_time=$SECONDS_EACH"
+      - name: Upload findings and new corpus entries
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: fuzz-${{ matrix.corpus }}
+          path: |
+            fuzz/target/findings/
+            fuzz/target/corpus-${{ matrix.corpus }}/
+          if-no-files-found: ignore

@@ -25,7 +25,7 @@ object EnvVarProviderSpec extends ZIOSpecDefault {
       test("finds a key containing 'i' under a Turkish default locale") {
         // Switched only around the synchronous call, so no other suite sees it.
         val previous = java.util.Locale.getDefault
-        java.util.Locale.setDefault(new java.util.Locale("tr", "TR"))
+        java.util.Locale.setDefault(java.util.Locale.forLanguageTag("tr-TR"))
         val result =
           try
             EnvVarProvider.withLookup(Map("FF_IS_ENABLED" -> "TRUE").get).getBooleanEvaluation("is-enabled", false, ctx)

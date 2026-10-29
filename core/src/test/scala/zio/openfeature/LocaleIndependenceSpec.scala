@@ -15,10 +15,11 @@ import zio.openfeature.internal.Evaluator
 // matching their own spellings.
 object LocaleIndependenceSpec extends ZIOSpecDefault {
 
-  private val turkish = new Locale("tr", "TR")
+  private val turkish = Locale.forLanguageTag("tr-TR")
 
-  // Switches the JVM-wide default only around a synchronous call, so no other suite can observe it.
-  private[openfeature] def underLocale[A](locale: Locale)(thunk: => A): A = {
+  // Switches the JVM-wide default only around a synchronous call, under one lock: tests run in parallel, and two
+  // interleaved save/restore pairs could otherwise leave the JVM on the Turkish locale.
+  private[openfeature] def underLocale[A](locale: Locale)(thunk: => A): A = LocaleIndependenceSpec.synchronized {
     val previous = Locale.getDefault
     Locale.setDefault(locale)
     try thunk

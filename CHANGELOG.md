@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`FeatureFlagRegistry` retries a provider that failed to initialize, and a failed client no longer leaks** (#562).
+  The Java SDK reuses a registered provider's state and initializes it only while it is not ready, so after one
+  failed `initialize()` every later `getClient` (or `defaultClient`) replayed the error in about a millisecond without
+  calling `initialize()` again. The failed client also stayed alive until the registry closed, along with its event
+  handlers and its init watchdog, which could later shut down the very provider a retry had brought up. A failed build
+  now releases its client at once, and the next attempt runs the provider's `initialize()` again through the SDK's own
+  state manager, without shutting the provider down first (an Optimizely provider that owns its client could not come
+  back from that). A `PROVIDER_FATAL` failure stays final, and a provider that initialized once and later reported an
+  error is left to recover on its own.
 - **A provider that can't shut down no longer hangs startup, the init watchdog or `setProvider`** (#561). A provider
   stuck in `initialize()` (an unreachable backend, a lock held by a hung connect) often blocks in `shutdown()` too.
   Three failure paths waited for that `shutdown()` without a bound: a failed sync build never returned, whatever

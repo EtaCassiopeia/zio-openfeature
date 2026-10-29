@@ -188,7 +188,10 @@ A domain names a client, so different parts of an app can use different provider
   `defaultClient` is the client without a domain.
 - A domain without its own provider uses the default one. `setProvider(domain, provider)` registers one, and swaps it in
   if the client exists.
-- A provider that fails or is not ready within 30 seconds gives `ProviderInitializationFailed`; `getClient` retries.
+- A provider that fails or is not ready within 30 seconds gives `ProviderInitializationFailed`, and the failed client
+  is released. The next `getClient` runs the provider's `initialize()` again (with its own 30 seconds) unless the
+  failure was `PROVIDER_FATAL`, which is final and fails at once. A retry that times out leaves that `initialize()`
+  running, and later attempts fail until it returns.
 - `addZioApiHook(hook)` adds an [API-level hook](hooks.md) to every client, current and future.
 - `fromProvider(defaultProvider)` is the only factory and takes no `FeatureFlagsConfig`: clients get the default
   timeouts and no version, hooks or context source. Closing the scope shuts down the API and every provider.

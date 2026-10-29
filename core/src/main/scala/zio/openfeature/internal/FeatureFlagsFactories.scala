@@ -48,7 +48,8 @@ private[openfeature] object FeatureFlagsFactories {
     initTimeout: Duration,
     maxAbandonedCalls: Int,
     recordTracking: Boolean,
-    unreadableNameIsUnknown: Boolean
+    unreadableNameIsUnknown: Boolean,
+    orphans: OrphanedProviders
   ): ZIO[Scope, Throwable, FeatureFlagsLive] =
     for {
       client <- ZIO.attempt(api.getClient(domain.orNull, version.orNull))
@@ -82,7 +83,8 @@ private[openfeature] object FeatureFlagsFactories {
       contextSource,
       initTimeout,
       maxAbandonedCalls,
-      recordTracking
+      recordTracking,
+      orphans = orphans
     )
 
   /** Whether the event bridge can be attached before `provider` is registered.
@@ -174,7 +176,11 @@ private[openfeature] object FeatureFlagsFactories {
       // Register the API shutdown finalizer BEFORE initiating provider registration. If init times out,
       // the provider reports a bad state, or getClient fails, the scope close still tears down whatever
       // the registration managed to bind.
-      _  <- ZIO.when(addShutdownFinalizer)(ZIO.addFinalizer(ProviderRegistration.boundedApiShutdown(api)))
+      orphans = OrphanedProviders(api)
+      // After the API's teardown, which settles or interrupts a timed-out swap's pending initialization.
+      _ <- ZIO.when(addShutdownFinalizer)(
+        ZIO.addFinalizer(ProviderRegistration.boundedApiShutdown(api) *> orphans.resolveAll)
+      )
       ff <- makeInstance(
         provider,
         api,
@@ -190,7 +196,8 @@ private[openfeature] object FeatureFlagsFactories {
         initTimeout,
         maxAbandonedCalls,
         recordTracking,
-        unreadableNameIsUnknown = true
+        unreadableNameIsUnknown = true,
+        orphans
       )
       // The bridge is attached before the provider initializes, so exactly one PROVIDER_READY reaches it. See
       // `attachesBeforeRegistration`.
@@ -358,7 +365,11 @@ private[openfeature] object FeatureFlagsFactories {
       api <- ZIO.succeed(apiOverride.getOrElse(OpenFeatureAPI.getInstance()))
       // Register the API shutdown finalizer BEFORE the provider, so a failure later in the build still tears down the
       // registered provider when the scope closes.
-      _  <- ZIO.when(addShutdownFinalizer)(ZIO.addFinalizer(ProviderRegistration.boundedApiShutdown(api)))
+      orphans = OrphanedProviders(api)
+      // After the API's teardown, which settles or interrupts a timed-out swap's pending initialization.
+      _ <- ZIO.when(addShutdownFinalizer)(
+        ZIO.addFinalizer(ProviderRegistration.boundedApiShutdown(api) *> orphans.resolveAll)
+      )
       ff <- makeInstance(
         provider,
         api,
@@ -374,7 +385,8 @@ private[openfeature] object FeatureFlagsFactories {
         initTimeout,
         maxAbandonedCalls,
         recordTracking,
-        unreadableNameIsUnknown = false
+        unreadableNameIsUnknown = false,
+        orphans
       )
       // As in the sync build: attach the bridge before the provider initializes, so exactly one PROVIDER_READY
       // reaches it — the post-init emission, or the SDK's replay for a provider that is already ready.

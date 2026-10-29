@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A timed-out swap no longer leaks the previous provider** (#564). When `setProvider`'s new provider did not finish
+  initializing within `initTimeout`, the SDK kept it bound and dropped the previous provider from the slot, shutting it
+  down only if the new one later became ready. If the new one failed instead, or was still initializing at shutdown,
+  nothing ever shut the previous provider down, not even the API's own shutdown, so its threads and pollers stayed
+  alive. An instance that owns its API now shuts it down in those cases, and the status stays `Error` until a later
+  `setProvider`. Installing that previous provider again fails with a clear error until the new one has settled, and
+  works after that.
 - **A shutdown during a provider swap stays `NotReady`** (#565). `shutdown()` did not wait for an in-flight
   `setProvider`, so a swap parked in `initialize()` that finished after the teardown moved the status to `Ready`
   (init released) or `Error` (init timed out), although `NotReady` is documented as final. Deterministic on a shared

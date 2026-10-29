@@ -123,4 +123,6 @@ also stops the provider depends on [who owns the API](providers.md#who-shuts-dow
 A shutdown called while a [provider swap](providers.md#replace-the-provider-at-runtime) is in flight waits for that
 swap to finish first, and for any swap already queued behind it, each bounded by its own `initTimeout`, and then runs.
 The status ends `NotReady` whatever the swap's outcome. Interrupting a shutdown that is still waiting cancels it
-before it has changed anything.
+before it has changed anything. An instance that owns its API also shuts down a provider that a
+[timed-out swap](providers.md#replace-the-provider-at-runtime) replaced, if the swap's new provider has not become
+ready by then.

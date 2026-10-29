@@ -211,5 +211,12 @@ A domain names a client, so different parts of an app can use different provider
 - If `initialize()` throws, `setProvider` fails with `ProviderInitializationFailed` and the old provider is restored (if
   that fails too, the status stays `Error`). A timeout fails the same way, wrapping a `TimeoutException`, with no
   rollback: the SDK would shut the old provider down once the new one became ready.
+- After a timeout the new provider keeps initializing. If it becomes ready, the status recovers to `Ready` and the SDK
+  shuts the old provider down. If it fails instead, the status stays `Error` and the old provider, which the SDK no
+  longer holds, is shut down; call `setProvider` again to recover. If it has not finished when the instance shuts down
+  or its scope closes, the old provider is shut down then. Only an instance that
+  [owns its API](#who-shuts-down-the-api) does this: on a shared API the old provider is left to the API's owner.
+  Until the new provider has settled, `setProvider` refuses the old provider with `ProviderInitializationFailed`:
+  installing it again then would get it shut down later, while it serves.
 - `setProvider` is the only way out of `Fatal`. With a wrapper such as `CircuitBreakerProvider`, swap in a new wrapper
   around the new provider.

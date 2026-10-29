@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`CachingProvider` no longer hands one caller another caller's failure** (#586). Concurrent callers for one key
+  share a single delegate call, and zio-cache gives all of them its outcome. When that call failed, for instance with
+  the `InterruptedException` a `CircuitBreakerProvider` timeout causes on the thread running it, a caller that had
+  only joined it failed too, with an error from an evaluation that was not its own. Such a caller now evaluates the
+  delegate once more itself; a failure of its own evaluation is still its answer, and failures are still never cached.
 - **A timed-out swap no longer leaks the previous provider** (#564). When `setProvider`'s new provider did not finish
   initializing within `initTimeout`, the SDK kept it bound and dropped the previous provider from the slot, shutting it
   down only if the new one later became ready. If the new one failed instead, or was still initializing at shutdown,

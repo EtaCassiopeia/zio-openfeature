@@ -409,6 +409,30 @@ final private[openfeature] class Evaluator(
     default: A,
     ctx: EvaluationContext,
     options: EvaluationOptions
+  ): IO[FeatureFlagError, FlagResolution[A]] =
+    evaluateResolution(key, default, ctx, options).flatMap { resolution =>
+      // The typed tier fails on a provider-reported error CODE, not only on a thrown one. Most providers report
+      // FLAG_NOT_FOUND / TYPE_MISMATCH / ... as a code on the resolution and never throw, so without this the tier a
+      // caller reaches for precisely because a default would be wrong handed the default back with no signal — a
+      // fail-closed gate written with `value` was silently fail-open. Promoted HERE, after the hook pipeline, so hooks
+      // keep observing exactly what they did (the `error` stage via the pipeline's own errorCode branch, and a
+      // `finallyAfter` with the details — which is also what the Java SDK hands `finally` on error), and so a
+      // transaction still records the evaluation for audit.
+      resolution.errorCode match {
+        case Some(code) =>
+          ZIO.fail(errorFromResolution(key, code, resolution.errorMessage, expected = FlagType[A].typeName))
+        case None => ZIO.succeed(resolution)
+      }
+    }
+
+  /** The evaluation before an error code is promoted to a failure: a provider's error-coded answer comes back as a
+    * resolution, with the variant, flag metadata and message the provider gave. The total tier serves from this.
+    */
+  private[openfeature] def evaluateResolution[A: FlagType](
+    key: String,
+    default: A,
+    ctx: EvaluationContext,
+    options: EvaluationOptions
   ): IO[FeatureFlagError, FlagResolution[A]] = {
     // Resolve the per-call selection against the instance's global timeout. `After` and `Disabled` override the global;
     // `Default` defers to it. The result is `Option[Duration]` (None => skip the timeout scaffolding entirely).
@@ -427,21 +451,6 @@ final private[openfeature] class Evaluator(
           options.hooks,
           options.hookHints
         )
-      }
-      .flatMap { resolution =>
-        // The typed tier fails on a provider-reported error CODE, not only on a thrown one. Most providers report
-        // FLAG_NOT_FOUND / TYPE_MISMATCH / ... as a code on the resolution and never throw, so without this the tier a
-        // caller reaches for precisely because a default would be wrong handed the default back with no signal — a
-        // fail-closed gate written with `value` was silently fail-open. Promoted HERE, after the hook pipeline, so hooks
-        // keep observing exactly what they did (the `error` stage via the pipeline's own errorCode branch, and a
-        // `finallyAfter` with the details — which is also what the Java SDK hands `finally` on error), and so a
-        // transaction still records the evaluation for audit. The total tier (`*OrDefault`/`resolveOrDefault`) is built
-        // on this failure channel and keeps serving the default with the code, as before.
-        resolution.errorCode match {
-          case Some(code) =>
-            ZIO.fail(errorFromResolution(key, code, resolution.errorMessage, expected = FlagType[A].typeName))
-          case None => ZIO.succeed(resolution)
-        }
       }
   }
 

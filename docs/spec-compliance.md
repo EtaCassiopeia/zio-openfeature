@@ -33,7 +33,7 @@ and runs them on every build, twice: the `conformance` module runs them with Cuc
 | Detailed evaluation | `booleanDetails` ... `objDetails`, `valueDetails`, returning `FlagResolution` |
 | Optional context and options arguments | every method takes a context and `EvaluationOptions` (hooks, hook hints, timeout) |
 | Resolution details: value, variant, reason, error code, error message, flag metadata | `FlagResolution` fields; metadata values may be boolean, string, int, long, float or double |
-| Never throw; return the default (§1.4.10) | the total tier (`*OrDefault`, `resolveOrDefault`) never fails and returns the default, with the error code on the resolution. The typed tier (`boolean`, `value`, `*Details`) fails with a typed `FeatureFlagError` instead, a ZIO-native addition. See [Evaluating flags](evaluating.md). |
+| Never throw; return the default (§1.4.10) | the total tier (`*OrDefault`, `resolveOrDefault`) never fails and returns the default, with the error code on the resolution; for a provider-reported error code it also keeps the provider's variant, flag metadata and message. The typed tier (`boolean`, `value`, `*Details`) fails with a typed `FeatureFlagError` instead, a ZIO-native addition. See [Evaluating flags](evaluating.md). |
 | No logging by the client (§1.4.11, SHOULD NOT) | **Deviates by default**: when the total tier serves a default, it logs one warning per flag key per minute (`FallbackLogging.Default`). Set `FallbackLogging.Off` to conform. A default served because of a defect is still logged, since it means a bug. |
 | **Providers (§1.6, §1.7, §2)** | |
 | Set a provider and wait for it (blocking init) | `FeatureFlags.fromProvider` |

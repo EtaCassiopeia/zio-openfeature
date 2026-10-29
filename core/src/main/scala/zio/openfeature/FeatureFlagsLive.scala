@@ -172,6 +172,16 @@ final private[openfeature] class FeatureFlagsLive(
   ): IO[FeatureFlagError, FlagResolution[A]] =
     evaluator.evaluateWithDetails(key, default, ctx, options)
 
+  // The total tier serves a provider's error-coded answer itself, with its variant, flag metadata and message, rather
+  // than a resolution rebuilt from the typed tier's failure.
+  override private[openfeature] def resolutionForTotal[A: FlagType](
+    key: String,
+    default: A,
+    ctx: EvaluationContext,
+    options: EvaluationOptions
+  )(typed: => IO[FeatureFlagError, FlagResolution[A]]): IO[FeatureFlagError, FlagResolution[A]] =
+    evaluator.evaluateResolution(key, default, ctx, options)
+
   override def setGlobalContext(ctx: EvaluationContext): UIO[Unit] =
     state.globalContextRef.set(ctx)
 

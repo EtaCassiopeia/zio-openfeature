@@ -1,8 +1,9 @@
 name: Mutation testing
 
-# Scheduled mutation testing of core with stryker4s (#468). It measures how many deliberately broken versions of the
-# code the test suite catches. Informational, never a PR gate: a run takes far longer than PR CI can afford, and a
-# low score is a prompt to look at the report, not a build failure (`thresholds.break` is 0 in stryker4s.conf).
+# Scheduled mutation testing with stryker4s. It measures how many deliberately broken versions of the code the test
+# suite catches. Never a PR gate: a run takes far longer than PR CI can afford. Each module has a score floor, enforced
+# by scripts/mutation-summary.py from the JSON report, so a drop fails the weekly run instead of going unread; the
+# step summary lists every surviving mutant by file. Raise a floor by hand as surviving mutants get killed.
 
 on:
   schedule:
@@ -13,16 +14,25 @@ on:
 permissions:
   contents: read
 
-# Force any JavaScript action still bundled with Node 20 to run on Node 24 (see ci.yml, #164).
+# Force any JavaScript action still bundled with Node 20 to run on Node 24 (see ci.yml).
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
   stryker:
+    name: stryker (${{ matrix.module }})
     runs-on: ubuntu-latest
-    # Each mutant reruns the core suite; a mutant that hangs it is cut off by stryker's own timeout, so this bound
+    # Each mutant reruns the module's suite; a mutant that hangs it is cut off by stryker's own timeout, so this bound
     # only catches a wedged runner.
     timeout-minutes: 300
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - module: core
+            floor: 60
+          - module: extras
+            floor: 66
     steps:
       - uses: actions/checkout@v7
       - name: Set up JDK 21
@@ -33,23 +43,26 @@ jobs:
           cache: sbt
       - name: Setup sbt
         uses: sbt/setup-sbt@v1
-      - name: Run stryker4s on core
+      - name: Run stryker4s
         # `shell: bash` runs with pipefail, so the build's exit status survives the `tee`.
         shell: bash
-        run: sbt core/stryker 2>&1 | tee stryker.log
-      - name: Summarize
+        run: sbt ${{ matrix.module }}/stryker 2>&1 | tee stryker.log
+      - name: Score and survivors
         if: always()
+        shell: bash
         run: |
-          {
-            echo '## Mutation testing (core)'
-            echo
-            grep -E 'Total mutants|Mutation score' stryker.log | sed 's/^\[info\] /- /' || echo '- no score: see the log'
-          } >> "$GITHUB_STEP_SUMMARY"
+          report=$(find ${{ matrix.module }}/target/stryker4s-report -name report.json 2>/dev/null | head -1 || true)
+          if [ -z "$report" ]; then
+            echo "## Mutation testing (${{ matrix.module }})" >> "$GITHUB_STEP_SUMMARY"
+            echo "- no report: see the log" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          python3 scripts/mutation-summary.py "$report" ${{ matrix.module }} ${{ matrix.floor }} --summary "$GITHUB_STEP_SUMMARY"
       - name: Upload report
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: stryker4s-report
-          path: core/target/stryker4s-report/
+          name: stryker4s-report-${{ matrix.module }}
+          path: ${{ matrix.module }}/target/stryker4s-report/
           if-no-files-found: warn
           retention-days: 30

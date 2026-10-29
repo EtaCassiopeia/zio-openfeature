@@ -77,13 +77,17 @@ python3 scripts/visuals/build.py evaluation   # one
 
 Mutation testing and the provider fault tests never run on a pull request; the property tests run a short version there.
 
-**Mutation testing** makes small deliberate changes to core (flipping a condition, swapping an operator) and checks that
-a test fails for each. The score and surviving mutants land in `core/target/stryker4s-report/`. A full run takes hours,
-so the `Mutation testing` workflow runs weekly (or by hand), and the score never fails the build. To try a few files,
-narrow `mutate` in `stryker4s.conf` locally.
+**Mutation testing** makes small deliberate changes to `core` and `extras` (flipping a condition, swapping an
+operator) and checks that a test fails for each. A full run takes hours, so the `Mutation testing` workflow runs weekly
+(or by hand). Each module has a score floor (`core` 60%, `extras` 66%, set in the workflow); a run below it fails, and
+its summary lists every surviving mutant by file, with the score again without string-literal mutants (mostly log
+messages). Only a module's own tests count: a `testkit` test does not kill a `core` mutant, so a test that pins core
+behaviour belongs in `core`. Raise a floor by hand when you kill survivors. Reports land in
+`<module>/target/stryker4s-report/`; to try a few files, narrow `mutate` in `stryker4s.conf` locally.
 
 ```sh
 sbt core/stryker
+sbt extras/stryker
 ```
 
 **Property tests.** `LifecycleModelSpec` generates sequences of lifecycle actions (swaps to providers that start, fail,

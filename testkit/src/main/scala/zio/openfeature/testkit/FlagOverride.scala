@@ -67,7 +67,7 @@ object FlagOverride {
       val ft      = flag.flagType
       val encoded = ft.encode(value)
       ft.decode(encoded) match {
-        case Right(_) => FlagOverride(flag.key, encoded, ft.typeName)
+        case Right(_)     => FlagOverride(flag.key, encoded, ft.typeName)
         case Left(reason) =>
           throw new IllegalArgumentException(
             s"FlagType[${ft.typeName}] cannot read back its own encoding of the fixture value for flag " +

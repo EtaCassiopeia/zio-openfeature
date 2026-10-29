@@ -165,7 +165,7 @@ final class TestFeatureProvider private (
     Option(flags.get(key)) match {
       case Some(raw) if expected.isInstance(raw) => ProviderEvaluations.of(expected.cast(raw), "TARGETING_MATCH")
       case Some(raw) if accept.isDefinedAt(raw)  => ProviderEvaluations.of(accept(raw), "TARGETING_MATCH")
-      case Some(raw) =>
+      case Some(raw)                             =>
         ProviderEvaluations.error(
           defaultValue,
           OFErrorCode.TYPE_MISMATCH,
@@ -627,7 +627,7 @@ object TestFeatureProvider {
     for {
       eventsHub <- Hub.unbounded[ProviderEvent]
       statusRef <- SubscriptionRef.make[ProviderStatus](if (ready) ProviderStatus.Ready else ProviderStatus.NotReady)
-      provider <- ZIO.succeed {
+      provider  <- ZIO.succeed {
         val flags = new ConcurrentHashMap[String, Any]()
         initialFlags.foreach { case (k, v) => flags.put(k, v) }
         new TestFeatureProvider(
@@ -756,9 +756,9 @@ object TestFeatureProvider {
             .fromProviderWithDomainAsync(provider, domain, provider.statusRef, api = Some(api), onReady = onReady)
       }
       featureFlags <- layer.build.map(_.get[FeatureFlags])
-      _ <- mode match {
-        case LayerMode.Sync(what) => awaitLatch(onReady, what)
-        case LayerMode.Async      => ZIO.unit
+      _            <- mode match {
+        case LayerMode.Sync(what)            => awaitLatch(onReady, what)
+        case LayerMode.Async                 => ZIO.unit
         case LayerMode.AsyncAutoReady(delay) =>
           (ZIO.sleep(delay) *> provider.setStatus(ProviderStatus.Ready)).forkScoped.unit
       }

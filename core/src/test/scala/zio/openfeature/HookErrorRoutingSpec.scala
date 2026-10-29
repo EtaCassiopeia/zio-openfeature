@@ -242,8 +242,11 @@ object HookErrorRoutingSpec extends ZIOSpecDefault {
               log.update(_ :+ "after") *> gate.await
             override def error(ctx: HookContext, err: FeatureFlagError, hints: HookHints): UIO[Unit] =
               log.update(_ :+ "error")
-            override def finallyAfter(ctx: HookContext, details: Option[FlagResolution[_]], hints: HookHints)
-              : UIO[Unit] =
+            override def finallyAfter(
+              ctx: HookContext,
+              details: Option[FlagResolution[_]],
+              hints: HookHints
+            ): UIO[Unit] =
               log.update(_ :+ "finallyAfter") *> fin.set(Some(details))
           }
           ff    <- buildFF(List(blockingHook))
@@ -263,8 +266,11 @@ object HookErrorRoutingSpec extends ZIOSpecDefault {
           hook = new FeatureHook {
             override def before(ctx: HookContext, hints: HookHints): UIO[Option[EvaluationContext]] =
               ZIO.die(new RuntimeException("defect in before"))
-            override def finallyAfter(ctx: HookContext, details: Option[FlagResolution[_]], hints: HookHints)
-              : UIO[Unit] =
+            override def finallyAfter(
+              ctx: HookContext,
+              details: Option[FlagResolution[_]],
+              hints: HookHints
+            ): UIO[Unit] =
               fin.set(Some(details))
           }
           ff  <- buildFF(List(hook))
@@ -285,8 +291,11 @@ object HookErrorRoutingSpec extends ZIOSpecDefault {
               log.update(_ :+ "after")
             override def error(ctx: HookContext, err: FeatureFlagError, hints: HookHints): UIO[Unit] =
               log.update(_ :+ "error")
-            override def finallyAfter(ctx: HookContext, details: Option[FlagResolution[_]], hints: HookHints)
-              : UIO[Unit] =
+            override def finallyAfter(
+              ctx: HookContext,
+              details: Option[FlagResolution[_]],
+              hints: HookHints
+            ): UIO[Unit] =
               log.update(_ :+ "finallyAfter")
           }
           ff    <- buildFF(List(blockingHook))

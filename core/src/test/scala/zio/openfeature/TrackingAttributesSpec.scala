@@ -71,7 +71,7 @@ object TrackingAttributesSpec extends ZIOSpecDefault {
       }
     },
     test("numeric, boolean and instant AttributeValues arrive with the matching kind") {
-      val now = java.time.Instant.parse("2026-10-23T12:00:00Z")
+      val now     = java.time.Instant.parse("2026-10-23T12:00:00Z")
       val details = TrackingEventDetails(
         Map(
           "i"   -> AttributeValue.IntValue(3),

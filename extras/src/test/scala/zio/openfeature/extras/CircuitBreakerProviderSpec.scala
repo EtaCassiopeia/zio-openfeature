@@ -286,7 +286,7 @@ object CircuitBreakerProviderSpec extends ZIOSpecDefault {
         assertTrue(result.getValue == true)
       } @@ TestAspect.withLiveClock,
       test("an infinite timeout evaluates the delegate on the calling thread") {
-        val seen = new AtomicReference[Thread]()
+        val seen       = new AtomicReference[Thread]()
         val underlying = new FailableProvider(Map("flag" -> true)) {
           override def getBooleanEvaluation(
             key: String,
@@ -303,7 +303,7 @@ object CircuitBreakerProviderSpec extends ZIOSpecDefault {
         } yield assertTrue(seen.get() == caller)
       },
       test("a finite timeout evaluates the delegate off the calling thread, so it can time out") {
-        val seen = new AtomicReference[Thread]()
+        val seen       = new AtomicReference[Thread]()
         val underlying = new FailableProvider(Map("flag" -> true)) {
           override def getBooleanEvaluation(
             key: String,
@@ -338,7 +338,7 @@ object CircuitBreakerProviderSpec extends ZIOSpecDefault {
       test("with an infinite timeout, a probe after the reset timeout closes the circuit") {
         val underlying = new FailableProvider(Map("flag" -> true))
         val clock      = new TestClock()
-        val config =
+        val config     =
           CircuitBreakerProviderConfig(
             evaluationTimeout = Duration.Infinity,
             failureThreshold = 2,
@@ -354,7 +354,7 @@ object CircuitBreakerProviderSpec extends ZIOSpecDefault {
         assertTrue(stateWhileOpen == ProviderState.ERROR, probe.getValue == true, cb.getState == ProviderState.READY)
       },
       test("with an infinite timeout, an in-flight probe is never stolen") {
-        val clock = new TestClock()
+        val clock  = new TestClock()
         val config =
           CircuitBreakerProviderConfig(
             evaluationTimeout = Duration.Infinity,
@@ -550,7 +550,7 @@ object CircuitBreakerProviderSpec extends ZIOSpecDefault {
       },
       test("delegate getState polling is bounded by stateCheckInterval, not evaluation count") {
         val stateChecks = new java.util.concurrent.atomic.AtomicInteger(0)
-        val underlying = new FailableProvider(Map("flag" -> true)) {
+        val underlying  = new FailableProvider(Map("flag" -> true)) {
           override def getState: ProviderState = {
             stateChecks.incrementAndGet()
             super.getState
@@ -572,7 +572,7 @@ object CircuitBreakerProviderSpec extends ZIOSpecDefault {
       },
       test("stateCheckInterval Zero polls delegate state on every evaluation") {
         val stateChecks = new java.util.concurrent.atomic.AtomicInteger(0)
-        val underlying = new FailableProvider(Map("flag" -> true)) {
+        val underlying  = new FailableProvider(Map("flag" -> true)) {
           override def getState: ProviderState = {
             stateChecks.incrementAndGet()
             super.getState
@@ -670,7 +670,7 @@ object CircuitBreakerProviderSpec extends ZIOSpecDefault {
       },
       test("initialize delegates to underlying") {
         var initialized = false
-        val underlying = new FailableProvider() {
+        val underlying  = new FailableProvider() {
           override def initialize(ctx: OFEvaluationContext): Unit = initialized = true
         }
         val cb = CircuitBreakerProvider(underlying)
@@ -679,7 +679,7 @@ object CircuitBreakerProviderSpec extends ZIOSpecDefault {
       },
       test("shutdown delegates to underlying") {
         var shutdownCalled = false
-        val underlying = new FailableProvider() {
+        val underlying     = new FailableProvider() {
           override def shutdown(): Unit = shutdownCalled = true
         }
         val cb = CircuitBreakerProvider(underlying)
@@ -738,9 +738,9 @@ object CircuitBreakerProviderSpec extends ZIOSpecDefault {
           successes = results.count(_.isRight)
           failures  = results.count(_.isLeft)
         } yield
-        // Exactly 1 probe succeeds; the rest fail fast because a probe is in progress
-        assertTrue(successes == 1) &&
-          assertTrue(failures == 9)
+          // Exactly 1 probe succeeds; the rest fail fast because a probe is in progress
+          assertTrue(successes == 1) &&
+            assertTrue(failures == 9)
       } @@ TestAspect.withLiveClock
     ),
     suite("Composability")(
@@ -855,8 +855,8 @@ object CircuitBreakerProviderSpec extends ZIOSpecDefault {
         assertTrue(underlying.evaluationCount.get() == countAfterTrip)
       },
       test("application error during half-open frees probe slot without closing circuit") {
-        val callCount = new AtomicInteger(0)
-        val mode      = new AtomicReference[String]("infra")
+        val callCount  = new AtomicInteger(0)
+        val mode       = new AtomicReference[String]("infra")
         val underlying = new FailableProvider(Map.empty) {
           override def getBooleanEvaluation(
             key: String,
@@ -870,7 +870,7 @@ object CircuitBreakerProviderSpec extends ZIOSpecDefault {
             }
           }
         }
-        val clock = new TestClock()
+        val clock  = new TestClock()
         val config =
           CircuitBreakerProviderConfig(failureThreshold = 2, resetTimeout = 1.second, halfOpenMaxCalls = 3)
         val cb = CircuitBreakerProvider(underlying, config, clock)
@@ -890,7 +890,7 @@ object CircuitBreakerProviderSpec extends ZIOSpecDefault {
         assertTrue(cb.breaker.isHalfOpen)
       },
       test("mixed application and infrastructure errors only count infrastructure errors") {
-        val callCount = new AtomicInteger(0)
+        val callCount  = new AtomicInteger(0)
         val underlying = new FailableProvider(Map.empty) {
           override def getBooleanEvaluation(
             key: String,

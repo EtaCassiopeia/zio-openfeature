@@ -257,7 +257,7 @@ object LongAwareMultiProviderSpec extends ZIOSpecDefault {
         ZIO.scoped {
           for {
             ff <- ffOver(FeatureFlags.multiProvider(List(a, b)))
-            _ <- ff.track(
+            _  <- ff.track(
               "signup",
               EvaluationContext("user-1").withAttribute("plan", AttributeValue.string("pro")),
               TrackingEventDetails(9.5)
@@ -330,7 +330,7 @@ object LongAwareMultiProviderSpec extends ZIOSpecDefault {
       test("one exception thrown by two later children is suppressed once") {
         val first  = new RuntimeException("a failed")
         val shared = new IllegalStateException("b and c failed")
-        val chain = new LongAwareMultiProvider(
+        val chain  = new LongAwareMultiProvider(
           List[FeatureProvider](
             new TrackChild("a", Some(first)),
             new TrackChild("b", Some(shared)),
@@ -344,7 +344,7 @@ object LongAwareMultiProviderSpec extends ZIOSpecDefault {
       test("children rethrowing cached exceptions do not grow the suppressed list across events") {
         val cachedA = new RuntimeException("a down")
         val cachedB = new IllegalStateException("b down")
-        val chain = new LongAwareMultiProvider(
+        val chain   = new LongAwareMultiProvider(
           List[FeatureProvider](new TrackChild("a", Some(cachedA)), new TrackChild("b", Some(cachedB))).asJava,
           new FirstMatchStrategy()
         )
@@ -364,7 +364,7 @@ object LongAwareMultiProviderSpec extends ZIOSpecDefault {
         )
       },
       test("children are offered the event in chain order") {
-        val order = new ConcurrentLinkedQueue[String]()
+        val order            = new ConcurrentLinkedQueue[String]()
         def child(n: String) = new TrackChild(n) {
           override def track(e: String, c: OFEvaluationContext, d: OFTrackingEventDetails): Unit = { order.add(n); () }
         }
@@ -387,7 +387,7 @@ object LongAwareMultiProviderSpec extends ZIOSpecDefault {
             ff = env.get[FeatureFlags]
             before <- ff.long("n", 0L)
             _      <- gate.succeed(())
-            state <- env
+            state  <- env
               .get[AcquireStatus]
               .changes
               .filter(_ != AcquireState.Constructing)

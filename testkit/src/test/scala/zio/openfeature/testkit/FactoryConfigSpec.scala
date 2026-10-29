@@ -409,7 +409,7 @@ object FactoryConfigSpec extends ZIOSpecDefault {
           ab1 <- pair; ab2 <- pair; ab3 <- pair; ab4 <- pair
           ab5 <- pair; ab6 <- pair; ab7 <- pair; ab8 <- pair
           l1  <- metaFlag(FeatureFlags.fromMultiProvider(List(ab1._1, ab1._2)))
-          c1 <- metaFlag(
+          c1  <- metaFlag(
             FeatureFlags.fromProvider(FeatureFlags.multiProvider(List(ab2._1, ab2._2)), FeatureFlagsConfig())
           )
           l2 <- metaFlag(FeatureFlags.fromMultiProvider(List(ab3._1, ab3._2), new FirstSuccessfulStrategy()))

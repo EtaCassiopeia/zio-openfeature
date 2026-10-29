@@ -94,7 +94,7 @@ object OptimizelyLifecycleRaceSpec extends ZIOSpecDefault {
         // A thread dying on an uncaught exception is invisible to `join`, so capture any failure and assert on it —
         // otherwise a broken re-stub would surface only as a puzzling `recovered == false` 20s later.
         val recoveryFailure = new AtomicReference[Throwable]()
-        val recovery = new Thread(
+        val recovery        = new Thread(
           () =>
             try {
               Thread.sleep(RecoveryDelay.toMillis)
@@ -211,8 +211,8 @@ object OptimizelyLifecycleRaceSpec extends ZIOSpecDefault {
             configManager = Some(mgr)
           )
         try {
-          val release  = new CountDownLatch(1)
-          val initDone = new AtomicInteger(0)
+          val release    = new CountDownLatch(1)
+          val initDone   = new AtomicInteger(0)
           val initThread = new Thread(() => {
             release.await()
             try provider.initialize(new ImmutableContext())

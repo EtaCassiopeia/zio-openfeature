@@ -27,7 +27,7 @@ object FallbackLoggingSpec extends ZIOSpecDefault {
     override def getMetadata: Metadata                      = new Metadata { override def getName: String = nm }
     override def getState: ProviderState                    = ProviderState.READY
     override def initialize(ctx: OFEvaluationContext): Unit = ()
-    private def missing[T](k: String, d: T) =
+    private def missing[T](k: String, d: T)                 =
       ProviderEvaluations.error(d, OFErrorCode.FLAG_NOT_FOUND, s"flag $k does not exist")
     override def getBooleanEvaluation(k: String, d: java.lang.Boolean, c: OFEvaluationContext) =
       if (k == "known") ProviderEvaluations.of(java.lang.Boolean.TRUE, "STATIC") else missing(k, d)
@@ -44,7 +44,7 @@ object FallbackLoggingSpec extends ZIOSpecDefault {
     )
 
   // The test logger accumulates across tests in the same runtime, so every test measures from its own baseline.
-  private def baseline: UIO[Int] = ZTestLogger.logOutput.map(_.length)
+  private def baseline: UIO[Int]                       = ZTestLogger.logOutput.map(_.length)
   private def warnings(since: Int): UIO[Chunk[String]] =
     ZTestLogger.logOutput.map(_.drop(since).filter(_.logLevel == LogLevel.Warning).map(_.message()))
 
@@ -68,7 +68,7 @@ object FallbackLoggingSpec extends ZIOSpecDefault {
     ): ZIO[R, Compat.OrError[E, FeatureFlagError], TransactionResult[A]] = ???
     override def transactionEither[R, E, A](o: Map[String, Any], c: EvaluationContext, ce: Boolean, n: NestedPolicy)(
       zio: ZIO[R, E, A]
-    ): ZIO[R, Either[E, FeatureFlagError], TransactionResult[A]] = ???
+    ): ZIO[R, Either[E, FeatureFlagError], TransactionResult[A]]                                         = ???
     override def inTransaction: UIO[Boolean]                                                             = ???
     override def currentEvaluatedFlags: UIO[Map[String, FlagEvaluation[_]]]                              = ???
     override def events: ZStream[Any, Nothing, ProviderEvent]                                            = ???
@@ -192,7 +192,7 @@ object FallbackLoggingSpec extends ZIOSpecDefault {
       ZIO.scoped {
         for {
           base <- baseline
-          ff <- layer(FeatureFlagsConfig().withAsyncInit.withFallbackLogging(FallbackLogging.Always)).build
+          ff   <- layer(FeatureFlagsConfig().withAsyncInit.withFallbackLogging(FallbackLogging.Always)).build
             .map(_.get[FeatureFlags])
           _    <- Live.live(ff.awaitReady(10.seconds))
           _    <- ZIO.foreachDiscard(1 to 3)(_ => ff.booleanOrDefault("k", default = true))

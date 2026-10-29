@@ -119,8 +119,8 @@ object BoundedLatencyContractSpec extends ZIOSpecDefault {
       ZIO.scoped {
         for {
           // Global 5s, per-call 100ms; slow provider takes 2s → per-call fires first
-          ff    <- buildWithTimeout(new SlowProvider(2000), 5.seconds)
-          start <- Clock.nanoTime
+          ff     <- buildWithTimeout(new SlowProvider(2000), 5.seconds)
+          start  <- Clock.nanoTime
           result <- ff
             .booleanDetails(
               "flag",

@@ -82,7 +82,7 @@ private[openfeature] object ClientEvaluator {
     // no flag key and no hint about the wire/encode mismatch. Checking the box up front is what turns that
     // programmer error at a documented extension point into an actionable typed failure.
     def erased[T](ev: ClientEvaluator[T], wireClass: Class[_]): Either[String, Erased[A]] = {
-      val encoded = flagType.encode(default)
+      val encoded         = flagType.encode(default)
       val (wire, extract) = flagType match {
         case optional: OptionalFlagType[_] if encoded == null =>
           // Produced by the element's own `encode`, so it passes the box check below by construction.

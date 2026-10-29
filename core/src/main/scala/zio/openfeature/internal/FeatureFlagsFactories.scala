@@ -174,7 +174,7 @@ private[openfeature] object FeatureFlagsFactories {
       // Register the API shutdown finalizer BEFORE initiating provider registration. If init times out,
       // the provider reports a bad state, or getClient fails, the scope close still tears down whatever
       // the registration managed to bind.
-      _ <- ZIO.when(addShutdownFinalizer)(ZIO.addFinalizer(ProviderRegistration.boundedApiShutdown(api)))
+      _  <- ZIO.when(addShutdownFinalizer)(ZIO.addFinalizer(ProviderRegistration.boundedApiShutdown(api)))
       ff <- makeInstance(
         provider,
         api,
@@ -350,7 +350,7 @@ private[openfeature] object FeatureFlagsFactories {
       api <- ZIO.succeed(apiOverride.getOrElse(OpenFeatureAPI.getInstance()))
       // Register the API shutdown finalizer BEFORE the provider, so a failure later in the build still tears down the
       // registered provider when the scope closes.
-      _ <- ZIO.when(addShutdownFinalizer)(ZIO.addFinalizer(ProviderRegistration.boundedApiShutdown(api)))
+      _  <- ZIO.when(addShutdownFinalizer)(ZIO.addFinalizer(ProviderRegistration.boundedApiShutdown(api)))
       ff <- makeInstance(
         provider,
         api,
@@ -442,7 +442,7 @@ private[openfeature] object FeatureFlagsFactories {
         // is initialized, then is flipped to the composed stack. No SDK swap, so no NotReady window.
         switch = new SwitchableProvider(firstFallback)
         state <- SubscriptionRef.make[AcquireState](AcquireState.Constructing)
-        ff <- buildWithTracking(
+        ff    <- buildWithTracking(
           switch,
           domain = None,
           version = None,
@@ -466,7 +466,7 @@ private[openfeature] object FeatureFlagsFactories {
           for {
             layerScope <- ZIO.scope
             candidate  <- Scope.make
-            real <- restore(
+            real       <- restore(
               candidate
                 .extend[Any](acquire.flatMap(real => verify(real).as(real)))
                 // `.disconnect` so the per-attempt timeout returns promptly even when `acquire` is an uninterruptible
@@ -484,38 +484,39 @@ private[openfeature] object FeatureFlagsFactories {
         // Background construction + swap. The fiber is `forkScoped`, so an in-flight attempt is interrupted on
         // release. A terminal construction/verification/swap failure is caught, reported, and left on the fallback —
         // nothing escapes to the (already-built) layer.
-        construct = for {
-          accepted <- attempt.retry(constructionRetry)
-          candidate = accepted._1
-          freshFallback <- fallback
-          composed = compose(accepted._2, freshFallback)
-          // A composed stack that does not make it into service is dead: shut it down (which reaches the real provider
-          // and the fresh fallback) and release the candidate now rather than at layer close. `Scope.close` is
-          // idempotent, so the layer-scope finalizer is then a no-op.
-          discard = (cause: Cause[Any]) =>
-            ProviderRegistration.boundedProviderShutdown(composed, "fromAcquireAsync (discarded provider)") *>
-              candidate.close(Exit.failCause(cause))
-          // Initialize the composed stack ourselves, where the SDK's `setProvider` used to, bounded the same way. The
-          // fallback keeps serving throughout. `.disconnect` lets the timeout fire even though a blocking
-          // `initialize()` cannot be interrupted; it may keep running in the background, and the shutdown above is
-          // best-effort against it.
-          _ <- ZIO
-            .attemptBlocking(composed.initialize(ff.apiEvaluationContext))
-            .disconnect
-            .timeoutFail(new TimeoutException(s"Provider initialization exceeded $initTimeout"))(initTimeout)
-            .zipRight(verifyInitState(composed))
-            .mapError(e => ProviderSwapFailed(FeatureFlagError.ProviderInitializationFailed(e)))
-            .onError(discard)
-          switched <- ff.switchProvider(switch, composed).onError(discard)
-          _ <- ZIO.unless(switched) {
-            val e = new IllegalStateException(
-              "provider replaced by setProvider before the acquired provider was swapped in"
-            )
-            discard(Cause.fail(e)) *> ZIO.fail(e)
-          }
-          // State flips before the callback so a probe reading `AcquireStatus.get` from inside it already sees Live.
-          _ <- state.set(AcquireState.Live) *> onSwapped
-        } yield ()
+        construct =
+          for {
+            accepted <- attempt.retry(constructionRetry)
+            candidate = accepted._1
+            freshFallback <- fallback
+            composed = compose(accepted._2, freshFallback)
+            // A composed stack that does not make it into service is dead: shut it down (which reaches the real provider
+            // and the fresh fallback) and release the candidate now rather than at layer close. `Scope.close` is
+            // idempotent, so the layer-scope finalizer is then a no-op.
+            discard = (cause: Cause[Any]) =>
+              ProviderRegistration.boundedProviderShutdown(composed, "fromAcquireAsync (discarded provider)") *>
+                candidate.close(Exit.failCause(cause))
+            // Initialize the composed stack ourselves, where the SDK's `setProvider` used to, bounded the same way. The
+            // fallback keeps serving throughout. `.disconnect` lets the timeout fire even though a blocking
+            // `initialize()` cannot be interrupted; it may keep running in the background, and the shutdown above is
+            // best-effort against it.
+            _ <- ZIO
+              .attemptBlocking(composed.initialize(ff.apiEvaluationContext))
+              .disconnect
+              .timeoutFail(new TimeoutException(s"Provider initialization exceeded $initTimeout"))(initTimeout)
+              .zipRight(verifyInitState(composed))
+              .mapError(e => ProviderSwapFailed(FeatureFlagError.ProviderInitializationFailed(e)))
+              .onError(discard)
+            switched <- ff.switchProvider(switch, composed).onError(discard)
+            _        <- ZIO.unless(switched) {
+              val e = new IllegalStateException(
+                "provider replaced by setProvider before the acquired provider was swapped in"
+              )
+              discard(Cause.fail(e)) *> ZIO.fail(e)
+            }
+            // State flips before the callback so a probe reading `AcquireStatus.get` from inside it already sees Live.
+            _ <- state.set(AcquireState.Live) *> onSwapped
+          } yield ()
         // Same ordering on the failure side: Failed is observable before `onConstructionError` runs. Failed is
         // terminal — the schedule is exhausted (or the swap failed) and nothing restarts construction. The whole
         // Cause is handled, not just typed failures: a defect (say `acquire = ZIO.succeed(new Provider(...))` whose
@@ -523,7 +524,7 @@ private[openfeature] object FeatureFlagsFactories {
         // a probe waiting for the outcome would hang. A defect is still re-raised after being recorded, so it keeps
         // whatever visibility an unhandled fiber defect had before; interruption (layer release) is not an outcome.
         _ <- construct.catchAllCause { cause =>
-          val e = cause.squashWith(identity)
+          val e      = cause.squashWith(identity)
           val record =
             if (cause.isInterruptedOnly) ZIO.unit
             else

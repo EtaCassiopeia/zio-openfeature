@@ -73,8 +73,8 @@ final private[openfeature] class Evaluator(
 
   private def checkProviderStatus: IO[FeatureFlagError, Unit] =
     providerStatus.flatMap {
-      case ProviderStatus.Fatal    => ZIO.fail(FeatureFlagError.ProviderFatal)
-      case ProviderStatus.NotReady => ZIO.fail(FeatureFlagError.ProviderNotReady(ProviderStatus.NotReady))
+      case ProviderStatus.Fatal        => ZIO.fail(FeatureFlagError.ProviderFatal)
+      case ProviderStatus.NotReady     => ZIO.fail(FeatureFlagError.ProviderNotReady(ProviderStatus.NotReady))
       case ProviderStatus.ShuttingDown =>
         ZIO.fail(FeatureFlagError.ProviderNotReady(ProviderStatus.ShuttingDown))
       // Error/Ready/Stale proceed: fast-failing only NOT_READY and FATAL is this library's deliberate policy — spec
@@ -205,7 +205,7 @@ final private[openfeature] class Evaluator(
             else {
               // Exactly one of the finalizer (Running -> Done) and the abandoning side (Running -> Abandoned) wins the
               // CAS, so the counter is incremented and decremented once per abandoned call and never drifts.
-              val call = new java.util.concurrent.atomic.AtomicInteger(FeatureFlagsLive.CallRunning)
+              val call    = new java.util.concurrent.atomic.AtomicInteger(FeatureFlagsLive.CallRunning)
               val abandon = ZIO.succeed {
                 if (call.compareAndSet(FeatureFlagsLive.CallRunning, FeatureFlagsLive.CallAbandoned))
                   abandonedCalls.incrementAndGet()
@@ -394,7 +394,7 @@ final private[openfeature] class Evaluator(
       // `Unknown` is reserved for a genuinely absent reason. A non-null but unrecognized reason is a provider-specific
       // one and must be passed through verbatim (spec 1.4.7), not collapsed — otherwise Optimizely/flagd custom reasons
       // are lost to hooks, analytics, and debugging.
-      case None => ResolutionReason.Unknown
+      case None    => ResolutionReason.Unknown
       case Some(r) =>
         r.toUpperCase match {
           case "STATIC"          => ResolutionReason.Static
@@ -486,7 +486,7 @@ private[openfeature] object Evaluator {
     code match {
       case ErrorCode.FlagNotFound => FeatureFlagError.FlagNotFound(key)
       case ErrorCode.TypeMismatch => FeatureFlagError.TypeMismatch(key, expected, message.getOrElse("unknown"))
-      case ErrorCode.ParseError =>
+      case ErrorCode.ParseError   =>
         FeatureFlagError.ParseError(key, new ProviderReportedError(message.getOrElse("parse error")))
       case ErrorCode.TargetingKeyMissing => FeatureFlagError.TargetingKeyMissing(key)
       case ErrorCode.InvalidContext      => FeatureFlagError.InvalidContext(message.getOrElse("invalid context"))

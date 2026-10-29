@@ -59,7 +59,7 @@ object EventHandlerIsolationSpec extends ZIOSpecDefault {
           provider <- ZIO.succeed(new EchoProvider)
           ff       <- buildFF(provider)
           seen     <- Promise.make[Nothing, (Boolean, Boolean)]
-          tx <- ff
+          tx       <- ff
             .transactionEither(overrides = Map("f" -> false)) {
               ff.onConfigurationChanged((_, _) =>
                 (ff.booleanOrDefault("f", false) <*> ff.inTransaction).flatMap(seen.succeed).unit
@@ -77,7 +77,7 @@ object EventHandlerIsolationSpec extends ZIOSpecDefault {
           provider <- ZIO.succeed(new EchoProvider)
           ff       <- buildFF(provider)
           seen     <- Promise.make[Nothing, String]
-          _ <- ff.withContext(EvaluationContext("ctx-user")) {
+          _        <- ff.withContext(EvaluationContext("ctx-user")) {
             ff.onConfigurationChanged((_, _) => ff.stringOrDefault("who", "").flatMap(seen.succeed).unit)
           }
           _   <- ZIO.attempt(provider.fireConfigChanged())
@@ -101,7 +101,7 @@ object EventHandlerIsolationSpec extends ZIOSpecDefault {
           provider <- ZIO.succeed(new EchoProvider)
           ff       <- buildFF(provider)
           seen     <- Promise.make[Nothing, (Boolean, Boolean)]
-          _ <- ff.transactionEither(overrides = Map("f" -> false)) {
+          _        <- ff.transactionEither(overrides = Map("f" -> false)) {
             ff.onProviderReady(_ => (ff.booleanOrDefault("f", false) <*> ff.inTransaction).flatMap(seen.succeed).unit)
           }
           result <- seen.await

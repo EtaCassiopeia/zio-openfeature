@@ -386,11 +386,11 @@ final class OptimizelyFeatureProvider private[optimizely] (
       case Right(d) =>
         val name = OptimizelyFeatureProvider.variableKey(ctx)
         lookupVariable(d, name) match {
-          case None => onAbsent(d)
+          case None      => onAbsent(d)
           case Some(raw) =>
             convert.lift(raw) match {
               case Some(v) => success(d, v, usedDefault = false)
-              case None =>
+              case None    =>
                 typeMismatch(defaultValue, s"variable '$name' is ${raw.getClass.getSimpleName}, expected $expected")
             }
         }

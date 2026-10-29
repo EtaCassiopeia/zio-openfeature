@@ -169,7 +169,7 @@ object WrapperConfigValidationSpec extends ZIOSpecDefault {
       },
       test("valid configs still construct") {
         val delegate = new CountingDelegate
-        val built = scala.util.Try {
+        val built    = scala.util.Try {
           CircuitBreakerProvider(delegate, CircuitBreakerProviderConfig(resetTimeout = Duration.Infinity))
           CachingProvider(delegate, CachingConfig(ttl = Duration.Infinity))
           CircuitBreaker(CircuitBreakerConfig(probeTimeout = Duration.Infinity), Ticker.system)

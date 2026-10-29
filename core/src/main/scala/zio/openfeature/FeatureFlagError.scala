@@ -161,7 +161,7 @@ object FeatureFlagError {
       case _: java.net.NoRouteToHostException                                                 => Unreachable(t)
       case _: java.net.ConnectException                                                       => Unreachable(t)
       case _: java.nio.channels.ClosedChannelException if msg.toLowerCase.contains("connect") => Unreachable(t)
-      case _ =>
+      case _                                                                                  =>
         httpStatus(t) match {
           case Some(status) if AuthStatuses.contains(status) => unauthorized(extractAuthReason(t, msg), t)
           case Some(_)                                       => ProviderError(t)

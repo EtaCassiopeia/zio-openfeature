@@ -121,8 +121,8 @@ object LifecycleFaultSpec extends ZIOSpecDefault {
                 .either
             )
           } yield
-          // The SDK's own shutdown waits a few seconds for its executor before interrupting the stuck init thread.
-          assertTrue(timed._1.left.toOption.exists(_.isInstanceOf[TimeoutException]), timed._2 < 10000L)
+            // The SDK's own shutdown waits a few seconds for its executor before interrupting the stuck init thread.
+            assertTrue(timed._1.left.toOption.exists(_.isInstanceOf[TimeoutException]), timed._2 < 10000L)
         }
       },
       test("a failed init rolls back to the previous provider, and the next attempt succeeds") {

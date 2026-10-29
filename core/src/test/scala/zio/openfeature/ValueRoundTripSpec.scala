@@ -85,7 +85,7 @@ object ValueRoundTripSpec extends ZIOSpecDefault {
     },
     test("DoubleValue NaN survives as a NaN double (not necessarily equal-by-==)") {
       // NaN is its own equivalence class — only `isNaN` is reliable.
-      val r = roundTrip(AttributeValue.DoubleValue(Double.NaN))
+      val r     = roundTrip(AttributeValue.DoubleValue(Double.NaN))
       val isNaN = r match {
         case AttributeValue.DoubleValue(v) => v.isNaN
         case _                             => false

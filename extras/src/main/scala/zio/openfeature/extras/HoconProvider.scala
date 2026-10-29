@@ -171,7 +171,7 @@ final class HoconProvider private (
   private def configValueToSdkValue(cv: com.typesafe.config.ConfigValue): Value =
     cv.valueType() match {
       case ConfigValueType.BOOLEAN => new Value(cv.unwrapped().asInstanceOf[java.lang.Boolean])
-      case ConfigValueType.NUMBER =>
+      case ConfigValueType.NUMBER  =>
         cv.unwrapped() match {
           case i: java.lang.Integer => new Value(i.intValue())
           // int-range long → Integer so it keeps an integer type (matching provider `instanceof Integer` targeting),
@@ -184,7 +184,7 @@ final class HoconProvider private (
         }
       case ConfigValueType.STRING => new Value(cv.unwrapped().asInstanceOf[String])
       case ConfigValueType.OBJECT =>
-        val obj = cv.asInstanceOf[com.typesafe.config.ConfigObject]
+        val obj                                    = cv.asInstanceOf[com.typesafe.config.ConfigObject]
         val javaMap: java.util.Map[String, Object] = obj
           .entrySet()
           .asScala

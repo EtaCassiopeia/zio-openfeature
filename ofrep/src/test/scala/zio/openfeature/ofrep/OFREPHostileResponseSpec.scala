@@ -140,7 +140,7 @@ object OFREPHostileResponseSpec extends ZIOSpecDefault {
     } yield {
       val lone = surrogate.toString
       position match {
-        case "start" => lone + base
+        case "start"  => lone + base
         case "middle" =>
           val mid = base.offsetByCodePoints(0, base.codePointCount(0, base.length) / 2)
           base.substring(0, mid) + lone + base.substring(mid)
@@ -210,7 +210,7 @@ object OFREPHostileResponseSpec extends ZIOSpecDefault {
         for {
           server   <- serverScoped
           provider <- providerFor(server)
-          r <- check(hostileString) { s =>
+          r        <- check(hostileString) { s =>
             val key    = serve(server, jsonString(s))
             val result = provider.getStringEvaluation(key, "DEFAULT", emptyContext)
             val value  = result.getValue
@@ -225,7 +225,7 @@ object OFREPHostileResponseSpec extends ZIOSpecDefault {
         for {
           server   <- serverScoped
           provider <- providerFor(server)
-          r <- check(finiteDouble) { d =>
+          r        <- check(finiteDouble) { d =>
             val key    = serve(server, d.toString)
             val result = provider.getDoubleEvaluation(key, java.lang.Double.valueOf(12345.0), emptyContext)
             val value  = result.getValue
@@ -240,7 +240,7 @@ object OFREPHostileResponseSpec extends ZIOSpecDefault {
         for {
           server   <- serverScoped
           provider <- providerFor(server)
-          r <- check(Gen.oneOf(Gen.fromIterable(List(Int.MinValue, -1, 0, 1, Int.MaxValue)), Gen.int)) { i =>
+          r        <- check(Gen.oneOf(Gen.fromIterable(List(Int.MinValue, -1, 0, 1, Int.MaxValue)), Gen.int)) { i =>
             val key    = serve(server, i.toString)
             val result = provider.getIntegerEvaluation(key, Integer.valueOf(7), emptyContext)
             val value  = result.getValue
@@ -255,7 +255,7 @@ object OFREPHostileResponseSpec extends ZIOSpecDefault {
         for {
           server   <- serverScoped
           provider <- providerFor(server)
-          r <- check(outOfIntLong) { l =>
+          r        <- check(outOfIntLong) { l =>
             val key    = serve(server, l.toString)
             val result = provider.getIntegerEvaluation(key, Integer.valueOf(7), emptyContext)
             val value  = result.getValue
@@ -271,7 +271,7 @@ object OFREPHostileResponseSpec extends ZIOSpecDefault {
         for {
           server   <- serverScoped
           provider <- providerFor(server)
-          r <- check(Gen.oneOf(Gen.fromIterable(boundaryLongs), Gen.long)) { l =>
+          r        <- check(Gen.oneOf(Gen.fromIterable(boundaryLongs), Gen.long)) { l =>
             val key    = serve(server, l.toString)
             val result = provider.getLongEvaluation(key, java.lang.Long.valueOf(7L), emptyContext)
             val value  = result.getValue
@@ -288,7 +288,7 @@ object OFREPHostileResponseSpec extends ZIOSpecDefault {
         for {
           server   <- serverScoped
           provider <- providerFor(server)
-          r <- check(Gen.int(0, 3).flatMap(d => Gen.mapOfBounded(0, 4)(wellFormedKey, jsonGen(d)))) { fields =>
+          r        <- check(Gen.int(0, 3).flatMap(d => Gen.mapOfBounded(0, 4)(wellFormedKey, jsonGen(d)))) { fields =>
             val json   = JObj(fields)
             val key    = serve(server, render(json))
             val result = provider.getObjectEvaluation(key, new Value(), emptyContext)
@@ -359,7 +359,7 @@ object OFREPHostileResponseSpec extends ZIOSpecDefault {
           deep    = (1 to 200).foldLeft[Json](JStr("\uD83D\uDE00"))((acc, _) => JObj(Map("k" -> JList(List(acc)))))
           bigObj  = JObj((0 until 5000).map(i => s"k$i\u0000\uD83D\uDE00" -> (JInt(i): Json)).toMap)
           bigList = JObj(Map("xs" -> JList((0 until 20000).map(i => JInt(i): Json).toList)))
-          decode = (j: Json) =>
+          decode  = (j: Json) =>
             actual(provider.getObjectEvaluation(serve(server, render(j)), new Value(), emptyContext).getValue)
           deepOk    = decode(deep) == expected(deep)
           bigObjOk  = decode(bigObj) == expected(bigObj)

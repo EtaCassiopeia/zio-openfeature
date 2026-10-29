@@ -160,7 +160,7 @@ object ZioApiHookSpec extends ZIOSpecDefault {
       test("addZioApiHook propagates to clients created after the call") {
         ZIO.scoped {
           for {
-            log <- Ref.make(List.empty[String])
+            log      <- Ref.make(List.empty[String])
             registry <- FeatureFlagRegistry
               .fromProvider(new SimpleBooleanProvider("p", true))
               .build
@@ -175,7 +175,7 @@ object ZioApiHookSpec extends ZIOSpecDefault {
       test("addZioApiHook propagates to already-existing clients") {
         ZIO.scoped {
           for {
-            log <- Ref.make(List.empty[String])
+            log      <- Ref.make(List.empty[String])
             registry <- FeatureFlagRegistry
               .fromProvider(new SimpleBooleanProvider("p", true))
               .build

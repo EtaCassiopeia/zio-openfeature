@@ -75,13 +75,13 @@ final private[openfeature] class FallbackLogLimiter private (
       case Some(cause) =>
         // `Default` is `Throttled`, so a defect under `Off` is bounded, never silenced.
         admit(boundedPolicy, key + DefectSuffix).flatMap {
-          case None => ZIO.unit
+          case None    => ZIO.unit
           case Some(n) =>
             ZIO.logWarningCause(s"${FallbackLogLimiter.absorbedDefectMessage(key)} $served${suffix(n)}", cause)
         }
       case None =>
         admit(key).flatMap {
-          case None => ZIO.unit
+          case None    => ZIO.unit
           case Some(n) =>
             val why = resolution.errorCode.fold("error")(_.toString) + resolution.errorMessage.fold("")(m => s": $m")
             ZIO.logWarning(s"Flag '$key' fell back to its default $served ($why)${suffix(n)}")

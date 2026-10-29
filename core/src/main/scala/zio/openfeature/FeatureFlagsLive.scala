@@ -64,7 +64,7 @@ final private[openfeature] class FeatureFlagsLive(
   // swap, shutdown and status.
   private val eventBridge  = new EventBridge(client, providerNameRef, state, onReady)
   private val hookPipeline = new HookPipeline(state, providerNameRef, domain, version)
-  private val evaluator = new Evaluator(
+  private val evaluator    = new Evaluator(
     client,
     state,
     contextSource,
@@ -298,7 +298,7 @@ final private[openfeature] class FeatureFlagsLive(
   private def cleanupUnboundFailedProvider(newProvider: OFFeatureProvider): UIO[Unit] =
     (for {
       bound <- ZIO.attemptBlocking(domain.fold(api.getProvider())(d => api.getProvider(d)))
-      _ <- ZIO.when(bound ne newProvider)(
+      _     <- ZIO.when(bound ne newProvider)(
         ZIO.attemptBlocking(newProvider.shutdown()).ignore *>
           ZIO.attemptBlocking(EventProviderAccess.deregisterGlobalProvider(api, newProvider)).ignore
       )

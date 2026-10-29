@@ -128,7 +128,7 @@ object CoreApiTidySpec extends ZIOSpecDefault {
     },
     test("the metrics hook reports the elapsed clock time between its stages") {
       val hook = FeatureHook.metrics((_, _, _) => ZIO.unit)
-      val ctx = HookContext(
+      val ctx  = HookContext(
         "timed",
         FlagValueType.Boolean,
         false,

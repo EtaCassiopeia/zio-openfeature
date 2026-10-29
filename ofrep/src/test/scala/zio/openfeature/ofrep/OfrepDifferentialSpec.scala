@@ -131,8 +131,8 @@ object OfrepDifferentialSpec extends ZIOSpecDefault {
     case i: Int     => i.toString
     case l: Long    => l.toString
     // JSON has no literal for NaN or the infinities; send the text, as a JSON-encoding server would have to.
-    case d: Double  => if (isNonFinite(d)) quote(d.toString) else d.toString
-    case l: List[_] => l.map(renderValue).mkString("[", ",", "]")
+    case d: Double    => if (isNonFinite(d)) quote(d.toString) else d.toString
+    case l: List[_]   => l.map(renderValue).mkString("[", ",", "]")
     case m: Map[_, _] =>
       m.toList.map { case (k, x) => s"${quote(k.toString)}:${renderValue(x)}" }.mkString("{", ",", "}")
     case other => sys.error(s"unexpected generated value $other")

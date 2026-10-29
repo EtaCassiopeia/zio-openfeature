@@ -301,7 +301,7 @@ object CachingProviderSpec extends ZIOSpecDefault {
     suite("Context key filtering")(
       test("contextKeys filters high-cardinality fields from cache key") {
         val underlying = new CountingProvider(Map("flag" -> true))
-        val cached = CachingProvider(
+        val cached     = CachingProvider(
           underlying,
           CachingConfig(contextKeys = Some(Set("plan")))
         )
@@ -319,7 +319,7 @@ object CachingProviderSpec extends ZIOSpecDefault {
       },
       test("different values in contextKeys produce separate cache entries") {
         val underlying = new CountingProvider(Map("flag" -> true))
-        val cached = CachingProvider(
+        val cached     = CachingProvider(
           underlying,
           CachingConfig(contextKeys = Some(Set("plan")))
         )
@@ -335,7 +335,7 @@ object CachingProviderSpec extends ZIOSpecDefault {
       },
       test("empty contextKeys ignores all context — caches by flag key only") {
         val underlying = new CountingProvider(Map("flag" -> true))
-        val cached = CachingProvider(
+        val cached     = CachingProvider(
           underlying,
           CachingConfig(contextKeys = Some(Set.empty))
         )
@@ -475,10 +475,10 @@ object CachingProviderSpec extends ZIOSpecDefault {
             (1 to 10).map(_ => ZIO.attemptBlocking(cached.getBooleanEvaluation("flag", false, ctx)))
           )
         } yield
-        // All 10 should get the correct value
-        assertTrue(results.forall(_.getValue == true)) &&
-          // But the underlying provider should only have been called once (dedup)
-          assertTrue(underlying.evaluationCount.get() == 1)
+          // All 10 should get the correct value
+          assertTrue(results.forall(_.getValue == true)) &&
+            // But the underlying provider should only have been called once (dedup)
+            assertTrue(underlying.evaluationCount.get() == 1)
       }
     ),
     suite("Delegate event propagation")(
@@ -529,7 +529,7 @@ object CachingProviderSpec extends ZIOSpecDefault {
     ),
     suite("Failure handling")(
       test("a delegate exception is not served from cache — next evaluation retries the delegate") {
-        val failFirst = new java.util.concurrent.atomic.AtomicBoolean(true)
+        val failFirst  = new java.util.concurrent.atomic.AtomicBoolean(true)
         val underlying = new CountingProvider(Map("flag" -> true)) {
           override def getBooleanEvaluation(
             key: String,
@@ -757,7 +757,7 @@ object CachingProviderSpec extends ZIOSpecDefault {
         for {
           underlying <- ZIO.succeed(new CountingProvider(Map("flag" -> true)))
           cached     <- CachingProvider.make(underlying, CachingConfig(ttl = 1.minute))
-          _ <- ZIO.succeed {
+          _          <- ZIO.succeed {
             cached.getBooleanEvaluation("flag", false, ctx)
             cached.getBooleanEvaluation("flag", false, ctx)
           }
@@ -816,7 +816,7 @@ object CachingProviderSpec extends ZIOSpecDefault {
     ),
     suite("calling thread")(
       test("a miss evaluates the delegate on the calling thread") {
-        val seen = new AtomicReference[Thread]()
+        val seen       = new AtomicReference[Thread]()
         val underlying = new CountingProvider(Map("flag" -> true)) {
           override def getBooleanEvaluation(
             key: String,

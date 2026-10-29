@@ -218,7 +218,7 @@ object AbandonedCallCapSpec extends ZIOSpecDefault {
       def viaConfig(config: FeatureFlagsConfig) =
         ZIO.scoped {
           for {
-            p <- gated
+            p  <- gated
             ff <- FeatureFlags
               .fromProvider(
                 p,
@@ -244,7 +244,7 @@ object AbandonedCallCapSpec extends ZIOSpecDefault {
     test("fromAcquireAsync's maxAbandonedCalls reaches the instance") {
       ZIO.scoped {
         for {
-          p <- gated
+          p  <- gated
           ff <- FeatureFlags
             .fromAcquireAsync(
               acquire = ZIO.never,

@@ -317,7 +317,7 @@ object FeatureHook {
       case AttributeValue.DoubleValue(v)  => v.toString
       case AttributeValue.InstantValue(v) => v.toString
       case AttributeValue.ListValue(vs)   => vs.map(renderAttributeValue).mkString("[", ", ", "]")
-      case AttributeValue.StructValue(m) =>
+      case AttributeValue.StructValue(m)  =>
         m.map { case (k, v) => s"$k=${renderAttributeValue(v)}" }.mkString("{", ", ", "}")
     }
 

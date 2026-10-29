@@ -116,7 +116,7 @@ final class OFREPFeatureProvider private[ofrep] (val underlying: OfrepProvider) 
         raw match {
           case i: java.lang.Integer => served(java.lang.Long.valueOf(i.longValue), evaluation)
           case l: java.lang.Long    => served(l, evaluation)
-          case other =>
+          case other                =>
             val found = Option(other).map(_.getClass.getSimpleName).getOrElse("null")
             mismatch(defaultValue, s"Type mismatch: expected Long but got $found", evaluation.getFlagMetadata)
         }

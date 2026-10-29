@@ -248,7 +248,7 @@ final private class FeatureFlagRegistryLive(
 
     def loop(remaining: Long): IO[FeatureFlagError, Unit] =
       check.flatMap {
-        case Some(_) => ZIO.unit
+        case Some(_)                => ZIO.unit
         case None if remaining <= 0 =>
           ZIO.fail(
             FeatureFlagError.ProviderInitializationFailed(

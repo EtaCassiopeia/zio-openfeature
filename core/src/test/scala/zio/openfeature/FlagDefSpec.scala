@@ -308,10 +308,10 @@ object FlagDefSpec extends ZIOSpecDefault {
             v      <- FeatureFlags.value(intFlag, vip).provideEnvironment(env)
             vod    <- FeatureFlags.valueOrDefault(intFlag, vip).provideEnvironment(env)
             rod    <- FeatureFlags.resolveOrDefault(intFlag, vip).provideEnvironment(env)
-            rodO <- FeatureFlags
+            rodO   <- FeatureFlags
               .resolveOrDefault(intFlag, vip, EvaluationOptions(recordingHook(firedR)))
               .provideEnvironment(env)
-            vd <- FeatureFlags.valueDetails(intFlag, vip).provideEnvironment(env)
+            vd  <- FeatureFlags.valueDetails(intFlag, vip).provideEnvironment(env)
             vdO <- FeatureFlags
               .valueDetails(intFlag, vip, EvaluationOptions(recordingHook(firedD)))
               .provideEnvironment(env)

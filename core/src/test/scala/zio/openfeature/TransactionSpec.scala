@@ -45,9 +45,9 @@ object TransactionSpec extends ZIOSpecDefault {
         assertTrue(result.allFlagKeys.isEmpty)
       },
       test("flagCount returns number of evaluated flags") {
-        val now   = Instant.now()
-        val eval1 = FlagEvaluation("a", true, FlagResolution.default("a", true), false, now)
-        val eval2 = FlagEvaluation("b", 42, FlagResolution.default("b", 42), false, now)
+        val now    = Instant.now()
+        val eval1  = FlagEvaluation("a", true, FlagResolution.default("a", true), false, now)
+        val eval2  = FlagEvaluation("b", 42, FlagResolution.default("b", 42), false, now)
         val result = TransactionResult(
           result = "test",
           evaluatedFlags = Map("a" -> eval1, "b" -> eval2),
@@ -56,10 +56,10 @@ object TransactionSpec extends ZIOSpecDefault {
         assertTrue(result.flagCount == 2)
       },
       test("overrideCount returns number of overridden flags") {
-        val now   = Instant.now()
-        val eval1 = FlagEvaluation("a", true, FlagResolution.cached("a", true), true, now)
-        val eval2 = FlagEvaluation("b", 42, FlagResolution.default("b", 42), false, now)
-        val eval3 = FlagEvaluation("c", "x", FlagResolution.cached("c", "x"), true, now)
+        val now    = Instant.now()
+        val eval1  = FlagEvaluation("a", true, FlagResolution.cached("a", true), true, now)
+        val eval2  = FlagEvaluation("b", 42, FlagResolution.default("b", 42), false, now)
+        val eval3  = FlagEvaluation("c", "x", FlagResolution.cached("c", "x"), true, now)
         val result = TransactionResult(
           result = "test",
           evaluatedFlags = Map("a" -> eval1, "b" -> eval2, "c" -> eval3),
@@ -68,9 +68,9 @@ object TransactionSpec extends ZIOSpecDefault {
         assertTrue(result.overrideCount == 2)
       },
       test("allFlagKeys returns all evaluated flag keys") {
-        val now   = Instant.now()
-        val eval1 = FlagEvaluation("flag-a", true, FlagResolution.default("flag-a", true), false, now)
-        val eval2 = FlagEvaluation("flag-b", 42, FlagResolution.default("flag-b", 42), false, now)
+        val now    = Instant.now()
+        val eval1  = FlagEvaluation("flag-a", true, FlagResolution.default("flag-a", true), false, now)
+        val eval2  = FlagEvaluation("flag-b", 42, FlagResolution.default("flag-b", 42), false, now)
         val result = TransactionResult(
           result = "test",
           evaluatedFlags = Map("flag-a" -> eval1, "flag-b" -> eval2),
@@ -79,9 +79,9 @@ object TransactionSpec extends ZIOSpecDefault {
         assertTrue(result.allFlagKeys == Set("flag-a", "flag-b"))
       },
       test("providerEvaluatedKeys excludes overridden flags") {
-        val now   = Instant.now()
-        val eval1 = FlagEvaluation("provider", true, FlagResolution.default("provider", true), false, now)
-        val eval2 = FlagEvaluation("override", 42, FlagResolution.cached("override", 42), true, now)
+        val now    = Instant.now()
+        val eval1  = FlagEvaluation("provider", true, FlagResolution.default("provider", true), false, now)
+        val eval2  = FlagEvaluation("override", 42, FlagResolution.cached("override", 42), true, now)
         val result = TransactionResult(
           result = "test",
           evaluatedFlags = Map("provider" -> eval1, "override" -> eval2),
@@ -90,8 +90,8 @@ object TransactionSpec extends ZIOSpecDefault {
         assertTrue(result.providerEvaluatedKeys == Set("provider"))
       },
       test("wasEvaluated returns true for evaluated flags") {
-        val now  = Instant.now()
-        val eval = FlagEvaluation("checked", true, FlagResolution.default("checked", true), false, now)
+        val now    = Instant.now()
+        val eval   = FlagEvaluation("checked", true, FlagResolution.default("checked", true), false, now)
         val result = TransactionResult(
           result = "test",
           evaluatedFlags = Map("checked" -> eval),
@@ -101,8 +101,8 @@ object TransactionSpec extends ZIOSpecDefault {
         assertTrue(!result.wasEvaluated("not-checked"))
       },
       test("wasOverridden returns true for overridden flags") {
-        val now  = Instant.now()
-        val eval = FlagEvaluation("overridden", true, FlagResolution.cached("overridden", true), true, now)
+        val now    = Instant.now()
+        val eval   = FlagEvaluation("overridden", true, FlagResolution.cached("overridden", true), true, now)
         val result = TransactionResult(
           result = "test",
           evaluatedFlags = Map("overridden" -> eval),
@@ -112,8 +112,8 @@ object TransactionSpec extends ZIOSpecDefault {
         assertTrue(!result.wasOverridden("not-overridden"))
       },
       test("getEvaluation returns evaluation record") {
-        val now  = Instant.now()
-        val eval = FlagEvaluation("get-test", "value", FlagResolution.default("get-test", "value"), false, now)
+        val now    = Instant.now()
+        val eval   = FlagEvaluation("get-test", "value", FlagResolution.default("get-test", "value"), false, now)
         val result = TransactionResult(
           result = "test",
           evaluatedFlags = Map("get-test" -> eval),
@@ -129,9 +129,9 @@ object TransactionSpec extends ZIOSpecDefault {
         assertTrue(mapped.result == 20)
       },
       test("toValueMap returns simple value map") {
-        val now   = Instant.now()
-        val eval1 = FlagEvaluation("a", true, FlagResolution.default("a", true), false, now)
-        val eval2 = FlagEvaluation("b", 42, FlagResolution.default("b", 42), false, now)
+        val now    = Instant.now()
+        val eval1  = FlagEvaluation("a", true, FlagResolution.default("a", true), false, now)
+        val eval2  = FlagEvaluation("b", 42, FlagResolution.default("b", 42), false, now)
         val result = TransactionResult(
           result = "test",
           evaluatedFlags = Map("a" -> eval1, "b" -> eval2),

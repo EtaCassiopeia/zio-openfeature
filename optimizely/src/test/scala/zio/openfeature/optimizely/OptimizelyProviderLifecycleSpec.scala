@@ -80,7 +80,7 @@ object OptimizelyProviderLifecycleSpec extends ZIOSpecDefault {
         val firstShutdown =
           try { provider.shutdown(); Right(()) }
           catch { case t: Throwable => Left(t) }
-        val afterFirst = stateOf(provider)
+        val afterFirst     = stateOf(provider)
         val secondShutdown =
           try { provider.shutdown(); Right(()) }
           catch { case t: Throwable => Left(t) }
@@ -140,7 +140,7 @@ object OptimizelyProviderLifecycleSpec extends ZIOSpecDefault {
         val client   = OptimizelyTestSupport.wiredClient(datafileUrl(server), "lifecycle-key")
         val provider = new OptimizelyFeatureProvider(client, OptimizelyTestSupport.InitWait, closeOnShutdown = true)
         val before   = stateOf(provider)
-        val result =
+        val result   =
           try { provider.shutdown(); Right(()) }
           catch { case t: Throwable => Left(t) }
         val after = stateOf(provider)
@@ -233,11 +233,11 @@ object OptimizelyProviderLifecycleSpec extends ZIOSpecDefault {
         val client   = OptimizelyTestSupport.wiredClient(datafileUrl(server), "lifecycle-key")
         val provider = new OptimizelyFeatureProvider(client, OptimizelyTestSupport.InitWait, closeOnShutdown = true)
         try {
-          val N        = 16
-          val release  = new CountDownLatch(1)
-          val started  = new CountDownLatch(N)
-          val errors   = new AtomicInteger(0)
-          val outcomes = new AtomicReference[List[Either[Throwable, Unit]]](Nil)
+          val N                    = 16
+          val release              = new CountDownLatch(1)
+          val started              = new CountDownLatch(N)
+          val errors               = new AtomicInteger(0)
+          val outcomes             = new AtomicReference[List[Either[Throwable, Unit]]](Nil)
           val threads: Seq[Thread] = (1 to N).map { _ =>
             new Thread(() => {
               started.countDown()

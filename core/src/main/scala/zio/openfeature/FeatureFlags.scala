@@ -583,7 +583,10 @@ trait FeatureFlags {
     * `ProviderInitializationFailed` wrapping a `TimeoutException` and status becomes `Error`, but the swap is not
     * rolled back: the new provider stays registered (status recovers to `Ready` if it finishes initializing later), and
     * the previous provider is not restored, because the SDK would shut it down if the new one later became ready. Call
-    * `setProvider` again with another provider to recover.
+    * `setProvider` again with another provider to recover. If the new provider fails to initialize later instead, or
+    * has not finished when this instance shuts down or its scope closes, an instance that owns its API shuts the
+    * previous provider down itself, since the SDK no longer holds it. Until the new provider has settled, installing
+    * the previous provider again fails with `ProviderInitializationFailed`.
     *
     * Once the swap has started it runs to one of those outcomes even if the calling fiber is interrupted, so
     * `setProvider(p).timeout(d)` with `d` shorter than the init timeout returns only when the swap has settled (at most

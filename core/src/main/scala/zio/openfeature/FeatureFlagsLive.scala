@@ -8,6 +8,7 @@ import zio.openfeature.internal.{
   FallbackLogLimiter,
   FeatureFlagsState,
   HookPipeline,
+  OrphanedProviders,
   ProviderRegistration,
   SwitchableProvider,
   TrackingConverter
@@ -19,6 +20,7 @@ import dev.openfeature.sdk.{
   EventDetails,
   EventProviderAccess,
   OpenFeatureAPI,
+  ProviderStateAccess,
   ProviderState => JavaProviderState
 }
 
@@ -48,7 +50,9 @@ final private[openfeature] class FeatureFlagsLive(
   maxAbandonedCalls: Int = FeatureFlags.DefaultMaxAbandonedCalls,
   // Whether `track` keeps a copy of each event and its merged context for `trackedEvents`. Only testkit-built
   // instances set it: a production instance must not retain contexts, which routinely hold PII.
-  recordTracking: Boolean = false
+  recordTracking: Boolean = false,
+  // Previous providers a timed-out swap left registered nowhere; an owning instance shuts them down once settled.
+  orphans: OrphanedProviders
 ) extends FeatureFlags {
 
   // The total tier's served-default breadcrumb, under this instance's `FallbackLogging` policy. Lives here, not
@@ -440,7 +444,7 @@ final private[openfeature] class FeatureFlagsLive(
   // delegates to the provider registered with the API at evaluation time,
   // not the provider that was active when the client was created.
   override def setProvider(newProvider: OFFeatureProvider): IO[FeatureFlagError, Unit] =
-    swapLock.withPermit {
+    swapLock.withPermit(refusePendingOrphan(newProvider) *> {
       val swap = for {
         // Save old state for rollback on failure
         oldProvider <- providerRef.get
@@ -473,8 +477,8 @@ final private[openfeature] class FeatureFlagsLive(
               applySignal(Signal.SwapFailed) *>
                 ZIO.logWarning(
                   s"setProvider: '$newName' did not finish initializing within $initTimeout; status is Error and the " +
-                    s"previous provider '$oldName' was not restored (it is shut down if '$newName' becomes ready later)"
-                )
+                    s"previous provider '$oldName' was not restored (it is shut down once '$newName' settles)"
+                ) *> recordOrphan(oldProvider, oldName, newProvider, newName)
             case _ =>
               // Roll back refs FIRST so the identity guard again reflects the previous provider and record the failure
               // via the machine, THEN reconcile the SDK client routing: the SDK binds the new provider before
@@ -519,7 +523,57 @@ final private[openfeature] class FeatureFlagsLive(
             reconcileLateReady(newProvider)
           case _ => ZIO.unit
         }
+    })
+
+  /** A provider that a timed-out swap replaced is still held by the new provider's pending initialization, which shuts
+    * it down if it succeeds; installing it again before that settles would get it shut down while it serves.
+    */
+  private def refusePendingOrphan(provider: OFFeatureProvider): IO[FeatureFlagError, Unit] =
+    orphans.pendingFor(provider).flatMap {
+      case None           => ZIO.unit
+      case Some(incoming) =>
+        val name = Option(provider.getMetadata).map(_.getName).getOrElse(FeatureFlags.UnknownProviderName)
+        ZIO.fail(
+          FeatureFlagError.ProviderInitializationFailed(
+            new IllegalStateException(
+              s"'$name' cannot be installed again until '$incoming', which replaced it in a swap that timed out, " +
+                "finishes initializing"
+            )
+          )
+        )
     }
+
+  /** After a timed-out swap the SDK holds `previous` only in `incoming`'s pending initialization, and shuts it down
+    * only if that succeeds; [[orphans]] covers the other outcomes. A non-owning instance leaves it alone, as it leaves
+    * every provider of its shared API: another client may be serving it.
+    */
+  private def recordOrphan(
+    previous: OFFeatureProvider,
+    previousName: String,
+    incoming: OFFeatureProvider,
+    incomingName: String
+  ): UIO[Unit] =
+    ZIO
+      .when(ownsApi && (previous ne incoming)) {
+        ZIO
+          .attemptBlocking(ProviderStateAccess.stateReader(api, domain.orNull, incoming))
+          .flatMap {
+            case Some(state) => orphans.record(previous, previousName, incomingName, state)
+            // Something outside this instance rebound the slot between the timeout and here.
+            case None =>
+              ZIO.logWarning(
+                s"setProvider: the slot no longer holds '$incomingName'; '$previousName' is not tracked and is not " +
+                  "shut down by this instance"
+              )
+          }
+          .catchAllCause(c =>
+            ZIO.logWarningCause(
+              s"setProvider: could not watch '$incomingName'; '$previousName' is not shut down by this instance",
+              c
+            )
+          )
+      }
+      .unit
 
   /** `fromAcquireAsync`'s swap: flip the registered [[SwitchableProvider]] to `next`, an already-initialized provider,
     * without going through the SDK — so status never leaves `Ready` and the SDK never refuses an evaluation. Serialized
@@ -630,7 +684,7 @@ final private[openfeature] class FeatureFlagsLive(
         // registry falls back to one shared default provider) and double-shut a provider the API still has registered.
         // A non-owning `shutdown` therefore releases only this instance's own state (status/hooks/contexts/event hub,
         // torn down above); retire such clients via whatever owns the API (e.g. the registry).
-        ZIO.when(ownsApi)(ProviderRegistration.boundedApiShutdown(api)) *>
+        ZIO.when(ownsApi)(ProviderRegistration.boundedApiShutdown(api) *> orphans.resolveAll) *>
         applySignal(Signal.ShutdownCompleted).unit).uninterruptible
     )
 

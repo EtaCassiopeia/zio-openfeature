@@ -34,4 +34,14 @@ object ProviderStateAccess {
       }
     }
   }
+
+  /** A reader for the state of the manager `domain`'s slot (the default slot when `domain` is null) holds for
+    * `provider`, or `None` when the slot holds another provider. The reader keeps reporting that manager's state after
+    * the slot is bound to another provider: it is the state the SDK goes by, once `provider`'s pending `initialize()`
+    * returns, to decide whether to shut down the provider `provider` replaced.
+    */
+  def stateReader(api: OpenFeatureAPI, domain: String, provider: FeatureProvider): Option[() => ProviderState] = {
+    val manager = api.getFeatureProviderStateManager(domain)
+    if (manager.getProvider eq provider) Some(() => manager.getState) else None
+  }
 }

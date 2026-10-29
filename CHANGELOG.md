@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`CachingProvider` no longer serves one context's cached result to another** (#566). The cache key wrote each
+  context attribute as its text, so attributes that differ only in type shared a key: `"30"` and `30`, `"true"` and
+  `true`, an int and a long, a string and an instant, a null and `"null"`, and lists of each. A provider that targets
+  on an attribute's type answered the first context, and the cache then served that answer, labelled `CACHED`, to the
+  second. The key now tags every value with its type and encodes lists and structures element by element.
 - **A client's status follows the SDK's own state, not just its events** (#563). Two cases went wrong, both with a
   provider shared between domains (a `FeatureFlagRegistry`'s default provider, or one passed to several domains):
   - A second domain's client was reported `Ready` while the shared provider was still initializing for the first,

@@ -185,9 +185,34 @@ final class CachingProvider private (
         case (None, Some(m))       => m.asScala.toList.sortBy(_._1)
         case (_, None)             => Nil
       }
-      val attrs = entries.map { case (k, v) => s"${lp(k)}=${lp(String.valueOf(v))}" }.mkString(",")
+      val attrs = entries.map { case (k, v) => s"${lp(k)}=${lp(valueFingerprint(v))}" }.mkString(",")
       s"${lp(tk)}|$attrs"
     }
+
+  // Type-tagged and recursive: a provider may target on an attribute's type (`"30"` is not `30`) or on a list's or a
+  // structure's shape, so two values that merely print alike must not share a key. Every nested part is length-prefixed
+  // for the same reason as the fields above.
+  private def valueFingerprint(v: AnyRef): String = v match {
+    case null         => "n"
+    case value: Value =>
+      if (value.isNull) "n"
+      else if (value.isList) "L" + value.asList.asScala.map(e => lp(valueFingerprint(e))).mkString
+      else if (value.isStructure)
+        "S" + value.asStructure.asUnmodifiableMap.asScala.toList
+          .sortBy(_._1)
+          .map { case (k, e) =>
+            lp(k) + lp(valueFingerprint(e))
+          }
+          .mkString
+      else valueFingerprint(value.asObject)
+    case b: java.lang.Boolean => s"b$b"
+    case s: String            => s"s$s"
+    case i: java.lang.Integer => s"i$i"
+    case l: java.lang.Long    => s"l$l"
+    case d: java.lang.Double  => s"d$d"
+    case t: java.time.Instant => s"t$t"
+    case other                => s"o${other.getClass.getName}:$other"
+  }
 
   // The OpenFeature `DEFAULT` reason string, compared against `ProviderEvaluation.getReason` (a raw String).
   private val DefaultReason: String = dev.openfeature.sdk.Reason.DEFAULT.toString

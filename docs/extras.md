@@ -103,6 +103,8 @@ Name the attributes that change the answer:
 ```
 
 With `contextKeys` set, the targeting key is left out of the cache key too; `Some(Set.empty)` caches by flag key alone.
+The key takes each attribute's type and shape, not just its text: `"30"` and `30` are different keys, as are lists
+and structures that print alike.
 
 When the wrapped provider (an OpenFeature `EventProvider`) emits `PROVIDER_CONFIGURATION_CHANGED`, the whole cache is
 cleared and the event passed on. Any other provider (including one inside `DeferredProvider` or

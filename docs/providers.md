@@ -226,6 +226,9 @@ A domain names a client, so different parts of an app can use different provider
   or its scope closes, the old provider is shut down then. Only an instance that
   [owns its API](#who-shuts-down-the-api) does this: on a shared API the old provider is left to the API's owner.
   Until the new provider has settled, `setProvider` refuses the old provider with `ProviderInitializationFailed`:
-  installing it again then would get it shut down later, while it serves.
+  installing it again then would get it shut down later, while it serves. A new provider that reports `READY` or
+  `ERROR` itself before its `initialize()` returns is taken at its word, since the Java SDK does not expose whether
+  `initialize()` has returned: the old provider may then be shut down twice, or, if the `READY` is followed by a
+  failed `initialize()`, not at all.
 - `setProvider` is the only way out of `Fatal`. With a wrapper such as `CircuitBreakerProvider`, swap in a new wrapper
   around the new provider.

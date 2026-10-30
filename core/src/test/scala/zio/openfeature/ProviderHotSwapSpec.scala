@@ -146,6 +146,22 @@ object ProviderHotSwapSpec extends ZIOSpecDefault {
       )
     }
 
+  /** Holds every task submitted to it until released: as a fiber's blocking executor, it parks the provider call of an
+    * evaluation that has already passed its readiness check.
+    */
+  final private class GatingExecutor(real: Executor) extends Executor {
+    val held                   = new java.util.concurrent.ConcurrentLinkedQueue[Runnable]
+    @volatile private var open = false
+    def metrics(implicit unsafe: Unsafe): Option[zio.internal.ExecutionMetrics] = None
+    def submit(r: Runnable)(implicit unsafe: Unsafe): Boolean                   =
+      if (open) real.submit(r) else { held.add(r); true }
+    def releaseAll(): Unit = {
+      open = true
+      var r = held.poll()
+      while (r != null) { real.submit(r)(Unsafe.unsafe): Unit; r = held.poll() }
+    }
+  }
+
   /** A probe that holds the fiber reaching `point` until `release` completes, completing `held` first. */
   private def holdAt(
     point: zio.openfeature.internal.LifecycleProbe.Point,
@@ -483,6 +499,44 @@ object ProviderHotSwapSpec extends ZIOSpecDefault {
           aDown,
           shuts == 1,
           status == ProviderStatus.Error
+        )
+      }
+    } @@ TestAspect.withLiveClock,
+    test("an evaluation that passed its check before a failing swap is not served by the failed provider") {
+      ZIO.scoped {
+        val a    = new SimpleProvider("A", Map("who" -> "A"))
+        val gate = new GatingExecutor(Runtime.defaultBlockingExecutor)
+        for {
+          held    <- Promise.make[Nothing, Unit]
+          release <- Promise.make[Nothing, Unit]
+          _       <- ZIO.addFinalizer(release.succeed(()) *> ZIO.succeed(gate.releaseAll()))
+          built   <- buildProbed(a, holdAt(zio.openfeature.internal.LifecycleProbe.Point.SwapRollback, held, release))
+          (ff, _, _) = built
+          // The evaluation passes its readiness check, then its provider call is parked.
+          eval   <- FiberRef.currentBlockingExecutor.locally(gate)(ff.string("who", "default")).either.fork
+          parked <- awaitTrue(!gate.held.isEmpty)
+          // The swap registers B, whose initialize() throws, and is held before it rolls back: B is bound and failed.
+          swap <- ff
+            .setProvider(new SimpleProvider("B", Map("who" -> "B")) {
+              override def initialize(ctx: OFEvaluationContext): Unit = throw new RuntimeException("B: cannot start")
+            })
+            .either
+            .fork
+          reached <- held.await.timeout(5.seconds)
+          // An evaluation that starts now, while the rollback has not yet put A back, passes the check (the status
+          // is Error) and must not be answered by B either.
+          fresh  <- ff.string("who", "default").either
+          _      <- ZIO.succeed(gate.releaseAll())
+          result <- eval.join
+          _      <- release.succeed(())
+          _      <- swap.join
+          after  <- ff.string("who", "default")
+        } yield assertTrue(
+          parked,
+          reached.isDefined,
+          fresh == Left(FeatureFlagError.ProviderNotReady(ProviderStatus.NotReady)),
+          result == Left(FeatureFlagError.ProviderNotReady(ProviderStatus.NotReady)),
+          after == "A"
         )
       }
     } @@ TestAspect.withLiveClock,

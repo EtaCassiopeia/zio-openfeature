@@ -28,6 +28,8 @@ uses the status to decide whether an evaluation may run, and publishes the provi
   final). An `ERROR` with code `ProviderFatal` always makes the status `Fatal`. Any other event handled while the
   SDK still reports `NOT_READY` for the provider changes nothing: it comes from another registration, such as a replaced
   provider with the same name. Either way the event itself reaches your handlers as sent.
+- An event from a provider that is no longer installed does not change the status: the Java SDK delivers a provider's
+  events only to the domains it is bound to, and the status follows the SDK's state for the installed provider.
 - `status.canEvaluate` is true for `Ready` and `Stale`; `status.isRecoverable` is false only for `Fatal`.
 - [`fromAcquireAsync`](providers.md#start-on-a-fallback-fromacquireasync) never changes the status when it switches from
   its fallback to the real provider. How the start works, and how long it may take, is set on the

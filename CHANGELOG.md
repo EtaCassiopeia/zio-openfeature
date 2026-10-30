@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **The lifecycle model test covers reused provider names, overlapping actions and orphaned providers** (#574,
+  test-only). `LifecycleModelSpec` now generates swaps whose provider reuses the replaced provider's name (an
+  evaluation's answering provider is told apart by id), events from an already-replaced provider, providers whose
+  `initialize()` hangs and then fails or whose `shutdown()` is slow, a reinstall of the provider a timed-out swap
+  replaced, and pairs of actions run at once, checked against every order they can take effect in. Every case also
+  checks that each provider it created was shut down exactly once. The model now lives in `LifecycleModel`.
+
 ### Fixed
 
 - **A `STALE` event now moves an `Error` status to `Stale`** (#613, spec compliance). The status left `Error` only on

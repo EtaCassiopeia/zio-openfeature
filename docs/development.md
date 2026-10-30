@@ -122,9 +122,13 @@ sbt extras/stryker
 
 **Property tests** generate inputs and check an invariant over each: value and context round trips, hostile values,
 cache keys, the circuit breaker, hook ordering, the status machine, and `LifecycleModelSpec`, which runs generated
-sequences of lifecycle actions (swaps to providers that start, fail, hang or start slowly, provider events, shutdown,
-an interrupted swap) against a real `FeatureFlags` and checks every step against a model written from
-[Lifecycle and events](lifecycle.md). Each such test carries the shared `PropertyBudget(n)` aspect: pull requests run
+sequences of lifecycle actions (swaps to providers that start, fail, hang, hang and then fail, start or shut down
+slowly, some reusing the name of the provider they replace; events from the installed provider and from one already
+replaced; shutdown; an interrupted swap; handing back a provider a timed-out swap replaced; and pairs of these run at
+once) against a real `FeatureFlags` and checks every step against a model written from
+[Lifecycle and events](lifecycle.md) and [Providers](providers.md#replace-the-provider-at-runtime). A pair must agree
+with the model after one of the orders its two actions can take effect in, and when a case ends every provider it
+created must have been shut down exactly once. Each such test carries the shared `PropertyBudget(n)` aspect: pull requests run
 its base count with zio-test's fixed seed, and the nightly `Property tests` workflow runs every one at 10× with a fresh
 seed, printed in the job summary. Replay a nightly failure with the same scale and seed, then check the shrunk case in
 as an explicit example (seeds are not stable across zio-test versions):

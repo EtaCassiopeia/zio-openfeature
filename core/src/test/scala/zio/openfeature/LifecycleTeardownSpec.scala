@@ -51,7 +51,79 @@ object LifecycleTeardownSpec extends ZIOSpecDefault {
       initTimeout = initTimeout
     )
 
+  /** Counts `initialize()` and `shutdown()` calls; when `blocking`, `initialize()` waits for `release`. */
+  private class Counting(name: String, blocking: Boolean) extends BoolProvider {
+    val release                                             = new CountDownLatch(1)
+    val inits                                               = new java.util.concurrent.atomic.AtomicInteger(0)
+    val shutdowns                                           = new java.util.concurrent.atomic.AtomicInteger(0)
+    override def getMetadata: Metadata                      = new Metadata { override def getName: String = name }
+    override def initialize(ctx: OFEvaluationContext): Unit = {
+      inits.incrementAndGet()
+      if (blocking) release.await()
+      ()
+    }
+    override def shutdown(): Unit = { shutdowns.incrementAndGet(); () }
+  }
+
+  private def awaitTrue(cond: => Boolean): UIO[Boolean] =
+    ZIO
+      .succeed(cond)
+      .repeat(Schedule.spaced(20.millis) && Schedule.recurWhile[Boolean](!_))
+      .timeout(5.seconds)
+      .map(_.isDefined)
+
   def spec = suite("LifecycleTeardownSpec")(
+    test("closing the scope during an in-flight swap still shuts the previous provider down exactly once") {
+      val a = new Counting("A", blocking = false)
+      val b = new Counting("B", blocking = true)
+      for {
+        bound <- Promise.make[Nothing, Unit]
+        probe = new zio.openfeature.internal.LifecycleProbe {
+          def at(p: zio.openfeature.internal.LifecycleProbe.Point): UIO[Unit] =
+            if (p == zio.openfeature.internal.LifecycleProbe.Point.SdkBind) bound.succeed(()).unit else ZIO.unit
+        }
+        _ <- ZIO.scoped {
+          for {
+            ff <- zio.openfeature.internal.FeatureFlagsFactories.buildWithTracking(
+              a,
+              domain = Some(s"teardown-${java.util.UUID.randomUUID()}"),
+              version = None,
+              initialHooks = Nil,
+              statusRef = None,
+              addShutdownFinalizer = true,
+              apiOverride = Some(OpenFeatureAPI.createIsolated()),
+              initTimeout = 500.millis,
+              probe = probe
+            )
+            _ <- ff.setProvider(b).ignore.forkDaemon
+            _ <- bound.await
+          } yield ()
+        }
+        aDown <- awaitTrue(a.shutdowns.get() == 1)
+        _     <- ZIO.succeed(b.release.countDown())
+        bDown <- awaitTrue(b.shutdowns.get() >= 1)
+        _     <- ZIO.sleep(200.millis)
+        aOnce = a.shutdowns.get() == 1
+      } yield assertTrue(aDown, bDown, aOnce)
+    },
+    test("setProvider after the layer scope closes fails with ProviderNotReady and does not touch the provider") {
+      val p2 = new Counting("p2", blocking = false)
+      for {
+        ff <- ZIO.scoped {
+          zio.openfeature.internal.FeatureFlagsFactories.buildWithTracking(
+            new Counting("p1", blocking = false),
+            domain = Some(s"teardown-${java.util.UUID.randomUUID()}"),
+            version = None,
+            initialHooks = Nil,
+            statusRef = None,
+            addShutdownFinalizer = true,
+            apiOverride = Some(OpenFeatureAPI.createIsolated())
+          )
+        }
+        swap <- ff.setProvider(p2).either
+        inits = p2.inits.get()
+      } yield assertTrue(swap == Left(FeatureFlagError.ProviderNotReady(ProviderStatus.NotReady)), inits == 0)
+    },
     test("closing the layer's scope ends an events stream consumer") {
       for {
         scope    <- Scope.make

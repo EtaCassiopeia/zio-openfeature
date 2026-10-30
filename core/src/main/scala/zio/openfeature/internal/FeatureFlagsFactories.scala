@@ -51,6 +51,23 @@ private[openfeature] object FeatureFlagsFactories {
   /** The instance both builds return, constructed before its provider is registered so its event bridge can be attached
     * first. The SDK client does not need a registered provider: it resolves the slot's provider per call.
     */
+  /** The scope finalizer of an instance that owns its API. It takes the swap lock, as `shutdown` does, so a swap in
+    * flight (and any queued ahead of it) finishes first and a timed-out one records its orphan before `resolveAll`; it
+    * marks the instance closed, so a later `setProvider` is refused; then tears the API down, which settles or
+    * interrupts a timed-out swap's pending initialization, and resolves the orphans.
+    */
+  private def ownedApiFinalizer(
+    api: OpenFeatureAPI,
+    orphans: OrphanedProviders,
+    probe: LifecycleProbe,
+    swapLock: Semaphore,
+    closed: java.util.concurrent.atomic.AtomicBoolean
+  ): UIO[Unit] =
+    swapLock.withPermit(
+      ZIO.succeed(closed.set(true)) *> probe.at(LifecycleProbe.Point.ScopeClose) *>
+        ProviderRegistration.boundedApiShutdown(api) *> orphans.resolveAll
+    )
+
   private def makeInstance(
     provider: OFFeatureProvider,
     api: OpenFeatureAPI,
@@ -68,7 +85,9 @@ private[openfeature] object FeatureFlagsFactories {
     recordTracking: Boolean,
     unreadableNameIsUnknown: Boolean,
     orphans: OrphanedProviders,
-    probe: LifecycleProbe
+    probe: LifecycleProbe,
+    swapLock: Semaphore,
+    closed: java.util.concurrent.atomic.AtomicBoolean
   ): ZIO[Scope, Throwable, FeatureFlagsLive] =
     for {
       client <- ZIO.attempt(api.getClient(domain.orNull, version.orNull))
@@ -79,7 +98,6 @@ private[openfeature] object FeatureFlagsFactories {
       read = ZIO.attempt(Option(provider.getMetadata).flatMap(m => Option(m.getName)).getOrElse(UnknownProviderName))
       providerName <- if (unreadableNameIsUnknown) read.orElseSucceed(UnknownProviderName) else read
       providerRef  <- Ref.make(provider)
-      swapLock     <- Semaphore.make(1)
       baseState    <- FeatureFlagsState.make
       state = statusRef.fold(baseState)(ref => baseState.copy(statusRef = ref))
       _                  <- state.hooksRef.set(initialHooks)
@@ -104,7 +122,8 @@ private[openfeature] object FeatureFlagsFactories {
       maxAbandonedCalls,
       recordTracking,
       orphans = orphans,
-      probe = probe
+      probe = probe,
+      closed = closed
     )
 
   /** Whether the event bridge can be attached before `provider` is registered.
@@ -198,14 +217,10 @@ private[openfeature] object FeatureFlagsFactories {
       // the provider reports a bad state, or getClient fails, the scope close still tears down whatever
       // the registration managed to bind.
       orphans = OrphanedProviders(api, probe)
-      // After the API's teardown, which settles or interrupts a timed-out swap's pending initialization.
-      _ <- ZIO.when(addShutdownFinalizer)(
-        ZIO.addFinalizer(
-          probe.at(LifecycleProbe.Point.ScopeClose) *> ProviderRegistration.boundedApiShutdown(
-            api
-          ) *> orphans.resolveAll
-        )
-      )
+      // Created before the finalizer, which takes the lock and sets the flag (see `ownedApiFinalizer`).
+      swapLock <- Semaphore.make(1)
+      closed = new java.util.concurrent.atomic.AtomicBoolean(false)
+      _  <- ZIO.when(addShutdownFinalizer)(ZIO.addFinalizer(ownedApiFinalizer(api, orphans, probe, swapLock, closed)))
       ff <- makeInstance(
         provider,
         api,
@@ -223,7 +238,9 @@ private[openfeature] object FeatureFlagsFactories {
         recordTracking,
         unreadableNameIsUnknown = true,
         orphans,
-        probe
+        probe,
+        swapLock,
+        closed
       )
       // The bridge is attached before the provider initializes, so exactly one PROVIDER_READY reaches it. See
       // `attachesBeforeRegistration`.
@@ -395,14 +412,10 @@ private[openfeature] object FeatureFlagsFactories {
       // Register the API shutdown finalizer BEFORE the provider, so a failure later in the build still tears down the
       // registered provider when the scope closes.
       orphans = OrphanedProviders(api, probe)
-      // After the API's teardown, which settles or interrupts a timed-out swap's pending initialization.
-      _ <- ZIO.when(addShutdownFinalizer)(
-        ZIO.addFinalizer(
-          probe.at(LifecycleProbe.Point.ScopeClose) *> ProviderRegistration.boundedApiShutdown(
-            api
-          ) *> orphans.resolveAll
-        )
-      )
+      // Created before the finalizer, which takes the lock and sets the flag (see `ownedApiFinalizer`).
+      swapLock <- Semaphore.make(1)
+      closed = new java.util.concurrent.atomic.AtomicBoolean(false)
+      _  <- ZIO.when(addShutdownFinalizer)(ZIO.addFinalizer(ownedApiFinalizer(api, orphans, probe, swapLock, closed)))
       ff <- makeInstance(
         provider,
         api,
@@ -420,7 +433,9 @@ private[openfeature] object FeatureFlagsFactories {
         recordTracking,
         unreadableNameIsUnknown = false,
         orphans,
-        probe
+        probe,
+        swapLock,
+        closed
       )
       // As in the sync build: attach the bridge before the provider initializes, so exactly one PROVIDER_READY
       // reaches it — the post-init emission, or the SDK's replay for a provider that is already ready.

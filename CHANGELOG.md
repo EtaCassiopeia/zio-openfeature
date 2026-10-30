@@ -71,6 +71,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `initialize()` a second time while the first still ran, and waited on it. There is now nothing to roll back to: the
   failed provider stays registered with status `Error`, the async build's provider is shut down by an instance that owns
   its API, and a later `setProvider` recovers.
+- **Closing the layer's scope waits for a swap in flight, and `setProvider` after it is refused** (#636, #665). The
+  scope finalizer tore the API down and resolved the timed-out swaps' leftover providers without taking the swap lock
+  that `shutdown` takes. A swap still running then recorded its leftover after that resolve, so the provider it
+  replaced was never shut down, and its watcher polled forever. The finalizer now takes the lock first, so the swap
+  finishes before the teardown, bounded by its `initTimeout` and rollback. It also marks the instance closed: a `setProvider` on
+  a reference kept past the scope fails with `ProviderNotReady(NotReady)` instead of registering a provider on the
+  torn-down API that nothing would ever shut down.
 - **A timed evaluation interrupted before its provider call starts no longer counts as abandoned** (#633). When the
   caller was interrupted, or the timeout fired, before the forked call ran its first instruction, the abandoned-call
   counter went up and never came back down, though the provider was never called. Enough of these filled the cap, and

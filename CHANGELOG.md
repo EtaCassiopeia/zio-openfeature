@@ -184,6 +184,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   publishes its event and releases `awaitReady` first, and no longer holds up closing the scope. A test now fails the
   build if lifecycle code calls a provider's `shutdown()` or `initialize()` directly instead of through the bounded
   helpers.
+- **A provider value that is missing, or that the flag's type cannot read, fails with `TypeMismatch` instead of killing
+  the fiber** (#632). A scalar resolution with no value (a `ProviderEvaluation` built without one, which the SDK passes
+  on unchecked), or with a value of another box, was unboxed without a check, so the evaluation died: the caller got a
+  defect, the `error` hook stage never ran and `finallyAfter` saw no resolution. The value now goes to the flag type's
+  `decode`, as every other value does: one it cannot read (`null`, a `Boolean` for a `Double`) fails the typed tier with
+  `TypeMismatch`, an `Option` read is `None`, and the total tier serves the default with error code `TypeMismatch`. A
+  number of another box (an `Integer` for a `Double`) is read as that number.
 
 ## [1.2.1] — 2026-10-28
 

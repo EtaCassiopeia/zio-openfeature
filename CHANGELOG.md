@@ -49,6 +49,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **An evaluation running when a swap starts is no longer served by the swap's failed provider** (#658). The readiness
+  check and the provider call were not ordered against `setProvider`, and the Java SDK picks the slot's provider per
+  call. So an evaluation that passed its check just before a swap could be answered by the new provider after its
+  `initialize()` threw and before the rollback restored the old one. Such an evaluation now fails with
+  `ProviderNotReady(NotReady)`, as one started after the swap's start does; so does one started during the failed
+  swap's rollback, and one in flight when any swap starts, even if the old provider answered it. The same change makes
+  the swap's
+  registration wait for the error message it reports when the provider initialized and then reported an error, which it
+  could settle without (`Error("")`) when the SDK's READY arrived first.
 - **An `ERROR` a provider reports right after initializing no longer fails the swap** (#623). The registration wait
   read the SDK's state alone, which is `ERROR` both for a failed `initialize()` and for a provider that initialized and
   then reported an error. So `setProvider` rolled back onto the old provider the SDK had just shut down and served

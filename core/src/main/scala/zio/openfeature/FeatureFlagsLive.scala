@@ -81,7 +81,9 @@ final private[openfeature] class FeatureFlagsLive(
     evaluationTimeout,
     maxAbandonedCalls,
     fallbackLogLimiter,
-    hookPipeline
+    hookPipeline,
+    eventBridge.swapGeneration,
+    eventBridge.swapInProgress
   )
 
   // The provider the last timed-out swap installed, and a reader for the SDK state of that registration. Its
@@ -519,6 +521,9 @@ final private[openfeature] class FeatureFlagsLive(
           //    queued Ready event from the OLD provider cannot mark the instance Ready mid-swap.
           _ <- ZIO.succeed(swapInProgress.set(true))
           _ <- applySignal(Signal.SwapStarted)
+          // After the status is NotReady and before the SDK changes: an evaluation that reads the new generation sees
+          // NotReady, and one that read the old one and then reaches the new provider sees the generation move.
+          _ <- ZIO.succeed(eventBridge.swapGeneration.incrementAndGet())
           // 2. Update refs BEFORE registering with Java SDK, so the event bridge (which fires PROVIDER_READY during
           //    initialization) and the identity guard see the new provider's metadata.
           newName = Option(newProvider.getMetadata).map(_.getName).getOrElse(FeatureFlags.UnknownProviderName)

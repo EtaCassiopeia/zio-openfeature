@@ -29,6 +29,11 @@ final private[openfeature] class EventBridge(
   // outcome. The successful swap sets Ready explicitly at the end.
   private[openfeature] val swapInProgress = new java.util.concurrent.atomic.AtomicBoolean(false)
 
+  // Bumped when `setProvider` has made the status NotReady, before it touches the SDK. The SDK client resolves the slot's provider on each
+  // call, so an evaluation that passed its readiness check and then met a swap may have been answered by the incoming
+  // provider before that provider settled; the evaluator compares this across its provider call to tell.
+  private[openfeature] val swapGeneration = new java.util.concurrent.atomic.AtomicLong(0L)
+
   // Set once the provider has ever been usable (Ready/Stale). Gates the init watchdog: a provider that was Ready and
   // later dipped to a transient Error must never be escalated to Fatal.
   private[openfeature] val everReady = new java.util.concurrent.atomic.AtomicBoolean(false)

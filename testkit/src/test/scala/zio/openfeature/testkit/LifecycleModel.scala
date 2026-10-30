@@ -88,7 +88,8 @@ object LifecycleModel {
     * @param parked
     *   ids of providers whose first `initialize()` is still parked
     * @param failing
-    *   ids of providers whose `initialize()` always throws (a parked one once released)
+    *   ids of providers whose `initialize()` always throws (a parked one once released); a failed swap's provider can
+    *   stay installed, and a later rollback onto it fails
     * @param orphans
     *   ids of providers a timed-out swap replaced, until that swap's provider settles
     * @param swapCompleted
@@ -155,13 +156,19 @@ object LifecycleModel {
         )
     }
 
-    /** A failed swap's rollback: the previous provider is registered again, which initializes it again (even while its
-      * first `initialize()` is still parked) and fails when that throws. Either way the previous provider stays the one
-      * the instance reports, and the one a later failed swap rolls back to.
+    /** A failed swap's outcome, `incoming` being the provider that failed.
+      *
+      * When the previous provider is a timed-out swap's whose `initialize()` has not returned, there is nothing to roll
+      * back to: "the new provider stays registered with status Error, the timed-out provider is shut down". Otherwise
+      * the previous provider is registered again, which initializes it again and fails when that throws; either way it
+      * stays the one the instance reports, and the one a later failed swap rolls back to.
       */
-    def rollback: Model =
-      if (installed.exists(i => failing(i.id))) copy(status = Error, swapCompleted = true)
-      else copy(status = Ready, swapCompleted = true)
+    def rollback(incoming: Installed): Model = installed match {
+      case Some(previous) if parked(previous.id) =>
+        copy(status = Error, installed = Some(incoming), orphans = orphans + previous.id, swapCompleted = true)
+      case Some(previous) if failing(previous.id) => copy(status = Error, swapCompleted = true)
+      case _                                      => copy(status = Ready, swapCompleted = true)
+    }
 
     /** A provider still parked in `initialize()`. Its events are not generated: a provider that reports a state before
       * its `initialize()` returns is taken at its word ("Replace the provider at runtime"), so an ERROR from it shuts
@@ -182,8 +189,9 @@ object LifecycleModel {
           case Kind.Good | Kind.SlowInit | Kind.SlowShutdown =>
             m.copy(status = Ready, installed = Some(incoming), swapCompleted = true)
           // "If the new provider's initialize() throws ... the previous provider is registered again, and the status
-          // returns to Ready", unless "that fails too", and then "the status stays Error".
-          case Kind.FailingInit => m.rollback
+          // returns to Ready", unless "that fails too", and then "the status stays Error"; and not at all when the
+          // previous provider is a timed-out swap's, still initializing.
+          case Kind.FailingInit => m.copy(failing = m.failing + incoming.id).rollback(incoming)
           // "The status becomes NotReady" while the SDK initializes the new provider.
           case Kind.HangingInit | Kind.HangThenFail =>
             m.copy(

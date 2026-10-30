@@ -118,8 +118,31 @@ object ProviderHotSwapSpec extends ZIOSpecDefault {
       }
   }
 
+  /** Counts its `initialize()` calls and its `shutdown()`; `initialize()` waits for `release` while `blocking`. */
+  private class Counting(name: String, blocking: Boolean) extends SimpleProvider(name, Map("flag" -> true)) {
+    val release                                             = new java.util.concurrent.CountDownLatch(1)
+    val inits                                               = new java.util.concurrent.atomic.AtomicInteger(0)
+    val shutdowns                                           = new java.util.concurrent.atomic.AtomicInteger(0)
+    override def initialize(ctx: OFEvaluationContext): Unit = {
+      inits.incrementAndGet()
+      if (blocking) release.await()
+      ()
+    }
+    override def shutdown(): Unit = { shutdowns.incrementAndGet(); () }
+  }
+
+  private def awaitTrue(cond: => Boolean): UIO[Boolean] =
+    ZIO
+      .succeed(cond)
+      .repeat(Schedule.spaced(20.millis) && Schedule.recurWhile[Boolean](!_))
+      .timeout(5.seconds)
+      .map(_.isDefined)
+
   /** [[buildWithDomain]], also handing back the API and domain so a test can read the SDK's state for the slot. */
-  private def buildExposed(provider: SimpleProvider): ZIO[Scope, Throwable, (FeatureFlags, OpenFeatureAPI, String)] = {
+  private def buildExposed(
+    provider: SimpleProvider,
+    initTimeout: Duration = FeatureFlags.DefaultInitTimeout
+  ): ZIO[Scope, Throwable, (FeatureFlags, OpenFeatureAPI, String)] = {
     val api    = OpenFeatureAPI.createIsolated()
     val domain = s"test-swap-${java.util.UUID.randomUUID()}"
     FeatureFlags
@@ -130,7 +153,8 @@ object ProviderHotSwapSpec extends ZIOSpecDefault {
         initialHooks = Nil,
         statusRef = None,
         addShutdownFinalizer = true,
-        apiOverride = Some(api)
+        apiOverride = Some(api),
+        initTimeout = initTimeout
       )
       .map(ff => (ff, api, domain))
   }
@@ -307,6 +331,116 @@ object ProviderHotSwapSpec extends ZIOSpecDefault {
           delivered.isDefined,
           ready == ProviderState.READY,
           status == ProviderStatus.Ready
+        )
+      }
+    } @@ TestAspect.withLiveClock,
+    test("a failed swap does not initialize again a provider whose initialize() has not returned") {
+      ZIO.scoped {
+        val a = new Counting("A", blocking = false)
+        val c = new SimpleProvider("C", Map.empty) {
+          override def initialize(ctx: OFEvaluationContext): Unit = throw new RuntimeException("cannot start")
+        }
+        for {
+          b <- ZIO.acquireRelease(ZIO.succeed(new Counting("B", blocking = true)))(p =>
+            ZIO.succeed(p.release.countDown())
+          )
+          built <- buildExposed(a, initTimeout = 300.millis)
+          (ff, api, domain) = built
+          timedOut <- ff.setProvider(b).either
+          failed   <- ff.setProvider(c).either
+          status   <- ff.providerStatus
+          m        <- ff.providerMetadata
+          bound    <- ZIO.succeed(api.getProvider(domain))
+          bDown    <- awaitTrue(b.shutdowns.get() >= 1)
+          // B's first initialize() returning later changes nothing, and the provider B replaced is then shut down.
+          _     <- ZIO.succeed(b.release.countDown())
+          aDown <- awaitTrue(a.shutdowns.get() >= 1)
+          after <- ff.providerStatus
+          d = new SimpleProvider("D", Map("flag" -> true))
+          next   <- ff.setProvider(d).either
+          final_ <- ff.providerStatus
+          served <- ff.boolean("flag", default = false)
+        } yield assertTrue(
+          timedOut.left.toOption.exists {
+            case FeatureFlagError.ProviderInitializationFailed(_: java.util.concurrent.TimeoutException) => true
+            case _                                                                                       => false
+          },
+          failed.left.toOption.exists(_.isInstanceOf[FeatureFlagError.ProviderInitializationFailed]),
+          b.inits.get() == 1,
+          status == ProviderStatus.Error,
+          m.name == "C",
+          bound eq c,
+          bDown,
+          aDown,
+          after == ProviderStatus.Error,
+          next.isRight,
+          final_ == ProviderStatus.Ready,
+          served
+        )
+      }
+    } @@ TestAspect.withLiveClock,
+    test("a timed-out provider installed again later is rolled back onto, not mistaken for a pending one") {
+      ZIO.scoped {
+        val a = new Counting("A", blocking = false)
+        val d = new SimpleProvider("D", Map("flag" -> true))
+        val c = new SimpleProvider("C", Map.empty) {
+          override def initialize(ctx: OFEvaluationContext): Unit = throw new RuntimeException("cannot start")
+        }
+        for {
+          b <- ZIO.acquireRelease(ZIO.succeed(new Counting("B", blocking = true)))(p =>
+            ZIO.succeed(p.release.countDown())
+          )
+          built <- buildExposed(a, initTimeout = 300.millis)
+          (ff, _, _) = built
+          _ <- ff.setProvider(b).either
+          // B finishes late; a swap to D then gets B's registration shut down by the SDK.
+          _      <- ZIO.succeed(b.release.countDown())
+          _      <- ff.providerStatus.repeatUntil(_ == ProviderStatus.Ready).timeout(5.seconds)
+          _      <- ff.setProvider(d)
+          bDown  <- awaitTrue(b.shutdowns.get() >= 1)
+          again  <- ff.setProvider(b).either
+          failed <- ff.setProvider(c).either
+          status <- ff.providerStatus
+          m      <- ff.providerMetadata
+          // Read now: the owning API shuts the serving B down once more when the scope closes.
+          bShutdowns <- ZIO.succeed(b.shutdowns.get())
+        } yield assertTrue(
+          bDown,
+          again.isRight,
+          failed.isLeft,
+          status == ProviderStatus.Ready,
+          m.name == "B",
+          bShutdowns == 1
+        )
+      }
+    } @@ TestAspect.withLiveClock,
+    test("a failed swap still rolls back onto a timed-out provider whose initialization has settled") {
+      ZIO.scoped {
+        val a = new Counting("A", blocking = false)
+        val c = new SimpleProvider("C", Map.empty) {
+          override def initialize(ctx: OFEvaluationContext): Unit = throw new RuntimeException("cannot start")
+        }
+        for {
+          b <- ZIO.acquireRelease(ZIO.succeed(new Counting("B", blocking = true)))(p =>
+            ZIO.succeed(p.release.countDown())
+          )
+          built <- buildExposed(a, initTimeout = 300.millis)
+          (ff, _, _) = built
+          _      <- ff.setProvider(b).either
+          _      <- ZIO.succeed(b.release.countDown())
+          ready  <- ff.providerStatus.repeatUntil(_ == ProviderStatus.Ready).timeout(5.seconds)
+          failed <- ff.setProvider(c).either
+          status <- ff.providerStatus
+          m      <- ff.providerMetadata
+          served <- ff.boolean("flag", default = false)
+        } yield assertTrue(
+          ready.contains(ProviderStatus.Ready),
+          failed.isLeft,
+          status == ProviderStatus.Ready,
+          m.name == "B",
+          served,
+          // The rollback initializes B again, after its first initialize() returned.
+          b.inits.get() == 2
         )
       }
     } @@ TestAspect.withLiveClock,
@@ -521,6 +655,27 @@ object ProviderHotSwapSpec extends ZIOSpecDefault {
             .repeatUntil(_ >= 1)
             .timeoutFail(new RuntimeException("failed provider never shut down"))(5.seconds)
         } yield assertTrue(failShutdowns.get() >= 1)
+      }
+    },
+    test("a rollback whose re-initialization fails with a fatal error leaves the status Fatal, as the SDK reports") {
+      ZIO.scoped {
+        val initCount = new java.util.concurrent.atomic.AtomicInteger(0)
+        // A succeeds on the first init (the build) and fails fatally on the second (the rollback).
+        val providerA = new SimpleProvider("A", Map("flag" -> true)) {
+          override def initialize(ctx: OFEvaluationContext): Unit =
+            if (initCount.incrementAndGet() >= 2) throw new dev.openfeature.sdk.exceptions.FatalError("gone for good")
+            else ()
+        }
+        val failing = new SimpleProvider("Failing", Map.empty) {
+          override def initialize(ctx: OFEvaluationContext): Unit = throw new RuntimeException("cannot start")
+        }
+        for {
+          built <- buildExposed(providerA)
+          (ff, api, domain) = built
+          result <- ff.setProvider(failing).either
+          slot   <- ZIO.succeed(api.getClient(domain).getProviderState)
+          status <- ff.providerStatus
+        } yield assertTrue(result.isLeft, slot == ProviderState.FATAL, status == ProviderStatus.Fatal)
       }
     },
     test("rollback failure: old provider re-init throws leaves status Error, surfaces original error, no hang") {

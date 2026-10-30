@@ -89,7 +89,7 @@ final private[openfeature] class OrphanedProviders(
               settleWith(
                 entry,
                 ZIO.logWarning(
-                  s"setProvider: '${entry.incomingName}' reported an error after its swap timed out; shutting down the " +
+                  s"setProvider: '${entry.incomingName}' reported an error before it ever served; shutting down the " +
                     s"previous provider '${entry.previousName}', which the OpenFeature SDK no longer holds. The status " +
                     "stays Error until a later setProvider succeeds"
                 ) *> shutDown(entry)

@@ -34,8 +34,8 @@ object OfrepFaultSpec extends ZIOSpecDefault:
     ZIO.succeed(EnvVarProvider.withLookup(Map("FF_MY_FLAG" -> "false").get))
 
   /** How the library classifies each fault on the typed tier. A 401/403 is `Unauthorized`: the contrib provider reports
-    * it as a `GENERAL` evaluation error whose message core recognizes. Any other HTTP rejection, a timeout, and a payload
-    * that is not OFREP JSON (truncated, not JSON, or a connection reset before any bytes) is a provider error.
+    * it as a `GENERAL` evaluation error whose message core recognizes. Any other HTTP rejection, a timeout, and a
+    * payload that is not OFREP JSON (truncated, not JSON, or a connection reset before any bytes) is a provider error.
     */
   private def classifiedAs(fault: Fault)(error: FeatureFlagError): Boolean =
     fault match

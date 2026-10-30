@@ -110,8 +110,8 @@ What you should see, through `fromProvider` (the provider's own error surfaces):
 | healthy | serve a valid payload | its values are served | its values are served |
 | rejected credentials | serve `401` or `403` | typed `Unauthorized` | the layer fails with "datafile did not load", within its init wait |
 | unavailable, rate limited | serve `503` or `429` | provider error | as above |
-| malformed payload | serve a truncated or non-JSON body marked `application/json` | `ParseError` | as above |
-| connection reset | redirect to an imposter with a TCP fault | `ParseError` or provider error | as above |
+| malformed payload | serve a truncated or non-JSON body marked `application/json` | provider error | as above |
+| connection reset | redirect to an imposter with a TCP fault | provider error | as above |
 | stalled endpoint | redirect to an imposter that waits ~30 s | `ProviderError(TimeoutException)` at the evaluation timeout | as above, at the init wait |
 
 Through `fromAcquireAsync`, Optimizely fetches at start-up, so start-up does not wait: the fallback's value is served at

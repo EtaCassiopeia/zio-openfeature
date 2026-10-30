@@ -42,6 +42,9 @@ stateDiagram-v2
     STALE --> NOT_READY: shutdown
 ```
 
+A shutdown while `initialize` waits for the datafile ends that wait at once; the provider stays `NOT_READY`, and a later
+`initialize` on a factory-built provider fails with "was shut down" (its client is closed).
+
 `initWait` (25 s) is shorter than `initTimeout` (30 s), so a datafile that never loads reports the provider's own
 error. `STALE` still serves the last datafile (see [below](#datafile-updates-and-staleness)); how `FeatureFlags` treats
 each state is in [Lifecycle](lifecycle.md).

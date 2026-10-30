@@ -1,0 +1,12 @@
+{"seq": 0, "point": "Begin", "arg": ""}
+{"seq": 1, "point": "SwapStart", "arg": ""}
+{"seq": 2, "point": "ApplySignal", "arg": "SwapStarted"}
+{"seq": 3, "point": "SdkBind", "arg": ""}
+{"seq": 4, "point": "DeliverEvent", "arg": "PROVIDER_READY"}
+{"seq": 5, "point": "ApplySignal", "arg": "SwapSucceeded(false)"}
+{"seq": 6, "point": "SwapDone", "arg": ""}
+{"seq": 7, "point": "ShutdownStart", "arg": ""}
+{"seq": 8, "point": "ApplySignal", "arg": "ShutdownStarted"}
+{"seq": 9, "point": "ShutdownDone", "arg": ""}
+{"seq": 10, "point": "ApplySignal", "arg": "ShutdownCompleted"}
+{"seq": 11, "point": "ScopeClose", "arg": ""}

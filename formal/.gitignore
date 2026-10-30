@@ -3,3 +3,4 @@ states/
 *_TTrace_*.tla
 *_TTrace_*.bin
 tla2tools.jar
+CommunityModules-deps.jar

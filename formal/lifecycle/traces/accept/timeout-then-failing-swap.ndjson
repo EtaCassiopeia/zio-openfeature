@@ -1,0 +1,14 @@
+{"seq": 0, "point": "Begin", "arg": ""}
+{"seq": 1, "point": "SwapStart", "arg": ""}
+{"seq": 2, "point": "SdkBind", "arg": ""}
+{"seq": 3, "point": "SwapTimeout", "arg": ""}
+{"seq": 4, "point": "OrphanRecorded", "arg": ""}
+{"seq": 5, "point": "LateReady", "arg": ""}
+{"seq": 6, "point": "SwapDone", "arg": ""}
+{"seq": 7, "point": "SwapStart", "arg": ""}
+{"seq": 8, "point": "SdkBind", "arg": ""}
+{"seq": 9, "point": "ApplySignal", "arg": "SwapFailed"}
+{"seq": 10, "point": "OrphanRecorded", "arg": ""}
+{"seq": 11, "point": "SwapDone", "arg": ""}
+{"seq": 12, "point": "OrphanResolved", "arg": ""}
+{"seq": 13, "point": "ScopeClose", "arg": ""}

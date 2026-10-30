@@ -158,8 +158,10 @@ throughout a swap, no second `initialize()` while one runs, the status following
 provider, and every provider shut down exactly once when the scope closes. The `Formal model` workflow runs it on every
 pull request that touches the lifecycle code or the model; a pull request that changes the lifecycle code without
 changing the model says why, in a description line starting `formal: unaffected because`. On `main`, `mutants.py` puts
-each fixed lifecycle bug back into the model and checks that an invariant catches it. `formal/lifecycle/README.md` maps
-each action to the code and lists what the model leaves out.
+each fixed lifecycle bug back into the model and checks that an invariant catches it. Trace validation keeps the
+model honest about the code: with `ZOF_TRACE=1` the lifecycle test suites record each run's probe points, and TLC checks
+the order of every run's library steps is one the model allows, on `main` and nightly in the same workflow. `formal/lifecycle/README.md` maps each action to
+the code, explains the trace check and lists what the model leaves out.
 
 ```sh
 cd formal/lifecycle

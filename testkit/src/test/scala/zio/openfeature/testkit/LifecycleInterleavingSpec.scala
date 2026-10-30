@@ -276,110 +276,119 @@ object LifecycleInterleavingSpec extends ZIOSpecDefault {
   /** Run `primary`, held at `holdAt` while `competitor` runs, and check it. */
   def scenario(primary: Primary, holdAt: Option[String], competitor: Option[Competitor]): UIO[Outcome] = {
     val where = s"$primary held at ${holdAt.getOrElse("nothing")}, ${competitor.fold("alone")(c => s"beside $c")}"
-    val run: URIO[Scope, (TestProbe, Set[String], Chunk[String], List[(String, Provider)])] = for {
-      probe   <- TestProbe.make(holdAt)
-      _       <- ZIO.addFinalizer(probe.release.succeed(()))
-      initial <- provider("p0")
-      ff      <- FeatureFlagsFactories
-        .buildWithTracking(
-          initial,
-          domain = Some(s"interleaving-${java.util.UUID.randomUUID()}"),
-          version = None,
-          initialHooks = Nil,
-          statusRef = None,
-          addShutdownFinalizer = true,
-          apiOverride = Some(OpenFeatureAPI.createIsolated()),
-          initTimeout = InitTimeout,
-          probe = probe
+    def run(trace: Option[TraceProbe]): URIO[Scope, (TestProbe, Set[String], Chunk[String], List[(String, Provider)])] =
+      for {
+        probe   <- TestProbe.make(holdAt)
+        _       <- ZIO.addFinalizer(probe.release.succeed(()))
+        initial <- provider("p0")
+        ff      <- FeatureFlagsFactories
+          .buildWithTracking(
+            initial,
+            domain = Some(s"interleaving-${java.util.UUID.randomUUID()}"),
+            version = None,
+            initialHooks = Nil,
+            statusRef = None,
+            addShutdownFinalizer = true,
+            apiOverride = Some(OpenFeatureAPI.createIsolated()),
+            initTimeout = InitTimeout,
+            probe = TraceProbe.alongside(probe, trace)
+          )
+          .orDie
+        first <- provider(
+          "p1",
+          (primary match {
+            case Primary.SwapFailing => Seq(Fault.Throw(new RuntimeException("p1: initialize fails")))
+            case Primary.SwapHanging => Seq(Fault.HangUntilReleased, Fault.Succeed)
+            case _                   => Nil
+          }): _*
         )
-        .orDie
-      first <- provider(
-        "p1",
-        (primary match {
-          case Primary.SwapFailing => Seq(Fault.Throw(new RuntimeException("p1: initialize fails")))
-          case Primary.SwapHanging => Seq(Fault.HangUntilReleased, Fault.Succeed)
-          case _                   => Nil
-        }): _*
+        second <- provider("p2")
+        third  <- provider("p3", Fault.Throw(new RuntimeException("p3: initialize fails")))
+        warmed <- probe.armAfterBuild
+        _      <- ZIO.foreachDiscard(trace)(_.begin)
+        cold       = if (warmed) Chunk.empty else Chunk(s"$where: the build's READY never reached the bridge")
+        before     = Model.initial(p0)
+        primaryRun = primary match {
+          case Primary.SwapGood | Primary.SwapFailing | Primary.SwapHanging => ff.setProvider(first).either.unit
+          case Primary.Shutdown                                             => ff.shutdown
+          case Primary.EventError => emit(initial, Action.EmitError(fatal = false), "primary")
+        }
+        primaryFiber <- primaryRun.fork
+        held         <- probe.held.await.timeout(HoldWait)
+        unheld =
+          if (holdAt.nonEmpty && held.isEmpty) Chunk(s"$where: the primary never reached its point") else Chunk.empty
+        none = Chunk.empty[Either[FeatureFlagError, String]]
+        // Forked: a competing shutdown or swap waits for the swap lock the held primary has.
+        competing <- ZIO.foreach(competitor) {
+          case Competitor.Emit(event)  => emit(initial, event, "competitor").as(none).fork
+          case Competitor.Shutdown     => ff.shutdown.as(none).fork
+          case Competitor.Evaluate     => evaluate(ff).fork
+          case Competitor.SwapGood     => ff.setProvider(second).either.as(none).fork
+          case Competitor.SwapFailing  => ff.setProvider(third).either.as(none).fork
+          case Competitor.Interrupt    => primaryFiber.interrupt.as(none).fork
+          case Competitor.ReleaseHangs => first.release.as(none).fork
+        }
+        // A competitor that waits for the swap lock is still waiting; let the events it sent arrive first.
+        _       <- ZIO.sleep(Settle)
+        heldNow <- ff.providerStatus
+        heldWrong = (for {
+          expected <- heldStatus(primary, holdAt.getOrElse(""))
+          if held.nonEmpty && heldNow != expected
+        } yield s"$where: while held the status is $heldNow, not $expected").toList
+        _         <- probe.release.succeed(())
+        done      <- primaryFiber.await.timeout(Bound)
+        evaluated <- ZIO.foreach(competing)(_.join.timeout(Bound)).map(_.flatten)
+        _         <- ZIO.sleep(Settle)
+        observed  <- observe(ff)
+        candidates = competitor.fold(List(primaryModel(primary, before)))(outcomes(primary, _, before))
+        agree      = candidates.exists(violations(_, observed).isEmpty)
+        mismatch   =
+          if (agree) Chunk.empty
+          else
+            Chunk(
+              s"$where: no order agrees; observed $observed; against ${primaryModel(primary, before).status}: " +
+                violations(candidates.head, observed).mkString("; ")
+            )
+        mid = primary match {
+          case Primary.SwapGood | Primary.SwapHanging => List(before.copy(status = ProviderStatus.NotReady))
+          // The failed provider stays bound until the previous one is registered again.
+          case Primary.SwapFailing =>
+            List(
+              before.copy(status = ProviderStatus.NotReady),
+              before.copy(status = ProviderStatus.Error, installed = Some(p1)),
+              before.copy(status = ProviderStatus.Error)
+            )
+          case Primary.Shutdown   => List(before.copy(status = ProviderStatus.ShuttingDown))
+          case Primary.EventError => List(before.copy(status = ProviderStatus.Error))
+        }
+        wrongEvals = evaluated.getOrElse(none).filterNot(r => (before :: mid ++ candidates).exists(whoAllowed(_, r)))
+        evalsBad   = if (wrongEvals.isEmpty) Chunk.empty else Chunk(s"$where: evaluations gave $wrongEvals")
+        late       = if (done.isEmpty) Chunk(s"$where: the primary did not finish within $Bound") else Chunk.empty
+        // The providers handed to the instance, each of which it must shut down exactly once.
+        used = List("p0" -> initial) ++
+          (if (Set[Primary](Primary.SwapGood, Primary.SwapFailing, Primary.SwapHanging)(primary)) List("p1" -> first)
+           else Nil) ++
+          (if (competitor.contains(Competitor.SwapGood)) List("p2" -> second) else Nil) ++
+          (if (competitor.contains(Competitor.SwapFailing)) List("p3" -> third) else Nil)
+      } yield (
+        probe,
+        probe.reached,
+        cold ++ unheld ++ Chunk.fromIterable(heldWrong) ++ late ++ mismatch ++ evalsBad,
+        used
       )
-      second <- provider("p2")
-      third  <- provider("p3", Fault.Throw(new RuntimeException("p3: initialize fails")))
-      warmed <- probe.armAfterBuild
-      cold       = if (warmed) Chunk.empty else Chunk(s"$where: the build's READY never reached the bridge")
-      before     = Model.initial(p0)
-      primaryRun = primary match {
-        case Primary.SwapGood | Primary.SwapFailing | Primary.SwapHanging => ff.setProvider(first).either.unit
-        case Primary.Shutdown                                             => ff.shutdown
-        case Primary.EventError => emit(initial, Action.EmitError(fatal = false), "primary")
-      }
-      primaryFiber <- primaryRun.fork
-      held         <- probe.held.await.timeout(HoldWait)
-      unheld =
-        if (holdAt.nonEmpty && held.isEmpty) Chunk(s"$where: the primary never reached its point") else Chunk.empty
-      none = Chunk.empty[Either[FeatureFlagError, String]]
-      // Forked: a competing shutdown or swap waits for the swap lock the held primary has.
-      competing <- ZIO.foreach(competitor) {
-        case Competitor.Emit(event)  => emit(initial, event, "competitor").as(none).fork
-        case Competitor.Shutdown     => ff.shutdown.as(none).fork
-        case Competitor.Evaluate     => evaluate(ff).fork
-        case Competitor.SwapGood     => ff.setProvider(second).either.as(none).fork
-        case Competitor.SwapFailing  => ff.setProvider(third).either.as(none).fork
-        case Competitor.Interrupt    => primaryFiber.interrupt.as(none).fork
-        case Competitor.ReleaseHangs => first.release.as(none).fork
-      }
-      // A competitor that waits for the swap lock is still waiting; let the events it sent arrive first.
-      _       <- ZIO.sleep(Settle)
-      heldNow <- ff.providerStatus
-      heldWrong = (for {
-        expected <- heldStatus(primary, holdAt.getOrElse(""))
-        if held.nonEmpty && heldNow != expected
-      } yield s"$where: while held the status is $heldNow, not $expected").toList
-      _         <- probe.release.succeed(())
-      done      <- primaryFiber.await.timeout(Bound)
-      evaluated <- ZIO.foreach(competing)(_.join.timeout(Bound)).map(_.flatten)
-      _         <- ZIO.sleep(Settle)
-      observed  <- observe(ff)
-      candidates = competitor.fold(List(primaryModel(primary, before)))(outcomes(primary, _, before))
-      agree      = candidates.exists(violations(_, observed).isEmpty)
-      mismatch   =
-        if (agree) Chunk.empty
-        else
-          Chunk(
-            s"$where: no order agrees; observed $observed; against ${primaryModel(primary, before).status}: " +
-              violations(candidates.head, observed).mkString("; ")
-          )
-      mid = primary match {
-        case Primary.SwapGood | Primary.SwapHanging => List(before.copy(status = ProviderStatus.NotReady))
-        // The failed provider stays bound until the previous one is registered again.
-        case Primary.SwapFailing =>
-          List(
-            before.copy(status = ProviderStatus.NotReady),
-            before.copy(status = ProviderStatus.Error, installed = Some(p1)),
-            before.copy(status = ProviderStatus.Error)
-          )
-        case Primary.Shutdown   => List(before.copy(status = ProviderStatus.ShuttingDown))
-        case Primary.EventError => List(before.copy(status = ProviderStatus.Error))
-      }
-      wrongEvals = evaluated.getOrElse(none).filterNot(r => (before :: mid ++ candidates).exists(whoAllowed(_, r)))
-      evalsBad   = if (wrongEvals.isEmpty) Chunk.empty else Chunk(s"$where: evaluations gave $wrongEvals")
-      late       = if (done.isEmpty) Chunk(s"$where: the primary did not finish within $Bound") else Chunk.empty
-      // The providers handed to the instance, each of which it must shut down exactly once.
-      used = List("p0" -> initial) ++
-        (if (Set[Primary](Primary.SwapGood, Primary.SwapFailing, Primary.SwapHanging)(primary)) List("p1" -> first)
-         else Nil) ++
-        (if (competitor.contains(Competitor.SwapGood)) List("p2" -> second) else Nil) ++
-        (if (competitor.contains(Competitor.SwapFailing)) List("p3" -> third) else Nil)
-    } yield (
-      probe,
-      probe.reached,
-      cold ++ unheld ++ Chunk.fromIterable(heldWrong) ++ late ++ mismatch ++ evalsBad,
-      used
-    )
 
     for {
+      trace <- TraceProbe.make
       scope <- Scope.make
-      ran   <- run.provideEnvironment(ZEnvironment[Scope](scope)).exit
+      ran   <- run(trace).provideEnvironment(ZEnvironment[Scope](scope)).exit
       _     <- scope.close(Exit.unit).timeout(Bound)
-      out   <- ran match {
+      _     <- ZIO.foreachDiscard(trace)(
+        _.write(
+          s"interleaving-$primary-${holdAt.getOrElse("none")}-${competitor.fold("none")(_.toString)}-" +
+            java.util.UUID.randomUUID().toString.take(8)
+        )
+      )
+      out <- ran match {
         case Exit.Failure(c) =>
           ZIO.succeed(Outcome(Set.empty, Set.empty, Chunk(s"$where: the scenario failed: ${c.prettyPrint}")))
         case Exit.Success((probe, reached, found, used)) =>

@@ -10,13 +10,13 @@ java -cp tla2tools.jar tlc2.TLC -workers auto -deadlock -config Lifecycle.cfg Li
 ```
 
 `-deadlock` is needed because a closed scope is a final state. The CI configuration (`Lifecycle.cfg`) has the initial
-provider, three swaps and two provider events: about 11 million distinct states, under a minute on a laptop.
+provider, three swaps and two provider events: about 12 million distinct states, under two minutes on a laptop.
 
 ## What it checks
 
 | Invariant | Meaning |
 |:--|:--|
-| `FinalNotReady` | Once shutdown has completed, the status stays `NotReady`. |
+| `FinalNotReady` | Once shutdown has completed, the status stays `NotReady` (a later shutdown call shows `ShuttingDown` while it runs). |
 | `NotReadyDuringSwap` | While a swap is in flight the status is `NotReady`, whatever events arrive. |
 | `GateDownWhenIdle` | The swap gate is down whenever no swap holds the lock. |
 | `OneLockHolder` | A swap and a shutdown never run at once. |
@@ -57,6 +57,43 @@ there is one.
 | `OrphanResolved` | `OrphanedProviders.settle` |
 | `ShutdownStart`, `ShutdownDone` | `FeatureFlagsLive.shutdown` |
 | `ScopeClose` | the API scope finalizer in `FeatureFlagsFactories`: `boundedApiShutdown`, `orphans.resolveAll` |
+
+## Trace validation
+
+The model is only worth what it says about the code, so runs of the code are checked against it. With `ZOF_TRACE=1`,
+`LifecycleModelSpec` and `LifecycleInterleavingSpec` record every lifecycle probe point each run passes, one ndjson file
+per run (`TraceProbe` in testkit's tests; `ZOF_TRACE_DIR` sets the directory, `target/traces` by default).
+`trace_labels.py` turns a run into the library actions above, with what the run recorded about each: a delivered
+event's type, whether a swap or its rollback ended `STALE`, whether the rollback succeeded. `TraceValidation.tla` then
+lets TLC search for a behaviour of `Lifecycle` that takes exactly those library steps in that order, with the SDK's
+steps (an `initialize()` returning or throwing, a provider emitting) free. A run is accepted when such a behaviour
+exists. The check is of the order of the library's steps and what was recorded about them; the statuses a run observed
+are not compared, which `LifecycleModelSpec`'s own oracle does. A trace TLC cannot decide in time is reported as
+undecided without failing the run, and a run that checks no trace at all fails.
+
+```sh
+curl -sSLo tla2tools-1.8.0.jar https://github.com/tlaplus/tlaplus/releases/download/v1.8.0/tla2tools.jar
+curl -sSLo CommunityModules-deps.jar https://github.com/tlaplus/CommunityModules/releases/download/202610262215/CommunityModules-deps.jar
+python3 validate.py tla2tools-1.8.0.jar CommunityModules-deps.jar --selftest traces
+python3 validate.py tla2tools-1.8.0.jar CommunityModules-deps.jar ../../testkit/target/traces
+```
+
+Reading the traces needs the community modules' `Json`, which needs TLC 1.8.0; the model check itself stays on 1.7.4.
+`--selftest` checks the checker: the runs under `traces/accept` must be accepted and those under `traces/reject`
+rejected, among them a run recorded with shutdown's lock removed from `FeatureFlagsLive`. The `Formal model` workflow
+runs the self-test on pull requests, and on `main`, nightly and on demand records both suites and validates every
+run.
+
+| Probe point | Library action |
+|:--|:--|
+| `SwapStart`, `SdkBind`, `SwapTimeout`, `SwapRollback` | the action of the same name |
+| `ApplySignal(SwapSucceeded(stale))` | `SwapDone` |
+| `OrphanRecorded` in a swap with no other outcome | `SwapFailNoRollback` |
+| `DeliverEvent` outside a swap, before any shutdown | `Deliver` |
+| `OrphanResolved` outside a shutdown | `OrphanResolved` |
+| `ShutdownStart`, `ShutdownDone`, `ScopeClose` | the action of the same name |
+
+The other points belong to one of those steps. A run that reaches `Watchdog`, which the model leaves out, is skipped.
 
 ## What is outside the model
 

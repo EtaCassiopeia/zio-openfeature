@@ -23,7 +23,7 @@ from trace_labels import labels, read
 
 here = os.path.dirname(os.path.abspath(__file__))
 TIMEOUT_SECS = int(os.environ.get("TRACE_TIMEOUT_SECS", "300"))
-TLC_WORKERS = 2
+TLC_WORKERS = int(os.environ.get("TRACE_TLC_WORKERS", "2"))
 PARALLEL = max(1, (os.cpu_count() or 2) // TLC_WORKERS)
 ACCEPTED, REJECTED, UNDECIDED = "accepted", "rejected", "undecided"
 

@@ -1,6 +1,7 @@
 package zio.openfeature
 
 import zio.openfeature.internal.ProviderStatusMachine
+import zio.openfeature.internal.ProviderRegistration.Settled
 import zio.openfeature.internal.ProviderStatusMachine.{Context, Signal}
 import zio.openfeature.testsupport.PropertyBudget
 import zio.test._
@@ -27,11 +28,15 @@ object ProviderStatusMachinePropertySpec extends ZIOSpecDefault {
 
   private val lifecycle: List[Signal] = List(
     Signal.SwapStarted,
-    Signal.SwapSucceeded(stale = false),
-    Signal.SwapSucceeded(stale = true),
+    Signal.SwapSucceeded(Settled.Ready),
+    Signal.SwapSucceeded(Settled.Stale),
+    Signal.SwapSucceeded(Settled.Error("e")),
+    Signal.SwapSucceeded(Settled.Fatal("f")),
     Signal.SwapFailed,
-    Signal.RollbackSucceeded(stale = false),
-    Signal.RollbackSucceeded(stale = true),
+    Signal.RollbackSucceeded(Settled.Ready),
+    Signal.RollbackSucceeded(Settled.Stale),
+    Signal.RollbackSucceeded(Settled.Error("e")),
+    Signal.RollbackSucceeded(Settled.Fatal("f")),
     Signal.ShutdownStarted,
     Signal.ShutdownCompleted
   )

@@ -3,13 +3,13 @@
 Input: ndjson lines {"seq": n, "point": "<LifecycleProbe point name>", "arg": "<payload or empty>"}, possibly
 out of order (several threads record), with a {"point": "Begin"} marker once the instance is built.
 Output: a list of model actions, each {"action": label, ...} with what the run recorded about it (a delivered event's
-type, whether a swap or its rollback ended STALE, whether the rollback succeeded), or None when the run uses something
+type, the SDK state a swap or its rollback settled in, whether the rollback succeeded), or None when the run uses something
 the model does not cover. A run without its Begin marker raises ValueError: the recording is broken.
 
 The mapping (formal/lifecycle/README.md, "Trace validation"):
   SwapStart                          -> SwapStart
   SdkBind                            -> SdkBind
-  ApplySignal(SwapSucceeded(_))      -> SwapDone
+  ApplySignal(SwapSucceeded(_))      -> SwapDone, settled in its state
   SwapTimeout                        -> SwapTimeout
   SwapRollback                       -> SwapRollback
   OrphanRecorded, no timeout or
@@ -43,7 +43,7 @@ def labels(records):
     closed = False
 
     def act(label, **fields):
-        entry = {"action": label, "event": "", "stale": False, "ok": False}
+        entry = {"action": label, "event": "", "state": "", "ok": False}
         entry.update(fields)
         out.append(entry)
         return entry
@@ -72,15 +72,16 @@ def labels(records):
             in_swap, swap_outcome, rollback = True, None, None
             continue
         if in_swap:
-            succeeded = re.match(r"(SwapSucceeded|RollbackSucceeded)\((true|false)\)", arg) if point == "ApplySignal" else None
+            succeeded = (re.match(r"(SwapSucceeded|RollbackSucceeded)\((Ready|Stale|Error|Fatal)\b", arg)
+                         if point == "ApplySignal" else None)
             if point == "SdkBind":
                 act("SdkBind")
             elif succeeded and succeeded.group(1) == "SwapSucceeded" and swap_outcome is None:
                 swap_outcome = "SwapDone"
-                act("SwapDone", stale=succeeded.group(2) == "true")
+                act("SwapDone", state=succeeded.group(2).upper())
             elif succeeded and succeeded.group(1) == "RollbackSucceeded" and rollback is not None:
                 rollback["ok"] = True
-                rollback["stale"] = succeeded.group(2) == "true"
+                rollback["state"] = succeeded.group(2).upper()
             elif point == "SwapTimeout" and swap_outcome is None:
                 swap_outcome = "SwapTimeout"
                 act("SwapTimeout")

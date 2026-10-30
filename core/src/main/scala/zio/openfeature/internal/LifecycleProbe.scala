@@ -37,6 +37,9 @@ private[openfeature] object LifecycleProbe {
     /** The new provider failed to initialize and `SwapFailed` is applied; the previous provider is not restored yet. */
     case object SwapRollback extends Point
 
+    /** The rollback's registration has returned and binds the previous provider again; its wait has not started. */
+    case object RollbackBind extends Point
+
     /** The swap has its outcome and the gate is down; the swap lock is still held. */
     case object SwapDone extends Point
 

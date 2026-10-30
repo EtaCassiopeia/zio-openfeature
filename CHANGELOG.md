@@ -40,6 +40,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **An `ERROR` a provider reports right after initializing no longer fails the swap** (#623). The registration wait
+  read the SDK's state alone, which is `ERROR` both for a failed `initialize()` and for a provider that initialized and
+  then reported an error. So `setProvider` rolled back onto the old provider the SDK had just shut down and served
+  through it, a rollback whose restored provider reported an error shut the failed provider down twice, and the
+  watcher of a timed-out swap's provider shut the provider it replaced down twice. The wait now also listens for the
+  SDK's own `PROVIDER_READY`, sent only when `initialize()` returned: such a swap or rollback succeeds with status
+  `Error` (or `Fatal`), and every provider is shut down once. A genuinely failed `initialize()` still fails the swap,
+  after waiting at most a fraction of a second for a READY that does not come.
 - **A failed swap no longer initializes a provider whose `initialize()` is still running** (#619). After a
   `setProvider` timed out, a later `setProvider` whose provider failed rolled back onto the timed-out provider, and the
   Java SDK called its `initialize()` a second time while the first call still ran. A provider that owns a client or a

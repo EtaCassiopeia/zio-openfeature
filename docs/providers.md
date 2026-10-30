@@ -219,6 +219,10 @@ A domain names a client, so different parts of an app can use different provider
   serialized, `setProvider` waits at most `initTimeout`, and a started swap finishes even if the caller is interrupted.
 - On success the status is the state the Java SDK reports for the new provider: `Ready`, or `Stale` for a provider
   that reports `STALE` while it starts. A restored old provider ends the same way.
+- An `ERROR` the new provider reports after its `initialize()` returned, even before `setProvider` has seen the
+  outcome, is a status, not a failed swap: `setProvider` succeeds, the status is `Error` (or `Fatal`), and the old
+  provider is shut down once, by the SDK. The same holds for a restored old provider during a rollback, and for a
+  timed-out swap's provider that initializes late: the provider it replaced is shut down once.
 - If `initialize()` throws, `setProvider` fails with `ProviderInitializationFailed` and the old provider is restored (if
   that fails too, the status stays `Error`). A timeout fails the same way, wrapping a `TimeoutException`, with no
   rollback: the SDK would shut the old provider down once the new one became ready.
@@ -232,9 +236,9 @@ A domain names a client, so different parts of an app can use different provider
   timed-out provider is still initializing and the new provider's `initialize()` throws, there is nothing to roll back
   to: the timed-out provider never served and is not initialized a second time. The new provider stays registered
   with status `Error`, the timed-out provider is shut down (by an instance that owns its API), and a later
-  `setProvider` recovers. A new provider that reports `READY` or
-  `ERROR` itself before its `initialize()` returns is taken at its word, since the Java SDK does not expose whether
-  `initialize()` has returned: the old provider may then be shut down twice, or, if the `READY` is followed by a
-  failed `initialize()`, not at all.
+  `setProvider` recovers. Whether `initialize()` returned is read from the Java SDK's own `PROVIDER_READY`, which it
+  sends only then, so a new provider that reports `READY` itself from inside its `initialize()` is taken at its word:
+  if that `initialize()` then fails, the old provider is not shut down. One that reports `ERROR` from inside an
+  `initialize()` that then fails reads as a failed swap.
 - `setProvider` is the only way out of `Fatal`. With a wrapper such as `CircuitBreakerProvider`, swap in a new wrapper
   around the new provider.

@@ -1,6 +1,7 @@
 package zio.openfeature.internal
 
 import zio.openfeature.ProviderStatus
+import zio.openfeature.internal.ProviderRegistration.Settled
 
 /** Pure provider-status state machine. Every status write in FeatureFlagsLive and the async init watchdog goes through
   * `transition`, so the legal-transition table lives in exactly one place.
@@ -22,18 +23,20 @@ private[openfeature] object ProviderStatusMachine {
     case object EventStale                      extends Signal
     case object SwapStarted                     extends Signal
 
-    /** The new provider initialized; `stale` when the SDK reported it STALE rather than READY. */
-    final case class SwapSucceeded(stale: Boolean) extends Signal
-    case object SwapFailed                         extends Signal
-    case object InitTimeout                        extends Signal
-    case object ShutdownStarted                    extends Signal
-    case object ShutdownCompleted                  extends Signal
+    /** The new provider initialized, and the SDK reports it in `settled`: an error it reported after initializing is
+      * its status, not a failed swap.
+      */
+    final case class SwapSucceeded(settled: Settled) extends Signal
+    case object SwapFailed                           extends Signal
+    case object InitTimeout                          extends Signal
+    case object ShutdownStarted                      extends Signal
+    case object ShutdownCompleted                    extends Signal
 
     /** setProvider: a failed hot-swap was rolled back and the previous provider re-registered with the SDK, verified to
       * be routing again. Same transition as a successful swap outcome, applied by `setProvider` itself once the
       * rollback re-registration confirms the old provider is bound.
       */
-    final case class RollbackSucceeded(stale: Boolean) extends Signal
+    final case class RollbackSucceeded(settled: Settled) extends Signal
   }
 
   /** Cross-thread context the table needs but the public ProviderStatus cannot represent. */
@@ -52,12 +55,12 @@ private[openfeature] object ProviderStatusMachine {
       // Lifecycle: authoritative from anywhere. setProvider is the ONLY exit from Fatal and from
       // post-shutdown NotReady — it installs a NEW provider, so the old one's irrecoverability
       // no longer applies.
-      case Signal.ShutdownStarted          => Some(ShuttingDown)
-      case Signal.ShutdownCompleted        => Some(NotReady)
-      case Signal.SwapStarted              => Some(NotReady)
-      case Signal.SwapSucceeded(stale)     => Some(if (stale) Stale else Ready)
-      case Signal.SwapFailed               => Some(Error)
-      case Signal.RollbackSucceeded(stale) => Some(if (stale) Stale else Ready)
+      case Signal.ShutdownStarted            => Some(ShuttingDown)
+      case Signal.ShutdownCompleted          => Some(NotReady)
+      case Signal.SwapStarted                => Some(NotReady)
+      case Signal.SwapSucceeded(settled)     => Some(statusOf(settled))
+      case Signal.SwapFailed                 => Some(Error)
+      case Signal.RollbackSucceeded(settled) => Some(statusOf(settled))
 
       // Non-lifecycle signals (the init watchdog and every bridge event) never take effect during a swap (the swap
       // sets its own outcome) nor after an explicit shutdown has completed (post-shutdown NotReady is terminal; a
@@ -97,5 +100,13 @@ private[openfeature] object ProviderStatusMachine {
           case Stale | Fatal | ShuttingDown => None
         }
     }
+  }
+
+  /** The status of a provider that initialized and settled in `settled`. */
+  def statusOf(settled: Settled): ProviderStatus = settled match {
+    case Settled.Ready    => ProviderStatus.Ready
+    case Settled.Stale    => ProviderStatus.Stale
+    case Settled.Error(_) => ProviderStatus.Error
+    case Settled.Fatal(_) => ProviderStatus.Fatal
   }
 }

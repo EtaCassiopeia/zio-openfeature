@@ -2,6 +2,7 @@ package zio.openfeature
 
 import zio.test._
 import zio.openfeature.internal.ProviderStatusMachine
+import zio.openfeature.internal.ProviderRegistration.Settled
 import zio.openfeature.internal.ProviderStatusMachine.{Context, Signal}
 
 /** Pure, exhaustive coverage of the centralized provider-status transition table. */
@@ -24,14 +25,18 @@ object ProviderStatusMachineSpec extends ZIOSpecDefault {
     ProviderStatusMachine.transition(current, signal, ctx)
 
   private val lifecycle: List[(Signal, ProviderStatus)] = List(
-    Signal.ShutdownStarted                  -> ShuttingDown,
-    Signal.ShutdownCompleted                -> NotReady,
-    Signal.SwapStarted                      -> NotReady,
-    Signal.SwapSucceeded(stale = false)     -> Ready,
-    Signal.SwapSucceeded(stale = true)      -> Stale,
-    Signal.SwapFailed                       -> Error,
-    Signal.RollbackSucceeded(stale = false) -> Ready,
-    Signal.RollbackSucceeded(stale = true)  -> Stale
+    Signal.ShutdownStarted                       -> ShuttingDown,
+    Signal.ShutdownCompleted                     -> NotReady,
+    Signal.SwapStarted                           -> NotReady,
+    Signal.SwapSucceeded(Settled.Ready)          -> Ready,
+    Signal.SwapSucceeded(Settled.Stale)          -> Stale,
+    Signal.SwapSucceeded(Settled.Error("e"))     -> Error,
+    Signal.SwapSucceeded(Settled.Fatal("f"))     -> Fatal,
+    Signal.SwapFailed                            -> Error,
+    Signal.RollbackSucceeded(Settled.Ready)      -> Ready,
+    Signal.RollbackSucceeded(Settled.Stale)      -> Stale,
+    Signal.RollbackSucceeded(Settled.Error("e")) -> Error,
+    Signal.RollbackSucceeded(Settled.Fatal("f")) -> Fatal
   )
 
   def spec = suite("ProviderStatusMachineSpec")(

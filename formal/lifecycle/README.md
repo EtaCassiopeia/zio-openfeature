@@ -10,7 +10,7 @@ java -cp tla2tools.jar tlc2.TLC -workers auto -deadlock -config Lifecycle.cfg Li
 ```
 
 `-deadlock` is needed because a closed scope is a final state. The CI configuration (`Lifecycle.cfg`) has the initial
-provider, three swaps and two provider events: about 12 million distinct states, under two minutes on a laptop.
+provider, three swaps and two provider events: about 24 million distinct states, a few minutes on a laptop.
 
 ## What it checks
 
@@ -36,6 +36,9 @@ provider, three swaps and two provider events: about 12 million distinct states,
 | A timed-out swap forgets the provider it replaced (#564) | `ClosedCleanly` |
 | The status follows the event type, not the SDK's state (#601) | `StatusFollowsSdk` |
 | A failed swap does not read the SDK's state once its gate drops (#619) | `StatusFollowsSdk` |
+| A swap reads an `ERROR` reported right after `initialize()` returned as a failed initialization (#623) | `ShutDownAtMostOnce` |
+| A rollback reads such an `ERROR` from the restored provider as a failed rollback (#623) | `ShutDownAtMostOnce` |
+| The watcher of a timed-out swap's provider reads such an `ERROR` as a failed initialization (#623) | `ShutDownAtMostOnce` |
 | The swap gate never goes up | `NotReadyDuringSwap` |
 
 ## Actions and the code
@@ -47,14 +50,14 @@ there is one.
 |:--|:--|
 | `SwapStart` | `FeatureFlagsLive.setProvider`: lock taken, gate up, `SwapStarted` |
 | `SdkBind` | `ProviderRegistration.registerThenAwait`: the SDK binds the new provider and starts `initialize()` |
-| `SdkInitOk`, `SdkInitFail` | the SDK's `FeatureProviderStateManager.initialize` returning or throwing; `ProviderRepository.shutDownOld` after a success |
-| `SwapDone` | `setProvider`: `SwapSucceeded(stale)`, gate down, `reconcileRegistration` |
+| `SdkInitOk`, `SdkInitFail` | the SDK's `FeatureProviderStateManager.initialize` returning or throwing; after a success, the SDK's `PROVIDER_READY` (`ran`) and `ProviderRepository.shutDownOld` |
+| `SwapDone` | `setProvider`: `SwapSucceeded(settled)`, gate down, `reconcileRegistration`; `ProviderRegistration.awaitOutcome` deciding by the SDK's `PROVIDER_READY` |
 | `SwapTimeout` | `setProvider`, timeout branch: `SwapFailed`, `pendingInit`, `recordOrphan`, `reconcileLateReady` |
 | `SwapFailNoRollback` | `setProvider`, failure branch when `initPending(oldProvider)` |
-| `SwapRollback` | `setProvider`, failure branch: `restoreSdkRegistration`, `RollbackSucceeded` or `cleanupUnboundFailedProvider` |
+| `SwapRollback` | `setProvider`, failure branch: `restoreSdkRegistration` (probe point `RollbackBind`), `RollbackSucceeded(settled)` or `cleanupUnboundFailedProvider` |
 | `Emit`, `EmitStaleWhileStarting` | a provider's `emit`; the SDK's `FeatureProviderStateManager.onEmit` |
 | `Deliver` | `EventBridge.onSdkEvent` and `applySdkSignal` |
-| `OrphanResolved` | `OrphanedProviders.settle` |
+| `OrphanResolved` | `OrphanedProviders.settle`, with the entry's `ReadyWatch` |
 | `ShutdownStart`, `ShutdownDone` | `FeatureFlagsLive.shutdown` |
 | `ScopeClose` | the API scope finalizer in `FeatureFlagsFactories`: `boundedApiShutdown`, `orphans.resolveAll` |
 
@@ -87,7 +90,7 @@ run.
 | Probe point | Library action |
 |:--|:--|
 | `SwapStart`, `SdkBind`, `SwapTimeout`, `SwapRollback` | the action of the same name |
-| `ApplySignal(SwapSucceeded(stale))` | `SwapDone` |
+| `ApplySignal(SwapSucceeded(settled))` | `SwapDone`, pinned to the settled state |
 | `OrphanRecorded` in a swap with no other outcome | `SwapFailNoRollback` |
 | `DeliverEvent` outside a swap, before any shutdown | `Deliver` |
 | `OrphanResolved` outside a shutdown | `OrphanResolved` |
@@ -97,17 +100,14 @@ The other points belong to one of those steps. A run that reaches `Watchdog`, wh
 
 ## What is outside the model
 
-- **A provider that reports a state before the library has seen its `initialize()` outcome.** The SDK exposes a
-  registration's state, not whether `initialize()` has returned, so the library takes such a report at its word (see
-  `docs/providers.md`, "Replace the provider at runtime"). Three consequences follow. The model leaves each one out, and
-  #623 tracks the fix:
-  - an `ERROR` reported right after a successful `initialize()`, before the swap's wait sees it, makes the swap roll back
-    onto a provider the SDK has already shut down;
-  - the same `ERROR` before the watcher of the provider it replaced polls makes the watcher shut that provider down a
-    second time;
-  - a provider that reports `STALE` while starting and then fails, or is interrupted, leaves the provider it replaced
-    unshut, and a rollback onto it would call `initialize()` again.
-- **The rollback's own wait seeing a late `ERROR`** (#623). The rollback is one step here.
+- **A provider that reports a state from inside its own `initialize()`.** The library reads whether `initialize()`
+  returned from the SDK's own `PROVIDER_READY`, which a provider can also send, so such a report is taken at its word
+  (see `docs/providers.md`, "Replace the provider at runtime"). The model allows only a `STALE` reported that way
+  (`EmitStaleWhileStarting`), and holds such a provider to finishing its start: a provider that reports `READY` or
+  `STALE` while starting and then fails, or is interrupted, leaves the provider it replaced unshut, and a rollback onto
+  it would call `initialize()` again.
+- **The watcher's two-tick wait.** The orphan watcher acts on an `ERROR` only when it persists across two ticks, which
+  gives the SDK's `PROVIDER_READY` time to arrive; the model reads whether `initialize()` returned directly.
 - **Time.** A timeout is an action enabled while `initialize()` runs; how long anything takes is not modelled.
 - **The registry, shared APIs and `fromAcquireAsync`.** The model is one instance that owns its API.
 - **The async build's init watchdog.** `LifecycleInterleavingSpec` covers it.

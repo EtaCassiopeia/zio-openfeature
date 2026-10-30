@@ -40,7 +40,8 @@ import scala.util.Try
   *     state with its handler removed. A subsequent `initialize()` on the same instance cleanly re-attempts (`Failed ->
   *     Initialized`) instead of silently no-op'ing and leaving every evaluation `PROVIDER_NOT_READY`.
   *   - A `shutdown()` racing an in-flight `initialize()` aborts the init cleanly: the handler it registered is removed
-  *     and the provider is left NOT_READY (it never reports READY after a shutdown).
+  *     and the provider is left NOT_READY (it never reports READY after a shutdown). A shutdown while `initialize()`
+  *     waits for the datafile ends that wait at once.
   *   - `shutdown()` removes the notification handler and closes the underlying client (which stops datafile polling and
   *     the HTTP client for factory-built providers).
   *   - Factory-built providers (via `OptimizelyProvider.make`/`scoped`/`layer`) start fetching the datafile at
@@ -157,12 +158,7 @@ final class OptimizelyFeatureProvider private[optimizely] (
     // CONFIGURATION_CHANGED on any re-init). Re-check now: if shut down, remove the handler we just registered and
     // abort — do not start polling, await, or announce READY.
     if (lifecycle.get() == Lifecycle.ShutDown) {
-      val handle = notificationHandle.getAndSet(-1)
-      if (handle > 0) {
-        val _ = Try(optimizely.getNotificationCenter.removeNotificationListener(handle))
-        ()
-      }
-      stateRef.set(ProviderState.NOT_READY)
+      abortForShutdown()
       return
     }
 
@@ -177,7 +173,14 @@ final class OptimizelyFeatureProvider private[optimizely] (
     // first, hiding the specific error below. A caller-managed client keeps `isValid`.
     if (configManager.fold(optimizely.isValid)(_.getCachedConfig != null)) initLatch.countDown()
 
-    if (!initLatch.await(initWait.toMillis, TimeUnit.MILLISECONDS))
+    val loaded = initLatch.await(initWait.toMillis, TimeUnit.MILLISECONDS)
+    // `shutdown()` releases the wait. Checked before `isValid`, which on a closed client can still answer from the
+    // datafile it cached before closing.
+    if (lifecycle.get() == Lifecycle.ShutDown) {
+      abortForShutdown()
+      return
+    }
+    if (!loaded)
       failInitialize(
         s"Optimizely datafile did not load within $initWait; check the SDK key and network reachability"
       )
@@ -217,9 +220,20 @@ final class OptimizelyFeatureProvider private[optimizely] (
     try Option(optimizely.getOptimizelyConfig).map(_.getRevision).orNull
     catch { case scala.util.control.NonFatal(_) => null }
 
+  /** `initialize()` found the provider shut down: remove the handler it registered and leave the provider NOT_READY. */
+  private def abortForShutdown(): Unit = {
+    val handle = notificationHandle.getAndSet(-1)
+    if (handle > 0) {
+      val _ = Try(optimizely.getNotificationCenter.removeNotificationListener(handle))
+      ()
+    }
+    stateRef.set(ProviderState.NOT_READY)
+  }
+
   /** Common failure path for `initialize()`: remove the handler registered this cycle (best-effort, as `shutdown` does)
     * so a retry doesn't leak it or fire duplicate CONFIGURATION_CHANGED events, mark the provider `Failed` (state
-    * ERROR) so a subsequent `initialize()` cleanly re-attempts instead of silently no-op'ing, then throw.
+    * ERROR) so a subsequent `initialize()` cleanly re-attempts instead of silently no-op'ing, then throw. A provider
+    * shut down meanwhile stays `ShutDown` and NOT_READY, so a later `initialize()` meets the shut-down rule.
     */
   private def failInitialize(msg: String): Nothing = {
     stopWatchdog()
@@ -228,8 +242,9 @@ final class OptimizelyFeatureProvider private[optimizely] (
       val _ = Try(optimizely.getNotificationCenter.removeNotificationListener(handle))
       ()
     }
+    // ERROR first, then the transition, as the READY path does: a shutdown landing in between still ends NOT_READY.
     stateRef.set(ProviderState.ERROR)
-    lifecycle.set(Lifecycle.Failed)
+    if (!lifecycle.compareAndSet(Lifecycle.Initialized, Lifecycle.Failed)) stateRef.set(ProviderState.NOT_READY)
     throw new RuntimeException(msg)
   }
 
@@ -237,6 +252,8 @@ final class OptimizelyFeatureProvider private[optimizely] (
     // Set ShutDown first so any watchdog tick already in flight sees it and won't emit STALE/READY after teardown,
     // then cancel the watchdog thread before touching the underlying client.
     lifecycle.set(Lifecycle.ShutDown)
+    // Wakes an `initialize()` waiting for the datafile, which then aborts instead of waiting out `initWait`.
+    initLatchRef.get().countDown()
     stopWatchdog()
     val handle = notificationHandle.getAndSet(-1)
     if (handle > 0) {

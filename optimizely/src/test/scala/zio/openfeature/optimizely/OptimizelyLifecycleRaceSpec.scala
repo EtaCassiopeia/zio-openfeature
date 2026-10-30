@@ -195,6 +195,46 @@ object OptimizelyLifecycleRaceSpec extends ZIOSpecDefault {
         OptimizelyFeatureProvider.shouldEmitConfigChange("1", "2")    // genuine later revision -> emit
       )
     },
+    test(
+      "a shutdown during the datafile wait ends initialize at once, leaves NOT_READY, and refuses a later initialize"
+    ) {
+      withMockServer { server =>
+        server.stubFor(get(urlEqualTo(DatafilePath)).willReturn(okJson(ValidDatafileV1).withFixedDelay(5000)))
+        val (client, mgr) =
+          OptimizelyTestSupport.wiredClientWithManager(datafileUrl(server), "wait-key", deferStart = true)
+        mgr.stop()
+        val provider =
+          new OptimizelyFeatureProvider(
+            client,
+            java.time.Duration.ofSeconds(10),
+            closeOnShutdown = true,
+            configManager = Some(mgr)
+          )
+        try {
+          val initDone   = new AtomicInteger(0)
+          val initThread = new Thread(() => {
+            try provider.initialize(new ImmutableContext())
+            catch { case _: Throwable => () }
+            initDone.incrementAndGet()
+            ()
+          })
+          initThread.start()
+          Thread.sleep(200)
+          val shutdownAt = java.lang.System.nanoTime()
+          provider.shutdown()
+          initThread.join(2000)
+          val tookMs = (java.lang.System.nanoTime() - shutdownAt) / 1000000L
+          val state  = stateOf(provider)
+          val again  = tryInit(provider)
+          assertTrue(
+            initDone.get() == 1,
+            tookMs < 2000L,
+            state == ProviderState.NOT_READY,
+            again.left.exists(e => e.isInstanceOf[IllegalStateException] && e.getMessage.contains("was shut down"))
+          )
+        } finally provider.shutdown()
+      }
+    },
     test("shutdown racing initialize never leaves the provider READY") {
       withMockServer { server =>
         // A delayed datafile keeps initialize in-flight so a concurrent shutdown genuinely interleaves.
@@ -230,13 +270,9 @@ object OptimizelyLifecycleRaceSpec extends ZIOSpecDefault {
           initThread.join(10000)
           shutdownThread.join(10000)
           val finalState = stateOf(provider)
-          // Invariant across every interleaving: a provider that saw a shutdown must never end up READY. It is
-          // NOT_READY (abort or post-success revert) or ERROR (failed load against the closing client).
-          assertTrue(
-            initDone.get() == 1,
-            finalState != ProviderState.READY,
-            finalState == ProviderState.NOT_READY || finalState == ProviderState.ERROR
-          )
+          // Invariant across every interleaving: a provider that saw a shutdown ends NOT_READY, whether the init
+          // aborted before its wait, was woken from it, reverted after READY, or failed against the closing client.
+          assertTrue(initDone.get() == 1, finalState == ProviderState.NOT_READY)
         } finally provider.shutdown()
       }
     }

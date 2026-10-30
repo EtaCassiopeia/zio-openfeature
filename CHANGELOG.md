@@ -203,6 +203,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `decode`, as every other value does: one it cannot read (`null`, a `Boolean` for a `Double`) fails the typed tier with
   `TypeMismatch`, an `Option` read is `None`, and the total tier serves the default with error code `TypeMismatch`. A
   number of another box (an `Integer` for a `Double`) is read as that number.
+- **Shutting an Optimizely provider down during `initialize()` ends the init at once and leaves it `NOT_READY`** (#646).
+  `shutdown()` did not wake an `initialize()` waiting for the datafile, so the init waited out `initWait` (25 s by
+  default) and then marked the shut-down provider `ERROR` and retryable. A later `initialize()` then registered a
+  handler on the closed client and either waited again or, if a datafile had loaded before the shutdown, reported
+  `READY` on a client that no longer polls. The wait now ends at once, the provider stays `NOT_READY`, and a later
+  `initialize()` on a factory-built provider fails with "was shut down".
 
 ## [1.2.1] — 2026-10-28
 

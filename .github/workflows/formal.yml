@@ -46,9 +46,11 @@ permissions:
 env:
   TLA_TOOLS_VERSION: v1.7.4
   TLA_TOOLS_SHA256: 936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88
-  # Trace validation reads the traces with the community modules' Json, which needs a newer TLC.
+  # Trace validation reads the traces with the community modules' Json, which needs a newer TLC. v1.8.0 is still a
+  # prerelease that upstream re-publishes, so its jar can change under this pin; when the check below fails, verify
+  # the new jar with `validate.py --selftest traces` and re-pin. Pinned to the asset uploaded 2026-10-30T15:45Z.
   TRACE_TLA_TOOLS_VERSION: v1.8.0
-  TRACE_TLA_TOOLS_SHA256: fc6878c603f0fdc18b9fe3e5bf51860cb90ab5b1154e3c371660c036d6bdd63e
+  TRACE_TLA_TOOLS_SHA256: 011267fca25d0752cf18894dd585cd28b96960c112ea8a20b823ea770e7e10cd
   COMMUNITY_MODULES_VERSION: '202610262215'
   COMMUNITY_MODULES_SHA256: 1c77d512e73ae9fde27103bee9115898fc9d62bea3a99313aeb5eb14c6284af6
 

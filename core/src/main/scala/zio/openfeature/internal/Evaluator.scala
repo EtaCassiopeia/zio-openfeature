@@ -16,7 +16,9 @@ final private[openfeature] class Evaluator(
   evaluationTimeout: Option[Duration],
   maxAbandonedCalls: Int,
   fallbackLogLimiter: FallbackLogLimiter,
-  hookPipeline: HookPipeline
+  hookPipeline: HookPipeline,
+  swapGeneration: java.util.concurrent.atomic.AtomicLong,
+  swapInProgress: java.util.concurrent.atomic.AtomicBoolean
 ) {
   import Evaluator.{convertImmutableMetadata, errorFromResolution}
 
@@ -85,6 +87,26 @@ final private[openfeature] class Evaluator(
       case _ => Exit.unit
     }
 
+  /** The readiness check, then `call`, which reaches the provider. The SDK resolves the slot's provider per call, so a
+    * swap's new provider may answer `call` before it has settled: when a swap started since the check, or is still
+    * running (its rollback runs with status `Error`, which the check lets through, while the failed provider is still
+    * bound), the outcome is not trusted and the evaluation fails as one made during the swap does, with
+    * `ProviderNotReady(NotReady)`. A defect or an interruption is kept as it is.
+    */
+  private def gated[B](call: IO[FeatureFlagError, B]): IO[FeatureFlagError, B] =
+    ZIO.suspendSucceed {
+      val generation = swapGeneration.get()
+      checkProviderStatus *> call.exit.flatMap { exit =>
+        val answered = exit match {
+          case Exit.Success(_)     => true
+          case Exit.Failure(cause) => cause.failureOption.isDefined
+        }
+        if (answered && (swapGeneration.get() != generation || swapInProgress.get()))
+          ZIO.fail(FeatureFlagError.ProviderNotReady(ProviderStatus.NotReady))
+        else exit
+      }
+    }
+
   // Context is already merged by evaluateWithDetails before entering the hook pipeline
   private def evaluateFlag[A: FlagType](
     key: String,
@@ -92,7 +114,7 @@ final private[openfeature] class Evaluator(
     context: EvaluationContext,
     timeout: Option[Duration]
   ): IO[FeatureFlagError, FlagResolution[A]] =
-    // The provider-readiness gate (`checkProviderStatus`) applies only where the value must actually come from the
+    // The provider-readiness gate (`gated`) applies only where the value must actually come from the
     // provider. A transaction override or a cached evaluation resolves purely locally and MUST still succeed while the
     // provider is NotReady / Fatal / shutting down — that fallback role is the whole point of overrides (spec:
     // deterministic tests without a live provider, and forcing known-safe values while a provider is down). So the gate
@@ -100,7 +122,7 @@ final private[openfeature] class Evaluator(
     // `evaluateWithTransaction`) rather than run up front.
     state.transactionRef.get.flatMap {
       case Some(ts) => evaluateWithTransaction(key, default, context, ts, timeout)
-      case None     => checkProviderStatus *> evaluateFromClient(key, default, context, timeout)
+      case None     => gated(evaluateFromClient(key, default, context, timeout))
     }
 
   private def evaluateWithTransaction[A: FlagType](
@@ -140,10 +162,10 @@ final private[openfeature] class Evaluator(
               case Left(reason) =>
                 ZIO.logDebug(
                   s"Transaction cache for '$key' does not decode as ${flagType.typeName} ($reason); evaluating from the provider"
-                ) *> checkProviderStatus *> evaluateAndCache(key, default, context, txState, timeout)
+                ) *> evaluateAndCache(key, default, context, txState, timeout)
             }
           case None =>
-            checkProviderStatus *> evaluateAndCache(key, default, context, txState, timeout)
+            evaluateAndCache(key, default, context, txState, timeout)
         }
     }
   }
@@ -178,7 +200,7 @@ final private[openfeature] class Evaluator(
     timeout: Option[Duration]
   ): IO[FeatureFlagError, FlagResolution[A]] =
     for {
-      resolution <- evaluateFromClient(key, default, context, timeout)
+      resolution <- gated(evaluateFromClient(key, default, context, timeout))
       eval       <- zio.openfeature.FlagEvaluation.evaluated(key, resolution)
       _          <- txState.record(eval)
     } yield resolution

@@ -2,7 +2,8 @@
 
 Usage: python3 preconditions.py <tla2tools.jar> <CommunityModules-deps.jar>.  For each precondition below, the
 precondition is deleted from Lifecycle.tla and its reject fixture under traces/reject is validated against the result:
-the fixture must now be accepted, which shows it is the run that precondition rules out.  A fixture that stays rejected
+the fixture, rejected as the model stands, must now be accepted, which shows it is the run that precondition rules
+out.  A fixture that stays rejected
 means no fixture exercises the precondition.  Exits non-zero when one is not exercised.
 
 The preconditions recorded runs cannot show (the recorder stops at ScopeClose, and ShutdownDone only follows
@@ -29,13 +30,13 @@ preconditions = [
      '    /\\ lock = "free" /\\ ~closed /\\ ~Settling\n    /\\ sdk[p] = "NONE"',
      "swap-after-shutdown"),
     ("ShutdownStart", 'lock = "free"',
-     'ShutdownStart ==\n    /\\ lock = "free"',
-     'ShutdownStart ==\n    /\\ lock # "shutdown"',
+     'ShutdownStart ==\n    /\\ lock = "free"\n',
+     'ShutdownStart ==\n',
      "shutdown-inside-a-swap"),
     ("ScopeClose", 'lock = "free"',
      'ScopeClose ==\n    /\\ lock = "free" /\\ ~closed',
      'ScopeClose ==\n    /\\ ~closed',
-     "scope-close-inside-a-swap"),
+     "swap-without-outcome"),
 ]
 
 
@@ -47,6 +48,10 @@ def main():
         if spec.count(old) != 1:
             sys.exit(f"{action} {pre}: its text no longer occurs exactly once in Lifecycle.tla")
         actions = trace_labels.labels(trace_labels.read(os.path.join(here, "traces", "reject", fixture + ".ndjson")))
+        validate.here = here
+        baseline, _ = validate.check(tla_jar, cm_jar, actions)
+        if baseline != validate.REJECTED:
+            sys.exit(f"reject/{fixture}: {baseline} by the model as it stands, so it shows nothing")
         with tempfile.TemporaryDirectory() as d:
             with open(os.path.join(d, "Lifecycle.tla"), "w") as f:
                 f.write(spec.replace(old, new))

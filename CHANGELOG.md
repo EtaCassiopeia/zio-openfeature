@@ -12,8 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The lifecycle model's preconditions, each enforced or named** (#655, test-only). `formal/lifecycle/README.md`
   classifies every precondition of a library action as enforced by the code or assumed, with what checks each.
   `preconditions.py` deletes each one a recorded run can show and checks that its reject fixture is then accepted, so
-  every such precondition has a run that exercises it; the `traces` job runs it. Three fixtures were added (a swap
-  inside a swap, a swap after shutdown, a scope close inside a swap), and the model now lets `shutdown` run after the
+  every such precondition has a fixture that exercises it; the `traces` job runs it. Two fixtures were added (a swap
+  inside a swap, a swap after shutdown), and the model now lets `shutdown` run after the
   scope has closed, as the code does.
 - **A TLA+ model of the provider lifecycle, checked by TLC in CI** (#582, test-only). `formal/lifecycle/Lifecycle.tla`
   models the swap, its rollback, the event bridge, the providers a timed-out swap leaves behind, shutdown and the scope

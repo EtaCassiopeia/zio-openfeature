@@ -140,6 +140,17 @@ ZOF_PBT_SCALE=10 ZOF_PBT_SEED=<seed> sbt "core/testOnly -- -tags property"
 A new property test takes `@@ PropertyBudget(n)` from `zio.openfeature.testsupport` (compiled into every module's
 tests), so the nightly run picks it up.
 
+**Deterministic interleavings.** Random timing finds lifecycle races slowly and cannot replay them, so
+`LifecycleInterleavingSpec` (testkit) enumerates them instead. The lifecycle code calls a probe at named points of the
+protocol (`internal/LifecycleProbe`: a swap starting, the SDK binding the new provider, a swap timing out or rolling
+back, an SDK event reaching the bridge, a status write, the init watchdog, shutdown and the scope close). Production
+instances get `LifecycleProbe.none`, a no-op, and `LifecycleProbeGuardSpec` keeps every probe off the evaluation path.
+The test holds each primary action (a swap that succeeds, fails or times out; a shutdown; a provider event) at each
+point it reaches, runs a competing action while it is held, then lets it go, and checks the outcome against the same
+model `LifecycleModelSpec` uses. A reach table lists the points each primary passes, so a probe that moves fails the
+test rather than silently testing nothing. To hold a new point, add it to `LifecycleProbe.Point`, call `probe.at` there,
+and add it to the reach table.
+
 **Linearizability checks.** `CircuitBreakerLincheckSpec` runs the circuit breaker's operations from several threads
 under [Lincheck](https://github.com/JetBrains/lincheck)'s model checker, which explores thread interleavings and checks
 every outcome matches some sequential order of the same calls. It belongs to the property run, so pull requests check

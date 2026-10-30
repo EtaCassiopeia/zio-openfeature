@@ -20,7 +20,8 @@ final private[openfeature] class EventBridge(
   client: OFClient,
   providerNameRef: java.util.concurrent.atomic.AtomicReference[String],
   state: FeatureFlagsState,
-  onReady: Option[java.util.concurrent.CountDownLatch]
+  onReady: Option[java.util.concurrent.CountDownLatch],
+  probe: LifecycleProbe = LifecycleProbe.none
 ) {
 
   // True while `setProvider` holds the swap lock and is re-registering the provider. Bridge events must not drive
@@ -48,7 +49,7 @@ final private[openfeature] class EventBridge(
     * side effects (watchdog shutdown, latch release).
     */
   private[openfeature] def applySignal(signal: Signal): UIO[Option[ProviderStatus]] =
-    state.statusRef.modify(transition(_, signal))
+    probe.at(LifecycleProbe.Point.ApplySignal(signal)) *> state.statusRef.modify(transition(_, signal))
 
   /** [[applySignal]] for an event the SDK delivered: the signal is the one the SDK's own state for this client's slot
     * implies, read inside the serialized write; `own` (the event's signal) applies only when the slot is unreadable, or
@@ -60,7 +61,7 @@ final private[openfeature] class EventBridge(
     * signal applied, if any, and the transition.
     */
   private def applySdkSignal(own: Signal): UIO[(Option[Signal], Option[ProviderStatus])] =
-    state.statusRef
+    probe.at(LifecycleProbe.Point.ApplySignal(own)) *> state.statusRef
       .modify { current =>
         // A fatal error is final whatever the slot reports by the time its handler runs.
         val (signal, unreadable) =
@@ -196,7 +197,10 @@ final private[openfeature] class EventBridge(
     * when the shared initialization completes takes the dropped one's place. A READY found with the slot in another
     * state is delivered, and the status follows that state.
     */
-  private[openfeature] def onSdkEvent(event: JavaProviderEvent, details: EventDetails): UIO[Unit] = event match {
+  private[openfeature] def onSdkEvent(event: JavaProviderEvent, details: EventDetails): UIO[Unit] =
+    probe.at(LifecycleProbe.Point.DeliverEvent(event.name)) *> deliver(event, details)
+
+  private def deliver(event: JavaProviderEvent, details: EventDetails): UIO[Unit] = event match {
     case JavaProviderEvent.PROVIDER_READY =>
       ZIO
         .attempt(client.getProviderState)

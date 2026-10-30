@@ -22,7 +22,11 @@ import zio._
   *
   * Only an instance that owns its API records entries: a provider of a shared API may serve sibling clients.
   */
-final private[openfeature] class OrphanedProviders(api: OpenFeatureAPI, pollInterval: Duration) {
+final private[openfeature] class OrphanedProviders(
+  api: OpenFeatureAPI,
+  pollInterval: Duration,
+  probe: LifecycleProbe = LifecycleProbe.none
+) {
   import OrphanedProviders.Entry
 
   // An entry leaves the list once it is settled, so a settle still in progress can be waited for.
@@ -103,7 +107,8 @@ final private[openfeature] class OrphanedProviders(api: OpenFeatureAPI, pollInte
   private def settleWith(entry: Entry, release: UIO[Unit]): UIO[Boolean] =
     ZIO.succeed(entry.claimed.compareAndSet(false, true)).flatMap { won =>
       ZIO.when(won)(
-        release.ensuring(ZIO.succeed(entries.updateAndGet(_.filterNot(_ eq entry))) *> entry.done.succeed(()))
+        probe.at(LifecycleProbe.Point.OrphanResolved) *> release
+          .ensuring(ZIO.succeed(entries.updateAndGet(_.filterNot(_ eq entry))) *> entry.done.succeed(()))
       )
     } *> ZIO.succeed(true)
 
@@ -132,7 +137,8 @@ private[openfeature] object OrphanedProviders {
 
   val PollInterval: Duration = 250.millis
 
-  def apply(api: OpenFeatureAPI): OrphanedProviders = new OrphanedProviders(api, PollInterval)
+  def apply(api: OpenFeatureAPI, probe: LifecycleProbe = LifecycleProbe.none): OrphanedProviders =
+    new OrphanedProviders(api, PollInterval, probe)
 
   final private class Entry(
     val previous: FeatureProvider,

@@ -16,7 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and `Error`; `Fatal` and `ShuttingDown` stay final. A client built on a provider the SDK already reports `STALE` is
   now `Stale` at once instead of `NotReady` until the init watchdog made it `Fatal`. An event handled while the SDK
   still reports `NOT_READY` for the provider no longer changes the status: it comes from another registration, such
-  as a replaced provider with the same name.
+  as a replaced provider with the same name. A synchronous build now seeds the status from the SDK's state for the
+  provider, and never over a status an event has already set: a provider reporting `STALE` from inside `initialize()`
+  (a `CircuitBreakerProvider` whose delegate starts stale) could otherwise leave the status disagreeing with the SDK.
 - **`CachingProvider` no longer hands one caller another caller's failure** (#586). Concurrent callers for one key
   share a single delegate call, and zio-cache gives all of them its outcome. When that call failed, for instance with
   the `InterruptedException` a `CircuitBreakerProvider` timeout causes on the thread running it, a caller that had

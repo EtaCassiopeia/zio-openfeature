@@ -359,11 +359,34 @@ final private[openfeature] class FeatureFlagsLive(
       case None => ZIO.unit
     }
 
-  /** Seed the initial status from the sync build path, recording ever-readiness for the machine. */
-  private[openfeature] def seedStatus(status: ProviderStatus): UIO[Unit] =
-    ZIO.succeed {
-      if (status == ProviderStatus.Ready || status == ProviderStatus.Stale) everReady.set(true)
-    } *> state.statusRef.set(status)
+  /** Seed the initial status once the sync build has verified the provider, recording ever-readiness for the machine.
+    *
+    * The seed is the SDK's state for this instance's slot, as every event's status is (`verified`, the provider's own
+    * state, only when the slot reads neither READY nor STALE), and it applies only while the status is still the
+    * initial `NotReady`. The bridge is attached before the provider initializes, so an event it has applied already
+    * read the slot at least as late. A provider that reports STALE from inside `initialize()` races the SDK's own READY
+    * when `initialize()` returns, and the slot keeps whichever lands last; the provider's own state can disagree with
+    * it, and seeding that over an applied event would leave the status disagreeing with the SDK for good.
+    */
+  private[openfeature] def seedStatus(verified: ProviderStatus): UIO[Unit] =
+    ZIO
+      .attempt(client.getProviderState)
+      .map {
+        case JavaProviderState.READY => ProviderStatus.Ready
+        case JavaProviderState.STALE => ProviderStatus.Stale
+        case _                       => verified
+      }
+      .catchAllCause(c =>
+        ZIO.logWarningCause("build: could not read the SDK state; seeding the provider's own", c).as(verified)
+      )
+      .flatMap { seed =>
+        state.statusRef.update {
+          case ProviderStatus.NotReady =>
+            if (seed == ProviderStatus.Ready || seed == ProviderStatus.Stale) everReady.set(true)
+            seed
+          case moved => moved
+        }
+      }
 
   /** Every status transition, current first. Test observability only: lets a spec prove a status was never entered. */
   private[openfeature] def statusChanges: ZStream[Any, Nothing, ProviderStatus] = state.statusRef.changes

@@ -220,6 +220,17 @@ object SdkEventOrderSpec extends ZIOSpecDefault {
         } yield assertTrue(status == ProviderStatus.Fatal)
       }
     },
+    test("the sync build's status seed does not overwrite a status an event already set") {
+      ZIO.scoped {
+        for {
+          built <- build(new Emitting("current"))
+          (ff, _, _) = built
+          _      <- ff.onStaleEvent(details("current"))
+          _      <- ff.seedStatus(ProviderStatus.Ready)
+          status <- ff.providerStatus
+        } yield assertTrue(status == ProviderStatus.Stale)
+      }
+    },
     test("ERROR then READY in quick succession settles on the state the SDK reports, every time") {
       ZIO.scoped {
         for {

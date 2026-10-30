@@ -238,11 +238,11 @@ been shut down it fails with `ProviderNotReady(NotReady)` and does not touch the
   or its scope closes, the old provider is shut down then. Only an instance that
   [owns its API](#who-shuts-down-the-api) does this: on a shared API the old provider is left to the API's owner.
   Until the new provider has settled, `setProvider` refuses the old provider with `ProviderInitializationFailed`:
-  installing it again then would get it shut down later, while it serves. If `setProvider` is called again while the
-  timed-out provider is still initializing and the new provider's `initialize()` throws, there is nothing to roll back
-  to: the timed-out provider never served and is not initialized a second time. The new provider stays registered
-  with status `Error`, the timed-out provider is shut down (by an instance that owns its API), and a later
-  `setProvider` recovers. Whether `initialize()` returned is read from the Java SDK's own `PROVIDER_READY`, which it
+  installing it again then would get it shut down later, while it serves. If `setProvider` is called while the
+  timed-out provider, or the provider an async start was built with, is still initializing and the new provider's
+  `initialize()` throws, there is nothing to roll back to: that provider never served and is not initialized a second
+  time. The new provider stays registered with status `Error`, that provider is shut down (by an instance that owns
+  its API), and a later `setProvider` recovers. Whether `initialize()` returned is read from the Java SDK's own `PROVIDER_READY`, which it
   sends only then, so a new provider that reports `READY` itself from inside its `initialize()` is taken at its word:
   if that `initialize()` then fails, the old provider is not shut down. One that reports `ERROR` from inside an
   `initialize()` that then fails reads as a failed swap.

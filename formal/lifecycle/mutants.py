@@ -62,6 +62,10 @@ mutants = {
     'a failed swap that never bound reads a still-initializing provider as Ready': (
         '    /\\ status\' = IF sdk[swap.prev] = "NOT_READY" THEN swap.before ELSE Apply(swap.before, sdk[swap.prev])',
         '    /\\ status\' = IF sdk[swap.prev] = "NOT_READY" THEN "Ready" ELSE Apply(swap.before, sdk[swap.prev])'),
+    # The async build does not record its provider as initializing, so a failed swap rolls back onto it.
+    'the async build does not record its provider as initializing': (
+        '    /\\ swap = None\n    /\\ pending = P0\n',
+        '    /\\ swap = None\n    /\\ pending = None\n'),
     # The gate never goes up.
     'no swap gate': (
         '    /\\ gate\' = TRUE\n    /\\ status\' = "NotReady"',

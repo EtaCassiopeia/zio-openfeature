@@ -682,6 +682,50 @@ object ProviderHotSwapSpec extends ZIOSpecDefault {
         } yield assertTrue(reached.isDefined, fatal, down)
       }
     } @@ TestAspect.withLiveClock,
+    test("a failed swap on an async-built instance does not initialize again a provider still initializing") {
+      ZIO.scoped {
+        val api    = OpenFeatureAPI.createIsolated()
+        val domain = s"test-swap-${java.util.UUID.randomUUID()}"
+        val c      = new FailingCounting("C")
+        for {
+          a <- ZIO.acquireRelease(ZIO.succeed(new Counting("A", blocking = true)))(p =>
+            ZIO.succeed(p.release.countDown())
+          )
+          ff <- FeatureFlags.buildAsync(
+            a,
+            domain = Some(domain),
+            version = None,
+            initialHooks = Nil,
+            statusRef = None,
+            addShutdownFinalizer = true,
+            apiOverride = Some(api),
+            initTimeout = 10.seconds
+          )
+          started <- awaitTrue(a.inits.get() == 1)
+          failed  <- ff.setProvider(c).either
+          status  <- ff.providerStatus
+          bound = api.getProvider(domain)
+          inits = a.inits.get()
+          // The watcher of the provider C replaced sees C fail and shuts A down; A is never initialized again.
+          aDown <- awaitTrue(a.shutdowns.get() >= 1)
+          _     <- ZIO.succeed(a.release.countDown())
+          _     <- ZIO.sleep(200.millis)
+          initsAfter = a.inits.get()
+          recovered <- ff.setProvider(new SimpleProvider("D", Map("flag" -> true))).either
+          served    <- ff.boolean("flag", default = false)
+        } yield assertTrue(
+          started,
+          failed.isLeft,
+          inits == 1,
+          status == ProviderStatus.Error,
+          bound eq c,
+          aDown,
+          initsAfter == 1,
+          recovered.isRight,
+          served
+        )
+      }
+    } @@ TestAspect.withLiveClock,
     test("a failed swap does not initialize again a provider whose initialize() has not returned") {
       ZIO.scoped {
         val a = new Counting("A", blocking = false)

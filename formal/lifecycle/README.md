@@ -10,7 +10,8 @@ java -cp tla2tools.jar tlc2.TLC -workers auto -deadlock -config Lifecycle.cfg Li
 ```
 
 `-deadlock` is needed because a closed scope is a final state. The CI configuration (`Lifecycle.cfg`) has the initial
-provider, three swaps and two provider events: about 26 million distinct states, a few minutes on a laptop.
+provider, three swaps and two provider events, from either start (the sync build's ready provider, or the async build's
+still initializing): about 57 million distinct states, a few minutes on a laptop.
 
 ## What it checks
 
@@ -41,6 +42,7 @@ provider, three swaps and two provider events: about 26 million distinct states,
 | The watcher of a timed-out swap's provider reads such an `ERROR` as a failed initialization (#623) | `ShutDownAtMostOnce` |
 | A swap after shutdown is not refused (#631) | `ShutDownAtMostOnce` |
 | A failed swap that never bound its provider reads a still-initializing provider as `Ready` (#634) | `StatusFollowsSdk` |
+| The async build does not record its provider as initializing (#635) | `NoConcurrentInit` |
 | The swap gate never goes up | `NotReadyDuringSwap` |
 
 ## Actions and the code
@@ -114,7 +116,8 @@ The other points belong to one of those steps. A run that reaches `Watchdog`, wh
   gives the SDK's `PROVIDER_READY` time to arrive; the model reads whether `initialize()` returned directly.
 - **Time.** A timeout is an action enabled while `initialize()` runs; how long anything takes is not modelled.
 - **The registry, shared APIs and `fromAcquireAsync`.** The model is one instance that owns its API.
-- **The async build's init watchdog.** `LifecycleInterleavingSpec` covers it.
+- **The async build's init watchdog.** The async start is in (`InitAsync`); its watchdog is not, and
+  `LifecycleInterleavingSpec` covers it.
 
 ## When the lifecycle code changes
 

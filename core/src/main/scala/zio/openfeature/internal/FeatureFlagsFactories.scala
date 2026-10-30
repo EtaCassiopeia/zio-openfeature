@@ -440,6 +440,8 @@ private[openfeature] object FeatureFlagsFactories {
       }).tapError(_ => ff.stopEventBridge)
       _ <- ZIO.unless(early)(ff.startEventBridge)
       _ <- ff.reconcileRegistration(provider)
+      // A failed swap must not roll back onto it while its first initialize() still runs.
+      _ <- ff.trackPendingInit(provider)
       // Init watchdog: after initTimeout, escalate to Fatal ONLY if the provider never became usable
       // (`everReady` gate inside the machine): publish the Error event, release the onReady latch, then shut the
       // provider down, bounded. A provider that was Ready and later dipped to a transient Error is left running. The

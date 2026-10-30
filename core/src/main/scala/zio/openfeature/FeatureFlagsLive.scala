@@ -86,22 +86,25 @@ final private[openfeature] class FeatureFlagsLive(
     eventBridge.swapInProgress
   )
 
-  // The provider the last timed-out swap installed, and a reader for the SDK state of that registration. Its
-  // `initialize()` is still running while that state is NOT_READY, and a provider must never be initialized again
-  // before its earlier call returns, so the next failed swap does not roll back onto it. Any other swap outcome clears
+  // The provider whose `initialize()` may not have returned (the one the last timed-out swap installed, or the async
+  // build's), and a reader for the SDK state of that registration. Its `initialize()` is still running while that state
+  // is NOT_READY, and a provider must never be initialized again before its earlier call returns, so the next failed
+  // swap does not roll back onto it. Any other swap outcome clears
   // it: the SDK's shutdown of that registration also reads NOT_READY, so a stale entry would mistake a provider
   // installed again, and serving, for the pending one.
   private val pendingInit =
     new java.util.concurrent.atomic.AtomicReference[Option[(OFFeatureProvider, () => JavaProviderState)]](None)
+
+  /** Record `provider`, which the async build registered and whose `initialize()` may still run, as pending. */
+  private[openfeature] def trackPendingInit(provider: OFFeatureProvider): UIO[Unit] =
+    stateReaderFor(provider, providerNameRef.get()).flatMap(r => ZIO.succeed(pendingInit.set(r.map(provider -> _))))
 
   private def initPending(provider: OFFeatureProvider): UIO[Boolean] =
     ZIO
       .attemptBlocking(pendingInit.get().exists { case (p, state) =>
         (p eq provider) && state() == JavaProviderState.NOT_READY
       })
-      .catchAllCause(c =>
-        ZIO.logWarningCause("setProvider: could not read the state of a timed-out swap's provider", c).as(false)
-      )
+      .catchAllCause(c => ZIO.logWarningCause("could not read the state of a provider still initializing", c).as(false))
 
   /** A reader for the SDK state of the registration `provider` holds in this instance's slot; None if the slot holds
     * another provider or the state cannot be read (logged).
@@ -109,7 +112,7 @@ final private[openfeature] class FeatureFlagsLive(
   private def stateReaderFor(provider: OFFeatureProvider, name: String): UIO[Option[() => JavaProviderState]] =
     ZIO
       .attemptBlocking(ProviderStateAccess.stateReader(api, domain.orNull, provider))
-      .catchAllCause(c => ZIO.logWarningCause(s"setProvider: could not watch '$name'", c).as(None))
+      .catchAllCause(c => ZIO.logWarningCause(s"could not watch '$name' while it initializes", c).as(None))
 
   /** Abandoned provider calls still running — for tests. */
   private[openfeature] def abandonedCallCount: Int = evaluator.abandonedCallCount
@@ -332,8 +335,8 @@ final private[openfeature] class FeatureFlagsLive(
     * Caveat: re-registration starts a fresh state manager for the old provider, so the SDK calls its `initialize()`
     * again (an Optimizely poller restarts, an OFREP client re-fetches, ...) — unless the old provider is still bound to
     * another domain of a shared API, whose READY manager is reused and skips re-init. It is never called for an old
-    * provider whose `initialize()` has not returned (one a timed-out swap installed): that would run two of its
-    * `initialize()` calls at once.
+    * provider whose `initialize()` has not returned (a timed-out swap's, or the async build's): that would run two of
+    * its `initialize()` calls at once.
     */
   private def restoreSdkRegistration(
     oldProvider: OFFeatureProvider,
@@ -585,8 +588,8 @@ final private[openfeature] class FeatureFlagsLive(
                         // the previous provider is the one it replaced, shut down as such.
                         applySignal(Signal.SwapFailed) *>
                           ZIO.logWarning(
-                            s"setProvider: '$newName' failed to initialize while '$oldName', which a timed-out swap " +
-                              s"installed, is still initializing; '$oldName' is not initialized again and is shut down; " +
+                            s"setProvider: '$newName' failed to initialize while '$oldName' is still initializing; " +
+                              s"'$oldName' is not initialized again and is shut down; " +
                               "status is Error until a later setProvider succeeds"
                           ) *>
                           stateReaderFor(newProvider, newName)

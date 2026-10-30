@@ -65,6 +65,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   no readiness recorded: a provider still starting, or one whose `initialize()` threw, is still made `Fatal` by the
   watchdog, including when its deadline fell inside the swap. After a timed-out swap, the refused swap also left the
   instance reporting the refused provider, which the SDK never bound; it now keeps the timed-out one.
+- **A failed swap on an async-built instance no longer initializes again a provider still initializing** (#635). The
+  async build returns while its provider's `initialize()` runs, but did not record that provider as pending the way a
+  timed-out swap's is. A `setProvider` whose new provider failed in that window rolled back onto it, called its
+  `initialize()` a second time while the first still ran, and waited on it. There is now nothing to roll back to: the
+  failed provider stays registered with status `Error`, the async build's provider is shut down by an instance that owns
+  its API, and a later `setProvider` recovers.
 - **A timed evaluation interrupted before its provider call starts no longer counts as abandoned** (#633). When the
   caller was interrupted, or the timeout fired, before the forked call ran its first instruction, the abandoned-call
   counter went up and never came back down, though the provider was never called. Enough of these filled the cap, and

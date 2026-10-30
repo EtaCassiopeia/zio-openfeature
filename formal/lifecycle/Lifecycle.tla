@@ -87,13 +87,14 @@ Apply(s, signal) ==
       [] OTHER -> s
 
 (* The status the SDK's state for the installed provider corresponds to.  *)
-(* NOT_READY: a timed-out swap's provider still initializing, Error.      *)
+(* NOT_READY: the async build's provider still starting (only P0 can be   *)
+(* bound NOT_READY that way), NotReady; a timed-out swap's, Error.        *)
 Matches(s, state) ==
     CASE state = "READY"     -> s = "Ready"
       [] state = "STALE"     -> s = "Stale"
       [] state = "ERROR"     -> s = "Error"
       [] state = "FATAL"     -> s = "Fatal"
-      [] state = "NOT_READY" -> s = "Error"
+      [] state = "NOT_READY" -> s = IF bound = P0 THEN "NotReady" ELSE "Error"
       [] OTHER               -> FALSE
 
 (* The status a swap or rollback ends in for a provider that settled in   *)
@@ -127,7 +128,30 @@ InitWith(events0) ==
     /\ shuts = [p \in All |-> 0]
     /\ twoInits = FALSE
 
-Init == InitWith({})
+\* The async build: the instance is returned while P0's initialize() runs, recorded as pending so a failed swap does not
+\* roll back onto it.  The init watchdog is outside the model.
+InitAsync ==
+    /\ status = "NotReady"
+    /\ installed = P0
+    /\ lock = "free"
+    /\ gate = FALSE
+    /\ swap = None
+    /\ pending = P0
+    /\ orphans = {}
+    /\ bridgeOn = TRUE
+    /\ shutDown = FALSE
+    /\ closed = FALSE
+    /\ bound = P0
+    /\ sdk = [p \in All |-> IF p = P0 THEN "NOT_READY" ELSE "NONE"]
+    /\ inits = [p \in All |-> IF p = P0 THEN 1 ELSE 0]
+    /\ ran = [p \in All |-> FALSE]
+    /\ prevOf = [p \in All |-> None]
+    /\ events = {}
+    /\ emitted = 0
+    /\ shuts = [p \in All |-> 0]
+    /\ twoInits = FALSE
+
+Init == InitWith({}) \/ InitAsync
 
 \* The state of the registration an orphan entry watches: the provider's current one, or, once that provider has been
 \* registered again, the state its watched registration was left in (a new registration does not change it).
@@ -307,11 +331,13 @@ Emit(p, e) ==
 \* initialize() has returned, so a provider that reports a state before it returns is taken at its word.  If it then
 \* fails or is interrupted, the provider it replaced may never be shut down, and a later rollback onto it would call
 \* initialize() a second time: documented limits, outside this model.  Not while
-\* a watcher waits on the provider, which would take the STALE at its word too.
+\* a watcher waits on the provider, which would take the STALE at its word too, nor while it is recorded as pending
+\* (the async build's), which a failed swap reads by its NOT_READY state.
 EmitStaleWhileStarting(p) ==
     /\ emitted < MaxEvents
     /\ inits[p] > 0 /\ sdk[p] = "NOT_READY"
     /\ ~\E o \in orphans : o.watch = p /\ o.frozen = "LIVE"
+    /\ pending # p
     /\ sdk' = [sdk EXCEPT ![p] = "STALE"]
     /\ events' = events \cup {[p |-> p, e |-> "STALE"]}
     /\ emitted' = emitted + 1

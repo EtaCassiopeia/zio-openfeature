@@ -58,6 +58,10 @@ mutants = {
     'a swap after shutdown is not refused': (
         '    /\\ lock = "free" /\\ ~shutDown /\\ ~closed /\\ ~Settling\n    /\\ sdk[p] = "NONE"',
         '    /\\ lock = "free" /\\ ~closed /\\ ~Settling\n    /\\ sdk[p] = "NONE"'),
+    # A failed swap that never bound its provider reads a still-initializing previous provider as Ready.
+    'a failed swap that never bound reads a still-initializing provider as Ready': (
+        '    /\\ status\' = IF sdk[swap.prev] = "NOT_READY" THEN swap.before ELSE Apply(swap.before, sdk[swap.prev])',
+        '    /\\ status\' = IF sdk[swap.prev] = "NOT_READY" THEN "Ready" ELSE Apply(swap.before, sdk[swap.prev])'),
     # The gate never goes up.
     'no swap gate': (
         '    /\\ gate\' = TRUE\n    /\\ status\' = "NotReady"',

@@ -10,7 +10,7 @@ java -cp tla2tools.jar tlc2.TLC -workers auto -deadlock -config Lifecycle.cfg Li
 ```
 
 `-deadlock` is needed because a closed scope is a final state. The CI configuration (`Lifecycle.cfg`) has the initial
-provider, three swaps and two provider events: about 24 million distinct states, a few minutes on a laptop.
+provider, three swaps and two provider events: about 26 million distinct states, a few minutes on a laptop.
 
 ## What it checks
 
@@ -40,6 +40,7 @@ provider, three swaps and two provider events: about 24 million distinct states,
 | A rollback reads such an `ERROR` from the restored provider as a failed rollback (#623) | `ShutDownAtMostOnce` |
 | The watcher of a timed-out swap's provider reads such an `ERROR` as a failed initialization (#623) | `ShutDownAtMostOnce` |
 | A swap after shutdown is not refused (#631) | `ShutDownAtMostOnce` |
+| A failed swap that never bound its provider reads a still-initializing provider as `Ready` (#634) | `StatusFollowsSdk` |
 | The swap gate never goes up | `NotReadyDuringSwap` |
 
 ## Actions and the code
@@ -51,11 +52,13 @@ there is one.
 |:--|:--|
 | `SwapStart` | `FeatureFlagsLive.setProvider`: lock taken, gate up, `SwapStarted`; on a shut-down instance `setProvider` fails before this point (`~shutDown`) |
 | `SdkBind` | `ProviderRegistration.registerThenAwait`: the SDK binds the new provider and starts `initialize()` |
+| `SdkBindFail` | the SDK's registration throwing before it binds (`EventProvider.attach` or `registerGlobalProvider` refusing the provider) |
 | `SdkInitOk`, `SdkInitFail` | the SDK's `FeatureProviderStateManager.initialize` returning or throwing; after a success, the SDK's `PROVIDER_READY` (`ran`) and `ProviderRepository.shutDownOld` |
 | `SwapDone` | `setProvider`: `SwapSucceeded(settled)`, gate down, `reconcileRegistration`; `ProviderRegistration.awaitOutcome` deciding by the SDK's `PROVIDER_READY` |
 | `SwapTimeout` | `setProvider`, timeout branch: `SwapFailed`, `pendingInit`, `recordOrphan`, `reconcileLateReady` |
 | `SwapFailNoRollback` | `setProvider`, failure branch when `initPending(oldProvider)` |
 | `SwapRollback` | `setProvider`, failure branch: `restoreSdkRegistration` (probe point `RollbackBind`), `RollbackSucceeded(settled)` or `cleanupUnboundFailedProvider` |
+| `SwapRollbackUnbound` | `setProvider`, failure branch: `failedBeforeBinding`, `RollbackUnbound(before)`, then `reconcileRegistration` once the gate drops |
 | `Emit`, `EmitStaleWhileStarting` | a provider's `emit`; the SDK's `FeatureProviderStateManager.onEmit` |
 | `Deliver` | `EventBridge.onSdkEvent` and `applySdkSignal` |
 | `OrphanResolved` | `OrphanedProviders.settle`, with the entry's `ReadyWatch` |

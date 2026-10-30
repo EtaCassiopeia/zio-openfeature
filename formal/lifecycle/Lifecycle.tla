@@ -163,7 +163,7 @@ SwapStart(p) ==
     /\ lock' = "swap"
     /\ gate' = TRUE
     /\ status' = "NotReady"
-    /\ swap' = [new |-> p, prev |-> installed, phase |-> "bind"]
+    /\ swap' = [new |-> p, prev |-> installed, phase |-> "bind", before |-> status]
     /\ installed' = p
     /\ UNCHANGED << pending, orphans, bridgeOn, shutDown, closed, sdkVars >>
 
@@ -178,6 +178,13 @@ SdkBind ==
     /\ swap' = [swap EXCEPT !.phase = "wait"]
     /\ UNCHANGED << status, installed, lock, gate, pending, orphans, bridgeOn, shutDown, closed,
                     events, emitted, shuts, twoInits >>
+
+\* SdkBindFail: the SDK refuses the registration before it binds the new provider (the provider is attached to, or
+\* registered with, another API).  Nothing changes in the SDK.
+SdkBindFail ==
+    /\ swap # None /\ swap.phase = "bind"
+    /\ swap' = [swap EXCEPT !.phase = "unbound"]
+    /\ UNCHANGED << status, installed, lock, gate, pending, orphans, bridgeOn, shutDown, closed, sdkVars >>
 
 \* SdkInitOk: a running initialize() returns.  The SDK reports READY, dispatches its PROVIDER_READY and shuts the
 \* previous provider down.
@@ -264,6 +271,17 @@ SwapRollback(ok, r, early) ==
     /\ orphans' = Freeze(orphans, swap.prev)
     /\ gate' = FALSE /\ lock' = "free" /\ swap' = None /\ pending' = None
     /\ UNCHANGED << bridgeOn, shutDown, closed, inits, emitted >>
+
+\* SwapRollbackUnbound: a swap whose registration was refused before binding.  Nothing is registered again: the previous
+\* provider is still bound, in the state its registration has.  The status goes back to the one before the swap, and the
+\* SDK's state for the slot is then applied as an event would be; one still initializing keeps its status (NotReady
+\* while it starts, Error for a timed-out swap's provider), and its own events move it on.
+SwapRollbackUnbound ==
+    /\ swap # None /\ swap.phase = "unbound"
+    /\ installed' = swap.prev
+    /\ status' = IF sdk[swap.prev] = "NOT_READY" THEN swap.before ELSE Apply(swap.before, sdk[swap.prev])
+    /\ gate' = FALSE /\ lock' = "free" /\ swap' = None
+    /\ UNCHANGED << pending, orphans, bridgeOn, shutDown, closed, sdkVars >>
 
 -----------------------------------------------------------------------------
 (* Provider events *)
@@ -390,6 +408,8 @@ ScopeClose ==
 Next ==
     \/ \E p \in Providers : SwapStart(p)
     \/ SdkBind
+    \/ SdkBindFail
+    \/ SwapRollbackUnbound
     \/ \E p \in All : SdkInitOk(p) \/ SdkInitFail(p)
     \/ SwapDone
     \/ SwapTimeout

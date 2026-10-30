@@ -9,7 +9,7 @@ uses the status to decide whether an evaluation may run, and publishes the provi
 
 | `ProviderStatus` | An evaluation | Entered by |
 |:--|:--|:--|
-| `NotReady` | fails with `ProviderNotReady(NotReady)` | start, a `setProvider` swap in progress, or shutdown complete |
+| `NotReady` | fails with `ProviderNotReady(NotReady)` | start, a `setProvider` swap in progress, a refused swap while the provider still starts, or shutdown complete |
 | `Ready` | runs | a `READY` event |
 | `Stale` | runs | a `STALE` event, or the SDK reporting `STALE` for the provider, from `NotReady`, `Ready` or `Error`; a `setProvider` whose new provider the SDK reports `STALE` |
 | `Error` | runs: the provider usually serves its last good values or answers with an error code | an `ERROR` event; a `setProvider` whose new provider reports `ERROR` right after it initialized |

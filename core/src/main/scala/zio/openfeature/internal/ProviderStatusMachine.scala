@@ -37,6 +37,12 @@ private[openfeature] object ProviderStatusMachine {
       * rollback re-registration confirms the old provider is bound.
       */
     final case class RollbackSucceeded(settled: Settled) extends Signal
+
+    /** A failed swap whose registration threw before the SDK bound the new provider changed nothing in the SDK: the
+      * status goes back to `previous`, the one before the swap, and the SDK's state for the slot is applied after it as
+      * an event. Not a readiness: the init watchdog stays armed.
+      */
+    final case class RollbackUnbound(previous: ProviderStatus) extends Signal
   }
 
   /** Cross-thread context the table needs but the public ProviderStatus cannot represent. */
@@ -61,6 +67,7 @@ private[openfeature] object ProviderStatusMachine {
       case Signal.SwapSucceeded(settled)     => Some(statusOf(settled))
       case Signal.SwapFailed                 => Some(Error)
       case Signal.RollbackSucceeded(settled) => Some(statusOf(settled))
+      case Signal.RollbackUnbound(prev)      => Some(prev)
 
       // Non-lifecycle signals (the init watchdog and every bridge event) never take effect during a swap (the swap
       // sets its own outcome) nor after an explicit shutdown has completed (post-shutdown NotReady is terminal; a

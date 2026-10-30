@@ -540,6 +540,148 @@ object ProviderHotSwapSpec extends ZIOSpecDefault {
         )
       }
     } @@ TestAspect.withLiveClock,
+    test("a failed swap that never bound its provider leaves a still-initializing previous provider NotReady") {
+      ZIO.scoped {
+        val api    = OpenFeatureAPI.createIsolated()
+        val domain = s"test-swap-${java.util.UUID.randomUUID()}"
+        val b      = new Counting("B", blocking = false)
+        for {
+          a <- ZIO.acquireRelease(ZIO.succeed(new Counting("A", blocking = true)))(p =>
+            ZIO.succeed(p.release.countDown())
+          )
+          ff <- FeatureFlags.buildAsync(
+            a,
+            domain = Some(domain),
+            version = None,
+            initialHooks = Nil,
+            statusRef = None,
+            addShutdownFinalizer = true,
+            apiOverride = Some(api),
+            initTimeout = 1.second
+          )
+          started <- awaitTrue(a.inits.get() == 1)
+          // Attached elsewhere already: the SDK's registration throws before it binds B, so the slot keeps A.
+          _      <- ZIO.succeed(dev.openfeature.sdk.EventProviderAccess.attach(b, (_, _) => ()))
+          failed <- ff.setProvider(b).either
+          status <- ff.providerStatus
+          eval   <- ff.boolean("flag", default = false).either
+          bound  = api.getProvider(domain)
+          binits = b.inits.get()
+          // The init watchdog is still armed: A, still initializing past initTimeout, goes Fatal and is shut down.
+          fatal <- ff.providerStatus
+            .repeat(Schedule.spaced(20.millis) && Schedule.recurWhile[ProviderStatus](_ != ProviderStatus.Fatal))
+            .timeout(5.seconds)
+            .map(_.isDefined)
+          down <- awaitTrue(a.shutdowns.get() >= 1)
+        } yield assertTrue(
+          started,
+          failed.isLeft,
+          status == ProviderStatus.NotReady,
+          eval == Left(FeatureFlagError.ProviderNotReady(ProviderStatus.NotReady)),
+          bound eq a,
+          binits == 0,
+          fatal,
+          down
+        )
+      }
+    } @@ TestAspect.withLiveClock,
+    test("a swap refused before binding, after a timed-out swap, keeps the timed-out provider and its Error status") {
+      ZIO.scoped {
+        val a = new Counting("A", blocking = false)
+        val c = new Counting("C", blocking = false)
+        for {
+          b <- ZIO.acquireRelease(ZIO.succeed(new Counting("B", blocking = true)))(p =>
+            ZIO.succeed(p.release.countDown())
+          )
+          built <- buildExposed(a, initTimeout = 300.millis)
+          (ff, api, domain) = built
+          timedOut <- ff.setProvider(b).either
+          _        <- ZIO.succeed(dev.openfeature.sdk.EventProviderAccess.attach(c, (_, _) => ()))
+          refused  <- ff.setProvider(c).either
+          status   <- ff.providerStatus
+          meta     <- ff.providerMetadata
+          bound  = api.getProvider(domain)
+          counts = (b.inits.get(), c.inits.get())
+        } yield assertTrue(
+          timedOut.isLeft,
+          refused.isLeft,
+          status == ProviderStatus.Error,
+          meta.name == "B",
+          bound eq b,
+          counts == ((1, 0))
+        )
+      }
+    } @@ TestAspect.withLiveClock,
+    test("a swap refused before binding leaves an async provider whose initialize() threw to the init watchdog") {
+      ZIO.scoped {
+        val api    = OpenFeatureAPI.createIsolated()
+        val domain = s"test-swap-${java.util.UUID.randomUUID()}"
+        val a      = new FailingCounting("A")
+        val b      = new Counting("B", blocking = false)
+        for {
+          ff <- FeatureFlags.buildAsync(
+            a,
+            domain = Some(domain),
+            version = None,
+            initialHooks = Nil,
+            statusRef = None,
+            addShutdownFinalizer = true,
+            apiOverride = Some(api),
+            initTimeout = 1.second
+          )
+          erred <- ff.providerStatus
+            .repeat(Schedule.spaced(20.millis) && Schedule.recurWhile[ProviderStatus](_ != ProviderStatus.Error))
+            .timeout(5.seconds)
+            .map(_.isDefined)
+          _      <- ZIO.succeed(dev.openfeature.sdk.EventProviderAccess.attach(b, (_, _) => ()))
+          failed <- ff.setProvider(b).either
+          status <- ff.providerStatus
+          // Never ready, so the watchdog still makes it Fatal at initTimeout.
+          fatal <- ff.providerStatus
+            .repeat(Schedule.spaced(20.millis) && Schedule.recurWhile[ProviderStatus](_ != ProviderStatus.Fatal))
+            .timeout(5.seconds)
+            .map(_.isDefined)
+        } yield assertTrue(erred, failed.isLeft, status == ProviderStatus.Error, fatal)
+      }
+    } @@ TestAspect.withLiveClock,
+    test("an init-watchdog deadline that falls inside a refused swap still makes a hung provider Fatal") {
+      ZIO.scoped {
+        val api    = OpenFeatureAPI.createIsolated()
+        val domain = s"test-swap-${java.util.UUID.randomUUID()}"
+        val b      = new Counting("B", blocking = false)
+        for {
+          a <- ZIO.acquireRelease(ZIO.succeed(new Counting("A", blocking = true)))(p =>
+            ZIO.succeed(p.release.countDown())
+          )
+          held    <- Promise.make[Nothing, Unit]
+          release <- Promise.make[Nothing, Unit]
+          _       <- ZIO.addFinalizer(release.succeed(()))
+          ff      <- zio.openfeature.internal.FeatureFlagsFactories.buildAsyncWithTracking(
+            a,
+            domain = Some(domain),
+            version = None,
+            initialHooks = Nil,
+            statusRef = None,
+            addShutdownFinalizer = true,
+            apiOverride = Some(api),
+            initTimeout = 300.millis,
+            probe = holdAt(zio.openfeature.internal.LifecycleProbe.Point.SwapRollback, held, release)
+          )
+          _    <- ZIO.succeed(dev.openfeature.sdk.EventProviderAccess.attach(b, (_, _) => ()))
+          swap <- ff.setProvider(b).either.fork
+          // Held with its gate up past the watchdog's deadline, which the gate drops.
+          reached <- held.await.timeout(5.seconds)
+          _       <- ZIO.sleep(600.millis)
+          _       <- release.succeed(())
+          _       <- swap.join
+          fatal   <- ff.providerStatus
+            .repeat(Schedule.spaced(20.millis) && Schedule.recurWhile[ProviderStatus](_ != ProviderStatus.Fatal))
+            .timeout(5.seconds)
+            .map(_.isDefined)
+          down <- awaitTrue(a.shutdowns.get() >= 1)
+        } yield assertTrue(reached.isDefined, fatal, down)
+      }
+    } @@ TestAspect.withLiveClock,
     test("a failed swap does not initialize again a provider whose initialize() has not returned") {
       ZIO.scoped {
         val a = new Counting("A", blocking = false)

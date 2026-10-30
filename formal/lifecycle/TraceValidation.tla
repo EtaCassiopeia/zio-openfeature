@@ -48,6 +48,8 @@ TraceNext ==
     \/ Lib("SwapDone", SwapDone /\ sdk[swap.new] = Step.state)
     \/ Lib("SwapTimeout", SwapTimeout)
     \/ Lib("SwapFailNoRollback", SwapFailNoRollback)
+    \/ Next1 = "SwapRollbackUnbound" /\ Env(SdkBindFail)
+    \/ Lib("SwapRollbackUnbound", SwapRollbackUnbound)
     \/ \E early \in BOOLEAN, r \in {"READY", "STALE", "ERROR", "FATAL"} :
          Lib("SwapRollback", (Step.ok => r = Step.state) /\ SwapRollback(Step.ok, r, early))
     \/ \E ev \in events : Lib("Deliver", Recorded(ev.e) /\ DeliverToBridge(ev))

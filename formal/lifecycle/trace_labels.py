@@ -11,7 +11,8 @@ The mapping (formal/lifecycle/README.md, "Trace validation"):
   SdkBind                            -> SdkBind
   ApplySignal(SwapSucceeded(_))      -> SwapDone, settled in its state
   SwapTimeout                        -> SwapTimeout
-  SwapRollback                       -> SwapRollback
+  SwapRollback                       -> SwapRollback, or SwapRollbackUnbound when the swap
+                                        recorded no SdkBind (its registration was refused)
   OrphanRecorded, no timeout or
     rollback in the same swap        -> SwapFailNoRollback
   DeliverEvent, outside a swap and
@@ -38,6 +39,7 @@ def labels(records):
     in_swap = False
     swap_outcome = None
     rollback = None
+    bound_new = False
     in_shutdown = False
     shut_down = False
     closed = False
@@ -69,13 +71,14 @@ def labels(records):
             continue
         if point == "SwapStart":
             act("SwapStart")
-            in_swap, swap_outcome, rollback = True, None, None
+            in_swap, swap_outcome, rollback, bound_new = True, None, None, False
             continue
         if in_swap:
             succeeded = (re.match(r"(SwapSucceeded|RollbackSucceeded)\((Ready|Stale|Error|Fatal)\b", arg)
                          if point == "ApplySignal" else None)
             if point == "SdkBind":
                 act("SdkBind")
+                bound_new = True
             elif succeeded and succeeded.group(1) == "SwapSucceeded" and swap_outcome is None:
                 swap_outcome = "SwapDone"
                 act("SwapDone", state=succeeded.group(2).upper())
@@ -87,7 +90,7 @@ def labels(records):
                 act("SwapTimeout")
             elif point == "SwapRollback" and swap_outcome is None:
                 swap_outcome = "SwapRollback"
-                rollback = act("SwapRollback")
+                rollback = act("SwapRollback" if bound_new else "SwapRollbackUnbound")
             elif point == "OrphanRecorded" and swap_outcome is None:
                 swap_outcome = "SwapFailNoRollback"
                 act("SwapFailNoRollback")

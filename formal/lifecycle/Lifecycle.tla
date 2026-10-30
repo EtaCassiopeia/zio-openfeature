@@ -400,19 +400,21 @@ TearDown ==
 (* shutdown and the scope close *)
 
 \* ShutdownStart: shutdown holds the lock (it waits for a swap in flight); the status is ShuttingDown and the bridge
-\* is deregistered.  A shutdown may be called again after one completed: it runs again, harmlessly.
+\* is deregistered.  A shutdown may be called again after one completed, or after the scope closed: it runs again,
+\* harmlessly.
 ShutdownStart ==
-    /\ lock = "free" /\ ~closed
+    /\ lock = "free"
     /\ lock' = "shutdown"
     /\ status' = "ShuttingDown"
     /\ bridgeOn' = FALSE
     /\ UNCHANGED << installed, gate, swap, pending, orphans, shutDown, closed, sdkVars >>
 
-\* ShutdownDone: the owning instance tears the API down; the status is NotReady for good.  A later shutdown finds the
-\* API already torn down: the SDK's shutdown cleared its registrations, so nothing is shut down again.
+\* ShutdownDone: the owning instance tears the API down; the status is NotReady for good.  A later shutdown, or one after
+\* the scope closed, finds the API already torn down: the SDK's shutdown cleared its registrations, so nothing is shut
+\* down again.
 ShutdownDone ==
     /\ lock = "shutdown"
-    /\ IF shutDown THEN UNCHANGED << shuts, inits, orphans >> ELSE TearDown
+    /\ IF shutDown \/ closed THEN UNCHANGED << shuts, inits, orphans >> ELSE TearDown
     /\ status' = "NotReady"
     /\ shutDown' = TRUE
     /\ lock' = "free"

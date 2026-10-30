@@ -1,0 +1,7 @@
+{"seq":0,"point":"Begin","arg":""}
+{"seq":1,"point":"SwapStart","arg":""}
+{"seq":2,"point":"SdkBind","arg":""}
+{"seq":3,"point":"SwapStart","arg":""}
+{"seq":4,"point":"SdkBind","arg":""}
+{"seq":5,"point":"ApplySignal","arg":"SwapSucceeded(Ready)"}
+{"seq":6,"point":"SwapDone","arg":""}

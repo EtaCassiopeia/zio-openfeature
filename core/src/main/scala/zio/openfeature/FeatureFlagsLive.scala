@@ -286,30 +286,33 @@ final private[openfeature] class FeatureFlagsLive(
   private def restoreSdkRegistration(
     oldProvider: OFFeatureProvider,
     newProvider: OFFeatureProvider
-  ): Task[Boolean] =
+  ): Task[Option[JavaProviderState]] =
     ZIO.attemptBlocking {
       val bound = domain.fold(api.getProvider())(d => api.getProvider(d))
-      if (bound eq oldProvider) true // swap failed before binding (e.g. attach threw); already routing to old
+      // Swap failed before binding (e.g. attach threw): already routing to old, in whatever state the SDK has for it.
+      if (bound eq oldProvider) Some(client.getProviderState)
       // A concurrent sibling swap (shared-api topology) won the slot: leave it alone and report no restore, so status
       // stays Error rather than us fighting the winner. The refs stay rolled back to oldProvider — a benign skew in
       // this rare topology, deliberately not reconciled here.
-      else if (bound ne newProvider) false
+      else if (bound ne newProvider) None
       else {
-        def register(): Unit = ProviderRegistration.registerAndAwaitBlocking(api, domain, oldProvider, initTimeout)
-        try register()
-        catch {
-          case _: IllegalStateException =>
-            // The "already attached" state a failed swap leaves an EventProvider in: its state manager was evicted from
-            // the slot but its `attach` CAS was never reset, so re-registration throws. Detach and retry once; any
-            // further failure propagates. This is precise for the case that matters — the ISE fires here only for an
-            // old provider still bound to ANOTHER domain when its reused READY manager skips attach entirely (so the
-            // detach is never called on a still-attached shared provider). The SDK's other ISE ("cannot set provider
-            // while repository is shutting down") also lands here, but it throws before any rebind, and the detach is
-            // moot then because the whole API is being torn down; the retry rethrows it and it propagates to cleanup.
-            EventProviderAccess.detach(oldProvider)
-            register()
-        }
-        true
+        def register(): JavaProviderState =
+          ProviderRegistration.registerAndAwaitBlocking(api, domain, oldProvider, initTimeout)
+        Some(
+          try register()
+          catch {
+            case _: IllegalStateException =>
+              // The "already attached" state a failed swap leaves an EventProvider in: its state manager was evicted from
+              // the slot but its `attach` CAS was never reset, so re-registration throws. Detach and retry once; any
+              // further failure propagates. This is precise for the case that matters — the ISE fires here only for an
+              // old provider still bound to ANOTHER domain when its reused READY manager skips attach entirely (so the
+              // detach is never called on a still-attached shared provider). The SDK's other ISE ("cannot set provider
+              // while repository is shutting down") also lands here, but it throws before any rebind, and the detach is
+              // moot then because the whole API is being torn down; the retry rethrows it and it propagates to cleanup.
+              EventProviderAccess.detach(oldProvider)
+              register()
+          }
+        )
       }
     }
 
@@ -495,7 +498,7 @@ final private[openfeature] class FeatureFlagsLive(
         //    lock across `initialize()`, so a hanging provider would wedge this swap, the rollback below and
         //    `api.shutdown()`. Phase 2 watch-point: re-verify READY detection against the SDK's spec-v0.9.0
         //    provider-event marker once shipped.
-        _ <- ProviderRegistration
+        settled <- ProviderRegistration
           .registerThenAwait(api, domain, newProvider, initTimeout)(probe.at(Point.SdkBind))
           .mapError(e => FeatureFlagError.ProviderInitializationFailed(e))
           .tapError {
@@ -530,19 +533,22 @@ final private[openfeature] class FeatureFlagsLive(
                       Cause.fail(e)
                     ) *> cleanupUnboundFailedProvider(newProvider),
                   restored =>
-                    // restored == false only when a concurrent sibling swap already won the slot (see
-                    // restoreSdkRegistration): leave status Error and log a breadcrumb, don't fight the winner.
-                    if (restored) applySignal(Signal.RollbackSucceeded).unit
-                    else
-                      ZIO.logInfo(
-                        s"setProvider rollback: slot no longer bound to the failed provider (concurrent swap?); " +
-                          s"leaving status Error for '$oldName'"
-                      )
+                    // None only when a concurrent sibling swap already won the slot (see restoreSdkRegistration):
+                    // leave status Error and log a breadcrumb, don't fight the winner.
+                    restored match {
+                      case Some(state) =>
+                        applySignal(Signal.RollbackSucceeded(stale = state == JavaProviderState.STALE)).unit
+                      case None =>
+                        ZIO.logInfo(
+                          s"setProvider rollback: slot no longer bound to the failed provider (concurrent swap?); " +
+                            s"leaving status Error for '$oldName'"
+                        )
+                    }
                 )
           }
-        // 4. Mark ready via the machine — the Java SDK bridge also fires PROVIDER_READY, but we set it explicitly for
-        //    immediate visibility.
-        _ <- applySignal(Signal.SwapSucceeded)
+        // 4. Apply the outcome via the machine — Ready, or Stale when the SDK reported the new provider STALE. The
+        //    bridge's own events for it were dropped while the gate was up; the re-read below picks up any later state.
+        _ <- applySignal(Signal.SwapSucceeded(stale = settled == JavaProviderState.STALE))
       } yield ()
       // The swap runs to its outcome even if the caller is interrupted: an interrupt mid-registration would skip
       // both the success signal and the rollback, leaving status NotReady with the refs on a provider that may or may not
@@ -551,12 +557,16 @@ final private[openfeature] class FeatureFlagsLive(
       // The gate must drop on every exit (success, failure, interruption) or bridge events would be suppressed forever.
       swap.uninterruptible
         .ensuring(ZIO.succeed(swapInProgress.set(false)))
-        .tapError {
-          // A READY that landed between the timeout and the gate dropping was suppressed; pick it up now.
-          case FeatureFlagError.ProviderInitializationFailed(_: java.util.concurrent.TimeoutException) =>
-            reconcileLateReady(newProvider)
-          case _ => ZIO.unit
-        }
+        .tapBoth(
+          {
+            // A READY that landed between the timeout and the gate dropping was suppressed; pick it up now.
+            case FeatureFlagError.ProviderInitializationFailed(_: java.util.concurrent.TimeoutException) =>
+              reconcileLateReady(newProvider)
+            case _ => ZIO.unit
+          },
+          // A state the SDK reached for the new provider while the gate was up was dropped; take it now.
+          _ => reconcileRegistration(newProvider)
+        )
         .ensuring(probe.at(Point.SwapDone))
     })
 

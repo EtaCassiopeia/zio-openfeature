@@ -27,7 +27,8 @@ def build() -> Scene:
         "status leaves Ready while the new provider initializes · three ways it ends",
         "on a timeout the status turns Ready by itself if the new provider finishes later · setProvider again recovers",
         "setProvider: the status moves from Ready to NotReady while the new provider initializes, and evaluations fail "
-        "with ProviderNotReady. If initialize succeeds the new provider serves and the status is Ready; if it throws, "
+        "with ProviderNotReady. If initialize succeeds the new provider serves and the status is Ready (or Stale if the "
+        "provider reports stale); if it throws, "
         "the old provider is restored and the status returns to Ready; if it times out, the new provider stays "
         "registered and the status is Error.",
     )

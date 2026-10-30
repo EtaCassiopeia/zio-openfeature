@@ -575,8 +575,9 @@ trait FeatureFlags {
   /** Replace the underlying provider at runtime.
     *
     * The new provider is initialized — bounded by the layer's init timeout — and, once it is ready, the old provider is
-    * shut down; the status transitions through `NotReady` during the swap. Hooks, context, and event handlers are
-    * preserved. Evaluations that start during the swap fail with `ProviderNotReady`.
+    * shut down; the status transitions through `NotReady` during the swap and ends `Ready`, or `Stale` when the SDK
+    * reports the new provider stale. Hooks, context, and event handlers are preserved. Evaluations that start during
+    * the swap fail with `ProviderNotReady`.
     *
     * If the new provider's `initialize()` fails, the effect fails with `ProviderInitializationFailed` and the previous
     * provider is registered again. If it does not finish within the init timeout, the effect fails with

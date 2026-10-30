@@ -103,6 +103,38 @@ object ProviderHotSwapSpec extends ZIOSpecDefault {
     } yield ff
   }
 
+  /** A provider whose `initialize()`, from its `staleFrom`-th call on, reports STALE and then waits for `release`. */
+  private class StaleWhileInitializing(name: String, staleFrom: Int) extends SimpleProvider(name, Map("flag" -> true)) {
+    val release                                             = new java.util.concurrent.CountDownLatch(1)
+    private val calls                                       = new java.util.concurrent.atomic.AtomicInteger(0)
+    override def initialize(ctx: OFEvaluationContext): Unit =
+      if (calls.incrementAndGet() >= staleFrom) {
+        emit(
+          dev.openfeature.sdk.ProviderEvent.PROVIDER_STALE,
+          dev.openfeature.sdk.ProviderEventDetails.builder().build()
+        )
+        release.await()
+        ()
+      }
+  }
+
+  /** [[buildWithDomain]], also handing back the API and domain so a test can read the SDK's state for the slot. */
+  private def buildExposed(provider: SimpleProvider): ZIO[Scope, Throwable, (FeatureFlags, OpenFeatureAPI, String)] = {
+    val api    = OpenFeatureAPI.createIsolated()
+    val domain = s"test-swap-${java.util.UUID.randomUUID()}"
+    FeatureFlags
+      .build(
+        provider,
+        domain = Some(domain),
+        version = None,
+        initialHooks = Nil,
+        statusRef = None,
+        addShutdownFinalizer = true,
+        apiOverride = Some(api)
+      )
+      .map(ff => (ff, api, domain))
+  }
+
   // Build a client on a caller-provided API + domain so several clients can share one API instance (registry topology).
   private def buildOn(
     api: dev.openfeature.sdk.OpenFeatureAPI,
@@ -178,6 +210,106 @@ object ProviderHotSwapSpec extends ZIOSpecDefault {
         } yield assertTrue(readCtx.targetingKey.contains("user-123"))
       }
     },
+    test("a swap whose new provider reports STALE from inside initialize() ends Stale, as the SDK reports") {
+      ZIO.scoped {
+        for {
+          built <- buildExposed(new SimpleProvider("A", Map("flag" -> true)))
+          (ff, api, domain) = built
+          next <- ZIO.acquireRelease(ZIO.succeed(new StaleWhileInitializing("B", staleFrom = 1)))(p =>
+            ZIO.succeed(p.release.countDown())
+          )
+          swap   <- ff.setProvider(next).either
+          status <- ff.providerStatus
+          slot   <- ZIO.succeed(api.getClient(domain).getProviderState)
+          value  <- ff.boolean("flag", default = false)
+          // Once initialize() returns, the SDK reports READY, and so does the status.
+          _     <- ZIO.succeed(next.release.countDown())
+          ready <- ff.providerStatus.repeatUntil(_ == ProviderStatus.Ready).timeout(5.seconds)
+        } yield assertTrue(
+          swap.isRight,
+          status == ProviderStatus.Stale,
+          slot == ProviderState.STALE,
+          value,
+          ready.contains(ProviderStatus.Ready)
+        )
+      }
+    } @@ TestAspect.withLiveClock,
+    test("a rollback onto a previous provider that reports STALE while it initializes again ends Stale") {
+      ZIO.scoped {
+        for {
+          previous <- ZIO.acquireRelease(ZIO.succeed(new StaleWhileInitializing("A", staleFrom = 2)))(p =>
+            ZIO.succeed(p.release.countDown())
+          )
+          built <- buildExposed(previous)
+          (ff, api, domain) = built
+          failing           = new SimpleProvider("Failing", Map.empty) {
+            override def initialize(ctx: OFEvaluationContext): Unit = throw new RuntimeException("cannot start")
+          }
+          swap   <- ff.setProvider(failing).either
+          status <- ff.providerStatus
+          slot   <- ZIO.succeed(api.getClient(domain).getProviderState)
+          m      <- ff.providerMetadata
+        } yield assertTrue(
+          swap.left.toOption.exists(_.isInstanceOf[FeatureFlagError.ProviderInitializationFailed]),
+          status == ProviderStatus.Stale,
+          slot == ProviderState.STALE,
+          m.name == "A"
+        )
+      }
+    } @@ TestAspect.withLiveClock,
+    test("a state the SDK reaches while the swap's gate is up is applied once the gate drops") {
+      ZIO.scoped {
+        for {
+          // Hold the swap just before it applies its outcome: the gate is still up there.
+          held    <- Promise.make[Nothing, Unit]
+          release <- Promise.make[Nothing, Unit]
+          _       <- ZIO.addFinalizer(release.succeed(()))
+          probe = new zio.openfeature.internal.LifecycleProbe {
+            def at(point: zio.openfeature.internal.LifecycleProbe.Point): UIO[Unit] = point match {
+              case zio.openfeature.internal.LifecycleProbe.Point
+                    .ApplySignal(zio.openfeature.internal.ProviderStatusMachine.Signal.SwapSucceeded(_)) =>
+                held.succeed(()) *> release.await
+              case _ => ZIO.unit
+            }
+          }
+          api    = OpenFeatureAPI.createIsolated()
+          domain = s"test-swap-${java.util.UUID.randomUUID()}"
+          ff <- zio.openfeature.internal.FeatureFlagsFactories.buildWithTracking(
+            new SimpleProvider("A", Map("flag" -> true)),
+            domain = Some(domain),
+            version = None,
+            initialHooks = Nil,
+            statusRef = None,
+            addShutdownFinalizer = true,
+            apiOverride = Some(api),
+            probe = probe
+          )
+          next <- ZIO.acquireRelease(ZIO.succeed(new StaleWhileInitializing("B", staleFrom = 1)))(p =>
+            ZIO.succeed(p.release.countDown())
+          )
+          swap <- ff.setProvider(next).either.fork
+          _    <- held.await.timeout(5.seconds)
+          // initialize() returns while the swap is held: the SDK now reports READY. The bridge publishes that READY
+          // right after its status write, which the swap's gate turned into a no-op; once it is published, the drop
+          // has happened.
+          fromB <- Promise.make[Nothing, Unit]
+          _     <- ZIO.acquireRelease(
+            ff.on(ProviderEventType.Ready, e => ZIO.when(e.metadata.name == "B")(fromB.succeed(())).unit)
+          )(cancel => cancel)
+          _         <- ZIO.succeed(next.release.countDown())
+          delivered <- fromB.await.timeout(5.seconds)
+          ready     <- ZIO.succeed(api.getClient(domain).getProviderState)
+          _         <- release.succeed(())
+          result    <- swap.join
+          status    <- ff.providerStatus
+        } yield assertTrue(
+          result.isRight,
+          delivered.isDefined,
+          ready == ProviderState.READY,
+          status == ProviderStatus.Ready
+        )
+      }
+    } @@ TestAspect.withLiveClock,
     test("setProvider transitions status to Ready after successful swap") {
       ZIO.scoped {
         val providerA = new SimpleProvider("ProviderA", Map.empty)

@@ -177,7 +177,8 @@ object LifecycleModel {
         // "Swaps are serialized": a swap waits for a parked one to settle first.
         val m = settle
         kind match {
-          // "On success, the status becomes Ready and the new provider serves."
+          // On success the status is the state the SDK reports for the new provider, Ready or Stale; no kind here
+          // reports STALE while it starts, so Ready.
           case Kind.Good | Kind.SlowInit | Kind.SlowShutdown =>
             m.copy(status = Ready, installed = Some(incoming), swapCompleted = true)
           // "If the new provider's initialize() throws ... the previous provider is registered again, and the status

@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1190 470" width="1190" height="470" role="img" aria-label="setProvider: the status moves from Ready to NotReady while the new provider initializes, and evaluations fail with ProviderNotReady. If initialize succeeds the new provider serves and the status is Ready; if it throws, the old provider is restored and the status returns to Ready; if it times out, the new provider stays registered and the status is Error.">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1190 470" width="1190" height="470" role="img" aria-label="setProvider: the status moves from Ready to NotReady while the new provider initializes, and evaluations fail with ProviderNotReady. If initialize succeeds the new provider serves and the status is Ready (or Stale if the provider reports stale); if it throws, the old provider is restored and the status returns to Ready; if it times out, the new provider stays registered and the status is Error.">
 <defs>
   <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
     <feGaussianBlur stdDeviation="2.5" result="blur"/>

@@ -24,6 +24,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A `setProvider` whose new provider reports `STALE` while it starts now ends `Stale`** (#617). The swap mapped
+  both `READY` and `STALE` to `Ready`, so the status said `Ready` while the Java SDK reported `STALE`, until the
+  provider's next event. The swap, and a rollback to the previous provider, now end in the state the SDK reports, and
+  once the swap's gate drops the SDK's state is read again, so a state reached during the swap is not lost.
 - **A `STALE` event now moves an `Error` status to `Stale`** (#613, spec compliance). The status left `Error` only on
   a `READY`, so a provider that recovered from an error to cached data, or a `multiProvider` chain whose failing member
   recovered while another stayed stale, reported `Error` while the SDK and the provider's own events said `STALE`. The

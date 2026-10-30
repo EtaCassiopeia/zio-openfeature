@@ -106,6 +106,27 @@ object LifecycleTeardownSpec extends ZIOSpecDefault {
         aOnce = a.shutdowns.get() == 1
       } yield assertTrue(aDown, bDown, aOnce)
     },
+    test("shutdown after the layer scope closes completes NotReady and shuts nothing down again") {
+      val p1 = new Counting("p1", blocking = false)
+      for {
+        ff <- ZIO.scoped {
+          zio.openfeature.internal.FeatureFlagsFactories.buildWithTracking(
+            p1,
+            domain = Some(s"teardown-${java.util.UUID.randomUUID()}"),
+            version = None,
+            initialHooks = Nil,
+            statusRef = None,
+            addShutdownFinalizer = true,
+            apiOverride = Some(OpenFeatureAPI.createIsolated())
+          )
+        }
+        closedDown <- awaitTrue(p1.shutdowns.get() == 1)
+        _          <- ff.shutdown.timeout(5.seconds)
+        status     <- ff.providerStatus
+        _          <- ZIO.sleep(200.millis)
+        shuts = p1.shutdowns.get()
+      } yield assertTrue(closedDown, status == ProviderStatus.NotReady, shuts == 1)
+    },
     test("setProvider after the layer scope closes fails with ProviderNotReady and does not touch the provider") {
       val p2 = new Counting("p2", blocking = false)
       for {

@@ -9,9 +9,9 @@ curl -sSLo tla2tools.jar https://github.com/tlaplus/tlaplus/releases/download/v1
 java -cp tla2tools.jar tlc2.TLC -workers auto -deadlock -config Lifecycle.cfg Lifecycle.tla
 ```
 
-`-deadlock` is needed because a closed scope is a final state. The CI configuration (`Lifecycle.cfg`) has the initial
+`-deadlock` turns off TLC's deadlock check: a state with no action enabled is not an error here. The CI configuration (`Lifecycle.cfg`) has the initial
 provider, three swaps and two provider events, from either start (the sync build's ready provider, or the async build's
-still initializing): about 57 million distinct states, a few minutes on a laptop.
+still initializing): about 63 million distinct states, a few minutes on a laptop.
 
 ## What it checks
 
@@ -68,6 +68,35 @@ there is one.
 | `OrphanResolved` | `OrphanedProviders.settle`, with the entry's `ReadyWatch` |
 | `ShutdownStart`, `ShutdownDone` | `FeatureFlagsLive.shutdown` |
 | `ScopeClose` | the API scope finalizer in `FeatureFlagsFactories`: takes the swap lock, marks the instance closed, then `boundedApiShutdown`, `orphans.resolveAll` |
+
+## Preconditions
+
+An action's precondition is either **enforced**, a guard the code has, or **assumed**, something the environment is
+taken never to do. TLC proves the invariants under both, so an assumed precondition on an action a user can trigger
+would hide a bug: each one below is enforced, or names the issue or the documented limit behind it. The SDK's and the provider's
+own actions (`SdkBind`, `SdkInitOk`, `Emit`, `Deliver`, ...) model what those do and are not listed.
+
+| Action | Precondition | Kind | Code, and what checks it |
+|:---|:---|:---|:---|
+| `SwapStart` | `lock = "free"` | enforced | `setProvider` runs under `swapLock`; fixture `reject/swap-inside-a-swap` |
+| `SwapStart` | `~shutDown` | enforced | `refuseSwap` (`shutdownCompleted`); fixture `reject/swap-after-shutdown`, `FeatureFlagsShutdownSpec`, mutant "a swap after shutdown is not refused" |
+| `SwapStart` | `~closed` | enforced | `refuseSwap` (`closed`, set by the scope finalizer); `LifecycleTeardownSpec`, mutant "a swap after the scope close is not refused" (a run recorded after `ScopeClose` is not validated) |
+| `SwapStart` | `~Settling` | assumed | a provider that reports `STALE` from inside `initialize()` is taken at its word, a documented limit (see below) |
+| `SwapStart` | `sdk[p] = "NONE"` | assumed | each provider is installed once. A provider still initializing can be installed again once the swap that replaced it settles (#669); installing again one that has settled or been shut down is not modelled either |
+| `ShutdownStart` | `lock = "free"` | enforced | `shutdown` runs under `swapLock`; fixtures `reject/shutdown-inside-a-swap` and `reject/recorded-shutdown-without-the-lock` |
+| `ShutdownDone` | `lock = "shutdown"` | enforced | structural: the second half of `shutdown`, in the same permit as `ShutdownStart`, so no run shows one without the other |
+| `ShutdownDone`, `ScopeClose` | `~Settling` (in `TearDown`) | assumed | the teardown waits for a provider that reported `STALE` from inside `initialize()` to finish starting; the code tears down regardless. The same documented limit as `SwapStart`'s |
+| `ScopeClose` | `lock = "free"` | enforced | `ownedApiFinalizer` takes `swapLock`; fixture `reject/swap-without-outcome`, `LifecycleTeardownSpec`, mutant "the scope close does not wait for a swap in flight" |
+| `ScopeClose` | `~closed` | assumed | a scope closes once; not an action a user can repeat |
+| `Init` | `InitWith` or `InitAsync` | both starts | the sync build hands over a `READY` provider, the async build one still initializing (recorded as pending); an async provider whose `initialize()` threw is `InitAsync` followed by `SdkInitFail` |
+
+`preconditions.py` checks that each fixture in the table is the run its precondition rules out: it deletes the
+precondition and validates the fixture again, which must then be accepted. The `traces` job runs it with the
+checker's self-test.
+
+`LifecycleInterleavingSpec` pairs every primary with every competitor except two kinds the docs give no outcome for:
+interrupting a provider-event primary (the interrupt has no lifecycle step to land in), and releasing hangs beside a
+primary whose provider does not hang.
 
 ## Trace validation
 

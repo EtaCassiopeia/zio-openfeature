@@ -17,6 +17,7 @@ on:
       - 'core/src/main/scala/zio/openfeature/internal/ProviderStatusMachine.scala'
       - 'core/src/main/scala/zio/openfeature/internal/OrphanedProviders.scala'
       - 'core/src/main/scala/zio/openfeature/internal/SwitchableProvider.scala'
+      - 'core/src/main/scala/zio/openfeature/internal/FeatureFlagsFactories.scala'
       - 'core/src/main/scala/zio/openfeature/internal/LifecycleProbe.scala'
       - 'testkit/src/test/scala/zio/openfeature/testkit/TraceProbe.scala'
       - 'testkit/src/test/scala/zio/openfeature/testkit/LifecycleModelSpec.scala'
@@ -32,6 +33,7 @@ on:
       - 'core/src/main/scala/zio/openfeature/internal/ProviderStatusMachine.scala'
       - 'core/src/main/scala/zio/openfeature/internal/OrphanedProviders.scala'
       - 'core/src/main/scala/zio/openfeature/internal/SwitchableProvider.scala'
+      - 'core/src/main/scala/zio/openfeature/internal/FeatureFlagsFactories.scala'
       - 'core/src/main/scala/zio/openfeature/internal/LifecycleProbe.scala'
       - 'testkit/src/test/scala/zio/openfeature/testkit/TraceProbe.scala'
       - 'testkit/src/test/scala/zio/openfeature/testkit/LifecycleModelSpec.scala'
@@ -101,6 +103,9 @@ jobs:
       - name: Check that the checker accepts and rejects its fixtures
         working-directory: formal/lifecycle
         run: python3 validate.py ../../tla2tools.jar ../../CommunityModules-deps.jar --selftest traces
+      - name: Check that each library precondition is exercised by a fixture
+        working-directory: formal/lifecycle
+        run: python3 preconditions.py ../../tla2tools.jar ../../CommunityModules-deps.jar
       - name: Record the lifecycle test suites' runs
         if: github.event_name != 'pull_request'
         env:
@@ -135,7 +140,7 @@ jobs:
           BODY: ${{ github.event.pull_request.body }}
         run: |
           changed=$(git diff --name-only "$BASE...$HEAD")
-          lifecycle=$(printf '%s\n' "$changed" | grep -E '^core/src/main/scala/zio/openfeature/(FeatureFlagsLive|internal/(EventBridge|ProviderRegistration|ProviderStatusMachine|OrphanedProviders|SwitchableProvider))\.scala$' || true)
+          lifecycle=$(printf '%s\n' "$changed" | grep -E '^core/src/main/scala/zio/openfeature/(FeatureFlagsLive|internal/(EventBridge|ProviderRegistration|ProviderStatusMachine|OrphanedProviders|SwitchableProvider|FeatureFlagsFactories))\.scala$' || true)
           model=$(printf '%s\n' "$changed" | grep -E '^formal/' || true)
           if [ -z "$lifecycle" ] || [ -n "$model" ]; then
             echo "Nothing to check: no lifecycle file changed, or the model changed with it."

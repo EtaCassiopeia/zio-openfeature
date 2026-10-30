@@ -10,6 +10,7 @@ import zio.openfeature.FeatureFlags.{
   UnknownProviderName
 }
 import dev.openfeature.sdk.{FeatureProvider => OFFeatureProvider, OpenFeatureAPI, ProviderState}
+import dev.openfeature.sdk.exceptions.{FatalError, GeneralError}
 import java.util.concurrent.TimeoutException
 
 /** The bodies of the [[FeatureFlags]] factories. `object FeatureFlags` keeps every signature, its ScalaDoc and its
@@ -21,14 +22,31 @@ private[openfeature] object FeatureFlagsFactories {
     * the layer build to fail so misconfiguration surfaces at startup, not at first evaluation. Returns the ZIO-level
     * `ProviderStatus` that should be reflected for a usable state.
     */
+  /** The state a provider reports through its own (deprecated) `getState`: what a provider whose `initialize()` this
+    * library ran itself, outside the SDK, is checked by, and what the build also refuses to serve when it is not
+    * `READY` or `STALE`.
+    */
   @scala.annotation.nowarn("msg=deprecated")
-  private def verifyInitState(provider: OFFeatureProvider): ZIO[Any, Throwable, ProviderStatus] =
+  private def verifyProviderState(provider: OFFeatureProvider): ZIO[Any, Throwable, ProviderStatus] =
     ZIO.attempt(provider.getState).flatMap {
       case ProviderState.READY => ZIO.succeed(ProviderStatus.Ready)
       case ProviderState.STALE => ZIO.succeed(ProviderStatus.Stale)
       case bad @ (ProviderState.ERROR | ProviderState.FATAL | ProviderState.NOT_READY) =>
         ZIO.fail(new IllegalStateException(s"Provider in $bad state after initialization"))
     }
+
+  /** The build serves only a provider that settled `READY` or `STALE`. One that initialized and then reported an error
+    * fails the build with that error's message, as one whose `initialize()` threw does: the build has nothing to fall
+    * back to, and the provider is shut down on that path.
+    */
+  private def verifyInitState(settled: ProviderRegistration.Settled): IO[Throwable, ProviderStatus] = settled match {
+    case ProviderRegistration.Settled.Ready      => ZIO.succeed(ProviderStatus.Ready)
+    case ProviderRegistration.Settled.Stale      => ZIO.succeed(ProviderStatus.Stale)
+    case ProviderRegistration.Settled.Error(msg) =>
+      ZIO.fail(new GeneralError(if (msg.isEmpty) "Provider entered ERROR during initialization" else msg))
+    case ProviderRegistration.Settled.Fatal(msg) =>
+      ZIO.fail(new FatalError(if (msg.isEmpty) "Provider entered FATAL during initialization" else msg))
+  }
 
   /** The instance both builds return, constructed before its provider is registered so its event bridge can be attached
     * first. The SDK client does not need a registered provider: it resolves the slot's provider per call.
@@ -217,9 +235,11 @@ private[openfeature] object FeatureFlagsFactories {
       // since a provider stuck in `initialize()` often cannot shut down either) so it doesn't keep threads/connections
       // alive — this also covers the domain/registry paths where no API finalizer is registered — and the bridge's
       // handlers are removed so a failed build leaves none behind.
-      verified <- (ProviderRegistration.registerThenAwait(api, domain, provider, initTimeout)(
-        ZIO.unless(early)(ff.startEventBridge).unit
-      ) *> verifyInitState(provider) <*
+      verified <- (ProviderRegistration
+        .registerThenAwait(api, domain, provider, initTimeout)(
+          ZIO.unless(early)(ff.startEventBridge).unit
+        )
+        .flatMap(settled => verifyInitState(settled) <* verifyProviderState(provider)) <*
         // A provider whose metadata name only exists once it has initialized (the SDK's MultiProvider) was stamped
         // with the "unknown" fallback; now that it has, record its real name.
         refreshProviderName(provider, ff))
@@ -536,7 +556,7 @@ private[openfeature] object FeatureFlagsFactories {
             // fallback keeps serving throughout; the shutdown above is best-effort against an init still running.
             _ <- ProviderRegistration
               .boundedInitialize(composed, ff.apiEvaluationContext, initTimeout)
-              .zipRight(verifyInitState(composed))
+              .zipRight(verifyProviderState(composed))
               .mapError(e => ProviderSwapFailed(FeatureFlagError.ProviderInitializationFailed(e)))
               .onError(discard)
             switched <- ff.switchProvider(switch, composed).onError(discard)

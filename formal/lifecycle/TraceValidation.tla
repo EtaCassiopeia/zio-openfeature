@@ -45,10 +45,11 @@ NeedsInit == Next1 \in {"SwapDone", "SwapRollback", "SwapFailNoRollback", "Orpha
 TraceNext ==
     \/ \E p \in Providers : Lib("SwapStart", SwapStart(p))
     \/ Lib("SdkBind", SdkBind)
-    \/ Lib("SwapDone", SwapDone /\ (sdk[swap.new] = "STALE") = Step.stale)
+    \/ Lib("SwapDone", SwapDone /\ sdk[swap.new] = Step.state)
     \/ Lib("SwapTimeout", SwapTimeout)
     \/ Lib("SwapFailNoRollback", SwapFailNoRollback)
-    \/ \E fatal, early \in BOOLEAN : Lib("SwapRollback", SwapRollback(Step.ok, Step.stale, fatal, early))
+    \/ \E early \in BOOLEAN, r \in {"READY", "STALE", "ERROR", "FATAL"} :
+         Lib("SwapRollback", (Step.ok => r = Step.state) /\ SwapRollback(Step.ok, r, early))
     \/ \E ev \in events : Lib("Deliver", Recorded(ev.e) /\ DeliverToBridge(ev))
     \/ \E o \in orphans : Lib("OrphanResolved", OrphanResolved(o))
     \/ Lib("ShutdownStart", ShutdownStart)

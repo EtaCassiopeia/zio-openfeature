@@ -12,13 +12,18 @@ import zio._
   * but that pending call: if it later fails, or never finishes, nothing shuts the previous provider down, and the API's
   * own shutdown cannot reach it. Each entry here watches the new provider's SDK state manager, which keeps its state
   * after the slot is rebound, and settles once:
-  *   - `READY` or `STALE`: the SDK has shut the previous provider down; the entry is dropped.
-  *   - `ERROR` or `FATAL`: the previous provider is shut down here.
-  *   - still `NOT_READY` when the owner shuts down or its scope closes: the previous provider is shut down here. An
+  *   - `READY` or `STALE`, or the SDK's `PROVIDER_READY` seen on the slot: the new provider's `initialize()` returned,
+  *     and the SDK has shut the previous provider down; the entry is dropped. A provider that initialized and then
+  *     reported an error is this case.
+  *   - `ERROR` or `FATAL` on two ticks in a row, with no `PROVIDER_READY` seen: `initialize()` failed, and the previous
+  *     provider is shut down here. The second tick gives the SDK's READY, dispatched asynchronously, time to arrive.
+  *   - neither when the owner shuts down or its scope closes: the previous provider is shut down here. An
   *     `initialize()` that ignores the SDK's interrupt and succeeds after that gets it shut down by the SDK as well.
   *
-  * The SDK exposes the manager's state, not whether `initialize()` has returned, so a provider that emits `READY` or
-  * `ERROR` from inside its own `initialize()` is taken at that word.
+  * The SDK does not mark its own `PROVIDER_READY` apart from one a provider emits, so a provider that emits `READY`
+  * from inside its own `initialize()` is taken at that word, and so is one that emits `ERROR` there before failing. The
+  * READY is watched on the slot's domain, which receives only the bound provider's events: once a later swap rebinds
+  * the slot, a READY the new provider sends is not seen there.
   *
   * Only an instance that owns its API records entries: a provider of a shared API may serve sibling clients.
   */
@@ -32,16 +37,19 @@ final private[openfeature] class OrphanedProviders(
   // An entry leaves the list once it is settled, so a settle still in progress can be waited for.
   private val entries = new AtomicReference[List[Entry]](Nil)
 
-  /** Watch `incomingState`, the state of the provider that replaced `previous` in a swap that timed out. */
+  /** Watch `incomingState`, the state of the provider that replaced `previous` in a swap that timed out, and `ready`,
+    * whether the SDK's READY for it reached the slot. `ready` is closed once the entry settles.
+    */
   def record(
     previous: FeatureProvider,
     previousName: String,
     incomingName: String,
-    incomingState: () => ProviderState
+    incomingState: () => ProviderState,
+    ready: Option[ProviderRegistration.ReadyWatch]
   ): UIO[Unit] =
     for {
       done <- Promise.make[Nothing, Unit]
-      entry = new Entry(previous, previousName, incomingName, incomingState, done)
+      entry = new Entry(previous, previousName, incomingName, incomingState, ready, done)
       _ <- ZIO.succeed(entries.updateAndGet(entry :: _))
       // A watcher that starts after a resolve has claimed the entry ends at its first tick.
       fiber <- watch(entry).forkDaemon
@@ -77,6 +85,7 @@ final private[openfeature] class OrphanedProviders(
         else
           entry.incomingState() match {
             case ProviderState.READY | ProviderState.STALE => settleWith(entry, ZIO.unit)
+            case _ if entry.initialized                    => settleWith(entry, ZIO.unit)
             case _ if forced                               =>
               settleWith(
                 entry,
@@ -85,7 +94,8 @@ final private[openfeature] class OrphanedProviders(
                     "in a swap that timed out and has not become ready"
                 ) *> shutDown(entry)
               )
-            case ProviderState.ERROR | ProviderState.FATAL =>
+            case ProviderState.ERROR | ProviderState.FATAL if !entry.failedOnce.getAndSet(true) => ZIO.succeed(false)
+            case ProviderState.ERROR | ProviderState.FATAL                                      =>
               settleWith(
                 entry,
                 ZIO.logWarning(
@@ -94,7 +104,7 @@ final private[openfeature] class OrphanedProviders(
                     "stays Error until a later setProvider succeeds"
                 ) *> shutDown(entry)
               )
-            case _ => ZIO.succeed(false)
+            case _ => ZIO.succeed { entry.failedOnce.set(false); false }
           }
       }
       .catchAllCause(c =>
@@ -108,7 +118,10 @@ final private[openfeature] class OrphanedProviders(
     ZIO.succeed(entry.claimed.compareAndSet(false, true)).flatMap { won =>
       ZIO.when(won)(
         probe.at(LifecycleProbe.Point.OrphanResolved) *> release
-          .ensuring(ZIO.succeed(entries.updateAndGet(_.filterNot(_ eq entry))) *> entry.done.succeed(()))
+          .ensuring(
+            ZIO.succeed(entry.ready.foreach(_.close())) *>
+              ZIO.succeed(entries.updateAndGet(_.filterNot(_ eq entry))) *> entry.done.succeed(())
+          )
       )
     } *> ZIO.succeed(true)
 
@@ -145,9 +158,14 @@ private[openfeature] object OrphanedProviders {
     val previousName: String,
     val incomingName: String,
     val incomingState: () => ProviderState,
+    val ready: Option[ProviderRegistration.ReadyWatch],
     val done: Promise[Nothing, Unit]
   ) {
-    val claimed = new AtomicBoolean(false)
+    val claimed    = new AtomicBoolean(false)
+    val failedOnce = new AtomicBoolean(false)
+
+    def initialized: Boolean = ready.exists(_.initialized)
+
     val watcher = new AtomicReference[Option[Fiber.Runtime[Nothing, Unit]]](None)
   }
 }

@@ -1,7 +1,7 @@
 package zio.openfeature.internal
 
 import java.util.concurrent.{TimeUnit, TimeoutException}
-import java.util.concurrent.atomic.AtomicReference
+import java.util.concurrent.atomic.{AtomicBoolean, AtomicReference}
 
 import scala.util.Try
 
@@ -28,10 +28,18 @@ import zio._
   * a hand-rolled loop on a blocking-pool thread rather than a `Schedule` because its deadline must be wall-clock:
   * construction has to stay bounded inside zio-test suites whose TestClock is frozen.
   *
+  * The outcome is decided by whether `initialize()` returned, not by the state the slot shows afterwards: a provider
+  * may report `ERROR` the moment it has initialized, and the SDK state of a failed `initialize()` is the same. The SDK
+  * dispatches its own `PROVIDER_READY` for a provider if and only if its `initialize()` returned, and before it shuts
+  * the replaced provider down, so the wait listens for that event on the slot's domain. A provider that initialized and
+  * then reported an error settles as [[Settled.Error]] or [[Settled.Fatal]]: the registration succeeded, in that
+  * status.
+  *
   * The SDK's async path hands the init exception only to its PROVIDER_ERROR event, as a message, so a failure here
   * carries the provider's message in a `GeneralError` (or `FatalError` for a FATAL outcome) rather than the original
-  * exception instance. A PROVIDER_ERROR that a provider emits from inside its own `initialize()` therefore reads as an
-  * init failure too.
+  * exception instance. A PROVIDER_READY that a provider emits from inside its own `initialize()` reads as an
+  * initialization that returned, and a PROVIDER_ERROR it emits there reads as a failure unless `initialize()` then
+  * returns within the outcome grace.
   */
 private[openfeature] object ProviderRegistration {
 
@@ -41,9 +49,38 @@ private[openfeature] object ProviderRegistration {
   final class RegistrationSuperseded
       extends RuntimeException("Provider registration was superseded by a concurrent registration")
 
+  /** How a registration settled: the provider's `initialize()` returned, and the SDK reports it in this state. Never
+    * `NOT_READY`.
+    */
+  sealed trait Settled extends Product with Serializable
+  object Settled {
+    case object Ready extends Settled
+    case object Stale extends Settled
+
+    /** `initialize()` returned and the provider then reported `ERROR`, with that event's message. */
+    final case class Error(message: String) extends Settled
+
+    /** `initialize()` returned and the provider then reported `FATAL`, with that event's message. */
+    final case class Fatal(message: String) extends Settled
+
+    /** The settled state for a provider already initialized in the slot, or None while it is still `NOT_READY`. */
+    def fromState(state: ProviderState): Option[Settled] = state match {
+      case ProviderState.READY     => Some(Ready)
+      case ProviderState.STALE     => Some(Stale)
+      case ProviderState.ERROR     => Some(Error(""))
+      case ProviderState.FATAL     => Some(Fatal(""))
+      case ProviderState.NOT_READY => None
+    }
+  }
+
   private val PollMillis = 10L
-  // The PROVIDER_ERROR event is dispatched asynchronously after the state flips, so give its message a short grace.
-  private val ErrorMessageGraceMillis = 500L
+  // Events are dispatched asynchronously after the state flips. On `ERROR` or `FATAL` the wait gives the SDK's READY,
+  // and the error's message, this long to arrive.
+  private val OutcomeGraceMillis = 500L
+  // Once the error's message has arrived, how much longer the READY may take. The SDK submits its READY before any
+  // event the provider emits after `initialize()` returns, to the same pool, so it trails that error only by
+  // scheduling; a READY missed here makes the registration read as failed, as it did before the READY was observed.
+  private val ReadyAfterErrorMillis = 100L
 
   /** Cap on the scope-close `api.shutdown()`. The SDK's own shutdown waits a few seconds per executor before forcing
     * them down, so this only trips when a provider's `shutdown()` itself hangs.
@@ -52,55 +89,88 @@ private[openfeature] object ProviderRegistration {
 
   final private case class InitError(message: String, fatal: Boolean)
 
-  /** Blocking form, for callers already on the blocking pool (the swap rollback). Returns the serving state the SDK
-    * reported, `READY` or `STALE`; throws on failure or timeout.
-    */
-  def registerAndAwaitBlocking(
-    api: OpenFeatureAPI,
-    domain: Option[String],
-    provider: OFFeatureProvider,
-    timeout: Duration
-  ): ProviderState = {
-    val lastError = new AtomicReference[Option[InitError]](None)
-    val handler   = errorHandler(provider, lastError)
-    api.on(JavaProviderEvent.PROVIDER_ERROR, handler)
-    try {
-      register(api, domain, provider)
-      awaitOutcome(api, domain, provider, timeout, lastError)
-    } finally removeHandler(api, handler)
-  }
-
-  /** Effect form, succeeding with the serving state the SDK reported, `READY` or `STALE`. The registration itself is
-    * not interruptible (it mutates SDK state); the wait is, so a caller's own timeout or interruption stops it.
+  /** Register `provider` and wait for its outcome, succeeding with how it settled. Fails if its `initialize()` threw,
+    * did not return within `timeout`, or the slot was rebound meanwhile. The registration itself is not interruptible
+    * (it mutates SDK state); the wait is, so a caller's own timeout or interruption stops it.
     */
   def registerAndAwait(
     api: OpenFeatureAPI,
     domain: Option[String],
     provider: OFFeatureProvider,
     timeout: Duration
-  ): Task[ProviderState] =
+  ): Task[Settled] =
     registerThenAwait(api, domain, provider, timeout)(ZIO.unit)
 
   /** [[registerAndAwait]], running `afterRegister` once the slot is bound to `provider` and before the wait. The build
-    * uses it to attach its event bridge to a slot that already holds the new provider.
+    * uses it to attach its event bridge to a slot that already holds the new provider. `ready`, when given, is the
+    * caller's watch for `provider`'s READY, opened before this call and closed by the caller; otherwise the wait opens
+    * and closes its own.
     */
   def registerThenAwait[R](
     api: OpenFeatureAPI,
     domain: Option[String],
     provider: OFFeatureProvider,
-    timeout: Duration
-  )(afterRegister: ZIO[R, Throwable, Unit]): ZIO[R, Throwable, ProviderState] =
+    timeout: Duration,
+    ready: Option[ReadyWatch] = None
+  )(afterRegister: ZIO[R, Throwable, Unit]): ZIO[R, Throwable, Settled] =
     ZIO.suspendSucceed {
-      val lastError = new AtomicReference[Option[InitError]](None)
-      val handler   = errorHandler(provider, lastError)
-      ZIO.acquireReleaseWith(ZIO.attempt(api.on(JavaProviderEvent.PROVIDER_ERROR, handler)))(_ =>
-        ZIO.succeed(removeHandler(api, handler))
-      ) { _ =>
+      val observer = new InitObserver(api, domain, provider, ready)
+      // Both handlers go on before the registration, so no event of it can come before them.
+      ZIO.acquireReleaseWith(ZIO.attempt(observer.open()))(_ => ZIO.succeed(observer.close())) { _ =>
         ZIO.attemptBlocking(register(api, domain, provider)) *>
           afterRegister *>
-          ZIO.attemptBlockingInterrupt(awaitOutcome(api, domain, provider, timeout, lastError))
+          ZIO.attemptBlockingInterrupt(awaitOutcome(api, domain, provider, timeout, observer))
       }
     }
+
+  /** Whether the SDK's `PROVIDER_READY` for `provider` reached the slot of `domain` (the default slot for `None`) since
+    * the watch was opened, i.e. whether `provider`'s `initialize()` returned. Opened before `provider` is registered,
+    * so it cannot miss that READY; a timed-out swap hands it on to the watcher of the provider it replaced, which reads
+    * it long after the wait ended.
+    *
+    * A READY counts only when it names `provider` and the slot binds `provider` when the handler runs. A domain handler
+    * receives only the events of the provider bound to the slot when they are emitted, so the provider being replaced
+    * cannot mark it, nor can a provider a later swap installs; one the slot held before `provider` could only if it had
+    * the same name and emitted READY just before the registration. The SDK's own run of a new handler, for a slot
+    * already READY when the watch opens, names no provider and is not counted, nor is a READY from a provider without a
+    * name: such a provider's `initialize()` is then judged by its state alone, as before the READY was watched.
+    */
+  final class ReadyWatch private[ProviderRegistration] (
+    api: OpenFeatureAPI,
+    domain: Option[String],
+    provider: OFFeatureProvider
+  ) {
+    private val seen    = new AtomicBoolean(false)
+    private val handler = new java.util.function.Consumer[EventDetails] {
+      // The name is read when the event arrives: a MultiProvider has none until it has initialized. `==` for the slot,
+      // as the SDK matches a provider to its registration. Anything unreadable counts nothing.
+      def accept(details: EventDetails): Unit = {
+        val named = Option(details.getProviderName).exists { sent =>
+          Try(Option(provider.getMetadata).map(_.getName)).toOption.flatten.contains(sent)
+        }
+        if (named && Try(domain.fold(api.getProvider())(d => api.getProvider(d)) == provider).getOrElse(false))
+          seen.set(true)
+      }
+    }
+    private val client = domain.fold(api.getClient())(d => api.getClient(d))
+
+    def initialized: Boolean = seen.get()
+
+    // Never let handler cleanup replace a caller's own outcome.
+    def close(): Unit = {
+      val _ = Try(client.removeHandler(JavaProviderEvent.PROVIDER_READY, handler))
+      ()
+    }
+
+    private[ProviderRegistration] def open(): ReadyWatch = {
+      client.on(JavaProviderEvent.PROVIDER_READY, handler)
+      this
+    }
+  }
+
+  /** Watch the slot of `domain` for the SDK's `PROVIDER_READY` for `provider`. Close it when done. */
+  def watchReady(api: OpenFeatureAPI, domain: Option[String], provider: OFFeatureProvider): ReadyWatch =
+    new ReadyWatch(api, domain, provider).open()
 
   /** The API-shutdown scope finalizer, bounded by `timeout`. Scope finalizers run uninterruptibly, so `.interruptible`
     * is what lets the timeout abandon a hung shutdown at all; `.disconnect` lets the blocking call keep running in the
@@ -182,23 +252,42 @@ private[openfeature] object ProviderRegistration {
       case None    => api.setProvider(provider)
     }
 
-  private def errorHandler(
+  /** What one registration's wait hears: the provider's last error message, and whether the SDK's READY reached the
+    * slot.
+    */
+  final private class InitObserver(
+    api: OpenFeatureAPI,
+    domain: Option[String],
     provider: OFFeatureProvider,
-    lastError: AtomicReference[Option[InitError]]
-  ): java.util.function.Consumer[EventDetails] = details => {
-    // The name is read when the event arrives, not up front: a MultiProvider (and a wrapper around one) has no metadata
-    // until it has initialized. An unreadable name matches any event; it only selects the message to report.
-    val name = Try(Option(provider.getMetadata).map(_.getName)).toOption.flatten
-    if (name.forall(_ == details.getProviderName))
-      lastError.set(
-        Some(InitError(Option(details.getMessage).getOrElse(""), details.getErrorCode == ErrorCode.PROVIDER_FATAL))
-      )
-  }
+    external: Option[ReadyWatch]
+  ) {
+    val lastError                                 = new AtomicReference[Option[InitError]](None)
+    @volatile private var own: Option[ReadyWatch] = None
 
-  // Never let handler cleanup replace the registration's own outcome.
-  private def removeHandler(api: OpenFeatureAPI, handler: java.util.function.Consumer[EventDetails]): Unit = {
-    val _ = Try(api.removeHandler(JavaProviderEvent.PROVIDER_ERROR, handler))
-    ()
+    def initialized: Boolean = external.orElse(own).exists(_.initialized)
+
+    private val errorHandler = new java.util.function.Consumer[EventDetails] {
+      def accept(details: EventDetails): Unit = {
+        // The name is read when the event arrives, not up front: a MultiProvider (and a wrapper around one) has no
+        // metadata until it has initialized. An unreadable name matches any event; it only selects the message.
+        val name = Try(Option(provider.getMetadata).map(_.getName)).toOption.flatten
+        if (name.forall(_ == details.getProviderName))
+          lastError.set(
+            Some(InitError(Option(details.getMessage).getOrElse(""), details.getErrorCode == ErrorCode.PROVIDER_FATAL))
+          )
+      }
+    }
+
+    def open(): Unit = {
+      val _ = api.on(JavaProviderEvent.PROVIDER_ERROR, errorHandler)
+      if (external.isEmpty) own = Some(ProviderRegistration.watchReady(api, domain, provider))
+    }
+
+    // Never let handler cleanup replace the registration's own outcome. A watch the caller passed is the caller's.
+    def close(): Unit = {
+      val _ = Try(api.removeHandler(JavaProviderEvent.PROVIDER_ERROR, errorHandler))
+      own.foreach(_.close())
+    }
   }
 
   private def awaitOutcome(
@@ -206,26 +295,42 @@ private[openfeature] object ProviderRegistration {
     domain: Option[String],
     provider: OFFeatureProvider,
     timeout: Duration,
-    lastError: AtomicReference[Option[InitError]]
-  ): ProviderState = {
+    observer: InitObserver
+  ): Settled = {
     // A client reads the state of whatever manager is bound to the slot, i.e. the one this registration installed.
     val stateClient = domain.fold(api.getClient())(d => api.getClient(d))
     val deadline    = java.lang.System.nanoTime() + timeout.toNanos
 
-    @annotation.tailrec
-    def loop(): ProviderState = {
+    def checkBound(): Unit = {
       val bound = domain.fold(api.getProvider())(d => api.getProvider(d))
       // `!=` (equals), not `ne`: the SDK itself matches a non-domain-scoped provider to an existing registration by
       // equals and binds that registration's instance.
       if (bound != provider) throw new RegistrationSuperseded
+    }
+
+    @annotation.tailrec
+    def loop(): Settled = {
+      checkBound()
       stateClient.getProviderState match {
-        case serving @ (ProviderState.READY | ProviderState.STALE) => serving
-        case failed @ (ProviderState.ERROR | ProviderState.FATAL)  =>
-          val error   = awaitInitError(lastError)
-          val message =
-            error.map(_.message).filter(_.nonEmpty).getOrElse(s"Provider entered $failed during initialization")
-          if (failed == ProviderState.FATAL || error.exists(_.fatal)) throw new FatalError(message)
-          else throw new GeneralError(message)
+        case ProviderState.READY                                  => Settled.Ready
+        case ProviderState.STALE                                  => Settled.Stale
+        case failed @ (ProviderState.ERROR | ProviderState.FATAL) =>
+          val error = awaitReadyOrError(observer)
+          checkBound()
+          if (observer.initialized)
+            // `initialize()` returned and the provider reported a state since: the registration succeeded in it.
+            stateClient.getProviderState match {
+              case ProviderState.STALE => Settled.Stale
+              case ProviderState.FATAL => Settled.Fatal(error.fold("")(_.message))
+              case ProviderState.ERROR => Settled.Error(error.fold("")(_.message))
+              case _                   => Settled.Ready
+            }
+          else {
+            val message =
+              error.map(_.message).filter(_.nonEmpty).getOrElse(s"Provider entered $failed during initialization")
+            if (failed == ProviderState.FATAL || error.exists(_.fatal)) throw new FatalError(message)
+            else throw new GeneralError(message)
+          }
         case _ if java.lang.System.nanoTime() - deadline >= 0 =>
           throw new TimeoutException(s"Provider initialization exceeded $timeout")
         case _ =>
@@ -237,9 +342,19 @@ private[openfeature] object ProviderRegistration {
     loop()
   }
 
-  private def awaitInitError(lastError: AtomicReference[Option[InitError]]): Option[InitError] = {
-    val until = java.lang.System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(ErrorMessageGraceMillis)
-    while (lastError.get().isEmpty && java.lang.System.nanoTime() - until < 0) Thread.sleep(PollMillis)
-    lastError.get()
+  /** Wait, bounded, until the SDK's READY has reached the slot or the error's message has been followed by
+    * [[ReadyAfterErrorMillis]] without one; the message, if it arrived.
+    */
+  private def awaitReadyOrError(observer: InitObserver): Option[InitError] = {
+    def now                       = java.lang.System.nanoTime()
+    val until                     = now + TimeUnit.MILLISECONDS.toNanos(OutcomeGraceMillis)
+    var errorSeenAt: Option[Long] = None
+    def errorWaitOver             =
+      errorSeenAt.exists(t => now - t >= TimeUnit.MILLISECONDS.toNanos(ReadyAfterErrorMillis))
+    while (!observer.initialized && !errorWaitOver && now - until < 0) {
+      if (errorSeenAt.isEmpty && observer.lastError.get().isDefined) errorSeenAt = Some(now)
+      Thread.sleep(PollMillis)
+    }
+    observer.lastError.get()
   }
 }

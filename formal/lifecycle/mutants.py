@@ -10,8 +10,8 @@ spec = open(os.path.join(here, 'Lifecycle.tla')).read()
 mutants = {
     # A failed swap always rolls back, even onto a provider whose initialize() still runs.
     'a failed swap rolls back onto a provider still initializing': (
-        '    /\\ ~(pending = swap.prev /\\ sdk[swap.prev] = "NOT_READY")\n    /\\ LET prev == swap.prev',
-        '    /\\ LET prev == swap.prev'),
+        '    /\\ ~(pending = swap.prev /\\ sdk[swap.prev] = "NOT_READY")\n    /\\ ok \\/ r',
+        '    /\\ ok \\/ r'),
     # Shutdown does not wait for a swap in flight.
     'shutdown does not wait for a swap in flight': (
         'ShutdownStart ==\n    /\\ lock = "free" /\\ ~closed\n    /\\ lock\' = "shutdown"',
@@ -22,8 +22,8 @@ mutants = {
         'IF s \\in {"Ready"} THEN "Stale" ELSE s'),
     # A successful swap always ends Ready.
     'a swap into a STALE provider ends Ready': (
-        '    /\\ status\' = IF sdk[swap.new] = "STALE" THEN "Stale" ELSE "Ready"\n    /\\ gate\' = FALSE /\\ lock\' = "free" /\\ swap\' = None /\\ pending\' = None\n    /\\ UNCHANGED << installed, orphans',
-        '    /\\ status\' = "Ready"\n    /\\ gate\' = FALSE /\\ lock\' = "free" /\\ swap\' = None /\\ pending\' = None\n    /\\ UNCHANGED << installed, orphans'),
+        '    /\\ status\' = StatusOf(sdk[swap.new])',
+        '    /\\ status\' = "Ready"'),
     # A timed-out swap forgets the provider it replaced.
     'a timed-out swap forgets the provider it replaced': (
         '    /\\ orphans\' = IF swap.prev # swap.new THEN orphans \\cup {Watch(swap.prev, swap.new)} ELSE orphans',
@@ -34,8 +34,26 @@ mutants = {
         '         ELSE Apply(status, ev.e)'),
     # A failed swap does not read the SDK state once its gate drops.
     'a failed swap does not read the SDK state after its gate drops': (
-        '                 /\\ status\' = IF fatal THEN "Fatal" ELSE "Error"',
-        '                 /\\ status\' = "Error"'),
+        '       /\\ status\' = StatusOf(r)',
+        '       /\\ status\' = IF ok THEN StatusOf(r) ELSE "Error"'),
+    # The swap's wait reads an ERROR the new provider reports right after initializing as a failed initialize().
+    'a swap reads an error after initialize() returned as a failed initialization': [
+        ('    /\\ sdk[swap.new] \\in {"READY", "STALE"} \\/ (ran[swap.new] /\\ sdk[swap.new] \\in {"ERROR", "FATAL"})',
+         '    /\\ sdk[swap.new] \\in {"READY", "STALE"}'),
+        ('    /\\ sdk[swap.new] \\in {"ERROR", "FATAL"} /\\ ~ran[swap.new]\n    /\\ ~(pending',
+         '    /\\ sdk[swap.new] \\in {"ERROR", "FATAL"}\n    /\\ ~(pending'),
+        ('    /\\ sdk[swap.new] \\in {"ERROR", "FATAL"} /\\ ~ran[swap.new]\n    /\\ pending',
+         '    /\\ sdk[swap.new] \\in {"ERROR", "FATAL"}\n    /\\ pending'),
+    ],
+    # The rollback's wait reads an ERROR the restored provider reports right after initializing as a failed
+    # rollback, whose cleanup shuts the failed provider down after the SDK already did.
+    'a rollback reads an error after initialize() returned as a failed rollback': (
+        "       /\\ shuts' = [shuts EXCEPT ![failed] = @ + 1]",
+        "       /\\ shuts' = [shuts EXCEPT ![failed] = @ + (IF ok /\\ r \\in {\"ERROR\", \"FATAL\"} THEN 2 ELSE 1)]"),
+    # The watcher of a timed-out swap's provider reads an ERROR it reports right after initializing as a failed one.
+    'the orphan watcher reads an error after initialize() returned as a failed one': (
+        'Released(o) == View(o) \\in {"READY", "STALE"} \\/ RanView(o)',
+        'Released(o) == View(o) \\in {"READY", "STALE"}'),
     # The gate never goes up.
     'no swap gate': (
         '    /\\ gate\' = TRUE\n    /\\ status\' = "NotReady"',
@@ -45,11 +63,14 @@ mutants = {
 jar = os.path.abspath(sys.argv[1]) if len(sys.argv) > 1 else os.path.join(here, 'tla2tools.jar')
 cfg = open(os.path.join(here, 'Lifecycle.cfg')).read()
 missed = []
-for name, (old, new) in mutants.items():
-    if spec.count(old) != 1:
-        sys.exit(f'{name}: the mutation no longer applies to Lifecycle.tla; update mutants.py')
+for name, edits in mutants.items():
+    mutated = spec
+    for old, new in (edits if isinstance(edits, list) else [edits]):
+        if mutated.count(old) != 1:
+            sys.exit(f'{name}: the mutation no longer applies to Lifecycle.tla; update mutants.py')
+        mutated = mutated.replace(old, new)
     with tempfile.TemporaryDirectory() as d:
-        open(os.path.join(d, 'Lifecycle.tla'), 'w').write(spec.replace(old, new))
+        open(os.path.join(d, 'Lifecycle.tla'), 'w').write(mutated)
         open(os.path.join(d, 'Lifecycle.cfg'), 'w').write(cfg)
         out = subprocess.run(['java', '-XX:+UseParallelGC', '-cp', jar, 'tlc2.TLC', '-workers', 'auto', '-deadlock',
                               '-config', 'Lifecycle.cfg', 'Lifecycle.tla'], cwd=d, capture_output=True, text=True).stdout

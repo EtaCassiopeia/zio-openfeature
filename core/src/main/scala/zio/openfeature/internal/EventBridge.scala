@@ -98,6 +98,12 @@ final private[openfeature] class EventBridge(
         // gap where a pending `everReady` write could let the watchdog Fatal an already-Ready provider.
         if (next == ProviderStatus.Ready || next == ProviderStatus.Stale) everReady.set(true)
         signal match {
+          // A provider that initialized and then reported an error is one that became usable; the init watchdog must
+          // not treat it as one that never did.
+          case Signal.SwapSucceeded(_) | Signal.RollbackSucceeded(_) => everReady.set(true)
+          case _                                                     => ()
+        }
+        signal match {
           case Signal.ShutdownCompleted => shutdownCompleted.set(true)
           case Signal.SwapStarted       => shutdownCompleted.set(false)
           case _                        => ()

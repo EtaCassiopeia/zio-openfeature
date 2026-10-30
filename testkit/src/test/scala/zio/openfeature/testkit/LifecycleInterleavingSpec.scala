@@ -142,7 +142,8 @@ object LifecycleInterleavingSpec extends ZIOSpecDefault {
   /** The points each primary always passes, in no particular order. */
   val reachTable: Map[Primary, Set[String]] = Map(
     Primary.SwapGood    -> Set("SwapStart", "ApplySignal", "SdkBind", "DeliverEvent", "SwapDone"),
-    Primary.SwapFailing -> Set("SwapStart", "ApplySignal", "SdkBind", "DeliverEvent", "SwapRollback", "SwapDone"),
+    Primary.SwapFailing ->
+      Set("SwapStart", "ApplySignal", "SdkBind", "DeliverEvent", "SwapRollback", "RollbackBind", "SwapDone"),
     Primary.SwapHanging ->
       Set("SwapStart", "ApplySignal", "SdkBind", "SwapTimeout", "OrphanRecorded", "LateReady", "SwapDone"),
     Primary.Shutdown   -> Set("ShutdownStart", "ApplySignal", "ShutdownDone"),
@@ -261,7 +262,7 @@ object LifecycleInterleavingSpec extends ZIOSpecDefault {
     // change it.
     case (Primary.SwapGood | Primary.SwapFailing | Primary.SwapHanging, "SdkBind") => Some(ProviderStatus.NotReady)
     case (Primary.SwapHanging, "SwapTimeout")                                      => Some(ProviderStatus.NotReady)
-    case (Primary.SwapFailing, "SwapRollback")                                     => Some(ProviderStatus.Error)
+    case (Primary.SwapFailing, "SwapRollback" | "RollbackBind")                    => Some(ProviderStatus.Error)
     case (Primary.Shutdown, "ShutdownDone")                                        => Some(ProviderStatus.ShuttingDown)
     case _                                                                         => None
   }
@@ -400,14 +401,8 @@ object LifecycleInterleavingSpec extends ZIOSpecDefault {
                 p.calls(Op.Shutdown).map(calls => id -> calls)
             }
             .map { counts =>
-              // A failing swap's provider may be shut down twice: an ERROR the previous provider sends during the
-              // rollback's wait makes the rollback count as failed after the SDK already shut the failed provider
-              // down, and the rollback-failure cleanup shuts it down again. The SDK exposes nothing that tells the
-              // two apart. Never shutting it down is still a leak.
-              def allowed(id: String, n: Int) =
-                n == 1 || (n == 2 && id == "p1" && primary == Primary.SwapFailing)
               val notOnce = counts.collect {
-                case (id, calls) if !allowed(id, calls.size) =>
+                case (id, calls) if calls.size != 1 =>
                   val by = calls.map(c => s"${c.thread} at ${c.startedAt}").mkString(", ")
                   s"$where: $id was shut down ${calls.size} times, not once ($by)"
               }

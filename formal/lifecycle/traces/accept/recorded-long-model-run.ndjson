@@ -6,7 +6,7 @@
 {"seq":5,"point":"SdkBind","arg":""}
 {"seq":6,"point":"DeliverEvent","arg":"PROVIDER_READY"}
 {"seq":7,"point":"ApplySignal","arg":"EventReady"}
-{"seq":8,"point":"ApplySignal","arg":"SwapSucceeded(false)"}
+{"seq":8,"point":"ApplySignal","arg":"SwapSucceeded(Ready)"}
 {"seq":9,"point":"ApplySignal","arg":"EventReady"}
 {"seq":10,"point":"SwapDone","arg":""}
 {"seq":11,"point":"SwapStart","arg":""}
@@ -14,7 +14,7 @@
 {"seq":13,"point":"SdkBind","arg":""}
 {"seq":14,"point":"DeliverEvent","arg":"PROVIDER_READY"}
 {"seq":15,"point":"ApplySignal","arg":"EventReady"}
-{"seq":16,"point":"ApplySignal","arg":"SwapSucceeded(false)"}
+{"seq":16,"point":"ApplySignal","arg":"SwapSucceeded(Ready)"}
 {"seq":17,"point":"ApplySignal","arg":"EventReady"}
 {"seq":18,"point":"SwapDone","arg":""}
 {"seq":19,"point":"SwapStart","arg":""}
@@ -22,7 +22,7 @@
 {"seq":21,"point":"SdkBind","arg":""}
 {"seq":22,"point":"DeliverEvent","arg":"PROVIDER_READY"}
 {"seq":23,"point":"ApplySignal","arg":"EventReady"}
-{"seq":24,"point":"ApplySignal","arg":"SwapSucceeded(false)"}
+{"seq":24,"point":"ApplySignal","arg":"SwapSucceeded(Ready)"}
 {"seq":25,"point":"ApplySignal","arg":"EventReady"}
 {"seq":26,"point":"SwapDone","arg":""}
 {"seq":27,"point":"DeliverEvent","arg":"PROVIDER_ERROR"}
@@ -31,7 +31,7 @@
 {"seq":30,"point":"ApplySignal","arg":"SwapStarted"}
 {"seq":31,"point":"SdkBind","arg":""}
 {"seq":32,"point":"DeliverEvent","arg":"PROVIDER_READY"}
-{"seq":33,"point":"ApplySignal","arg":"SwapSucceeded(false)"}
+{"seq":33,"point":"ApplySignal","arg":"SwapSucceeded(Ready)"}
 {"seq":34,"point":"ApplySignal","arg":"EventReady"}
 {"seq":35,"point":"ApplySignal","arg":"EventReady"}
 {"seq":36,"point":"SwapDone","arg":""}
@@ -39,7 +39,7 @@
 {"seq":38,"point":"ApplySignal","arg":"SwapStarted"}
 {"seq":39,"point":"SdkBind","arg":""}
 {"seq":40,"point":"DeliverEvent","arg":"PROVIDER_READY"}
-{"seq":41,"point":"ApplySignal","arg":"SwapSucceeded(false)"}
+{"seq":41,"point":"ApplySignal","arg":"SwapSucceeded(Ready)"}
 {"seq":42,"point":"ApplySignal","arg":"EventReady"}
 {"seq":43,"point":"ApplySignal","arg":"EventReady"}
 {"seq":44,"point":"SwapDone","arg":""}
@@ -62,7 +62,7 @@
 {"seq":61,"point":"SwapRollback","arg":""}
 {"seq":62,"point":"DeliverEvent","arg":"PROVIDER_READY"}
 {"seq":63,"point":"ApplySignal","arg":"EventReady"}
-{"seq":64,"point":"ApplySignal","arg":"RollbackSucceeded(false)"}
+{"seq":64,"point":"ApplySignal","arg":"RollbackSucceeded(Ready)"}
 {"seq":65,"point":"ApplySignal","arg":"EventReady"}
 {"seq":66,"point":"SwapDone","arg":""}
 {"seq":67,"point":"SwapStart","arg":""}
@@ -75,7 +75,7 @@
 {"seq":74,"point":"SwapRollback","arg":""}
 {"seq":75,"point":"DeliverEvent","arg":"PROVIDER_READY"}
 {"seq":76,"point":"ApplySignal","arg":"EventReady"}
-{"seq":77,"point":"ApplySignal","arg":"RollbackSucceeded(false)"}
+{"seq":77,"point":"ApplySignal","arg":"RollbackSucceeded(Ready)"}
 {"seq":78,"point":"ApplySignal","arg":"EventReady"}
 {"seq":79,"point":"SwapDone","arg":""}
 {"seq":80,"point":"ScopeClose","arg":""}

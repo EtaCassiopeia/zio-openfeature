@@ -131,6 +131,53 @@ object ProviderHotSwapSpec extends ZIOSpecDefault {
     override def shutdown(): Unit = { shutdowns.incrementAndGet(); () }
   }
 
+  /** [[Counting]] whose `initialize()` throws. */
+  private class FailingCounting(name: String) extends Counting(name, blocking = false) {
+    override def initialize(ctx: OFEvaluationContext): Unit = {
+      inits.incrementAndGet()
+      throw new RuntimeException(s"$name: cannot start")
+    }
+  }
+
+  private def emitError(provider: EventProvider, message: String): UIO[Unit] =
+    ZIO.succeed {
+      val _ = provider.emitProviderError(
+        dev.openfeature.sdk.ProviderEventDetails.builder().message(message).build()
+      )
+    }
+
+  /** A probe that holds the fiber reaching `point` until `release` completes, completing `held` first. */
+  private def holdAt(
+    point: zio.openfeature.internal.LifecycleProbe.Point,
+    held: Promise[Nothing, Unit],
+    release: Promise[Nothing, Unit]
+  ): zio.openfeature.internal.LifecycleProbe =
+    new zio.openfeature.internal.LifecycleProbe {
+      def at(p: zio.openfeature.internal.LifecycleProbe.Point): UIO[Unit] =
+        if (p == point) held.succeed(()) *> release.await else ZIO.unit
+    }
+
+  /** A build on an isolated API whose lifecycle probe is `probe`, handing back the API and domain. */
+  private def buildProbed(
+    provider: SimpleProvider,
+    probe: zio.openfeature.internal.LifecycleProbe
+  ): ZIO[Scope, Throwable, (FeatureFlags, OpenFeatureAPI, String)] = {
+    val api    = OpenFeatureAPI.createIsolated()
+    val domain = s"test-swap-${java.util.UUID.randomUUID()}"
+    zio.openfeature.internal.FeatureFlagsFactories
+      .buildWithTracking(
+        provider,
+        domain = Some(domain),
+        version = None,
+        initialHooks = Nil,
+        statusRef = None,
+        addShutdownFinalizer = true,
+        apiOverride = Some(api),
+        probe = probe
+      )
+      .map(ff => (ff, api, domain))
+  }
+
   private def awaitTrue(cond: => Boolean): UIO[Boolean] =
     ZIO
       .succeed(cond)
@@ -331,6 +378,111 @@ object ProviderHotSwapSpec extends ZIOSpecDefault {
           delivered.isDefined,
           ready == ProviderState.READY,
           status == ProviderStatus.Ready
+        )
+      }
+    } @@ TestAspect.withLiveClock,
+    test("an ERROR the new provider reports right after initializing is its status, not a failed swap") {
+      ZIO.scoped {
+        val a = new Counting("A", blocking = false)
+        val b = new Counting("B", blocking = false)
+        for {
+          held    <- Promise.make[Nothing, Unit]
+          release <- Promise.make[Nothing, Unit]
+          _       <- ZIO.addFinalizer(release.succeed(()))
+          built   <- buildProbed(a, holdAt(zio.openfeature.internal.LifecycleProbe.Point.SdkBind, held, release))
+          (ff, api, domain) = built
+          swap <- ff.setProvider(b).either.fork
+          // Hold the swap between its registration and its wait: B initializes, the SDK reports READY and shuts A down,
+          // and B reports an error before the wait reads anything.
+          _      <- held.await.timeout(5.seconds)
+          ready  <- awaitTrue(api.getClient(domain).getProviderState == ProviderState.READY)
+          _      <- emitError(b, "B: backend lost")
+          errord <- awaitTrue(api.getClient(domain).getProviderState == ProviderState.ERROR)
+          _      <- release.succeed(())
+          result <- swap.join
+          status <- ff.providerStatus
+          m      <- ff.providerMetadata
+          bound  <- ZIO.succeed(api.getProvider(domain))
+          aDown  <- awaitTrue(a.shutdowns.get() >= 1)
+          _      <- ZIO.sleep(300.millis)
+          served <- ff.boolean("flag", default = false)
+          // Read now: the scope's close shuts the serving provider down before a lazy assertion would read it.
+          counts = (a.inits.get(), a.shutdowns.get(), b.shutdowns.get())
+        } yield assertTrue(
+          ready,
+          errord,
+          result.isRight,
+          status == ProviderStatus.Error,
+          m.name == "B",
+          bound eq b,
+          aDown,
+          counts == ((1, 1, 0)),
+          served
+        )
+      }
+    } @@ TestAspect.withLiveClock,
+    test("an ERROR the restored provider reports right after initializing leaves the rollback successful") {
+      ZIO.scoped {
+        val a = new Counting("A", blocking = false)
+        val c = new FailingCounting("C")
+        for {
+          held    <- Promise.make[Nothing, Unit]
+          release <- Promise.make[Nothing, Unit]
+          _       <- ZIO.addFinalizer(release.succeed(()))
+          built   <- buildProbed(a, holdAt(zio.openfeature.internal.LifecycleProbe.Point.RollbackBind, held, release))
+          (ff, api, domain) = built
+          swap <- ff.setProvider(c).either.fork
+          // C fails; the rollback registers A again. Hold it there: A initializes again, the SDK shuts C down, and A
+          // reports an error before the rollback's wait reads anything.
+          _      <- held.await.timeout(5.seconds)
+          ready  <- awaitTrue(api.getClient(domain).getProviderState == ProviderState.READY)
+          _      <- emitError(a, "A: backend lost")
+          errord <- awaitTrue(api.getClient(domain).getProviderState == ProviderState.ERROR)
+          _      <- release.succeed(())
+          result <- swap.join
+          status <- ff.providerStatus
+          m      <- ff.providerMetadata
+          bound  <- ZIO.succeed(api.getProvider(domain))
+          cDown  <- awaitTrue(c.shutdowns.get() >= 1)
+          _      <- ZIO.sleep(300.millis)
+          // Read now: the scope's close shuts the serving provider down before a lazy assertion would read it.
+          counts = (a.inits.get(), a.shutdowns.get(), c.shutdowns.get())
+        } yield assertTrue(
+          ready,
+          errord,
+          result.left.toOption.exists(_.isInstanceOf[FeatureFlagError.ProviderInitializationFailed]),
+          status == ProviderStatus.Error,
+          m.name == "A",
+          bound eq a,
+          cDown,
+          counts == ((2, 0, 1))
+        )
+      }
+    } @@ TestAspect.withLiveClock,
+    test("an ERROR a timed-out swap's provider reports right after initializing leaves its predecessor to the SDK") {
+      ZIO.scoped {
+        val a = new Counting("A", blocking = false)
+        for {
+          b <- ZIO.acquireRelease(ZIO.succeed(new Counting("B", blocking = true)))(p =>
+            ZIO.succeed(p.release.countDown())
+          )
+          built <- buildExposed(a, initTimeout = 300.millis)
+          (ff, api, domain) = built
+          timedOut <- ff.setProvider(b).either
+          // B initializes late, the SDK shuts A down, and B reports an error before the watcher's next look.
+          _      <- ZIO.succeed(b.release.countDown())
+          ready  <- awaitTrue(api.getClient(domain).getProviderState == ProviderState.READY)
+          _      <- emitError(b, "B: backend lost")
+          aDown  <- awaitTrue(a.shutdowns.get() >= 1)
+          _      <- ZIO.sleep(1.second)
+          status <- ff.providerStatus
+          shuts = a.shutdowns.get()
+        } yield assertTrue(
+          timedOut.isLeft,
+          ready,
+          aDown,
+          shuts == 1,
+          status == ProviderStatus.Error
         )
       }
     } @@ TestAspect.withLiveClock,

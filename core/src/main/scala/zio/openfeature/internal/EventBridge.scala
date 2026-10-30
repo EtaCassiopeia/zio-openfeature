@@ -38,8 +38,8 @@ final private[openfeature] class EventBridge(
   // later dipped to a transient Error must never be escalated to Fatal.
   private[openfeature] val everReady = new java.util.concurrent.atomic.AtomicBoolean(false)
 
-  // Set when an explicit `shutdown` has run to completion: the final NotReady is terminal for bridge events; only
-  // setProvider (which installs a new provider) clears it.
+  // Set when an explicit `shutdown` has run to completion: the final NotReady is terminal. Nothing clears it:
+  // `setProvider` is refused once it is set.
   private[openfeature] val shutdownCompleted = new java.util.concurrent.atomic.AtomicBoolean(false)
 
   // Set by startEventBridge; invoked by `shutdown` BEFORE teardown (so no emitter thread races it) and by the scope
@@ -110,7 +110,6 @@ final private[openfeature] class EventBridge(
         }
         signal match {
           case Signal.ShutdownCompleted => shutdownCompleted.set(true)
-          case Signal.SwapStarted       => shutdownCompleted.set(false)
           case _                        => ()
         }
         (Some(next), next)

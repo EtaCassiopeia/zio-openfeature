@@ -52,9 +52,9 @@ private[openfeature] object ProviderStatusMachine {
   def transition(current: ProviderStatus, signal: Signal, ctx: Context): Option[ProviderStatus] = {
     import ProviderStatus._
     signal match {
-      // Lifecycle: authoritative from anywhere. setProvider is the ONLY exit from Fatal and from
-      // post-shutdown NotReady — it installs a NEW provider, so the old one's irrecoverability
-      // no longer applies.
+      // Lifecycle: authoritative from anywhere. setProvider is the ONLY exit from Fatal: it installs a NEW provider, so
+      // the old one's irrecoverability no longer applies. Post-shutdown NotReady has no exit: `setProvider` is refused
+      // before it signals.
       case Signal.ShutdownStarted            => Some(ShuttingDown)
       case Signal.ShutdownCompleted          => Some(NotReady)
       case Signal.SwapStarted                => Some(NotReady)

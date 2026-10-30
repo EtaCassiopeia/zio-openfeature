@@ -180,7 +180,9 @@ object LifecycleModel {
       * step: the harness checks it against the serial orders of its two actions.
       */
     def step(action: Action, incoming: Installed): Model = action match {
-      case Action.SetProvider(kind, _) =>
+      // "A `setProvider` after shutdown fails with `ProviderNotReady(NotReady)`; a shut-down instance is never revived."
+      case Action.SetProvider(_, _) if shutDown => this
+      case Action.SetProvider(kind, _)          =>
         // "Swaps are serialized": a swap waits for a parked one to settle first.
         val m = settle
         kind match {

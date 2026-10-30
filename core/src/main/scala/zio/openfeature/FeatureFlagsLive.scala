@@ -511,7 +511,7 @@ final private[openfeature] class FeatureFlagsLive(
   // not the provider that was active when the client was created.
   override def setProvider(newProvider: OFFeatureProvider): IO[FeatureFlagError, Unit] =
     swapLock.withPermit(
-      refusePendingOrphan(newProvider) *> ZIO.acquireReleaseWith(openSwapWatch(newProvider))(_.release) { watch =>
+      refuseSwap(newProvider) *> ZIO.acquireReleaseWith(openSwapWatch(newProvider))(_.release) { watch =>
         val swap = for {
           _ <- probe.at(Point.SwapStart)
           // Save old state for rollback on failure
@@ -660,6 +660,14 @@ final private[openfeature] class FeatureFlagsLive(
           .as(new SwapWatch(None))
       )
 
+  /** Refuses a swap on a shut-down instance, which has no event bridge or hub left and so is never revived, before any
+    * SDK change, watch or probe point; then [[refusePendingOrphan]]. Run under the swap lock, which `shutdown` sets the
+    * flag under.
+    */
+  private def refuseSwap(newProvider: OFFeatureProvider): IO[FeatureFlagError, Unit] =
+    ZIO.fail(FeatureFlagError.ProviderNotReady(ProviderStatus.NotReady)).when(shutdownCompleted.get()) *>
+      refusePendingOrphan(newProvider)
+
   /** A provider that a timed-out swap replaced is still held by the new provider's pending initialization, which shuts
     * it down if it succeeds; installing it again before that settles would get it shut down while it serves.
     */
@@ -717,7 +725,8 @@ final private[openfeature] class FeatureFlagsLive(
     swapLock
       .withPermit(
         providerRef.get.flatMap { registered =>
-          if (registered ne switch) ZIO.none
+          // After a shutdown the SDK has shut the switch down; `construct` then discards the composed stack.
+          if ((registered ne switch) || shutdownCompleted.get()) ZIO.none
           else
             ZIO.attempt {
               // The name first: the SDK stamps the switch's (now `next`'s) name on every event, and the identity guard

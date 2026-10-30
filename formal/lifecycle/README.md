@@ -39,6 +39,7 @@ provider, three swaps and two provider events: about 24 million distinct states,
 | A swap reads an `ERROR` reported right after `initialize()` returned as a failed initialization (#623) | `ShutDownAtMostOnce` |
 | A rollback reads such an `ERROR` from the restored provider as a failed rollback (#623) | `ShutDownAtMostOnce` |
 | The watcher of a timed-out swap's provider reads such an `ERROR` as a failed initialization (#623) | `ShutDownAtMostOnce` |
+| A swap after shutdown is not refused (#631) | `ShutDownAtMostOnce` |
 | The swap gate never goes up | `NotReadyDuringSwap` |
 
 ## Actions and the code
@@ -48,7 +49,7 @@ there is one.
 
 | Action | Code |
 |:--|:--|
-| `SwapStart` | `FeatureFlagsLive.setProvider`: lock taken, gate up, `SwapStarted` |
+| `SwapStart` | `FeatureFlagsLive.setProvider`: lock taken, gate up, `SwapStarted`; on a shut-down instance `setProvider` fails before this point (`~shutDown`) |
 | `SdkBind` | `ProviderRegistration.registerThenAwait`: the SDK binds the new provider and starts `initialize()` |
 | `SdkInitOk`, `SdkInitFail` | the SDK's `FeatureProviderStateManager.initialize` returning or throwing; after a success, the SDK's `PROVIDER_READY` (`ran`) and `ProviderRepository.shutDownOld` |
 | `SwapDone` | `setProvider`: `SwapSucceeded(settled)`, gate down, `reconcileRegistration`; `ProviderRegistration.awaitOutcome` deciding by the SDK's `PROVIDER_READY` |

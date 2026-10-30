@@ -215,8 +215,10 @@ A domain names a client, so different parts of an app can use different provider
 
 ![setProvider: the status goes NotReady while the new provider initializes, then Ready, or Stale if the provider reports stale; if initialize throws the old provider is restored, and on a timeout the new one stays registered with status Error.](assets/provider-swap.svg)
 
-- Evaluations that start during the swap fail with `ProviderNotReady`; running ones finish on the old provider. Swaps are
-  serialized, `setProvider` waits at most `initTimeout`, and a started swap finishes even if the caller is interrupted.
+- Evaluations that start during the swap fail with `ProviderNotReady`, and so does one that was already reaching the
+  provider when the swap started: the Java SDK picks the slot's provider per call, so its answer may have come from the
+  new provider before that provider settled. Swaps are serialized, `setProvider` waits at most `initTimeout`, and a
+  started swap finishes even if the caller is interrupted.
 - On success the status is the state the Java SDK reports for the new provider: `Ready`, or `Stale` for a provider
   that reports `STALE` while it starts. A restored old provider ends the same way.
 - An `ERROR` the new provider reports after its `initialize()` returned, even before `setProvider` has seen the

@@ -342,8 +342,10 @@ private[openfeature] object ProviderRegistration {
     loop()
   }
 
-  /** Wait, bounded, until the SDK's READY has reached the slot or the error's message has been followed by
-    * [[ReadyAfterErrorMillis]] without one; the message, if it arrived.
+  /** Wait, bounded, until the SDK's READY and the error's message have both arrived, or the message has been followed
+    * by [[ReadyAfterErrorMillis]] without the READY; the message, if it arrived. Both are needed when `initialize()`
+    * returned: the slot's state is already ERROR, but the handlers run unordered, so the READY can arrive before the
+    * message the settled state carries.
     */
   private def awaitReadyOrError(observer: InitObserver): Option[InitError] = {
     def now                       = java.lang.System.nanoTime()
@@ -351,7 +353,7 @@ private[openfeature] object ProviderRegistration {
     var errorSeenAt: Option[Long] = None
     def errorWaitOver             =
       errorSeenAt.exists(t => now - t >= TimeUnit.MILLISECONDS.toNanos(ReadyAfterErrorMillis))
-    while (!observer.initialized && !errorWaitOver && now - until < 0) {
+    while (!(observer.initialized && observer.lastError.get().isDefined) && !errorWaitOver && now - until < 0) {
       if (errorSeenAt.isEmpty && observer.lastError.get().isDefined) errorSeenAt = Some(now)
       Thread.sleep(PollMillis)
     }

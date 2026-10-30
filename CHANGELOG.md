@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Deterministic lifecycle interleavings** (#576, test-only). The lifecycle code now names fourteen points of the
+  provider-lifecycle protocol through an internal probe, which production instances leave as a no-op and which the
+  evaluation code never receives. The new `LifecycleInterleavingSpec` holds a swap, a shutdown or a provider event at
+  each point it reaches and runs a competing action there (an event, a shutdown, evaluations, another swap, a released
+  initialization), then checks the outcome against the lifecycle model. With the shutdown-during-swap fix (#565), the
+  timed-out-swap orphan fix (#564) or the swap gate reverted, its named regressions fail every time.
 - **The lifecycle model test covers reused provider names, overlapping actions and orphaned providers** (#574,
   test-only). `LifecycleModelSpec` now generates swaps whose provider reuses the replaced provider's name (an
   evaluation's answering provider is told apart by id), events from an already-replaced provider, providers whose

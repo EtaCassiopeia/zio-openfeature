@@ -8,11 +8,13 @@ import zio.openfeature.internal.{
   FallbackLogLimiter,
   FeatureFlagsState,
   HookPipeline,
+  LifecycleProbe,
   OrphanedProviders,
   ProviderRegistration,
   SwitchableProvider,
   TrackingConverter
 }
+import zio.openfeature.internal.LifecycleProbe.Point
 import zio.openfeature.internal.ProviderStatusMachine.Signal
 import dev.openfeature.sdk.{
   Client => OFClient,
@@ -53,7 +55,9 @@ final private[openfeature] class FeatureFlagsLive(
   // instances set it: a production instance must not retain contexts, which routinely hold PII.
   recordTracking: Boolean = false,
   // Previous providers a timed-out swap left registered nowhere; an owning instance shuts them down once settled.
-  orphans: OrphanedProviders
+  orphans: OrphanedProviders,
+  // Named lifecycle points a test can hold a fiber at; a no-op in production.
+  probe: LifecycleProbe = LifecycleProbe.none
 ) extends FeatureFlags {
 
   // The total tier's served-default breadcrumb, under this instance's `FallbackLogging` policy. Lives here, not
@@ -67,7 +71,7 @@ final private[openfeature] class FeatureFlagsLive(
 
   // The collaborators this instance delegates to. It keeps lifecycle and state: construction, the provider
   // swap, shutdown and status.
-  private val eventBridge  = new EventBridge(client, providerNameRef, state, onReady)
+  private val eventBridge  = new EventBridge(client, providerNameRef, state, onReady, probe)
   private val hookPipeline = new HookPipeline(state, providerNameRef, domain, version)
   private val evaluator    = new Evaluator(
     client,
@@ -473,6 +477,7 @@ final private[openfeature] class FeatureFlagsLive(
   override def setProvider(newProvider: OFFeatureProvider): IO[FeatureFlagError, Unit] =
     swapLock.withPermit(refusePendingOrphan(newProvider) *> {
       val swap = for {
+        _ <- probe.at(Point.SwapStart)
         // Save old state for rollback on failure
         oldProvider <- providerRef.get
         oldName     <- ZIO.succeed(providerNameRef.get())
@@ -491,7 +496,7 @@ final private[openfeature] class FeatureFlagsLive(
         //    `api.shutdown()`. Phase 2 watch-point: re-verify READY detection against the SDK's spec-v0.9.0
         //    provider-event marker once shipped.
         _ <- ProviderRegistration
-          .registerAndAwait(api, domain, newProvider, initTimeout)
+          .registerThenAwait(api, domain, newProvider, initTimeout)(probe.at(Point.SdkBind))
           .mapError(e => FeatureFlagError.ProviderInitializationFailed(e))
           .tapError {
             // A timed-out swap is NOT rolled back. The new provider's `initialize()` is still running on the SDK's
@@ -501,7 +506,8 @@ final private[openfeature] class FeatureFlagsLive(
             // new provider bound (refs keep pointing at it) with status Error: a late READY recovers to Ready through
             // the event bridge, and a later setProvider works because no API lock is held.
             case FeatureFlagError.ProviderInitializationFailed(_: java.util.concurrent.TimeoutException) =>
-              applySignal(Signal.SwapFailed) *>
+              probe.at(Point.SwapTimeout) *>
+                applySignal(Signal.SwapFailed) *>
                 ZIO.logWarning(
                   s"setProvider: '$newName' did not finish initializing within $initTimeout; status is Error and the " +
                     s"previous provider '$oldName' was not restored (it is shut down once '$newName' settles)"
@@ -515,6 +521,7 @@ final private[openfeature] class FeatureFlagsLive(
               providerRef.set(oldProvider) *>
                 ZIO.succeed(providerNameRef.set(oldName)) *>
                 applySignal(Signal.SwapFailed) *>
+                probe.at(Point.SwapRollback) *>
                 restoreSdkRegistration(oldProvider, newProvider).foldZIO(
                   e =>
                     ZIO.logErrorCause(
@@ -550,6 +557,7 @@ final private[openfeature] class FeatureFlagsLive(
             reconcileLateReady(newProvider)
           case _ => ZIO.unit
         }
+        .ensuring(probe.at(Point.SwapDone))
     })
 
   /** A provider that a timed-out swap replaced is still held by the new provider's pending initialization, which shuts
@@ -585,7 +593,8 @@ final private[openfeature] class FeatureFlagsLive(
         ZIO
           .attemptBlocking(ProviderStateAccess.stateReader(api, domain.orNull, incoming))
           .flatMap {
-            case Some(state) => orphans.record(previous, previousName, incomingName, state)
+            case Some(state) =>
+              orphans.record(previous, previousName, incomingName, state) *> probe.at(Point.OrphanRecorded)
             // Something outside this instance rebound the slot between the timeout and here.
             case None =>
               ZIO.logWarning(
@@ -642,7 +651,7 @@ final private[openfeature] class FeatureFlagsLive(
   private[openfeature] def apiEvaluationContext: dev.openfeature.sdk.EvaluationContext = api.getEvaluationContext
 
   private def reconcileLateReady(newProvider: OFFeatureProvider): UIO[Unit] =
-    ZIO
+    probe.at(Point.LateReady) *> ZIO
       .attemptBlocking {
         val bound = domain.fold(api.getProvider())(d => api.getProvider(d))
         if (bound eq newProvider) client.getProviderState match {
@@ -695,7 +704,8 @@ final private[openfeature] class FeatureFlagsLive(
     // teardown would move the status out of the final NotReady. A shutdown during a swap therefore waits for it to
     // settle (each swap is bounded by `initTimeout`); waiting for the permit stays interruptible, as in `setProvider`.
     swapLock.withPermit(
-      (applySignal(Signal.ShutdownStarted) *>
+      (probe.at(Point.ShutdownStart) *>
+        applySignal(Signal.ShutdownStarted) *>
         // Deregister the bridge handlers BEFORE tearing down the API so no emitter thread races the teardown (the scope
         // finalizer also calls this — the SDK's removeHandler is idempotent). It takes the SDK's lock, so off the core pool.
         ZIO.attemptBlocking(bridgeDeregister.get()()).ignore *>
@@ -714,6 +724,7 @@ final private[openfeature] class FeatureFlagsLive(
         // A non-owning `shutdown` therefore releases only this instance's own state (status/hooks/contexts/event hub,
         // torn down above); retire such clients via whatever owns the API (e.g. the registry).
         ZIO.when(ownsApi)(ProviderRegistration.boundedApiShutdown(api) *> orphans.resolveAll) *>
+        probe.at(Point.ShutdownDone) *>
         applySignal(Signal.ShutdownCompleted).unit).uninterruptible
     )
 

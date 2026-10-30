@@ -49,7 +49,8 @@ private[openfeature] object FeatureFlagsFactories {
     maxAbandonedCalls: Int,
     recordTracking: Boolean,
     unreadableNameIsUnknown: Boolean,
-    orphans: OrphanedProviders
+    orphans: OrphanedProviders,
+    probe: LifecycleProbe
   ): ZIO[Scope, Throwable, FeatureFlagsLive] =
     for {
       client <- ZIO.attempt(api.getClient(domain.orNull, version.orNull))
@@ -84,7 +85,8 @@ private[openfeature] object FeatureFlagsFactories {
       initTimeout,
       maxAbandonedCalls,
       recordTracking,
-      orphans = orphans
+      orphans = orphans,
+      probe = probe
     )
 
   /** Whether the event bridge can be attached before `provider` is registered.
@@ -169,17 +171,22 @@ private[openfeature] object FeatureFlagsFactories {
     contextSource: ContextSource = ContextSource.empty,
     fallbackLogging: FallbackLogging = FallbackLogging.Default,
     maxAbandonedCalls: Int = DefaultMaxAbandonedCalls,
-    recordTracking: Boolean = false
+    recordTracking: Boolean = false,
+    probe: LifecycleProbe = LifecycleProbe.none
   ): ZIO[Scope, Throwable, FeatureFlagsLive] =
     for {
       api <- ZIO.succeed(apiOverride.getOrElse(OpenFeatureAPI.getInstance()))
       // Register the API shutdown finalizer BEFORE initiating provider registration. If init times out,
       // the provider reports a bad state, or getClient fails, the scope close still tears down whatever
       // the registration managed to bind.
-      orphans = OrphanedProviders(api)
+      orphans = OrphanedProviders(api, probe)
       // After the API's teardown, which settles or interrupts a timed-out swap's pending initialization.
       _ <- ZIO.when(addShutdownFinalizer)(
-        ZIO.addFinalizer(ProviderRegistration.boundedApiShutdown(api) *> orphans.resolveAll)
+        ZIO.addFinalizer(
+          probe.at(LifecycleProbe.Point.ScopeClose) *> ProviderRegistration.boundedApiShutdown(
+            api
+          ) *> orphans.resolveAll
+        )
       )
       ff <- makeInstance(
         provider,
@@ -197,7 +204,8 @@ private[openfeature] object FeatureFlagsFactories {
         maxAbandonedCalls,
         recordTracking,
         unreadableNameIsUnknown = true,
-        orphans
+        orphans,
+        probe
       )
       // The bridge is attached before the provider initializes, so exactly one PROVIDER_READY reaches it. See
       // `attachesBeforeRegistration`.
@@ -359,16 +367,21 @@ private[openfeature] object FeatureFlagsFactories {
     contextSource: ContextSource = ContextSource.empty,
     fallbackLogging: FallbackLogging = FallbackLogging.Default,
     maxAbandonedCalls: Int = DefaultMaxAbandonedCalls,
-    recordTracking: Boolean = false
+    recordTracking: Boolean = false,
+    probe: LifecycleProbe = LifecycleProbe.none
   ): ZIO[Scope, Throwable, FeatureFlagsLive] =
     for {
       api <- ZIO.succeed(apiOverride.getOrElse(OpenFeatureAPI.getInstance()))
       // Register the API shutdown finalizer BEFORE the provider, so a failure later in the build still tears down the
       // registered provider when the scope closes.
-      orphans = OrphanedProviders(api)
+      orphans = OrphanedProviders(api, probe)
       // After the API's teardown, which settles or interrupts a timed-out swap's pending initialization.
       _ <- ZIO.when(addShutdownFinalizer)(
-        ZIO.addFinalizer(ProviderRegistration.boundedApiShutdown(api) *> orphans.resolveAll)
+        ZIO.addFinalizer(
+          probe.at(LifecycleProbe.Point.ScopeClose) *> ProviderRegistration.boundedApiShutdown(
+            api
+          ) *> orphans.resolveAll
+        )
       )
       ff <- makeInstance(
         provider,
@@ -386,7 +399,8 @@ private[openfeature] object FeatureFlagsFactories {
         maxAbandonedCalls,
         recordTracking,
         unreadableNameIsUnknown = false,
-        orphans
+        orphans,
+        probe
       )
       // As in the sync build: attach the bridge before the provider initializes, so exactly one PROVIDER_READY
       // reaches it — the post-init emission, or the SDK's replay for a provider that is already ready.
@@ -410,7 +424,8 @@ private[openfeature] object FeatureFlagsFactories {
       // (`everReady` gate inside the machine): publish the Error event, release the onReady latch, then shut the
       // provider down, bounded. A provider that was Ready and later dipped to a transient Error is left running. The
       // fiber is forked into the layer's Scope, so it is also interrupted when the layer is released.
-      _ <- (ZIO.sleep(initTimeout) *> ff.escalateInitTimeout(provider, initTimeout)).forkScoped
+      _ <- (ZIO.sleep(initTimeout) *> probe.at(LifecycleProbe.Point.Watchdog) *>
+        ff.escalateInitTimeout(provider, initTimeout)).forkScoped
     } yield ff
 
   /** Create a FeatureFlags layer with a named domain and shared status ref (non-blocking). */

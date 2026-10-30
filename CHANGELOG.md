@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A TLA+ model of the provider lifecycle, checked by TLC in CI** (#582, test-only). `formal/lifecycle/Lifecycle.tla`
+  models the swap, its rollback, the event bridge, the providers a timed-out swap leaves behind, shutdown and the scope
+  close, with the Java SDK as the environment, and TLC checks every interleaving for the initial provider, three swaps
+  and two provider events (about 11 million states) against eight invariants. Each of the lifecycle bugs fixed this
+  release, put back into the model, breaks one of them. The new `Formal model` workflow runs it when the lifecycle code
+  or the model changes, and asks a pull request that changes the code without the model to say why. Writing the model
+  found a defect it now records as a known limit: a provider that reports `ERROR` right after a successful
+  `initialize()`, before the swap has seen the outcome, makes the swap roll back onto a provider the SDK has already
+  shut down (#623).
 - **Deterministic lifecycle interleavings** (#576, test-only). The lifecycle code now names fourteen points of the
   provider-lifecycle protocol through an internal probe, which production instances leave as a no-op and which the
   evaluation code never receives. The new `LifecycleInterleavingSpec` holds a swap, a shutdown or a provider event at

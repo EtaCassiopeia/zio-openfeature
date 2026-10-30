@@ -1,0 +1,90 @@
+name: Formal model
+
+# TLC checks the provider-lifecycle model (formal/lifecycle) on every change to it and to the lifecycle code it models.
+# A pull request that changes the lifecycle code without changing the model says why in its description. On main and
+# on demand, the mutants also run: each fixed lifecycle bug is put back into the model and must be caught.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+    paths:
+      - 'formal/**'
+      - '.github/workflows/formal.yml'
+      - 'core/src/main/scala/zio/openfeature/FeatureFlagsLive.scala'
+      - 'core/src/main/scala/zio/openfeature/internal/EventBridge.scala'
+      - 'core/src/main/scala/zio/openfeature/internal/ProviderRegistration.scala'
+      - 'core/src/main/scala/zio/openfeature/internal/ProviderStatusMachine.scala'
+      - 'core/src/main/scala/zio/openfeature/internal/OrphanedProviders.scala'
+      - 'core/src/main/scala/zio/openfeature/internal/SwitchableProvider.scala'
+  push:
+    branches: [main]
+    paths:
+      - 'formal/**'
+      - '.github/workflows/formal.yml'
+      - 'core/src/main/scala/zio/openfeature/FeatureFlagsLive.scala'
+      - 'core/src/main/scala/zio/openfeature/internal/EventBridge.scala'
+      - 'core/src/main/scala/zio/openfeature/internal/ProviderRegistration.scala'
+      - 'core/src/main/scala/zio/openfeature/internal/ProviderStatusMachine.scala'
+      - 'core/src/main/scala/zio/openfeature/internal/OrphanedProviders.scala'
+      - 'core/src/main/scala/zio/openfeature/internal/SwitchableProvider.scala'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  TLA_TOOLS_VERSION: v1.7.4
+  TLA_TOOLS_SHA256: 936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88
+
+jobs:
+  tlc:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - name: Set up JDK 21
+        uses: actions/setup-java@v6
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+      - name: Download the TLA+ tools
+        run: |
+          curl -sSLo tla2tools.jar "https://github.com/tlaplus/tlaplus/releases/download/${TLA_TOOLS_VERSION}/tla2tools.jar"
+          echo "${TLA_TOOLS_SHA256}  tla2tools.jar" | sha256sum -c -
+      - name: Check the lifecycle model
+        working-directory: formal/lifecycle
+        run: java -XX:+UseParallelGC -cp ../../tla2tools.jar tlc2.TLC -workers auto -deadlock -config Lifecycle.cfg Lifecycle.tla
+      - name: Check that the model catches each fixed lifecycle bug
+        if: github.event_name != 'pull_request'
+        working-directory: formal/lifecycle
+        run: python3 mutants.py ../../tla2tools.jar
+
+  # A lifecycle change without a model change is fine when it does not affect the protocol, but the author says so.
+  model-or-reason:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Require a model change or a stated reason
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+          BODY: ${{ github.event.pull_request.body }}
+        run: |
+          changed=$(git diff --name-only "$BASE...$HEAD")
+          lifecycle=$(printf '%s\n' "$changed" | grep -E '^core/src/main/scala/zio/openfeature/(FeatureFlagsLive|internal/(EventBridge|ProviderRegistration|ProviderStatusMachine|OrphanedProviders|SwitchableProvider))\.scala$' || true)
+          model=$(printf '%s\n' "$changed" | grep -E '^formal/' || true)
+          if [ -z "$lifecycle" ] || [ -n "$model" ]; then
+            echo "Nothing to check: no lifecycle file changed, or the model changed with it."
+            exit 0
+          fi
+          if printf '%s\n' "$BODY" | grep -qiE '^formal: unaffected because .+'; then
+            echo "The description states why the model is unaffected."
+            exit 0
+          fi
+          echo "::error::This pull request changes the lifecycle code without changing formal/lifecycle:"
+          printf '%s\n' "$lifecycle"
+          echo "::error::Update the model, or add a line to the description: 'formal: unaffected because <reason>'."
+          exit 1

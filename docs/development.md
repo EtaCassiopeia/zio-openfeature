@@ -151,6 +151,23 @@ model `LifecycleModelSpec` uses. A reach table lists the points each primary pas
 test rather than silently testing nothing. To hold a new point, add it to `LifecycleProbe.Point`, call `probe.at` there,
 and add it to the reach table.
 
+**Model checking.** `formal/lifecycle/Lifecycle.tla` is a TLA+ model of the provider lifecycle (swaps, rollbacks,
+the event bridge, the providers a timed-out swap leaves behind, shutdown), with the Java SDK as its environment. TLC
+checks every order its actions can take for a small configuration against invariants: the final `NotReady`, `NotReady`
+throughout a swap, no second `initialize()` while one runs, the status following the SDK's state for the installed
+provider, and every provider shut down exactly once when the scope closes. The `Formal model` workflow runs it on every
+pull request that touches the lifecycle code or the model; a pull request that changes the lifecycle code without
+changing the model says why, in a description line starting `formal: unaffected because`. On `main`, `mutants.py` puts
+each fixed lifecycle bug back into the model and checks that an invariant catches it. `formal/lifecycle/README.md` maps
+each action to the code and lists what the model leaves out.
+
+```sh
+cd formal/lifecycle
+curl -sSLo tla2tools.jar https://github.com/tlaplus/tlaplus/releases/download/v1.7.4/tla2tools.jar
+java -cp tla2tools.jar tlc2.TLC -workers auto -deadlock -config Lifecycle.cfg Lifecycle.tla
+python3 mutants.py tla2tools.jar
+```
+
 **Linearizability checks.** `CircuitBreakerLincheckSpec` runs the circuit breaker's operations from several threads
 under [Lincheck](https://github.com/JetBrains/lincheck)'s model checker, which explores thread interleavings and checks
 every outcome matches some sequential order of the same calls. It belongs to the property run, so pull requests check

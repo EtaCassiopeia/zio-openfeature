@@ -88,6 +88,28 @@ object AbandonedCallCapSpec extends ZIOSpecDefault {
         .map(_.message())
     )
 
+  /** Parks every fiber but `caller` while holding, so a test can interrupt a timed call before its forked fibers run.
+    */
+  final private class HoldingExecutor(real: Executor) extends Executor {
+    val caller = new java.util.concurrent.atomic.AtomicReference[FiberId](null)
+    val held   = new java.util.concurrent.ConcurrentLinkedQueue[Runnable]
+    def metrics(implicit unsafe: Unsafe): Option[zio.internal.ExecutionMetrics] = None
+    def submit(r: Runnable)(implicit unsafe: Unsafe): Boolean                   = r match {
+      case f: Fiber.Runtime[_, _] if caller.get() != null && f.id != caller.get() => held.add(r)
+      case _                                                                      => real.submit(r)
+    }
+    // Drains until the queue stays empty: a submit that read `caller` before it was cleared may still be adding.
+    def releaseAll(): Unit = {
+      caller.set(null)
+      var r = held.poll()
+      while (r != null) {
+        real.submit(r)(Unsafe.unsafe): Unit
+        r = held.poll()
+        if (r == null) { Thread.sleep(10); r = held.poll() }
+      }
+    }
+  }
+
   private val untimed = EvaluationOptions.empty.withoutTimeout
 
   def spec = suite("AbandonedCallCapSpec")(
@@ -153,6 +175,31 @@ object AbandonedCallCapSpec extends ZIOSpecDefault {
         }
       }
     } @@ PropertyBudget(25),
+    test("a caller interrupted before the forked call starts does not count, and never reaches the provider") {
+      ZIO.scoped {
+        val ex = new HoldingExecutor(Runtime.defaultExecutor)
+        for {
+          p     <- gated
+          ff    <- build(p, Some(5.seconds), cap = 3)
+          _     <- ZIO.addFinalizer(ZIO.succeed(ex.releaseAll()))
+          fiber <- (ZIO.fiberIdWith(id => ZIO.succeed(ex.caller.set(id))) *> ff.boolean("fast", default = false))
+            .onExecutor(ex)
+            .fork
+          parked <- eventually(!ex.held.isEmpty)
+          _      <- fiber.interruptFork
+          // The caller takes the interrupt, and passes it on to the parked fibers in the same step, before any of them
+          // runs; the short pause covers that step.
+          taken   <- eventually(fiber.asInstanceOf[zio.internal.FiberRuntime[_, _]].isInterrupted())
+          _       <- ZIO.sleep(20.millis)
+          _       <- ZIO.succeed(ex.releaseAll())
+          exit    <- fiber.await.timeout(5.seconds)
+          drained <- eventually(ff.abandonedCallCount == 0)
+          _       <- ZIO.sleep(100.millis)
+          // Read now: the counts must hold after every released fiber has run.
+          counts = (ff.abandonedCallCount, p.entered.get())
+        } yield assertTrue(parked, taken, exit.exists(_.isInterrupted), drained, counts == ((0, 0)))
+      }
+    },
     test("a caller interrupted mid-call abandons it too, and it counts") {
       ZIO.scoped {
         for {

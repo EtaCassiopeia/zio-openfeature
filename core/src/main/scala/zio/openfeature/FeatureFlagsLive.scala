@@ -887,7 +887,9 @@ final private[openfeature] class FeatureFlagsLive(
 private[openfeature] object FeatureFlagsLive {
 
   // Per-call states for the abandoned-call cap, see `withTimeout`.
-  private[openfeature] val CallRunning   = 0
-  private[openfeature] val CallDone      = 1
-  private[openfeature] val CallAbandoned = 2
+  private[openfeature] val CallRunning    = 0
+  private[openfeature] val CallDone       = 1
+  private[openfeature] val CallAbandoned  = 2
+  private[openfeature] val CallNotStarted = 3
+  private[openfeature] val CallSkipped    = 4
 }

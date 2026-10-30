@@ -203,19 +203,30 @@ final private[openfeature] class Evaluator(
             // leak, it is not an exact quota.
             if (abandoned >= maxAbandonedCalls) rejectAbandoned(abandoned)
             else {
-              // Exactly one of the finalizer (Running -> Done) and the abandoning side (Running -> Abandoned) wins the
-              // CAS, so the counter is incremented and decremented once per abandoned call and never drifts.
-              val call    = new java.util.concurrent.atomic.AtomicInteger(FeatureFlagsLive.CallRunning)
+              // One state per call. Inside the finalizer-guarded region, the forked fiber's first step moves
+              // NotStarted -> Running before it calls the provider; an abandoning caller that finds the call NotStarted moves it to Skipped, so the provider is
+              // never called and nothing is counted. A fiber interrupted before its first instruction never runs that
+              // step nor registers its finalizer, which is why only a call already Running may be counted. From
+              // Running, exactly one of the finalizer (-> Done) and the abandoning side (-> Abandoned, counted) wins,
+              // and the finalizer decrements only after losing to Abandoned: one increment, one decrement, no drift.
+              val call    = new java.util.concurrent.atomic.AtomicInteger(FeatureFlagsLive.CallNotStarted)
               val abandon = ZIO.succeed {
                 if (call.compareAndSet(FeatureFlagsLive.CallRunning, FeatureFlagsLive.CallAbandoned))
                   abandonedCalls.incrementAndGet(): Unit
+                else call.compareAndSet(FeatureFlagsLive.CallNotStarted, FeatureFlagsLive.CallSkipped): Unit
               }.unit
-              effect
+              ZIO
+                .suspendSucceed(
+                  if (call.compareAndSet(FeatureFlagsLive.CallNotStarted, FeatureFlagsLive.CallRunning)) effect
+                  else ZIO.interrupt
+                )
                 // Before `.disconnect`, so the finalizer runs on the disconnected fiber when the provider finally
                 // returns, however long after the caller moved on.
                 .ensuring(ZIO.succeed {
-                  if (!call.compareAndSet(FeatureFlagsLive.CallRunning, FeatureFlagsLive.CallDone))
-                    abandonedCalls.decrementAndGet(): Unit
+                  if (
+                    !call.compareAndSet(FeatureFlagsLive.CallRunning, FeatureFlagsLive.CallDone) &&
+                    call.get() == FeatureFlagsLive.CallAbandoned
+                  ) abandonedCalls.decrementAndGet(): Unit
                 })
                 .disconnect
                 .timeoutFail(new java.util.concurrent.TimeoutException(s"Evaluation of '$key' timed out after $d"))(d)

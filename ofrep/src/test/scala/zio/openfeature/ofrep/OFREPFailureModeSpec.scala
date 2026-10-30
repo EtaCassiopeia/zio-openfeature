@@ -88,27 +88,48 @@ object OFREPFailureModeSpec extends ZIOSpecDefault {
   private def flagged(result: Either[FeatureFlagError, FlagResolution[Boolean]]): Boolean =
     result.fold(_ => true, _.errorCode.isDefined)
 
-  private def parseError(result: Either[FeatureFlagError, FlagResolution[Boolean]]): Boolean =
+  /** A server error: the typed tier fails with `ProviderError`, which the circuit breaker counts. */
+  private def general(result: Either[FeatureFlagError, FlagResolution[Boolean]]): Boolean =
     result match {
-      case Left(_: FeatureFlagError.ParseError) => true
-      case _                                    => false
+      case Left(_: FeatureFlagError.ProviderError) => true
+      case _                                       => false
     }
 
   // Responses a proxy, a crashing server or a half-dead connection can hand back in place of an OFREP answer.
-  // Each pairs the response with what must come back: a body that arrives but does not parse is a `ParseError`.
+  // Each pairs the response with what must come back: a body that arrives but is not OFREP JSON, whatever the status,
+  // is a server error, so a dead backend behind a proxy opens the circuit.
   private val brokenResponses
     : List[(String, ResponseDefinitionBuilder, Either[FeatureFlagError, FlagResolution[Boolean]] => Boolean)] = List(
     ("random bytes, then the connection closes", aResponse().withFault(Fault.RANDOM_DATA_THEN_CLOSE), flagged),
     ("a malformed chunk", aResponse().withFault(Fault.MALFORMED_RESPONSE_CHUNK), flagged),
     ("an empty response", aResponse().withFault(Fault.EMPTY_RESPONSE), flagged),
-    ("truncated JSON", okJson("""{"key":"broken","value":tr"""), parseError),
+    ("truncated JSON", okJson("""{"key":"broken","value":tr"""), general),
     (
       "an HTML page with status 200",
       aResponse()
         .withStatus(200)
         .withHeader("Content-Type", "text/html")
         .withBody("<html><body><h1>Gateway</h1></body></html>"),
-      parseError
+      general
+    ),
+    (
+      "a 502 with an HTML body",
+      aResponse()
+        .withStatus(502)
+        .withHeader("Content-Type", "text/html")
+        .withBody("<html><body>Bad Gateway</body></html>"),
+      general
+    ),
+    ("a 503 with an empty body", aResponse().withStatus(503), general),
+    (
+      "a 401 with an HTML body",
+      aResponse().withStatus(401).withHeader("Content-Type", "text/html").withBody("<html>Forbidden</html>"),
+      general
+    ),
+    (
+      "a 429 with an HTML body",
+      aResponse().withStatus(429).withHeader("Retry-After", "1").withBody("<html>Too Many Requests</html>"),
+      general
     )
   )
 
@@ -129,6 +150,43 @@ object OFREPFailureModeSpec extends ZIOSpecDefault {
         }
       }: _*
     ),
+    test("a context the client cannot serialize is not blamed on a healthy server") {
+      withMockServer { server =>
+        stubBroken(server, okJson("""{"key":"broken","value":true,"reason":"STATIC"}"""))
+        // The contrib provider's request mapper has no java.time support, so it fails before sending anything.
+        val ctx    = zio.openfeature.EvaluationContext.builder.attribute("at", java.time.Instant.EPOCH).build
+        val result = withFeatureFlags(server, evaluationTimeout = Some(5.seconds)) { ff =>
+          Unsafe.unsafe { implicit u =>
+            Runtime.default.unsafe
+              .run(ff.booleanDetails("broken", default = false, ctx = ctx).either.withClock(Clock.ClockLive))
+              .getOrThrowFiberFailure()
+          }
+        }
+        assertTrue(result match {
+          case Left(_: FeatureFlagError.ParseError) => true
+          case _                                    => false
+        })
+      }
+    },
+    test("a long read of an HTML error page is a server error too") {
+      withMockServer { server =>
+        stubBroken(
+          server,
+          aResponse().withStatus(502).withHeader("Content-Type", "text/html").withBody("<html>Bad Gateway</html>")
+        )
+        val result = withFeatureFlags(server, evaluationTimeout = Some(5.seconds)) { ff =>
+          Unsafe.unsafe { implicit u =>
+            Runtime.default.unsafe
+              .run(ff.longDetails("broken", default = 7L).either.withClock(Clock.ClockLive))
+              .getOrThrowFiberFailure()
+          }
+        }
+        assertTrue(result match {
+          case Left(_: FeatureFlagError.ProviderError) => true
+          case _                                       => false
+        })
+      }
+    },
     test("a response dribbled out slower than the evaluation timeout fails with a timeout") {
       withMockServer { server =>
         stubBroken(

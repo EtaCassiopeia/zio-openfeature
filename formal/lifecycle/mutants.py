@@ -14,8 +14,8 @@ mutants = {
         '    /\\ LET prev == swap.prev'),
     # Shutdown does not wait for a swap in flight.
     'shutdown does not wait for a swap in flight': (
-        'ShutdownStart ==\n    /\\ lock = "free" /\\ ~shutDown /\\ ~closed\n    /\\ lock\' = "shutdown"',
-        'ShutdownStart ==\n    /\\ lock # "shutdown" /\\ ~shutDown /\\ ~closed\n    /\\ lock\' = IF lock = "swap" THEN lock ELSE "shutdown"'),
+        'ShutdownStart ==\n    /\\ lock = "free" /\\ ~closed\n    /\\ lock\' = "shutdown"',
+        'ShutdownStart ==\n    /\\ lock # "shutdown" /\\ ~closed\n    /\\ lock\' = IF lock = "swap" THEN lock ELSE "shutdown"'),
     # STALE moves the status only from Ready.
     'STALE moves the status only from Ready': (
         'IF s \\in {"NotReady", "Ready", "Error"} THEN "Stale" ELSE s',

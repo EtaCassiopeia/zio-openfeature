@@ -1,0 +1,16 @@
+{"seq":0,"point":"DeliverEvent","arg":"PROVIDER_READY"}
+{"seq":1,"point":"ApplySignal","arg":"EventReady"}
+{"seq":2,"point":"Begin","arg":""}
+{"seq":3,"point":"SwapStart","arg":""}
+{"seq":4,"point":"ApplySignal","arg":"SwapStarted"}
+{"seq":5,"point":"SdkBind","arg":""}
+{"seq":6,"point":"DeliverEvent","arg":"PROVIDER_READY"}
+{"seq":7,"point":"ApplySignal","arg":"EventReady"}
+{"seq":8,"point":"ShutdownStart","arg":""}
+{"seq":9,"point":"ApplySignal","arg":"ShutdownStarted"}
+{"seq":10,"point":"ShutdownDone","arg":""}
+{"seq":11,"point":"ApplySignal","arg":"ShutdownCompleted"}
+{"seq":12,"point":"ApplySignal","arg":"SwapFailed"}
+{"seq":13,"point":"SwapRollback","arg":""}
+{"seq":14,"point":"SwapDone","arg":""}
+{"seq":15,"point":"ScopeClose","arg":""}

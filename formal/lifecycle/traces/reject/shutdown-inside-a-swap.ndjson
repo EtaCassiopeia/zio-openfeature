@@ -1,0 +1,6 @@
+{"seq": 0, "point": "Begin", "arg": ""}
+{"seq": 1, "point": "SwapStart", "arg": ""}
+{"seq": 2, "point": "SdkBind", "arg": ""}
+{"seq": 3, "point": "ShutdownStart", "arg": ""}
+{"seq": 4, "point": "ShutdownDone", "arg": ""}
+{"seq": 5, "point": "SwapDone", "arg": ""}

@@ -18,6 +18,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   found a defect it now records as a known limit: a provider that reports `ERROR` right after a successful
   `initialize()`, before the swap has seen the outcome, makes the swap roll back onto a provider the SDK has already
   shut down (#623).
+- **Trace validation of the lifecycle model** (#582, test-only). With `ZOF_TRACE=1`, `LifecycleModelSpec` and
+  `LifecycleInterleavingSpec` record the lifecycle probe points of every run, and `formal/lifecycle/validate.py` has
+  TLC check that each run's library steps follow an order the TLA+ model allows. The `Formal model` workflow does so on
+  `main` and nightly for both suites,
+  and on pull requests checks that the checker accepts recorded and hand-written runs and rejects runs the model
+  forbids, among them one recorded with shutdown's lock removed. The model now allows a second shutdown call, which the
+  recorded runs showed is harmless.
 - **Deterministic lifecycle interleavings** (#576, test-only). The lifecycle code now names fourteen points of the
   provider-lifecycle protocol through an internal probe, which production instances leave as a no-op and which the
   evaluation code never receives. The new `LifecycleInterleavingSpec` holds a swap, a shutdown or a provider event at

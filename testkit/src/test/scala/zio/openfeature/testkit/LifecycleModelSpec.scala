@@ -6,6 +6,7 @@ import zio.openfeature.testsupport.LeakCheck.{awaitNoLeaks, snapshot}
 import zio._
 import zio.test._
 import zio.openfeature._
+import zio.openfeature.internal.{FeatureFlagsFactories, LifecycleProbe}
 import dev.openfeature.sdk.{
   ErrorCode => OFErrorCode,
   FeatureProvider,
@@ -505,20 +506,26 @@ object LifecycleModelSpec extends ZIOSpecDefault {
       }
     } yield next
 
-  private def runSteps(actions: List[Action]): URIO[Scope, (Chunk[String], Map[String, Provider])] = {
+  private def runSteps(
+    actions: List[Action],
+    trace: Option[TraceProbe]
+  ): URIO[Scope, (Chunk[String], Map[String, Provider])] = {
     val first = Installed("p0-initial", "p0-initial")
     for {
       initial <- newProvider(first, Kind.Good)
-      ff      <- FeatureFlags.build(
-        initial,
-        domain = Some(s"lifecycle-model-${java.util.UUID.randomUUID()}"),
-        version = None,
-        initialHooks = Nil,
-        statusRef = None,
-        addShutdownFinalizer = true,
-        apiOverride = Some(OpenFeatureAPI.createIsolated()),
-        initTimeout = InitTimeout
-      )
+      ff      <- FeatureFlagsFactories
+        .buildWithTracking(
+          initial,
+          domain = Some(s"lifecycle-model-${java.util.UUID.randomUUID()}"),
+          version = None,
+          initialHooks = Nil,
+          statusRef = None,
+          addShutdownFinalizer = true,
+          apiOverride = Some(OpenFeatureAPI.createIsolated()),
+          initTimeout = InitTimeout,
+          probe = TraceProbe.alongside(LifecycleProbe.none, trace)
+        )
+        .orDie
       queue <- Queue.unbounded[ProviderEvent]
       // Handlers tied to the scope, as docs/lifecycle.md "Scoping a handler" says: they run until cancelled.
       _ <- ZIO.foreachDiscard(List(ProviderEventType.Ready, ProviderEventType.Error, ProviderEventType.Stale)) { t =>
@@ -527,6 +534,7 @@ object LifecycleModelSpec extends ZIOSpecDefault {
       sut   = Sut(ff, queue)
       start = Run(Model.initial(first), Map(first.id -> initial), first, first, None, None, Nil, Chunk.empty)
       seen <- verify(sut, start.model, "initial")
+      _    <- ZIO.foreachDiscard(trace)(_.begin)
       last <- ZIO.foldLeft(actions.zipWithIndex)(start.copy(violations = seen)) { case (run, (action, i)) =>
         perform(sut, run, action, i + 1)
       }
@@ -540,10 +548,12 @@ object LifecycleModelSpec extends ZIOSpecDefault {
   def runCase(actions: List[Action]): UIO[Chunk[String]] =
     for {
       baseline <- snapshot
+      trace    <- TraceProbe.make
       scope    <- Scope.make
-      ran      <- runSteps(actions).provideEnvironment(ZEnvironment[Scope](scope))
+      ran      <- runSteps(actions, trace).provideEnvironment(ZEnvironment[Scope](scope))
       (steps, providers) = ran
       closed <- scope.close(Exit.unit).timed.timeout(CloseHardBound)
+      _      <- ZIO.foreachDiscard(trace)(_.write(s"model-${java.util.UUID.randomUUID()}"))
       closing = closed match {
         case None                                 => Chunk(s"scope close did not complete within $CloseHardBound")
         case Some((took, _)) if took > CloseBound => Chunk(s"scope close took ${took.toMillis} ms, over $CloseBound")

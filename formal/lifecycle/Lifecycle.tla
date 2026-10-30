@@ -95,7 +95,8 @@ Matches(s, state) ==
       [] OTHER               -> FALSE
 
 -----------------------------------------------------------------------------
-Init ==
+\* The state after the build, with `events0` the build's events not yet delivered.
+InitWith(events0) ==
     /\ status = "Ready"
     /\ installed = P0
     /\ lock = "free"
@@ -110,10 +111,12 @@ Init ==
     /\ sdk = [p \in All |-> IF p = P0 THEN "READY" ELSE "NONE"]
     /\ inits = [p \in All |-> 0]
     /\ prevOf = [p \in All |-> None]
-    /\ events = {}
+    /\ events = events0
     /\ emitted = 0
     /\ shuts = [p \in All |-> 0]
     /\ twoInits = FALSE
+
+Init == InitWith({})
 
 \* The state of the registration an orphan entry watches: the provider's current one, or, once that provider has been
 \* registered again, the state its watched registration was left in (a new registration does not change it).
@@ -282,18 +285,30 @@ EmitStaleWhileStarting(p) ==
                     bound, inits, prevOf, shuts, twoInits >>
 
 \* DeliverEvent + ApplySignal: the SDK delivers a pending event, in any order, to the handlers of the domains its
-\* provider is bound to.  The bridge applies the signal the SDK's state for the slot implies (a FATAL as sent); an
-\* event found while the slot is NOT_READY changes nothing; the gate and the final NotReady block all of them.
-Deliver(ev) ==
+\* provider is bound to; the bridge's handler runs only for the provider bound to the slot and while it is registered.
+\* The bridge applies the signal the SDK's state for the slot implies (a FATAL as sent); an event found while the slot
+\* is NOT_READY changes nothing, and so does every event while the swap gate is up.
+DeliverToBridge(ev) ==
     /\ ev \in events
+    /\ bridgeOn /\ ev.p = bound
     /\ events' = events \ {ev}
     /\ status' =
-         IF ~bridgeOn \/ ev.p # bound \/ gate \/ shutDown THEN status
+         IF gate \/ shutDown THEN status
          ELSE IF ev.e = "FATAL" THEN Apply(status, "FATAL")
          ELSE IF sdk[bound] = "NOT_READY" THEN status
          ELSE Apply(status, sdk[bound])
     /\ UNCHANGED << installed, lock, gate, swap, pending, orphans, bridgeOn, shutDown, closed,
                     bound, sdk, inits, prevOf, emitted, shuts, twoInits >>
+
+\* An event no handler of this instance receives: from a provider no longer bound, or after the bridge is gone.
+Discard(ev) ==
+    /\ ev \in events
+    /\ ~(bridgeOn /\ ev.p = bound)
+    /\ events' = events \ {ev}
+    /\ UNCHANGED << status, installed, lock, gate, swap, pending, orphans, bridgeOn, shutDown, closed,
+                    bound, sdk, inits, prevOf, emitted, shuts, twoInits >>
+
+Deliver(ev) == DeliverToBridge(ev) \/ Discard(ev)
 
 -----------------------------------------------------------------------------
 (* OrphanedProviders *)
@@ -324,18 +339,19 @@ TearDown ==
 (* shutdown and the scope close *)
 
 \* ShutdownStart: shutdown holds the lock (it waits for a swap in flight); the status is ShuttingDown and the bridge
-\* is deregistered.
+\* is deregistered.  A shutdown may be called again after one completed: it runs again, harmlessly.
 ShutdownStart ==
-    /\ lock = "free" /\ ~shutDown /\ ~closed
+    /\ lock = "free" /\ ~closed
     /\ lock' = "shutdown"
     /\ status' = "ShuttingDown"
     /\ bridgeOn' = FALSE
     /\ UNCHANGED << installed, gate, swap, pending, orphans, shutDown, closed, sdkVars >>
 
-\* ShutdownDone: the owning instance tears the API down; the status is NotReady for good.
+\* ShutdownDone: the owning instance tears the API down; the status is NotReady for good.  A later shutdown finds the
+\* API already torn down: the SDK's shutdown cleared its registrations, so nothing is shut down again.
 ShutdownDone ==
     /\ lock = "shutdown"
-    /\ TearDown
+    /\ IF shutDown THEN UNCHANGED << shuts, inits, orphans >> ELSE TearDown
     /\ status' = "NotReady"
     /\ shutDown' = TRUE
     /\ lock' = "free"
@@ -375,8 +391,8 @@ Spec == Init /\ [][Next]_vars
 -----------------------------------------------------------------------------
 (* Invariants *)
 
-\* Once shutdown has completed the status stays NotReady.
-FinalNotReady == shutDown => status = "NotReady"
+\* Once shutdown has completed the status stays NotReady, apart from a later shutdown call's own ShuttingDown.
+FinalNotReady == shutDown => status = IF lock = "shutdown" THEN "ShuttingDown" ELSE "NotReady"
 
 \* "The status becomes NotReady while the SDK initializes the new provider", whatever events arrive meanwhile.
 NotReadyDuringSwap == (swap # None) => status = "NotReady"

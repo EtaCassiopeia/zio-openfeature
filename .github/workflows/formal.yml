@@ -3,6 +3,8 @@ name: Formal model
 # TLC checks the provider-lifecycle model (formal/lifecycle) on every change to it and to the lifecycle code it models.
 # A pull request that changes the lifecycle code without changing the model says why in its description. On main and
 # on demand, the mutants also run: each fixed lifecycle bug is put back into the model and must be caught.
+# Trace validation checks that runs of the library are behaviours of the model: on pull requests the checker's own
+# fixtures, on main, nightly and on demand also the runs the lifecycle test suites record.
 on:
   pull_request:
     types: [opened, synchronize, reopened, edited]
@@ -15,6 +17,10 @@ on:
       - 'core/src/main/scala/zio/openfeature/internal/ProviderStatusMachine.scala'
       - 'core/src/main/scala/zio/openfeature/internal/OrphanedProviders.scala'
       - 'core/src/main/scala/zio/openfeature/internal/SwitchableProvider.scala'
+      - 'core/src/main/scala/zio/openfeature/internal/LifecycleProbe.scala'
+      - 'testkit/src/test/scala/zio/openfeature/testkit/TraceProbe.scala'
+      - 'testkit/src/test/scala/zio/openfeature/testkit/LifecycleModelSpec.scala'
+      - 'testkit/src/test/scala/zio/openfeature/testkit/LifecycleInterleavingSpec.scala'
   push:
     branches: [main]
     paths:
@@ -26,6 +32,12 @@ on:
       - 'core/src/main/scala/zio/openfeature/internal/ProviderStatusMachine.scala'
       - 'core/src/main/scala/zio/openfeature/internal/OrphanedProviders.scala'
       - 'core/src/main/scala/zio/openfeature/internal/SwitchableProvider.scala'
+      - 'core/src/main/scala/zio/openfeature/internal/LifecycleProbe.scala'
+      - 'testkit/src/test/scala/zio/openfeature/testkit/TraceProbe.scala'
+      - 'testkit/src/test/scala/zio/openfeature/testkit/LifecycleModelSpec.scala'
+      - 'testkit/src/test/scala/zio/openfeature/testkit/LifecycleInterleavingSpec.scala'
+  schedule:
+    - cron: '17 3 * * *'
   workflow_dispatch:
 
 permissions:
@@ -34,9 +46,15 @@ permissions:
 env:
   TLA_TOOLS_VERSION: v1.7.4
   TLA_TOOLS_SHA256: 936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88
+  # Trace validation reads the traces with the community modules' Json, which needs a newer TLC.
+  TRACE_TLA_TOOLS_VERSION: v1.8.0
+  TRACE_TLA_TOOLS_SHA256: fc6878c603f0fdc18b9fe3e5bf51860cb90ab5b1154e3c371660c036d6bdd63e
+  COMMUNITY_MODULES_VERSION: '202610262215'
+  COMMUNITY_MODULES_SHA256: 1c77d512e73ae9fde27103bee9115898fc9d62bea3a99313aeb5eb14c6284af6
 
 jobs:
   tlc:
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -57,6 +75,47 @@ jobs:
         if: github.event_name != 'pull_request'
         working-directory: formal/lifecycle
         run: python3 mutants.py ../../tla2tools.jar
+
+  traces:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+      - name: Set up JDK 21
+        uses: actions/setup-java@v6
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: sbt
+      - name: Set up sbt
+        if: github.event_name != 'pull_request'
+        uses: sbt/setup-sbt@v1
+      - name: Download the TLA+ tools and community modules
+        run: |
+          curl -sSLo tla2tools.jar "https://github.com/tlaplus/tlaplus/releases/download/${TRACE_TLA_TOOLS_VERSION}/tla2tools.jar"
+          echo "${TRACE_TLA_TOOLS_SHA256}  tla2tools.jar" | sha256sum -c -
+          curl -sSLo CommunityModules-deps.jar "https://github.com/tlaplus/CommunityModules/releases/download/${COMMUNITY_MODULES_VERSION}/CommunityModules-deps.jar"
+          echo "${COMMUNITY_MODULES_SHA256}  CommunityModules-deps.jar" | sha256sum -c -
+      - name: Check that the checker accepts and rejects its fixtures
+        working-directory: formal/lifecycle
+        run: python3 validate.py ../../tla2tools.jar ../../CommunityModules-deps.jar --selftest traces
+      - name: Record the lifecycle test suites' runs
+        if: github.event_name != 'pull_request'
+        env:
+          ZOF_TRACE: '1'
+          ZOF_TRACE_DIR: ${{ github.workspace }}/traces
+        run: sbt "testkit/testOnly zio.openfeature.testkit.LifecycleModelSpec zio.openfeature.testkit.LifecycleInterleavingSpec"
+      - name: Check every recorded run is a behaviour of the model
+        if: github.event_name != 'pull_request'
+        working-directory: formal/lifecycle
+        run: python3 validate.py ../../tla2tools.jar ../../CommunityModules-deps.jar "${GITHUB_WORKSPACE}/traces"
+      - name: Keep the recorded runs
+        if: failure() && github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v7
+        with:
+          name: lifecycle-traces
+          path: traces/
+          retention-days: 14
 
   # A lifecycle change without a model change is fine when it does not affect the protocol, but the author says so.
   model-or-reason:

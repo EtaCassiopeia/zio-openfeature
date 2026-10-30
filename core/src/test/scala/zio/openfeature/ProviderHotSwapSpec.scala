@@ -289,17 +289,25 @@ object ProviderHotSwapSpec extends ZIOSpecDefault {
           )
           swap <- ff.setProvider(next).either.fork
           _    <- held.await.timeout(5.seconds)
-          // initialize() returns while the swap is held: the SDK now reports READY, and its event is dropped.
-          _     <- ZIO.succeed(next.release.countDown())
-          ready <- ZIO
-            .succeed(api.getClient(domain).getProviderState)
-            .repeatUntil(_ == ProviderState.READY)
-            .timeout(5.seconds)
-          _      <- ZIO.sleep(200.millis)
-          _      <- release.succeed(())
-          result <- swap.join
-          status <- ff.providerStatus
-        } yield assertTrue(result.isRight, ready.contains(ProviderState.READY), status == ProviderStatus.Ready)
+          // initialize() returns while the swap is held: the SDK now reports READY. The bridge publishes that READY
+          // right after its status write, which the swap's gate turned into a no-op; once it is published, the drop
+          // has happened.
+          fromB <- Promise.make[Nothing, Unit]
+          _     <- ZIO.acquireRelease(
+            ff.on(ProviderEventType.Ready, e => ZIO.when(e.metadata.name == "B")(fromB.succeed(())).unit)
+          )(cancel => cancel)
+          _         <- ZIO.succeed(next.release.countDown())
+          delivered <- fromB.await.timeout(5.seconds)
+          ready     <- ZIO.succeed(api.getClient(domain).getProviderState)
+          _         <- release.succeed(())
+          result    <- swap.join
+          status    <- ff.providerStatus
+        } yield assertTrue(
+          result.isRight,
+          delivered.isDefined,
+          ready == ProviderState.READY,
+          status == ProviderStatus.Ready
+        )
       }
     } @@ TestAspect.withLiveClock,
     test("setProvider transitions status to Ready after successful swap") {

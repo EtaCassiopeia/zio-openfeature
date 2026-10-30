@@ -181,27 +181,31 @@ object LifecycleModelSpec extends ZIOSpecDefault {
     Installed(id, if (reuseName) run.installed.name else id)
 
   /** Install `who`, waiting for the READY the SDK sends for whichever provider ends up initialized. */
-  private def swapTo(sut: Sut, run: Run, who: Installed, kind: Kind): URIO[Scope, Run] =
+  /** Install `who`, the model then being `next`. */
+  private def swapTo(sut: Sut, run: Run, who: Installed, kind: Kind, next: Model): URIO[Scope, Run] =
     for {
       p <- newProvider(who, kind)
       withP = run.copy(providers = run.providers + (who.id -> p))
-      next <- kind match {
+      after <- kind match {
         case Kind.HangingInit | Kind.HangThenFail =>
           for {
             fiber <- sut.ff.setProvider(p).either.fork
             _     <- p.awaitEntered(Op.Initialize).timeout(EventWait)
           } yield withP.copy(outgoing = run.installed, installed = who, swapFiber = Some(fiber))
         case _ =>
-          // The SDK reports READY for whichever provider ends up initialized (the new one, or the previous one
-          // registered again); wait for it so it cannot land after a later step.
-          val failed = kind == Kind.FailingInit
+          // The SDK reports READY for whichever provider ends up serving (the new one, or the previous one registered
+          // again); wait for it so it cannot land after a later step. A failed swap that could not roll back leaves
+          // the failed provider bound, and nothing serves.
+          val kept = next.installed.exists(_.id == who.id)
           sut.ff.setProvider(p).either *>
-            awaitEvent(sut, EventWait)(isReadyFrom(if (failed) run.installed.name else who.name)).as(
-              if (failed) withP.copy(replaced = Some(who))
-              else withP.copy(installed = who, replaced = Some(run.installed))
-            )
+            ZIO
+              .when(next.serving)(awaitEvent(sut, EventWait)(isReadyFrom(next.installed.fold(who.name)(_.name))))
+              .as(
+                if (kept) withP.copy(installed = who, replaced = Some(run.installed))
+                else withP.copy(replaced = Some(who))
+              )
       }
-    } yield next
+    } yield after
 
   private def emitter(run: Run): Installed = if (run.model.swap.nonEmpty) run.outgoing else run.installed
 
@@ -237,10 +241,10 @@ object LifecycleModelSpec extends ZIOSpecDefault {
       case Action.SetProvider(kind, reuse) =>
         for {
           settled <- settle(sut, run, where)
-          who = whoFor(settled, kind, reuse, s"p$index-${label(kind)}")
-          swapped <- swapTo(sut, settled, who, kind)
+          who   = whoFor(settled, kind, reuse, s"p$index-${label(kind)}")
           model = settled.model.step(action, who)
-          seen <- verify(sut, model, where)
+          swapped <- swapTo(sut, settled, who, kind, model)
+          seen    <- verify(sut, model, where)
         } yield swapped.copy(model = model, violations = swapped.violations ++ seen)
 
       case Action.Both(first, second) => both(sut, run, first, second, index, where)
@@ -446,8 +450,11 @@ object LifecycleModelSpec extends ZIOSpecDefault {
               case _               => emit(run.providers(emitter.id), other, tag).as(Chunk.empty)
             }
             _ <- swap.await.timeout(SwapBound)
-            readyFrom = if (kind == Kind.FailingInit) emitter.name else who.name
-            _ <- awaitEvent(sut, EventWait)(isReadyFrom(readyFrom))
+            planned = before.step(s, who)
+            kept    = planned.installed.exists(_.id == who.id)
+            _ <- ZIO.when(planned.serving)(
+              awaitEvent(sut, EventWait)(isReadyFrom(planned.installed.fold(who.name)(_.name)))
+            )
             _ <- ZIO.when(Action.isEmit(other))(awaitEvent(sut, MaybeEventWait)(tagged(tag)))
             swapped = before.step(s, who)
             // The event can take effect before the swap, after it (only while its sender is still installed), or be
@@ -459,14 +466,14 @@ object LifecycleModelSpec extends ZIOSpecDefault {
               else List(swapped)
             checked <- checkAny(sut, candidates, where)
             (model, seen) = checked
-            installed     = if (kind == Kind.FailingInit) emitter else who
+            installed     = if (kept) who else emitter
             // An evaluation sees the instance before the swap, during it (NotReady), or after it.
             wrong = unexpected(evaluated, List(before, before.copy(status = ProviderStatus.NotReady), swapped))
           } yield run.copy(
             model = model,
             providers = run.providers + (who.id -> p),
             installed = installed,
-            replaced = Some(if (kind == Kind.FailingInit) who else emitter),
+            replaced = Some(if (kept) emitter else who),
             violations = run.violations ++ seen ++
               (if (wrong.isEmpty) Chunk.empty else Chunk(s"$where: evaluations during the swap gave $wrong"))
           )
@@ -737,8 +744,8 @@ object LifecycleModelSpec extends ZIOSpecDefault {
         )
       ),
       regression(
-        "a failed swap rolls back to a timed-out provider by initializing it again, Ready",
-        List(SetProvider(Kind.HangingInit), SetProvider(Kind.FailingInit), Evaluate)
+        "a failed swap does not roll back onto a timed-out provider still initializing; it stays Error",
+        List(SetProvider(Kind.HangingInit), SetProvider(Kind.FailingInit), Evaluate, ReleaseHangs)
       ),
       regression(
         "a provider parked in an initialize() that will fail is replaced, and every provider is shut down once",

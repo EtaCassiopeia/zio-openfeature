@@ -228,7 +228,11 @@ A domain names a client, so different parts of an app can use different provider
   or its scope closes, the old provider is shut down then. Only an instance that
   [owns its API](#who-shuts-down-the-api) does this: on a shared API the old provider is left to the API's owner.
   Until the new provider has settled, `setProvider` refuses the old provider with `ProviderInitializationFailed`:
-  installing it again then would get it shut down later, while it serves. A new provider that reports `READY` or
+  installing it again then would get it shut down later, while it serves. If `setProvider` is called again while the
+  timed-out provider is still initializing and the new provider's `initialize()` throws, there is nothing to roll back
+  to: the timed-out provider never served and is not initialized a second time. The new provider stays registered
+  with status `Error`, the timed-out provider is shut down (by an instance that owns its API), and a later
+  `setProvider` recovers. A new provider that reports `READY` or
   `ERROR` itself before its `initialize()` returns is taken at its word, since the Java SDK does not expose whether
   `initialize()` has returned: the old provider may then be shut down twice, or, if the `READY` is followed by a
   failed `initialize()`, not at all.

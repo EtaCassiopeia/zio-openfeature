@@ -6,7 +6,10 @@ import zio._
   * go. Production instances use [[LifecycleProbe.none]], whose `at` is a constant no-op.
   *
   * The points name the steps of the lifecycle protocol: a swap, an SDK event reaching the bridge, a status write, the
-  * init watchdog, a shutdown and the scope close. Probes sit on lifecycle paths only, never on the evaluation path.
+  * init watchdog, a shutdown and the scope close. The probe is handed only to the lifecycle collaborators:
+  * `FeatureFlagsLive` for the swap and shutdown, `EventBridge`, `OrphanedProviders`, and the builds for the watchdog
+  * and the scope finalizer. `Evaluator` and `HookPipeline` never receive it, which keeps it off the evaluation path;
+  * `FeatureFlagsLive`'s evaluation methods only delegate to the `Evaluator`.
   */
 private[openfeature] trait LifecycleProbe {
   def at(point: LifecycleProbe.Point): UIO[Unit]

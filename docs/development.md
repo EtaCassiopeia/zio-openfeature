@@ -144,7 +144,7 @@ tests), so the nightly run picks it up.
 `LifecycleInterleavingSpec` (testkit) enumerates them instead. The lifecycle code calls a probe at named points of the
 protocol (`internal/LifecycleProbe`: a swap starting, the SDK binding the new provider, a swap timing out or rolling
 back, an SDK event reaching the bridge, a status write, the init watchdog, shutdown and the scope close). Production
-instances get `LifecycleProbe.none`, a no-op, and `LifecycleProbeGuardSpec` keeps every probe off the evaluation path.
+instances get `LifecycleProbe.none`, a no-op, and the evaluation code never receives the probe.
 The test holds each primary action (a swap that succeeds, fails or times out; a shutdown; a provider event) at each
 point it reaches, runs a competing action while it is held, then lets it go, and checks the outcome against the same
 model `LifecycleModelSpec` uses. A reach table lists the points each primary passes, so a probe that moves fails the

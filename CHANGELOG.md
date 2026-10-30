@@ -10,8 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **Deterministic lifecycle interleavings** (#576, test-only). The lifecycle code now names fourteen points of the
-  provider-lifecycle protocol through an internal probe, which production instances leave as a no-op and a guard test
-  keeps off the evaluation path. The new `LifecycleInterleavingSpec` holds a swap, a shutdown or a provider event at
+  provider-lifecycle protocol through an internal probe, which production instances leave as a no-op and which the
+  evaluation code never receives. The new `LifecycleInterleavingSpec` holds a swap, a shutdown or a provider event at
   each point it reaches and runs a competing action there (an event, a shutdown, evaluations, another swap, a released
   initialization), then checks the outcome against the lifecycle model. With the shutdown-during-swap fix (#565), the
   timed-out-swap orphan fix (#564) or the swap gate reverted, its named regressions fail every time.

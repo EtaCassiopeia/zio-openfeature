@@ -57,6 +57,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   swap's rollback, and one in flight when any swap starts, even if the old provider answered it. The same change makes
   the swap's registration wait for the error message it reports when the provider initialized and then reported an
   error, which it could settle without (`Error("")`) when the SDK's READY arrived first.
+- **A swap refused before the SDK binds its provider no longer reports a still-initializing provider `Ready`** (#634).
+  When the SDK refused the new provider before binding it (attached to, or registered with, another API), the rollback
+  read the previous provider's `NOT_READY` as `Ready` and marked it ready, so `awaitReady` returned while every
+  evaluation failed, and the init watchdog of an async build never moved a hung provider to `Fatal`. Nothing changed in
+  the SDK on that path, so the status now goes back to what it was before the swap and then follows the SDK's state, with
+  no readiness recorded: a provider still starting, or one whose `initialize()` threw, is still made `Fatal` by the
+  watchdog, including when its deadline fell inside the swap. After a timed-out swap, the refused swap also left the
+  instance reporting the refused provider, which the SDK never bound; it now keeps the timed-out one.
 - **A timed evaluation interrupted before its provider call starts no longer counts as abandoned** (#633). When the
   caller was interrupted, or the timeout fired, before the forked call ran its first instruction, the abandoned-call
   counter went up and never came back down, though the provider was never called. Enough of these filled the cap, and

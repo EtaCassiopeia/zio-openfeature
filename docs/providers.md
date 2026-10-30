@@ -229,6 +229,9 @@ been shut down it fails with `ProviderNotReady(NotReady)` and does not touch the
 - If `initialize()` throws, `setProvider` fails with `ProviderInitializationFailed` and the old provider is restored (if
   that fails too, the status stays `Error`). A timeout fails the same way, wrapping a `TimeoutException`, with no
   rollback: the SDK would shut the old provider down once the new one became ready.
+- If the SDK refuses the new provider before binding it (it is attached to, or registered with, another API), nothing is
+  initialized again: the previous provider keeps the state it had, and a provider still starting keeps the status it had
+  before the swap (`NotReady` while an async build starts, `Error` for a timed-out swap's provider).
 - After a timeout the new provider keeps initializing. If it becomes ready, the status recovers to `Ready` and the SDK
   shuts the old provider down. If it fails instead, the status stays `Error` and the old provider, which the SDK no
   longer holds, is shut down; call `setProvider` again to recover. If it has not finished when the instance shuts down

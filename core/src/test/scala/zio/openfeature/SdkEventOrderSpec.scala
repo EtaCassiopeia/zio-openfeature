@@ -54,6 +54,24 @@ object SdkEventOrderSpec extends ZIOSpecDefault {
       .map(ff => (ff, api, domain))
   }
 
+  /** A provider whose `initialize()` parks until `release`, so its slot stays `NOT_READY`. */
+  final private class Parked(name: String) extends EventProvider {
+    val release = new java.util.concurrent.CountDownLatch(1)
+    @scala.annotation.nowarn("msg=deprecated")
+    override def getMetadata: Metadata                      = new Metadata { def getName: String = name }
+    override def initialize(ctx: OFEvaluationContext): Unit = { release.await(); () }
+    override def getBooleanEvaluation(k: String, d: java.lang.Boolean, c: OFEvaluationContext) =
+      ProviderEvaluations.of[java.lang.Boolean](d, "DEFAULT")
+    override def getStringEvaluation(k: String, d: String, c: OFEvaluationContext) =
+      ProviderEvaluations.of(d, "DEFAULT")
+    override def getIntegerEvaluation(k: String, d: java.lang.Integer, c: OFEvaluationContext) =
+      ProviderEvaluations.of(d, "DEFAULT")
+    override def getDoubleEvaluation(k: String, d: java.lang.Double, c: OFEvaluationContext) =
+      ProviderEvaluations.of(d, "DEFAULT")
+    override def getObjectEvaluation(k: String, d: Value, c: OFEvaluationContext) =
+      ProviderEvaluations.of(d, "DEFAULT")
+  }
+
   private def details(name: String): EventDetails =
     EventDetails.builder().providerName(name).message("from the test").build().asInstanceOf[EventDetails]
 
@@ -140,6 +158,77 @@ object SdkEventOrderSpec extends ZIOSpecDefault {
           _      <- ff.onSdkEvent(OFProviderEvent.PROVIDER_ERROR, fatal)
           status <- ff.providerStatus
         } yield assertTrue(status == ProviderStatus.Fatal)
+      }
+    },
+    test("ERROR then STALE settles on Stale, and a late ERROR handled after the STALE leaves it Stale") {
+      ZIO.scoped {
+        for {
+          provider <- ZIO.succeed(new Emitting("current"))
+          built    <- build(provider)
+          (ff, api, domain) = built
+          _      <- ZIO.succeed(provider.emit(OFProviderEvent.PROVIDER_ERROR, ProviderEventDetails.builder().build()))
+          inErr  <- awaitStatus(ff, ProviderStatus.Error)
+          _      <- ZIO.succeed(provider.emit(OFProviderEvent.PROVIDER_STALE, ProviderEventDetails.builder().build()))
+          stale  <- awaitStatus(ff, ProviderStatus.Stale)
+          slot   <- slotState(api, domain)
+          _      <- ff.onSdkEvent(OFProviderEvent.PROVIDER_ERROR, details("current"))
+          status <- ff.providerStatus
+        } yield assertTrue(inErr, stale, slot == ProviderState.STALE, status == ProviderStatus.Stale)
+      }
+    } @@ TestAspect.withLiveClock,
+    test(
+      "a STALE or non-fatal ERROR handled while the slot is NOT_READY leaves the status unchanged, and is published"
+    ) {
+      ZIO.scoped {
+        for {
+          built <- build(new Emitting("current"))
+          (ff, api, domain) = built
+          stales <- published(ff, ProviderEventType.Stale)
+          errors <- published(ff, ProviderEventType.Error)
+          // A same-named provider still initializing in the slot: the identity guard cannot tell it apart.
+          parked <- ZIO.acquireRelease(ZIO.succeed(new Parked("current")))(p => ZIO.succeed(p.release.countDown()))
+          _      <- ZIO.succeed(api.setProvider(domain, parked))
+          slot   <- slotState(api, domain)
+          _      <- ff.onSdkEvent(OFProviderEvent.PROVIDER_STALE, details("current"))
+          _      <- ff.onSdkEvent(OFProviderEvent.PROVIDER_ERROR, details("current"))
+          status <- ff.providerStatus
+          sawS   <- stales.get.repeatUntil(_ > 0).timeout(2.seconds)
+          sawE   <- errors.get.repeatUntil(_ > 0).timeout(2.seconds)
+        } yield assertTrue(
+          slot == ProviderState.NOT_READY,
+          status == ProviderStatus.Ready,
+          sawS.contains(1),
+          sawE.contains(1)
+        )
+      }
+    } @@ TestAspect.withLiveClock,
+    test("a fatal ERROR handled while the slot is NOT_READY still makes the status Fatal") {
+      ZIO.scoped {
+        for {
+          built <- build(new Emitting("current"))
+          (ff, api, domain) = built
+          parked <- ZIO.acquireRelease(ZIO.succeed(new Parked("current")))(p => ZIO.succeed(p.release.countDown()))
+          _      <- ZIO.succeed(api.setProvider(domain, parked))
+          fatal = EventDetails
+            .builder()
+            .providerName("current")
+            .errorCode(dev.openfeature.sdk.ErrorCode.PROVIDER_FATAL)
+            .build()
+            .asInstanceOf[EventDetails]
+          _      <- ff.onSdkEvent(OFProviderEvent.PROVIDER_ERROR, fatal)
+          status <- ff.providerStatus
+        } yield assertTrue(status == ProviderStatus.Fatal)
+      }
+    },
+    test("the sync build's status seed does not overwrite a status an event already set") {
+      ZIO.scoped {
+        for {
+          built <- build(new Emitting("current"))
+          (ff, _, _) = built
+          _      <- ff.onStaleEvent(details("current"))
+          _      <- ff.seedStatus(ProviderStatus.Ready)
+          status <- ff.providerStatus
+        } yield assertTrue(status == ProviderStatus.Stale)
       }
     },
     test("ERROR then READY in quick succession settles on the state the SDK reports, every time") {

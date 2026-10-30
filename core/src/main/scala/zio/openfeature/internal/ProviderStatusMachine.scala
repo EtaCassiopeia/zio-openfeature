@@ -89,10 +89,10 @@ private[openfeature] object ProviderStatusMachine {
 
       case Signal.EventStale =>
         current match {
-          // STALE means "serving cached data" — only meaningful from Ready (never over Fatal/ShuttingDown,
-          // which staleHandler can do today).
-          case Ready => Some(Stale)
-          case _     => None
+          // The specification maps PROVIDER_STALE to STALE from any status (§5.3.5), and so does the SDK; a provider
+          // recovering from an error to cached data goes Error -> Stale. Fatal and ShuttingDown stay final.
+          case NotReady | Ready | Error     => Some(Stale)
+          case Stale | Fatal | ShuttingDown => None
         }
     }
   }

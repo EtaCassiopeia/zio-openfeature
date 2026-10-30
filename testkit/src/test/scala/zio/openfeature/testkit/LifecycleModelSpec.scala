@@ -114,8 +114,9 @@ object LifecycleModelSpec extends ZIOSpecDefault {
           case _                        => this
         }
 
-    // "STALE: Ready -> Stale"
-    private def onStale: Model = if (!quiet && status == Ready) copy(status = Stale) else this
+    // "a STALE event, or the SDK reporting STALE for the provider, from NotReady, Ready or Error"
+    private def onStale: Model =
+      if (!quiet && (status == NotReady || status == Ready || status == Error)) copy(status = Stale) else this
 
     /** A parked swap reaches `initTimeout`: "the status becomes Error. This swap is not rolled back: the new provider
       * stays registered". After a shutdown nothing moves the status ("evaluations fail from then on").

@@ -138,26 +138,48 @@ object BreakerStaleReportingSpec extends ZIOSpecDefault {
       val _  = scala.util.Try(cb.initialize(ctx))
       assertTrue(cb.getState == ProviderState.ERROR)
     },
-    test("a sync build over a default breaker whose delegate reports STALE at startup succeeds with status Stale") {
+    // The breaker hears its delegate's STALE and reports its own on the SDK's emitter threads, while the SDK marks the
+    // provider READY once `initialize()` returns; whichever write lands last is the SDK's state for it. So the build
+    // must succeed and the breaker report STALE, and the status follows the SDK's state, either way.
+    test("a sync build over a default breaker whose delegate reports STALE at startup succeeds") {
       ZIO.scoped {
         for {
           inner <- FaultyProvider.scoped(Map("flag" -> true), name = "inner")
           _     <- inner.script(Op.Initialize, Fault.Emit(OFProviderEvent.PROVIDER_STALE))
-          ff    <- FeatureFlags
+          breaker = CircuitBreakerProvider(inner)
+          api     = OpenFeatureAPI.createIsolated()
+          domain  = s"breaker-stale-${java.util.UUID.randomUUID()}"
+          ff <- FeatureFlags
             .build(
-              CircuitBreakerProvider(inner),
-              domain = Some(s"breaker-stale-${java.util.UUID.randomUUID()}"),
+              breaker,
+              domain = Some(domain),
               version = None,
               initialHooks = Nil,
               statusRef = None,
               addShutdownFinalizer = true,
-              apiOverride = Some(OpenFeatureAPI.createIsolated()),
+              apiOverride = Some(api),
               initTimeout = 5.seconds
             )
             .either
-          status <- ff.fold(_ => ZIO.none, _.providerStatus.asSome)
-        } yield assertTrue(ff.isRight, status.contains(ProviderStatus.Stale))
+          tripped <- ZIO.succeed(breakerState(breaker)).repeatUntil(_ == ProviderState.STALE).timeout(2.seconds)
+          settled <- ff.fold(
+            _ => ZIO.none,
+            f =>
+              (f.providerStatus <*> ZIO.succeed(api.getClient(domain).getProviderState))
+                .repeatUntil(agrees)
+                .timeout(2.seconds)
+          )
+        } yield assertTrue(ff.isRight, tripped.contains(ProviderState.STALE), settled.isDefined)
       }
     }
   ) @@ TestAspect.withLiveClock @@ TestAspect.sequential @@ TestAspect.timeout(2.minutes)
+
+  @scala.annotation.nowarn("msg=deprecated")
+  private def breakerState(p: CircuitBreakerProvider): ProviderState = p.getState
+
+  private def agrees(observed: (ProviderStatus, ProviderState)): Boolean = observed match {
+    case (ProviderStatus.Stale, ProviderState.STALE) => true
+    case (ProviderStatus.Ready, ProviderState.READY) => true
+    case _                                           => false
+  }
 }

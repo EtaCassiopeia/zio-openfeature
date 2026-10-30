@@ -148,9 +148,12 @@ object ProviderStatusMachineSpec extends ZIOSpecDefault {
         )
       }
     ),
-    test("EventStale only Ready => Stale; no-op everywhere else (ungated)") {
+    test("EventStale => Stale from NotReady/Ready/Error; no-op from Stale/Fatal/ShuttingDown (ungated)") {
       val checks = allStatuses.map { s =>
-        val expected = if (s == Ready) Some(Stale) else None
+        val expected = s match {
+          case NotReady | Ready | Error     => Some(Stale)
+          case Stale | Fatal | ShuttingDown => None
+        }
         assertTrue(t(s, Signal.EventStale, Context(false, false, false)) == expected)
       }
       TestResult.allSuccesses(checks)

@@ -184,7 +184,7 @@ object ProviderStatusBridgeSpec extends ZIOSpecDefault {
         }
       } yield out
     },
-    test("EventStale only transitions from Ready; a stale event over Error is ignored") {
+    test("a stale event moves Ready and Error to Stale") {
       for {
         refR      <- SubscriptionRef.make[ProviderStatus](ProviderStatus.Ready)
         refE      <- SubscriptionRef.make[ProviderStatus](ProviderStatus.Error)
@@ -194,7 +194,7 @@ object ProviderStatusBridgeSpec extends ZIOSpecDefault {
         fromError <- ZIO.scoped {
           build(refE, "current").flatMap(ff => ff.onStaleEvent(details("current")) *> ff.providerStatus)
         }
-      } yield assertTrue(fromReady == ProviderStatus.Stale, fromError == ProviderStatus.Error)
+      } yield assertTrue(fromReady == ProviderStatus.Stale, fromError == ProviderStatus.Stale)
     },
     test("after shutdown, late error/stale events cannot move status off terminal NotReady") {
       for {

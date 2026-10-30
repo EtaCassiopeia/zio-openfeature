@@ -51,22 +51,24 @@ final private[openfeature] class EventBridge(
     state.statusRef.modify(transition(_, signal))
 
   /** [[applySignal]] for an event the SDK delivered: the signal is the one the SDK's own state for this client's slot
-    * implies, read inside the serialized write, and `own` (the event's signal) only while the slot is `NOT_READY` or
-    * unreadable, or when the event is a fatal error. The SDK runs a provider's handlers with no ordering between them,
-    * but writes the slot state before running the event's handlers; so whichever handler applies last reads the final
-    * state, and an ERROR handled after the READY that followed it cannot leave the status on Error. Returns the signal
-    * applied and the transition.
+    * implies, read inside the serialized write; `own` (the event's signal) applies only when the slot is unreadable, or
+    * when the event is a fatal error. The SDK runs a provider's handlers with no ordering between them, but writes the
+    * slot state before running the event's handlers; so whichever handler applies last reads the final state, and an
+    * ERROR handled after the READY that followed it cannot leave the status on Error. For the same reason an event from
+    * the installed provider never finds the slot `NOT_READY`: one that does is about another registration (a replaced
+    * provider with the same name, which the identity guard cannot tell apart), and applies no signal. Returns the
+    * signal applied, if any, and the transition.
     */
-  private def applySdkSignal(own: Signal): UIO[(Signal, Option[ProviderStatus])] =
+  private def applySdkSignal(own: Signal): UIO[(Option[Signal], Option[ProviderStatus])] =
     state.statusRef
       .modify { current =>
         // A fatal error is final whatever the slot reports by the time its handler runs.
         val (signal, unreadable) =
-          if (own == Signal.EventError(true)) (own, None)
+          if (own == Signal.EventError(true)) (Some(own), None)
           else
-            try (signalForSlot(client.getProviderState).getOrElse(own), None)
-            catch { case scala.util.control.NonFatal(e) => (own, Some(e)) }
-        val (transitioned, next) = transition(current, signal)
+            try (signalForSlot(client.getProviderState), None)
+            catch { case scala.util.control.NonFatal(e) => (Some(own), Some(e)) }
+        val (transitioned, next) = signal.map(transition(current, _)).getOrElse((None, current))
         ((signal, transitioned, unreadable), next)
       }
       .flatMap { case (signal, transitioned, unreadable) =>
@@ -155,10 +157,12 @@ final private[openfeature] class EventBridge(
   // state (see `onSdkEvent`): that one is not delivered at all. With `fromSdk` the status signal comes from the
   // SDK's state for the slot (`applySdkSignal`); without it, from the event type.
 
-  /** The status signal for an event from the current provider; None for one from another provider. */
+  /** The status signal applied for an event and its transition; None for an event from another provider, or one the
+    * SDK's state for the slot does not back.
+    */
   private def applyFor(current: Boolean, fromSdk: Boolean, own: Signal): UIO[Option[(Signal, Option[ProviderStatus])]] =
     if (!current) ZIO.none
-    else if (fromSdk) applySdkSignal(own).asSome
+    else if (fromSdk) applySdkSignal(own).map { case (signal, transitioned) => signal.map((_, transitioned)) }
     else applySignal(own).map(t => Some((own, t)))
 
   private[openfeature] def onReadyEvent(details: EventDetails, fromSdk: Boolean = false): UIO[Unit] =

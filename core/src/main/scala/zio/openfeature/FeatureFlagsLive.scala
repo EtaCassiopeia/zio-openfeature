@@ -617,7 +617,10 @@ final private[openfeature] class FeatureFlagsLive(
             // A READY that landed between the timeout and the gate dropping was suppressed; pick it up now.
             case FeatureFlagError.ProviderInitializationFailed(_: java.util.concurrent.TimeoutException) =>
               reconcileLateReady(newProvider)
-            case _ => ZIO.unit
+            // A failed swap ends on the provider it rolled back to, or on the failed one when there was nothing to roll
+            // back to. A state the SDK reached for it while the gate was up (a FATAL from its re-initialization, an
+            // event during the rollback's wait) was dropped; take it now.
+            case _ => providerRef.get.flatMap(reconcileRegistration)
           },
           // A state the SDK reached for the new provider while the gate was up was dropped; take it now.
           _ => reconcileRegistration(newProvider)

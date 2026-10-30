@@ -657,6 +657,27 @@ object ProviderHotSwapSpec extends ZIOSpecDefault {
         } yield assertTrue(failShutdowns.get() >= 1)
       }
     },
+    test("a rollback whose re-initialization fails with a fatal error leaves the status Fatal, as the SDK reports") {
+      ZIO.scoped {
+        val initCount = new java.util.concurrent.atomic.AtomicInteger(0)
+        // A succeeds on the first init (the build) and fails fatally on the second (the rollback).
+        val providerA = new SimpleProvider("A", Map("flag" -> true)) {
+          override def initialize(ctx: OFEvaluationContext): Unit =
+            if (initCount.incrementAndGet() >= 2) throw new dev.openfeature.sdk.exceptions.FatalError("gone for good")
+            else ()
+        }
+        val failing = new SimpleProvider("Failing", Map.empty) {
+          override def initialize(ctx: OFEvaluationContext): Unit = throw new RuntimeException("cannot start")
+        }
+        for {
+          built <- buildExposed(providerA)
+          (ff, api, domain) = built
+          result <- ff.setProvider(failing).either
+          slot   <- ZIO.succeed(api.getClient(domain).getProviderState)
+          status <- ff.providerStatus
+        } yield assertTrue(result.isLeft, slot == ProviderState.FATAL, status == ProviderStatus.Fatal)
+      }
+    },
     test("rollback failure: old provider re-init throws leaves status Error, surfaces original error, no hang") {
       // When the old provider's re-initialize() throws, rollback fails: setProvider still reports the ORIGINAL swap
       // failure, status stays Error, and the call completes (no hang). The SDK slot was rebound to the old provider

@@ -33,11 +33,15 @@ private[openfeature] trait ClientEvaluator[A] {
 
   /** Extract the typed value from the raw SDK evaluation details.
     *
-    * Some types (Long, Float) require converting the SDK result type (Integer, Double) back to the target type.
+    * Some types (Long, Float) require converting the SDK result type (Integer, Double) back to the target type. Throws
+    * on a resolution with no value or a value of another box, which the SDK passes on unchecked; the evaluation path
+    * uses [[extractForDecode]], which does not.
     */
   def extractValue(details: FlagEvaluationDetails[_]): A
 
   /** What the flag's `FlagType` decodes: the extracted value, unless extracting it would lose what `decode` must see.
+    * The library's scalar instances never throw here: a missing value or one of another box is handed on as it is, and
+    * `decode` rejects it.
     */
   def extractForDecode(details: FlagEvaluationDetails[_]): Any = extractValue(details)
 }
@@ -92,11 +96,12 @@ private[openfeature] object ClientEvaluator {
           // Produced by the element's own `encode`, so it passes the box check below by construction.
           val sentinel = optional.underlying.encode(optional.underlying.defaultValue)
           val read: FlagEvaluationDetails[_] => Either[String, A] = { details =>
-            val raw = ev.extractValue(details)
-            // `decode(null)` is the Option instance's own `None`, so no cast to `A` is needed.
+            val raw = ev.extractForDecode(details)
+            // `decode(null)` is the Option instance's own `None`, so no cast to `A` is needed. `==` on `Any` compares
+            // boxed numbers by value, so the extracted zero equals the boxed sentinel.
             if (details.getErrorCode != null || (FellBackReasons.contains(details.getReason) && raw == sentinel))
               flagType.decode(null)
-            else flagType.decode(ev.extractForDecode(details))
+            else flagType.decode(raw)
           }
           (sentinel, read)
         case _ =>
@@ -139,6 +144,11 @@ private[openfeature] object ClientEvaluator {
 
     def extractValue(details: FlagEvaluationDetails[_]): Boolean =
       details.getValue.asInstanceOf[java.lang.Boolean].booleanValue()
+
+    override def extractForDecode(details: FlagEvaluationDetails[_]): Any = details.getValue match {
+      case b: java.lang.Boolean => b.booleanValue()
+      case other                => other
+    }
   }
 
   implicit val stringEvaluator: ClientEvaluator[String] = new ClientEvaluator[String] {
@@ -152,6 +162,8 @@ private[openfeature] object ClientEvaluator {
 
     def extractValue(details: FlagEvaluationDetails[_]): String =
       details.getValue.asInstanceOf[String]
+
+    override def extractForDecode(details: FlagEvaluationDetails[_]): Any = details.getValue
   }
 
   implicit val intEvaluator: ClientEvaluator[Int] = new ClientEvaluator[Int] {
@@ -165,6 +177,11 @@ private[openfeature] object ClientEvaluator {
 
     def extractValue(details: FlagEvaluationDetails[_]): Int =
       details.getValue.asInstanceOf[java.lang.Integer].intValue()
+
+    override def extractForDecode(details: FlagEvaluationDetails[_]): Any = details.getValue match {
+      case i: java.lang.Integer => i.intValue()
+      case other                => other
+    }
   }
 
   // SDK 1.22.0 added a native Long surface, so Long evaluations dispatch to the provider's own `getLongEvaluation`
@@ -191,6 +208,11 @@ private[openfeature] object ClientEvaluator {
     // Still `Number`, not a `Long` cast: the SDK's double-backed default path can hand back a boxed Double.
     def extractValue(details: FlagEvaluationDetails[_]): Long =
       details.getValue.asInstanceOf[java.lang.Number].longValue()
+
+    override def extractForDecode(details: FlagEvaluationDetails[_]): Any = details.getValue match {
+      case n: java.lang.Number => n.longValue()
+      case other               => other
+    }
   }
 
   // Float uses Double SDK method with conversion
@@ -211,9 +233,11 @@ private[openfeature] object ClientEvaluator {
     // A finite double beyond Float range narrows to +/-Infinity, and `decode` would then accept it as a valid Float.
     // Only that case hands `decode` the Double itself, so it can reject the overflow; every other value still
     // arrives as a Float, which is what a Float-wire `FlagType` expects.
-    override def extractForDecode(details: FlagEvaluationDetails[_]): Any = {
-      val d = details.getValue.asInstanceOf[java.lang.Double].doubleValue()
-      if (!d.isInfinite && !d.isNaN && math.abs(d) > Float.MaxValue.toDouble) d else d.toFloat
+    override def extractForDecode(details: FlagEvaluationDetails[_]): Any = details.getValue match {
+      case boxed: java.lang.Double =>
+        val d = boxed.doubleValue()
+        if (!d.isInfinite && !d.isNaN && math.abs(d) > Float.MaxValue.toDouble) d else d.toFloat
+      case other => other
     }
   }
 
@@ -228,5 +252,10 @@ private[openfeature] object ClientEvaluator {
 
     def extractValue(details: FlagEvaluationDetails[_]): Double =
       details.getValue.asInstanceOf[java.lang.Double].doubleValue()
+
+    override def extractForDecode(details: FlagEvaluationDetails[_]): Any = details.getValue match {
+      case d: java.lang.Double => d.doubleValue()
+      case other               => other
+    }
   }
 }

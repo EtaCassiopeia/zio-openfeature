@@ -46,9 +46,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `initialize()` threw and before the rollback restored the old one. Such an evaluation now fails with
   `ProviderNotReady(NotReady)`, as one started after the swap's start does; so does one started during the failed
   swap's rollback, and one in flight when any swap starts, even if the old provider answered it. The same change makes
-  the swap's
-  registration wait for the error message it reports when the provider initialized and then reported an error, which it
-  could settle without (`Error("")`) when the SDK's READY arrived first.
+  the swap's registration wait for the error message it reports when the provider initialized and then reported an
+  error, which it could settle without (`Error("")`) when the SDK's READY arrived first.
+- **A timed evaluation interrupted before its provider call starts no longer counts as abandoned** (#633). When the
+  caller was interrupted, or the timeout fired, before the forked call ran its first instruction, the abandoned-call
+  counter went up and never came back down, though the provider was never called. Enough of these filled the cap, and
+  every timed evaluation was then rejected while the provider was healthy. Such a call is now skipped and not counted.
 - **An `ERROR` a provider reports right after initializing no longer fails the swap** (#623). The registration wait
   read the SDK's state alone, which is `ERROR` both for a failed `initialize()` and for a provider that initialized and
   then reported an error. So `setProvider` rolled back onto the old provider the SDK had just shut down and served

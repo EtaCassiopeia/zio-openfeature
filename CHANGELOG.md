@@ -38,6 +38,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   replaced, and pairs of actions run at once, checked against every order they can take effect in. Every case also
   checks that each provider it created was shut down exactly once. The model now lives in `LifecycleModel`.
 
+### Changed
+
+- **An OFREP answer that is not OFREP JSON is a `GENERAL` error, so it trips the circuit breaker** (#642). The contrib
+  provider parses the body before it reads the status, so a 502/503/504 with an HTML or empty body, a 401/403 page
+  from an auth proxy and a 429 without JSON all surfaced as `PARSE_ERROR`, which `CircuitBreakerProvider` counts as a
+  reachable server: a dead backend behind a proxy never opened the circuit. `OFREPFeatureProvider` now answers such a
+  response with `GENERAL` and the caller's default, on every resolver. The status is not visible there, so a 200 with
+  malformed JSON is `GENERAL` too (typed tier: `ProviderError` instead of `ParseError`).
+
 ### Fixed
 
 - **An `ERROR` a provider reports right after initializing no longer fails the swap** (#623). The registration wait

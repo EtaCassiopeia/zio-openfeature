@@ -64,7 +64,7 @@ Keep `FeatureFlags`' `evaluationTimeout` (one second by default) at or below `re
 | The server answers 401 or 403 | fails with `Unauthorized` | your default, error code `General` |
 | The server answers another 4xx or 5xx | fails with the error the response names (`ProviderError` for `GENERAL`) | your default, with that error code |
 | The server cannot be reached | fails with `Unreachable` (or `ProviderError`) | your default, error code `General` |
-| The response cannot be parsed | fails with `ParseError` | your default, error code `ParseError` |
+| The response is not OFREP JSON (an HTML error page, an empty body, truncated JSON), whatever the status | fails with `ProviderError` | your default, error code `General` |
 
 To alert on the total tier, check the resolution's error code:
 
@@ -81,8 +81,10 @@ To alert on the total tier, check the resolution's error code:
 ```
 
 The contrib provider reports `READY` and emits no state events, so only failed calls trip the breaker: network errors,
-`GENERAL` answers (401, 403, 429, 5xx) and calls slower than the breaker's `evaluationTimeout`. A 404
-(`FLAG_NOT_FOUND`) or a parse or type error proves the server is reachable and does not count.
+`GENERAL` answers (401, 403, 429, 5xx, and any answer that is not OFREP JSON, such as a proxy's HTML error page) and
+calls slower than the breaker's `evaluationTimeout`. A 404 (`FLAG_NOT_FOUND`) or a type error proves the server is
+reachable and does not count. A 429 whose body is not JSON counts as a failure but cannot set the rate-limit window:
+the contrib provider reads `Retry-After` only from a response it could parse.
 
 ## `Long` flags
 

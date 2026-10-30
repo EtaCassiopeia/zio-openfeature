@@ -49,6 +49,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the swap's
   registration wait for the error message it reports when the provider initialized and then reported an error, which it
   could settle without (`Error("")`) when the SDK's READY arrived first.
+- **`setProvider` after `shutdown` is refused instead of reviving the instance** (#631). The swap had no shutdown guard
+  and cleared the shut-down flag, so it moved the status back to `Ready` and evaluations ran again, although the event
+  bridge and hub were gone: the new provider's `ERROR`, `STALE` and `FATAL` never moved the status, `events` ended at
+  once and new handlers never fired. It now fails with `ProviderNotReady(NotReady)` without touching the provider, as
+  does one queued behind the shutdown, and a `fromAcquireAsync` build that finishes after a shutdown discards the
+  composed provider instead of installing it.
 - **An `ERROR` a provider reports right after initializing no longer fails the swap** (#623). The registration wait
   read the SDK's state alone, which is `ERROR` both for a failed `initialize()` and for a provider that initialized and
   then reported an error. So `setProvider` rolled back onto the old provider the SDK had just shut down and served

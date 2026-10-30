@@ -56,7 +56,88 @@ object FeatureFlagsShutdownSpec extends ZIOSpecDefault {
       apiOverride = Some(api)
     )
 
+  /** Counts `initialize()` and `shutdown()` calls. */
+  private class CountingProvider(name: String) extends TrackingProvider(name, new AtomicBoolean(false)) {
+    val inits                                               = new java.util.concurrent.atomic.AtomicInteger(0)
+    override def initialize(ctx: OFEvaluationContext): Unit = { inits.incrementAndGet(); () }
+  }
+
+  /** A probe that holds the fiber reaching `point` until `release` completes, completing `held` first. */
+  private def holdAt(
+    point: zio.openfeature.internal.LifecycleProbe.Point,
+    held: Promise[Nothing, Unit],
+    release: Promise[Nothing, Unit]
+  ): zio.openfeature.internal.LifecycleProbe =
+    new zio.openfeature.internal.LifecycleProbe {
+      def at(p: zio.openfeature.internal.LifecycleProbe.Point): UIO[Unit] =
+        if (p == point) held.succeed(()) *> release.await else ZIO.unit
+    }
+
+  private def buildOwning(
+    provider: dev.openfeature.sdk.FeatureProvider,
+    probe: zio.openfeature.internal.LifecycleProbe = zio.openfeature.internal.LifecycleProbe.none
+  ): ZIO[Scope, Throwable, (FeatureFlags, dev.openfeature.sdk.OpenFeatureAPI, String)] = {
+    val api    = dev.openfeature.sdk.OpenFeatureAPI.createIsolated()
+    val domain = uniqueDomain("revive")
+    zio.openfeature.internal.FeatureFlagsFactories
+      .buildWithTracking(
+        provider,
+        domain = Some(domain),
+        version = None,
+        initialHooks = Nil,
+        statusRef = None,
+        addShutdownFinalizer = true,
+        apiOverride = Some(api),
+        probe = probe
+      )
+      .map(ff => (ff, api, domain))
+  }
+
   def spec = suite("FeatureFlagsShutdownSpec")(
+    test("setProvider after shutdown fails with ProviderNotReady and does not touch the new provider") {
+      ZIO.scoped {
+        val p2 = new CountingProvider("p2")
+        for {
+          built <- buildOwning(new CountingProvider("p1"))
+          (ff, api, domain) = built
+          _      <- ff.shutdown
+          swap   <- ff.setProvider(p2).either
+          status <- ff.providerStatus
+          eval   <- ff.boolean("flag", default = false).either
+          bound  <- ZIO.succeed(api.getProvider(domain))
+          inits = p2.inits.get()
+        } yield assertTrue(
+          swap == Left(FeatureFlagError.ProviderNotReady(ProviderStatus.NotReady)),
+          status == ProviderStatus.NotReady,
+          eval == Left(FeatureFlagError.ProviderNotReady(ProviderStatus.NotReady)),
+          inits == 0,
+          !(bound eq p2)
+        )
+      }
+    },
+    test("a setProvider queued behind shutdown is refused once the shutdown completes") {
+      ZIO.scoped {
+        val p2 = new CountingProvider("p2")
+        for {
+          held    <- Promise.make[Nothing, Unit]
+          release <- Promise.make[Nothing, Unit]
+          _       <- ZIO.addFinalizer(release.succeed(()))
+          built   <- buildOwning(
+            new CountingProvider("p1"),
+            holdAt(zio.openfeature.internal.LifecycleProbe.Point.ShutdownDone, held, release)
+          )
+          (ff, _, _) = built
+          shut <- ff.shutdown.fork
+          _    <- held.await.timeout(5.seconds)
+          swap <- ff.setProvider(p2).either.fork
+          _    <- ZIO.sleep(100.millis)
+          _    <- release.succeed(())
+          _    <- shut.join
+          out  <- swap.join
+          inits = p2.inits.get()
+        } yield assertTrue(out == Left(FeatureFlagError.ProviderNotReady(ProviderStatus.NotReady)), inits == 0)
+      }
+    } @@ withLiveClock,
     test("shutdown on a non-owning (shared-api) client shuts down neither the shared api nor any provider") {
       val shutA = new AtomicBoolean(false)
       val shutB = new AtomicBoolean(false)

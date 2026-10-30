@@ -54,6 +54,10 @@ mutants = {
     'the orphan watcher reads an error after initialize() returned as a failed one': (
         'Released(o) == View(o) \\in {"READY", "STALE"} \\/ RanView(o)',
         'Released(o) == View(o) \\in {"READY", "STALE"}'),
+    # A swap after shutdown is not refused, and revives the instance.
+    'a swap after shutdown is not refused': (
+        '    /\\ lock = "free" /\\ ~shutDown /\\ ~closed /\\ ~Settling\n    /\\ sdk[p] = "NONE"',
+        '    /\\ lock = "free" /\\ ~closed /\\ ~Settling\n    /\\ sdk[p] = "NONE"'),
     # The gate never goes up.
     'no swap gate': (
         '    /\\ gate\' = TRUE\n    /\\ status\' = "NotReady"',

@@ -128,15 +128,13 @@ object LifecycleInterleavingSpec extends ZIOSpecDefault {
     )
   }
 
-  /** The pairs the docs give an outcome for. A swap after a shutdown is not one ("evaluations fail from then on"), and
-    * releasing hangs only matters to a swap whose provider hangs.
+  /** The pairs the docs give an outcome for. Releasing hangs only matters to a swap whose provider hangs.
     */
   private def applies(primary: Primary, competitor: Competitor): Boolean = (primary, competitor) match {
-    case (Primary.Shutdown, Competitor.SwapGood | Competitor.SwapFailing) => false
-    case (Primary.EventError, Competitor.Interrupt)                       => false
-    case (Primary.SwapHanging, _)                                         => true
-    case (_, Competitor.ReleaseHangs)                                     => false
-    case _                                                                => true
+    case (Primary.EventError, Competitor.Interrupt) => false
+    case (Primary.SwapHanging, _)                   => true
+    case (_, Competitor.ReleaseHangs)               => false
+    case _                                          => true
   }
 
   /** The points each primary always passes, in no particular order. */
@@ -395,16 +393,23 @@ object LifecycleInterleavingSpec extends ZIOSpecDefault {
         case Exit.Success((probe, reached, found, used)) =>
           ZIO
             .foreach(Chunk.fromIterable(used)) { case (id, p) =>
-              p.calls(Op.Shutdown)
-                .repeat(Schedule.spaced(10.millis) && Schedule.recurWhile(_.isEmpty))
-                .timeout(OnceBound) *>
-                p.calls(Op.Shutdown).map(calls => id -> calls)
+              // A provider the instance took is shut down once; one it refused (a swap after shutdown) never had its
+              // initialize() entered and stays its caller's, so it is shut down zero times. Entered, not finished: a
+              // parked initialize() counts as taken.
+              p.entered(Op.Initialize).flatMap { entered =>
+                val expected = if (entered == 0) 0 else 1
+                ZIO.when(expected == 1)(
+                  p.calls(Op.Shutdown)
+                    .repeat(Schedule.spaced(10.millis) && Schedule.recurWhile(_.isEmpty))
+                    .timeout(OnceBound)
+                ) *> p.calls(Op.Shutdown).map(calls => (id, expected, calls))
+              }
             }
             .map { counts =>
               val notOnce = counts.collect {
-                case (id, calls) if calls.size != 1 =>
+                case (id, expected, calls) if calls.size != expected =>
                   val by = calls.map(c => s"${c.thread} at ${c.startedAt}").mkString(", ")
-                  s"$where: $id was shut down ${calls.size} times, not once ($by)"
+                  s"$where: $id was shut down ${calls.size} times, not $expected ($by)"
               }
               Outcome(reached, probe.reached, found ++ notOnce)
             }

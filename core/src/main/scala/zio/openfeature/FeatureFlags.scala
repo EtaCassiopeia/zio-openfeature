@@ -589,6 +589,9 @@ trait FeatureFlags {
     * previous provider down itself, since the SDK no longer holds it. Until the new provider has settled, installing
     * the previous provider again fails with `ProviderInitializationFailed`.
     *
+    * On an instance that has been shut down, the effect fails with `ProviderNotReady(NotReady)` and the provider is not
+    * touched: a shut-down instance is never revived.
+    *
     * Once the swap has started it runs to one of those outcomes even if the calling fiber is interrupted, so
     * `setProvider(p).timeout(d)` with `d` shorter than the init timeout returns only when the swap has settled (at most
     * about twice the init timeout). Waiting for an earlier swap to finish can still be interrupted.

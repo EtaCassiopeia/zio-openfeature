@@ -185,6 +185,24 @@ object LifecycleModelSpec extends ZIOSpecDefault {
     * serving.
     */
   private def swapTo(sut: Sut, run: Run, who: Installed, kind: Kind, next: Model): URIO[Scope, Run] =
+    if (run.model.shutDown) refusedSwap(sut, run, who, kind) else runSwap(sut, run, who, kind, next)
+
+  /** A swap on a shut-down instance is refused before the SDK is touched: the provider is never initialized. */
+  private def refusedSwap(sut: Sut, run: Run, who: Installed, kind: Kind): URIO[Scope, Run] =
+    for {
+      p     <- newProvider(who, kind)
+      out   <- sut.ff.setProvider(p).either
+      inits <- p.entered(Op.Initialize)
+      refused = out match {
+        case Left(FeatureFlagError.ProviderNotReady(_)) => true
+        case _                                          => false
+      }
+      wrong =
+        if (refused && inits == 0) Chunk.empty
+        else Chunk(s"a setProvider after shutdown gave $out and initialized the provider $inits time(s)")
+    } yield run.copy(violations = run.violations ++ wrong)
+
+  private def runSwap(sut: Sut, run: Run, who: Installed, kind: Kind, next: Model): URIO[Scope, Run] =
     for {
       p <- newProvider(who, kind)
       withP = run.copy(providers = run.providers + (who.id -> p))
@@ -633,8 +651,8 @@ object LifecycleModelSpec extends ZIOSpecDefault {
       Gen.const(Action.Shutdown)                              -> 3.0
     )
 
-  /** After a shutdown the instance is not used again ("evaluations fail from then on"), so a later swap becomes an
-    * evaluation. A map keeps shrinking intact.
+  /** After a shutdown a plain swap stays: it must be refused. A paired one, or reinstalling the previous provider,
+    * becomes an evaluation, since those steps assume a swap that runs. A map keeps shrinking intact.
     */
   private def afterShutdownNoSwaps(actions: List[Action]): List[Action] = {
     def swaps(a: Action): Boolean = a match {
@@ -643,7 +661,10 @@ object LifecycleModelSpec extends ZIOSpecDefault {
       case _                                                   => false
     }
     val (before, rest) = actions.span(_ != Action.Shutdown)
-    before ++ rest.map(a => if (swaps(a)) Action.Evaluate else a)
+    before ++ rest.map {
+      case s: Action.SetProvider => s
+      case a                     => if (swaps(a)) Action.Evaluate else a
+    }
   }
 
   val genActions: Gen[Any, List[Action]] = Gen.listOfBounded(1, 12)(genAction).map(afterShutdownNoSwaps)

@@ -13,13 +13,14 @@ object LifecycleProbeGuardSpec extends ZIOSpecDefault {
 
   private val probeCall = """\bprobe\.at\(""".r
 
-  // The lifecycle code: the swap and shutdown, the event bridge, the timed-out swap's previous providers, and the
-  // builds' watchdog and scope finalizer.
-  private val allowed = Set(
-    "FeatureFlagsLive.scala",
-    "EventBridge.scala",
-    "OrphanedProviders.scala",
-    "FeatureFlagsFactories.scala"
+  // The lifecycle code and how many probes each file has: the swap and shutdown, the event bridge, the timed-out swap's
+  // previous providers, and the builds' watchdog and scope finalizers. FeatureFlagsLive also holds the evaluation
+  // methods, so a probe added anywhere changes a count and has to be looked at here.
+  private val expected = Map(
+    "FeatureFlagsLive.scala"      -> 9,
+    "EventBridge.scala"           -> 3,
+    "OrphanedProviders.scala"     -> 1,
+    "FeatureFlagsFactories.scala" -> 3
   )
 
   private def code(line: String): String = {
@@ -59,13 +60,13 @@ object LifecycleProbeGuardSpec extends ZIOSpecDefault {
     }
 
   def spec = suite("LifecycleProbeGuardSpec")(
-    test("lifecycle probes are called only from the lifecycle code, never on the evaluation path") {
+    test("lifecycle probes are called only from the lifecycle code, as many times as reviewed") {
       for {
         root  <- ZIO.fromOption(repoRoot).orElseFail(new IllegalStateException("repository root not found"))
         files <- ZIO.attemptBlocking(scalaFiles(new File(root, "core/src/main")))
         found <- ZIO.attemptBlocking(probeCalls(files))
-        outside = found.collect { case (file, at) if !allowed(file) => s"$file:$at" }
-      } yield assertTrue(found.size >= 14, outside == Nil)
+        counts = found.groupBy(_._1).map { case (file, calls) => file -> calls.size }
+      } yield assertTrue(counts == expected)
     },
     test("the guard finds a probe call and skips comments") {
       assertTrue(

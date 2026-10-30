@@ -39,25 +39,50 @@ object LifecycleInterleavingSpec extends ZIOSpecDefault {
 
   // The probe
 
-  /** Records the name of every point reached; holds the first hit of `holdAt` until `release`. */
-  final class TestProbe(holdAt: Option[String], val held: Promise[Nothing, Unit], val release: Promise[Nothing, Unit])
-      extends LifecycleProbe {
+  /** Records the name of every point reached once armed, and holds the first hit of `holdAt` until `release`. Points
+    * reached before [[arm]] (the build's own READY) are recorded apart and never held.
+    */
+  final class TestProbe(
+    holdAt: Option[String],
+    armedAtStart: Boolean,
+    val held: Promise[Nothing, Unit],
+    val release: Promise[Nothing, Unit]
+  ) extends LifecycleProbe {
+    private val warmupQueue  = new ConcurrentLinkedQueue[String]()
     private val reachedQueue = new ConcurrentLinkedQueue[String]()
+    private val armed        = new AtomicBoolean(armedAtStart)
     private val taken        = new AtomicBoolean(false)
 
+    def warmup: Set[String]  = warmupQueue.asScala.toSet
     def reached: Set[String] = reachedQueue.asScala.toSet
+    def arm: UIO[Unit]       = ZIO.succeed(armed.set(true))
 
     def at(point: Point): UIO[Unit] =
       ZIO.suspendSucceed {
-        reachedQueue.add(point.name)
-        if (holdAt.contains(point.name) && taken.compareAndSet(false, true)) held.succeed(()) *> release.await
-        else ZIO.unit
+        if (!armed.get()) { warmupQueue.add(point.name); ZIO.unit }
+        else {
+          reachedQueue.add(point.name)
+          if (holdAt.contains(point.name) && taken.compareAndSet(false, true)) held.succeed(()) *> release.await
+          else ZIO.unit
+        }
       }
+
+    /** Arm once the build's READY has reached the bridge and been applied, so it is not what gets held. */
+    def armAfterBuild: UIO[Boolean] =
+      ZIO
+        .succeed(warmup)
+        .repeat(
+          Schedule.spaced(10.millis) && Schedule.recurWhile[Set[String]](w => !w("DeliverEvent") || !w("ApplySignal"))
+        )
+        .timeout(HoldWait)
+        .map(_.isDefined) <* arm
   }
 
   object TestProbe {
-    def make(holdAt: Option[String]): UIO[TestProbe] =
-      (Promise.make[Nothing, Unit] <*> Promise.make[Nothing, Unit]).map { case (h, r) => new TestProbe(holdAt, h, r) }
+    def make(holdAt: Option[String], armed: Boolean = false): UIO[TestProbe] =
+      (Promise.make[Nothing, Unit] <*> Promise.make[Nothing, Unit]).map { case (h, r) =>
+        new TestProbe(holdAt, armed, h, r)
+      }
   }
 
   // Actions
@@ -83,7 +108,11 @@ object LifecycleInterleavingSpec extends ZIOSpecDefault {
     case object Shutdown                 extends Competitor
     case object Evaluate                 extends Competitor
     case object SwapGood                 extends Competitor
-    case object ReleaseHangs             extends Competitor
+    case object SwapFailing              extends Competitor
+
+    /** Interrupt the fiber running the primary. */
+    case object Interrupt    extends Competitor
+    case object ReleaseHangs extends Competitor
 
     val all: List[Competitor] = List(
       Emit(Action.EmitReady),
@@ -93,6 +122,8 @@ object LifecycleInterleavingSpec extends ZIOSpecDefault {
       Shutdown,
       Evaluate,
       SwapGood,
+      SwapFailing,
+      Interrupt,
       ReleaseHangs
     )
   }
@@ -101,10 +132,11 @@ object LifecycleInterleavingSpec extends ZIOSpecDefault {
     * releasing hangs only matters to a swap whose provider hangs.
     */
   private def applies(primary: Primary, competitor: Competitor): Boolean = (primary, competitor) match {
-    case (Primary.Shutdown, Competitor.SwapGood) => false
-    case (Primary.SwapHanging, _)                => true
-    case (_, Competitor.ReleaseHangs)            => false
-    case _                                       => true
+    case (Primary.Shutdown, Competitor.SwapGood | Competitor.SwapFailing) => false
+    case (Primary.EventError, Competitor.Interrupt)                       => false
+    case (Primary.SwapHanging, _)                                         => true
+    case (_, Competitor.ReleaseHangs)                                     => false
+    case _                                                                => true
   }
 
   /** The points each primary always passes, in no particular order. */
@@ -173,6 +205,7 @@ object LifecycleInterleavingSpec extends ZIOSpecDefault {
   private val p0 = Installed("p0", "p0")
   private val p1 = Installed("p1", "p1")
   private val p2 = Installed("p2", "p2")
+  private val p3 = Installed("p3", "p3")
 
   private def primaryModel(primary: Primary, m: Model): Model = primary match {
     case Primary.SwapGood    => m.step(Action.SetProvider(Kind.Good), p1)
@@ -184,10 +217,13 @@ object LifecycleInterleavingSpec extends ZIOSpecDefault {
 
   private def competitorModel(competitor: Competitor, m: Model): Model = competitor match {
     // The event comes from the provider installed when the scenario started; once replaced, it reaches no one.
-    case Competitor.Emit(event)  => if (m.installed.contains(p0) && m.swap.isEmpty) m.step(event, p0) else m
-    case Competitor.Shutdown     => m.step(Action.Shutdown, p0)
-    case Competitor.Evaluate     => m
-    case Competitor.SwapGood     => m.step(Action.SetProvider(Kind.Good), p2)
+    case Competitor.Emit(event) => if (m.installed.contains(p0) && m.swap.isEmpty) m.step(event, p0) else m
+    case Competitor.Shutdown    => m.step(Action.Shutdown, p0)
+    case Competitor.Evaluate    => m
+    case Competitor.SwapGood    => m.step(Action.SetProvider(Kind.Good), p2)
+    case Competitor.SwapFailing => m.step(Action.SetProvider(Kind.FailingInit), p3)
+    // "Once a swap has started it finishes ... even if the calling fiber is interrupted"; a started shutdown too.
+    case Competitor.Interrupt    => m
     case Competitor.ReleaseHangs => m.step(Action.ReleaseHangs, p0)
   }
 
@@ -201,7 +237,8 @@ object LifecycleInterleavingSpec extends ZIOSpecDefault {
       case Primary.SwapGood | Primary.SwapFailing | Primary.SwapHanging => true
       case _                                                            => false
     }
-    val locked  = competitor == Competitor.Shutdown || competitor == Competitor.SwapGood
+    val locked =
+      competitor == Competitor.Shutdown || competitor == Competitor.SwapGood || competitor == Competitor.SwapFailing
     val hanging = (primary, competitor) match {
       // Released before the timeout, the hanging provider's initialize() succeeds and the swap with it.
       case (Primary.SwapHanging, Competitor.ReleaseHangs) =>
@@ -209,10 +246,12 @@ object LifecycleInterleavingSpec extends ZIOSpecDefault {
       case _ => Nil
     }
     val dropped = competitor match {
-      case Competitor.Emit(_) => List(primaryModel(primary, before))
-      case _                  => Nil
+      case Competitor.Emit(_) if swap => List(primaryModel(primary, before))
+      case _                          => Nil
     }
-    val ordered = if (swap && locked) List(primaryFirst) else List(primaryFirst, competitorFirst)
+    // The primary's own event is sent before any point it can be held at, so the competitor's always comes second.
+    val ordered =
+      if ((swap && locked) || primary == Primary.EventError) List(primaryFirst) else List(primaryFirst, competitorFirst)
     ordered ++ hanging ++ dropped
   }
 
@@ -263,6 +302,9 @@ object LifecycleInterleavingSpec extends ZIOSpecDefault {
         }): _*
       )
       second <- provider("p2")
+      third  <- provider("p3", Fault.Throw(new RuntimeException("p3: initialize fails")))
+      warmed <- probe.armAfterBuild
+      cold       = if (warmed) Chunk.empty else Chunk(s"$where: the build's READY never reached the bridge")
       before     = Model.initial(p0)
       primaryRun = primary match {
         case Primary.SwapGood | Primary.SwapFailing | Primary.SwapHanging => ff.setProvider(first).either.unit
@@ -280,6 +322,8 @@ object LifecycleInterleavingSpec extends ZIOSpecDefault {
         case Competitor.Shutdown     => ff.shutdown.as(none).fork
         case Competitor.Evaluate     => evaluate(ff).fork
         case Competitor.SwapGood     => ff.setProvider(second).either.as(none).fork
+        case Competitor.SwapFailing  => ff.setProvider(third).either.as(none).fork
+        case Competitor.Interrupt    => primaryFiber.interrupt.as(none).fork
         case Competitor.ReleaseHangs => first.release.as(none).fork
       }
       // A competitor that waits for the swap lock is still waiting; let the events it sent arrive first.
@@ -303,11 +347,18 @@ object LifecycleInterleavingSpec extends ZIOSpecDefault {
             s"$where: no order agrees; observed $observed; against ${primaryModel(primary, before).status}: " +
               violations(candidates.head, observed).mkString("; ")
           )
-      mid = List(
-        before.copy(status = ProviderStatus.NotReady, installed = None),
-        before.copy(status = ProviderStatus.ShuttingDown),
-        before.copy(status = ProviderStatus.Error, installed = None)
-      )
+      mid = primary match {
+        case Primary.SwapGood | Primary.SwapHanging => List(before.copy(status = ProviderStatus.NotReady))
+        // The failed provider stays bound until the previous one is registered again.
+        case Primary.SwapFailing =>
+          List(
+            before.copy(status = ProviderStatus.NotReady),
+            before.copy(status = ProviderStatus.Error, installed = Some(p1)),
+            before.copy(status = ProviderStatus.Error)
+          )
+        case Primary.Shutdown   => List(before.copy(status = ProviderStatus.ShuttingDown))
+        case Primary.EventError => List(before.copy(status = ProviderStatus.Error))
+      }
       wrongEvals = evaluated.getOrElse(none).filterNot(r => (before :: mid ++ candidates).exists(whoAllowed(_, r)))
       evalsBad   = if (wrongEvals.isEmpty) Chunk.empty else Chunk(s"$where: evaluations gave $wrongEvals")
       late       = if (done.isEmpty) Chunk(s"$where: the primary did not finish within $Bound") else Chunk.empty
@@ -315,11 +366,12 @@ object LifecycleInterleavingSpec extends ZIOSpecDefault {
       used = List("p0" -> initial) ++
         (if (Set[Primary](Primary.SwapGood, Primary.SwapFailing, Primary.SwapHanging)(primary)) List("p1" -> first)
          else Nil) ++
-        (if (competitor.contains(Competitor.SwapGood)) List("p2" -> second) else Nil)
+        (if (competitor.contains(Competitor.SwapGood)) List("p2" -> second) else Nil) ++
+        (if (competitor.contains(Competitor.SwapFailing)) List("p3" -> third) else Nil)
     } yield (
       probe,
       probe.reached,
-      unheld ++ Chunk.fromIterable(heldWrong) ++ late ++ mismatch ++ evalsBad,
+      cold ++ unheld ++ Chunk.fromIterable(heldWrong) ++ late ++ mismatch ++ evalsBad,
       used
     )
 
@@ -333,7 +385,9 @@ object LifecycleInterleavingSpec extends ZIOSpecDefault {
         case Exit.Success((probe, reached, found, used)) =>
           ZIO
             .foreach(Chunk.fromIterable(used)) { case (id, p) =>
-              p.calls(Op.Shutdown).repeatUntil(_.nonEmpty).timeout(OnceBound) *>
+              p.calls(Op.Shutdown)
+                .repeat(Schedule.spaced(10.millis) && Schedule.recurWhile(_.isEmpty))
+                .timeout(OnceBound) *>
                 p.calls(Op.Shutdown).map(calls => id -> calls.size)
             }
             .map { counts =>
@@ -368,6 +422,7 @@ object LifecycleInterleavingSpec extends ZIOSpecDefault {
       inner <- FaultyProvider.make(Map(Flag -> true, Who -> "p1"), "p1")
       _     <- inner.script(Op.Initialize, Fault.Throw(new RuntimeException("p1: initialize fails")))
       outer <- FaultyProvider.wrapScoped[FeatureProvider](inner, "p1")
+      _     <- probe.armAfterBuild
       _     <- outer.script(Op.Initialize, Fault.HangUntilReleased, Fault.Succeed)
       swap  <- ff.setProvider(outer).either.fork
       _     <- probe.held.await.timeout(HoldWait)
@@ -375,7 +430,10 @@ object LifecycleInterleavingSpec extends ZIOSpecDefault {
       _     <- swap.await.timeout(Bound)
       _     <- outer.release
       // The previous provider is shut down once the timed-out swap's provider reports its failure.
-      _      <- initial.calls(Op.Shutdown).repeatUntil(_.nonEmpty).timeout(OnceBound)
+      _ <- initial
+        .calls(Op.Shutdown)
+        .repeat(Schedule.spaced(10.millis) && Schedule.recurWhile(_.isEmpty))
+        .timeout(OnceBound)
       status <- ff.providerStatus
     } yield (probe, initial, status)
     for {
@@ -392,7 +450,7 @@ object LifecycleInterleavingSpec extends ZIOSpecDefault {
     */
   private def watchdogRacedByReady: UIO[(Set[String], ProviderStatus, Int)] = {
     val run = for {
-      probe <- TestProbe.make(Some("Watchdog"))
+      probe <- TestProbe.make(Some("Watchdog"), armed = true)
       _     <- ZIO.addFinalizer(probe.release.succeed(()))
       p     <- provider("p0", Fault.HangUntilReleased, Fault.Succeed)
       ff    <- FeatureFlagsFactories
@@ -408,9 +466,11 @@ object LifecycleInterleavingSpec extends ZIOSpecDefault {
           probe = probe
         )
         .orDie
-      _      <- probe.held.await.timeout(HoldWait)
-      _      <- emit(p, Action.EmitReady, "competitor")
-      _      <- ff.providerStatus.repeatUntil(_ == ProviderStatus.Ready).timeout(HoldWait)
+      _ <- probe.held.await.timeout(HoldWait)
+      _ <- emit(p, Action.EmitReady, "competitor")
+      _ <- ff.providerStatus
+        .repeat(Schedule.spaced(10.millis) && Schedule.recurWhile(_ != ProviderStatus.Ready))
+        .timeout(HoldWait)
       _      <- probe.release.succeed(())
       _      <- ZIO.sleep(Settle)
       status <- ff.providerStatus

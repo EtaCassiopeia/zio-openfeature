@@ -66,6 +66,14 @@ mutants = {
     'the async build does not record its provider as initializing': (
         '    /\\ swap = None\n    /\\ pending = P0\n',
         '    /\\ swap = None\n    /\\ pending = None\n'),
+    # The scope close does not wait for a swap in flight.
+    'the scope close does not wait for a swap in flight': (
+        'ScopeClose ==\n    /\\ lock = "free" /\\ ~closed',
+        'ScopeClose ==\n    /\\ ~closed'),
+    # A swap after the scope close is not refused.
+    'a swap after the scope close is not refused': (
+        '    /\\ lock = "free" /\\ ~shutDown /\\ ~closed /\\ ~Settling\n    /\\ sdk[p] = "NONE"',
+        '    /\\ lock = "free" /\\ ~shutDown /\\ ~Settling\n    /\\ sdk[p] = "NONE"'),
     # The gate never goes up.
     'no swap gate': (
         '    /\\ gate\' = TRUE\n    /\\ status\' = "NotReady"',

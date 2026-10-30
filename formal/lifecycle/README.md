@@ -43,6 +43,8 @@ still initializing): about 57 million distinct states, a few minutes on a laptop
 | A swap after shutdown is not refused (#631) | `ShutDownAtMostOnce` |
 | A failed swap that never bound its provider reads a still-initializing provider as `Ready` (#634) | `StatusFollowsSdk` |
 | The async build does not record its provider as initializing (#635) | `NoConcurrentInit` |
+| The scope close does not wait for a swap in flight (#636) | `ClosedCleanly` |
+| A swap after the scope close is not refused (#665) | `ClosedCleanly` |
 | The swap gate never goes up | `NotReadyDuringSwap` |
 
 ## Actions and the code
@@ -65,7 +67,7 @@ there is one.
 | `Deliver` | `EventBridge.onSdkEvent` and `applySdkSignal` |
 | `OrphanResolved` | `OrphanedProviders.settle`, with the entry's `ReadyWatch` |
 | `ShutdownStart`, `ShutdownDone` | `FeatureFlagsLive.shutdown` |
-| `ScopeClose` | the API scope finalizer in `FeatureFlagsFactories`: `boundedApiShutdown`, `orphans.resolveAll` |
+| `ScopeClose` | the API scope finalizer in `FeatureFlagsFactories`: takes the swap lock, marks the instance closed, then `boundedApiShutdown`, `orphans.resolveAll` |
 
 ## Trace validation
 

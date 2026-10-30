@@ -57,7 +57,9 @@ final private[openfeature] class FeatureFlagsLive(
   // Previous providers a timed-out swap left registered nowhere; an owning instance shuts them down once settled.
   orphans: OrphanedProviders,
   // Named lifecycle points a test can hold a fiber at; a no-op in production.
-  probe: LifecycleProbe = LifecycleProbe.none
+  probe: LifecycleProbe = LifecycleProbe.none,
+  // Set by the layer's scope finalizer, under `swapLock`: the API is torn down, so no swap may start.
+  closed: java.util.concurrent.atomic.AtomicBoolean = new java.util.concurrent.atomic.AtomicBoolean(false)
 ) extends FeatureFlags {
 
   // The total tier's served-default breadcrumb, under this instance's `FallbackLogging` policy. Lives here, not
@@ -683,12 +685,14 @@ final private[openfeature] class FeatureFlagsLive(
           .as(new SwapWatch(None))
       )
 
-  /** Refuses a swap on a shut-down instance, which has no event bridge or hub left and so is never revived, before any
-    * SDK change, watch or probe point; then [[refusePendingOrphan]]. Run under the swap lock, which `shutdown` sets the
-    * flag under.
+  /** Refuses a swap on a shut-down instance, which has no event bridge or hub left and so is never revived, and on one
+    * whose layer scope has closed, whose API is torn down; before any SDK change, watch or probe point; then
+    * [[refusePendingOrphan]]. Run under the swap lock, which `shutdown` and the scope finalizer set the flags under.
     */
   private def refuseSwap(newProvider: OFFeatureProvider): IO[FeatureFlagError, Unit] =
-    ZIO.fail(FeatureFlagError.ProviderNotReady(ProviderStatus.NotReady)).when(shutdownCompleted.get()) *>
+    ZIO
+      .fail(FeatureFlagError.ProviderNotReady(ProviderStatus.NotReady))
+      .when(shutdownCompleted.get() || closed.get()) *>
       refusePendingOrphan(newProvider)
 
   /** A provider that a timed-out swap replaced is still held by the new provider's pending initialization, which shuts
@@ -749,7 +753,7 @@ final private[openfeature] class FeatureFlagsLive(
       .withPermit(
         providerRef.get.flatMap { registered =>
           // After a shutdown the SDK has shut the switch down; `construct` then discards the composed stack.
-          if ((registered ne switch) || shutdownCompleted.get()) ZIO.none
+          if ((registered ne switch) || shutdownCompleted.get() || closed.get()) ZIO.none
           else
             ZIO.attempt {
               // The name first: the SDK stamps the switch's (now `next`'s) name on every event, and the identity guard

@@ -74,6 +74,9 @@ Shutting the OpenFeature API down stops every provider registered on it.
 | `ApiOwnership.Owned` | Shuts down the API and its providers. |
 | `ApiOwnership.Shared` | Leaves the API and provider running for other clients. |
 
+Closing an owning layer's scope waits for a [provider swap](#replace-the-provider-at-runtime) in flight before it
+shuts the API down, as `shutdown` does.
+
 !!! warning
     A domain client with the default ownership (`Auto`, which is `Shared` for a domain client) never shuts its provider down. If the provider holds threads or
     connections, set `Owned` or use a [`FeatureFlagRegistry`](#one-client-per-domain-featureflagregistry).

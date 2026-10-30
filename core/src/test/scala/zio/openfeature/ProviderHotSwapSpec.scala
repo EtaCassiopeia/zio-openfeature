@@ -379,6 +379,41 @@ object ProviderHotSwapSpec extends ZIOSpecDefault {
         )
       }
     } @@ TestAspect.withLiveClock,
+    test("a timed-out provider installed again later is rolled back onto, not mistaken for a pending one") {
+      ZIO.scoped {
+        val a = new Counting("A", blocking = false)
+        val d = new SimpleProvider("D", Map("flag" -> true))
+        val c = new SimpleProvider("C", Map.empty) {
+          override def initialize(ctx: OFEvaluationContext): Unit = throw new RuntimeException("cannot start")
+        }
+        for {
+          b <- ZIO.acquireRelease(ZIO.succeed(new Counting("B", blocking = true)))(p =>
+            ZIO.succeed(p.release.countDown())
+          )
+          built <- buildExposed(a, initTimeout = 300.millis)
+          (ff, _, _) = built
+          _ <- ff.setProvider(b).either
+          // B finishes late; a swap to D then gets B's registration shut down by the SDK.
+          _      <- ZIO.succeed(b.release.countDown())
+          _      <- ff.providerStatus.repeatUntil(_ == ProviderStatus.Ready).timeout(5.seconds)
+          _      <- ff.setProvider(d)
+          bDown  <- awaitTrue(b.shutdowns.get() >= 1)
+          again  <- ff.setProvider(b).either
+          failed <- ff.setProvider(c).either
+          status <- ff.providerStatus
+          m      <- ff.providerMetadata
+          // Read now: the owning API shuts the serving B down once more when the scope closes.
+          bShutdowns <- ZIO.succeed(b.shutdowns.get())
+        } yield assertTrue(
+          bDown,
+          again.isRight,
+          failed.isLeft,
+          status == ProviderStatus.Ready,
+          m.name == "B",
+          bShutdowns == 1
+        )
+      }
+    } @@ TestAspect.withLiveClock,
     test("a failed swap still rolls back onto a timed-out provider whose initialization has settled") {
       ZIO.scoped {
         val a = new Counting("A", blocking = false)

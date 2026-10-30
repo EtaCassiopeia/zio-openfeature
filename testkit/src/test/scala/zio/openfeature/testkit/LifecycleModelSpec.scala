@@ -180,8 +180,9 @@ object LifecycleModelSpec extends ZIOSpecDefault {
   private def whoFor(run: Run, kind: Kind, reuseName: Boolean, id: String): Installed =
     Installed(id, if (reuseName) run.installed.name else id)
 
-  /** Install `who`, waiting for the READY the SDK sends for whichever provider ends up initialized. */
-  /** Install `who`, the model then being `next`. */
+  /** Install `who`, the model then being `next`; waits for the READY the SDK sends for whichever provider ends up
+    * serving.
+    */
   private def swapTo(sut: Sut, run: Run, who: Installed, kind: Kind, next: Model): URIO[Scope, Run] =
     for {
       p <- newProvider(who, kind)
@@ -456,7 +457,7 @@ object LifecycleModelSpec extends ZIOSpecDefault {
               awaitEvent(sut, EventWait)(isReadyFrom(planned.installed.fold(who.name)(_.name)))
             )
             _ <- ZIO.when(Action.isEmit(other))(awaitEvent(sut, MaybeEventWait)(tagged(tag)))
-            swapped = before.step(s, who)
+            swapped = planned
             // The event can take effect before the swap, after it (only while its sender is still installed), or be
             // dropped while the swap is in flight.
             afterEmit =

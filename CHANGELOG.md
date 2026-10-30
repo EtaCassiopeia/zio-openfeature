@@ -29,9 +29,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Java SDK called its `initialize()` a second time while the first call still ran. A provider that owns a client or a
   poller (Optimizely, OFREP, flagd) does not survive that. There is nothing to roll back to then: the failed provider
   stays registered with status `Error`, the timed-out provider is shut down, and a later `setProvider` recovers.
-- **A failed swap's provider is no longer shut down twice when an event fails the rollback.** An `ERROR` the previous
-  provider sent while the rollback waited made the rollback count as failed after the SDK had already shut the failed
-  provider down, and the cleanup shut it down again.
 - **A `setProvider` whose new provider reports `STALE` while it starts now ends `Stale`** (#617). The swap mapped
   both `READY` and `STALE` to `Ready`, so the status said `Ready` while the Java SDK reported `STALE`, until the
   provider's next event. The swap, and a rollback to the previous provider, now end in the state the SDK reports, and

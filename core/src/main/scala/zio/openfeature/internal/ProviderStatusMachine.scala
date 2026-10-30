@@ -21,17 +21,19 @@ private[openfeature] object ProviderStatusMachine {
     final case class EventError(fatal: Boolean) extends Signal
     case object EventStale                      extends Signal
     case object SwapStarted                     extends Signal
-    case object SwapSucceeded                   extends Signal
-    case object SwapFailed                      extends Signal
-    case object InitTimeout                     extends Signal
-    case object ShutdownStarted                 extends Signal
-    case object ShutdownCompleted               extends Signal
+
+    /** The new provider initialized; `stale` when the SDK reported it STALE rather than READY. */
+    final case class SwapSucceeded(stale: Boolean) extends Signal
+    case object SwapFailed                         extends Signal
+    case object InitTimeout                        extends Signal
+    case object ShutdownStarted                    extends Signal
+    case object ShutdownCompleted                  extends Signal
 
     /** setProvider: a failed hot-swap was rolled back and the previous provider re-registered with the SDK, verified to
       * be routing again. Same transition as a successful swap outcome, applied by `setProvider` itself once the
       * rollback re-registration confirms the old provider is bound.
       */
-    case object RollbackSucceeded extends Signal
+    final case class RollbackSucceeded(stale: Boolean) extends Signal
   }
 
   /** Cross-thread context the table needs but the public ProviderStatus cannot represent. */
@@ -50,12 +52,12 @@ private[openfeature] object ProviderStatusMachine {
       // Lifecycle: authoritative from anywhere. setProvider is the ONLY exit from Fatal and from
       // post-shutdown NotReady — it installs a NEW provider, so the old one's irrecoverability
       // no longer applies.
-      case Signal.ShutdownStarted   => Some(ShuttingDown)
-      case Signal.ShutdownCompleted => Some(NotReady)
-      case Signal.SwapStarted       => Some(NotReady)
-      case Signal.SwapSucceeded     => Some(Ready)
-      case Signal.SwapFailed        => Some(Error)
-      case Signal.RollbackSucceeded => Some(Ready)
+      case Signal.ShutdownStarted          => Some(ShuttingDown)
+      case Signal.ShutdownCompleted        => Some(NotReady)
+      case Signal.SwapStarted              => Some(NotReady)
+      case Signal.SwapSucceeded(stale)     => Some(if (stale) Stale else Ready)
+      case Signal.SwapFailed               => Some(Error)
+      case Signal.RollbackSucceeded(stale) => Some(if (stale) Stale else Ready)
 
       // Non-lifecycle signals (the init watchdog and every bridge event) never take effect during a swap (the swap
       // sets its own outcome) nor after an explicit shutdown has completed (post-shutdown NotReady is terminal; a

@@ -11,7 +11,7 @@ uses the status to decide whether an evaluation may run, and publishes the provi
 |:--|:--|:--|
 | `NotReady` | fails with `ProviderNotReady(NotReady)` | start, a `setProvider` swap in progress, or shutdown complete |
 | `Ready` | runs | a `READY` event |
-| `Stale` | runs | a `STALE` event, or the SDK reporting `STALE` for the provider, from `NotReady`, `Ready` or `Error` |
+| `Stale` | runs | a `STALE` event, or the SDK reporting `STALE` for the provider, from `NotReady`, `Ready` or `Error`; a `setProvider` whose new provider the SDK reports `STALE` |
 | `Error` | runs: the provider usually serves its last good values or answers with an error code | an `ERROR` event |
 | `Fatal` | fails with `ProviderFatal` | an `ERROR` event with code `ProviderFatal`, or `initTimeout` passing before the provider was ever ready |
 | `ShuttingDown` | fails with `ProviderNotReady(ShuttingDown)` | `shutdown` in progress |

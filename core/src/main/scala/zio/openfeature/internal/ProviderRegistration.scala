@@ -52,13 +52,15 @@ private[openfeature] object ProviderRegistration {
 
   final private case class InitError(message: String, fatal: Boolean)
 
-  /** Blocking form, for callers already on the blocking pool (the swap rollback). Throws on failure or timeout. */
+  /** Blocking form, for callers already on the blocking pool (the swap rollback). Returns the serving state the SDK
+    * reported, `READY` or `STALE`; throws on failure or timeout.
+    */
   def registerAndAwaitBlocking(
     api: OpenFeatureAPI,
     domain: Option[String],
     provider: OFFeatureProvider,
     timeout: Duration
-  ): Unit = {
+  ): ProviderState = {
     val lastError = new AtomicReference[Option[InitError]](None)
     val handler   = errorHandler(provider, lastError)
     api.on(JavaProviderEvent.PROVIDER_ERROR, handler)
@@ -68,15 +70,15 @@ private[openfeature] object ProviderRegistration {
     } finally removeHandler(api, handler)
   }
 
-  /** Effect form. The registration itself is not interruptible (it mutates SDK state); the wait is, so a caller's own
-    * timeout or interruption stops it.
+  /** Effect form, succeeding with the serving state the SDK reported, `READY` or `STALE`. The registration itself is
+    * not interruptible (it mutates SDK state); the wait is, so a caller's own timeout or interruption stops it.
     */
   def registerAndAwait(
     api: OpenFeatureAPI,
     domain: Option[String],
     provider: OFFeatureProvider,
     timeout: Duration
-  ): Task[Unit] =
+  ): Task[ProviderState] =
     registerThenAwait(api, domain, provider, timeout)(ZIO.unit)
 
   /** [[registerAndAwait]], running `afterRegister` once the slot is bound to `provider` and before the wait. The build
@@ -87,7 +89,7 @@ private[openfeature] object ProviderRegistration {
     domain: Option[String],
     provider: OFFeatureProvider,
     timeout: Duration
-  )(afterRegister: ZIO[R, Throwable, Unit]): ZIO[R, Throwable, Unit] =
+  )(afterRegister: ZIO[R, Throwable, Unit]): ZIO[R, Throwable, ProviderState] =
     ZIO.suspendSucceed {
       val lastError = new AtomicReference[Option[InitError]](None)
       val handler   = errorHandler(provider, lastError)
@@ -205,20 +207,20 @@ private[openfeature] object ProviderRegistration {
     provider: OFFeatureProvider,
     timeout: Duration,
     lastError: AtomicReference[Option[InitError]]
-  ): Unit = {
+  ): ProviderState = {
     // A client reads the state of whatever manager is bound to the slot, i.e. the one this registration installed.
     val stateClient = domain.fold(api.getClient())(d => api.getClient(d))
     val deadline    = java.lang.System.nanoTime() + timeout.toNanos
 
     @annotation.tailrec
-    def loop(): Unit = {
+    def loop(): ProviderState = {
       val bound = domain.fold(api.getProvider())(d => api.getProvider(d))
       // `!=` (equals), not `ne`: the SDK itself matches a non-domain-scoped provider to an existing registration by
       // equals and binds that registration's instance.
       if (bound != provider) throw new RegistrationSuperseded
       stateClient.getProviderState match {
-        case ProviderState.READY | ProviderState.STALE            => ()
-        case failed @ (ProviderState.ERROR | ProviderState.FATAL) =>
+        case serving @ (ProviderState.READY | ProviderState.STALE) => serving
+        case failed @ (ProviderState.ERROR | ProviderState.FATAL)  =>
           val error   = awaitInitError(lastError)
           val message =
             error.map(_.message).filter(_.nonEmpty).getOrElse(s"Provider entered $failed during initialization")

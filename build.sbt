@@ -290,6 +290,14 @@ lazy val core = (project in file("core"))
       "dev.zio"        %% "zio"         % zioVersion,
       "dev.zio"        %% "zio-streams" % zioVersion,
       "dev.openfeature" % "sdk"         % openFeatureSdkVersion
+    ),
+    // `private[openfeature]` internals compile to public bytecode on 2.13, so MiMa sees them. The swap's outcome signals
+    // gained a payload (whether the SDK reported the new provider STALE); nothing outside the library can name them.
+    mimaBinaryIssueFilters ++= Seq(
+      ProblemFilters.exclude[Problem]("zio.openfeature.internal.ProviderStatusMachine#Signal#SwapSucceeded*"),
+      ProblemFilters.exclude[Problem]("zio.openfeature.internal.ProviderStatusMachine$Signal$SwapSucceeded*"),
+      ProblemFilters.exclude[Problem]("zio.openfeature.internal.ProviderStatusMachine#Signal#RollbackSucceeded*"),
+      ProblemFilters.exclude[Problem]("zio.openfeature.internal.ProviderStatusMachine$Signal$RollbackSucceeded*")
     )
   )
 

@@ -24,12 +24,14 @@ object ProviderStatusMachineSpec extends ZIOSpecDefault {
     ProviderStatusMachine.transition(current, signal, ctx)
 
   private val lifecycle: List[(Signal, ProviderStatus)] = List(
-    Signal.ShutdownStarted   -> ShuttingDown,
-    Signal.ShutdownCompleted -> NotReady,
-    Signal.SwapStarted       -> NotReady,
-    Signal.SwapSucceeded     -> Ready,
-    Signal.SwapFailed        -> Error,
-    Signal.RollbackSucceeded -> Ready
+    Signal.ShutdownStarted                  -> ShuttingDown,
+    Signal.ShutdownCompleted                -> NotReady,
+    Signal.SwapStarted                      -> NotReady,
+    Signal.SwapSucceeded(stale = false)     -> Ready,
+    Signal.SwapSucceeded(stale = true)      -> Stale,
+    Signal.SwapFailed                       -> Error,
+    Signal.RollbackSucceeded(stale = false) -> Ready,
+    Signal.RollbackSucceeded(stale = true)  -> Stale
   )
 
   def spec = suite("ProviderStatusMachineSpec")(

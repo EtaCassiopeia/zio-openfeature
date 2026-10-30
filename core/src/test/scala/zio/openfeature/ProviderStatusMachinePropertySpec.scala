@@ -27,9 +27,11 @@ object ProviderStatusMachinePropertySpec extends ZIOSpecDefault {
 
   private val lifecycle: List[Signal] = List(
     Signal.SwapStarted,
-    Signal.SwapSucceeded,
+    Signal.SwapSucceeded(stale = false),
+    Signal.SwapSucceeded(stale = true),
     Signal.SwapFailed,
-    Signal.RollbackSucceeded,
+    Signal.RollbackSucceeded(stale = false),
+    Signal.RollbackSucceeded(stale = true),
     Signal.ShutdownStarted,
     Signal.ShutdownCompleted
   )

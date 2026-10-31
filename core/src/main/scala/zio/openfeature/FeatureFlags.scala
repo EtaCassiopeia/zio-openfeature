@@ -563,7 +563,7 @@ trait FeatureFlags {
   def clientMetadata: UIO[ClientMetadata]
 
   // Administration: the provider, the API's hooks, the event handlers and the instance's lifetime moved to
-  // [[FeatureFlagsAdmin]], which every layer of this library also provides. The members below are kept for 1.x.
+  // [[FeatureFlagsAdmin]] (`>+> FeatureFlagsAdmin.layer` adds it to any layer). The members below are kept for 1.x.
 
   /** Moved to [[FeatureFlagsAdmin.onProviderReady]]. */
   @deprecated(FeatureFlags.MovedToAdmin, "1.3.0")
@@ -639,7 +639,7 @@ trait FeatureFlags {
 object FeatureFlags {
 
   /** The deprecation message of the administration members, which moved to [[FeatureFlagsAdmin]]. */
-  final val MovedToAdmin = "Moved to FeatureFlagsAdmin, which every layer of this library also provides"
+  final val MovedToAdmin = "Moved to FeatureFlagsAdmin: add it to a layer with `>+> FeatureFlagsAdmin.layer`"
 
   // Service Accessors - simple evaluation. Typed tier: `default` is what the provider and hooks receive for this evaluation; it is not served on failure: use the
   // `*OrDefault` form for that.
@@ -1259,10 +1259,7 @@ object FeatureFlags {
     * `FeatureFlagsConfig()` reproduces `fromProvider(provider)` exactly (sync init, no domain, `Owned` API — the `Auto`
     * truth table's `domain.isEmpty` branch).
     */
-  def fromProvider(
-    provider: OFFeatureProvider,
-    config: FeatureFlagsConfig
-  ): ZLayer[Any, Throwable, FeatureFlags with FeatureFlagsAdmin] =
+  def fromProvider(provider: OFFeatureProvider, config: FeatureFlagsConfig): ZLayer[Any, Throwable, FeatureFlags] =
     fromProvider(provider, config, statusRef = None)
 
   /** `private[openfeature]` variant of [[fromProvider(OFFeatureProvider, FeatureFlagsConfig)]] that additionally
@@ -1277,7 +1274,7 @@ object FeatureFlags {
     statusRef: Option[SubscriptionRef[ProviderStatus]],
     apiOverride: Option[OpenFeatureAPI] = None,
     onReady: Option[java.util.concurrent.CountDownLatch] = None
-  ): ZLayer[Any, Throwable, FeatureFlags with FeatureFlagsAdmin] =
+  ): ZLayer[Any, Throwable, FeatureFlags] =
     FeatureFlagsFactories.fromProvider(provider, config, statusRef, apiOverride, onReady)
 
   /** Combine multiple providers into one via the SDK's `MultiProvider`, defaulting to a first-match strategy. Pairs
@@ -1316,7 +1313,7 @@ object FeatureFlags {
     * `IllegalStateException` wrapped at the layer boundary. Use `fromProvider(provider, FeatureFlagsConfig())` with
     * `.withInitTimeout(...)` to override.
     */
-  def fromProvider(provider: OFFeatureProvider): ZLayer[Any, Throwable, FeatureFlags with FeatureFlagsAdmin] =
+  def fromProvider(provider: OFFeatureProvider): ZLayer[Any, Throwable, FeatureFlags] =
     fromProvider(provider, FeatureFlagsConfig())
 
   /** Create a FeatureFlags layer with a global evaluation timeout.
@@ -1471,7 +1468,7 @@ object FeatureFlags {
     * `providerStatus` stop waiting. Use `fromProvider(provider, FeatureFlagsConfig(initMode = InitMode.Async))` with
     * `.withInitTimeout(...)` to override.
     */
-  def fromProviderAsync(provider: OFFeatureProvider): ZLayer[Any, Throwable, FeatureFlags with FeatureFlagsAdmin] =
+  def fromProviderAsync(provider: OFFeatureProvider): ZLayer[Any, Throwable, FeatureFlags] =
     fromProvider(provider, FeatureFlagsConfig(initMode = InitMode.Async))
 
   /** Create a FeatureFlags layer with a global evaluation timeout (non-blocking).
@@ -1667,7 +1664,7 @@ object FeatureFlags {
     fallbackLogging: FallbackLogging = FallbackLogging.Default,
     // Its own parameter for the same reason as `fallbackLogging`.
     maxAbandonedCalls: Int = DefaultMaxAbandonedCalls
-  ): URLayer[Any, FeatureFlags with FeatureFlagsAdmin with AcquireStatus] =
+  ): URLayer[Any, FeatureFlags with AcquireStatus] =
     FeatureFlagsFactories.fromAcquireAsync(
       acquire,
       fallback,
@@ -1700,7 +1697,7 @@ object FeatureFlags {
     verify: OFFeatureProvider => Task[Unit],
     onSwapped: UIO[Unit],
     fallbackLogging: FallbackLogging
-  ): URLayer[Any, FeatureFlags with FeatureFlagsAdmin with AcquireStatus] =
+  ): URLayer[Any, FeatureFlags with AcquireStatus] =
     FeatureFlagsFactories.fromAcquireAsync(
       acquire,
       fallback,

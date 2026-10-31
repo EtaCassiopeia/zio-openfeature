@@ -117,7 +117,7 @@ object Providers:
 
   // --8<-- [start:hot-swap]
   def swap(next: FeatureProvider): ZIO[FeatureFlags, FeatureFlagError, Unit] =
-    FeatureFlags.setProvider(next).catchSome { case e: FeatureFlagError.ProviderInitializationFailed =>
+    FeatureFlagsAdmin.setProvider(next).catchSome { case e: FeatureFlagError.ProviderInitializationFailed =>
       // If initialize() threw, the previous provider is back and still serving.
       // If it timed out, the new provider stays registered and the status is Error until it finishes.
       ZIO.logWarning(s"swap failed: ${e.message}")

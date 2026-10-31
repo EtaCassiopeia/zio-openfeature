@@ -212,7 +212,9 @@ A domain names a client, so different parts of an app can use different provider
 
 ## Replace the provider at runtime
 
-`setProvider` swaps the provider of a running instance; hooks, context and event handlers stay. On an instance that has
+`FeatureFlagsAdmin.setProvider` swaps the provider of a running instance (add `FeatureFlagsAdmin` to the layer with
+`>+> FeatureFlagsAdmin.layer`; the member on `FeatureFlags` is deprecated since 1.3.0). Hooks, context and event
+handlers stay. On an instance that has
 been shut down it fails with `ProviderNotReady(NotReady)` and does not touch the provider: build a new layer instead.
 
 ```scala

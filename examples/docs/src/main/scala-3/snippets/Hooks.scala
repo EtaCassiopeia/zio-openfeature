@@ -20,7 +20,7 @@ object Hooks:
     for
       _ <- FeatureFlags.addHook(audit)                                            // client: this FeatureFlags instance
       _ <- FeatureFlags.addHooks(List(FeatureHook.logging()))                     // several at once, run in list order
-      _ <- FeatureFlags.addZioApiHook(FeatureHook.metrics((_, _, _) => ZIO.unit)) // runs before client hooks
+      _ <- FeatureFlagsAdmin.addZioApiHook(FeatureHook.metrics((_, _, _) => ZIO.unit)) // runs before client hooks
     yield ()
 
   // Invocation: hooks and hints for one call only
@@ -103,17 +103,17 @@ object Hooks:
   // A hook written against the OpenFeature Java SDK runs inside the SDK call
   val javaHook: dev.openfeature.sdk.Hook[Object] = new dev.openfeature.sdk.Hook[Object] {}
 
-  val registerJava: ZIO[FeatureFlags, Nothing, Unit] = FeatureFlags.addApiHook(javaHook)
+  val registerJava: ZIO[FeatureFlags, Nothing, Unit] = FeatureFlagsAdmin.addApiHook(javaHook)
   // --8<-- [end:java-hook]
 
   // --8<-- [start:manage]
   val manage: ZIO[FeatureFlags, Nothing, List[FeatureHook]] =
     for
       client <- FeatureFlags.hooks         // the client hooks, in order
-      api    <- FeatureFlags.zioApiHooks   // the ZIO API hooks
+      api    <- FeatureFlagsAdmin.zioApiHooks   // the ZIO API hooks
       _      <- FeatureFlags.clearHooks
-      _      <- FeatureFlags.clearZioApiHooks
-      _      <- FeatureFlags.clearApiHooks // the Java SDK hooks
+      _      <- FeatureFlagsAdmin.clearZioApiHooks
+      _      <- FeatureFlagsAdmin.clearApiHooks // the Java SDK hooks
     yield api ++ client
   // --8<-- [end:manage]
 

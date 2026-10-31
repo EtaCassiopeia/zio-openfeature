@@ -2,7 +2,7 @@ package zio.openfeature.internal
 
 import zio._
 import zio.openfeature._
-import dev.openfeature.sdk.{Client => OFClient, FlagEvaluationDetails}
+import dev.openfeature.sdk.{Client => OFClient, FlagEvaluationDetails, Value}
 
 import scala.jdk.CollectionConverters._
 
@@ -323,7 +323,9 @@ final private[openfeature] class Evaluator(
             }
           ).mapError(e => FeatureFlagError.classify(e))
             .flatMap { details =>
-              val value = valueToMap(details.getValue)
+              Evaluator.objectValue(key, flagType.typeName, details).map(v => (details, valueToMap(v)))
+            }
+            .flatMap { case (details, value) =>
               toFlagMetadata(details.getFlagMetadata).map { metadata =>
                 FlagResolution(
                   value = value.asInstanceOf[A],
@@ -346,9 +348,10 @@ final private[openfeature] class Evaluator(
               client.getObjectDetails(key, anyToValue(flagType.encode(default)), ofContext)
             }
           ).mapError(e => FeatureFlagError.classify(e))
-            .flatMap { details =>
+            .flatMap(details => Evaluator.objectValue(key, flagType.typeName, details).map(v => (details, v)))
+            .flatMap { case (details, wireValue) =>
               val providerError = Option(details.getErrorCode).map(ErrorCodeConverter.fromJava)
-              val decoded       = valueToAny(details.getValue).map(flagType.decode)
+              val decoded       = valueToAny(wireValue).map(flagType.decode)
 
               decoded match {
                 case Some(Right(value)) =>
@@ -506,6 +509,24 @@ final private[openfeature] class Evaluator(
 }
 
 private[openfeature] object Evaluator {
+
+  /** The value of an object-getter answer, read through `FlagEvaluationDetails[_]`: the erased getter inserts no cast,
+    * so a provider that returns something other than a `Value` fails with a typed `TypeMismatch` rather than a
+    * `ClassCastException` defect, as the scalar paths do. `null`, a valueless answer, passes through.
+    */
+  def objectValue(key: String, expected: String, details: FlagEvaluationDetails[_]): IO[FeatureFlagError, Value] =
+    (details.getValue: Any) match {
+      case v: Value => ZIO.succeed(v)
+      case null     => ZIO.succeed(null)
+      case other    =>
+        ZIO.fail(
+          FeatureFlagError.TypeMismatch(
+            key,
+            expected,
+            s"provider returned ${other.getClass.getSimpleName}, not a Value"
+          )
+        )
+    }
 
   /** Whether a wire value cached by one read could have come from the resolver `target` selects: the same scalar box,
     * or any number for a numeric read (the decoder then judges the range). `Object` reads, and a cached `null`, are

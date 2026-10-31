@@ -110,6 +110,40 @@ object CoreApiTidySpec extends ZIOSpecDefault {
         )
       }
     } @@ TestAspect.withLiveClock,
+    test("the per-type getters take options after the context, on the instance and through the service") {
+      ZIO.scoped {
+        for {
+          ff    <- buildFF(new NamedProvider("p"))
+          calls <- Ref.make(0)
+          hook = new FeatureHook {
+            override def before(ctx: HookContext, hints: HookHints): UIO[Option[EvaluationContext]] =
+              calls.update(_ + 1).as(None)
+          }
+          opts = EvaluationOptions(hook)
+          ctx  = EvaluationContext.empty
+          b          <- ff.boolean("f", true, ctx, opts)
+          s          <- ff.string("f", "s", ctx, opts)
+          i          <- ff.int("f", 1, ctx, opts)
+          l          <- ff.long("f", 2L, ctx, opts)
+          d          <- ff.double("f", 3.0, ctx, opts)
+          o          <- ff.obj("f", Map[String, Any]("k" -> "v"), ctx, opts)
+          onInstance <- calls.get
+          viaService <- (FeatureFlags.boolean("f", true, ctx, opts) *> FeatureFlags.string("f", "s", ctx, opts) *>
+            FeatureFlags.int("f", 1, ctx, opts) *> FeatureFlags.long("f", 2L, ctx, opts) *>
+            FeatureFlags.double("f", 3.0, ctx, opts) *> FeatureFlags.obj("f", Map[String, Any](), ctx, opts))
+            .provideSomeLayer[Any](ZLayer.succeed(ff)) *> calls.get
+        } yield assertTrue(
+          b,
+          s == "s",
+          i == 1,
+          l == 2L,
+          d == 3.0,
+          o == Map[String, Any]("k" -> "v"),
+          onInstance == 6,
+          viaService == 12
+        )
+      }
+    },
     test("invocation hooks passed in options run on the total tier") {
       ZIO.scoped {
         for {

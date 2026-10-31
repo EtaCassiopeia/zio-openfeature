@@ -101,8 +101,8 @@ on `FeatureFlagError` group them by flag and by provider.
 
 ## Options for one call
 
-`EvaluationOptions` adds hooks, hints or a timeout to a single evaluation. Pass it after the context to any `*Details`,
-`*OrDefault`, `value` or `resolveOrDefault` method, `FlagDef` forms included:
+`EvaluationOptions` adds hooks, hints or a timeout to a single evaluation. Pass it after the context to any evaluation
+method, `FlagDef` forms included:
 
 ```scala
 --8<-- "Evaluating.scala:options"

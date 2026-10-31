@@ -89,11 +89,29 @@ trait FeatureFlags {
   def boolean(key: String, default: Boolean, ctx: EvaluationContext): IO[FeatureFlagError, Boolean] =
     booleanDetails(key, default, ctx).map(_.value)
 
+  /** [[boolean]] with per-call [[EvaluationOptions]] (invocation hooks, hints, a timeout). */
+  def boolean(
+    key: String,
+    default: Boolean,
+    ctx: EvaluationContext,
+    options: EvaluationOptions
+  ): IO[FeatureFlagError, Boolean] =
+    booleanDetails(key, default, ctx, options).map(_.value)
+
   def string(key: String, default: String): IO[FeatureFlagError, String] =
     stringDetails(key, default).map(_.value)
 
   def string(key: String, default: String, ctx: EvaluationContext): IO[FeatureFlagError, String] =
     stringDetails(key, default, ctx).map(_.value)
+
+  /** [[string]] with per-call [[EvaluationOptions]] (invocation hooks, hints, a timeout). */
+  def string(
+    key: String,
+    default: String,
+    ctx: EvaluationContext,
+    options: EvaluationOptions
+  ): IO[FeatureFlagError, String] =
+    stringDetails(key, default, ctx, options).map(_.value)
 
   def int(key: String, default: Int): IO[FeatureFlagError, Int] =
     intDetails(key, default).map(_.value)
@@ -101,11 +119,19 @@ trait FeatureFlags {
   def int(key: String, default: Int, ctx: EvaluationContext): IO[FeatureFlagError, Int] =
     intDetails(key, default, ctx).map(_.value)
 
+  /** [[int]] with per-call [[EvaluationOptions]] (invocation hooks, hints, a timeout). */
+  def int(key: String, default: Int, ctx: EvaluationContext, options: EvaluationOptions): IO[FeatureFlagError, Int] =
+    intDetails(key, default, ctx, options).map(_.value)
+
   def long(key: String, default: Long): IO[FeatureFlagError, Long] =
     longDetails(key, default).map(_.value)
 
   def long(key: String, default: Long, ctx: EvaluationContext): IO[FeatureFlagError, Long] =
     longDetails(key, default, ctx).map(_.value)
+
+  /** [[long]] with per-call [[EvaluationOptions]] (invocation hooks, hints, a timeout). */
+  def long(key: String, default: Long, ctx: EvaluationContext, options: EvaluationOptions): IO[FeatureFlagError, Long] =
+    longDetails(key, default, ctx, options).map(_.value)
 
   def double(key: String, default: Double): IO[FeatureFlagError, Double] =
     doubleDetails(key, default).map(_.value)
@@ -113,11 +139,29 @@ trait FeatureFlags {
   def double(key: String, default: Double, ctx: EvaluationContext): IO[FeatureFlagError, Double] =
     doubleDetails(key, default, ctx).map(_.value)
 
+  /** [[double]] with per-call [[EvaluationOptions]] (invocation hooks, hints, a timeout). */
+  def double(
+    key: String,
+    default: Double,
+    ctx: EvaluationContext,
+    options: EvaluationOptions
+  ): IO[FeatureFlagError, Double] =
+    doubleDetails(key, default, ctx, options).map(_.value)
+
   def obj(key: String, default: Map[String, Any]): IO[FeatureFlagError, Map[String, Any]] =
     objDetails(key, default).map(_.value)
 
   def obj(key: String, default: Map[String, Any], ctx: EvaluationContext): IO[FeatureFlagError, Map[String, Any]] =
     objDetails(key, default, ctx).map(_.value)
+
+  /** [[obj]] with per-call [[EvaluationOptions]] (invocation hooks, hints, a timeout). */
+  def obj(
+    key: String,
+    default: Map[String, Any],
+    ctx: EvaluationContext,
+    options: EvaluationOptions
+  ): IO[FeatureFlagError, Map[String, Any]] =
+    objDetails(key, default, ctx, options).map(_.value)
 
   def value[A: FlagType](key: String, default: A): IO[FeatureFlagError, A] =
     valueDetails(key, default).map(_.value)
@@ -653,11 +697,27 @@ object FeatureFlags {
   def boolean(key: String, default: Boolean, ctx: EvaluationContext): ZIO[FeatureFlags, FeatureFlagError, Boolean] =
     ZIO.serviceWithZIO(_.boolean(key, default, ctx))
 
+  def boolean(
+    key: String,
+    default: Boolean,
+    ctx: EvaluationContext,
+    options: EvaluationOptions
+  ): ZIO[FeatureFlags, FeatureFlagError, Boolean] =
+    ZIO.serviceWithZIO(_.boolean(key, default, ctx, options))
+
   def string(key: String, default: String): ZIO[FeatureFlags, FeatureFlagError, String] =
     ZIO.serviceWithZIO(_.string(key, default))
 
   def string(key: String, default: String, ctx: EvaluationContext): ZIO[FeatureFlags, FeatureFlagError, String] =
     ZIO.serviceWithZIO(_.string(key, default, ctx))
+
+  def string(
+    key: String,
+    default: String,
+    ctx: EvaluationContext,
+    options: EvaluationOptions
+  ): ZIO[FeatureFlags, FeatureFlagError, String] =
+    ZIO.serviceWithZIO(_.string(key, default, ctx, options))
 
   def int(key: String, default: Int): ZIO[FeatureFlags, FeatureFlagError, Int] =
     ZIO.serviceWithZIO(_.int(key, default))
@@ -665,17 +725,41 @@ object FeatureFlags {
   def int(key: String, default: Int, ctx: EvaluationContext): ZIO[FeatureFlags, FeatureFlagError, Int] =
     ZIO.serviceWithZIO(_.int(key, default, ctx))
 
+  def int(
+    key: String,
+    default: Int,
+    ctx: EvaluationContext,
+    options: EvaluationOptions
+  ): ZIO[FeatureFlags, FeatureFlagError, Int] =
+    ZIO.serviceWithZIO(_.int(key, default, ctx, options))
+
   def long(key: String, default: Long): ZIO[FeatureFlags, FeatureFlagError, Long] =
     ZIO.serviceWithZIO(_.long(key, default))
 
   def long(key: String, default: Long, ctx: EvaluationContext): ZIO[FeatureFlags, FeatureFlagError, Long] =
     ZIO.serviceWithZIO(_.long(key, default, ctx))
 
+  def long(
+    key: String,
+    default: Long,
+    ctx: EvaluationContext,
+    options: EvaluationOptions
+  ): ZIO[FeatureFlags, FeatureFlagError, Long] =
+    ZIO.serviceWithZIO(_.long(key, default, ctx, options))
+
   def double(key: String, default: Double): ZIO[FeatureFlags, FeatureFlagError, Double] =
     ZIO.serviceWithZIO(_.double(key, default))
 
   def double(key: String, default: Double, ctx: EvaluationContext): ZIO[FeatureFlags, FeatureFlagError, Double] =
     ZIO.serviceWithZIO(_.double(key, default, ctx))
+
+  def double(
+    key: String,
+    default: Double,
+    ctx: EvaluationContext,
+    options: EvaluationOptions
+  ): ZIO[FeatureFlags, FeatureFlagError, Double] =
+    ZIO.serviceWithZIO(_.double(key, default, ctx, options))
 
   def obj(key: String, default: Map[String, Any]): ZIO[FeatureFlags, FeatureFlagError, Map[String, Any]] =
     ZIO.serviceWithZIO(_.obj(key, default))
@@ -686,6 +770,14 @@ object FeatureFlags {
     ctx: EvaluationContext
   ): ZIO[FeatureFlags, FeatureFlagError, Map[String, Any]] =
     ZIO.serviceWithZIO(_.obj(key, default, ctx))
+
+  def obj(
+    key: String,
+    default: Map[String, Any],
+    ctx: EvaluationContext,
+    options: EvaluationOptions
+  ): ZIO[FeatureFlags, FeatureFlagError, Map[String, Any]] =
+    ZIO.serviceWithZIO(_.obj(key, default, ctx, options))
 
   def value[A: FlagType](key: String, default: A): ZIO[FeatureFlags, FeatureFlagError, A] =
     ZIO.serviceWithZIO(_.value(key, default))

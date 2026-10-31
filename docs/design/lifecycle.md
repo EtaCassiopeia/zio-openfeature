@@ -56,8 +56,8 @@ object and observes all three.
 **`ManagedProvider`** is the only object the library registers with the SDK: one per user provider, delegating every
 `FeatureProvider` member. It counts `initialize()` calls in flight per binding and completes a promise when the call
 returns or throws, with the real exception; it delegates `shutdown()` once per initialization cycle, so a provider is
-shut down at most once by construction; and it forwards its delegate's events with `emit(...).await()`, so the slot's
-state writes follow the delegate's emission order. The SDK's own `READY` and `ERROR` for an initialization still go
+shut down at most once by construction; and it forwards its delegate's events through one ordered lane, a thread that
+emits and awaits each event in turn, so the slot's state writes follow the order in which the wrapper received them. The SDK's own `READY` and `ERROR` for an initialization still go
 through its pool, but nothing depends on them.
 
 **`Registration`** binds and then awaits that promise, bounded by `initTimeout`. One read of the manager's state right
@@ -89,10 +89,11 @@ provider's own emissions.
 - `api.getProvider()` on an API the library owns returns the wrapper. `getMetadata` delegates, so names are unchanged.
   `fromAcquireAsync` already behaved this way.
 - A provider already attached to another API fails at build time, not at registration.
-- `await()` orders the slot's state writes. The SDK still runs the handler bodies on its executor, unordered, so the
-  bridge keeps reading the slot when a handler runs, and the order in which `events` publishes them is as documented. A
-  wrapper that re-emits its delegate's events through its own `emit` reorders before the registration unless it awaits
-  too (#700).
+- The lane orders the slot's state writes from the wrapper down. Two things it cannot order: two emissions a
+  provider issues back to back without awaiting, which the SDK's cached emitter pool can swap before any wrapper
+  sees them (a provider that needs order awaits its own emissions), and the handler bodies, which the SDK runs on
+  its executor, so the bridge keeps reading the slot when a handler runs and the order in which `events` publishes
+  them is as documented. The extras wrappers get the same lane (#700).
 - A hanging `initialize()` is still not interruptible; the timeout semantics are unchanged.
 - Two equal but distinct provider instances on one API are two registrations.
 

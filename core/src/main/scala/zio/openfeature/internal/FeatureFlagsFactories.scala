@@ -40,12 +40,23 @@ private[openfeature] object FeatureFlagsFactories {
     * back to, and the provider is shut down on that path.
     */
   private def verifyInitState(settled: ProviderRegistration.Settled): IO[Throwable, ProviderStatus] = settled match {
-    case ProviderRegistration.Settled.Ready      => ZIO.succeed(ProviderStatus.Ready)
-    case ProviderRegistration.Settled.Stale      => ZIO.succeed(ProviderStatus.Stale)
-    case ProviderRegistration.Settled.Error(msg) =>
-      ZIO.fail(new GeneralError(if (msg.isEmpty) "Provider entered ERROR during initialization" else msg))
-    case ProviderRegistration.Settled.Fatal(msg) =>
-      ZIO.fail(new FatalError(if (msg.isEmpty) "Provider entered FATAL during initialization" else msg))
+    case ProviderRegistration.Settled.Ready              => ZIO.succeed(ProviderStatus.Ready)
+    case ProviderRegistration.Settled.Stale              => ZIO.succeed(ProviderStatus.Stale)
+    case ProviderRegistration.Settled.Error(msg, reused) =>
+      ZIO.fail(new GeneralError(failedMessage(msg, reused, "ERROR")))
+    case ProviderRegistration.Settled.Fatal(msg, reused) =>
+      ZIO.fail(new FatalError(failedMessage(msg, reused, "FATAL")))
+  }
+
+  private def failedMessage(msg: String, reused: Boolean, state: String): String =
+    if (reused) s"$msg; it was left running for the domain it serves"
+    else if (msg.isEmpty) s"Provider entered $state during initialization"
+    else msg
+
+  private def isReused(settled: ProviderRegistration.Settled): Boolean = settled match {
+    case ProviderRegistration.Settled.Error(_, reused) => reused
+    case ProviderRegistration.Settled.Fatal(_, reused) => reused
+    case _                                             => false
   }
 
   /** The instance both builds return, constructed before its provider is registered so its event bridge can be attached
@@ -252,22 +263,23 @@ private[openfeature] object FeatureFlagsFactories {
       // since a provider stuck in `initialize()` often cannot shut down either) so it doesn't keep threads/connections
       // alive — this also covers the domain/registry paths where no API finalizer is registered — and the bridge's
       // handlers are removed so a failed build leaves none behind.
-      verified <- (ProviderRegistration
+      failedBuild = ff.stopEventBridge *>
+        ProviderRegistration.boundedProviderShutdown(
+          provider,
+          "build (failed initialization)",
+          ProviderRegistration.failedProviderShutdownTimeout(initTimeout)
+        )
+      settled <- ProviderRegistration
         .registerThenAwait(api, domain, provider, initTimeout)(
           ZIO.unless(early)(ff.startEventBridge).unit
         )
-        .flatMap(settled => verifyInitState(settled) <* verifyProviderState(provider)) <*
+        .tapError(_ => failedBuild)
+      // A provider reused from another domain of this API is serving there: the build fails without shutting it down.
+      verified <- ((verifyInitState(settled) <* verifyProviderState(provider)) <*
         // A provider whose metadata name only exists once it has initialized (the SDK's MultiProvider) was stamped
         // with the "unknown" fallback; now that it has, record its real name.
         refreshProviderName(provider, ff))
-        .tapError(_ =>
-          ff.stopEventBridge *>
-            ProviderRegistration.boundedProviderShutdown(
-              provider,
-              "build (failed initialization)",
-              ProviderRegistration.failedProviderShutdownTimeout(initTimeout)
-            )
-        )
+        .tapError(_ => if (isReused(settled)) ff.stopEventBridge else failedBuild)
       // Only seed status when the caller didn't hand us a shared ref (testkit shares one). Routed through
       // `seedStatus` so the machine's `everReady` flag records a Ready/Stale seed.
       _ <- statusRef.fold(ff.seedStatus(verified))(_ => ZIO.unit)

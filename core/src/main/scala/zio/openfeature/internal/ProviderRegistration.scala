@@ -40,6 +40,13 @@ import zio._
   * exception instance. A PROVIDER_READY that a provider emits from inside its own `initialize()` reads as an
   * initialization that returned, and a PROVIDER_ERROR it emits there reads as a failure unless `initialize()` then
   * returns within the outcome grace.
+  *
+  * A provider already registered on another slot of the same API is reused: the SDK binds its existing state, runs no
+  * `initialize()` and sends no event. In `ERROR` or `FATAL`, the slot shows that state on the first poll, never
+  * `NOT_READY`, and neither the SDK's READY nor its ERROR arrives within the outcome grace, which a fresh registration
+  * always produces one of. That settles as [[Settled.Error]] or [[Settled.Fatal]] with `reused`. A fresh registration
+  * whose ERROR event is delayed past the grace reads the same way: the swap then reports `Error` rather than rolling
+  * back, the same latency assumption the wait makes for the SDK's READY.
   */
 private[openfeature] object ProviderRegistration {
 
@@ -57,20 +64,13 @@ private[openfeature] object ProviderRegistration {
     case object Ready extends Settled
     case object Stale extends Settled
 
-    /** `initialize()` returned and the provider then reported `ERROR`, with that event's message. */
-    final case class Error(message: String) extends Settled
+    /** `initialize()` returned and the provider then reported `ERROR`, with that event's message; or, `reused`, the
+      * provider was already registered elsewhere in this API, in `ERROR`, and no initialization ran.
+      */
+    final case class Error(message: String, reused: Boolean = false) extends Settled
 
-    /** `initialize()` returned and the provider then reported `FATAL`, with that event's message. */
-    final case class Fatal(message: String) extends Settled
-
-    /** The settled state for a provider already initialized in the slot, or None while it is still `NOT_READY`. */
-    def fromState(state: ProviderState): Option[Settled] = state match {
-      case ProviderState.READY     => Some(Ready)
-      case ProviderState.STALE     => Some(Stale)
-      case ProviderState.ERROR     => Some(Error(""))
-      case ProviderState.FATAL     => Some(Fatal(""))
-      case ProviderState.NOT_READY => None
-    }
+    /** As [[Error]], for `FATAL`. */
+    final case class Fatal(message: String, reused: Boolean = false) extends Settled
   }
 
   private val PollMillis = 10L
@@ -333,6 +333,11 @@ private[openfeature] object ProviderRegistration {
       if (bound != provider) throw new RegistrationSuperseded
     }
 
+    // A registration that reuses a manager the provider already has elsewhere in this API runs no `initialize()`: the
+    // slot reads its settled state on the first poll, never NOT_READY, and the SDK sends neither its READY nor its
+    // ERROR for it. A fresh registration whose `initialize()` throws can read ERROR first too, but its ERROR follows.
+    var sawNotReady = false
+
     @annotation.tailrec
     def loop(): Settled = {
       checkBound()
@@ -350,7 +355,11 @@ private[openfeature] object ProviderRegistration {
               case ProviderState.ERROR => Settled.Error(error.fold("")(_.message))
               case _                   => Settled.Ready
             }
-          else {
+          else if (!sawNotReady && error.isEmpty) {
+            val message = s"Provider was already registered in this API in state $failed; no initialization ran"
+            if (failed == ProviderState.FATAL) Settled.Fatal(message, reused = true)
+            else Settled.Error(message, reused = true)
+          } else {
             val message =
               error.map(_.message).filter(_.nonEmpty).getOrElse(s"Provider entered $failed during initialization")
             if (failed == ProviderState.FATAL || error.exists(_.fatal)) throw new FatalError(message)
@@ -359,6 +368,7 @@ private[openfeature] object ProviderRegistration {
         case _ if java.lang.System.nanoTime() - deadline >= 0 =>
           throw new TimeoutException(s"Provider initialization exceeded $timeout")
         case _ =>
+          sawNotReady = true
           Thread.sleep(PollMillis)
           loop()
       }

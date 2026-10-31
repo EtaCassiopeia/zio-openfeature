@@ -239,6 +239,47 @@ object ProviderHotSwapSpec extends ZIOSpecDefault {
     )
 
   def spec = suite("Provider Hot-Swap")(
+    test("setProvider of a provider already bound to another domain and in ERROR succeeds with status Error") {
+      ZIO.scoped {
+        val api = OpenFeatureAPI.createIsolated()
+        val p   = new Counting("P", blocking = false)
+        val q   = new Counting("Q", blocking = false)
+        for {
+          ffA     <- buildOn(api, "shared-a", p)
+          ffB     <- buildOn(api, "shared-b", q)
+          _       <- emitError(p, "P: backend down")
+          _       <- awaitTrue(api.getClient("shared-a").getProviderState == ProviderState.ERROR)
+          swap    <- ffB.setProvider(p).either
+          status  <- ffB.providerStatus
+          bound   <- ZIO.succeed(api.getProvider("shared-b"))
+          qDown   <- awaitTrue(q.shutdowns.get() >= 1)
+          _       <- ZIO.sleep(200.millis)
+          servedA <- ffA.booleanDetails("flag", default = false).either
+          counts = (p.inits.get(), p.shutdowns.get(), q.inits.get(), q.shutdowns.get())
+        } yield assertTrue(
+          swap.isRight,
+          status == ProviderStatus.Error,
+          bound eq p,
+          qDown,
+          counts == ((1, 0, 1, 1)),
+          servedA.isRight
+        )
+      }
+    } @@ TestAspect.withLiveClock,
+    test("a sync build over a provider bound elsewhere and in ERROR fails without shutting that provider down") {
+      ZIO.scoped {
+        val api = OpenFeatureAPI.createIsolated()
+        val p   = new Counting("P", blocking = false)
+        for {
+          _     <- buildOn(api, "shared-a", p)
+          _     <- emitError(p, "P: backend down")
+          _     <- awaitTrue(api.getClient("shared-a").getProviderState == ProviderState.ERROR)
+          built <- ZIO.scoped(buildOn(api, "shared-b", p)).either
+          _     <- ZIO.sleep(200.millis)
+          shuts = p.shutdowns.get()
+        } yield assertTrue(built.isLeft, shuts == 0)
+      }
+    } @@ TestAspect.withLiveClock,
     test("setProvider swaps to a new provider") {
       ZIO.scoped {
         val providerA = new SimpleProvider("ProviderA", Map("flag" -> true))

@@ -58,6 +58,39 @@ object ProviderRegistrationSpec extends ZIOSpecDefault {
   }
 
   def spec = suite("ProviderRegistrationSpec")(
+    test("a provider already bound to another domain and in ERROR is reused: Error, no second initialize()") {
+      registered { (api, domain) =>
+        val inits    = new java.util.concurrent.atomic.AtomicInteger(0)
+        val provider = new Provider("shared", _ => { inits.incrementAndGet(); () })
+        for {
+          _       <- ZIO.attemptBlocking(api.setProviderAndWait(domain, provider))
+          _       <- ZIO.succeed(provider.reportError("backend down"))
+          _       <- until(api, domain, ProviderState.ERROR)
+          settled <- ProviderRegistration.registerAndAwait(api, Some(domain + "-b"), provider, 5.seconds)
+          count = inits.get()
+        } yield assertTrue(
+          settled match {
+            case Settled.Error(_, reused) => reused
+            case _                        => false
+          },
+          count == 1
+        )
+      }
+    },
+    test("the same with FATAL settles as Fatal, reused") {
+      registered { (api, domain) =>
+        val provider = new Provider("shared", _ => ())
+        for {
+          _       <- ZIO.attemptBlocking(api.setProviderAndWait(domain, provider))
+          _       <- ZIO.succeed(provider.reportError("revoked", fatal = true))
+          _       <- until(api, domain, ProviderState.FATAL)
+          settled <- ProviderRegistration.registerAndAwait(api, Some(domain + "-b"), provider, 5.seconds)
+        } yield assertTrue(settled match {
+          case Settled.Fatal(_, reused) => reused
+          case _                        => false
+        })
+      }
+    },
     test("a provider without a name: an initialize() that returns, then an ERROR, settles as Error") {
       registered { (api, domain) =>
         val provider = new Provider(null, _ => ())

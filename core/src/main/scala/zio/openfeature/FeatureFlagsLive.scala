@@ -746,7 +746,8 @@ final private[openfeature] class FeatureFlagsLive(
     * without going through the SDK — so status never leaves `Ready` and the SDK never refuses an evaluation. Serialized
     * with [[setProvider]] by `swapLock`. Returns `false`, changing nothing, when `switch` is no longer the registered
     * provider (a user `setProvider` replaced it first); the caller then owns `next`. On `true` the replaced delegate
-    * has been shut down (bounded).
+    * has been shut down (bounded). Uninterruptible: a failure means `switchTo` threw and the switch still holds the
+    * replaced delegate, so the caller may discard `next`.
     */
   private[openfeature] def switchProvider(switch: SwitchableProvider, next: OFFeatureProvider): Task[Boolean] =
     swapLock
@@ -770,12 +771,14 @@ final private[openfeature] class FeatureFlagsLive(
             }
         }
       )
-      .uninterruptible
       .flatMap {
         case Some(old) =>
           ProviderRegistration.boundedProviderShutdown(old, "fromAcquireAsync (replaced fallback)").as(true)
         case None => ZIO.succeed(false)
       }
+      // The replaced delegate's shutdown too: an interrupt there (the layer's release) would fail the swap after the
+      // flip, and the caller would then discard `next`, which now serves. The shutdown is bounded.
+      .uninterruptible
 
   /** The API's evaluation context, which the SDK passes to `initialize()`; `fromAcquireAsync` initializes its composed
     * stack itself and passes the same.

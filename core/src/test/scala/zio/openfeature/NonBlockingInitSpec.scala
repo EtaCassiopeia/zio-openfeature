@@ -152,6 +152,40 @@ object NonBlockingInitSpec extends ZIOSpecDefault {
         }
       } yield result
     },
+    test("fromAcquireAsync: layer release during the replaced fallback's shutdown shuts the composed stack down once") {
+      val entered           = new java.util.concurrent.CountDownLatch(1)
+      val release           = new java.util.concurrent.CountDownLatch(1)
+      val composedShutdowns = new AtomicInteger(0)
+      val created           = new AtomicInteger(0)
+      // The first fallback's shutdown() holds until released, so the layer's release lands while the swap is shutting
+      // the replaced fallback down.
+      val fallback = ZIO.succeed[FeatureProvider] {
+        if (created.incrementAndGet() == 1) new FixedBoolProvider("fb-1", false) {
+          override def shutdown(): Unit = {
+            entered.countDown()
+            val _ = release.await(10, java.util.concurrent.TimeUnit.SECONDS)
+            super.shutdown()
+          }
+        }
+        else new FixedBoolProvider("fb-2", false)
+      }
+      val acquire: RIO[Scope, FeatureProvider] = ZIO.succeed(new FixedBoolProvider("real", true))
+      val composed                             = new FixedBoolProvider("composed", true, composedShutdowns)
+      for {
+        _ <- ZIO.scoped {
+          FeatureFlags
+            .fromAcquireAsync(acquire, fallback, compose = (_, _) => composed)
+            .build *>
+            ZIO.attemptBlocking(entered.await(10, java.util.concurrent.TimeUnit.SECONDS)) <*
+            // Released only once the scope has started closing, from outside it.
+            (ZIO.sleep(300.millis) *> ZIO.succeed(release.countDown())).forkDaemon
+        }
+        // The API finalizer's shutdown() of the switch reaches the composed stack once the scope has closed.
+        settled <- ZIO.succeed(composedShutdowns.get()).repeatUntil(_ >= 1).timeout(5.seconds)
+        _       <- ZIO.sleep(300.millis)
+        count = composedShutdowns.get()
+      } yield assertTrue(settled.isDefined, count == 1)
+    } @@ TestAspect.withLiveClock,
     // AC3
     test(
       "fromAcquireAsync: successful swap preserves hooks and context, uses a fresh fallback, shuts the first fallback down once"
@@ -769,6 +803,26 @@ object NonBlockingInitSpec extends ZIOSpecDefault {
           }
         }
       } yield out
+    },
+    test("watchdog: a provider it shut down is shut down again by the SDK when the instance shuts down") {
+      // The documented limit: the provider stays bound to its slot, and the SDK calls shutdown() on every bound provider
+      // at api.shutdown(). Pinned so that a change making it once is noticed.
+      val shutdowns = new AtomicInteger(0)
+      val provider  = new InertProvider {
+        override def shutdown(): Unit = { shutdowns.incrementAndGet(); super.shutdown() }
+      }
+      for {
+        ref <- SubscriptionRef.make[ProviderStatus](ProviderStatus.NotReady)
+        _   <- ZIO.scoped {
+          buildControlled(ref, provider, initTimeout = 200.millis).flatMap { ff =>
+            TestClock.adjust(200.millis) *> ff.awaitReady(5.seconds) *>
+              Live.live(ZIO.succeed(shutdowns.get()).repeatUntil(_ >= 1).timeout(5.seconds))
+          }
+        }
+        count <- Live
+          .live(ZIO.succeed(shutdowns.get()).repeatUntil(_ >= 2).timeout(5.seconds) *> ZIO.sleep(200.millis))
+          .as(shutdowns.get())
+      } yield assertTrue(count == 2)
     }
   ) @@ TestAspect.sequential
 }

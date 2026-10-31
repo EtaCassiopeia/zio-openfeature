@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`FeatureFlagError` by operation, and as a `Throwable`** (#653). Each case also extends one or more of the sealed
+  `FeatureFlagError.EvaluationError`, `LifecycleError` and `TransactionError`, by the operations that raise it; the
+  methods still declare `FeatureFlagError`, so nothing that matches on it changes. `toThrowable` (and
+  `FeatureFlagError.asThrowable`, for `mapError`) wraps an error in a `FeatureFlagException` with its message and
+  cause and no stack trace. `zio.openfeature.Compat` moved to `zio.openfeature.internal.Compat`; the old name is a
+  deprecated alias of the same types.
 - **`FeatureFlagsConfig.withIsolatedApi`** (#652): a private `OpenFeatureAPI` for the instance, which owns it, so
   nothing else on the JVM shares its slot (`ApiOwnership.Isolated`). Building an instance on a slot that already holds
   another provider now logs a warning naming both: the SDK shuts the previous one down once the new one is ready.

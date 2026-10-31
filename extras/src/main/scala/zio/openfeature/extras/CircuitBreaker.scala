@@ -96,6 +96,7 @@ private[extras] object GateResult {
   *   - '''Half-Open → Open''': on any probe failure
   *   - '''Any → Open''': via `trip()` (external signal)
   *   - '''Open(External or Polled) → Closed''': via `reset()` (external recovery)
+  *   - '''Open(External or Polled) → Half-Open''': via `transitionToHalfOpen()` (stale signal)
   *
   * Every transition starts a new epoch. Outcomes recorded with the [[CircuitBreaker.Permit]] a call was admitted under
   * only count while the circuit is still in that epoch, so a slow call admitted earlier cannot close, re-open or free
@@ -311,15 +312,16 @@ final class CircuitBreaker private[extras] (
     }
   }
 
-  /** Transition to half-open state (e.g., for stale delegate). Only transitions from Open — a Closed circuit is already
-    * healthy and should not be demoted.
+  /** Transition to half-open state (e.g., for stale delegate). Only from a circuit the delegate's own signal opened
+    * (`External` or `Polled`), the circuits [[reset]] may close: a Closed circuit is already healthy and admits every
+    * call, and one that failures opened recovers only through `resetTimeout` and a successful probe.
     */
   def transitionToHalfOpen(): Unit = {
     var done = false
     while (!done) {
       val state = stateRef.get()
       state.circuit match {
-        case _: Open =>
+        case Open(_, reason, _) if reason != OpenReason.Failures =>
           done = stateRef.compareAndSet(
             state,
             transition(state, HalfOpen(successes = 0, probing = false, probeStartNanos = 0L))

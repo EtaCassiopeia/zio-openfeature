@@ -298,6 +298,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   that exact `Long`; every other number, a smaller `Long` included, is still the `Double` it was. `HoconProvider` now
   sends such a member as a `Long` too, where it sent a `Double`. The context and testing docs no longer say a `Long` loses precision on its
   way to the provider.
+- **`StalePolicy.HalfOpen` no longer probes a circuit that failures opened on every state poll** (#644). A `STALE`
+  delegate half-opened any open circuit, so one opened by failures let a probe through every `stateCheckInterval`
+  (1 second by default) instead of after `resetTimeout`, and a failed probe re-opened it for the next poll to half-open
+  again. `HalfOpen` now acts only on a circuit the provider's own signal opened; a failure-opened one waits out
+  `resetTimeout`.
 
 ## [1.2.1] — 2026-10-28
 

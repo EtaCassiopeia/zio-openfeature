@@ -215,6 +215,16 @@ object CircuitBreakerSpec extends ZIOSpecDefault {
         cb.reset()         // should NOT close
         assertTrue(cb.isOpen)
       },
+      test("transitionToHalfOpen leaves a failure-opened circuit open until resetTimeout") {
+        val ticker = new TestTicker()
+        val cb     = CircuitBreaker(CircuitBreakerConfig(failureThreshold = 1, resetTimeout = 1.minute), ticker)
+        cb.recordFailure()
+        cb.transitionToHalfOpen()
+        val openAfter = cb.isOpen
+        val rejected  = cb.tryAcquire == GateResult.Rejected
+        ticker.advance(1.minute)
+        assertTrue(openAfter, rejected, cb.tryAcquire == GateResult.Allowed)
+      },
       test("transitionToHalfOpen allows a probe") {
         val cb = CircuitBreaker(CircuitBreakerConfig(), Ticker.system)
         cb.trip()

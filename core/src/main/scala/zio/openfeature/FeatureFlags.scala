@@ -28,6 +28,8 @@ trait FeatureFlags {
 
   // Typed tier: abstract detailed evaluation methods (one per type, with defaults for ctx and options). Each fails with
   // a typed `FeatureFlagError` when the evaluation cannot produce a real value — see the trait scaladoc for the contract.
+  // `default` is what the provider and hooks receive for this evaluation; it is not served on failure: use the
+  // `*OrDefault` form for that.
 
   def booleanDetails(
     key: String,
@@ -78,7 +80,8 @@ trait FeatureFlags {
     options: EvaluationOptions = EvaluationOptions.empty
   ): IO[FeatureFlagError, FlagResolution[A]]
 
-  // Concrete simple evaluation methods (delegate to details)
+  // Concrete simple evaluation methods (delegate to details). Typed tier: `default` is what the provider and hooks receive for this evaluation; it is not served on failure: use the
+  // `*OrDefault` form for that.
 
   def boolean(key: String, default: Boolean): IO[FeatureFlagError, Boolean] =
     booleanDetails(key, default).map(_.value)
@@ -269,6 +272,8 @@ trait FeatureFlags {
     )
 
   // Typed flag definition overloads
+  //
+  // The typed ones fail like the key-based typed tier; `flag.default` is passed to the evaluation, not served on failure.
   //
   // Each delegates to the key-based generic tier above, passing `flag.default` as the evaluation default and
   // `flag.flagType` as the decoding instance. There is no new evaluation machinery here, and no new failure mode:
@@ -639,7 +644,8 @@ trait FeatureFlags {
 
 object FeatureFlags {
 
-  // Service Accessors - simple evaluation
+  // Service Accessors - simple evaluation. Typed tier: `default` is what the provider and hooks receive for this evaluation; it is not served on failure: use the
+  // `*OrDefault` form for that.
 
   def boolean(key: String, default: Boolean): ZIO[FeatureFlags, FeatureFlagError, Boolean] =
     ZIO.serviceWithZIO(_.boolean(key, default))
@@ -810,7 +816,8 @@ object FeatureFlags {
   ): ZIO[FeatureFlags, Nothing, FlagResolution[A]] =
     ZIO.serviceWithZIO(_.resolveOrDefault(key, default, ctx, options))
 
-  // Service Accessors - detailed evaluation (with default parameters)
+  // Service Accessors - detailed evaluation (with default parameters). Typed tier: `default` is what the provider and hooks receive for this evaluation; it is not served on failure: use the
+  // `*OrDefault` form for that.
 
   def booleanDetails(
     key: String,

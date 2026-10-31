@@ -11,9 +11,9 @@ object GettingStarted:
   // --8<-- [start:first-flag]
   object FirstFlag extends ZIOAppDefault:
 
-    val program: ZIO[FeatureFlags, FeatureFlagError, String] =
+    val program: ZIO[FeatureFlags, Nothing, String] =
       for
-        enabled <- FeatureFlags.boolean("new-checkout", default = false)
+        enabled <- FeatureFlags.booleanOrDefault("new-checkout", default = false)
         message = if enabled then "new checkout" else "old checkout"
         _ <- ZIO.logInfo(message)
       yield message
@@ -24,7 +24,7 @@ object GettingStarted:
 
   // --8<-- [start:real-provider]
   // Any OpenFeature Java provider: flagd, LaunchDarkly, Flagsmith, OFREP, Optimizely, ...
-  def withProvider(provider: FeatureProvider): ZIO[Any, Throwable | FeatureFlagError, String] =
+  def withProvider(provider: FeatureProvider): ZIO[Any, Throwable, String] =
     FirstFlag.program.provide(
       FeatureFlags.fromProvider(provider) // initializes the provider, shuts it down when the layer is released
     )

@@ -307,6 +307,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   The event reset only a circuit an event or a poll had opened, but was passed on regardless, so the SDK was told
   `READY` while every evaluation was rejected and was told again when a probe closed the circuit. The `READY` is now
   held until the circuit is closed, and the closing probe's `READY` is the one subscribers see.
+- **`CachingProvider` with `contextKeys` no longer serves one Optimizely variable's value for another** (#647).
+  `contextKeys` dropped every unlisted attribute from the cache key, `openfeature.variableKey` included, so reading two
+  variables of one flag returned the first variable's value for both, with reason `CACHED`. That attribute is now
+  always part of the key.
 
 ## [1.2.1] — 2026-10-28
 

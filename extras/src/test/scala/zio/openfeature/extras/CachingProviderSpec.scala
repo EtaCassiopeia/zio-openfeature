@@ -317,6 +317,36 @@ object CachingProviderSpec extends ZIOSpecDefault {
         assertTrue(r2.getReason == "CACHED") &&
         assertTrue(underlying.evaluationCount.get() == 1)
       },
+      test("contextKeys never drops openfeature.variableKey from the cache key") {
+        // Answers with the variable it was asked for, as Optimizely's variable override does.
+        def provider() = new CountingProvider(Map.empty) {
+          override def getStringEvaluation(key: String, default: String, ctx: OFEvaluationContext) = {
+            evaluationCount.incrementAndGet()
+            ProviderEvaluations.of[String](ctx.getValue("openfeature.variableKey").asString, "TARGETING_MATCH")
+          }
+        }
+        def ctx(variable: String) = {
+          val attrs = new java.util.HashMap[String, Value]()
+          attrs.put("plan", new Value("premium"))
+          attrs.put("openfeature.variableKey", new Value(variable))
+          new ImmutableContext("user-1", attrs)
+        }
+        def readBoth(config: CachingConfig) = {
+          val underlying = provider()
+          val cached     = CachingProvider(underlying, config)
+          val _          = cached.getStringEvaluation("f", "", ctx("color"))
+          (cached.getStringEvaluation("f", "", ctx("label")), underlying.evaluationCount.get())
+        }
+        val (keyed, keyedCount) = readBoth(CachingConfig(contextKeys = Some(Set("plan"))))
+        val (full, fullCount)   = readBoth(CachingConfig())
+        assertTrue(
+          keyed.getValue == "label",
+          keyed.getReason != "CACHED",
+          keyedCount == 2,
+          full.getValue == "label",
+          fullCount == 2
+        )
+      },
       test("different values in contextKeys produce separate cache entries") {
         val underlying = new CountingProvider(Map("flag" -> true))
         val cached     = CachingProvider(

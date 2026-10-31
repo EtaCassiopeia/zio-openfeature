@@ -106,6 +106,8 @@ Name the attributes that change the answer:
 ```
 
 With `contextKeys` set, the targeting key is left out of the cache key too; `Some(Set.empty)` caches by flag key alone.
+`openfeature.variableKey` is always part of the key: it chooses which Optimizely variable a read returns, so leaving it
+out would serve one variable's value for another.
 The key takes each attribute's type and shape, not just its text: `"30"` and `30` are different keys, as are lists
 and structures that print alike.
 

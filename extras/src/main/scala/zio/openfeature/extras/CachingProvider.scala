@@ -33,7 +33,8 @@ import scala.jdk.CollectionConverters._
   *   per-request UUIDs) that would defeat caching. For example, `contextKeys = Some(Set("plan", "region"))` caches by
   *   plan and region, ignoring `userId` and the targeting key — so every user shares one entry, which breaks percentage
   *   rollouts; add `"targetingKey"` when the flag targets individual users. If `None` (default), the full context,
-  *   targeting key included, is hashed.
+  *   targeting key included, is hashed. `openfeature.variableKey` is always part of the key: it chooses which
+  *   Optimizely variable a read returns.
   */
 final case class CachingConfig(
   maxEntries: Int = CachingProvider.DefaultMaxEntries,
@@ -183,9 +184,12 @@ final class CachingProvider private (
         case None    => Option(ctx.getTargetingKey).getOrElse("")
       }
       val entries: List[(String, AnyRef)] = (config.contextKeys, Option(ctx.asUnmodifiableMap())) match {
-        case (Some(keys), Some(m)) => m.asScala.toList.filter { case (k, _) => keys.contains(k) }.sortBy(_._1)
-        case (None, Some(m))       => m.asScala.toList.sortBy(_._1)
-        case (_, None)             => Nil
+        case (Some(keys), Some(m)) =>
+          m.asScala.toList
+            .filter { case (k, _) => keys.contains(k) || CachingProvider.AlwaysKeyed.contains(k) }
+            .sortBy(_._1)
+        case (None, Some(m)) => m.asScala.toList.sortBy(_._1)
+        case (_, None)       => Nil
       }
       val attrs = entries.map { case (k, v) => s"${lp(k)}=${lp(valueFingerprint(v))}" }.mkString(",")
       s"${lp(tk)}|$attrs"
@@ -340,6 +344,10 @@ final class CachingProvider private (
 }
 
 object CachingProvider {
+
+  // Provider-steering attributes: they choose what a read returns, not who asks, so they are part of the key whatever
+  // `contextKeys` says. `openfeature.variableKey` is read by `OptimizelyFeatureProvider` (its `VariableKeyAttribute`).
+  private[extras] val AlwaysKeyed: Set[String] = Set("openfeature.variableKey")
 
   val DefaultMaxEntries: Int = 1000
   val DefaultTtl: Duration   = 5.minutes

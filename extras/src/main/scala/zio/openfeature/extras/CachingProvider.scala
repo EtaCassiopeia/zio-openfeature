@@ -15,6 +15,7 @@ import dev.openfeature.sdk.{
 import zio._
 import zio.cache.{Cache, Lookup}
 import zio.openfeature.FeatureFlagError
+import zio.openfeature.internal.OrderedEmitter
 import java.util.concurrent.atomic.AtomicBoolean
 import scala.jdk.CollectionConverters._
 
@@ -134,6 +135,11 @@ final class CachingProvider private (
 
   private val generation = new java.util.concurrent.atomic.AtomicLong(0L)
 
+  // Forwards go through one lane, so the SDK applies them in the order the delegate handed them over.
+  private val lane = new OrderedEmitter(this)
+
+  private[extras] def laneRunning: Boolean = lane.isRunning
+
   private val channel = new DelegateEventChannel(underlying, onDelegateEvent)
 
   // Forward delegate emissions upward (the delegate is never registered with an API, so without this its
@@ -141,8 +147,7 @@ final class CachingProvider private (
   // for the remainder of the TTL.
   private def onDelegateEvent(event: JavaProviderEvent, details: ProviderEventDetails): Unit = {
     if (event == JavaProviderEvent.PROVIDER_CONFIGURATION_CHANGED) invalidateAllNow()
-    emit(event, details)
-    ()
+    lane.enqueue(event, details)
   }
 
   private def attachDelegate(): Unit = channel.attach()
@@ -167,6 +172,7 @@ final class CachingProvider private (
   override def shutdown(): Unit =
     if (shutdownRan.compareAndSet(false, true)) {
       channel.detach()
+      lane.close()
       invalidateAllNow()
       try underlying.shutdown()
       finally super.shutdown()

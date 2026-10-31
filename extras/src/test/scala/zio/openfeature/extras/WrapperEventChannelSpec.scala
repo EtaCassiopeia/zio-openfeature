@@ -61,6 +61,27 @@ object WrapperEventChannelSpec extends ZIOSpecDefault {
       _       <- Live.live(ZIO.sleep(200.millis)) // a dispatch, if one was accepted, has run by now
     } yield assertTrue(emitted.isLeft || seen.isEmpty)
 
+  /** The wrapper's ordered lane is running once it has forwarded an event, and its thread is gone after shutdown. */
+  private def shutdownStopsLane[W <: EventProvider with FeatureProvider](
+    make: EmittingDelegate => W
+  )(running: W => Boolean): Task[TestResult] =
+    for {
+      delegate  <- ZIO.succeed(new EmittingDelegate)
+      wrapper   <- ZIO.succeed(make(delegate))
+      seen      <- ZIO.succeed(record(wrapper))
+      _         <- ZIO.attemptBlocking(wrapper.initialize(ctx))
+      _         <- ZIO.attemptBlocking(delegate.configChanged())
+      forwarded <- Live.live(
+        ZIO
+          .succeed(seen.contains(ProviderEvent.PROVIDER_CONFIGURATION_CHANGED))
+          .repeatUntil(identity)
+          .timeout(5.seconds)
+      )
+      runningBefore = running(wrapper)
+      _       <- ZIO.attemptBlocking(wrapper.shutdown())
+      stopped <- Live.live(ZIO.succeed(!running(wrapper)).repeatUntil(identity).timeout(5.seconds))
+    } yield assertTrue(forwarded.contains(true), runningBefore, stopped.contains(true))
+
   private def failedAttachKeepsOwner(make: EmittingDelegate => EventProvider with FeatureProvider): Task[TestResult] =
     for {
       delegate  <- ZIO.succeed(new EmittingDelegate)
@@ -85,6 +106,12 @@ object WrapperEventChannelSpec extends ZIOSpecDefault {
     },
     test("CircuitBreakerProvider.shutdown stops its own event emitter") {
       shutdownStopsEmission(CircuitBreakerProvider(new EmittingDelegate))
+    },
+    test("CachingProvider.shutdown stops its ordered emission lane") {
+      shutdownStopsLane(d => CachingProvider(d))(_.laneRunning)
+    },
+    test("CircuitBreakerProvider.shutdown stops its ordered emission lane") {
+      shutdownStopsLane(d => CircuitBreakerProvider(d))(_.laneRunning)
     },
     test("a CachingProvider whose attach failed does not detach the wrapper that owns the delegate") {
       failedAttachKeepsOwner(d => CachingProvider(d))

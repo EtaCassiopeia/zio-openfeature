@@ -3,6 +3,7 @@ package zio.openfeature
 import zio._
 import zio.stream._
 import zio.openfeature.internal.{
+  Compat,
   ApiInstances,
   EventBridge,
   Evaluator,

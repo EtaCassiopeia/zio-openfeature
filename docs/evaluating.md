@@ -90,7 +90,13 @@ the typed tier `errorCode` is always empty, since an error code fails the effect
 | `NestedTransactionNotAllowed` | a transaction inside another, under the default nesting policy |
 
 Every error has a `message`, and a `cause` when there is an underlying exception. `isFlagError` and `isProviderError`
-on `FeatureFlagError` group them by flag and by provider.
+on `FeatureFlagError` group them by flag and by provider. By operation, each case is also an `EvaluationError` (raised
+by an evaluation, and by `track`), a `LifecycleError` (building an instance, `setProvider`, a provider's constructor)
+or a `TransactionError` (`transaction` itself), some of them more than one; the methods still declare
+`FeatureFlagError`.
+
+Where a `Throwable` is wanted, `toThrowable` gives a `FeatureFlagException` carrying the error, its message and its
+cause, with no stack trace: `ff.boolean("dark-mode", false).mapError(FeatureFlagError.asThrowable).orDie`.
 
 `FeatureFlagError.classify` sorts what a provider throws: network failures become `Unreachable`, HTTP 401 and 403
 `Unauthorized`, the rest `ProviderError`. Recover from the cases you expect and let the rest fail:

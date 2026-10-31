@@ -64,7 +64,7 @@ object FallbackLoggingSpec extends ZIOSpecDefault {
     override def withContext[R, E, A](ctx: EvaluationContext)(zio: ZIO[R, E, A]): ZIO[R, E, A]            = ???
     override def transaction[R, E, A](o: Map[String, Any], c: EvaluationContext, ce: Boolean, n: NestedPolicy)(
       zio: ZIO[R, E, A]
-    ): ZIO[R, Compat.OrError[E, FeatureFlagError], TransactionResult[A]] = ???
+    ): ZIO[R, _root_.zio.openfeature.internal.Compat.OrError[E, FeatureFlagError], TransactionResult[A]] = ???
     override def transactionEither[R, E, A](o: Map[String, Any], c: EvaluationContext, ce: Boolean, n: NestedPolicy)(
       zio: ZIO[R, E, A]
     ): ZIO[R, Either[E, FeatureFlagError], TransactionResult[A]]                                         = ???

@@ -2,7 +2,7 @@ package zio.openfeature
 
 import zio._
 import zio.stream._
-import zio.openfeature.internal.{Evaluator, FallbackLogLimiter, FeatureFlagsFactories, LongAwareMultiProvider}
+import zio.openfeature.internal.{Compat, Evaluator, FallbackLogLimiter, FeatureFlagsFactories, LongAwareMultiProvider}
 import dev.openfeature.sdk.{FeatureProvider => OFFeatureProvider, OpenFeatureAPI}
 import dev.openfeature.sdk.multiprovider.{Strategy, FirstMatchStrategy, FirstSuccessfulStrategy}
 

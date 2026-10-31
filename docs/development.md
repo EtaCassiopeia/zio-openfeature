@@ -39,7 +39,7 @@ also covers the binary-compatibility baselines.
 |:----|:---------------|
 | format | `sbt scalafmtCheckAll scalafmtSbtCheck providerFaultTests/scalafmtCheckAll` (`providerFaultTests` is not aggregated, so format it explicitly) |
 | build and test, JDK 17, 21 and 25, Scala 2.13 and 3 | `sbt +test` |
-| binary compatibility | `sbt +mimaReportBinaryIssues` |
+| binary compatibility | `sbt +mimaReportBinaryIssues tastyMiMaReportIssues`, then `.github/scripts/check-mima-filters.sh` |
 | published POMs | `sbt +checkPublishedPins +optimizely/checkOptimizelyJsonParser` |
 | examples | `sbt examplesOfrepInitTimeout/compile examplesTestkitApp/test examplesDocs/test` |
 | conformance | `sbt conformance/test conformanceZioBdd/test` |

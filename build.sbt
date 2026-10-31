@@ -1,5 +1,6 @@
 import net.nmoncho.sbt.dependencycheck.settings._
 import com.typesafe.tools.mima.core._
+import tastymima.intf.{ProblemKind, ProblemMatcher}
 
 val scala213Version = "2.13.18"
 val scala3Version   = "3.3.8"
@@ -142,8 +143,10 @@ lazy val lintSettings = Seq(
 // `<FromJavaObject>` terms (scoverage 2.0.9, Scala 3.3.4) no longer reproduces.
 ThisBuild / coverageEnabled := false
 
-// Binary-compatibility check via sbt-mima. The API is frozen as of `1.0.0`, so each module baselines against its
-// own most recent release — currently `1.2.0` (see `mimaPreviousArtifacts` in `commonSettings`):
+// Binary-compatibility check via sbt-mima, and TASTy compatibility of the Scala 3 artifacts via sbt-tasty-mima. The
+// API is frozen as of `1.0.0`, so each module baselines against its own most recent release — currently `1.2.1` (see
+// `mimaPreviousArtifacts` in `commonSettings`). Which filters a minor release may carry is RELEASING.md's
+// "Binary compatibility policy", enforced by `.github/scripts/check-mima-filters.sh`:
 // `sbt mimaReportBinaryIssues` catches
 // accidental breaking changes on every PR, and an intentional break is whitelisted with a `mimaBinaryIssueFilters`
 // rule scoped to the specific symbol — see https://github.com/lightbend/mima for the filter API. Bump the baseline
@@ -198,8 +201,10 @@ lazy val commonSettings = Seq(
   ),
   // Baseline against each module's last release (see the ThisBuild MiMa note above). Bump the version to the previous
   // release version when cutting a new one, per `RELEASING.md`.
-  mimaPreviousArtifacts := Set(organization.value %% moduleName.value % "1.2.0"),
-  checkPublishedPins    := checkPublishedPinsTask.value,
+  mimaPreviousArtifacts := Set(organization.value %% moduleName.value % "1.2.1"),
+  // TASTy only exists for the Scala 3 artifacts.
+  tastyMiMaPreviousArtifacts := { if (scalaBinaryVersion.value == "3") mimaPreviousArtifacts.value else Set.empty },
+  checkPublishedPins         := checkPublishedPinsTask.value,
   // Test helpers every module's specs share (the property-test budget), compiled into each module's tests rather than
   // published or depended on.
   Test / unmanagedSourceDirectories += (LocalRootProject / baseDirectory).value / "test-support" / "src" / "test" / "scala"
@@ -297,11 +302,16 @@ lazy val core = (project in file("core"))
       ProblemFilters.exclude[Problem]("zio.openfeature.internal.ProviderStatusMachine#Signal#SwapSucceeded*"),
       ProblemFilters.exclude[Problem]("zio.openfeature.internal.ProviderStatusMachine$Signal$SwapSucceeded*"),
       ProblemFilters.exclude[Problem]("zio.openfeature.internal.ProviderStatusMachine#Signal#RollbackSucceeded*"),
-      ProblemFilters.exclude[Problem]("zio.openfeature.internal.ProviderStatusMachine$Signal$RollbackSucceeded*"),
-      // The registration wait reports how a provider settled, including an error it reported after initializing.
-      ProblemFilters.exclude[Problem]("zio.openfeature.internal.ProviderRegistration*"),
-      ProblemFilters.exclude[Problem]("zio.openfeature.internal.OrphanedProviders*")
-    )
+      ProblemFilters.exclude[Problem]("zio.openfeature.internal.ProviderStatusMachine$Signal$RollbackSucceeded*")
+    ),
+    // TASTy-MiMa checks `private[...]` members as well, so the internals and the instance's constructor are reported.
+    tastyMiMaConfig ~= (_.withMoreProblemFilters(
+      java.util.Arrays.asList(
+        ProblemMatcher.make("zio.openfeature.internal.*"),
+        // non-public: private[openfeature]
+        ProblemMatcher.make("zio.openfeature.FeatureFlagsLive.<init>")
+      )
+    ))
   )
 
 // Extras module - built-in providers (HOCON, env vars, caching wrapper)
@@ -323,11 +333,20 @@ lazy val extras = (project in file("extras"))
     Test / javaOptions += "-XX:+EnableDynamicAgentLoading",
     // CircuitState.Open gained the stale flag. The type is private[extras], which Scala 2.13 emits as public bytecode.
     mimaBinaryIssueFilters ++= Seq(
+      // non-public: private[extras]
       ProblemFilters.exclude[DirectMissingMethodProblem]("zio.openfeature.extras.CircuitState#Open.copy"),
       ProblemFilters.exclude[DirectMissingMethodProblem]("zio.openfeature.extras.CircuitState#Open.this"),
       ProblemFilters.exclude[DirectMissingMethodProblem]("zio.openfeature.extras.CircuitState#Open.apply"),
       ProblemFilters.exclude[MissingTypesProblem]("zio.openfeature.extras.CircuitState$Open$")
-    )
+    ),
+    // The `reason` overload of `trip` is `private[extras]`; the public `trip()` is unchanged.
+    tastyMiMaConfig ~= (_.withMoreProblemFilters(
+      java.util.Arrays.asList(
+        // non-public: private[extras]
+        ProblemMatcher.make("zio.openfeature.extras.CircuitState.Open.*"),
+        ProblemMatcher.make(ProblemKind.MissingTermMember, "zio.openfeature.extras.CircuitBreaker.trip")
+      )
+    ))
   )
 
 // Patched, aligned Jackson family for the OFREP provider's transitive HTTP stack. Applied to `ofrep` both as

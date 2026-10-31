@@ -86,9 +86,10 @@ jobs:
         run: sbt "++${{ matrix.scala-version }} test"
 
   # Binary-compatibility check runs once on the primary JDK. mima checks bytecode, which is JDK-independent given a
-  # single target bytecode level. `mimaPreviousArtifacts` baselines each module against its own `1.0.0` (see
+  # single target bytecode level. `mimaPreviousArtifacts` baselines each module against its own last release (see
   # `commonSettings` in build.sbt), and those artifacts are published on Maven Central — so this gate is LIVE: it
-  # really does compare every PR against 1.0.0, and an accidental break fails here.
+  # really does compare every PR against that release, and an accidental break fails here. TASTy-MiMa does the same
+  # for the Scala 3 artifacts' TASTy, and the filter check enforces RELEASING.md's binary compatibility policy.
   #
   # One caveat when reading a green result: `ThisBuild / mimaFailOnNoPrevious := false` means a module with no
   # published baseline (a newly added one, before its first release) is skipped SILENTLY rather than failing. So
@@ -109,6 +110,14 @@ jobs:
         uses: sbt/setup-sbt@v1
       - name: Check binary compatibility
         run: sbt +mimaReportBinaryIssues
+      - name: Check TASTy compatibility (Scala 3)
+        run: sbt tastyMiMaReportIssues
+      # RELEASING.md's policy: a filter may only excuse a non-public symbol, until a major. Reads the latest tag.
+      - name: Check the compatibility filters against the policy
+        run: |
+          git fetch --tags --quiet
+          bash .github/scripts/test-check-mima-filters.sh
+          bash .github/scripts/check-mima-filters.sh
       # The release publishes each module's API docs for both Scala versions, and nothing else on a PR builds them: a
       # doc failure would otherwise first show up as a failed snapshot publish on main.
       - name: Build the API docs

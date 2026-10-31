@@ -91,6 +91,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A non-`Value` object from a provider's object getter is a `TypeMismatch`, not a dead fiber** (#659). Reading the
+  value cast it to `Value`, so a provider that returned anything else made `obj`, `objDetails` and object-backed custom
+  types die with a `ClassCastException`: the `error` hook stage was skipped, `finallyAfter` got nothing, and the total
+  tier reported `General`. They now fail with `TypeMismatch` naming the class the provider returned, through every hook
+  stage and the total tier's default, as the scalar getters already did.
 - **An instance whose API another instance tore down now reports `NotReady`** (#652). Shutting down, or closing the
   scope of, an instance that owns its `OpenFeatureAPI` shut every provider on it, and the SDK then answered the other
   instances on that API with its No-op provider: they stayed `Ready` and served the caller's default with reason

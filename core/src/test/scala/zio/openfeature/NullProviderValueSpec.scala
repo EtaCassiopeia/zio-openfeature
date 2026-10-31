@@ -35,8 +35,26 @@ object NullProviderValueSpec extends ZIOSpecDefault {
       case "intbox" => ProviderEvaluations.of[AnyRef](Integer.valueOf(1), "STATIC").asInstanceOf[ProviderEvaluation[T]]
       case _        => valueless
     }
-    override def getObjectEvaluation(k: String, d: Value, c: OFEvaluationContext) = ProviderEvaluations.of(d, "DEFAULT")
+    // `wrongbox` answers a String where the object getter promises a Value; the cast is erased, as in boxed.
+    override def getObjectEvaluation(k: String, d: Value, c: OFEvaluationContext) =
+      if (k == "wrongbox")
+        ProviderEvaluations.of[AnyRef]("not a Value", "STATIC").asInstanceOf[ProviderEvaluation[Value]]
+      else ProviderEvaluations.of(d, "DEFAULT")
   }
+
+  final case class Rollout(pct: Int)
+
+  // An object-backed custom type: its wire is the object getter.
+  implicit private val rolloutFlagType: FlagType[Rollout] = FlagType.from[Rollout](
+    "Rollout",
+    Rollout(0),
+    {
+      case m: Map[_, _] =>
+        m.asInstanceOf[Map[String, Any]].get("pct").toRight("missing pct").flatMap(FlagType[Int].decode).map(Rollout(_))
+      case other => Left("not a Rollout: " + other)
+    },
+    r => Map[String, Any]("pct" -> r.pct)
+  )
 
   /** Records the `error` and `finallyAfter` stages it sees. */
   final private class Recorder(ref: Ref[Chunk[String]]) extends FeatureHook {
@@ -129,6 +147,39 @@ object NullProviderValueSpec extends ZIOSpecDefault {
           _     <- ff.boolean("null", default = false).exit
           calls <- ref.get
         } yield assertTrue(calls == Chunk("error:TypeMismatch", "finally:TypeMismatch"))
+      }
+    },
+    test("a non-Value object from the object getter fails obj with TypeMismatch, not a defect") {
+      ZIO.scoped {
+        build
+          .flatMap(_.obj("wrongbox", Map.empty[String, Any]).exit)
+          .map(exit => assertTrue(mismatch(exit, "Object", "String")))
+      }
+    },
+    test("the same fails an object-backed custom type with TypeMismatch naming it") {
+      ZIO.scoped {
+        build
+          .flatMap(_.value[Rollout]("wrongbox", Rollout(5)).exit)
+          .map(exit => assertTrue(mismatch(exit, "Rollout", "String")))
+      }
+    },
+    test("the error and finally hook stages see the object path's TypeMismatch") {
+      ZIO.scoped {
+        for {
+          ff    <- build
+          ref   <- Ref.make(Chunk.empty[String])
+          _     <- ff.addHook(new Recorder(ref))
+          _     <- ff.obj("wrongbox", Map.empty[String, Any]).exit
+          calls <- ref.get
+        } yield assertTrue(calls == Chunk("error:TypeMismatch", "finally:TypeMismatch"))
+      }
+    },
+    test("the total tier serves the object default with error code TypeMismatch") {
+      ZIO.scoped {
+        for {
+          ff  <- build
+          res <- ff.resolveOrDefault[Map[String, Any]]("wrongbox", Map[String, Any]("a" -> 1))
+        } yield assertTrue(res.value == Map[String, Any]("a" -> 1), res.errorCode == Some(ErrorCode.TypeMismatch))
       }
     },
     test("the total tier serves the default with error code TypeMismatch") {

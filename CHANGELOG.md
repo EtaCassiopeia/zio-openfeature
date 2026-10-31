@@ -254,6 +254,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   handler on the closed client and either waited again or, if a datafile had loaded before the shutdown, reported
   `READY` on a client that no longer polls. The wait now ends at once, the provider stays `NOT_READY`, and a later
   `initialize()` on a factory-built provider fails with "was shut down".
+- **A cached read inside a transaction keeps the provider's variant and flag metadata** (#638, spec compliance). A
+  read served from the transaction's cache carried `variant = None` and empty flag metadata, so exposure logging and
+  `after` hooks keyed on the variant lost it on every read after the first. It is now the first read's resolution
+  re-labelled `Cached`.
 
 ## [1.2.1] — 2026-10-28
 

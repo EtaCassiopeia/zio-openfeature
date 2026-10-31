@@ -155,10 +155,20 @@ final private[openfeature] class Evaluator(
             // The cache holds the WIRE value, so this is the same decode the provider path runs — a custom type's
             // domain value would not decode (decode is wire → domain), and that is what used to make the cache miss on
             // every read for such types. A `Left` now means a genuine cross-type read of the same key (cached as
-            // Boolean, re-read as String): not an error, just not servable from the cache.
+            // Boolean, re-read as String): not an error, just not servable from the cache. A hit is the recorded
+            // resolution re-labelled `Cached`, so it keeps the provider's variant and flag metadata.
             flagType.decode(cached.wire) match {
               case Right(decoded) =>
-                ZIO.succeed(FlagResolution.cached(key, decoded))
+                val prior = cached.evaluation.resolution
+                ZIO.succeed(
+                  FlagResolution(
+                    value = decoded,
+                    variant = prior.variant,
+                    reason = ResolutionReason.Cached,
+                    metadata = prior.metadata,
+                    flagKey = key
+                  )
+                )
               case Left(reason) =>
                 ZIO.logDebug(
                   s"Transaction cache for '$key' does not decode as ${flagType.typeName} ($reason); evaluating from the provider"

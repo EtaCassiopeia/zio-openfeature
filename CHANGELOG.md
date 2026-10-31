@@ -303,6 +303,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (1 second by default) instead of after `resetTimeout`, and a failed probe re-opened it for the next poll to half-open
   again. `HalfOpen` now acts only on a circuit the provider's own signal opened; a failure-opened one waits out
   `resetTimeout`.
+- **`CircuitBreakerProvider` no longer forwards the delegate's `READY` while failures keep the circuit open** (#645).
+  The event reset only a circuit an event or a poll had opened, but was passed on regardless, so the SDK was told
+  `READY` while every evaluation was rejected and was told again when a probe closed the circuit. The `READY` is now
+  held until the circuit is closed, and the closing probe's `READY` is the one subscribers see.
 
 ## [1.2.1] — 2026-10-28
 

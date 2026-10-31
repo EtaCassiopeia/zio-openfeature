@@ -144,7 +144,9 @@ stateDiagram-v2
 ```
 
 The state names show the status the breaker reports. It emits `PROVIDER_STALE` when failures open it and
-`PROVIDER_READY` when a probe closes it. After `resetTimeout` the next call is a probe.
+`PROVIDER_READY` when a probe closes it. A `PROVIDER_READY` from the provider is passed on only once the circuit is
+closed: while failures keep it open the event is held, and the probe that closes it emits the `READY`. After
+`resetTimeout` the next call is a probe.
 
 **What counts as a failure.** A call slower than `evaluationTimeout`, or one that throws or returns `GENERAL`,
 `PROVIDER_NOT_READY` or `PROVIDER_FATAL`. Other answers (`FLAG_NOT_FOUND`, type mismatch, invalid context) prove the

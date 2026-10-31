@@ -87,8 +87,9 @@ final case class CircuitBreakerProviderConfig(
   *     SDK's `READY` default.
   *   - '''Event-driven''': events emitted by the delegate feed the breaker directly — `PROVIDER_ERROR` trips it,
   *     `PROVIDER_READY` resets an externally-opened circuit, `PROVIDER_STALE` applies `stalePolicy`. Delegate events
-  *     are also re-emitted through this wrapper so downstream subscribers still see them. The wrapper takes ownership
-  *     of the delegate's event channel on `initialize`; do not register the same delegate instance directly with an
+  *     are also re-emitted through this wrapper so downstream subscribers still see them, except a `PROVIDER_READY`
+  *     while the circuit stays open: the probe that closes it emits the `READY` instead. The wrapper takes ownership of
+  *     the delegate's event channel on `initialize`; do not register the same delegate instance directly with an
   *     `OpenFeatureAPI` while it is wrapped. This mechanism requires an `EventProvider` delegate — see below.
   *
   * '''Plain providers''': the delegate is a `FeatureProvider`, so a provider that does not extend `EventProvider` can
@@ -139,19 +140,21 @@ final class CircuitBreakerProvider private (
   // events go nowhere) and feed them into the breaker so an unhealthy delegate is detected as soon as it
   // says so, not only via polling or evaluation failures.
   private def onDelegateEvent(event: JavaProviderEvent, details: ProviderEventDetails): Unit = {
-    event match {
-      case JavaProviderEvent.PROVIDER_ERROR => breaker.trip()
-      case JavaProviderEvent.PROVIDER_READY => breaker.reset()
+    val forward = event match {
+      case JavaProviderEvent.PROVIDER_ERROR => breaker.trip(); true
+      // A READY the breaker cannot honour (failures keep the circuit open) is held: the probe that closes the circuit
+      // emits the READY subscribers get.
+      case JavaProviderEvent.PROVIDER_READY => breaker.reset(); breaker.isClosed
       case JavaProviderEvent.PROVIDER_STALE =>
         config.stalePolicy match {
           case StalePolicy.Open     => breaker.trip(OpenReason.External, stale = true)
           case StalePolicy.HalfOpen => breaker.transitionToHalfOpen()
           case StalePolicy.Ignore   => ()
         }
-      case _ => ()
+        true
+      case _ => true
     }
-    emit(event, details)
-    ()
+    if (forward) { val _ = emit(event, details) }
   }
 
   private def doInitialize(runDelegateInit: => Unit): Unit =

@@ -111,9 +111,9 @@ private[openfeature] object ProviderStatusMachine {
 
   /** The status of a provider that initialized and settled in `settled`. */
   def statusOf(settled: Settled): ProviderStatus = settled match {
-    case Settled.Ready    => ProviderStatus.Ready
-    case Settled.Stale    => ProviderStatus.Stale
-    case Settled.Error(_) => ProviderStatus.Error
-    case Settled.Fatal(_) => ProviderStatus.Fatal
+    case Settled.Ready       => ProviderStatus.Ready
+    case Settled.Stale       => ProviderStatus.Stale
+    case Settled.Error(_, _) => ProviderStatus.Error
+    case Settled.Fatal(_, _) => ProviderStatus.Fatal
   }
 }

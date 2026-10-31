@@ -232,6 +232,10 @@ been shut down it fails with `ProviderNotReady(NotReady)` and does not touch the
 - If `initialize()` throws, `setProvider` fails with `ProviderInitializationFailed` and the old provider is restored (if
   that fails too, the status stays `Error`). A timeout fails the same way, wrapping a `TimeoutException`, with no
   rollback: the SDK would shut the old provider down once the new one became ready.
+- A provider instance already bound to another domain of the same API is reused by the SDK: no `initialize()` runs, and
+  the swap or build takes the state the provider has. In `Ready` or `Stale` it serves at once. In `Error` or `Fatal`,
+  `setProvider` succeeds with that status, and a sync build fails without shutting the provider down, since it still
+  serves its other domain. A registry's domains share its default provider this way.
 - If the SDK refuses the new provider before binding it (it is attached to, or registered with, another API), nothing is
   initialized again: the previous provider keeps the state it had, and a provider still starting keeps the status it had
   before the swap (`NotReady` while an async build starts, `Error` for a timed-out swap's provider).

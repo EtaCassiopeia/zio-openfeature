@@ -277,6 +277,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   has no name it read the `ERROR` as a failed `initialize()`, the misread #623 fixed for named providers: the swap rolled
   back onto a provider the SDK had already shut down. A second watch, armed once the registration has bound the
   provider, now counts an unnamed `READY` too.
+- **Registering a provider that another domain of the same API already serves, in `ERROR` or `FATAL`, is no longer read
+  as a failed initialization** (#630). The SDK reuses that registration and runs no `initialize()`, so the wait saw an
+  error with no READY and failed: `setProvider` rolled back, initializing the replaced provider again after the SDK had
+  shut it down, and a sync build shut the shared provider down while it served the other domain. `setProvider` now
+  succeeds with status `Error` or `Fatal`, and a sync build fails without shutting the provider down.
 
 ## [1.2.1] — 2026-10-28
 

@@ -362,12 +362,21 @@ object HostileValueSweepSpec extends ZIOSpecDefault {
           assertTrue(back.map(canonAny).contains(exactNumber(l)))
         }
       },
-      // Documented on ValueBridge: every number comes back as a Double, so a Long beyond 2^53 does not survive. The
-      // typed Long path no longer crosses here, so this pins the documented behaviour: nearest Double, no more.
-      test("a Long beyond +-2^53 reads back as its nearest Double (documented ValueBridge contract)") {
+      test("a Long beyond +-2^53 reads back as that exact Long") {
         check(beyondSafeLong) { l =>
           val back = ValueBridge.valueToAny(ValueBridge.anyToValue(l))
-          assertTrue(back.exists(_ == l.toDouble))
+          // Typed: Scala's `==` on boxed numbers would equate the Long with its nearest Double.
+          assertTrue(back.exists { case b: Long => b == l; case _ => false })
+        }
+      },
+      test("an object flag's Long member beyond +-2^53 survives the Value bridge") {
+        check(beyondSafeLong) { l =>
+          val back = ValueBridge.valueToAny(ValueBridge.anyToValue(Map("max" -> l)))
+          assertTrue(back.exists {
+            case m: Map[_, _] =>
+              m.asInstanceOf[Map[String, Any]].get("max").exists { case b: Long => b == l; case _ => false }
+            case _ => false
+          })
         }
       },
       test("NaN, +-Infinity, -0.0 and subnormals survive bit-for-bit") {

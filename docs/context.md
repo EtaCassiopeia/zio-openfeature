@@ -35,8 +35,8 @@ Richer values use `AttributeValue`: `bool`, `string`, `int`, `long`, `double`, `
 ```
 
 !!! note "Large longs"
-    The Java SDK carries every number as a `Double`, so a `Long` above 2^53 loses precision on its way to the provider.
-    Pass IDs that large as strings.
+    The Java SDK carries a `Long` as a `Long`, so a `Long` attribute of any size reaches the provider exact. A provider
+    that stores numbers as doubles can still round one above 2^53: pass IDs that large as strings for such a provider.
 
 Read attributes back with `get`, `getString`, `getInt`, `getLong`, `getDouble` and `getBoolean`; each
 `AttributeValue` also has `asString`, `asInt`, `asList`, `asStruct` and so on.

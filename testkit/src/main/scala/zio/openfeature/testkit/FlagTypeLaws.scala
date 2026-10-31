@@ -16,9 +16,10 @@ import zio.test._
   *   - [[roundTrip]] checks `decode(encode(a))` in memory. It is the law as stated, and it passes trivially for every
   *     built-in instance because their `encode` is (or delegates to) the identity.
   *   - [[throughValueBridge]] additionally crosses the OpenFeature `Value` conversion that every object-path evaluation
-  *     crosses for real. That is where the interesting failures live: '''every number comes back as a `Double`''', so a
-  *     `Long` beyond 2^53 does not survive, and a structure member the bridge cannot convert is dropped so its key
-  *     reads back absent. A codec can satisfy `roundTrip` and still fail here.
+  *     crosses for real. That is where the interesting failures live: '''every number comes back as a `Double`''' (a
+  *     `Long` beyond 2^53 as that exact `Long`), a member the SDK has no `Value` for is sent as its string, and a
+  *     structure member the bridge cannot convert back is dropped so its key reads back absent. A codec can satisfy
+  *     `roundTrip` and still fail here.
   *
   * Use [[all]] to check both. Reach for [[throughValueBridge]] specifically if your type is object-backed (its `wire`
   * is `WireType.Object`), since that is the path it will actually be evaluated on.
@@ -50,8 +51,8 @@ object FlagTypeLaws {
   /** `decode` of the value recovered after crossing the OpenFeature `Value` conversion, which is what an object-path
     * evaluation really does with a default.
     *
-    * This is the stricter of the two laws, and the one that catches lossy encodings: numbers return as `Double`, and
-    * unconvertible structure members are dropped.
+    * This is the stricter of the two laws, and the one that catches lossy encodings: numbers return as `Double` (a
+    * `Long` beyond 2^53 as that exact `Long`), and unconvertible structure members are dropped.
     */
   def throughValueBridge[A](gen: Gen[Any, A])(implicit ft: FlagType[A]): Spec[Any, Nothing] =
     test(s"${ft.typeName}: survives the SDK Value bridge") {

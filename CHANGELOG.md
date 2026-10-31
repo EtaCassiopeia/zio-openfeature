@@ -292,6 +292,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   inside a transaction such a read was served the string's value with reason `Cached`, where the provider answers
   `TYPE_MISMATCH` outside one. A key read again as another type is now served from the cache only when both reads are
   numeric and the value converts; otherwise the provider answers.
+- **An object flag's `Long` member now comes back exact** (#640). The `Value` bridge read every number through
+  `Double`, so a derived case class's `Long` field, or a `Map[String, Any]` entry the provider returns as a `Long`, lost
+  precision beyond 2^53, even when it was the caller's own default echoed back. A `Long` beyond 2^53 now comes back as
+  that exact `Long`; every other number, a smaller `Long` included, is still the `Double` it was. `HoconProvider` now
+  sends such a member as a `Long` too, where it sent a `Double`. The context and testing docs no longer say a `Long` loses precision on its
+  way to the provider.
 
 ## [1.2.1] — 2026-10-28
 

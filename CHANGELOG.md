@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`FeatureFlagsConfig.withIsolatedApi`** (#652): a private `OpenFeatureAPI` for the instance, which owns it, so
+  nothing else on the JVM shares its slot (`ApiOwnership.Isolated`). Building an instance on a slot that already holds
+  another provider now logs a warning naming both: the SDK shuts the previous one down once the new one is ready.
+  `docs/providers.md` has a new "Sharing the SDK" section.
 - **`boolean`, `string`, `int`, `long`, `double` and `obj` take `EvaluationOptions` after the context** (#650), on
   `FeatureFlags` and through the companion's service accessors, as every other evaluation method already did. They are
   concrete methods, so an existing implementor of `FeatureFlags` keeps compiling and linking.
@@ -72,6 +76,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **An instance whose API another instance tore down now reports `NotReady`** (#652). Shutting down, or closing the
+  scope of, an instance that owns its `OpenFeatureAPI` shut every provider on it, and the SDK then answered the other
+  instances on that API with its No-op provider: they stayed `Ready` and served the caller's default with reason
+  `DEFAULT` and no error. They are now retired as by their own `shutdown`: status `NotReady`, typed reads fail with
+  `ProviderNotReady`. A `FeatureFlagRegistry`'s clients do the same when its scope closes.
 - **An evaluation running when a swap starts is no longer served by the swap's failed provider** (#658). The readiness
   check and the provider call were not ordered against `setProvider`, and the Java SDK picks the slot's provider per
   call. So an evaluation that passed its check just before a swap could be answered by the new provider after its

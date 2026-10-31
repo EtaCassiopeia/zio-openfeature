@@ -58,6 +58,42 @@ object ProviderRegistrationSpec extends ZIOSpecDefault {
   }
 
   def spec = suite("ProviderRegistrationSpec")(
+    test("a provider without a name: an initialize() that returns, then an ERROR, settles as Error") {
+      registered { (api, domain) =>
+        val provider = new Provider(null, _ => ())
+        ProviderRegistration
+          .registerThenAwait(api, Some(domain), provider, 5.seconds)(
+            until(api, domain, ProviderState.READY) *>
+              ZIO.succeed(provider.reportError("lost the backend")) *>
+              until(api, domain, ProviderState.ERROR)
+          )
+          .map(settled => assertTrue(settled == Settled.Error("lost the backend")))
+      }
+    },
+    test("a provider without a name whose initialize() throws still fails the registration") {
+      registered { (api, domain) =>
+        val provider = new Provider(null, _ => throw new RuntimeException("bad config"))
+        ProviderRegistration.registerAndAwait(api, Some(domain), provider, 5.seconds).either.map { result =>
+          assertTrue(result.left.toOption.exists(_.getMessage.contains("bad config")))
+        }
+      }
+    },
+    test("over a slot already READY, a nameless provider whose initialize() throws is not counted as initialized") {
+      // A watch opened before the registration is run at once for the READY slot, with no provider name: that run is
+      // about the provider the slot held, and must not count for the new one.
+      registered { (api, domain) =>
+        val before = new Provider("before", _ => ())
+        val after  = new Provider(null, _ => throw new RuntimeException("bad config"))
+        for {
+          _      <- ZIO.attemptBlocking(api.setProviderAndWait(domain, before))
+          watch  <- ZIO.succeed(ProviderRegistration.watchReady(api, Some(domain), after))
+          result <- ProviderRegistration
+            .registerThenAwait(api, Some(domain), after, 5.seconds, Some(watch))(ZIO.unit)
+            .either
+            .ensuring(ZIO.succeed(watch.close()))
+        } yield assertTrue(result.isLeft, !watch.initialized)
+      }
+    },
     test("an initialize() that returns, then an ERROR before the wait reads it, settles as Error") {
       registered { (api, domain) =>
         val provider = new Provider("p", _ => ())

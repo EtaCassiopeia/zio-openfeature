@@ -272,6 +272,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The `error` hook stage receives the same `TypeMismatch` expected type as the caller** (#641). For a provider-reported
   `TYPE_MISMATCH`, the hook's error named the resolver's wire type (`Double` for a `Float` flag, `String` for a
   string-backed custom type) while the caller's named the flag's own type; both now name the flag's (`Float`, `Plan`).
+- **A provider without a name that reports `ERROR` right after initializing no longer fails the swap** (#629). The
+  registration wait counted the SDK's `PROVIDER_READY` only when it named the provider, so for a provider whose metadata
+  has no name it read the `ERROR` as a failed `initialize()`, the misread #623 fixed for named providers: the swap rolled
+  back onto a provider the SDK had already shut down. A second watch, armed once the registration has bound the
+  provider, now counts an unnamed `READY` too.
 
 ## [1.2.1] — 2026-10-28
 

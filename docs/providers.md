@@ -248,6 +248,8 @@ been shut down it fails with `ProviderNotReady(NotReady)` and does not touch the
   its API), and a later `setProvider` recovers. Whether `initialize()` returned is read from the Java SDK's own `PROVIDER_READY`, which it
   sends only then, so a new provider that reports `READY` itself from inside its `initialize()` is taken at its word:
   if that `initialize()` then fails, the old provider is not shut down. One that reports `ERROR` from inside an
-  `initialize()` that then fails reads as a failed swap.
+  `initialize()` that then fails reads as a failed swap. A provider whose metadata has no name is covered the same way, unless
+  it initializes and reports an error in the instant between its registration and the library starting to watch for its
+  `READY`.
 - `setProvider` is the only way out of `Fatal`. With a wrapper such as `CircuitBreakerProvider`, swap in a new wrapper
   around the new provider.

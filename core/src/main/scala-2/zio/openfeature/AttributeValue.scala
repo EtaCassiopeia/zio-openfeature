@@ -65,10 +65,9 @@ object AttributeValue {
 
   /** A 64-bit integer attribute.
     *
-    * The OpenFeature Java SDK normalises every numeric to `Double`, so longs cross the SDK boundary through a `Double`
-    * mediation: values with magnitude up to 2^53 round-trip exactly, larger values silently lose precision at the
-    * provider boundary. If exact identity matters beyond 2^53 (e.g. snowflake IDs), pass the value as a `StringValue`
-    * instead.
+    * Sent to the provider, and read back, as a `java.lang.Long`: exact over the whole `Long` range. A provider that
+    * stores numbers as doubles can still round one above 2^53 (e.g. a snowflake ID); pass such a value as a
+    * `StringValue` for that provider.
     */
   final case class LongValue(value: Long)                          extends AttributeValue
   final case class DoubleValue(value: Double)                      extends AttributeValue

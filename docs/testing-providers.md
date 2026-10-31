@@ -80,8 +80,8 @@ Check a hand-written `FlagType` with `FlagTypeLaws` and a `Gen` for your type:
 | `roundTrip` | `decode(encode(a)) == Right(a)` |
 | `throughValueBridge` | the same, after a trip through the OpenFeature SDK's `Value` type |
 
-The second finds the real problems: the SDK turns every number into a `Double`, so a `Long` above 2^53 does not
-survive, and it drops structure members it cannot represent. Object-backed types always take that path. Both laws work
+The second finds the real problems: every number comes back as a `Double` (a `Long` beyond 2^53 as that exact `Long`),
+and structure members the SDK cannot represent are dropped. Object-backed types always take that path. Both laws work
 on Scala 2.13 too.
 
 ## Check a wrapper passes every call on

@@ -36,6 +36,7 @@ object FlagTypeDerivedSpec extends ZIOSpecDefault:
   final case class Rollout(tier: String, pct: Int = 10, note: Option[String]) derives FlagType
 
   final case class Inner(a: Int) derives FlagType
+  final case class Limits(max: Long) derives FlagType
   final case class Outer(name: String, inner: Inner, tags: List[String]) derives FlagType
 
   /** Two adjacent fields of the SAME type, so a labels/fields mispairing produces a type-correct but wrong result that
@@ -286,6 +287,13 @@ object FlagTypeDerivedSpec extends ZIOSpecDefault:
               r == Wrapped("hi")
             )
           }
+        }
+      }
+    },
+    test("a derived product's Long field beyond 2^53 comes back exact from a provider that echoes the default") {
+      ZIO.scoped {
+        build(new DerivedProvider("unused"), "limits").flatMap { ff =>
+          ff.value[Limits]("limits", Limits(9007199254740993L)).map(r => assertTrue(r == Limits(9007199254740993L)))
         }
       }
     },

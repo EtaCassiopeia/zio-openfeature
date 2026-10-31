@@ -79,6 +79,8 @@ To read a variable other than `value`, set the context attribute `openfeature.va
 --8<-- "Optimizely.scala:variables"
 ```
 
+Under `CachingProvider` the attribute is always part of the cache key, even with `contextKeys` set.
+
 ```scala
 --8<-- "Optimizely.scala:object-flag"
 ```

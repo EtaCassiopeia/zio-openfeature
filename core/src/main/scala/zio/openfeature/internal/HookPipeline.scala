@@ -42,7 +42,7 @@ final private[openfeature] class HookPipeline(
       )
       result <-
         if (allHooks.isEmpty) evaluate(context)
-        else runHookPipeline(hookCtx, allHooks, context, initialHints, evaluate)
+        else runHookPipeline(hookCtx, allHooks, context, initialHints, evaluate, FlagType[A].typeName)
     } yield result
 
   private def runHookPipeline[A](
@@ -50,7 +50,9 @@ final private[openfeature] class HookPipeline(
     hooks: List[FeatureHook],
     context: EvaluationContext,
     initialHints: HookHints,
-    evaluate: EvaluationContext => IO[FeatureFlagError, FlagResolution[A]]
+    evaluate: EvaluationContext => IO[FeatureFlagError, FlagResolution[A]],
+    // The type the caller asked for, which a `TypeMismatch` names: `hookCtx.flagType` is the resolver's wire type.
+    typeName: String
   ): IO[FeatureFlagError, FlagResolution[A]] = {
     val composedHook = FeatureHook.compose(hooks)
 
@@ -108,7 +110,7 @@ final private[openfeature] class HookPipeline(
                         composedHook.error(
                           stageCtx,
                           Evaluator
-                            .errorFromResolution(res.flagKey, code, res.errorMessage, expected = hookCtx.flagType.name),
+                            .errorFromResolution(res.flagKey, code, res.errorMessage, expected = typeName),
                           hints
                         )
                       case None =>

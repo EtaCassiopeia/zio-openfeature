@@ -23,6 +23,9 @@ Extend `FeatureHook` and override the stages you need. Every stage has a no-op d
 Every stage also receives the `HookContext` (`flagKey`, `flagType`, `defaultValue`, `evaluationContext`,
 `clientMetadata`, `providerMetadata`, `hookData`) and the evaluation's `HookHints`.
 
+A `TypeMismatch` handed to `error` names the type the caller asked for in `expected`, as the caller's own failure
+does; the wire type the provider was asked for is `ctx.flagType`.
+
 ## Registering hooks
 
 ```scala

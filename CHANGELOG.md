@@ -254,6 +254,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   handler on the closed client and either waited again or, if a datafile had loaded before the shutdown, reported
   `READY` on a client that no longer polls. The wait now ends at once, the provider stays `NOT_READY`, and a later
   `initialize()` on a factory-built provider fails with "was shut down".
+- **The `error` hook stage receives the same `TypeMismatch` expected type as the caller** (#641). For a provider-reported
+  `TYPE_MISMATCH`, the hook's error named the resolver's wire type (`Double` for a `Float` flag, `String` for a
+  string-backed custom type) while the caller's named the flag's own type; both now name the flag's (`Float`, `Plan`).
 
 ## [1.2.1] — 2026-10-28
 

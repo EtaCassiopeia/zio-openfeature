@@ -99,6 +99,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A provider still initializing is never installed again** (#669). Only the swap right after a timed-out one was
+  guarded. Once that swap settled, by succeeding, or by failing and retiring the provider, `setProvider` with the
+  timed-out swap's provider, or the async build's, made the SDK run `initialize()` on it a second time while the first
+  call still ran. The instance now keeps every registration whose `initialize()` it started and has not seen return,
+  a timed-out rollback's included, and refuses such a provider with `ProviderInitializationFailed` until that call
+  returns, however many swaps happened since.
 - **A non-`Value` object from a provider's object getter is a `TypeMismatch`, not a dead fiber** (#659). Reading the
   value cast it to `Value`, so a provider that returned anything else made `obj`, `objDetails` and object-backed custom
   types die with a `ClassCastException`: the `error` hook stage was skipped, `finallyAfter` got nothing, and the total

@@ -91,24 +91,29 @@ final private[openfeature] class FeatureFlagsLive(
     eventBridge.swapInProgress
   )
 
-  // The provider whose `initialize()` may not have returned (the one the last timed-out swap installed, or the async
-  // build's), and a reader for the SDK state of that registration. Its `initialize()` is still running while that state
-  // is NOT_READY, and a provider must never be initialized again before its earlier call returns, so the next failed
-  // swap does not roll back onto it. Any other swap outcome clears
-  // it: the SDK's shutdown of that registration also reads NOT_READY, so a stale entry would mistake a provider
-  // installed again, and serving, for the pending one.
-  private val pendingInit =
-    new java.util.concurrent.atomic.AtomicReference[Option[(OFFeatureProvider, () => JavaProviderState)]](None)
+  // The registrations whose `initialize()` this instance started and has not seen return: the async build's, a timed-out
+  // swap's, a timed-out rollback's. Such a provider is never registered again, by a swap or a rollback: the SDK would
+  // run initialize() on it a second time while the first call runs. Each comes with a reader for the SDK state of its
+  // own registration, which leaves NOT_READY only when that call returns or throws. No swap resets a registration's
+  // state (the SDK shuts the provider down, not its state manager; only `api.shutdown()` resets it, after which the
+  // instance refuses every swap), so an entry is dropped by its reader, never by a swap's outcome.
+  private val initializing =
+    new java.util.concurrent.atomic.AtomicReference[List[(OFFeatureProvider, () => JavaProviderState)]](Nil)
 
-  /** Record `provider`, which the async build registered and whose `initialize()` may still run, as pending. */
+  private def trackInitializing(provider: OFFeatureProvider, reader: Option[() => JavaProviderState]): UIO[Unit] =
+    ZIO.foreachDiscard(reader)(r => ZIO.succeed(initializing.updateAndGet(es => (provider -> r) :: es)))
+
+  /** Record `provider`, which the async build registered and whose `initialize()` may still run. */
   private[openfeature] def trackPendingInit(provider: OFFeatureProvider): UIO[Unit] =
-    stateReaderFor(provider, providerNameRef.get()).flatMap(r => ZIO.succeed(pendingInit.set(r.map(provider -> _))))
+    stateReaderFor(provider, providerNameRef.get()).flatMap(trackInitializing(provider, _))
 
-  private def initPending(provider: OFFeatureProvider): UIO[Boolean] =
+  /** Whether an `initialize()` of `provider` this instance started is still running; prunes the ones that returned. */
+  private def initRunning(provider: OFFeatureProvider): UIO[Boolean] =
     ZIO
-      .attemptBlocking(pendingInit.get().exists { case (p, state) =>
-        (p eq provider) && state() == JavaProviderState.NOT_READY
-      })
+      .attemptBlocking {
+        val running = initializing.updateAndGet(_.filter { case (_, state) => state() == JavaProviderState.NOT_READY })
+        running.exists { case (p, _) => p eq provider }
+      }
       .catchAllCause(c => ZIO.logWarningCause("could not read the state of a provider still initializing", c).as(false))
 
   /** A reader for the SDK state of the registration `provider` holds in this instance's slot; None if the slot holds
@@ -576,16 +581,14 @@ final private[openfeature] class FeatureFlagsLive(
                       s"previous provider '$oldName' was not restored (it is shut down once '$newName' settles)"
                   ) *>
                   stateReaderFor(newProvider, newName).flatMap { reader =>
-                    ZIO.succeed(pendingInit.set(reader.map(newProvider -> _))) *>
+                    trackInitializing(newProvider, reader) *>
                       recordOrphan(oldProvider, oldName, newProvider, newName, reader, watch)
                   }
               case _ =>
                 failedBeforeBinding(oldProvider, oldName, before).flatMap { handled =>
                   if (handled) ZIO.unit
                   else
-                    // The entry applies only to the swap right after the timed-out one: once read, clear it, so a later
-                    // registration of the same provider is never mistaken for the pending one.
-                    initPending(oldProvider).tap(_ => ZIO.succeed(pendingInit.set(None))).flatMap { pending =>
+                    initRunning(oldProvider).flatMap { pending =>
                       if (pending)
                         // The previous provider was installed by a timed-out swap and its initialize() is still running.
                         // It never served, and registering it again would call initialize() on it a second time while the
@@ -612,12 +615,16 @@ final private[openfeature] class FeatureFlagsLive(
                           probe.at(Point.SwapRollback) *>
                           restoreSdkRegistration(oldProvider, newProvider).foldZIO(
                             e =>
-                              ZIO.logErrorCause(
-                                s"setProvider rollback: failed to re-register previous provider '$oldName'; status remains " +
-                                  "Error and evaluations may still route to the failed provider until a later setProvider " +
-                                  "succeeds",
-                                Cause.fail(e)
-                              ) *> cleanupUnboundFailedProvider(newProvider),
+                              // A rollback that timed out leaves the previous provider's initialize() running.
+                              ZIO.whenCase(e) { case _: java.util.concurrent.TimeoutException =>
+                                stateReaderFor(oldProvider, oldName).flatMap(trackInitializing(oldProvider, _))
+                              } *>
+                                ZIO.logErrorCause(
+                                  s"setProvider rollback: failed to re-register previous provider '$oldName'; status remains " +
+                                    "Error and evaluations may still route to the failed provider until a later setProvider " +
+                                    "succeeds",
+                                  Cause.fail(e)
+                                ) *> cleanupUnboundFailedProvider(newProvider),
                             restored =>
                               // None only when a concurrent sibling swap already won the slot (see restoreSdkRegistration):
                               // leave status Error and log a breadcrumb, don't fight the winner.
@@ -640,7 +647,6 @@ final private[openfeature] class FeatureFlagsLive(
           //    Error or Fatal too when it reported one before the wait read the outcome. The bridge's own events for it
           //    were dropped while the gate was up; the re-read below picks up any later state.
           _ <- applySignal(Signal.SwapSucceeded(settled))
-          _ <- ZIO.succeed(pendingInit.set(None))
         } yield ()
         // The swap runs to its outcome even if the caller is interrupted: an interrupt mid-registration would skip
         // both the success signal and the rollback, leaving status NotReady with the refs on a provider that may or may not
@@ -696,7 +702,26 @@ final private[openfeature] class FeatureFlagsLive(
     ZIO
       .fail(FeatureFlagError.ProviderNotReady(ProviderStatus.NotReady))
       .when(shutdownCompleted.get() || closed.get()) *>
+      refuseStillInitializing(newProvider) *>
       refusePendingOrphan(newProvider)
+
+  /** A provider whose earlier `initialize()` this instance started has not returned: registering it again would make
+    * the SDK run a second one alongside it. However many swaps happened since; refused until that call returns.
+    */
+  private def refuseStillInitializing(provider: OFFeatureProvider): IO[FeatureFlagError, Unit] =
+    initRunning(provider).flatMap { running =>
+      ZIO.when(running) {
+        val name = Option(provider.getMetadata).map(_.getName).getOrElse(FeatureFlags.UnknownProviderName)
+        ZIO.fail(
+          FeatureFlagError.ProviderInitializationFailed(
+            new IllegalStateException(
+              s"'$name' is still initializing from an earlier registration and cannot be installed again until " +
+                "that initialize() returns"
+            )
+          )
+        )
+      }
+    }.unit
 
   /** A provider that a timed-out swap replaced is still held by the new provider's pending initialization, which shuts
     * it down if it succeeds; installing it again before that settles would get it shut down while it serves.

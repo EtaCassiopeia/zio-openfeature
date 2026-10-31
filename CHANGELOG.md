@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`boolean`, `string`, `int`, `long`, `double` and `obj` take `EvaluationOptions` after the context** (#650), on
+  `FeatureFlags` and through the companion's service accessors, as every other evaluation method already did. They are
+  concrete methods, so an existing implementor of `FeatureFlags` keeps compiling and linking.
 - **The lifecycle model's preconditions, each enforced or named** (#655, test-only). `formal/lifecycle/README.md`
   classifies every precondition of a library action as enforced by the code or assumed, with what checks each.
   `preconditions.py` deletes each one a recorded run can show and checks that its reject fixture is then accepted, so

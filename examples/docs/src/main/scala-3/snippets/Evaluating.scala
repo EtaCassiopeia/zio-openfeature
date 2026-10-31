@@ -82,6 +82,9 @@ object Evaluating:
 
   val bounded: ZIO[FeatureFlags, FeatureFlagError, FlagResolution[Boolean]] =
     FeatureFlags.booleanDetails("dark-mode", default = false, EvaluationContext.empty, options)
+
+  val boundedValue: ZIO[FeatureFlags, FeatureFlagError, Boolean] =
+    FeatureFlags.boolean("dark-mode", false, EvaluationContext.empty, options)
   // --8<-- [end:options]
 
   // --8<-- [start:instance-config]

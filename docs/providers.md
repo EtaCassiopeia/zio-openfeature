@@ -58,7 +58,9 @@ works, for example [flagd](https://flagd.dev/), [LaunchDarkly](https://launchdar
 
 Either way the provider is shut down once it has failed. A provider stuck in `initialize()` often can't shut down
 either, so that `shutdown()` is abandoned rather than awaited: the sync build waits for it at most `initTimeout`
-(capped at 15 seconds), and the async `Error` event is published before it starts.
+(capped at 15 seconds), and the async `Error` event is published before it starts. A provider the async watchdog shut
+down stays registered with the Java SDK, which calls its `shutdown()` again when the instance shuts down or the provider
+is replaced, so a provider's `shutdown()` should tolerate a second call.
 
 Use sync when serving a default is worse than not starting: a wrong SDK key then stops the app. Use async to start
 fast and gate traffic on [readiness](lifecycle.md#wait-until-the-provider-is-ready), or use a

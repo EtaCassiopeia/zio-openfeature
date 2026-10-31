@@ -282,6 +282,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   error with no READY and failed: `setProvider` rolled back, initializing the replaced provider again after the SDK had
   shut it down, and a sync build shut the shared provider down while it served the other domain. `setProvider` now
   succeeds with status `Error` or `Fatal`, and a sync build fails without shutting the provider down.
+- **`fromAcquireAsync` no longer shuts the composed stack down twice when its layer is released during the swap**
+  (#637). An interrupt landing while the replaced fallback was being shut down failed the swap after the composed stack
+  was already serving, and the swap's cleanup shut it down and released the acquired provider; the API's shutdown then
+  shut it down again. The swap, including that bounded shutdown, is now uninterruptible. The docs also say that a
+  provider the async init watchdog shut down is shut down again by the SDK when the instance shuts down.
 
 ## [1.2.1] — 2026-10-28
 

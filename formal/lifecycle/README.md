@@ -80,13 +80,13 @@ own actions (`SdkBind`, `SdkInitOk`, `Emit`, `Deliver`, ...) model what those do
 |:---|:---|:---|:---|
 | `SwapStart` | `lock = "free"` | enforced | `setProvider` runs under `swapLock`; fixture `reject/swap-inside-a-swap` |
 | `SwapStart` | `~shutDown` | enforced | `refuseSwap` (`shutdownCompleted`); fixture `reject/swap-after-shutdown`, `FeatureFlagsShutdownSpec`, mutant "a swap after shutdown is not refused" |
-| `SwapStart` | `~closed` | enforced | `refuseSwap` (`closed`, set by the scope finalizer); `LifecycleTeardownSpec`, mutant "a swap after the scope close is not refused" (a run recorded after `ScopeClose` is not validated) |
+| `SwapStart` | `~closed` | enforced | `refuseSwap` (`closed`, set by the scope finalizer of every build, owning its API or not); `LifecycleTeardownSpec`, mutant "a swap after the scope close is not refused" (a run recorded after `ScopeClose` is not validated) |
 | `SwapStart` | `~Settling` | assumed | a provider that reports `STALE` from inside `initialize()` is taken at its word, a documented limit (see below) |
-| `SwapStart` | `sdk[p] = "NONE"` | assumed | each provider is installed once. A provider still initializing can be installed again once the swap that replaced it settles (#669); installing again one that has settled or been shut down is not modelled either |
+| `SwapStart` | `sdk[p] = "NONE"` | assumed | each provider is installed once; re-installation is not modelled (#693). The code refuses to re-install a provider whose earlier `initialize()` has not returned, however many swaps happened since (`refuseStillInitializing`; `ProviderHotSwapSpec`, three tests "... is refused while its initialize() runs ..."), and installs one again once that call returned |
 | `ShutdownStart` | `lock = "free"` | enforced | `shutdown` runs under `swapLock`; fixtures `reject/shutdown-inside-a-swap` and `reject/recorded-shutdown-without-the-lock` |
 | `ShutdownDone` | `lock = "shutdown"` | enforced | structural: the second half of `shutdown`, in the same permit as `ShutdownStart`, so no run shows one without the other |
 | `ShutdownDone`, `ScopeClose` | `~Settling` (in `TearDown`) | assumed | the teardown waits for a provider that reported `STALE` from inside `initialize()` to finish starting; the code tears down regardless. The same documented limit as `SwapStart`'s |
-| `ScopeClose` | `lock = "free"` | enforced | `ownedApiFinalizer` takes `swapLock`; fixture `reject/swap-without-outcome`, `LifecycleTeardownSpec`, mutant "the scope close does not wait for a swap in flight" |
+| `ScopeClose` | `lock = "free"` | enforced | `scopeFinalizer` takes `swapLock`; fixture `reject/swap-without-outcome`, `LifecycleTeardownSpec`, mutant "the scope close does not wait for a swap in flight" |
 | `ScopeClose` | `~closed` | assumed | a scope closes once; not an action a user can repeat |
 | `Init` | `InitWith` or `InitAsync` | both starts | the sync build hands over a `READY` provider, the async build one still initializing (recorded as pending); an async provider whose `initialize()` threw is `InitAsync` followed by `SdkInitFail` |
 
@@ -137,6 +137,9 @@ The other points belong to one of those steps. A run that reaches `Watchdog`, wh
 
 ## What is outside the model
 
+- **A shared instance's scope close.** `ScopeClose` models the owning topology, which tears the API down. An
+  instance that shares its API also sets `closed` and drops its bridge when its scope closes, under the swap lock, but
+  leaves the API and its providers to the API's owner (`LifecycleTeardownSpec`).
 - **A provider that reports a state from inside its own `initialize()`.** The library reads whether `initialize()`
   returned from the SDK's own `PROVIDER_READY`, which a provider can also send, so such a report is taken at its word
   (see `docs/providers.md`, "Replace the provider at runtime"). The model allows only a `STALE` reported that way

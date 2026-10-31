@@ -74,7 +74,7 @@ Shutting the OpenFeature API down stops every provider registered on it.
 |:--|:--|
 | `ApiOwnership.Auto` (default) | `Owned` without a domain, `Shared` with one. |
 | `ApiOwnership.Owned` | Shuts down the API and its providers. |
-| `ApiOwnership.Shared` | Leaves the API and provider running for other clients. |
+| `ApiOwnership.Shared` | Leaves the API and provider running for other clients. The instance still refuses `setProvider` once its scope has closed. |
 | `ApiOwnership.Isolated` (`withIsolatedApi`) | A private API for this instance alone, which it owns and shuts down. |
 
 Closing an owning layer's scope waits for a [provider swap](#replace-the-provider-at-runtime) in flight before it
@@ -280,7 +280,9 @@ been shut down it fails with `ProviderNotReady(NotReady)` and does not touch the
   or its scope closes, the old provider is shut down then. Only an instance that
   [owns its API](#who-shuts-down-the-api) does this: on a shared API the old provider is left to the API's owner.
   Until the new provider has settled, `setProvider` refuses the old provider with `ProviderInitializationFailed`:
-  installing it again then would get it shut down later, while it serves. If `setProvider` is called while the
+  installing it again then would get it shut down later, while it serves. A provider whose earlier `initialize()` has
+  not returned (the one an async start was built with, or one a timed-out swap or rollback installed) is refused the
+  same way, however many swaps have happened since, until that call returns. If `setProvider` is called while the
   timed-out provider, or the provider an async start was built with, is still initializing and the new provider's
   `initialize()` throws, there is nothing to roll back to: that provider never served and is not initialized a second
   time. The new provider stays registered with status `Error`, that provider is shut down (by an instance that owns

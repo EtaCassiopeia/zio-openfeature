@@ -194,6 +194,25 @@ object ProviderHotSwapSpec extends ZIOSpecDefault {
       .map(ff => (ff, api, domain))
   }
 
+  private def isStillInitializing(result: Either[FeatureFlagError, Unit]): Boolean = result match {
+    case Left(FeatureFlagError.ProviderInitializationFailed(e: IllegalStateException)) =>
+      e.getMessage.contains("still initializing")
+    case _ => false
+  }
+
+  // Once released, the provider's first initialize() returns on the SDK's executor; until the instance reads that, a
+  // reinstall is still refused, so retry the refusal for a moment.
+  private def installOnceReturned(
+    ff: FeatureFlags,
+    provider: dev.openfeature.sdk.FeatureProvider
+  ): UIO[Either[FeatureFlagError, Unit]] =
+    ff.setProvider(provider)
+      .retry(Schedule.spaced(50.millis) && Schedule.recurs(60) && Schedule.recurWhile[FeatureFlagError] {
+        case FeatureFlagError.ProviderInitializationFailed(_: IllegalStateException) => true
+        case _                                                                       => false
+      })
+      .either
+
   private def awaitTrue(cond: => Boolean): UIO[Boolean] =
     ZIO
       .succeed(cond)
@@ -613,6 +632,88 @@ object ProviderHotSwapSpec extends ZIOSpecDefault {
           result == Left(FeatureFlagError.ProviderNotReady(ProviderStatus.NotReady)),
           after == "A"
         )
+      }
+    } @@ TestAspect.withLiveClock,
+    test("the async build's provider is refused while its initialize() runs, after a failed swap retired it") {
+      ZIO.scoped {
+        val api    = OpenFeatureAPI.createIsolated()
+        val domain = s"test-swap-${java.util.UUID.randomUUID()}"
+        val c      = new FailingCounting("C")
+        for {
+          a <- ZIO.acquireRelease(ZIO.succeed(new Counting("A", blocking = true)))(p =>
+            ZIO.succeed(p.release.countDown())
+          )
+          ff <- FeatureFlags.buildAsync(
+            a,
+            domain = Some(domain),
+            version = None,
+            initialHooks = Nil,
+            statusRef = None,
+            addShutdownFinalizer = true,
+            apiOverride = Some(api),
+            initTimeout = 20.seconds
+          )
+          _       <- awaitTrue(a.inits.get() == 1)
+          failed  <- ff.setProvider(c).either
+          retired <- awaitTrue(a.shutdowns.get() >= 1)
+          refused <- ff.setProvider(a).either
+          during = a.inits.get()
+          _     <- ZIO.succeed(a.release.countDown())
+          again <- installOnceReturned(ff, a)
+        } yield assertTrue(
+          failed.isLeft,
+          retired,
+          isStillInitializing(refused),
+          during == 1,
+          again.isRight,
+          a.inits.get() == 2
+        )
+      }
+    } @@ TestAspect.withLiveClock,
+    test("a timed-out swap's provider is refused while its initialize() runs, after a later swap succeeded") {
+      ZIO.scoped {
+        val a = new Counting("A", blocking = false)
+        for {
+          b <- ZIO.acquireRelease(ZIO.succeed(new Counting("B", blocking = true)))(p =>
+            ZIO.succeed(p.release.countDown())
+          )
+          built <- buildExposed(a, initTimeout = 500.millis)
+          (ff, _, _) = built
+          timedOut <- ff.setProvider(b).either
+          next     <- ff.setProvider(new SimpleProvider("D", Map("flag" -> true))).either
+          status   <- ff.providerStatus
+          refused  <- ff.setProvider(b).either
+          during = b.inits.get()
+          _     <- ZIO.succeed(b.release.countDown())
+          again <- installOnceReturned(ff, b)
+        } yield assertTrue(
+          timedOut.isLeft,
+          next.isRight,
+          status == ProviderStatus.Ready,
+          isStillInitializing(refused),
+          during == 1,
+          again.isRight,
+          b.inits.get() == 2
+        )
+      }
+    } @@ TestAspect.withLiveClock,
+    test("a timed-out swap's provider is refused while its initialize() runs, after a later swap failed") {
+      ZIO.scoped {
+        val a = new Counting("A", blocking = false)
+        for {
+          b <- ZIO.acquireRelease(ZIO.succeed(new Counting("B", blocking = true)))(p =>
+            ZIO.succeed(p.release.countDown())
+          )
+          built <- buildExposed(a, initTimeout = 500.millis)
+          (ff, _, _) = built
+          timedOut <- ff.setProvider(b).either
+          failed   <- ff.setProvider(new FailingCounting("C")).either
+          // C's failure leaves B, still initializing, an orphan of C's registration: on C's error B is shut down and
+          // deregistered, which is when it used to become installable again.
+          settled <- awaitTrue(b.shutdowns.get() >= 1)
+          refused <- ff.setProvider(b).either
+          during = b.inits.get()
+        } yield assertTrue(timedOut.isLeft, failed.isLeft, settled, isStillInitializing(refused), during == 1)
       }
     } @@ TestAspect.withLiveClock,
     test("a failed swap that never bound its provider leaves a still-initializing previous provider NotReady") {

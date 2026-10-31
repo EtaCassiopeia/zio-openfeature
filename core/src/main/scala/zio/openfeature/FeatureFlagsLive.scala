@@ -62,7 +62,8 @@ final private[openfeature] class FeatureFlagsLive(
   probe: LifecycleProbe = LifecycleProbe.none,
   // Set by the layer's scope finalizer, under `swapLock`: the API is torn down, so no swap may start.
   closed: java.util.concurrent.atomic.AtomicBoolean = new java.util.concurrent.atomic.AtomicBoolean(false)
-) extends FeatureFlags {
+) extends FeatureFlags
+    with FeatureFlagsAdmin {
 
   // The total tier's served-default breadcrumb, under this instance's `FallbackLogging` policy. Lives here, not
   // in `FeatureFlagsState`: the trait's `totalResolution` reaches state only through this hook.

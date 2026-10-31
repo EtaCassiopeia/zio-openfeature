@@ -13,6 +13,7 @@ fiber-local context, ZIO hooks, transactions, a provider status you can rely on,
 | Piece | What it is | Where it lives |
 |---|---|---|
 | `FeatureFlags` | The service your code calls | a `ZLayer`, built by one of the [factories](providers.md) |
+| `FeatureFlagsAdmin` | The same instance's administration: `setProvider`, `shutdown`, API hooks, event handlers | `>+> FeatureFlagsAdmin.layer` |
 | `OpenFeatureAPI` | The SDK's registry of providers and API-level hooks | the global singleton, or an isolated instance per [`FeatureFlagRegistry`](providers.md) |
 | `Client` | The SDK object that evaluates flags | one per `FeatureFlags`, internal |
 | `FeatureProvider` | Any OpenFeature Java provider | passed to the factory |

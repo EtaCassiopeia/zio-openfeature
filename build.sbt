@@ -204,7 +204,7 @@ lazy val commonSettings = Seq(
   mimaPreviousArtifacts := Set(organization.value %% moduleName.value % "1.2.1"),
   // TASTy only exists for the Scala 3 artifacts.
   tastyMiMaPreviousArtifacts := { if (scalaBinaryVersion.value == "3") mimaPreviousArtifacts.value else Set.empty },
-  checkPublishedPins    := checkPublishedPinsTask.value,
+  checkPublishedPins         := checkPublishedPinsTask.value,
   // Test helpers every module's specs share (the property-test budget), compiled into each module's tests rather than
   // published or depended on.
   Test / unmanagedSourceDirectories += (LocalRootProject / baseDirectory).value / "test-support" / "src" / "test" / "scala"
@@ -308,7 +308,8 @@ lazy val core = (project in file("core"))
     tastyMiMaConfig ~= (_.withMoreProblemFilters(
       java.util.Arrays.asList(
         ProblemMatcher.make("zio.openfeature.internal.*"),
-        ProblemMatcher.make("zio.openfeature.FeatureFlagsLive.<init>") // non-public: private[openfeature]
+        // non-public: private[openfeature]
+        ProblemMatcher.make("zio.openfeature.FeatureFlagsLive.<init>")
       )
     ))
   )
@@ -332,16 +333,18 @@ lazy val extras = (project in file("extras"))
     Test / javaOptions += "-XX:+EnableDynamicAgentLoading",
     // CircuitState.Open gained the stale flag. The type is private[extras], which Scala 2.13 emits as public bytecode.
     mimaBinaryIssueFilters ++= Seq(
-      ProblemFilters.exclude[DirectMissingMethodProblem]("zio.openfeature.extras.CircuitState#Open.copy"), // non-public: private[extras]
-      ProblemFilters.exclude[DirectMissingMethodProblem]("zio.openfeature.extras.CircuitState#Open.this"), // non-public: private[extras]
-      ProblemFilters.exclude[DirectMissingMethodProblem]("zio.openfeature.extras.CircuitState#Open.apply"), // non-public: private[extras]
-      ProblemFilters.exclude[MissingTypesProblem]("zio.openfeature.extras.CircuitState$Open$") // non-public: private[extras]
+      // non-public: private[extras]
+      ProblemFilters.exclude[DirectMissingMethodProblem]("zio.openfeature.extras.CircuitState#Open.copy"),
+      ProblemFilters.exclude[DirectMissingMethodProblem]("zio.openfeature.extras.CircuitState#Open.this"),
+      ProblemFilters.exclude[DirectMissingMethodProblem]("zio.openfeature.extras.CircuitState#Open.apply"),
+      ProblemFilters.exclude[MissingTypesProblem]("zio.openfeature.extras.CircuitState$Open$")
     ),
+    // The `reason` overload of `trip` is `private[extras]`; the public `trip()` is unchanged.
     tastyMiMaConfig ~= (_.withMoreProblemFilters(
       java.util.Arrays.asList(
-        ProblemMatcher.make("zio.openfeature.extras.CircuitState.Open.*"), // non-public: private[extras]
-        // The `reason` overload is `private[extras]`; the public `trip()` is unchanged.
-        ProblemMatcher.make(ProblemKind.MissingTermMember, "zio.openfeature.extras.CircuitBreaker.trip") // non-public: private[extras]
+        // non-public: private[extras]
+        ProblemMatcher.make("zio.openfeature.extras.CircuitState.Open.*"),
+        ProblemMatcher.make(ProblemKind.MissingTermMember, "zio.openfeature.extras.CircuitBreaker.trip")
       )
     ))
   )

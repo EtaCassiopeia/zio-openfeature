@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Fixture test for check-mima-filters.sh: each case is a small build file and the exit code the check must give it.
+# shellcheck disable=SC2016 # the fixtures are literal build-file text: `$Open$` is a JVM class name, not an expansion
 
 set -euo pipefail
 
@@ -61,6 +62,37 @@ expect one-bad-among-good 1 v1.2.1 \
   'ProblemFilters.exclude[MissingClassProblem]("zio.openfeature.FlagType"),'
 expect no-filters-is-an-error 2 v1.2.1 \
   'name := "x"'
+expect marker-line-covers-its-group 0 v1.2.1 \
+  '    // non-public: private[extras]' \
+  '    ProblemFilters.exclude[DirectMissingMethodProblem]("zio.openfeature.extras.CircuitState#Open.copy"),' \
+  '    ProblemFilters.exclude[MissingTypesProblem]("zio.openfeature.extras.CircuitState$Open$")'
+expect marker-line-ends-at-the-group 1 v1.2.1 \
+  '    // non-public: private[extras]' \
+  '    ProblemFilters.exclude[DirectMissingMethodProblem]("zio.openfeature.extras.CircuitState#Open.copy")' \
+  '  ),' \
+  '    ProblemFilters.exclude[DirectMissingMethodProblem]("zio.openfeature.FeatureFlags.build")'
+expect wrapped-target-is-read 1 v1.2.1 \
+  '      ProblemFilters.exclude[DirectMissingMethodProblem](' \
+  '        "zio.openfeature.FeatureFlags.build"' \
+  '      ),'
+# A wrapped filter takes its marker on a line of its own: the closing line comes after the target is read.
+expect wrapped-target-trailing-marker-fails-closed 1 v1.2.1 \
+  '        ProblemMatcher.make(' \
+  '          ProblemKind.MissingTermMember,' \
+  '          "zio.openfeature.extras.CircuitBreaker.trip"' \
+  '        ) // non-public: private[extras]'
+expect wrapped-target-with-marker-line 0 v1.2.1 \
+  '        // non-public: private[extras]' \
+  '        ProblemMatcher.make(' \
+  '          ProblemKind.MissingTermMember,' \
+  '          "zio.openfeature.extras.CircuitBreaker.trip"' \
+  '        )'
+expect wrapped-target-never-found 2 v1.2.1 \
+  'ProblemFilters.exclude[Problem](' \
+  ')' \
+  'x' \
+  'y' \
+  'z'
 
 echo "$passed passed, $failed failed"
 [ "$failed" -eq 0 ]

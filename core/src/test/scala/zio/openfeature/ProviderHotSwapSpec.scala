@@ -437,6 +437,40 @@ object ProviderHotSwapSpec extends ZIOSpecDefault {
         )
       }
     } @@ TestAspect.withLiveClock,
+    test("an ERROR a provider without a name reports right after initializing is its status, not a failed swap") {
+      ZIO.scoped {
+        val a = new Counting("A", blocking = false)
+        val b = new Counting(null, blocking = false)
+        for {
+          held    <- Promise.make[Nothing, Unit]
+          release <- Promise.make[Nothing, Unit]
+          _       <- ZIO.addFinalizer(release.succeed(()))
+          built   <- buildProbed(a, holdAt(zio.openfeature.internal.LifecycleProbe.Point.SdkBind, held, release))
+          (ff, api, domain) = built
+          swap   <- ff.setProvider(b).either.fork
+          _      <- held.await.timeout(5.seconds)
+          ready  <- awaitTrue(api.getClient(domain).getProviderState == ProviderState.READY)
+          _      <- emitError(b, "B: backend lost")
+          errord <- awaitTrue(api.getClient(domain).getProviderState == ProviderState.ERROR)
+          _      <- release.succeed(())
+          result <- swap.join
+          status <- ff.providerStatus
+          bound  <- ZIO.succeed(api.getProvider(domain))
+          aDown  <- awaitTrue(a.shutdowns.get() >= 1)
+          _      <- ZIO.sleep(300.millis)
+          // Read now: the scope's close shuts the serving provider down before a lazy assertion would read it.
+          counts = (a.inits.get(), a.shutdowns.get(), b.shutdowns.get())
+        } yield assertTrue(
+          ready,
+          errord,
+          result.isRight,
+          status == ProviderStatus.Error,
+          bound eq b,
+          aDown,
+          counts == ((1, 1, 0))
+        )
+      }
+    } @@ TestAspect.withLiveClock,
     test("an ERROR the restored provider reports right after initializing leaves the rollback successful") {
       ZIO.scoped {
         val a = new Counting("A", blocking = false)

@@ -118,6 +118,7 @@ private[openfeature] object ProviderRegistration {
       // Both handlers go on before the registration, so no event of it can come before them.
       ZIO.acquireReleaseWith(ZIO.attempt(observer.open()))(_ => ZIO.succeed(observer.close())) { _ =>
         ZIO.attemptBlocking(register(api, domain, provider)) *>
+          ZIO.attempt(observer.arm()) *>
           afterRegister *>
           ZIO.attemptBlockingInterrupt(awaitOutcome(api, domain, provider, timeout, observer))
       }
@@ -132,8 +133,13 @@ private[openfeature] object ProviderRegistration {
     * receives only the events of the provider bound to the slot when they are emitted, so the provider being replaced
     * cannot mark it, nor can a provider a later swap installs; one the slot held before `provider` could only if it had
     * the same name and emitted READY just before the registration. The SDK's own run of a new handler, for a slot
-    * already READY when the watch opens, names no provider and is not counted, nor is a READY from a provider without a
-    * name: such a provider's `initialize()` is then judged by its state alone, as before the READY was watched.
+    * already READY when the watch opens, names no provider and is not counted there.
+    *
+    * A second handler is armed once the registration has bound `provider` (`arm`). From then on a READY can only come
+    * from the provider the slot binds when it is dispatched, so that handler also counts one with no name, and the
+    * SDK's immediate run of it, for a slot already READY, means `provider`'s registration is. That is what covers a
+    * provider whose metadata has no name. Such a provider is still judged by its state alone if it initializes and
+    * reports an error in the instant between the registration and the arming.
     */
   final class ReadyWatch private[ProviderRegistration] (
     api: OpenFeatureAPI,
@@ -152,13 +158,26 @@ private[openfeature] object ProviderRegistration {
           seen.set(true)
       }
     }
+    // Added once the slot binds `provider`: a READY now, named or not, comes from the provider the slot binds when it is
+    // dispatched, and the SDK's run of the new handler, for a slot already READY, means `provider`'s registration is.
+    // So this one also counts a provider without a name, which `handler` cannot tell from the slot's previous one.
+    private val armedHandler = new java.util.function.Consumer[EventDetails] {
+      def accept(details: EventDetails): Unit = {
+        val name = Try(Option(provider.getMetadata).map(_.getName)).toOption.flatten
+        val sent = Option(details.getProviderName)
+        if ((sent.isEmpty || sent == name) && Try(bound == provider).getOrElse(false)) seen.set(true)
+      }
+    }
+    private val armed  = new AtomicBoolean(false)
     private val client = domain.fold(api.getClient())(d => api.getClient(d))
+    private def bound  = domain.fold(api.getProvider())(d => api.getProvider(d))
 
     def initialized: Boolean = seen.get()
 
     // Never let handler cleanup replace a caller's own outcome.
     def close(): Unit = {
       val _ = Try(client.removeHandler(JavaProviderEvent.PROVIDER_READY, handler))
+      if (armed.get()) { val _ = Try(client.removeHandler(JavaProviderEvent.PROVIDER_READY, armedHandler)) }
       ()
     }
 
@@ -166,6 +185,10 @@ private[openfeature] object ProviderRegistration {
       client.on(JavaProviderEvent.PROVIDER_READY, handler)
       this
     }
+
+    /** Add the second handler, once `provider` is registered on the slot. Idempotent. */
+    private[ProviderRegistration] def arm(): Unit =
+      if (armed.compareAndSet(false, true)) { val _ = client.on(JavaProviderEvent.PROVIDER_READY, armedHandler) }
   }
 
   /** Watch the slot of `domain` for the SDK's `PROVIDER_READY` for `provider`. Close it when done. */
@@ -265,6 +288,8 @@ private[openfeature] object ProviderRegistration {
     @volatile private var own: Option[ReadyWatch] = None
 
     def initialized: Boolean = external.orElse(own).exists(_.initialized)
+
+    def arm(): Unit = external.orElse(own).foreach(_.arm())
 
     private val errorHandler = new java.util.function.Consumer[EventDetails] {
       def accept(details: EventDetails): Unit = {

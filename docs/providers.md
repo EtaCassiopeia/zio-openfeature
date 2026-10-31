@@ -74,7 +74,7 @@ Shutting the OpenFeature API down stops every provider registered on it.
 |:--|:--|
 | `ApiOwnership.Auto` (default) | `Owned` without a domain, `Shared` with one. |
 | `ApiOwnership.Owned` | Shuts down the API and its providers. |
-| `ApiOwnership.Shared` | Leaves the API and provider running for other clients. |
+| `ApiOwnership.Shared` | Leaves the API and provider running for other clients. The instance still refuses `setProvider` once its scope has closed. |
 | `ApiOwnership.Isolated` (`withIsolatedApi`) | A private API for this instance alone, which it owns and shuts down. |
 
 Closing an owning layer's scope waits for a [provider swap](#replace-the-provider-at-runtime) in flight before it

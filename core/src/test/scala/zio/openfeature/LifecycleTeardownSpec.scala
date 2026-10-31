@@ -145,6 +145,84 @@ object LifecycleTeardownSpec extends ZIOSpecDefault {
         inits = p2.inits.get()
       } yield assertTrue(swap == Left(FeatureFlagError.ProviderNotReady(ProviderStatus.NotReady)), inits == 0)
     },
+    test("an instance that shares its API also refuses setProvider after its scope closes, and leaves the slot alone") {
+      val api    = OpenFeatureAPI.createIsolated()
+      val domain = s"teardown-${java.util.UUID.randomUUID()}"
+      val p1     = new Counting("p1", blocking = false)
+      val p2     = new Counting("p2", blocking = false)
+      for {
+        ff <- ZIO.scoped {
+          zio.openfeature.internal.FeatureFlagsFactories.buildWithTracking(
+            p1,
+            domain = Some(domain),
+            version = None,
+            initialHooks = Nil,
+            statusRef = None,
+            addShutdownFinalizer = false,
+            apiOverride = Some(api)
+          )
+        }
+        swap  <- ff.setProvider(p2).either
+        bound <- ZIO.succeed(api.getProvider(domain))
+      } yield assertTrue(
+        swap == Left(FeatureFlagError.ProviderNotReady(ProviderStatus.NotReady)),
+        p2.inits.get() == 0,
+        bound eq p1,
+        p1.shutdowns.get() == 0
+      )
+    },
+    test("a registry client refuses setProvider once the registry's scope has closed") {
+      val p2 = new Counting("p2", blocking = false)
+      for {
+        client <- ZIO.scoped(
+          FeatureFlagRegistry
+            .fromProvider(new Counting("p1", blocking = false))
+            .build
+            .flatMap(
+              _.get[FeatureFlagRegistry].getClient("d")
+            )
+        )
+        swap <- client.setProvider(p2).either
+      } yield assertTrue(swap == Left(FeatureFlagError.ProviderNotReady(ProviderStatus.NotReady)), p2.inits.get() == 0)
+    },
+    test("a shared instance's scope close waits for a swap in flight, then refuses the next") {
+      val a = new Counting("A", blocking = false)
+      val b = new Counting("B", blocking = true)
+      val c = new Counting("C", blocking = false)
+      for {
+        bound <- Promise.make[Nothing, Unit]
+        probe = new zio.openfeature.internal.LifecycleProbe {
+          def at(p: zio.openfeature.internal.LifecycleProbe.Point): UIO[Unit] =
+            if (p == zio.openfeature.internal.LifecycleProbe.Point.SdkBind) bound.succeed(()).unit else ZIO.unit
+        }
+        scope <- Scope.make
+        ff    <- scope.extend[Any](
+          zio.openfeature.internal.FeatureFlagsFactories.buildWithTracking(
+            a,
+            domain = Some(s"teardown-${java.util.UUID.randomUUID()}"),
+            version = None,
+            initialHooks = Nil,
+            statusRef = None,
+            addShutdownFinalizer = false,
+            apiOverride = Some(OpenFeatureAPI.createIsolated()),
+            initTimeout = 500.millis,
+            probe = probe
+          )
+        )
+        swap <- ff.setProvider(b).either.fork
+        _    <- bound.await
+        _    <- scope.close(Exit.unit)
+        // The close took the swap lock, so the swap had settled (here: timed out) before the close returned.
+        done <- swap.poll
+        next <- ff.setProvider(c).either
+        _    <- ZIO.succeed(b.release.countDown())
+      } yield assertTrue(
+        done.isDefined,
+        b.inits.get() == 1,
+        next == Left(FeatureFlagError.ProviderNotReady(ProviderStatus.NotReady)),
+        c.inits.get() == 0
+      )
+    },
     test("closing the layer's scope ends an events stream consumer") {
       for {
         scope    <- Scope.make

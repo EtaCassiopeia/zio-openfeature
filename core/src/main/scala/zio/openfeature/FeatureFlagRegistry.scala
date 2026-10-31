@@ -2,7 +2,7 @@ package zio.openfeature
 
 import dev.openfeature.sdk.{FeatureProvider => OFFeatureProvider, OpenFeatureAPI}
 import zio._
-import zio.openfeature.internal.ProviderRegistration
+import zio.openfeature.internal.{ApiInstances, ProviderRegistration}
 
 trait FeatureFlagRegistry {
 
@@ -67,7 +67,8 @@ object FeatureFlagRegistry {
           lock,
           zioApiHooksRef
         )
-        _ <- ZIO.addFinalizer(ProviderRegistration.boundedApiShutdown(api))
+        // The registry owns its API: its clients go NotReady with it rather than serve the SDK's No-op answers.
+        _ <- ZIO.addFinalizer(ApiInstances.retireAll(api) *> ProviderRegistration.boundedApiShutdown(api))
       } yield registry
     }
 }

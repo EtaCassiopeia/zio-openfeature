@@ -75,6 +75,7 @@ Shutting the OpenFeature API down stops every provider registered on it.
 | `ApiOwnership.Auto` (default) | `Owned` without a domain, `Shared` with one. |
 | `ApiOwnership.Owned` | Shuts down the API and its providers. |
 | `ApiOwnership.Shared` | Leaves the API and provider running for other clients. |
+| `ApiOwnership.Isolated` (`withIsolatedApi`) | A private API for this instance alone, which it owns and shuts down. |
 
 Closing an owning layer's scope waits for a [provider swap](#replace-the-provider-at-runtime) in flight before it
 shuts the API down, as `shutdown` does.
@@ -86,6 +87,24 @@ shuts the API down, as `shutdown` does.
 ```scala
 --8<-- "Providers.scala:owned-domain"
 ```
+
+## Sharing the SDK
+
+By default every instance uses the process-global `OpenFeatureAPI`, the one the Java SDK and other JVM libraries see.
+One API has one default slot and one slot per domain, so instances on it are not independent:
+
+- **Binding a slot that already holds a provider** replaces it: once the new provider is ready, the SDK shuts the
+  previous one down, under whatever instance was using it. The build logs a warning naming the slot and both
+  providers.
+- **An owner's shutdown or scope close tears the API down** for every instance on it. The others then report
+  `NotReady`, as after their own `shutdown`: typed reads fail with `ProviderNotReady`, and `*OrDefault` reads serve
+  the default. A `FeatureFlagRegistry` does the same to its clients when its scope closes.
+- **What is per instance and what is shared.** `setGlobalContext` and `addZioApiHook` belong to this instance
+  (`addZioApiHook` is API level in the hook order, not shared across instances). `addApiHook` and `clearApiHooks` act
+  on the shared Java API.
+
+To keep instances apart, give each one `FeatureFlagsConfig().withIsolatedApi`, a domain of its own, or build them all
+from one [`FeatureFlagRegistry`](#one-client-per-domain-featureflagregistry).
 
 ## Ask several providers in order
 

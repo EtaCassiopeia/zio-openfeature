@@ -3,6 +3,7 @@ package zio.openfeature
 import zio._
 import zio.stream._
 import zio.openfeature.internal.{
+  ApiInstances,
   EventBridge,
   Evaluator,
   FallbackLogLimiter,
@@ -840,7 +841,17 @@ final private[openfeature] class FeatureFlagsLive(
 
   // Shutdown API (spec 1.6.1, 1.6.2)
 
+  // An instance that owns its API retires the others on it first: their provider goes with the API. Before taking its
+  // own swap lock, and a retirement never retires anything itself, so two owners of one API cannot wait on each other.
   override def shutdown: UIO[Unit] =
+    ZIO.when(ownsApi)(ApiInstances.retireSiblings(api, this)) *> teardown(tearDownApi = ownsApi)
+
+  /** The teardown of an instance that does not own its API, called when the instance that does tears it down: the
+    * instance's own state goes, and its status ends `NotReady` as after its own `shutdown`.
+    */
+  private[openfeature] def retire: UIO[Unit] = teardown(tearDownApi = false)
+
+  private def teardown(tearDownApi: Boolean): UIO[Unit] =
     // ShuttingDown rejects evaluations for the duration of the teardown (checkProviderStatus); the terminal state
     // after teardown is NotReady. The machine keeps both terminal: while ShuttingDown no bridge event transitions,
     // and ShutdownCompleted makes the final NotReady stick against a late event from the dying provider.
@@ -869,7 +880,7 @@ final private[openfeature] class FeatureFlagsLive(
         // registry falls back to one shared default provider) and double-shut a provider the API still has registered.
         // A non-owning `shutdown` therefore releases only this instance's own state (status/hooks/contexts/event hub,
         // torn down above); retire such clients via whatever owns the API (e.g. the registry).
-        ZIO.when(ownsApi)(ProviderRegistration.boundedApiShutdown(api) *> orphans.resolveAll) *>
+        ZIO.when(tearDownApi)(ProviderRegistration.boundedApiShutdown(api) *> orphans.resolveAll) *>
         probe.at(Point.ShutdownDone) *>
         applySignal(Signal.ShutdownCompleted).unit).uninterruptible
     )

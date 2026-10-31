@@ -225,7 +225,14 @@ object FallbackLoggingSpec extends ZIOSpecDefault {
         // Off: nothing logged even though every evaluation is a fallback
         offLogs <- ZIO.scoped {
           FeatureFlags
-            .fromAcquireAsync(acquire, fallback, fallbackLogging = FallbackLogging.Off)
+            .fromAcquireAsync(
+              acquire,
+              fallback,
+              FeatureFlagsConfig(
+                fallbackLogging = FallbackLogging.Off
+              ),
+              AcquireConfig.default
+            )
             .build
             .map(_.get[FeatureFlags])
             .flatMap(ff => ZIO.foreachDiscard(1 to 3)(_ => ff.booleanOrDefault("k", default = true)) *> warnings(base))

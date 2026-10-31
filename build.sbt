@@ -302,14 +302,20 @@ lazy val core = (project in file("core"))
       ProblemFilters.exclude[Problem]("zio.openfeature.internal.ProviderStatusMachine#Signal#SwapSucceeded*"),
       ProblemFilters.exclude[Problem]("zio.openfeature.internal.ProviderStatusMachine$Signal$SwapSucceeded*"),
       ProblemFilters.exclude[Problem]("zio.openfeature.internal.ProviderStatusMachine#Signal#RollbackSucceeded*"),
-      ProblemFilters.exclude[Problem]("zio.openfeature.internal.ProviderStatusMachine$Signal$RollbackSucceeded*")
+      ProblemFilters.exclude[Problem]("zio.openfeature.internal.ProviderStatusMachine$Signal$RollbackSucceeded*"),
+      // A top-level `private` class, public bytecode on 2.13; it now carries the registry's config.
+      // non-public: private[openfeature]
+      ProblemFilters.exclude[DirectMissingMethodProblem]("zio.openfeature.FeatureFlagRegistryLive.this")
     ),
     // TASTy-MiMa checks `private[...]` members as well, so the internals and the instance's constructor are reported.
     tastyMiMaConfig ~= (_.withMoreProblemFilters(
       java.util.Arrays.asList(
         ProblemMatcher.make("zio.openfeature.internal.*"),
         // non-public: private[openfeature]
-        ProblemMatcher.make("zio.openfeature.FeatureFlagsLive.<init>")
+        ProblemMatcher.make("zio.openfeature.FeatureFlagsLive.<init>"),
+        // A top-level `private` class, visible only inside `zio.openfeature`; it now carries the registry's config.
+        // non-public: private[openfeature]
+        ProblemMatcher.make("zio.openfeature.FeatureFlagRegistryLive.<init>")
       )
     ))
   )

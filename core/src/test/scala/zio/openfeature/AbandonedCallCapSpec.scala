@@ -298,8 +298,11 @@ object AbandonedCallCapSpec extends ZIOSpecDefault {
             .fromAcquireAsync(
               acquire = ZIO.never,
               fallback = ZIO.succeed(p),
-              evaluationTimeout = 50.millis,
-              maxAbandonedCalls = 1
+              FeatureFlagsConfig(
+                evaluationTimeout = EvaluationTimeout.After(50.millis),
+                maxAbandonedCalls = 1
+              ),
+              AcquireConfig.default
             )
             .build
             .map(_.get[FeatureFlags])
@@ -312,7 +315,14 @@ object AbandonedCallCapSpec extends ZIOSpecDefault {
       val fallback: URIO[Scope, FeatureProvider] = ZIO.succeed(new GatedProvider)
       val config                                 = scala.util.Try(FeatureFlagsConfig(maxAbandonedCalls = 0))
       val setter                                 = scala.util.Try(FeatureFlagsConfig().withMaxAbandonedCalls(-1))
-      val acquire = scala.util.Try(FeatureFlags.fromAcquireAsync(ZIO.never, fallback, maxAbandonedCalls = 0))
+      val acquire                                = scala.util.Try(
+        FeatureFlags.fromAcquireAsync(
+          ZIO.never,
+          fallback,
+          FeatureFlagsConfig(maxAbandonedCalls = 0),
+          AcquireConfig.default
+        )
+      )
       val default = FeatureFlagsConfig().maxAbandonedCalls
       assertTrue(
         config.failed.toOption.exists(_.isInstanceOf[IllegalArgumentException]),

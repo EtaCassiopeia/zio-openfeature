@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`fromAcquireAsync` and `FeatureFlagRegistry` take a `FeatureFlagsConfig`** (#654). `fromAcquireAsync(acquire,
+  fallback, config, acquireConfig)` reads what every instance takes from the config, now including domain, version,
+  initial hooks and API ownership, which this path could not set before. The settings only it takes go in the new
+  `AcquireConfig` (`withVerify`, `withCompose`, `withConstructionRetry`, `withConstructionTimeout`, `withOnSwapped`,
+  `withOnConstructionError`). `fromAcquireAsync(acquire, fallback)` and `(acquire, fallback, config)` use the
+  defaults. `FeatureFlagRegistry.fromProvider(defaultProvider, config)` applies the config to every client.
+  **Deprecated:** the 13-parameter `fromAcquireAsync`. Its `evaluationTimeout`, `initTimeout`, `contextSource`,
+  `fallbackLogging` and `maxAbandonedCalls` are `FeatureFlagsConfig` fields; the rest are `AcquireConfig` settings.
+
 - **`FeatureFlagError` by operation, and as a `Throwable`** (#653). Each case also extends one or more of the sealed
   `FeatureFlagError.EvaluationError`, `LifecycleError` and `TransactionError`, by the operations that raise it; the
   methods still declare `FeatureFlagError`, so nothing that matches on it changes. `toThrowable` (and

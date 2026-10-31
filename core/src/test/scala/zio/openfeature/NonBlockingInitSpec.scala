@@ -107,8 +107,10 @@ object NonBlockingInitSpec extends ZIOSpecDefault {
             .fromAcquireAsync(
               acquire,
               fallback,
-              constructionRetry = Schedule.recurs(2), // no delay, fail fast after 3 attempts
-              onConstructionError = e => errP.succeed(e).unit
+              FeatureFlagsConfig(),
+              AcquireConfig.default
+                .withConstructionRetry(Schedule.recurs(2)) // no delay, fail fast after 3 attempts
+                .withOnConstructionError(e => errP.succeed(e).unit)
             )
             .build
             .map(_.get[FeatureFlags])
@@ -135,7 +137,14 @@ object NonBlockingInitSpec extends ZIOSpecDefault {
         errP   <- Promise.make[Nothing, Throwable]
         result <- ZIO.scoped {
           FeatureFlags
-            .fromAcquireAsync(acquire, fallback, compose = badCompose, onConstructionError = e => errP.succeed(e).unit)
+            .fromAcquireAsync(
+              acquire,
+              fallback,
+              FeatureFlagsConfig(),
+              AcquireConfig.default
+                .withCompose(badCompose)
+                .withOnConstructionError(e => errP.succeed(e).unit)
+            )
             .build
             .map(_.get[FeatureFlags])
             .flatMap { ff =>
@@ -174,7 +183,13 @@ object NonBlockingInitSpec extends ZIOSpecDefault {
       for {
         _ <- ZIO.scoped {
           FeatureFlags
-            .fromAcquireAsync(acquire, fallback, compose = (_, _) => composed)
+            .fromAcquireAsync(
+              acquire,
+              fallback,
+              FeatureFlagsConfig(),
+              AcquireConfig.default
+                .withCompose((_, _) => composed)
+            )
             .build *>
             ZIO.attemptBlocking(entered.await(10, java.util.concurrent.TimeUnit.SECONDS)) <*
             // Released only once the scope has started closing, from outside it.
@@ -272,8 +287,17 @@ object NonBlockingInitSpec extends ZIOSpecDefault {
               ffPromise.await.flatMap(ff => ff.boolean("x", true).either.flatMap(v => duringVerify.set(Some(v)))) *>
               release.await
           for {
-            ff <- FeatureFlags.fromAcquireAsync(acquire, fallback, verify = verify).build.map(_.get[FeatureFlags])
-            _  <- ffPromise.succeed(ff)
+            ff <- FeatureFlags
+              .fromAcquireAsync(
+                acquire,
+                fallback,
+                FeatureFlagsConfig(),
+                AcquireConfig.default
+                  .withVerify(verify)
+              )
+              .build
+              .map(_.get[FeatureFlags])
+            _ <- ffPromise.succeed(ff)
             // While verify is blocked the fallback still serves and status is Ready (edge case d).
             _       <- Live.live(seen.get.repeatUntil(_.isDefined).timeout(5.seconds))
             pre     <- ff.boolean("x", true)
@@ -311,9 +335,11 @@ object NonBlockingInitSpec extends ZIOSpecDefault {
             .fromAcquireAsync(
               acquire,
               fallback,
-              constructionRetry = Schedule.recurs(2), // 3 attempts, no delay
-              onConstructionError = e => errP.succeed(e).unit,
-              verify = verify
+              FeatureFlagsConfig(),
+              AcquireConfig.default
+                .withConstructionRetry(Schedule.recurs(2)) // 3 attempts, no delay
+                .withOnConstructionError(e => errP.succeed(e).unit)
+                .withVerify(verify)
             )
             .build
             .map(_.get[FeatureFlags])
@@ -354,7 +380,14 @@ object NonBlockingInitSpec extends ZIOSpecDefault {
             .unit
         liveCounts <- ZIO.scoped {
           FeatureFlags
-            .fromAcquireAsync(acquire, fallback, constructionRetry = Schedule.recurs(5), verify = verify)
+            .fromAcquireAsync(
+              acquire,
+              fallback,
+              FeatureFlagsConfig(),
+              AcquireConfig.default
+                .withConstructionRetry(Schedule.recurs(5))
+                .withVerify(verify)
+            )
             .build
             .map(_.get[FeatureFlags])
             .flatMap { ff =>
@@ -391,9 +424,11 @@ object NonBlockingInitSpec extends ZIOSpecDefault {
             .fromAcquireAsync(
               ZIO.succeed(new LazyProvider(known): FeatureProvider),
               fallback,
-              constructionRetry = Schedule.recurs(1),
-              onConstructionError = e => errP.succeed(e).unit,
-              verify = Verify.flagExists[Boolean]("kill-switch")
+              FeatureFlagsConfig(),
+              AcquireConfig.default
+                .withConstructionRetry(Schedule.recurs(1))
+                .withOnConstructionError(e => errP.succeed(e).unit)
+                .withVerify(Verify.flagExists[Boolean]("kill-switch"))
             )
             .build
             .map(_.get[FeatureFlags])
@@ -405,7 +440,9 @@ object NonBlockingInitSpec extends ZIOSpecDefault {
             .fromAcquireAsync(
               ZIO.succeed(new LazyProvider(known): FeatureProvider),
               fallback,
-              verify = Verify.flagExists[Boolean]("kill-switch")
+              FeatureFlagsConfig(),
+              AcquireConfig.default
+                .withVerify(Verify.flagExists[Boolean]("kill-switch"))
             )
             .build
             .map(_.get[FeatureFlags])
@@ -430,9 +467,19 @@ object NonBlockingInitSpec extends ZIOSpecDefault {
           )
         verify = (_: FeatureProvider) => verifying.succeed(()) *> ZIO.never
         _ <- ZIO.scoped {
-          FeatureFlags.fromAcquireAsync(acquire, fallback, verify = verify).build.map(_.get[FeatureFlags]).flatMap { _ =>
-            verifying.await // close the layer while verify is blocked
-          }
+          FeatureFlags
+            .fromAcquireAsync(
+              acquire,
+              fallback,
+              FeatureFlagsConfig(),
+              AcquireConfig.default
+                .withVerify(verify)
+            )
+            .build
+            .map(_.get[FeatureFlags])
+            .flatMap { _ =>
+              verifying.await // close the layer while verify is blocked
+            }
         }
         _ <- Live.live(
           releasedP.await.timeoutFail(new RuntimeException("candidate was not released on layer close"))(5.seconds)
@@ -456,7 +503,14 @@ object NonBlockingInitSpec extends ZIOSpecDefault {
           )
         liveCount <- ZIO.scoped {
           FeatureFlags
-            .fromAcquireAsync(acquire, fallback, compose = badCompose, onConstructionError = e => errP.succeed(e).unit)
+            .fromAcquireAsync(
+              acquire,
+              fallback,
+              FeatureFlagsConfig(),
+              AcquireConfig.default
+                .withCompose(badCompose)
+                .withOnConstructionError(e => errP.succeed(e).unit)
+            )
             .build
             .map(_.get[FeatureFlags])
             .flatMap(_ => errP.await *> released.get)
@@ -481,10 +535,12 @@ object NonBlockingInitSpec extends ZIOSpecDefault {
               .fromAcquireAsync(
                 acquire,
                 fallback,
-                constructionRetry = Schedule.recurs(1), // 2 attempts
-                constructionTimeout = 200.millis,
-                onConstructionError = e => errP.succeed(e).unit,
-                verify = verify
+                FeatureFlagsConfig(),
+                AcquireConfig.default
+                  .withConstructionRetry(Schedule.recurs(1)) // 2 attempts
+                  .withConstructionTimeout(200.millis)
+                  .withOnConstructionError(e => errP.succeed(e).unit)
+                  .withVerify(verify)
               )
               .build
               .map(_.get[FeatureFlags])
@@ -518,7 +574,9 @@ object NonBlockingInitSpec extends ZIOSpecDefault {
               .fromAcquireAsync(
                 acquire,
                 fallback,
-                onSwapped = statusP.await.flatMap(_.get).flatMap(seenInSwapped.succeed(_)).unit
+                FeatureFlagsConfig(),
+                AcquireConfig.default
+                  .withOnSwapped(statusP.await.flatMap(_.get).flatMap(seenInSwapped.succeed(_)).unit)
               )
               .build
             ff     = env.get[FeatureFlags]
@@ -559,7 +617,14 @@ object NonBlockingInitSpec extends ZIOSpecDefault {
               statusP.await.flatMap(_.get).flatMap(s => seen.update(s :: _)) *>
                 ZIO.fail(new RuntimeException("reject")).unless(p.getMetadata.getName == "real-3").unit
             env <- FeatureFlags
-              .fromAcquireAsync(acquire, fallback, constructionRetry = Schedule.recurs(5), verify = verify)
+              .fromAcquireAsync(
+                acquire,
+                fallback,
+                FeatureFlagsConfig(),
+                AcquireConfig.default
+                  .withConstructionRetry(Schedule.recurs(5))
+                  .withVerify(verify)
+              )
               .build
             status = env.get[AcquireStatus]
             _      <- statusP.succeed(status)
@@ -589,8 +654,10 @@ object NonBlockingInitSpec extends ZIOSpecDefault {
               .fromAcquireAsync(
                 acquire,
                 fallback,
-                constructionRetry = Schedule.recurs(2),
-                onConstructionError = e => statusP.await.flatMap(_.get).flatMap(s => inCb.succeed((e, s))).unit
+                FeatureFlagsConfig(),
+                AcquireConfig.default
+                  .withConstructionRetry(Schedule.recurs(2))
+                  .withOnConstructionError(e => statusP.await.flatMap(_.get).flatMap(s => inCb.succeed((e, s))).unit)
               )
               .build
             status = env.get[AcquireStatus]
@@ -627,8 +694,10 @@ object NonBlockingInitSpec extends ZIOSpecDefault {
               .fromAcquireAsync(
                 acquire,
                 fallback,
-                compose = badCompose,
-                onConstructionError = e => errP.succeed(e).unit
+                FeatureFlagsConfig(),
+                AcquireConfig.default
+                  .withCompose(badCompose)
+                  .withOnConstructionError(e => errP.succeed(e).unit)
               )
               .build
             err   <- errP.await
@@ -653,9 +722,11 @@ object NonBlockingInitSpec extends ZIOSpecDefault {
             .fromAcquireAsync(
               acquire,
               fallback,
-              constructionRetry = Schedule.recurs(2),
-              onConstructionError = e => errP.succeed(e).unit,
-              verify = (_: FeatureProvider) => ZIO.fail(verifyErr)
+              FeatureFlagsConfig(),
+              AcquireConfig.default
+                .withConstructionRetry(Schedule.recurs(2))
+                .withOnConstructionError(e => errP.succeed(e).unit)
+                .withVerify((_: FeatureProvider) => ZIO.fail(verifyErr))
             )
             .build
             .flatMap { env =>
@@ -678,7 +749,13 @@ object NonBlockingInitSpec extends ZIOSpecDefault {
         errP   <- Promise.make[Nothing, Throwable]
         result <- ZIO.scoped {
           FeatureFlags
-            .fromAcquireAsync(acquire, fallback, onConstructionError = e => errP.succeed(e).unit)
+            .fromAcquireAsync(
+              acquire,
+              fallback,
+              FeatureFlagsConfig(),
+              AcquireConfig.default
+                .withOnConstructionError(e => errP.succeed(e).unit)
+            )
             .build
             .flatMap { env =>
               for {

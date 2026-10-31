@@ -318,6 +318,29 @@ private[openfeature] object FeatureFlagsFactories {
       _ <- statusRef.fold(ff.seedStatus(verified))(_ => ZIO.unit)
     } yield ff
 
+  // How a `FeatureFlagsConfig` reads on every config-driven path (`fromProvider`, `fromAcquireAsync`), in one place.
+
+  private[openfeature] def evaluationTimeoutOf(config: FeatureFlagsConfig): Option[Duration] =
+    config.evaluationTimeout match {
+      case EvaluationTimeout.Default  => Some(DefaultEvaluationTimeout)
+      case EvaluationTimeout.Disabled => None
+      case EvaluationTimeout.After(d) => Some(d)
+    }
+
+  private def ownsApiOf(config: FeatureFlagsConfig): Boolean = config.apiOwnership match {
+    case ApiOwnership.Auto     => config.domain.isEmpty
+    case ApiOwnership.Owned    => true
+    case ApiOwnership.Shared   => false
+    case ApiOwnership.Isolated => true
+  }
+
+  // An isolated instance gets a private API of its own, unless the package-private override names one.
+  private def apiOverrideOf(config: FeatureFlagsConfig, apiOverride: Option[OpenFeatureAPI]): Option[OpenFeatureAPI] =
+    config.apiOwnership match {
+      case ApiOwnership.Isolated => apiOverride.orElse(Some(OpenFeatureAPI.createIsolated()))
+      case _                     => apiOverride
+    }
+
   def fromProvider(
     provider: OFFeatureProvider,
     config: FeatureFlagsConfig,
@@ -326,22 +349,9 @@ private[openfeature] object FeatureFlagsFactories {
     onReady: Option[java.util.concurrent.CountDownLatch] = None
   ): ZLayer[Any, Throwable, FeatureFlags] =
     ZLayer.scoped {
-      val evalTimeout = config.evaluationTimeout match {
-        case EvaluationTimeout.Default  => Some(DefaultEvaluationTimeout)
-        case EvaluationTimeout.Disabled => None
-        case EvaluationTimeout.After(d) => Some(d)
-      }
-      // An isolated instance gets a private API of its own, unless the package-private override names one.
-      val resolvedApi = config.apiOwnership match {
-        case ApiOwnership.Isolated => apiOverride.orElse(Some(OpenFeatureAPI.createIsolated()))
-        case _                     => apiOverride
-      }
-      val ownsApi = config.apiOwnership match {
-        case ApiOwnership.Auto     => config.domain.isEmpty
-        case ApiOwnership.Owned    => true
-        case ApiOwnership.Shared   => false
-        case ApiOwnership.Isolated => true
-      }
+      val evalTimeout = evaluationTimeoutOf(config)
+      val resolvedApi = apiOverrideOf(config, apiOverride)
+      val ownsApi     = ownsApiOf(config)
       config.initMode match {
         // The `WithTracking` variants, not `build`/`buildAsync`: those keep their released signatures (they are
         // package-private but compiled into the published testkit), so newer knobs like `maxAbandonedCalls`
@@ -546,21 +556,21 @@ private[openfeature] object FeatureFlagsFactories {
       )
     )
 
+  /** `config.initMode` does not apply: the fallback is installed at once and the real provider always arrives later. */
   def fromAcquireAsync(
     acquire: RIO[Scope, OFFeatureProvider],
     fallback: URIO[Scope, OFFeatureProvider],
-    compose: (OFFeatureProvider, OFFeatureProvider) => OFFeatureProvider,
-    constructionRetry: Schedule[Any, Throwable, Any],
-    constructionTimeout: Duration,
-    onConstructionError: Throwable => UIO[Unit],
-    evaluationTimeout: Duration,
-    initTimeout: Duration,
-    contextSource: ContextSource,
-    verify: OFFeatureProvider => Task[Unit],
-    onSwapped: UIO[Unit],
-    fallbackLogging: FallbackLogging,
-    maxAbandonedCalls: Int
+    config: FeatureFlagsConfig,
+    acquireConfig: AcquireConfig
   ): URLayer[Any, FeatureFlags with AcquireStatus] = {
+    val compose             = acquireConfig.compose
+    val constructionRetry   = acquireConfig.constructionRetry
+    val constructionTimeout = acquireConfig.constructionTimeout
+    val onConstructionError = acquireConfig.onConstructionError
+    val verify              = acquireConfig.verify
+    val onSwapped           = acquireConfig.onSwapped
+    val initTimeout         = config.initTimeout
+    val maxAbandonedCalls   = config.maxAbandonedCalls
     require(maxAbandonedCalls >= 1, s"maxAbandonedCalls must be at least 1, got $maxAbandonedCalls")
     // `scopedEnvironment` rather than `scoped`: the layer emits two services, and only an explicit ZEnvironment can
     // carry an intersection.
@@ -575,15 +585,16 @@ private[openfeature] object FeatureFlagsFactories {
         state <- SubscriptionRef.make[AcquireState](AcquireState.Constructing)
         ff    <- buildWithTracking(
           switch,
-          domain = None,
-          version = None,
-          initialHooks = Nil,
+          domain = config.domain,
+          version = config.version,
+          initialHooks = config.initialHooks,
           statusRef = None,
-          addShutdownFinalizer = true,
-          evaluationTimeout = Some(evaluationTimeout),
+          addShutdownFinalizer = ownsApiOf(config),
+          apiOverride = apiOverrideOf(config, None),
+          evaluationTimeout = evaluationTimeoutOf(config),
           initTimeout = initTimeout,
-          contextSource = contextSource,
-          fallbackLogging = fallbackLogging,
+          contextSource = config.contextSource,
+          fallbackLogging = config.fallbackLogging,
           maxAbandonedCalls = maxAbandonedCalls
         ).orDie
         // One attempt = acquire, then verify the candidate, inside a child scope of the layer scope. The child scope

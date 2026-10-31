@@ -74,9 +74,11 @@ object Providers:
     FeatureFlags.fromAcquireAsync(
       acquire = ZIO.attemptBlocking(buildRealProvider()),
       fallback = ZIO.succeed(EnvVarProvider()), // a fresh instance each time it runs
-      verify = Verify.flagExists[Boolean]("kill-switch"),
-      onSwapped = ZIO.logInfo("real provider is live"),
-      onConstructionError = e => ZIO.logWarning(s"staying on env vars: ${e.getMessage}")
+      config = FeatureFlagsConfig(),         // what every instance takes
+      acquireConfig = AcquireConfig.default // what only this path takes
+        .withVerify(Verify.flagExists[Boolean]("kill-switch"))
+        .withOnSwapped(ZIO.logInfo("real provider is live"))
+        .withOnConstructionError(e => ZIO.logWarning(s"staying on env vars: ${e.getMessage}"))
     )
   // --8<-- [end:acquire]
 

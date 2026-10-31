@@ -91,6 +91,13 @@ final class HoconProvider private (
     case d: java.lang.Double                                                                 => d.doubleValue
   }
 
+  // `hasPath` parses its argument as a HOCON path and throws for a key that is not one (`a:b`, `flag@v2`, an empty
+  // element); such a key cannot be present, so it is not found like any other absent key. A dotted key still reads a
+  // nested path.
+  private def present(key: String): Boolean =
+    try config.hasPath(key)
+    catch { case _: ConfigException.BadPath => false }
+
   /** A key this config does not contain is `FLAG_NOT_FOUND`, not a `DEFAULT`-reason answer.
     *
     * That is what lets a `MultiProvider` chain distinguish "not configured here" from "configured to this value" and
@@ -112,7 +119,7 @@ final class HoconProvider private (
     defaultValue: java.lang.Boolean,
     context: OFEvaluationContext
   ): ProviderEvaluation[java.lang.Boolean] =
-    if (config.hasPath(key))
+    if (present(key))
       ProviderEvaluations.of(java.lang.Boolean.valueOf(typedRead(key, config.getBoolean(key))), "STATIC")
     else
       notFound(key, defaultValue)
@@ -122,7 +129,7 @@ final class HoconProvider private (
     defaultValue: String,
     context: OFEvaluationContext
   ): ProviderEvaluation[String] =
-    if (config.hasPath(key))
+    if (present(key))
       ProviderEvaluations.of(typedRead(key, config.getString(key)), "STATIC")
     else
       notFound(key, defaultValue)
@@ -132,7 +139,7 @@ final class HoconProvider private (
     defaultValue: java.lang.Integer,
     context: OFEvaluationContext
   ): ProviderEvaluation[java.lang.Integer] =
-    if (config.hasPath(key))
+    if (present(key))
       ProviderEvaluations.of(java.lang.Integer.valueOf(exactNumber(key, "an int")(asInt)), "STATIC")
     else
       notFound(key, defaultValue)
@@ -142,7 +149,7 @@ final class HoconProvider private (
     defaultValue: java.lang.Long,
     context: OFEvaluationContext
   ): ProviderEvaluation[java.lang.Long] =
-    if (config.hasPath(key))
+    if (present(key))
       ProviderEvaluations.of(java.lang.Long.valueOf(exactNumber(key, "a long")(asLong)), "STATIC")
     else
       notFound(key, defaultValue)
@@ -152,7 +159,7 @@ final class HoconProvider private (
     defaultValue: java.lang.Double,
     context: OFEvaluationContext
   ): ProviderEvaluation[java.lang.Double] =
-    if (config.hasPath(key))
+    if (present(key))
       ProviderEvaluations.of(java.lang.Double.valueOf(exactNumber(key, "a double")(asDouble)), "STATIC")
     else
       notFound(key, defaultValue)
@@ -162,7 +169,7 @@ final class HoconProvider private (
     defaultValue: Value,
     context: OFEvaluationContext
   ): ProviderEvaluation[Value] =
-    if (config.hasPath(key)) {
+    if (present(key)) {
       val value = typedRead(key, configValueToSdkValue(config.getValue(key)))
       ProviderEvaluations.of(value, "STATIC")
     } else

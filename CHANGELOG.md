@@ -264,6 +264,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   read served from the transaction's cache carried `variant = None` and empty flag metadata, so exposure logging and
   `after` hooks keyed on the variant lost it on every read after the first. It is now the first read's resolution
   re-labelled `Cached`.
+- **`HoconProvider` answers `FLAG_NOT_FOUND` for a key that is not a HOCON path, instead of throwing** (#643). A key such
+  as `flag@v2`, `a:b` or `a..b` made Typesafe Config's `hasPath` throw `BadPath`, which the SDK reported as `GENERAL`:
+  a first-match provider chain stopped at it, and under `CircuitBreakerProvider` repeated reads of one such key opened
+  the circuit around purely local config. Such a key is now not found, like any absent one; dotted keys still read a
+  nested path.
 
 ## [1.2.1] — 2026-10-28
 

@@ -51,7 +51,9 @@ feature-flags {
 - A value of the wrong type is a `TypeMismatch`; one Typesafe Config cannot parse is a `ParseError`. HOCON has one
   number type, so an int read accepts any number whose value survives (`2.0` is `2`, `1.5` is a `TypeMismatch`), and
   Typesafe's conversions apply (`"42"` parses).
-- An absent key is `FLAG_NOT_FOUND`, so a [provider chain](providers.md#ask-several-providers-in-order) moves on.
+- An absent key is `FLAG_NOT_FOUND`, so a [provider chain](providers.md#ask-several-providers-in-order) moves on. So is a
+  key with a character HOCON reserves in a path (`:`, `@`, `#`, `$`, `,`, `=`, brackets, quotes) or an empty element
+  (`a..b`): it cannot be present.
 
 !!! warning "A missing path is silent"
     If the `path` you pass to `HoconProvider(path)` does not exist, the provider starts empty: every flag is

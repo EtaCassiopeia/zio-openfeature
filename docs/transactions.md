@@ -64,8 +64,9 @@ flag changes meanwhile.
 ??? note "Caching details"
     - The cache is keyed by flag key only: a second read with a different context gets the cached value.
     - An answer that carries an error code (such as `FLAG_NOT_FOUND`) is recorded but never served from the cache.
-    - A key read again as another type is served from the cache when the cached value converts (an `Int` read as a
-      `Long`), and from the provider otherwise.
+    - A key read again as another type is served from the cache only when both reads are numeric and the cached value
+      converts (an `Int` read as a `Long`). A value cached as a `String` is never served to a `Boolean` or numeric read,
+      nor the reverse: those go to the provider, which answers as it would outside a transaction.
 
 ## What a transaction returns
 

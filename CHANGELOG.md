@@ -93,6 +93,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Documentation
 
+- **Lifecycle design record** (#696). `docs/design/lifecycle.md` records how the provider lifecycle is built and why,
+  the changes that got it here and what each taught, the options weighed for the managed-registration redesign, and
+  its status. Linked from "Under the hood".
 - **Getting started no longer says the typed getter serves the default** (#649). The first example now uses
   `booleanOrDefault`, and the getting-started text, the `FlagDef` ScalaDoc and the typed getters' docs say that on the
   typed tier `default` is passed to the provider and hooks but not served on failure.

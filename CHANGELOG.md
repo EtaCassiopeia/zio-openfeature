@@ -287,6 +287,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   was already serving, and the swap's cleanup shut it down and released the acquired provider; the API's shutdown then
   shut it down again. The swap, including that bounded shutdown, is now uninterruptible. The docs also say that a
   provider the async init watchdog shut down is shut down again by the SDK when the instance shuts down.
+- **A transaction's cache no longer serves a cached `String` to a `Boolean` or numeric read of the same key** (#639).
+  The cache-hit check relied on the type's decoder, which also accepts `"true"` or `"42"` for an override's sake, so
+  inside a transaction such a read was served the string's value with reason `Cached`, where the provider answers
+  `TYPE_MISMATCH` outside one. A key read again as another type is now served from the cache only when both reads are
+  numeric and the value converts; otherwise the provider answers.
 
 ## [1.2.1] — 2026-10-28
 

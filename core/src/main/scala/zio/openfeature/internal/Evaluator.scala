@@ -156,8 +156,14 @@ final private[openfeature] class Evaluator(
             // domain value would not decode (decode is wire → domain), and that is what used to make the cache miss on
             // every read for such types. A `Left` now means a genuine cross-type read of the same key (cached as
             // Boolean, re-read as String): not an error, just not servable from the cache. A hit is the recorded
-            // resolution re-labelled `Cached`, so it keeps the provider's variant and flag metadata.
-            flagType.decode(cached.wire) match {
+            // resolution re-labelled `Cached`, so it keeps the provider's variant and flag metadata. The decoders accept
+            // a numeric or boolean string (an override may be one), so the wire value is first checked against the
+            // resolver this read would call: a string the provider served is never a boolean or a number to it.
+            (if (Evaluator.servableAs(cached.wire, flagType.wire)) flagType.decode(cached.wire)
+             else
+               Left(
+                 s"cached as ${cached.wire.getClass.getSimpleName}, not from the ${flagType.wire.name} resolver"
+               )) match {
               case Right(decoded) =>
                 val prior = cached.evaluation.resolution
                 ZIO.succeed(
@@ -500,6 +506,19 @@ final private[openfeature] class Evaluator(
 }
 
 private[openfeature] object Evaluator {
+
+  /** Whether a wire value cached by one read could have come from the resolver `target` selects: the same scalar box,
+    * or any number for a numeric read (the decoder then judges the range). `Object` reads, and a cached `null`, are
+    * left to the decoder.
+    */
+  def servableAs(wire: Any, target: WireType): Boolean = (wire, target) match {
+    case (null, _)                                                                              => true
+    case (_, WireType.Object)                                                                   => true
+    case (_: java.lang.Boolean, WireType.Boolean)                                               => true
+    case (_: java.lang.String, WireType.String)                                                 => true
+    case (_: java.lang.Number, WireType.Int | WireType.Long | WireType.Float | WireType.Double) => true
+    case _                                                                                      => false
+  }
 
   private[openfeature] def toResolutionReason(reason: String): ResolutionReason =
     Option(reason) match {

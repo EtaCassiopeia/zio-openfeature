@@ -4,7 +4,7 @@ import zio._
 import zio.test._
 import zio.test.TestAspect.withLiveClock
 import zio.openfeature.internal.ProviderEvaluations
-import dev.openfeature.sdk.{EvaluationContext => OFEvaluationContext, FeatureProvider, Metadata, OpenFeatureAPI, Value}
+import dev.openfeature.sdk.{EvaluationContext => OFEvaluationContext, FeatureProvider, Metadata, Value}
 
 /** [[FeatureFlagsAdmin]] administers the [[FeatureFlags]] a factory built, added with `>+> FeatureFlagsAdmin.layer`;
   * the factories' own layer types are unchanged.
@@ -19,7 +19,8 @@ object FeatureFlagsAdminSpec extends ZIOSpecDefault {
     override def getMetadata: Metadata = new Metadata { override def getName: String = name }
     override def getBooleanEvaluation(k: String, d: java.lang.Boolean, c: OFEvaluationContext) =
       ProviderEvaluations.of[java.lang.Boolean](java.lang.Boolean.valueOf(value), "STATIC")
-    override def getStringEvaluation(k: String, d: String, c: OFEvaluationContext) = ProviderEvaluations.of(d, "DEFAULT")
+    override def getStringEvaluation(k: String, d: String, c: OFEvaluationContext) =
+      ProviderEvaluations.of(d, "DEFAULT")
     override def getIntegerEvaluation(k: String, d: java.lang.Integer, c: OFEvaluationContext) =
       ProviderEvaluations.of(d, "DEFAULT")
     override def getDoubleEvaluation(k: String, d: java.lang.Double, c: OFEvaluationContext) =
@@ -56,7 +57,11 @@ object FeatureFlagsAdminSpec extends ZIOSpecDefault {
       for {
         _ <- admin.setProvider(provider)
         _ <- admin.shutdown
-      } yield assertTrue(stub.installed.get() eq provider, stub.shutdowns.get() == 1, !(admin.asInstanceOf[AnyRef] eq stub))
+      } yield assertTrue(
+        stub.installed.get() eq provider,
+        stub.shutdowns.get() == 1,
+        !(admin.asInstanceOf[AnyRef] eq stub)
+      )
     },
     test("a factory's layer still has its 1.2 type: build.map(_.get) needs no type argument") {
       ZIO.scoped {
@@ -81,7 +86,7 @@ object FeatureFlagsAdminSpec extends ZIOSpecDefault {
     val shutdowns = new java.util.concurrent.atomic.AtomicInteger(0)
 
     override def setProvider(p: FeatureProvider): IO[FeatureFlagError, Unit] = ZIO.succeed(installed.set(p))
-    override def shutdown: UIO[Unit]                                          = ZIO.succeed(shutdowns.incrementAndGet()).unit
+    override def shutdown: UIO[Unit] = ZIO.succeed(shutdowns.incrementAndGet()).unit
 
     override def booleanDetails(k: String, d: Boolean, ctx: EvaluationContext, o: EvaluationOptions)      = ???
     override def stringDetails(k: String, d: String, ctx: EvaluationContext, o: EvaluationOptions)        = ???
@@ -90,11 +95,11 @@ object FeatureFlagsAdminSpec extends ZIOSpecDefault {
     override def doubleDetails(k: String, d: Double, ctx: EvaluationContext, o: EvaluationOptions)        = ???
     override def objDetails(k: String, d: Map[String, Any], ctx: EvaluationContext, o: EvaluationOptions) = ???
     override def valueDetails[A: FlagType](k: String, d: A, ctx: EvaluationContext, o: EvaluationOptions) = ???
-    override def setGlobalContext(ctx: EvaluationContext): UIO[Unit]                           = ???
-    override def globalContext: UIO[EvaluationContext]                                         = ???
-    override def setClientContext(ctx: EvaluationContext): UIO[Unit]                           = ???
-    override def clientContext: UIO[EvaluationContext]                                         = ???
-    override def withContext[R, E, A](ctx: EvaluationContext)(zio: ZIO[R, E, A]): ZIO[R, E, A] = ???
+    override def setGlobalContext(ctx: EvaluationContext): UIO[Unit]                                      = ???
+    override def globalContext: UIO[EvaluationContext]                                                    = ???
+    override def setClientContext(ctx: EvaluationContext): UIO[Unit]                                      = ???
+    override def clientContext: UIO[EvaluationContext]                                                    = ???
+    override def withContext[R, E, A](ctx: EvaluationContext)(zio: ZIO[R, E, A]): ZIO[R, E, A]            = ???
     override def transaction[R, E, A](o: Map[String, Any], c: EvaluationContext, ce: Boolean, n: NestedPolicy)(
       zio: ZIO[R, E, A]
     ): ZIO[R, _root_.zio.openfeature.internal.Compat.OrError[E, FeatureFlagError], TransactionResult[A]] = ???
@@ -103,7 +108,7 @@ object FeatureFlagsAdminSpec extends ZIOSpecDefault {
     ): ZIO[R, Either[E, FeatureFlagError], TransactionResult[A]]                                         = ???
     override def inTransaction: UIO[Boolean]                                                             = ???
     override def currentEvaluatedFlags: UIO[Map[String, FlagEvaluation[_]]]                              = ???
-    override def events: zio.stream.ZStream[Any, Nothing, ProviderEvent]                                = ???
+    override def events: zio.stream.ZStream[Any, Nothing, ProviderEvent]                                 = ???
     override def providerStatus: UIO[ProviderStatus]                                                     = ???
     override def awaitReady(within: Duration): UIO[ProviderStatus]                                       = ???
     override def providerMetadata: UIO[ProviderMetadata]                                                 = ???
@@ -126,7 +131,11 @@ object FeatureFlagsAdminSpec extends ZIOSpecDefault {
     override def track(eventName: String): IO[FeatureFlagError, Unit]                                    = ???
     override def track(eventName: String, context: EvaluationContext): IO[FeatureFlagError, Unit]        = ???
     override def track(eventName: String, details: TrackingEventDetails): IO[FeatureFlagError, Unit]     = ???
-    override def track(eventName: String, context: EvaluationContext, details: TrackingEventDetails): IO[FeatureFlagError, Unit] =
+    override def track(
+      eventName: String,
+      context: EvaluationContext,
+      details: TrackingEventDetails
+    ): IO[FeatureFlagError, Unit] =
       ???
   }
 }

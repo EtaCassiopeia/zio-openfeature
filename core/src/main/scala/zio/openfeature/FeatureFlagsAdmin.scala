@@ -145,14 +145,14 @@ object FeatureFlagsAdmin {
       ff.onConfigurationChanged(handler)
     def on(eventType: ProviderEventType, handler: ProviderEvent => UIO[Unit]): UIO[UIO[Unit]] =
       ff.on(eventType, handler)
-    def addZioApiHook(hook: FeatureHook): UIO[Unit]                   = ff.addZioApiHook(hook)
-    def addZioApiHooks(hooks: List[FeatureHook]): UIO[Unit]           = ff.addZioApiHooks(hooks)
-    def clearZioApiHooks: UIO[Unit]                                   = ff.clearZioApiHooks
-    def zioApiHooks: UIO[List[FeatureHook]]                           = ff.zioApiHooks
-    def addApiHook(hook: dev.openfeature.sdk.Hook[_]): UIO[Unit]      = ff.addApiHook(hook)
-    def clearApiHooks: UIO[Unit]                                      = ff.clearApiHooks
+    def addZioApiHook(hook: FeatureHook): UIO[Unit]                          = ff.addZioApiHook(hook)
+    def addZioApiHooks(hooks: List[FeatureHook]): UIO[Unit]                  = ff.addZioApiHooks(hooks)
+    def clearZioApiHooks: UIO[Unit]                                          = ff.clearZioApiHooks
+    def zioApiHooks: UIO[List[FeatureHook]]                                  = ff.zioApiHooks
+    def addApiHook(hook: dev.openfeature.sdk.Hook[_]): UIO[Unit]             = ff.addApiHook(hook)
+    def clearApiHooks: UIO[Unit]                                             = ff.clearApiHooks
     def setProvider(provider: OFFeatureProvider): IO[FeatureFlagError, Unit] = ff.setProvider(provider)
-    def shutdown: UIO[Unit]                                           = ff.shutdown
+    def shutdown: UIO[Unit]                                                  = ff.shutdown
   }
 
   // Service accessors

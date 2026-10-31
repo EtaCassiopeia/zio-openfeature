@@ -25,7 +25,7 @@ object Lifecycle:
   // --8<-- [end:not-ready]
 
   // --8<-- [start:handlers]
-  val watchProvider: URIO[FeatureFlags, UIO[Unit]] =
+  val watchProvider: URIO[FeatureFlagsAdmin, UIO[Unit]] =
     for
       onReady  <- FeatureFlagsAdmin.onProviderReady(meta => ZIO.logInfo(s"${meta.name} is ready"))
       onError  <- FeatureFlagsAdmin.onProviderError((error, meta) => ZIO.logError(s"${meta.name}: ${error.getMessage}"))
@@ -37,7 +37,7 @@ object Lifecycle:
 
   // --8<-- [start:scoped-handler]
   // The handler is unsubscribed when the scope closes, even if the body fails
-  def readyWhileScoped(onReady: ProviderMetadata => UIO[Unit]): ZIO[FeatureFlags, Nothing, Unit] =
+  def readyWhileScoped(onReady: ProviderMetadata => UIO[Unit]): ZIO[FeatureFlagsAdmin, Nothing, Unit] =
     ZIO.scoped {
       ZIO.acquireRelease(FeatureFlagsAdmin.onProviderReady(onReady))(cancel => cancel) *>
         ZIO.logInfo("handling events") // the work that needs the handler goes here
@@ -60,5 +60,5 @@ object Lifecycle:
 
   // --8<-- [start:shutdown]
   // Also runs on its own when the layer's scope closes
-  val stop: URIO[FeatureFlags, Unit] = FeatureFlagsAdmin.shutdown
+  val stop: URIO[FeatureFlagsAdmin, Unit] = FeatureFlagsAdmin.shutdown
   // --8<-- [end:shutdown]

@@ -16,7 +16,7 @@ object Hooks:
   // --8<-- [end:custom]
 
   // --8<-- [start:register]
-  val register: ZIO[FeatureFlags, Nothing, Unit] =
+  val register: ZIO[FeatureFlags & FeatureFlagsAdmin, Nothing, Unit] =
     for
       _ <- FeatureFlags.addHook(audit)                                            // client: this FeatureFlags instance
       _ <- FeatureFlags.addHooks(List(FeatureHook.logging()))                     // several at once, run in list order
@@ -103,11 +103,11 @@ object Hooks:
   // A hook written against the OpenFeature Java SDK runs inside the SDK call
   val javaHook: dev.openfeature.sdk.Hook[Object] = new dev.openfeature.sdk.Hook[Object] {}
 
-  val registerJava: ZIO[FeatureFlags, Nothing, Unit] = FeatureFlagsAdmin.addApiHook(javaHook)
+  val registerJava: ZIO[FeatureFlagsAdmin, Nothing, Unit] = FeatureFlagsAdmin.addApiHook(javaHook)
   // --8<-- [end:java-hook]
 
   // --8<-- [start:manage]
-  val manage: ZIO[FeatureFlags, Nothing, List[FeatureHook]] =
+  val manage: ZIO[FeatureFlags & FeatureFlagsAdmin, Nothing, List[FeatureHook]] =
     for
       client <- FeatureFlags.hooks         // the client hooks, in order
       api    <- FeatureFlagsAdmin.zioApiHooks   // the ZIO API hooks

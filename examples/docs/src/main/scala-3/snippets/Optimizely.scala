@@ -118,7 +118,7 @@ object Optimizely:
   // --8<-- [end:circuit-breaker]
 
   // --8<-- [start:config-changed]
-  val logChanges: URIO[FeatureFlags, UIO[Unit]] =
+  val logChanges: URIO[FeatureFlagsAdmin, UIO[Unit]] =
     FeatureFlagsAdmin.onConfigurationChanged((_, _) => ZIO.logInfo("Optimizely datafile changed"))
   // --8<-- [end:config-changed]
 

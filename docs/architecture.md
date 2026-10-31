@@ -52,6 +52,9 @@ Hooks run on every path, including overrides, cache hits and a provider that is 
 
 Scoped context and transactions are fiber-local, so concurrent requests never see each other's targeting or overrides.
 
+Why the lifecycle is built the way it is, what was tried before, and where it is going: the
+[lifecycle design record](design/lifecycle.md).
+
 ## Sharing the SDK
 
 Whether an instance shares the SDK's global `OpenFeatureAPI` or owns an isolated one, and who shuts it down, is set by

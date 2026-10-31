@@ -96,6 +96,7 @@ nav:
       - Testing real providers: testing-real-providers.md
   - Reference:
       - Under the hood: architecture.md
+      - Lifecycle design record: design/lifecycle.md
       - Spec compliance: spec-compliance.md
       - API reference: https://javadoc.io/doc/io.github.etacassiopeia/zio-openfeature-core_3
   - Contributing:

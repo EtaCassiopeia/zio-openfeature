@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`FeatureFlagsAdmin`: administering an instance, apart from reading its flags** (#651). Swapping the provider,
+  shutting down, the API-level hooks (`addApiHook`, `clearApiHooks`, the ZIO API hooks) and the event-handler
+  registrations (`onProviderReady` and the rest, `on`) are on the new `FeatureFlagsAdmin`, with service accessors on its
+  companion. `FeatureFlags.fromProvider(p) >+> FeatureFlagsAdmin.layer` adds it, administering the same instance, so a
+  program that needs only `FeatureFlags` can no longer swap the provider or shut the instance down. The factories'
+  layer types are unchanged. **Deprecated:** those 13 members on `FeatureFlags` and its companion; they still work
+  for 1.x.
+
 - **`fromAcquireAsync` and `FeatureFlagRegistry` take a `FeatureFlagsConfig`** (#654). `fromAcquireAsync(acquire,
   fallback, config, acquireConfig)` reads what every instance takes from the config, now including domain, version,
   initial hooks and API ownership, which this path could not set before. The settings only it takes go in the new

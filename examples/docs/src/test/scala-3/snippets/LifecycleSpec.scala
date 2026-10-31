@@ -94,4 +94,4 @@ object LifecycleSpec extends ZIOSpecDefault:
         result == Left(FeatureFlagError.ProviderNotReady(ProviderStatus.NotReady))
       )
     }
-  ).provide(layer, Scope.default) @@ TestAspect.sequential
+  ).provide(layer, FeatureFlagsAdmin.layer, Scope.default) @@ TestAspect.sequential

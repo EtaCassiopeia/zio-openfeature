@@ -52,7 +52,7 @@ object ProvidersSpec extends ZIOSpecDefault:
         result <- banner
         status <- FeatureFlags.providerStatus
       yield assertTrue(result == "from-next", status == ProviderStatus.Ready)
-    }.provide(TestFeatureProvider.layer(Map("banner" -> "from-first"))),
+    }.provide(TestFeatureProvider.layer(Map("banner" -> "from-first")), FeatureFlagsAdmin.layer),
     test("hot swap: a provider that fails to start leaves the previous one serving") {
       val broken = new NoOpProvider:
         override def initialize(ctx: OFContext): Unit = throw new RuntimeException("cannot start")
@@ -66,7 +66,7 @@ object ProvidersSpec extends ZIOSpecDefault:
         result == "from-first",
         status == ProviderStatus.Ready
       )
-    }.provide(TestFeatureProvider.layer(Map("banner" -> "from-first"))),
+    }.provide(TestFeatureProvider.layer(Map("banner" -> "from-first")), FeatureFlagsAdmin.layer),
     test("owned domain: the client is built on the domain") {
       for
         provider <- TestFeatureProvider.make

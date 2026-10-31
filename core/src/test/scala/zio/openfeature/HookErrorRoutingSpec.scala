@@ -33,11 +33,13 @@ object HookErrorRoutingSpec extends ZIOSpecDefault {
       if (k == "missing") ProviderEvaluations.error[java.lang.Boolean](d, ErrorCode.FLAG_NOT_FOUND, "not found")
       else ProviderEvaluations.of[java.lang.Boolean](true, "STATIC")
     override def getStringEvaluation(k: String, d: String, c: OFEvaluationContext) =
-      ProviderEvaluations.of[String](d, "DEFAULT")
+      if (k == "plan") ProviderEvaluations.error[String](d, ErrorCode.TYPE_MISMATCH, "stored as a number")
+      else ProviderEvaluations.of[String](d, "DEFAULT")
     override def getIntegerEvaluation(k: String, d: java.lang.Integer, c: OFEvaluationContext) =
       ProviderEvaluations.of[java.lang.Integer](d, "DEFAULT")
     override def getDoubleEvaluation(k: String, d: java.lang.Double, c: OFEvaluationContext) =
-      ProviderEvaluations.of[java.lang.Double](d, "DEFAULT")
+      if (k == "ratio") ProviderEvaluations.error[java.lang.Double](d, ErrorCode.TYPE_MISMATCH, "stored as string")
+      else ProviderEvaluations.of[java.lang.Double](d, "DEFAULT")
     override def getObjectEvaluation(k: String, d: Value, c: OFEvaluationContext) =
       ProviderEvaluations.of[Value](d, "DEFAULT")
   }
@@ -102,7 +104,33 @@ object HookErrorRoutingSpec extends ZIOSpecDefault {
     )
   }
 
+  final private case class Plan(name: String)
+  implicit private val planType: FlagType[Plan] = FlagType.mapped[Plan, String]("Plan", Plan("free"))(Plan(_), _.name)
+
+  private def errorRecorder(seen: Ref[List[FeatureFlagError]]): FeatureHook = new FeatureHook {
+    override def error(ctx: HookContext, error: FeatureFlagError, hints: HookHints): UIO[Unit] =
+      seen.update(_ :+ error)
+  }
+
   def spec = suite("HookErrorRoutingSpec")(
+    test("the error hook sees the same TypeMismatch expected type as the caller, for a Float and a custom type") {
+      ZIO.scoped {
+        for {
+          seen   <- Ref.make(List.empty[FeatureFlagError])
+          ff     <- buildFF(List(errorRecorder(seen)))
+          ratio  <- ff.value[Float]("ratio", 0f).either
+          plan   <- ff.value[Plan]("plan", Plan("free")).either
+          hooked <- seen.get
+        } yield assertTrue(
+          ratio == Left(FeatureFlagError.TypeMismatch("ratio", "Float", "stored as string")),
+          plan == Left(FeatureFlagError.TypeMismatch("plan", "Plan", "stored as a number")),
+          hooked == List(
+            FeatureFlagError.TypeMismatch("ratio", "Float", "stored as string"),
+            FeatureFlagError.TypeMismatch("plan", "Plan", "stored as a number")
+          )
+        )
+      }
+    },
     test("an error-code resolution runs `error`, not `after` (spec §4.3.6/§4.4.6)") {
       ZIO.scoped {
         for {

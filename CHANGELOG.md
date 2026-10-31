@@ -269,6 +269,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a first-match provider chain stopped at it, and under `CircuitBreakerProvider` repeated reads of one such key opened
   the circuit around purely local config. Such a key is now not found, like any absent one; dotted keys still read a
   nested path.
+- **The `error` hook stage receives the same `TypeMismatch` expected type as the caller** (#641). For a provider-reported
+  `TYPE_MISMATCH`, the hook's error named the resolver's wire type (`Double` for a `Float` flag, `String` for a
+  string-backed custom type) while the caller's named the flag's own type; both now name the flag's (`Float`, `Plan`).
 
 ## [1.2.1] — 2026-10-28
 

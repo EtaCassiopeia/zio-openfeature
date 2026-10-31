@@ -287,11 +287,10 @@ object TypedTierErrorPromotionSpec extends ZIOSpecDefault {
     },
     // --- what `expected` names, on each side, for a custom type -----------------------------------------------------
     test(
-      "provider TYPE_MISMATCH on a custom type: the typed failure names the domain type, the hook's error names the wire type"
+      "provider TYPE_MISMATCH on a custom type: the typed failure and the hook's error both name the domain type"
     ) {
-      // Deliberately different, and pinned so the difference is a decision rather than an accident: the caller asked
-      // for the DOMAIN type ("Strict"), so its failure says so; a hook filters and reasons in WIRE types
-      // (`HookContext.flagType` is the wire type), so its error names what the provider was actually asked for.
+      // Pinned so that the two agreeing is a decision rather than an accident: the hook gets the evaluation's error,
+      // and the wire type the provider was asked for is `ctx.flagType`.
       implicit val strict: FlagType[Int] = new FlagType[Int] {
         def typeName: String                        = "Strict"
         override def wireType: String               = "String"
@@ -311,7 +310,7 @@ object TypedTierErrorPromotionSpec extends ZIOSpecDefault {
           fromHook <- seen.get
         } yield assertTrue(
           typed == Left(FeatureFlagError.TypeMismatch("type-mismatch", "Strict", "flag is a string")),
-          fromHook == Some(FeatureFlagError.TypeMismatch("type-mismatch", "String", "flag is a string"))
+          fromHook == Some(FeatureFlagError.TypeMismatch("type-mismatch", "Strict", "flag is a string"))
         )
       }
     }

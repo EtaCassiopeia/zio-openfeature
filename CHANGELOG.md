@@ -53,6 +53,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   response with `GENERAL` and the caller's default, on every resolver. The status is not visible there, so a 200 with
   malformed JSON is `GENERAL` too (typed tier: `ProviderError` instead of `ParseError`).
 
+### Documentation
+
+- **Getting started no longer says the typed getter serves the default** (#649). The first example now uses
+  `booleanOrDefault`, and the getting-started text, the `FlagDef` ScalaDoc and the typed getters' docs say that on the
+  typed tier `default` is passed to the provider and hooks but not served on failure.
+
 ### Fixed
 
 - **An evaluation running when a swap starts is no longer served by the swap's failed provider** (#658). The readiness

@@ -16,9 +16,10 @@ package zio.openfeature
   * ==Which default is used==
   *
   * `FlagType[A]` also carries a `defaultValue`, so a `FlagDef` appears to hold two defaults. It does not, in any way
-  * that matters: '''`FlagDef.default` is always the value served''' when evaluation misses or fails.
-  * `FlagType.defaultValue` is a type-level zero required internally by `FlagType.from`/`mapped` and is '''never'''
-  * consulted on the evaluation path.
+  * that matters: '''`FlagDef.default` is the default passed to every evaluation'''. The total forms (`valueOrDefault`,
+  * `resolveOrDefault`) serve it when evaluation misses or fails; the typed forms (`value`, `valueDetails`) fail
+  * instead. `FlagType.defaultValue` is a type-level zero required internally by `FlagType.from`/`mapped` and is
+  * '''never''' consulted on the evaluation path.
   *
   * ==Equality==
   *

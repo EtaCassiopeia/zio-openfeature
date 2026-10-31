@@ -160,18 +160,27 @@ the real provider, then switches to it. The status is `Ready` throughout:
 The layer's error type is `Nothing`: a real provider that never comes up is retried, reported to
 `onConstructionError`, and the fallback keeps serving.
 
-| Parameter | Default | Meaning |
+`fromAcquireAsync(acquire, fallback, config, acquireConfig)` takes two effects and two settings objects;
+`fromAcquireAsync(acquire, fallback)` and `fromAcquireAsync(acquire, fallback, config)` use the defaults for the rest.
+
+| Argument | Meaning |
+|:--|:--|
+| `acquire` | Builds the real provider. Register cleanup in its `Scope` so a rejected one is closed. |
+| `fallback` | Builds a fallback; runs again for the swap, so return a fresh instance each time. |
+| `config` | A [`FeatureFlagsConfig`](#configure-it-with-featureflagsconfig): domain, version, hooks, timeouts (`initTimeout` bounds the swapped-in provider's initialization), API ownership, context source, fallback logging and `maxAbandonedCalls`. `initMode` does not apply: the fallback serves at once and the real provider always comes later. |
+| `acquireConfig` | An `AcquireConfig`: what only this path takes, below. |
+
+| `AcquireConfig` | Default | Meaning |
 |:--|:--|:--|
-| `acquire` | | Builds the real provider. Register cleanup in its `Scope` so a rejected one is closed. |
-| `fallback` | | Builds a fallback; runs again for the swap, so return a fresh instance each time. |
-| `verify` | accept | Checks the real provider before the swap; a failure is a failed attempt ([below](#verify-the-candidate)). |
-| `compose` | `FeatureFlags.defaultAcquireCompose` | Combines real and fallback into the swapped-in provider. The default asks the real one first and falls back on any error. |
-| `constructionRetry` | `Schedule.recurs(3) && Schedule.exponential(1.second).jittered` | Retries `acquire` plus `verify`. |
-| `constructionTimeout` | 30 seconds | Bounds one attempt. |
-| `onSwapped` | nothing | Runs once the real provider serves. |
-| `onConstructionError` | nothing | Runs when all attempts or the swap failed. |
-| `evaluationTimeout`, `initTimeout` | 1 second, 30 seconds | Plain `Duration`s. |
-| `contextSource`, `fallbackLogging`, `maxAbandonedCalls` | empty, `Default`, 256 | Passed directly, as in the [config table](#configure-it-with-featureflagsconfig); this factory bypasses `FeatureFlagsConfig`. |
+| `withVerify(f)` | accept | Checks the real provider before the swap; a failure is a failed attempt ([below](#verify-the-candidate)). |
+| `withCompose(f)` | `FeatureFlags.defaultAcquireCompose` | Combines real and fallback into the swapped-in provider. The default asks the real one first and falls back on any error. |
+| `withConstructionRetry(s)` | `Schedule.recurs(3) && Schedule.exponential(1.second).jittered` | Retries `acquire` plus `verify`. |
+| `withConstructionTimeout(d)` | 30 seconds | Bounds one attempt. |
+| `withOnSwapped(effect)` | nothing | Runs once the real provider serves. |
+| `withOnConstructionError(f)` | nothing | Runs when all attempts or the swap failed. |
+
+The earlier form, which took `evaluationTimeout`, `initTimeout`, `contextSource`, `fallbackLogging` and
+`maxAbandonedCalls` as named arguments next to the `AcquireConfig` settings, is deprecated since 1.3.0.
 
 ### Verify the candidate
 
@@ -226,8 +235,11 @@ A domain names a client, so different parts of an app can use different provider
   failure was `PROVIDER_FATAL`, which is final and fails at once. A retry that times out leaves that `initialize()`
   running, and later attempts fail until it returns.
 - `addZioApiHook(hook)` adds an [API-level hook](hooks.md) to every client, current and future.
-- `fromProvider(defaultProvider)` is the only factory and takes no `FeatureFlagsConfig`: clients get the default
-  timeouts and no version, hooks or context source. Closing the scope shuts down the API and every provider.
+- `fromProvider(defaultProvider, config)` applies `version`, initial hooks, the evaluation and init timeouts, context
+  source, fallback logging, `maxAbandonedCalls` and init mode to every client (with `withAsyncInit`, `getClient`
+  returns before the provider is ready). `domain` and `apiOwnership` do not apply: the registry names each client's
+  domain and owns its private API. `fromProvider(defaultProvider)` is the same with `FeatureFlagsConfig()`. Closing
+  the scope shuts down the API and every provider.
 
 ## Replace the provider at runtime
 

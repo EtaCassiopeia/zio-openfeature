@@ -248,9 +248,12 @@ object ProviderInitTimeoutSpec extends ZIOSpecDefault {
             .fromAcquireAsync(
               acquire,
               fallback,
-              compose = (_, _) => stuck,
-              onConstructionError = e => errP.succeed(e).unit,
-              initTimeout = initTimeout
+              FeatureFlagsConfig(
+                initTimeout = initTimeout
+              ),
+              AcquireConfig.default
+                .withCompose((_, _) => stuck)
+                .withOnConstructionError(e => errP.succeed(e).unit)
             )
             .build
           ff = env.get[FeatureFlags]

@@ -46,7 +46,8 @@ object StalePolicy {
   * @param halfOpenMaxCalls
   *   Number of successful probes in half-open state required to close the circuit. Must be `>= 1`.
   * @param stalePolicy
-  *   How to react when the delegate provider is in STALE state
+  *   How to react when the delegate provider is in STALE state. `HalfOpen` lets the next call probe a circuit the
+  *   delegate's own signal opened; on a closed circuit, or one that failures opened, it changes nothing.
   * @param stateCheckInterval
   *   Minimum time between polls of the delegate's `getState()` on the evaluation path. The state-driven trip mechanism
   *   only needs periodic freshness; polling on every evaluation puts delegate-defined work (locks, computed state) on

@@ -153,7 +153,9 @@ provider is reachable and reset the count.
 **Other ways it opens.** At most once per `stateCheckInterval` the breaker polls the provider's state: `ERROR` or
 `FATAL` opens, and a polled `READY` closes a circuit a poll opened. With an `EventProvider`, `PROVIDER_ERROR` opens and
 `PROVIDER_READY` closes a circuit an event or a poll opened. A failed `initialize` opens it too, and a `STALE` provider
-opens it under the default `stalePolicy` (`HalfOpen` sends it straight to half-open, `Ignore` does nothing). A circuit
+opens it under the default `stalePolicy`. `HalfOpen` lets the next call probe a circuit the provider's own `ERROR`,
+`FATAL` or failed `initialize` opened, instead of waiting `resetTimeout`; on a closed circuit, or one that failures
+opened, it changes nothing. `Ignore` does nothing. A circuit
 opened by failures closes only through `resetTimeout` and a successful probe.
 
 **What an open circuit reports.** `ERROR`, except when the provider's `STALE` opened it: then it reports `STALE`,

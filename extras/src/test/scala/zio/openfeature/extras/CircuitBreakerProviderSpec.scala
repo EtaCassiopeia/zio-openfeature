@@ -543,9 +543,32 @@ object CircuitBreakerProviderSpec extends ZIOSpecDefault {
         val config     = CircuitBreakerProviderConfig(stalePolicy = StalePolicy.HalfOpen)
         val cb         = CircuitBreakerProvider(underlying, config)
         underlying.setState(ProviderState.STALE)
-        // First call allowed as probe
+        // A closed circuit already admits every call: the policy changes nothing there.
         val result = cb.getBooleanEvaluation("flag", false, ctx)
-        assertTrue(result.getValue == true)
+        assertTrue(result.getValue == true, cb.breaker.isClosed, underlying.evaluationCount.get() == 1)
+      },
+      test("stalePolicy HalfOpen does not shortcut resetTimeout for a circuit failures opened") {
+        val underlying = new FailableProvider(Map("flag" -> true))
+        val clock      = new TestClock()
+        val config     = CircuitBreakerProviderConfig(
+          stalePolicy = StalePolicy.HalfOpen,
+          failureThreshold = 1,
+          resetTimeout = 30.seconds,
+          stateCheckInterval = 1.second
+        )
+        val cb = CircuitBreakerProvider(underlying, config, clock)
+        underlying.setFailing(true)
+        val _ = scala.util.Try(cb.getBooleanEvaluation("flag", false, ctx)) // opens the circuit
+        underlying.setFailing(false)
+        underlying.setState(ProviderState.STALE)
+        clock.advance(2.seconds)
+        val beforePoll = underlying.evaluationCount.get()
+        val polled     = scala.util.Try(cb.getBooleanEvaluation("flag", false, ctx))
+        val stillOpen  = cb.breaker.isOpen
+        val reached    = underlying.evaluationCount.get() - beforePoll
+        clock.advance(30.seconds)
+        val probe = scala.util.Try(cb.getBooleanEvaluation("flag", false, ctx))
+        assertTrue(polled.isFailure, stillOpen, reached == 0, probe.toOption.exists(_.getValue == true))
       },
       test("delegate getState polling is bounded by stateCheckInterval, not evaluation count") {
         val stateChecks = new java.util.concurrent.atomic.AtomicInteger(0)

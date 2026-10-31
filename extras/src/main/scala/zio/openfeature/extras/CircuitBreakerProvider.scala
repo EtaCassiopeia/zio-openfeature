@@ -15,6 +15,7 @@ import dev.openfeature.sdk.{
 import dev.openfeature.sdk.exceptions.GeneralError
 import zio._
 import zio.openfeature.FeatureFlagError
+import zio.openfeature.internal.OrderedEmitter
 import java.util.concurrent.atomic.AtomicBoolean
 
 /** Policy for how the circuit breaker reacts to `STALE` provider state. */
@@ -134,6 +135,12 @@ final class CircuitBreakerProvider private (
     case _: CircuitState.HalfOpen      => ProviderState.STALE
   }
 
+  // Every emission of this wrapper, forwarded or its own, goes through one lane, so the SDK applies them in the order
+  // they were decided here.
+  private val lane = new OrderedEmitter(this)
+
+  private[extras] def laneRunning: Boolean = lane.isRunning
+
   private val channel = new DelegateEventChannel(underlying, onDelegateEvent)
 
   // Forward delegate emissions upward (the delegate is never registered with an API, so without this its
@@ -154,7 +161,7 @@ final class CircuitBreakerProvider private (
         true
       case _ => true
     }
-    if (forward) { val _ = emit(event, details) }
+    if (forward) lane.enqueue(event, details)
   }
 
   private def doInitialize(runDelegateInit: => Unit): Unit =
@@ -186,6 +193,7 @@ final class CircuitBreakerProvider private (
   override def shutdown(): Unit =
     if (shutdownRan.compareAndSet(false, true)) {
       channel.detach()
+      lane.close()
       try underlying.shutdown()
       finally super.shutdown()
     }
@@ -296,9 +304,9 @@ final class CircuitBreakerProvider private (
       // for network errors), so a returned evaluation is classified exactly like a thrown error. It is passed
       // back unchanged either way.
       classify(result.getErrorCode) match {
-        case Outcome.Success   => if (breaker.recordSuccess(permit)) safeEmitReady()
+        case Outcome.Success   => if (breaker.recordSuccess(permit)) emitReady()
         case Outcome.Reachable => breaker.recordReachable(permit)
-        case Outcome.Failure   => if (breaker.recordFailure(permit)) safeEmitStale("Circuit breaker opened")
+        case Outcome.Failure   => if (breaker.recordFailure(permit)) emitStale("Circuit breaker opened")
       }
       result
     } catch {
@@ -316,7 +324,7 @@ final class CircuitBreakerProvider private (
         throw e
       case e: Throwable =>
         val didOpen = breaker.recordFailure(permit)
-        if (didOpen) safeEmitStale("Circuit breaker opened")
+        if (didOpen) emitStale("Circuit breaker opened")
         val unwrapped = FiberFailures.unwrap(e)
         val error     = new GeneralError(s"Circuit breaker: delegate failed: ${unwrapped.getMessage}")
         error.initCause(unwrapped)
@@ -401,13 +409,11 @@ final class CircuitBreakerProvider private (
 
   // --- Event emission ---
 
-  private def safeEmitReady(): Unit =
-    try emitProviderReady(dev.openfeature.sdk.ProviderEventDetails.builder().build()): Unit
-    catch { case _: Exception => () }
+  private def emitReady(): Unit =
+    lane.enqueue(JavaProviderEvent.PROVIDER_READY, ProviderEventDetails.builder().build())
 
-  private def safeEmitStale(message: String): Unit =
-    try emitProviderStale(dev.openfeature.sdk.ProviderEventDetails.builder().message(message).build()): Unit
-    catch { case _: Exception => () }
+  private def emitStale(message: String): Unit =
+    lane.enqueue(JavaProviderEvent.PROVIDER_STALE, ProviderEventDetails.builder().message(message).build())
 }
 
 object CircuitBreakerProvider {

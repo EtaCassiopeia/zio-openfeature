@@ -102,6 +102,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`CachingProvider` and `CircuitBreakerProvider` events reach the status in the order they were sent** (#700). Each
+  wrapper re-emitted through the SDK's emitter pool, which applies two emissions in either order, so a wrapped
+  provider's `ERROR` then `STALE` could leave the status `Error`, and the breaker's own `STALE` could land after an
+  `ERROR` it preceded. Both wrappers now send every event through one ordered lane, a daemon thread that hands each
+  emission to the SDK once the previous one has been applied, and stop it on `shutdown()`.
+
 - **An instance that shares its API refuses `setProvider` once its scope has closed** (#671). Only an instance that
   owned its API set the closed flag at scope close, so a domain client, a `Shared` one, or a registry client could
   still swap after its layer was gone: the SDK bound the new provider to the shared API's slot and shut that slot's

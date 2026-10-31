@@ -19,7 +19,12 @@ All are plain `FeatureProvider`s: pass them to any factory on [Wiring a provider
 | [`IntegerWideningLongProvider`](#integer-widening-long-provider) | no | yes |
 
 `CachingProvider` and `CircuitBreakerProvider` take over the wrapped provider's event channel, so don't also register
-that instance with OpenFeature. Both validate their config and offer three constructors:
+that instance with OpenFeature. Each sends its events, the ones it passes on and the breaker's own, through one ordered
+lane: they reach the provider status in the order the wrapper sent them. The lane cannot reorder what the wrapped
+provider itself sends out of order: two events it emits back to back without awaiting the first can arrive swapped
+before any wrapper sees them.
+
+`CachingProvider` and `CircuitBreakerProvider` both validate their config and offer three constructors:
 
 - `make` fails with `FeatureFlagError.InvalidConfiguration` naming every field out of bounds.
 - `scoped` is `make` plus a finalizer: closing the scope shuts down the wrapper and the wrapped provider (within 10

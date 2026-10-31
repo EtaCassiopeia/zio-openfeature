@@ -52,6 +52,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reachable server: a dead backend behind a proxy never opened the circuit. `OFREPFeatureProvider` now answers such a
   response with `GENERAL` and the caller's default, on every resolver. The status is not visible there, so a 200 with
   malformed JSON is `GENERAL` too (typed tier: `ProviderError` instead of `ParseError`).
+- **Binary compatibility policy** (#648). Minor and patch releases are now required to be binary compatible on both
+  Scala versions, as the `semver-spec` version scheme already tells sbt they are. 1.1.0 and 1.2.0 were not: both
+  changed the constructor, `apply` and `copy` of `FeatureFlagsConfig` by adding a field (1.2.0 also
+  `OptimizelyProviderConfig`, and `fromAcquireAsync`'s 13-parameter descriptor), and 1.1.0 also the `build`,
+  `buildAsync`, `make` and `transaction` overloads. The build now checks the Scala 3 artifacts' TASTy too (TASTy-MiMa),
+  baselines against 1.2.1, and fails CI on a compatibility filter for a public symbol before a major release.
+  `RELEASING.md` states the policy, including the freeze on new fields in the public configuration case classes for
+  the rest of 1.x.
 
 ### Documentation
 

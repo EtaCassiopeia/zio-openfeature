@@ -650,6 +650,48 @@ object CircuitBreakerProviderSpec extends ZIOSpecDefault {
           result <- ZIO.attemptBlocking(cb.getBooleanEvaluation("flag", false, ctx))
         } yield assertTrue(result.getValue == true)
       },
+      test("a delegate READY is held while failures keep the circuit open, and one READY follows the closing probe") {
+        class EmittingProvider extends FailableProvider(Map("flag" -> true)) {
+          def fireReady(): Unit  = { emitProviderReady(dev.openfeature.sdk.ProviderEventDetails.builder().build()); () }
+          def fireMarker(): Unit = {
+            emitProviderConfigurationChanged(dev.openfeature.sdk.ProviderEventDetails.builder().build())
+            ()
+          }
+        }
+        import dev.openfeature.sdk.ProviderEvent.{PROVIDER_CONFIGURATION_CHANGED, PROVIDER_READY, PROVIDER_STALE}
+        val underlying = new EmittingProvider
+        val clock      = new TestClock()
+        val cb         = CircuitBreakerProvider(
+          underlying,
+          CircuitBreakerProviderConfig(failureThreshold = 1, resetTimeout = 30.seconds),
+          clock
+        )
+        val seen = new java.util.concurrent.ConcurrentLinkedQueue[dev.openfeature.sdk.ProviderEvent]()
+        def until(p: => Boolean, what: String) =
+          ZIO.succeed(p).repeatUntil(identity).timeoutFail(new RuntimeException(what))(10.seconds)
+        def readies = seen.toArray.count(_ == PROVIDER_READY)
+        for {
+          _ <- ZIO.succeed(dev.openfeature.sdk.EventProviderBridge.attach(cb, (e, _) => { seen.add(e); () }))
+          _ <- ZIO.attemptBlocking(cb.initialize(ctx))
+          _ <- ZIO.succeed(underlying.setFailing(true))
+          _ <- ZIO.attemptBlocking(cb.getBooleanEvaluation("flag", false, ctx)).ignore
+          _ <- until(seen.contains(PROVIDER_STALE), "failures never opened the circuit")
+          before = readies
+          _ <- ZIO.succeed(underlying.fireReady())
+          // Delivered after the READY by the same emitter: once it is seen, the READY has been handled.
+          _ <- ZIO.succeed(underlying.fireMarker())
+          _ <- until(seen.contains(PROVIDER_CONFIGURATION_CHANGED), "the marker event never arrived")
+          _ <- ZIO.sleep(100.millis)
+          held     = readies - before
+          heldOpen = cb.getState == dev.openfeature.sdk.ProviderState.ERROR
+          _      <- ZIO.succeed(underlying.setFailing(false))
+          _      <- ZIO.succeed(clock.advance(31.seconds))
+          probed <- ZIO.attemptBlocking(cb.getBooleanEvaluation("flag", false, ctx))
+          _      <- until(readies > before, "the closing probe emitted no READY")
+          _      <- ZIO.sleep(100.millis)
+          after = readies - before
+        } yield assertTrue(held == 0, heldOpen, probed.getValue == true, after == 1)
+      },
       test("delegate events are re-emitted through the wrapper") {
         class EmittingProvider extends FailableProvider(Map("flag" -> true)) {
           def fireConfigChanged(): Unit = {

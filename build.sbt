@@ -116,12 +116,15 @@ ThisBuild / scalacOptions ++= {
 lazy val lintSettings = Seq(
   // Test inherits Compile's options; on 2.13 only main code is held to zero warnings. On Scala 3 the last matching
   // `-Wconf` rule wins, so the effect-type errors come after the catch-all silencing.
+  // The administration members moved to FeatureFlagsAdmin but stay supported for 1.x, and the specs that exercise them
+  // through `FeatureFlags` keep doing so: that deprecation alone is silenced in tests.
   Test / scalacOptions := {
-    val inherited = (Test / scalacOptions).value
+    val inherited    = (Test / scalacOptions).value
+    val movedToAdmin = "-Wconf:cat=deprecation&msg=Moved to FeatureFlagsAdmin:s"
     CrossVersion.partialVersion(scalaVersion.value) match {
-      case Some((2, _)) => inherited.filterNot(_ == "-Werror") :+ "-Wconf:cat=scala3-migration:s"
+      case Some((2, _)) => inherited.filterNot(_ == "-Werror") :+ "-Wconf:cat=scala3-migration:s" :+ movedToAdmin
       case Some((3, _)) =>
-        inherited :+ "-Wconf:id=E175:s,id=E176:s,id=E175&msg=.*type zio\\.(ZIO|UIO|URIO|IO|Task|RIO)\\b.*:e,id=E176&msg=.*type zio\\.(ZIO|UIO|URIO|IO|Task|RIO)\\b.*:e"
+        inherited :+ "-Wconf:id=E175:s,id=E176:s,id=E175&msg=.*type zio\\.(ZIO|UIO|URIO|IO|Task|RIO)\\b.*:e,id=E176&msg=.*type zio\\.(ZIO|UIO|URIO|IO|Task|RIO)\\b.*:e" :+ movedToAdmin
       case _ => inherited
     }
   },
@@ -309,7 +312,10 @@ lazy val core = (project in file("core"))
       java.util.Arrays.asList(
         ProblemMatcher.make("zio.openfeature.internal.*"),
         // non-public: private[openfeature]
-        ProblemMatcher.make("zio.openfeature.FeatureFlagsLive.<init>")
+        ProblemMatcher.make("zio.openfeature.FeatureFlagsLive.<init>"),
+        // A top-level `private` class, visible only inside `zio.openfeature`; it now holds its clients as the instance.
+        // non-public: private[openfeature]
+        ProblemMatcher.make("zio.openfeature.FeatureFlagRegistryLive.<init>")
       )
     ))
   )

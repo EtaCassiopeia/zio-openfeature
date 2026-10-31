@@ -291,8 +291,9 @@ private[openfeature] object FeatureFlagsFactories {
     statusRef: Option[SubscriptionRef[ProviderStatus]],
     apiOverride: Option[OpenFeatureAPI] = None,
     onReady: Option[java.util.concurrent.CountDownLatch] = None
-  ): ZLayer[Any, Throwable, FeatureFlags] =
-    ZLayer.scoped {
+  ): ZLayer[Any, Throwable, FeatureFlags with FeatureFlagsAdmin] =
+    // Both services from the one instance, as `fromAcquireAsync` emits its two.
+    ZLayer.scopedEnvironment {
       val evalTimeout = config.evaluationTimeout match {
         case EvaluationTimeout.Default  => Some(DefaultEvaluationTimeout)
         case EvaluationTimeout.Disabled => None
@@ -303,7 +304,7 @@ private[openfeature] object FeatureFlagsFactories {
         case ApiOwnership.Owned  => true
         case ApiOwnership.Shared => false
       }
-      config.initMode match {
+      (config.initMode match {
         // The `WithTracking` variants, not `build`/`buildAsync`: those keep their released signatures (they are
         // package-private but compiled into the published testkit), so newer knobs like `maxAbandonedCalls`
         // reach the instance only through these.
@@ -339,7 +340,7 @@ private[openfeature] object FeatureFlagsFactories {
             fallbackLogging = config.fallbackLogging,
             maxAbandonedCalls = config.maxAbandonedCalls
           )
-      }
+      }).map(ff => ZEnvironment[FeatureFlags](ff).add[FeatureFlagsAdmin](ff))
     }
 
   /** Create a FeatureFlags layer with a named domain/client and a shared status ref. */
@@ -514,7 +515,7 @@ private[openfeature] object FeatureFlagsFactories {
     onSwapped: UIO[Unit],
     fallbackLogging: FallbackLogging,
     maxAbandonedCalls: Int
-  ): URLayer[Any, FeatureFlags with AcquireStatus] = {
+  ): URLayer[Any, FeatureFlags with FeatureFlagsAdmin with AcquireStatus] = {
     require(maxAbandonedCalls >= 1, s"maxAbandonedCalls must be at least 1, got $maxAbandonedCalls")
     // `scopedEnvironment` rather than `scoped`: the layer emits two services, and only an explicit ZEnvironment can
     // carry an intersection.
@@ -615,7 +616,7 @@ private[openfeature] object FeatureFlagsFactories {
               }
           record *> ZIO.when(cause.isDie || cause.isInterrupted)(ZIO.refailCause(cause))
         }.forkScoped
-      } yield ZEnvironment[FeatureFlags](ff).add[AcquireStatus](AcquireStatus.fromRef(state))
+      } yield ZEnvironment[FeatureFlags](ff).add[FeatureFlagsAdmin](ff).add[AcquireStatus](AcquireStatus.fromRef(state))
     }
   }
 }

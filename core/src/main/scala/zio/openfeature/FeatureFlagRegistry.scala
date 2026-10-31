@@ -52,9 +52,9 @@ object FeatureFlagRegistry {
       for {
         api            <- ZIO.succeed(OpenFeatureAPI.createIsolated())
         scope          <- ZIO.service[Scope]
-        clients        <- Ref.make(Map.empty[String, Promise[FeatureFlagError, FeatureFlags]])
+        clients        <- Ref.make(Map.empty[String, Promise[FeatureFlagError, FeatureFlagsLive]])
         providers      <- Ref.make(Map.empty[String, OFFeatureProvider])
-        defaultRef     <- Ref.make(Option.empty[Promise[FeatureFlagError, FeatureFlags]])
+        defaultRef     <- Ref.make(Option.empty[Promise[FeatureFlagError, FeatureFlagsLive]])
         lock           <- Semaphore.make(1)
         zioApiHooksRef <- Ref.make(List.empty[FeatureHook])
         registry = new FeatureFlagRegistryLive(
@@ -88,9 +88,9 @@ final private class FeatureFlagRegistryLive(
   defaultProvider: OFFeatureProvider,
   api: OpenFeatureAPI,
   scope: Scope,
-  clients: Ref[Map[String, Promise[FeatureFlagError, FeatureFlags]]],
+  clients: Ref[Map[String, Promise[FeatureFlagError, FeatureFlagsLive]]],
   providers: Ref[Map[String, OFFeatureProvider]],
-  defaultRef: Ref[Option[Promise[FeatureFlagError, FeatureFlags]]],
+  defaultRef: Ref[Option[Promise[FeatureFlagError, FeatureFlagsLive]]],
   lock: Semaphore,
   zioApiHooksRef: Ref[List[FeatureHook]]
 ) extends FeatureFlagRegistry {
@@ -145,16 +145,16 @@ final private class FeatureFlagRegistryLive(
 
   /** Get-or-insert the memoized promise under the lock, build outside it (first caller only), await. */
   private def memoizedClient(
-    get: UIO[Option[Promise[FeatureFlagError, FeatureFlags]]],
-    put: Promise[FeatureFlagError, FeatureFlags] => UIO[Unit],
+    get: UIO[Option[Promise[FeatureFlagError, FeatureFlagsLive]]],
+    put: Promise[FeatureFlagError, FeatureFlagsLive] => UIO[Unit],
     remove: UIO[Unit],
-    buildClient: IO[FeatureFlagError, FeatureFlags]
+    buildClient: IO[FeatureFlagError, FeatureFlagsLive]
   ): IO[FeatureFlagError, FeatureFlags] =
     for {
       inserted <- lock.withPermit {
         get.flatMap {
           case Some(p) => ZIO.succeed((p, false))
-          case None    => Promise.make[FeatureFlagError, FeatureFlags].flatMap(p => put(p).as((p, true)))
+          case None    => Promise.make[FeatureFlagError, FeatureFlagsLive].flatMap(p => put(p).as((p, true)))
         }
       }
       promise = inserted._1
@@ -171,8 +171,8 @@ final private class FeatureFlagRegistryLive(
     * fibers unblock. The build itself is bounded by the init timeout.
     */
   private def runBuild(
-    buildClient: IO[FeatureFlagError, FeatureFlags],
-    promise: Promise[FeatureFlagError, FeatureFlags],
+    buildClient: IO[FeatureFlagError, FeatureFlagsLive],
+    promise: Promise[FeatureFlagError, FeatureFlagsLive],
     remove: UIO[Unit]
   ): UIO[Unit] =
     buildClient
@@ -208,7 +208,7 @@ final private class FeatureFlagRegistryLive(
   // SDK's failed registration and replay its error. Each build then owns a child of the registry scope. A successful
   // client lives until the registry closes; a failed one is released at once, since its event bridge and init watchdog
   // would otherwise outlive it, and the watchdog would later shut down the provider a retry brought up.
-  private def buildClient(domain: Option[String]): IO[FeatureFlagError, FeatureFlags] =
+  private def buildClient(domain: Option[String]): IO[FeatureFlagError, FeatureFlagsLive] =
     for {
       provider <- domain match {
         case Some(d) => providers.get.map(_.getOrElse(d, defaultProvider))

@@ -2,7 +2,7 @@ package zio.openfeature
 
 import dev.openfeature.sdk.{FeatureProvider => OFFeatureProvider, OpenFeatureAPI}
 import zio._
-import zio.openfeature.internal.ProviderRegistration
+import zio.openfeature.internal.{ApiInstances, FeatureFlagsFactories, ProviderRegistration}
 
 trait FeatureFlagRegistry {
 
@@ -48,6 +48,17 @@ object FeatureFlagRegistry {
     ZIO.serviceWithZIO(_.addZioApiHook(hook))
 
   def fromProvider(defaultProvider: OFFeatureProvider): ZLayer[Any, Throwable, FeatureFlagRegistry] =
+    fromProvider(defaultProvider, FeatureFlagsConfig())
+
+  /** A registry whose every client takes `config`: version, initial hooks, evaluation and init timeouts, context
+    * source, fallback logging, the abandoned-call cap, and init mode (`Async` returns a client before its provider is
+    * ready). `domain` and `apiOwnership` do not apply: the registry names each client's domain and owns its private
+    * API.
+    */
+  def fromProvider(
+    defaultProvider: OFFeatureProvider,
+    config: FeatureFlagsConfig
+  ): ZLayer[Any, Throwable, FeatureFlagRegistry] =
     ZLayer.scoped {
       for {
         api            <- ZIO.succeed(OpenFeatureAPI.createIsolated())
@@ -65,9 +76,11 @@ object FeatureFlagRegistry {
           providers,
           defaultRef,
           lock,
-          zioApiHooksRef
+          zioApiHooksRef,
+          config
         )
-        _ <- ZIO.addFinalizer(ProviderRegistration.boundedApiShutdown(api))
+        // The registry owns its API: its clients go NotReady with it rather than serve the SDK's No-op answers.
+        _ <- ZIO.addFinalizer(ApiInstances.retireAll(api) *> ProviderRegistration.boundedApiShutdown(api))
       } yield registry
     }
 }
@@ -92,7 +105,8 @@ final private class FeatureFlagRegistryLive(
   providers: Ref[Map[String, OFFeatureProvider]],
   defaultRef: Ref[Option[Promise[FeatureFlagError, FeatureFlagsLive]]],
   lock: Semaphore,
-  zioApiHooksRef: Ref[List[FeatureHook]]
+  zioApiHooksRef: Ref[List[FeatureHook]],
+  config: FeatureFlagsConfig
 ) extends FeatureFlagRegistry {
 
   override def getClient(domain: String): IO[FeatureFlagError, FeatureFlags] =
@@ -215,23 +229,29 @@ final private class FeatureFlagRegistryLive(
         case None    => ZIO.succeed(defaultProvider)
       }
       _ <- ProviderRegistration
-        .retryFailedInitialization(api, domain, provider, FeatureFlags.DefaultInitTimeout)
+        .retryFailedInitialization(api, domain, provider, config.initTimeout)
         .mapError(t => FeatureFlagError.ProviderInitializationFailed(t))
       child  <- scope.fork
       client <- child
         .extend[Any](
-          FeatureFlags.buildAsync(
+          FeatureFlags.buildAsyncWithTracking(
             provider,
             domain = domain,
-            version = None,
-            initialHooks = Nil,
+            version = config.version,
+            initialHooks = config.initialHooks,
             statusRef = None,
             addShutdownFinalizer = false,
-            apiOverride = Some(api)
+            apiOverride = Some(api),
+            evaluationTimeout = FeatureFlagsFactories.evaluationTimeoutOf(config),
+            initTimeout = config.initTimeout,
+            contextSource = config.contextSource,
+            fallbackLogging = config.fallbackLogging,
+            maxAbandonedCalls = config.maxAbandonedCalls
           )
         )
         .mapError(t => FeatureFlagError.ProviderInitializationFailed(t))
-        .tap(awaitReady)
+        // An async registry hands the client out at once; it reports its own status while the provider starts.
+        .tap(client => ZIO.unless(config.initMode == InitMode.Async)(awaitReady(client)))
         .onError(cause => child.close(Exit.failCause(cause)))
     } yield client
 
@@ -243,7 +263,7 @@ final private class FeatureFlagRegistryLive(
     */
   private def awaitReady(client: FeatureFlags): IO[FeatureFlagError, Unit] = {
     val pollMillis = FeatureFlagRegistry.AwaitReadyPollInterval.toMillis
-    val maxPolls   = math.max(1L, FeatureFlags.DefaultInitTimeout.toMillis / pollMillis)
+    val maxPolls   = math.max(1L, config.initTimeout.toMillis / pollMillis)
 
     val check: IO[FeatureFlagError, Option[Unit]] = client.providerStatus.flatMap {
       case ProviderStatus.Ready | ProviderStatus.Stale => ZIO.some(())
@@ -263,7 +283,7 @@ final private class FeatureFlagRegistryLive(
           ZIO.fail(
             FeatureFlagError.ProviderInitializationFailed(
               new java.util.concurrent.TimeoutException(
-                s"Provider initialization exceeded ${FeatureFlags.DefaultInitTimeout}"
+                s"Provider initialization exceeded ${config.initTimeout}"
               )
             )
           )

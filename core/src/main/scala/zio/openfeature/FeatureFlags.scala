@@ -2,7 +2,7 @@ package zio.openfeature
 
 import zio._
 import zio.stream._
-import zio.openfeature.internal.{Evaluator, FallbackLogLimiter, FeatureFlagsFactories, LongAwareMultiProvider}
+import zio.openfeature.internal.{Compat, Evaluator, FallbackLogLimiter, FeatureFlagsFactories, LongAwareMultiProvider}
 import dev.openfeature.sdk.{FeatureProvider => OFFeatureProvider, OpenFeatureAPI}
 import dev.openfeature.sdk.multiprovider.{Strategy, FirstMatchStrategy, FirstSuccessfulStrategy}
 
@@ -1626,23 +1626,50 @@ object FeatureFlags {
     *   the real provider as a scoped effect (typically `ZIO.attemptBlocking(new Provider(...))`)
     * @param fallback
     *   a scoped effect producing a FRESH fallback instance each time it is run
-    * @param compose
-    *   how to combine (real, freshFallback) into the swapped-in provider
-    * @param constructionRetry
-    *   retry policy for the `acquire` + `verify` attempt
-    * @param constructionTimeout
-    *   per-attempt bound on `acquire` + `verify`
-    * @param onConstructionError
-    *   run when `acquire`, `verify`, or the swap ultimately fails; the instance stays on the fallback
-    * @param verify
-    *   run on each acquired candidate before the swap; failure rejects the candidate and counts as a failed attempt.
-    *   Defaults to accepting every candidate. See [[Verify]] for ready-made checks.
-    * @param onSwapped
-    *   run once after the switch routes to the real provider and [[AcquireState.Live]] is observable
-    * @param maxAbandonedCalls
-    *   cap on provider calls abandoned by `evaluationTimeout` and still running, see [[DefaultMaxAbandonedCalls]]; must
-    *   be at least 1
+    * @param config
+    *   what every instance takes: domain, version, initial hooks, timeouts (`initTimeout` bounds the composed stack's
+    *   initialization), API ownership, context source, fallback logging and `maxAbandonedCalls`. `initMode` does not
+    *   apply: the fallback is installed at once and the real provider always arrives later.
+    * @param acquireConfig
+    *   how the real provider is composed, retried, bounded, verified and reported; see [[AcquireConfig]]
     */
+  def fromAcquireAsync(
+    acquire: RIO[Scope, OFFeatureProvider],
+    fallback: URIO[Scope, OFFeatureProvider],
+    config: FeatureFlagsConfig,
+    acquireConfig: AcquireConfig
+  ): URLayer[Any, FeatureFlags with AcquireStatus] =
+    FeatureFlagsFactories.fromAcquireAsync(acquire, fallback, config, acquireConfig)
+
+  /** [[fromAcquireAsync(RIO[Scope, OFFeatureProvider], URIO[Scope, OFFeatureProvider], FeatureFlagsConfig, AcquireConfig)]]
+    * with [[AcquireConfig.default]].
+    */
+  def fromAcquireAsync(
+    acquire: RIO[Scope, OFFeatureProvider],
+    fallback: URIO[Scope, OFFeatureProvider],
+    config: FeatureFlagsConfig
+  ): URLayer[Any, FeatureFlags with AcquireStatus] =
+    fromAcquireAsync(acquire, fallback, config, AcquireConfig.default)
+
+  /** [[fromAcquireAsync(RIO[Scope, OFFeatureProvider], URIO[Scope, OFFeatureProvider], FeatureFlagsConfig, AcquireConfig)]]
+    * with the default config and [[AcquireConfig.default]]. No default arguments, so a two-argument call resolves here
+    * rather than to the deprecated form.
+    */
+  def fromAcquireAsync(
+    acquire: RIO[Scope, OFFeatureProvider],
+    fallback: URIO[Scope, OFFeatureProvider]
+  ): URLayer[Any, FeatureFlags with AcquireStatus] =
+    fromAcquireAsync(acquire, fallback, FeatureFlagsConfig(), AcquireConfig.default)
+
+  /** The form before [[AcquireConfig]]: `evaluationTimeout`, `initTimeout`, `contextSource`, `fallbackLogging` and
+    * `maxAbandonedCalls` are now [[FeatureFlagsConfig]] fields, the rest [[AcquireConfig]] settings.
+    */
+  @deprecated(
+    "Use fromAcquireAsync(acquire, fallback, FeatureFlagsConfig(), AcquireConfig.default): evaluationTimeout, " +
+      "initTimeout, contextSource, fallbackLogging and maxAbandonedCalls are FeatureFlagsConfig fields, the rest " +
+      "AcquireConfig settings",
+    "1.3.0"
+  )
   def fromAcquireAsync(
     acquire: RIO[Scope, OFFeatureProvider],
     fallback: URIO[Scope, OFFeatureProvider],
@@ -1665,7 +1692,7 @@ object FeatureFlags {
     // Its own parameter for the same reason as `fallbackLogging`.
     maxAbandonedCalls: Int = DefaultMaxAbandonedCalls
   ): URLayer[Any, FeatureFlags with AcquireStatus] =
-    FeatureFlagsFactories.fromAcquireAsync(
+    legacyAcquireAsync(
       acquire,
       fallback,
       compose,
@@ -1698,7 +1725,7 @@ object FeatureFlags {
     onSwapped: UIO[Unit],
     fallbackLogging: FallbackLogging
   ): URLayer[Any, FeatureFlags with AcquireStatus] =
-    FeatureFlagsFactories.fromAcquireAsync(
+    legacyAcquireAsync(
       acquire,
       fallback,
       compose,
@@ -1712,5 +1739,41 @@ object FeatureFlags {
       onSwapped,
       fallbackLogging,
       DefaultMaxAbandonedCalls
+    )
+
+  // The forms before AcquireConfig, translated: the instance-wide knobs into a FeatureFlagsConfig, the rest into an
+  // AcquireConfig. The evaluation timeout was always set on this path, so it is `After`, never `Default`.
+  private def legacyAcquireAsync(
+    acquire: RIO[Scope, OFFeatureProvider],
+    fallback: URIO[Scope, OFFeatureProvider],
+    compose: (OFFeatureProvider, OFFeatureProvider) => OFFeatureProvider,
+    constructionRetry: Schedule[Any, Throwable, Any],
+    constructionTimeout: Duration,
+    onConstructionError: Throwable => UIO[Unit],
+    evaluationTimeout: Duration,
+    initTimeout: Duration,
+    contextSource: ContextSource,
+    verify: OFFeatureProvider => Task[Unit],
+    onSwapped: UIO[Unit],
+    fallbackLogging: FallbackLogging,
+    maxAbandonedCalls: Int
+  ): URLayer[Any, FeatureFlags with AcquireStatus] =
+    fromAcquireAsync(
+      acquire,
+      fallback,
+      FeatureFlagsConfig(
+        evaluationTimeout = EvaluationTimeout.After(evaluationTimeout),
+        initTimeout = initTimeout,
+        contextSource = contextSource,
+        fallbackLogging = fallbackLogging,
+        maxAbandonedCalls = maxAbandonedCalls
+      ),
+      AcquireConfig.default
+        .withCompose(compose)
+        .withConstructionRetry(constructionRetry)
+        .withConstructionTimeout(constructionTimeout)
+        .withOnConstructionError(onConstructionError)
+        .withVerify(verify)
+        .withOnSwapped(onSwapped)
     )
 }

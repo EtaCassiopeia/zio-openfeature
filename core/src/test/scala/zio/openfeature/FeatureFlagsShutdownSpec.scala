@@ -169,12 +169,49 @@ object FeatureFlagsShutdownSpec extends ZIOSpecDefault {
       ZIO.scoped {
         for {
           ffOwn <- buildShared("Own", shutOwn, owns = true, api)
-          _     <- buildShared("Sib", shutSib, owns = false, api)
+          ffSib <- buildShared("Sib", shutSib, owns = false, api)
+          _     <- ffSib.awaitReady(5.seconds)
           _     <- ffOwn.shutdown
+          // The sibling's provider is gone with the API: it reports so rather than serve the SDK's No-op answers.
+          status <- ffSib.providerStatus
+          read   <- ffSib.boolean("flag", default = false).either
+          waited <- ffSib.awaitReady(5.seconds).timed
         } yield assertTrue(
           shutOwn.get(), // api.shutdown() shut the owner's provider
-          shutSib.get()  // ...and cascaded to every provider on the api — proving api.shutdown() actually fired
+          shutSib.get(), // ...and cascaded to every provider on the api — proving api.shutdown() actually fired
+          status == ProviderStatus.NotReady,
+          read == Left(FeatureFlagError.ProviderNotReady(ProviderStatus.NotReady)),
+          waited._2 == ProviderStatus.NotReady,
+          waited._1 < 1.second
         )
+      }
+    } @@ withLiveClock,
+    test("an owner's scope close leaves a sibling on the same api NotReady") {
+      val api = OpenFeatureAPI.createIsolated()
+      ZIO.scoped {
+        for {
+          ffSib <- buildShared("Sib", new AtomicBoolean(false), owns = false, api)
+          _ <- ZIO.scoped(buildShared("Own", new AtomicBoolean(false), owns = true, api) *> ffSib.awaitReady(5.seconds))
+          status <- ffSib.providerStatus
+          read   <- ffSib.boolean("flag", default = false).either
+        } yield assertTrue(
+          status == ProviderStatus.NotReady,
+          read == Left(FeatureFlagError.ProviderNotReady(ProviderStatus.NotReady))
+        )
+      }
+    } @@ withLiveClock,
+    test("two owners on one api: each one's teardown leaves the other NotReady, and neither waits on the other") {
+      val api = OpenFeatureAPI.createIsolated()
+      ZIO.scoped {
+        for {
+          a <- buildShared("A", new AtomicBoolean(false), owns = true, api)
+          b <- buildShared("B", new AtomicBoolean(false), owns = true, api)
+          _ <- a.awaitReady(5.seconds) *> b.awaitReady(5.seconds)
+          // Both at once: an owner retiring the other while the other retires it must not deadlock.
+          both <- a.shutdown.zipPar(b.shutdown).timeout(20.seconds)
+          sa   <- a.providerStatus
+          sb   <- b.providerStatus
+        } yield assertTrue(both.isDefined, sa == ProviderStatus.NotReady, sb == ProviderStatus.NotReady)
       }
     } @@ withLiveClock
   )

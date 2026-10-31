@@ -9,7 +9,7 @@ import zio.openfeature.FeatureFlags.{
   DefaultMaxAbandonedCalls,
   UnknownProviderName
 }
-import dev.openfeature.sdk.{FeatureProvider => OFFeatureProvider, OpenFeatureAPI, ProviderState}
+import dev.openfeature.sdk.{FeatureProvider => OFFeatureProvider, NoOpProvider, OpenFeatureAPI, ProviderState}
 import dev.openfeature.sdk.exceptions.{FatalError, GeneralError}
 import java.util.concurrent.TimeoutException
 
@@ -72,12 +72,38 @@ private[openfeature] object FeatureFlagsFactories {
     orphans: OrphanedProviders,
     probe: LifecycleProbe,
     swapLock: Semaphore,
-    closed: java.util.concurrent.atomic.AtomicBoolean
+    closed: java.util.concurrent.atomic.AtomicBoolean,
+    self: java.util.concurrent.atomic.AtomicReference[FeatureFlagsLive]
   ): UIO[Unit] =
-    swapLock.withPermit(
-      ZIO.succeed(closed.set(true)) *> probe.at(LifecycleProbe.Point.ScopeClose) *>
-        ProviderRegistration.boundedApiShutdown(api) *> orphans.resolveAll
-    )
+    // The other instances on the API first, as `shutdown` does, and before this one's lock.
+    ApiInstances.retireSiblings(api, self.get()) *>
+      swapLock.withPermit(
+        ZIO.succeed(closed.set(true)) *> probe.at(LifecycleProbe.Point.ScopeClose) *>
+          ProviderRegistration.boundedApiShutdown(api) *> orphans.resolveAll
+      )
+
+  /** Warn when the slot this build binds already holds another provider: the SDK shuts that one down once the new one
+    * is ready, under whichever instance was using it. Never fails the build.
+    */
+  private def warnIfSlotBound(api: OpenFeatureAPI, domain: Option[String], provider: OFFeatureProvider): UIO[Unit] =
+    ZIO
+      .attempt {
+        val default = api.getProvider()
+        // The SDK answers an unbound domain with the default slot's provider.
+        val bound = domain.fold(default)(d => api.getProvider(d)) match {
+          case p if domain.isDefined && (p eq default) => null
+          case p                                       => p
+        }
+        Option(bound).filter(b => !(b eq provider) && !b.isInstanceOf[NoOpProvider]).map { b =>
+          def name(p: OFFeatureProvider) = Option(p.getMetadata).flatMap(m => Option(m.getName)).getOrElse("unnamed")
+          val slot                       = domain.fold("the default slot")(d => s"domain '$d'")
+          s"$slot of this OpenFeatureAPI already holds provider '${name(b)}'; binding '${name(provider)}' makes the SDK " +
+            "shut it down once the new one is ready, under whatever was using it. Use FeatureFlagsConfig.withIsolatedApi, " +
+            "a domain, or FeatureFlagRegistry to keep instances apart."
+        }
+      }
+      .flatMap(ZIO.foreachDiscard(_)(ZIO.logWarning(_)))
+      .catchAll(e => ZIO.logDebug(s"Could not read the slot's provider before binding: ${e.getMessage}"))
 
   private def makeInstance(
     provider: OFFeatureProvider,
@@ -231,7 +257,10 @@ private[openfeature] object FeatureFlagsFactories {
       // Created before the finalizer, which takes the lock and sets the flag (see `ownedApiFinalizer`).
       swapLock <- Semaphore.make(1)
       closed = new java.util.concurrent.atomic.AtomicBoolean(false)
-      _  <- ZIO.when(addShutdownFinalizer)(ZIO.addFinalizer(ownedApiFinalizer(api, orphans, probe, swapLock, closed)))
+      self   = new java.util.concurrent.atomic.AtomicReference[FeatureFlagsLive](null)
+      _ <- ZIO.when(addShutdownFinalizer)(
+        ZIO.addFinalizer(ownedApiFinalizer(api, orphans, probe, swapLock, closed, self))
+      )
       ff <- makeInstance(
         provider,
         api,
@@ -253,6 +282,10 @@ private[openfeature] object FeatureFlagsFactories {
         swapLock,
         closed
       )
+      // Known to the instance that later tears this API down, which then retires this one; and the slot checked
+      // before it is bound.
+      _ <- ZIO.succeed { self.set(ff); ApiInstances.register(api, ff) }
+      _ <- warnIfSlotBound(api, domain, provider)
       // The bridge is attached before the provider initializes, so exactly one PROVIDER_READY reaches it. See
       // `attachesBeforeRegistration`.
       early <- attachesBeforeRegistration(api, domain, provider)
@@ -285,6 +318,29 @@ private[openfeature] object FeatureFlagsFactories {
       _ <- statusRef.fold(ff.seedStatus(verified))(_ => ZIO.unit)
     } yield ff
 
+  // How a `FeatureFlagsConfig` reads on every config-driven path (`fromProvider`, `fromAcquireAsync`), in one place.
+
+  private[openfeature] def evaluationTimeoutOf(config: FeatureFlagsConfig): Option[Duration] =
+    config.evaluationTimeout match {
+      case EvaluationTimeout.Default  => Some(DefaultEvaluationTimeout)
+      case EvaluationTimeout.Disabled => None
+      case EvaluationTimeout.After(d) => Some(d)
+    }
+
+  private def ownsApiOf(config: FeatureFlagsConfig): Boolean = config.apiOwnership match {
+    case ApiOwnership.Auto     => config.domain.isEmpty
+    case ApiOwnership.Owned    => true
+    case ApiOwnership.Shared   => false
+    case ApiOwnership.Isolated => true
+  }
+
+  // An isolated instance gets a private API of its own, unless the package-private override names one.
+  private def apiOverrideOf(config: FeatureFlagsConfig, apiOverride: Option[OpenFeatureAPI]): Option[OpenFeatureAPI] =
+    config.apiOwnership match {
+      case ApiOwnership.Isolated => apiOverride.orElse(Some(OpenFeatureAPI.createIsolated()))
+      case _                     => apiOverride
+    }
+
   def fromProvider(
     provider: OFFeatureProvider,
     config: FeatureFlagsConfig,
@@ -293,16 +349,9 @@ private[openfeature] object FeatureFlagsFactories {
     onReady: Option[java.util.concurrent.CountDownLatch] = None
   ): ZLayer[Any, Throwable, FeatureFlags] =
     ZLayer.scoped {
-      val evalTimeout = config.evaluationTimeout match {
-        case EvaluationTimeout.Default  => Some(DefaultEvaluationTimeout)
-        case EvaluationTimeout.Disabled => None
-        case EvaluationTimeout.After(d) => Some(d)
-      }
-      val ownsApi = config.apiOwnership match {
-        case ApiOwnership.Auto   => config.domain.isEmpty
-        case ApiOwnership.Owned  => true
-        case ApiOwnership.Shared => false
-      }
+      val evalTimeout = evaluationTimeoutOf(config)
+      val resolvedApi = apiOverrideOf(config, apiOverride)
+      val ownsApi     = ownsApiOf(config)
       config.initMode match {
         // The `WithTracking` variants, not `build`/`buildAsync`: those keep their released signatures (they are
         // package-private but compiled into the published testkit), so newer knobs like `maxAbandonedCalls`
@@ -315,7 +364,7 @@ private[openfeature] object FeatureFlagsFactories {
             config.initialHooks,
             statusRef = statusRef,
             addShutdownFinalizer = ownsApi,
-            apiOverride = apiOverride,
+            apiOverride = resolvedApi,
             evaluationTimeout = evalTimeout,
             initTimeout = config.initTimeout,
             onReady = onReady,
@@ -331,7 +380,7 @@ private[openfeature] object FeatureFlagsFactories {
             config.initialHooks,
             statusRef = statusRef,
             addShutdownFinalizer = ownsApi,
-            apiOverride = apiOverride,
+            apiOverride = resolvedApi,
             onReady = onReady,
             evaluationTimeout = evalTimeout,
             initTimeout = config.initTimeout,
@@ -427,7 +476,10 @@ private[openfeature] object FeatureFlagsFactories {
       // Created before the finalizer, which takes the lock and sets the flag (see `ownedApiFinalizer`).
       swapLock <- Semaphore.make(1)
       closed = new java.util.concurrent.atomic.AtomicBoolean(false)
-      _  <- ZIO.when(addShutdownFinalizer)(ZIO.addFinalizer(ownedApiFinalizer(api, orphans, probe, swapLock, closed)))
+      self   = new java.util.concurrent.atomic.AtomicReference[FeatureFlagsLive](null)
+      _ <- ZIO.when(addShutdownFinalizer)(
+        ZIO.addFinalizer(ownedApiFinalizer(api, orphans, probe, swapLock, closed, self))
+      )
       ff <- makeInstance(
         provider,
         api,
@@ -449,6 +501,10 @@ private[openfeature] object FeatureFlagsFactories {
         swapLock,
         closed
       )
+      // Known to the instance that later tears this API down, which then retires this one; and the slot checked
+      // before it is bound.
+      _ <- ZIO.succeed { self.set(ff); ApiInstances.register(api, ff) }
+      _ <- warnIfSlotBound(api, domain, provider)
       // As in the sync build: attach the bridge before the provider initializes, so exactly one PROVIDER_READY
       // reaches it — the post-init emission, or the SDK's replay for a provider that is already ready.
       early <- attachesBeforeRegistration(api, domain, provider)
@@ -500,21 +556,21 @@ private[openfeature] object FeatureFlagsFactories {
       )
     )
 
+  /** `config.initMode` does not apply: the fallback is installed at once and the real provider always arrives later. */
   def fromAcquireAsync(
     acquire: RIO[Scope, OFFeatureProvider],
     fallback: URIO[Scope, OFFeatureProvider],
-    compose: (OFFeatureProvider, OFFeatureProvider) => OFFeatureProvider,
-    constructionRetry: Schedule[Any, Throwable, Any],
-    constructionTimeout: Duration,
-    onConstructionError: Throwable => UIO[Unit],
-    evaluationTimeout: Duration,
-    initTimeout: Duration,
-    contextSource: ContextSource,
-    verify: OFFeatureProvider => Task[Unit],
-    onSwapped: UIO[Unit],
-    fallbackLogging: FallbackLogging,
-    maxAbandonedCalls: Int
+    config: FeatureFlagsConfig,
+    acquireConfig: AcquireConfig
   ): URLayer[Any, FeatureFlags with AcquireStatus] = {
+    val compose             = acquireConfig.compose
+    val constructionRetry   = acquireConfig.constructionRetry
+    val constructionTimeout = acquireConfig.constructionTimeout
+    val onConstructionError = acquireConfig.onConstructionError
+    val verify              = acquireConfig.verify
+    val onSwapped           = acquireConfig.onSwapped
+    val initTimeout         = config.initTimeout
+    val maxAbandonedCalls   = config.maxAbandonedCalls
     require(maxAbandonedCalls >= 1, s"maxAbandonedCalls must be at least 1, got $maxAbandonedCalls")
     // `scopedEnvironment` rather than `scoped`: the layer emits two services, and only an explicit ZEnvironment can
     // carry an intersection.
@@ -529,15 +585,16 @@ private[openfeature] object FeatureFlagsFactories {
         state <- SubscriptionRef.make[AcquireState](AcquireState.Constructing)
         ff    <- buildWithTracking(
           switch,
-          domain = None,
-          version = None,
-          initialHooks = Nil,
+          domain = config.domain,
+          version = config.version,
+          initialHooks = config.initialHooks,
           statusRef = None,
-          addShutdownFinalizer = true,
-          evaluationTimeout = Some(evaluationTimeout),
+          addShutdownFinalizer = ownsApiOf(config),
+          apiOverride = apiOverrideOf(config, None),
+          evaluationTimeout = evaluationTimeoutOf(config),
           initTimeout = initTimeout,
-          contextSource = contextSource,
-          fallbackLogging = fallbackLogging,
+          contextSource = config.contextSource,
+          fallbackLogging = config.fallbackLogging,
           maxAbandonedCalls = maxAbandonedCalls
         ).orDie
         // One attempt = acquire, then verify the candidate, inside a child scope of the layer scope. The child scope

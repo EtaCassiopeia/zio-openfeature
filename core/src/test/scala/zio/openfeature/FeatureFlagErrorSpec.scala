@@ -253,6 +253,75 @@ object FeatureFlagErrorSpec extends ZIOSpecDefault {
         }
         assertTrue(ok)
       }
+    ),
+    suite("Operation sub-traits")(
+      test("every case is in the sub-traits of the operations that raise it") {
+        import FeatureFlagError._
+        val boom = new RuntimeException("boom")
+        // (case, evaluation, lifecycle, transaction)
+        val table: List[(FeatureFlagError, Boolean, Boolean, Boolean)] = List(
+          (FlagNotFound("k"), true, false, false),
+          (TypeMismatch("k", "Boolean", "String"), true, false, false),
+          (ParseError("k", boom), true, false, false),
+          (emptyFlagVariables, true, false, false),
+          (TargetingKeyMissing("k"), true, false, false),
+          (InvalidContext("r"), true, false, false),
+          (ProviderNotReady(ProviderStatus.NotReady), true, true, false),
+          (ProviderFatal, true, true, false),
+          (ProviderError(boom), true, true, false),
+          (Unauthorized("r"), true, true, false),
+          (Unreachable(boom), true, true, false),
+          (ProviderInitializationFailed(boom), false, true, false),
+          (InvalidConfiguration("r"), false, true, false),
+          (NestedTransactionNotAllowed, false, false, true),
+          (OverrideTypeMismatch("k", "Boolean", "String"), true, false, true)
+        )
+        val wrong = table.filterNot { case (e, ev, lc, tx) =>
+          e.isInstanceOf[EvaluationError] == ev && e.isInstanceOf[LifecycleError] == lc &&
+          e.isInstanceOf[TransactionError] == tx
+        }
+        assertTrue(wrong.isEmpty)
+      },
+      test("each sub-trait is sealed: a match over its cases needs no default") {
+        // Compiled with fatal warnings on Scala 3: a missing case here is a non-exhaustive match.
+        def describe(e: FeatureFlagError.TransactionError): String = e match {
+          case FeatureFlagError.NestedTransactionNotAllowed   => "nested"
+          case FeatureFlagError.OverrideTypeMismatch(k, _, _) => s"override $k"
+        }
+        assertTrue(describe(FeatureFlagError.NestedTransactionNotAllowed) == "nested")
+      }
+    ),
+    suite("Throwable bridge")(
+      test("toThrowable carries the message, the cause and the error, with no stack trace") {
+        val boom = new RuntimeException("boom")
+        val err  = FeatureFlagError.ProviderError(boom)
+        val t    = err.toThrowable
+        assertTrue(
+          t.getMessage == err.message,
+          t.getCause eq boom,
+          t.getStackTrace.isEmpty,
+          t match {
+            case e: FeatureFlagException => e.error == err
+            case _                       => false
+          }
+        )
+      },
+      test("asThrowable composes with orDie") {
+        for {
+          exit <- ZIO.fail(FeatureFlagError.FlagNotFound("k")).mapError(FeatureFlagError.asThrowable).orDie.exit
+        } yield assertTrue(exit.causeOption.flatMap(_.dieOption).exists {
+          case e: FeatureFlagException => e.error == FeatureFlagError.FlagNotFound("k")
+          case _                       => false
+        })
+      }
+    ),
+    suite("Compat")(
+      test("the deprecated zio.openfeature.Compat merges as the internal one does") {
+        val e: Either[String, FeatureFlagError] = Right(FeatureFlagError.ProviderFatal)
+        // Outside the assertTrue macro, which reports a deprecation at its own position, past this object's @nowarn.
+        val viaAlias: Any = Compat.merge(e)
+        assertTrue(viaAlias == zio.openfeature.internal.Compat.merge(e))
+      }
     )
   )
 }

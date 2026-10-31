@@ -64,7 +64,7 @@ object FallbackLoggingSpec extends ZIOSpecDefault {
     override def withContext[R, E, A](ctx: EvaluationContext)(zio: ZIO[R, E, A]): ZIO[R, E, A]            = ???
     override def transaction[R, E, A](o: Map[String, Any], c: EvaluationContext, ce: Boolean, n: NestedPolicy)(
       zio: ZIO[R, E, A]
-    ): ZIO[R, Compat.OrError[E, FeatureFlagError], TransactionResult[A]] = ???
+    ): ZIO[R, _root_.zio.openfeature.internal.Compat.OrError[E, FeatureFlagError], TransactionResult[A]] = ???
     override def transactionEither[R, E, A](o: Map[String, Any], c: EvaluationContext, ce: Boolean, n: NestedPolicy)(
       zio: ZIO[R, E, A]
     ): ZIO[R, Either[E, FeatureFlagError], TransactionResult[A]]                                         = ???
@@ -225,7 +225,14 @@ object FallbackLoggingSpec extends ZIOSpecDefault {
         // Off: nothing logged even though every evaluation is a fallback
         offLogs <- ZIO.scoped {
           FeatureFlags
-            .fromAcquireAsync(acquire, fallback, fallbackLogging = FallbackLogging.Off)
+            .fromAcquireAsync(
+              acquire,
+              fallback,
+              FeatureFlagsConfig(
+                fallbackLogging = FallbackLogging.Off
+              ),
+              AcquireConfig.default
+            )
             .build
             .map(_.get[FeatureFlags])
             .flatMap(ff => ZIO.foreachDiscard(1 to 3)(_ => ff.booleanOrDefault("k", default = true)) *> warnings(base))

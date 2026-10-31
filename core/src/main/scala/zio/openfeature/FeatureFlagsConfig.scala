@@ -36,6 +36,9 @@ final case class FeatureFlagsConfig(
   def withSyncInit: FeatureFlagsConfig                        = copy(initMode = InitMode.Sync)
   def withApiOwnership(o: ApiOwnership): FeatureFlagsConfig   = copy(apiOwnership = o)
 
+  /** A private `OpenFeatureAPI` for this instance instead of the process-global one; see [[ApiOwnership.Isolated]]. */
+  def withIsolatedApi: FeatureFlagsConfig = copy(apiOwnership = ApiOwnership.Isolated)
+
   /** Consult `source` for ambient context on every evaluation, merged between the client and fiber-local contexts — see
     * [[ContextSource]] for the full precedence and why that slot matters. Replaces any source already set; compose with
     * `++` to add to one.
@@ -98,4 +101,9 @@ object ApiOwnership {
 
   /** Scope close / `shutdown` leaves the underlying API untouched — sibling clients sharing it keep working. */
   case object Shared extends ApiOwnership
+
+  /** A private `OpenFeatureAPI` created for this instance, which always owns it: nothing else on the JVM sees its
+    * provider, and binding it touches no other instance's slot. With a domain set, the domain is on that private API.
+    */
+  case object Isolated extends ApiOwnership
 }

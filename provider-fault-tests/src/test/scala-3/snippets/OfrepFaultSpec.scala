@@ -89,8 +89,8 @@ object OfrepFaultSpec extends ZIOSpecDefault:
             .fromAcquireAsync(
               acquire = acquired(OFREPProvider.scoped(config)),
               fallback = fallback,
-              constructionRetry = Schedule.stop,
-              evaluationTimeout = evaluationTimeout
+              config = FeatureFlagsConfig().withEvaluationTimeout(evaluationTimeout),
+              acquireConfig = AcquireConfig.default.withConstructionRetry(Schedule.stop)
             )
             .build
           flags = env.get[FeatureFlags]

@@ -130,7 +130,9 @@ environment-variable, deferred and long-widening providers send none.
 
 Shutdown moves the status to `ShuttingDown` and then `NotReady`, and evaluations fail from then on. It clears the
 client and ZIO API hooks and the global and client context, and ends the event stream and every handler. Whether it
-also stops the provider depends on [who owns the API](providers.md#who-shuts-down-the-api). A `setProvider` after
+also stops the provider depends on [who owns the API](providers.md#who-shuts-down-the-api); an owner's shutdown leaves
+every other instance on the same API `NotReady` too (see [sharing the SDK](providers.md#sharing-the-sdk)). A
+`setProvider` after
 shutdown, or after the layer's scope has closed, fails with `ProviderNotReady(NotReady)` and leaves the provider it was
 given untouched: a shut-down instance is never revived, so build a new layer instead.
 

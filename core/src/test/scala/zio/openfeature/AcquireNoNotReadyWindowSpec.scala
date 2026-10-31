@@ -141,8 +141,11 @@ object AcquireNoNotReadyWindowSpec extends ZIOSpecDefault {
             .fromAcquireAsync(
               acquire,
               fallbacks.effect,
-              onConstructionError = e => errP.succeed(e).unit,
-              initTimeout = 300.millis
+              FeatureFlagsConfig(
+                initTimeout = 300.millis
+              ),
+              AcquireConfig.default
+                .withOnConstructionError(e => errP.succeed(e).unit)
             )
             .build
           ff = env.get[FeatureFlags]
@@ -178,8 +181,10 @@ object AcquireNoNotReadyWindowSpec extends ZIOSpecDefault {
             .fromAcquireAsync(
               acquire,
               fallbacks.effect,
-              compose = (r, _) => r,
-              onConstructionError = e => errP.succeed(e).unit
+              FeatureFlagsConfig(),
+              AcquireConfig.default
+                .withCompose((r, _) => r)
+                .withOnConstructionError(e => errP.succeed(e).unit)
             )
             .build
           ff = env.get[FeatureFlags]
@@ -207,7 +212,15 @@ object AcquireNoNotReadyWindowSpec extends ZIOSpecDefault {
       val fallbacks = new Fallbacks
       ZIO.scoped {
         for {
-          env <- FeatureFlags.fromAcquireAsync(ZIO.succeed(real), fallbacks.effect, compose = (r, _) => r).build
+          env <- FeatureFlags
+            .fromAcquireAsync(
+              ZIO.succeed(real),
+              fallbacks.effect,
+              FeatureFlagsConfig(),
+              AcquireConfig.default
+                .withCompose((r, _) => r)
+            )
+            .build
           ff = env.get[FeatureFlags]
           _       <- awaitOutcome(env)
           changed <- Promise.make[Nothing, Set[String]]
@@ -267,7 +280,13 @@ object AcquireNoNotReadyWindowSpec extends ZIOSpecDefault {
           errP     <- Promise.make[Nothing, Throwable]
           acquire = ZIO.acquireRelease(ZIO.succeed(real: FeatureProvider))(_ => released.update(_ + 1))
           env <- FeatureFlags
-            .fromAcquireAsync(acquire, fallbacks.effect, onConstructionError = e => errP.succeed(e).unit)
+            .fromAcquireAsync(
+              acquire,
+              fallbacks.effect,
+              FeatureFlagsConfig(),
+              AcquireConfig.default
+                .withOnConstructionError(e => errP.succeed(e).unit)
+            )
             .build
           ff = env.get[FeatureFlags]
           _        <- awaitLatch(real.initStarted, "the real provider's initialize()")
@@ -300,11 +319,14 @@ object AcquireNoNotReadyWindowSpec extends ZIOSpecDefault {
             .fromAcquireAsync(
               ZIO.succeed(real),
               fallbacks.effect,
-              // Initialize the real provider through the composed stack, as MultiProvider does.
-              compose = (r, _) =>
-                new TestProvider("composed", true) {
-                  override def initialize(ctx: OFEvaluationContext): Unit = r.initialize(ctx)
-                }
+              FeatureFlagsConfig(),
+              AcquireConfig.default
+                // Initialize the real provider through the composed stack, as MultiProvider does.
+                .withCompose((r, _) =>
+                  new TestProvider("composed", true) {
+                    override def initialize(ctx: OFEvaluationContext): Unit = r.initialize(ctx)
+                  }
+                )
             )
             .build
           ff = env.get[FeatureFlags]

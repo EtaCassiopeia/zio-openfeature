@@ -87,10 +87,9 @@ object OptimizelyFaultSpec extends ZIOSpecDefault:
             .fromAcquireAsync(
               acquire = acquired(OptimizelyProvider.scoped(config)),
               fallback = fallback,
-              constructionRetry = Schedule.stop,
-              constructionTimeout = initTimeout,
-              initTimeout = initTimeout,
-              evaluationTimeout = 2.seconds
+              config = FeatureFlagsConfig().withInitTimeout(initTimeout).withEvaluationTimeout(2.seconds),
+              acquireConfig =
+                AcquireConfig.default.withConstructionRetry(Schedule.stop).withConstructionTimeout(initTimeout)
             )
             .build
           flags  = env.get[FeatureFlags]

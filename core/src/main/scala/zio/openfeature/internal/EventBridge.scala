@@ -58,12 +58,14 @@ final private[openfeature] class EventBridge(
 
   /** [[applySignal]] for an event the SDK delivered: the signal is the one the SDK's own state for this client's slot
     * implies, read inside the serialized write; `own` (the event's signal) applies only when the slot is unreadable, or
-    * when the event is a fatal error. The SDK runs a provider's handlers with no ordering between them, but writes the
-    * slot state before running the event's handlers; so whichever handler applies last reads the final state, and an
-    * ERROR handled after the READY that followed it cannot leave the status on Error. For the same reason an event from
-    * the installed provider never finds the slot `NOT_READY`: one that does is about another registration (a replaced
-    * provider with the same name, which the identity guard cannot tell apart), and applies no signal. Returns the
-    * signal applied, if any, and the transition.
+    * when the event is a fatal error. The SDK writes the slot state in the emit task, on the provider's emitter pool,
+    * before it runs that event's handlers, and runs the handlers with no ordering between them; so whichever handler
+    * applies last reads the slot's final state, and an ERROR handled after the READY that followed it cannot leave the
+    * status on Error. Across events there is no such guarantee: two emissions from one provider write the slot in
+    * either order unless the provider awaits each one (the extras wrappers do), and the status follows the slot. For
+    * the same reason an event from the installed provider never finds the slot `NOT_READY`: one that does is about
+    * another registration (a replaced provider with the same name, which the identity guard cannot tell apart), and
+    * applies no signal. Returns the signal applied, if any, and the transition.
     */
   private def applySdkSignal(own: Signal): UIO[(Option[Signal], Option[ProviderStatus])] =
     probe.at(LifecycleProbe.Point.ApplySignal(own)) *> state.statusRef

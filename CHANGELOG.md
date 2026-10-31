@@ -74,6 +74,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   replaced, and pairs of actions run at once, checked against every order they can take effect in. Every case also
   checks that each provider it created was shut down exactly once. The model now lives in `LifecycleModel`.
 
+- **Wrapper-stack event-order flake pinned** (#666, test-only). `WrapperStackFaultSpec` now also runs the two cases
+  its generated property shrank to when an `ERROR` failed to reach the status in CI; the cause, wrappers re-emitting
+  through the SDK's unordered pool, is fixed by #700 and caught by `WrapperEmissionOrderSpec`. The comments in
+  `WrapperStackFaultSpec` and `EventBridge` now say where the SDK orders events (per event, slot write before handlers)
+  and where it does not (across one provider's emissions).
+
 ### Changed
 
 - **An OFREP answer that is not OFREP JSON is a `GENERAL` error, so it trips the circuit breaker** (#642). The contrib

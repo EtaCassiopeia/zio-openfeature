@@ -29,8 +29,9 @@ examples on this site use Scala 3 syntax.
 
 ## Your first flag
 
-`FeatureFlags` is a ZIO service. Ask it for a flag by key, with the value to use when the flag is not set. Here it runs
-on the testkit's in-memory provider, so nothing else is needed:
+`FeatureFlags` is a ZIO service. Ask it for a flag by key, with the default to serve when the flag cannot be read.
+`booleanOrDefault` never fails; `boolean`, shown below, fails instead. Here it runs on the testkit's in-memory
+provider, so nothing else is needed:
 
 ```scala
 --8<-- "GettingStarted.scala:first-flag"
@@ -50,8 +51,8 @@ flagd, add `"dev.openfeature.contrib.providers" % "flagd" % "<version>"` and pas
 
 ## Two ways to read a flag
 
-The typed tier fails when the flag cannot be read; the total tier serves your default. See
-[Evaluating flags](evaluating.md#two-tiers).
+The typed tier fails when the flag cannot be read; the total tier serves your default. On the typed tier the default
+is still sent to the provider and to hooks, but it is not served. See [Evaluating flags](evaluating.md#two-tiers).
 
 ```scala
 --8<-- "GettingStarted.scala:two-tiers"

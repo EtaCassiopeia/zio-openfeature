@@ -53,7 +53,8 @@ A [custom flag type](typed-flags.md) can be overridden with its value or with th
 ## Caching
 
 With `cacheEvaluations = true` (the default), the first read of a key calls the provider and the next reads of that
-key in the block are served from the transaction with reason `Cached`. The block sees one value per flag even if the
+key in the block are served from the transaction with reason `Cached`, keeping the first read's variant and flag
+metadata. The block sees one value per flag even if the
 flag changes meanwhile.
 
 ```scala

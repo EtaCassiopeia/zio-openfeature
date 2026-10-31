@@ -53,6 +53,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   response with `GENERAL` and the caller's default, on every resolver. The status is not visible there, so a 200 with
   malformed JSON is `GENERAL` too (typed tier: `ProviderError` instead of `ParseError`).
 
+### Documentation
+
+- **Getting started no longer says the typed getter serves the default** (#649). The first example now uses
+  `booleanOrDefault`, and the getting-started text, the `FlagDef` ScalaDoc and the typed getters' docs say that on the
+  typed tier `default` is passed to the provider and hooks but not served on failure.
+
 ### Fixed
 
 - **An evaluation running when a swap starts is no longer served by the swap's failed provider** (#658). The readiness
@@ -254,6 +260,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   handler on the closed client and either waited again or, if a datafile had loaded before the shutdown, reported
   `READY` on a client that no longer polls. The wait now ends at once, the provider stays `NOT_READY`, and a later
   `initialize()` on a factory-built provider fails with "was shut down".
+- **A cached read inside a transaction keeps the provider's variant and flag metadata** (#638, spec compliance). A
+  read served from the transaction's cache carried `variant = None` and empty flag metadata, so exposure logging and
+  `after` hooks keyed on the variant lost it on every read after the first. It is now the first read's resolution
+  re-labelled `Cached`.
+- **`HoconProvider` answers `FLAG_NOT_FOUND` for a key that is not a HOCON path, instead of throwing** (#643). A key such
+  as `flag@v2`, `a:b` or `a..b` made Typesafe Config's `hasPath` throw `BadPath`, which the SDK reported as `GENERAL`:
+  a first-match provider chain stopped at it, and under `CircuitBreakerProvider` repeated reads of one such key opened
+  the circuit around purely local config. Such a key is now not found, like any absent one; dotted keys still read a
+  nested path.
 - **The `error` hook stage receives the same `TypeMismatch` expected type as the caller** (#641). For a provider-reported
   `TYPE_MISMATCH`, the hook's error named the resolver's wire type (`Double` for a `Float` flag, `String` for a
   string-backed custom type) while the caller's named the flag's own type; both now name the flag's (`Float`, `Plan`).

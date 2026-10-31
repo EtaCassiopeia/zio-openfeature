@@ -214,6 +214,30 @@ object HoconProviderSpec extends ZIOSpecDefault {
           after.getValue == 20 // proves reload re-read "issue260-flags"; the hardcoded "feature-flags" would give 0
         )).ensuring(ZIO.succeed(java.lang.System.clearProperty("issue260-flags.limit")))
       }
-    ) @@ TestAspect.sequential
+    ) @@ TestAspect.sequential,
+    test("a key that is not a valid HOCON path is FLAG_NOT_FOUND with the default, on every resolver, never a throw") {
+      val hocon    = HoconProvider.fromConfig(ConfigFactory.parseString("a = true"))
+      val keys     = List("a:b", "flag@v2", "a//b", "x#y", "a$b", "", "a..b", "a,b", "a=b", "a[b", "a\"b")
+      val notFound = dev.openfeature.sdk.ErrorCode.FLAG_NOT_FOUND
+      val outcomes = keys.map { key =>
+        scala.util.Try {
+          val b = hocon.getBooleanEvaluation(key, true, ctx)
+          val s = hocon.getStringEvaluation(key, "d", ctx)
+          val i = hocon.getIntegerEvaluation(key, 7, ctx)
+          val l = hocon.getLongEvaluation(key, 8L, ctx)
+          val d = hocon.getDoubleEvaluation(key, 9.5, ctx)
+          val o = hocon.getObjectEvaluation(key, new dev.openfeature.sdk.Value("o"), ctx)
+          List(b, s, i, l, d, o).forall(_.getErrorCode == notFound) &&
+          b.getValue == true && s.getValue == "d" && i.getValue == 7 && l.getValue == 8L && d.getValue == 9.5 &&
+          o.getValue.asString == "o"
+        }
+      }
+      val wrong = keys.zip(outcomes).collect { case (k, r) if !r.toOption.contains(true) => s"'$k': $r" }
+      assertTrue(wrong.isEmpty)
+    },
+    test("a dotted key still reads a nested path") {
+      val hocon = HoconProvider.fromConfig(ConfigFactory.parseString("feature { sub = true }"))
+      assertTrue(hocon.getBooleanEvaluation("feature.sub", false, ctx).getValue == true)
+    }
   )
 }

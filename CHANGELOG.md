@@ -94,6 +94,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   evaluation entry points over them and pins each outcome; with the fix for null provider values reverted it fails.
   `Fault` gains two cases, so an exhaustive match on it needs them.
 
+- **OFREP fault shapes as three axes** (#705, test-only). `OfrepFaultShapeSpec` runs every combination of status
+  (400, 401, 403, 404, 429, 500, 502, 503), body (OFREP JSON, other JSON, HTML, empty, truncated) and headers
+  (`Retry-After`, `Content-Type` JSON or HTML) against a pure table: a 429 or 5xx is a `ProviderError` whatever it
+  carries, a 4xx with a JSON body is classified by its status, a 4xx whose body is not JSON is a `ProviderError`, and
+  headers change nothing. Through `CircuitBreakerProvider` the circuit opens for all of them but a 400 or 404 with a
+  JSON body. With the fix for non-JSON error bodies reverted, a 502 with an HTML body no longer opens the circuit.
+
 ### Changed
 
 - **An OFREP answer that is not OFREP JSON is a `GENERAL` error, so it trips the circuit breaker** (#642). The contrib

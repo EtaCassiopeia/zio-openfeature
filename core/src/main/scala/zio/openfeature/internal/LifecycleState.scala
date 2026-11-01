@@ -18,12 +18,15 @@ import zio.openfeature.internal.ProviderStatusMachine.Signal
   *   the provider was ever usable: the init watchdog leaves it running
   * @param shutDown
   *   an explicit shutdown completed; its final `NotReady` is terminal (model: `shutDown`)
+  * @param closed
+  *   the layer's scope closed, so no swap may start (model: `closed`)
   */
 final private[openfeature] case class LifecycleState(
   status: ProviderStatus,
   gate: Boolean,
   everReady: Boolean,
-  shutDown: Boolean
+  shutDown: Boolean,
+  closed: Boolean
 ) {
 
   /** The context the status table reads. */
@@ -32,7 +35,7 @@ final private[openfeature] case class LifecycleState(
 
 private[openfeature] object LifecycleState {
   val initial: LifecycleState =
-    LifecycleState(status = ProviderStatus.NotReady, gate = false, everReady = false, shutDown = false)
+    LifecycleState(status = ProviderStatus.NotReady, gate = false, everReady = false, shutDown = false, closed = false)
 }
 
 /** What moves the lifecycle: a status signal, or a step of the library's own sequences. */
@@ -45,6 +48,9 @@ private[openfeature] object LifecycleInput {
 
   /** The sync build's verified status, applied only while the status is still the initial `NotReady`. */
   final case class Seed(status: ProviderStatus) extends LifecycleInput
+
+  /** The layer's scope closed (model: `ScopeClose`). */
+  case object ScopeClose extends LifecycleInput
 
   /** Changes nothing: an SDK event that implies no signal. */
   case object Idle extends LifecycleInput
@@ -82,9 +88,10 @@ private[openfeature] object LifecycleStep {
           case _ => unchanged(state)
         }
 
-      case LifecycleInput.Idle     => unchanged(state)
-      case LifecycleInput.GateUp   => Outcome(state.copy(gate = true), None, Chunk.empty)
-      case LifecycleInput.GateDown => Outcome(state.copy(gate = false), None, Chunk.empty)
+      case LifecycleInput.Idle       => unchanged(state)
+      case LifecycleInput.ScopeClose => Outcome(state.copy(closed = true), None, Chunk.empty)
+      case LifecycleInput.GateUp     => Outcome(state.copy(gate = true), None, Chunk.empty)
+      case LifecycleInput.GateDown   => Outcome(state.copy(gate = false), None, Chunk.empty)
     }
 
   private def status(state: LifecycleState, signal: Signal): Outcome =

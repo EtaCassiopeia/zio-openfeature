@@ -69,10 +69,16 @@ A provider the user already registered with the API, in the target slot or the d
 it would run its `initialize()` again, or fail on an `EventProvider` the SDK holds. The library binds that registration
 as it is (`Bound.Foreign`), settles on the state the SDK reports for it, and gives it none of the wrapper's guarantees.
 
-**`LifecycleState`** is one record in the status ref, field for field the model's library variables (status, installed
-provider, ever ready, phase, pending registration, orphans, generation), and **`step`** is one pure function from a
-state and a signal to the next state and the effects to run. Every refusal is decided in `step`, so no entry path can
-skip it. The swap lock stays as the serializer of the multi-step sequences.
+**`LifecycleState`** is one record, field for field the model's library variables (status, installed provider, lock,
+gate, swap in flight, the registrations still initializing with what each replaced, orphans, shut down, closed), plus
+ever-readiness, a deferred init deadline and the generation; and **`step`** is one pure function from a state and an
+input to the next state, the status it moved to and the effects to run. Every refusal is decided in `step`, so no entry
+path can skip it. The swap lock stays as the serializer of the multi-step sequences.
+
+The status lives in the status ref, which the testkit may share and set directly; the rest of the record lives beside
+it, and every step runs under the status ref's `modifyZIO`, whose semaphore makes both writes one step. The mirrors read
+synchronously from SDK threads and the evaluator (the gate, the generation, the provider name) are written in the same
+step; the effects run after it, never under the semaphore.
 
 What stays: the probe points, the interleaving grid, the model and trace validation, which now check observed `inits`,
 `ran` and `shuts` rather than assumed ones; the evaluation path and its generation check; the two-tier status rule.
@@ -106,7 +112,7 @@ provider's own emissions.
 | Phase | Issue | State |
 |:--|:--|:--|
 | 1. `ManagedProvider` and the promise-based `Registration`; event-driven orphans | #697 | done |
-| 2. `LifecycleState` and `step` | #698 | planned |
+| 2. `LifecycleState` and `step` | #698 | done |
 | 3. `SwitchableProvider` merged into `ManagedProvider`; one wrapper per registry provider | #699 | planned |
 
 ## Changing the lifecycle

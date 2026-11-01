@@ -48,7 +48,7 @@ Hooks run on every path, including overrides, cache hits and a provider that is 
 | Scoped context (`withContext`) | `FiberRef` | the fiber and its children |
 | Transaction (overrides, cache, recorded flags) | `FiberRef` | the transaction block |
 | Hooks | `Ref`; a registry adds its API-level ZIO hooks to every client | the instance |
-| Provider status | a serialized state machine | the instance |
+| Provider status | the lifecycle state: one record and one pure transition | the instance |
 
 Scoped context and transactions are fiber-local, so concurrent requests never see each other's targeting or overrides.
 

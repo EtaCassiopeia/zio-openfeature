@@ -133,6 +133,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the order it sent them. `api.getProvider()` now returns that wrapper. A provider already registered with the shared
   API, in the instance's slot or the default slot, is reused as it is rather than wrapped, so `api.getProvider()`
   returns the raw provider then and the wrapper's guarantees do not cover it.
+- **The lifecycle is one record moved by one pure step** (#698, internal). The swap gate, ever-readiness, shutdown and
+  scope-close flags, the deferred init deadline, the installed provider, the registrations still initializing and the
+  providers a timed-out swap left behind are fields of one `LifecycleState`, which `LifecycleStep.step` moves and the
+  instance writes under its status ref's lock. A swap's refusals are decided in that step. `LifecycleStepSpec` tests it
+  per model action, per model mutant and over random sequences. No behaviour changes.
 
 ### Documentation
 

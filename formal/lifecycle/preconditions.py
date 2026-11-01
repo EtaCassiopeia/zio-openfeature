@@ -22,12 +22,12 @@ here = os.path.dirname(os.path.abspath(__file__))
 # (action, precondition, the text it is deleted from, that text without it, the fixture it rules out)
 preconditions = [
     ("SwapStart", 'lock = "free"',
-     '    /\\ lock = "free" /\\ ~shutDown /\\ ~closed /\\ ~Settling\n    /\\ sdk[p] = "NONE"',
-     '    /\\ ~shutDown /\\ ~closed /\\ ~Settling\n    /\\ sdk[p] = "NONE"',
+     '    /\\ lock = "free" /\\ ~shutDown /\\ ~closed /\\ ~Settling\n    /\\ p # bound /\\ inits[p] = 0',
+     '    /\\ ~shutDown /\\ ~closed /\\ ~Settling\n    /\\ p # bound /\\ inits[p] = 0',
      "swap-inside-a-swap"),
     ("SwapStart", "~shutDown",
-     '    /\\ lock = "free" /\\ ~shutDown /\\ ~closed /\\ ~Settling\n    /\\ sdk[p] = "NONE"',
-     '    /\\ lock = "free" /\\ ~closed /\\ ~Settling\n    /\\ sdk[p] = "NONE"',
+     '    /\\ lock = "free" /\\ ~shutDown /\\ ~closed /\\ ~Settling\n    /\\ p # bound /\\ inits[p] = 0',
+     '    /\\ lock = "free" /\\ ~closed /\\ ~Settling\n    /\\ p # bound /\\ inits[p] = 0',
      "swap-after-shutdown"),
     ("ShutdownStart", 'lock = "free"',
      'ShutdownStart ==\n    /\\ lock = "free"\n',

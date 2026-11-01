@@ -697,6 +697,118 @@ object ProviderHotSwapSpec extends ZIOSpecDefault {
         )
       }
     } @@ TestAspect.withLiveClock,
+    test("the provider a timed-out swap replaced is refused until the swap's provider settles") {
+      ZIO.scoped {
+        val a = new Counting("A", blocking = false)
+        for {
+          b <- ZIO.acquireRelease(ZIO.succeed(new Counting("B", blocking = true)))(p =>
+            ZIO.succeed(p.release.countDown())
+          )
+          built <- buildExposed(a, initTimeout = 500.millis)
+          (ff, _, _) = built
+          timedOut <- ff.setProvider(b).either
+          refused  <- ff.setProvider(a).either
+          during = a.inits.get()
+          _     <- ZIO.succeed(b.release.countDown())
+          again <- installOnceReturned(ff, a)
+          bDown <- awaitTrue(b.shutdowns.get() >= 1)
+          shut = (a.shutdowns.get(), b.shutdowns.get())
+        } yield assertTrue(
+          timedOut.isLeft,
+          bDown,
+          shut == ((1, 1)), // A once, by the SDK when B became ready; B once, replaced by A again
+          refused match {
+            case Left(FeatureFlagError.ProviderInitializationFailed(e: IllegalStateException)) =>
+              e.getMessage.contains("cannot be installed again until 'B'")
+            case _ => false
+          },
+          during == 1,
+          again.isRight,
+          a.inits.get() == 2
+        )
+      }
+    } @@ TestAspect.withLiveClock,
+    test(
+      "an instance that shares its API refuses the provider a timed-out swap replaced until that swap's provider returns"
+    ) {
+      ZIO.scoped {
+        val api = OpenFeatureAPI.createIsolated()
+        val a   = new Counting("A", blocking = false)
+        for {
+          _ <- ZIO.addFinalizer(ZIO.attemptBlocking(api.shutdown()).ignore)
+          b <- ZIO.acquireRelease(ZIO.succeed(new Counting("B", blocking = true)))(p =>
+            ZIO.succeed(p.release.countDown())
+          )
+          ff <- FeatureFlags.build(
+            a,
+            domain = Some(s"shared-${java.util.UUID.randomUUID()}"),
+            version = None,
+            initialHooks = Nil,
+            statusRef = None,
+            addShutdownFinalizer = false,
+            apiOverride = Some(api),
+            initTimeout = 500.millis
+          )
+          timedOut <- ff.setProvider(b).either
+          refused  <- ff.setProvider(a).either
+          during = (a.inits.get(), a.shutdowns.get())
+          _     <- ZIO.succeed(b.release.countDown())
+          again <- installOnceReturned(ff, a)
+          bDown <- awaitTrue(b.shutdowns.get() >= 1)
+          shut = (a.shutdowns.get(), b.shutdowns.get())
+        } yield assertTrue(
+          timedOut.isLeft,
+          refused match {
+            case Left(FeatureFlagError.ProviderInitializationFailed(e: IllegalStateException)) =>
+              e.getMessage.contains("cannot be installed again until 'B', which replaced it")
+            case _ => false
+          },
+          during == ((1, 0)),
+          again.isRight,
+          a.inits.get() == 2,
+          bDown,
+          shut == ((1, 1)) // A once, by the SDK when B returned; B once, replaced by A again
+        )
+      }
+    } @@ TestAspect.withLiveClock,
+    test("after a rollback that timed out, the failed provider is refused until the restored provider returns") {
+      ZIO.scoped {
+        val reinit = new java.util.concurrent.CountDownLatch(1)
+        val aInits = new java.util.concurrent.atomic.AtomicInteger(0)
+        // A starts at once when built, and blocks when the rollback registers it again.
+        val a = new SimpleProvider("A", Map("flag" -> true)) {
+          override def initialize(ctx: OFEvaluationContext): Unit =
+            if (aInits.incrementAndGet() >= 2) { reinit.await(10, java.util.concurrent.TimeUnit.SECONDS); () }
+            else ()
+        }
+        val fInits     = new java.util.concurrent.atomic.AtomicInteger(0)
+        val fShutdowns = new java.util.concurrent.atomic.AtomicInteger(0)
+        // F fails its first start, so the swap rolls back onto A, and starts on later ones.
+        val f = new SimpleProvider("F", Map("flag" -> true)) {
+          override def initialize(ctx: OFEvaluationContext): Unit =
+            if (fInits.incrementAndGet() == 1) throw new RuntimeException("first start fails") else ()
+          override def shutdown(): Unit = { fShutdowns.incrementAndGet(); () }
+        }
+        for {
+          _     <- ZIO.addFinalizer(ZIO.succeed(reinit.countDown()))
+          built <- buildExposed(a, initTimeout = 500.millis)
+          (ff, _, _) = built
+          failed  <- ff.setProvider(f).either
+          refused <- ff.setProvider(f).either
+          _       <- ZIO.succeed(reinit.countDown())
+          again   <- installOnceReturned(ff, f)
+        } yield assertTrue(
+          failed.isLeft,
+          refused match {
+            case Left(FeatureFlagError.ProviderInitializationFailed(e: IllegalStateException)) =>
+              e.getMessage.contains("cannot be installed again until 'A', which replaced it")
+            case _ => false
+          },
+          again.isRight,
+          fInits.get() == 2
+        )
+      }
+    } @@ TestAspect.withLiveClock,
     test("a timed-out swap's provider is refused while its initialize() runs, after a later swap failed") {
       ZIO.scoped {
         val a = new Counting("A", blocking = false)

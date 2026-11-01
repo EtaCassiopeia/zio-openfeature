@@ -93,28 +93,36 @@ final private[openfeature] class FeatureFlagsLive(
 
   // The registrations whose `initialize()` this instance started and has not seen return: the async build's, a timed-out
   // swap's, a timed-out rollback's. Such a provider is never registered again, by a swap or a rollback: the SDK would
-  // run initialize() on it a second time while the first call runs. Each comes with a reader for the SDK state of its
-  // own registration, which leaves NOT_READY only when that call returns or throws. No swap resets a registration's
-  // state (the SDK shuts the provider down, not its state manager; only `api.shutdown()` resets it, after which the
-  // instance refuses every swap), so an entry is dropped by its reader, never by a swap's outcome.
-  private val initializing =
-    new java.util.concurrent.atomic.AtomicReference[List[(OFFeatureProvider, () => JavaProviderState)]](Nil)
+  // run initialize() on it a second time while the first call runs. Nor is the provider such a registration replaced:
+  // once that initialize() returns, the SDK shuts the replaced provider down through its old registration, whatever the
+  // slot holds by then. Each comes with a reader for the SDK state of its own registration, which leaves NOT_READY only
+  // when that call returns or throws. No swap resets a registration's state (the SDK shuts the provider down, not its
+  // state manager; only `api.shutdown()` resets it, after which the instance refuses every swap), so an entry is
+  // dropped by its reader, never by a swap's outcome.
+  private val initializing = new java.util.concurrent.atomic.AtomicReference[List[FeatureFlagsLive.Initializing]](Nil)
 
-  private def trackInitializing(provider: OFFeatureProvider, reader: Option[() => JavaProviderState]): UIO[Unit] =
-    ZIO.foreachDiscard(reader)(r => ZIO.succeed(initializing.updateAndGet(es => (provider -> r) :: es)))
+  private def trackInitializing(
+    provider: OFFeatureProvider,
+    replaced: Option[OFFeatureProvider],
+    reader: Option[() => JavaProviderState]
+  ): UIO[Unit] =
+    ZIO.foreachDiscard(reader)(r =>
+      ZIO.succeed(initializing.updateAndGet(FeatureFlagsLive.Initializing(provider, replaced, r) :: _))
+    )
 
   /** Record `provider`, which the async build registered and whose `initialize()` may still run. */
   private[openfeature] def trackPendingInit(provider: OFFeatureProvider): UIO[Unit] =
-    stateReaderFor(provider, providerNameRef.get()).flatMap(trackInitializing(provider, _))
+    stateReaderFor(provider, providerNameRef.get()).flatMap(trackInitializing(provider, None, _))
 
-  /** Whether an `initialize()` of `provider` this instance started is still running; prunes the ones that returned. */
-  private def initRunning(provider: OFFeatureProvider): UIO[Boolean] =
+  /** The registrations whose `initialize()` is still running; prunes the ones that returned. */
+  private def stillInitializing: UIO[List[FeatureFlagsLive.Initializing]] =
     ZIO
-      .attemptBlocking {
-        val running = initializing.updateAndGet(_.filter { case (_, state) => state() == JavaProviderState.NOT_READY })
-        running.exists { case (p, _) => p eq provider }
-      }
-      .catchAllCause(c => ZIO.logWarningCause("could not read the state of a provider still initializing", c).as(false))
+      .attemptBlocking(initializing.updateAndGet(_.filter(_.state() == JavaProviderState.NOT_READY)))
+      .catchAllCause(c => ZIO.logWarningCause("could not read the state of a provider still initializing", c).as(Nil))
+
+  /** Whether an `initialize()` of `provider` this instance started is still running. */
+  private def initRunning(provider: OFFeatureProvider): UIO[Boolean] =
+    stillInitializing.map(_.exists(_.provider eq provider))
 
   /** A reader for the SDK state of the registration `provider` holds in this instance's slot; None if the slot holds
     * another provider or the state cannot be read (logged).
@@ -581,7 +589,7 @@ final private[openfeature] class FeatureFlagsLive(
                       s"previous provider '$oldName' was not restored (it is shut down once '$newName' settles)"
                   ) *>
                   stateReaderFor(newProvider, newName).flatMap { reader =>
-                    trackInitializing(newProvider, reader) *>
+                    trackInitializing(newProvider, Some(oldProvider), reader) *>
                       recordOrphan(oldProvider, oldName, newProvider, newName, reader, watch)
                   }
               case _ =>
@@ -617,7 +625,8 @@ final private[openfeature] class FeatureFlagsLive(
                             e =>
                               // A rollback that timed out leaves the previous provider's initialize() running.
                               ZIO.whenCase(e) { case _: java.util.concurrent.TimeoutException =>
-                                stateReaderFor(oldProvider, oldName).flatMap(trackInitializing(oldProvider, _))
+                                stateReaderFor(oldProvider, oldName)
+                                  .flatMap(trackInitializing(oldProvider, Some(newProvider), _))
                               } *>
                                 ZIO.logErrorCause(
                                   s"setProvider rollback: failed to re-register previous provider '$oldName'; status remains " +
@@ -703,7 +712,8 @@ final private[openfeature] class FeatureFlagsLive(
       .fail(FeatureFlagError.ProviderNotReady(ProviderStatus.NotReady))
       .when(shutdownCompleted.get() || closed.get()) *>
       refuseStillInitializing(newProvider) *>
-      refusePendingOrphan(newProvider)
+      refusePendingOrphan(newProvider) *>
+      refuseReplacedByPendingInit(newProvider)
 
   /** A provider whose earlier `initialize()` this instance started has not returned: registering it again would make
     * the SDK run a second one alongside it. However many swaps happened since; refused until that call returns.
@@ -739,6 +749,31 @@ final private[openfeature] class FeatureFlagsLive(
             )
           )
         )
+    }
+
+  /** A provider that a registration still initializing replaced: a timed-out swap's old provider, or the failed
+    * provider a timed-out rollback replaced. Once that `initialize()` returns, the SDK shuts the replaced provider down
+    * through the registration it was replaced in, even if it has been installed again since. For a timed-out swap, an
+    * instance that owns its API refuses this already, for longer ([[refusePendingOrphan]]); one that shares its API
+    * records no orphans, so this is its guard there. A rollback records no orphan on either kind of instance.
+    *
+    * The registration counts as returned once the SDK reports it `READY`; the SDK takes its lock to shut the replaced
+    * provider down just after that, so an install in that instant can still see the provider shut down.
+    */
+  private def refuseReplacedByPendingInit(provider: OFFeatureProvider): IO[FeatureFlagError, Unit] =
+    stillInitializing.flatMap { running =>
+      ZIO.foreachDiscard(running.find(e => e.replaced.exists(_ eq provider) && (e.provider ne provider))) { holder =>
+        def nameOf(p: OFFeatureProvider) =
+          Option(p.getMetadata).map(_.getName).getOrElse(FeatureFlags.UnknownProviderName)
+        ZIO.fail(
+          FeatureFlagError.ProviderInitializationFailed(
+            new IllegalStateException(
+              s"'${nameOf(provider)}' cannot be installed again until '${nameOf(holder.provider)}', which replaced it, " +
+                "finishes initializing"
+            )
+          )
+        )
+      }
     }
 
   /** After a timed-out swap the SDK holds `previous` only in `incoming`'s pending initialization, and shuts it down
@@ -985,4 +1020,12 @@ private[openfeature] object FeatureFlagsLive {
   private[openfeature] val CallAbandoned  = 2
   private[openfeature] val CallNotStarted = 3
   private[openfeature] val CallSkipped    = 4
+
+  /** A registration whose `initialize()` an instance started, the provider it replaced, and a reader for its SDK state.
+    */
+  final private case class Initializing(
+    provider: dev.openfeature.sdk.FeatureProvider,
+    replaced: Option[dev.openfeature.sdk.FeatureProvider],
+    state: () => dev.openfeature.sdk.ProviderState
+  )
 }

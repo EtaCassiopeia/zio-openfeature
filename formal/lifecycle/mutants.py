@@ -26,7 +26,7 @@ mutants = {
         '    /\\ status\' = "Ready"'),
     # A timed-out swap forgets the provider it replaced.
     'a timed-out swap forgets the provider it replaced': (
-        '    /\\ orphans\' = IF swap.prev # swap.new THEN orphans \\cup {Watch(swap.prev, swap.new)} ELSE orphans',
+        '    /\\ orphans\' = IF owns /\\ swap.prev # swap.new THEN orphans \\cup {Watch(swap.prev, swap.new)} ELSE orphans',
         '    /\\ orphans\' = orphans'),
     # The bridge applies the event's own type instead of the SDK's state for the slot.
     'the status follows the event type, not the SDK state': (
@@ -56,8 +56,8 @@ mutants = {
         'Released(o) == View(o) \\in {"READY", "STALE"}'),
     # A swap after shutdown is not refused, and revives the instance.
     'a swap after shutdown is not refused': (
-        '    /\\ lock = "free" /\\ ~shutDown /\\ ~closed /\\ ~Settling\n    /\\ sdk[p] = "NONE"',
-        '    /\\ lock = "free" /\\ ~closed /\\ ~Settling\n    /\\ sdk[p] = "NONE"'),
+        '    /\\ lock = "free" /\\ ~shutDown /\\ ~closed /\\ ~Settling\n    /\\ p # bound /\\ inits[p] = 0',
+        '    /\\ lock = "free" /\\ ~closed /\\ ~Settling\n    /\\ p # bound /\\ inits[p] = 0'),
     # A failed swap that never bound its provider reads a still-initializing previous provider as Ready.
     'a failed swap that never bound reads a still-initializing provider as Ready': (
         '    /\\ status\' = IF sdk[swap.prev] = "NOT_READY" THEN swap.before ELSE Apply(swap.before, sdk[swap.prev])',
@@ -72,8 +72,21 @@ mutants = {
         'ScopeClose ==\n    /\\ ~closed'),
     # A swap after the scope close is not refused.
     'a swap after the scope close is not refused': (
-        '    /\\ lock = "free" /\\ ~shutDown /\\ ~closed /\\ ~Settling\n    /\\ sdk[p] = "NONE"',
-        '    /\\ lock = "free" /\\ ~shutDown /\\ ~Settling\n    /\\ sdk[p] = "NONE"'),
+        '    /\\ lock = "free" /\\ ~shutDown /\\ ~closed /\\ ~Settling\n    /\\ p # bound /\\ inits[p] = 0',
+        '    /\\ lock = "free" /\\ ~shutDown /\\ ~Settling\n    /\\ p # bound /\\ inits[p] = 0'),
+    # A provider whose earlier initialize() still runs is installed again (refuseStillInitializing removed).
+    'a provider still initializing is installed again': (
+        '    /\\ p # bound /\\ inits[p] = 0\n',
+        '    /\\ p # bound\n'),
+    # A provider a timed-out swap's entry still holds is installed again (refusePendingOrphan removed).
+    'a provider a timed-out swap still holds is installed again': (
+        '    /\\ ~\\E o \\in orphans : o.prev = p\n',
+        ''),
+    # A provider that a registration still initializing replaced is installed again (refuseReplacedByPendingInit
+    # removed): an instance that shares its API, which records no orphans, gets it shut down by the SDK.
+    'a provider a registration still initializing replaced is installed again': (
+        '    /\\ ~\\E q \\in All : prevOf[q] = p /\\ inits[q] > 0\n',
+        ''),
     # The gate never goes up.
     'no swap gate': (
         '    /\\ gate\' = TRUE\n    /\\ status\' = "NotReady"',

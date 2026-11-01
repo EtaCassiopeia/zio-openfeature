@@ -280,7 +280,10 @@ been shut down it fails with `ProviderNotReady(NotReady)` and does not touch the
   or its scope closes, the old provider is shut down then. Only an instance that
   [owns its API](#who-shuts-down-the-api) does this: on a shared API the old provider is left to the API's owner.
   Until the new provider has settled, `setProvider` refuses the old provider with `ProviderInitializationFailed`:
-  installing it again then would get it shut down later, while it serves. A provider whose earlier `initialize()` has
+  installing it again then would get it shut down later, while it serves. On a shared API the refusal lasts until the
+  new provider's `initialize()` returns, since the SDK shuts the old provider down when that call succeeds, whatever the
+  slot holds by then. After a rollback that timed out, every instance refuses the failed provider the same way until
+  the restored provider's `initialize()` returns. A provider whose earlier `initialize()` has
   not returned (the one an async start was built with, or one a timed-out swap or rollback installed) is refused the
   same way, however many swaps have happened since, until that call returns. If `setProvider` is called while the
   timed-out provider, or the provider an async start was built with, is still initializing and the new provider's

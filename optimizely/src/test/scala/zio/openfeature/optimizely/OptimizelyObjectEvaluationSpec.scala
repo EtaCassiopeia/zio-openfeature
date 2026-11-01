@@ -1,7 +1,6 @@
 package zio.openfeature.optimizely
 
 import com.github.tomakehurst.wiremock.WireMockServer
-import com.github.tomakehurst.wiremock.client.WireMock._
 import com.github.tomakehurst.wiremock.core.WireMockConfiguration
 import dev.openfeature.sdk.{ErrorCode, ImmutableContext, MutableStructure, Reason, Value}
 import zio._
@@ -33,12 +32,8 @@ object OptimizelyObjectEvaluationSpec extends ZIOSpecDefault {
     finally server.stop()
   }
 
-  private def datafileUrl(server: WireMockServer): String =
-    s"http://localhost:${server.port()}$DatafilePath"
-
   private def readyProvider(server: WireMockServer, datafile: String): OptimizelyFeatureProvider = {
-    server.stubFor(get(urlEqualTo(DatafilePath)).willReturn(okJson(datafile)))
-    val client   = OptimizelyTestSupport.wiredClient(datafileUrl(server), "object-eval-key")
+    val client   = OptimizelyTestSupport.readyClient(server, DatafilePath, datafile, "object-eval-key")
     val provider = new OptimizelyFeatureProvider(client, OptimizelyTestSupport.InitWait, closeOnShutdown = true)
     provider.initialize(new ImmutableContext())
     provider

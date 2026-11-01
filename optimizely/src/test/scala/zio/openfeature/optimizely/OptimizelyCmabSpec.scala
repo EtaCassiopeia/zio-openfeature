@@ -1,7 +1,6 @@
 package zio.openfeature.optimizely
 
 import com.github.tomakehurst.wiremock.WireMockServer
-import com.github.tomakehurst.wiremock.client.WireMock._
 import com.github.tomakehurst.wiremock.core.WireMockConfiguration
 import com.optimizely.ab.OptimizelyUserContext
 import com.optimizely.ab.cmab.service.{CmabDecision, CmabService}
@@ -25,9 +24,10 @@ object OptimizelyCmabSpec extends ZIOSpecDefault {
     val server = new WireMockServer(WireMockConfiguration.options().dynamicPort())
     server.start()
     try {
-      server.stubFor(get(urlEqualTo(DatafilePath)).willReturn(okJson(readResource("/datafiles/cmab.json"))))
-      val client = OptimizelyTestSupport.wiredClient(
-        s"http://localhost:${server.port()}$DatafilePath",
+      val client = OptimizelyTestSupport.readyClient(
+        server,
+        DatafilePath,
+        readResource("/datafiles/cmab.json"),
         "cmab-key",
         customize = _.withCmabService(cmab)
       )

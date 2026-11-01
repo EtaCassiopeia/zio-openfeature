@@ -80,6 +80,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `WrapperStackFaultSpec` and `EventBridge` now say where the SDK orders events (per event, slot write before handlers)
   and where it does not (across one provider's emissions).
 
+- **The lifecycle model installs a provider again** (#693, test-only). `formal/lifecycle/Lifecycle.tla` no longer
+  assumes each provider is installed once: any provider but the bound one, `P0` included, can be installed again under a
+  swap budget (`MaxSwaps`), with the code's three guards as enforced preconditions. It models instances that share
+  their API as well as owners, and checks a new invariant, `BoundNotShutDown`. Shutdown and initialization counts are
+  per registration. Three new mutants take each guard out, and `ProviderHotSwapSpec` now pins `refusePendingOrphan`,
+  which had no test.
+
 ### Changed
 
 - **An OFREP answer that is not OFREP JSON is a `GENERAL` error, so it trips the circuit breaker** (#642). The contrib
@@ -107,6 +114,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   typed tier `default` is passed to the provider and hooks but not served on failure.
 
 ### Fixed
+
+- **An instance that shares its API no longer gets a re-installed provider shut down by the SDK** (#693). After a
+  timed-out swap, such an instance, which records no orphans, let the replaced provider be installed again while the
+  swap's provider still initialized. When that `initialize()` returned, the SDK shut the replaced provider down through
+  its old registration, while it served again; a later swap away from it shut it down a second time. `setProvider` now
+  refuses a provider that a registration still initializing replaced, on every instance, until that `initialize()`
+  returns. That also covers the failed provider of a rollback that timed out, on every instance. The lifecycle model
+  found it.
 
 - **`CachingProvider` and `CircuitBreakerProvider` events reach the status in the order they were sent** (#700). Each
   wrapper re-emitted through the SDK's emitter pool, which applies two emissions in either order, so a wrapped

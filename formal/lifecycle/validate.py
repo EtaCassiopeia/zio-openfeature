@@ -44,6 +44,7 @@ def check(tla_jar, cm_jar, actions):
         cfg = f"""CONSTANTS
     P0 = q0
     Providers = {{{providers}}}
+    MaxSwaps = {swaps}
     MaxEvents = {deliveries}
     None = None
     TraceFile = "{trace}"

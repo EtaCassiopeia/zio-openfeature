@@ -56,8 +56,8 @@ mutants = {
         'Released(o) == View(o) \\in {"READY", "STALE"}'),
     # A swap after shutdown is not refused, and revives the instance.
     'a swap after shutdown is not refused': (
-        '    /\\ lock = "free" /\\ ~shutDown /\\ ~closed /\\ ~Settling\n    /\\ sdk[p] = "NONE"',
-        '    /\\ lock = "free" /\\ ~closed /\\ ~Settling\n    /\\ sdk[p] = "NONE"'),
+        '    /\\ lock = "free" /\\ ~shutDown /\\ ~closed /\\ ~Settling\n    /\\ p # bound /\\ inits[p] = 0',
+        '    /\\ lock = "free" /\\ ~closed /\\ ~Settling\n    /\\ p # bound /\\ inits[p] = 0'),
     # A failed swap that never bound its provider reads a still-initializing previous provider as Ready.
     'a failed swap that never bound reads a still-initializing provider as Ready': (
         '    /\\ status\' = IF sdk[swap.prev] = "NOT_READY" THEN swap.before ELSE Apply(swap.before, sdk[swap.prev])',
@@ -72,8 +72,16 @@ mutants = {
         'ScopeClose ==\n    /\\ ~closed'),
     # A swap after the scope close is not refused.
     'a swap after the scope close is not refused': (
-        '    /\\ lock = "free" /\\ ~shutDown /\\ ~closed /\\ ~Settling\n    /\\ sdk[p] = "NONE"',
-        '    /\\ lock = "free" /\\ ~shutDown /\\ ~Settling\n    /\\ sdk[p] = "NONE"'),
+        '    /\\ lock = "free" /\\ ~shutDown /\\ ~closed /\\ ~Settling\n    /\\ p # bound /\\ inits[p] = 0',
+        '    /\\ lock = "free" /\\ ~shutDown /\\ ~Settling\n    /\\ p # bound /\\ inits[p] = 0'),
+    # A provider whose earlier initialize() still runs is installed again (refuseStillInitializing removed).
+    'a provider still initializing is installed again': (
+        '    /\\ p # bound /\\ inits[p] = 0\n',
+        '    /\\ p # bound\n'),
+    # A provider a timed-out swap's entry still holds is installed again (refusePendingOrphan removed).
+    'a provider a timed-out swap still holds is installed again': (
+        '    /\\ ~\\E o \\in orphans : o.prev = p\n',
+        ''),
     # The gate never goes up.
     'no swap gate': (
         '    /\\ gate\' = TRUE\n    /\\ status\' = "NotReady"',

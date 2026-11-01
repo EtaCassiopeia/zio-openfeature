@@ -80,6 +80,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `WrapperStackFaultSpec` and `EventBridge` now say where the SDK orders events (per event, slot write before handlers)
   and where it does not (across one provider's emissions).
 
+- **The lifecycle model installs a provider again** (#693, test-only). `formal/lifecycle/Lifecycle.tla` no longer
+  assumes each provider is installed once: any provider but the bound one, `P0` included, can be installed again under a
+  swap budget (`MaxSwaps`), with the code's two guards as enforced preconditions, `refuseStillInitializing` and
+  `refusePendingOrphan`. Shutdown and initialization counts are per registration. Two new mutants put each guard back
+  out, and `ProviderHotSwapSpec` now pins `refusePendingOrphan`, which had no test.
+
 ### Changed
 
 - **An OFREP answer that is not OFREP JSON is a `GENERAL` error, so it trips the circuit breaker** (#642). The contrib

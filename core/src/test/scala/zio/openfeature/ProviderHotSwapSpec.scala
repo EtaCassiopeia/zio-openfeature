@@ -697,6 +697,37 @@ object ProviderHotSwapSpec extends ZIOSpecDefault {
         )
       }
     } @@ TestAspect.withLiveClock,
+    test("the provider a timed-out swap replaced is refused until the swap's provider settles") {
+      ZIO.scoped {
+        val a = new Counting("A", blocking = false)
+        for {
+          b <- ZIO.acquireRelease(ZIO.succeed(new Counting("B", blocking = true)))(p =>
+            ZIO.succeed(p.release.countDown())
+          )
+          built <- buildExposed(a, initTimeout = 500.millis)
+          (ff, _, _) = built
+          timedOut <- ff.setProvider(b).either
+          refused  <- ff.setProvider(a).either
+          during = a.inits.get()
+          _     <- ZIO.succeed(b.release.countDown())
+          again <- installOnceReturned(ff, a)
+          bDown <- awaitTrue(b.shutdowns.get() >= 1)
+          shut = (a.shutdowns.get(), b.shutdowns.get())
+        } yield assertTrue(
+          timedOut.isLeft,
+          bDown,
+          shut == ((1, 1)), // A once, by the SDK when B became ready; B once, replaced by A again
+          refused match {
+            case Left(FeatureFlagError.ProviderInitializationFailed(e: IllegalStateException)) =>
+              e.getMessage.contains("cannot be installed again until 'B'")
+            case _ => false
+          },
+          during == 1,
+          again.isRight,
+          a.inits.get() == 2
+        )
+      }
+    } @@ TestAspect.withLiveClock,
     test("a timed-out swap's provider is refused while its initialize() runs, after a later swap failed") {
       ZIO.scoped {
         val a = new Counting("A", blocking = false)

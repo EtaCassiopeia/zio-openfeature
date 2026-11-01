@@ -58,6 +58,15 @@ private[openfeature] object LifecycleProbe {
     /** A status signal is about to be applied, outside the serialized write. */
     final case class ApplySignal(signal: ProviderStatusMachine.Signal) extends Point
 
+    /** A registered provider's `initialize()` was entered (by the SDK, on its executor), before it runs. */
+    case object InitEntered extends Point
+
+    /** A registered provider's `initialize()` returned or threw; its outcome is recorded. */
+    case object InitReturned extends Point
+
+    /** A registered provider's `shutdown()` is about to run, for the first time in its cycle. */
+    case object ProviderShutDown extends Point
+
     /** The async build's init watchdog woke up, before it escalates. */
     case object Watchdog extends Point
 

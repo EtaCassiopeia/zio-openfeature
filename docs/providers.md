@@ -103,6 +103,14 @@ One API has one default slot and one slot per domain, so instances on it are not
   (`addZioApiHook` is API level in the hook order, not shared across instances). `addApiHook` and `clearApiHooks` act
   on the shared Java API.
 
+- **A provider you registered with the API yourself** is reused as it is: in its own slot, or under any domain when
+  it is in the default slot, the instance binds that registration and the SDK runs no second `initialize()`. The SDK
+  keeps owning it, so its events reach the status through the SDK's own delivery, in no fixed order unless the
+  provider awaits each emission (see [events](lifecycle.md)), and `api.getProvider()` returns it. Every other provider
+  is registered through the library's wrapper, which `api.getProvider()` returns instead. A provider registered
+  directly under a different domain is not reused: an `EventProvider` fails the build with the SDK's "already
+  attached" error, and any other provider is initialized again. Bind it through the library instead.
+
 To keep instances apart, give each one `FeatureFlagsConfig().withIsolatedApi`, a domain of its own, or build them all
 from one [`FeatureFlagRegistry`](#one-client-per-domain-featureflagregistry).
 

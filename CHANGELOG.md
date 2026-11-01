@@ -126,6 +126,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `RELEASING.md` states the policy, including the freeze on new fields in the public configuration case classes for
   the rest of 1.x.
 
+- **The library registers a wrapper of each provider and awaits its `initialize()` directly** (#697). A swap, a build
+  and a timed-out swap's previous provider settle on the outcome the wrapper reports when `initialize()` returns or
+  throws, instead of polling the slot and watching for `READY` with grace windows; no blocking-pool thread is parked
+  per wait. The wrapper reaches the provider's `shutdown()` once per initialization, and hands its events to the SDK in
+  the order it sent them. `api.getProvider()` now returns that wrapper. A provider already registered with the shared
+  API, in the instance's slot or the default slot, is reused as it is rather than wrapped, so `api.getProvider()`
+  returns the raw provider then and the wrapper's guarantees do not cover it.
+
 ### Documentation
 
 - **Lifecycle design record** (#696). `docs/design/lifecycle.md` records how the provider lifecycle is built and why,
@@ -422,6 +430,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `contextKeys` dropped every unlisted attribute from the cache key, `openfeature.variableKey` included, so reading two
   variables of one flag returned the first variable's value for both, with reason `CACHED`. That attribute is now
   always part of the key.
+
+- **A provider is shut down once, not twice, after the init watchdog shut it down** (#697). The provider stayed bound
+  and the SDK called its `shutdown()` again at `api.shutdown()`; the registered wrapper now reaches it once per
+  initialization.
 
 ## [1.2.1] — 2026-10-28
 

@@ -104,7 +104,7 @@ object FeatureFlagsShutdownSpec extends ZIOSpecDefault {
           swap   <- ff.setProvider(p2).either
           status <- ff.providerStatus
           eval   <- ff.boolean("flag", default = false).either
-          bound  <- ZIO.succeed(api.getProvider(domain))
+          bound  <- ZIO.succeed(zio.openfeature.internal.ManagedProvider.unwrap(api.getProvider(domain)))
           inits = p2.inits.get()
         } yield assertTrue(
           swap == Left(FeatureFlagError.ProviderNotReady(ProviderStatus.NotReady)),

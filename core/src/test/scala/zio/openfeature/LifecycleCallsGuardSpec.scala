@@ -21,13 +21,15 @@ object LifecycleCallsGuardSpec extends ZIOSpecDefault {
   // an SDK shim that re-runs a failed initialize() through the SDK's state manager; only ProviderRegistration's bounded
   // helper calls it. LongAwareMultiProvider is a provider too: its initialize() and shutdown() wrap the SDK
   // MultiProvider's own, which they call through `super`. OrderedEmitter calls no provider: its shutdown() is its own
-  // executor's.
+  // executor's. ManagedProvider is the provider the SDK registers: its initialize() and shutdown() forward to the user's,
+  // invoked only by the SDK or by those helpers.
   private val allowed = Set(
     "ProviderRegistration.scala",
     "SwitchableProvider.scala",
     "ProviderStateAccess.scala",
     "LongAwareMultiProvider.scala",
-    "OrderedEmitter.scala"
+    "OrderedEmitter.scala",
+    "ManagedProvider.scala"
   )
 
   private def code(line: String): String = {

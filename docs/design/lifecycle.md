@@ -53,7 +53,7 @@ The library never learned directly whether a provider's `initialize()` returned,
 whatever object is registered, and `EventProvider.emit` returns an `Awaitable`; so the library registers its own
 object and observes all three.
 
-**`ManagedProvider`** is the only object the library registers with the SDK: one per user provider, delegating every
+**`ManagedProvider`** is what the library registers with the SDK: one per user provider, delegating every
 `FeatureProvider` member. It counts `initialize()` calls in flight per binding and completes a promise when the call
 returns or throws, with the real exception; it delegates `shutdown()` once per initialization cycle, so a provider is
 shut down at most once by construction; and it forwards its delegate's events through one ordered lane, a thread that
@@ -64,6 +64,10 @@ through its pool, but nothing depends on them.
 after the bind tells a fresh initialization from one already running for the same binding and from a reused
 registration that ran none. The `READY` watch, the error observer, the slot poll and the grace windows are gone, and no
 blocking-pool thread is parked per swap. A timed-out swap's previous provider is settled by the same promise.
+
+A provider the user already registered with the API, in the target slot or the default one, is the exception: wrapping
+it would run its `initialize()` again, or fail on an `EventProvider` the SDK holds. The library binds that registration
+as it is (`Bound.Foreign`), settles on the state the SDK reports for it, and gives it none of the wrapper's guarantees.
 
 **`LifecycleState`** is one record in the status ref, field for field the model's library variables (status, installed
 provider, ever ready, phase, pending registration, orphans, generation), and **`step`** is one pure function from a
@@ -101,7 +105,7 @@ provider's own emissions.
 
 | Phase | Issue | State |
 |:--|:--|:--|
-| 1. `ManagedProvider` and the promise-based `Registration`; event-driven orphans | #697 | planned |
+| 1. `ManagedProvider` and the promise-based `Registration`; event-driven orphans | #697 | done |
 | 2. `LifecycleState` and `step` | #698 | planned |
 | 3. `SwitchableProvider` merged into `ManagedProvider`; one wrapper per registry provider | #699 | planned |
 

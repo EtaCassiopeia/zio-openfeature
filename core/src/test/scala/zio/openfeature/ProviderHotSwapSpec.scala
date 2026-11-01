@@ -270,7 +270,7 @@ object ProviderHotSwapSpec extends ZIOSpecDefault {
           _       <- awaitTrue(api.getClient("shared-a").getProviderState == ProviderState.ERROR)
           swap    <- ffB.setProvider(p).either
           status  <- ffB.providerStatus
-          bound   <- ZIO.succeed(api.getProvider("shared-b"))
+          bound   <- ZIO.succeed(zio.openfeature.internal.ManagedProvider.unwrap(api.getProvider("shared-b")))
           qDown   <- awaitTrue(q.shutdowns.get() >= 1)
           _       <- ZIO.sleep(200.millis)
           servedA <- ffA.booleanDetails("flag", default = false).either
@@ -478,7 +478,7 @@ object ProviderHotSwapSpec extends ZIOSpecDefault {
           result <- swap.join
           status <- ff.providerStatus
           m      <- ff.providerMetadata
-          bound  <- ZIO.succeed(api.getProvider(domain))
+          bound  <- ZIO.succeed(zio.openfeature.internal.ManagedProvider.unwrap(api.getProvider(domain)))
           aDown  <- awaitTrue(a.shutdowns.get() >= 1)
           _      <- ZIO.sleep(300.millis)
           served <- ff.boolean("flag", default = false)
@@ -515,7 +515,7 @@ object ProviderHotSwapSpec extends ZIOSpecDefault {
           _      <- release.succeed(())
           result <- swap.join
           status <- ff.providerStatus
-          bound  <- ZIO.succeed(api.getProvider(domain))
+          bound  <- ZIO.succeed(zio.openfeature.internal.ManagedProvider.unwrap(api.getProvider(domain)))
           aDown  <- awaitTrue(a.shutdowns.get() >= 1)
           _      <- ZIO.sleep(300.millis)
           // Read now: the scope's close shuts the serving provider down before a lazy assertion would read it.
@@ -552,7 +552,7 @@ object ProviderHotSwapSpec extends ZIOSpecDefault {
           result <- swap.join
           status <- ff.providerStatus
           m      <- ff.providerMetadata
-          bound  <- ZIO.succeed(api.getProvider(domain))
+          bound  <- ZIO.succeed(zio.openfeature.internal.ManagedProvider.unwrap(api.getProvider(domain)))
           cDown  <- awaitTrue(c.shutdowns.get() >= 1)
           _      <- ZIO.sleep(300.millis)
           // Read now: the scope's close shuts the serving provider down before a lazy assertion would read it.
@@ -853,7 +853,7 @@ object ProviderHotSwapSpec extends ZIOSpecDefault {
           failed <- ff.setProvider(b).either
           status <- ff.providerStatus
           eval   <- ff.boolean("flag", default = false).either
-          bound  = api.getProvider(domain)
+          bound  = zio.openfeature.internal.ManagedProvider.unwrap(api.getProvider(domain))
           binits = b.inits.get()
           // The init watchdog is still armed: A, still initializing past initTimeout, goes Fatal and is shut down.
           fatal <- ff.providerStatus
@@ -888,7 +888,7 @@ object ProviderHotSwapSpec extends ZIOSpecDefault {
           refused  <- ff.setProvider(c).either
           status   <- ff.providerStatus
           meta     <- ff.providerMetadata
-          bound  = api.getProvider(domain)
+          bound  = zio.openfeature.internal.ManagedProvider.unwrap(api.getProvider(domain))
           counts = (b.inits.get(), c.inits.get())
         } yield assertTrue(
           timedOut.isLeft,
@@ -955,7 +955,10 @@ object ProviderHotSwapSpec extends ZIOSpecDefault {
             initTimeout = 300.millis,
             probe = holdAt(zio.openfeature.internal.LifecycleProbe.Point.SwapRollback, held, release)
           )
-          _    <- ZIO.succeed(dev.openfeature.sdk.EventProviderAccess.attach(b, (_, _) => ()))
+          // The SDK refuses to register a wrapper attached elsewhere: the swap fails at its registration.
+          _ <- ZIO.succeed(
+            dev.openfeature.sdk.EventProviderAccess.attach(zio.openfeature.internal.ManagedProvider(b), (_, _) => ())
+          )
           swap <- ff.setProvider(b).either.fork
           // Held with its gate up past the watchdog's deadline, which the gate drops.
           reached <- held.await.timeout(5.seconds)
@@ -992,7 +995,7 @@ object ProviderHotSwapSpec extends ZIOSpecDefault {
           started <- awaitTrue(a.inits.get() == 1)
           failed  <- ff.setProvider(c).either
           status  <- ff.providerStatus
-          bound = api.getProvider(domain)
+          bound = zio.openfeature.internal.ManagedProvider.unwrap(api.getProvider(domain))
           inits = a.inits.get()
           // The watcher of the provider C replaced sees C fail and shuts A down; A is never initialized again.
           aDown <- awaitTrue(a.shutdowns.get() >= 1)
@@ -1030,7 +1033,7 @@ object ProviderHotSwapSpec extends ZIOSpecDefault {
           failed   <- ff.setProvider(c).either
           status   <- ff.providerStatus
           m        <- ff.providerMetadata
-          bound    <- ZIO.succeed(api.getProvider(domain))
+          bound    <- ZIO.succeed(zio.openfeature.internal.ManagedProvider.unwrap(api.getProvider(domain)))
           bDown    <- awaitTrue(b.shutdowns.get() >= 1)
           // B's first initialize() returning later changes nothing, and the provider B replaced is then shut down.
           _     <- ZIO.succeed(b.release.countDown())

@@ -252,6 +252,10 @@ private[openfeature] object FeatureFlagsFactories {
   ): ZIO[Scope, Throwable, FeatureFlagsLive] =
     for {
       api <- ZIO.succeed(apiOverride.getOrElse(OpenFeatureAPI.getInstance()))
+      // The SDK registers the library's wrapper, which observes the provider's initialization, shutdown and events; or
+      // the provider itself, when this API already holds it.
+      bound <- ZIO.attempt(Bound.of(api, domain, provider, probe))
+      managed = bound.sdk
       // Register the API shutdown finalizer BEFORE initiating provider registration. If init times out,
       // the provider reports a bad state, or getClient fails, the scope close still tears down whatever
       // the registration managed to bind.
@@ -263,7 +267,7 @@ private[openfeature] object FeatureFlagsFactories {
       // Every build, owning its API or not: the close marks the instance closed (see `scopeFinalizer`).
       _  <- ZIO.addFinalizer(scopeFinalizer(addShutdownFinalizer, api, orphans, probe, swapLock, closed, self))
       ff <- makeInstance(
-        provider,
+        managed,
         api,
         domain,
         version,
@@ -286,34 +290,36 @@ private[openfeature] object FeatureFlagsFactories {
       // Known to the instance that later tears this API down, which then retires this one; and the slot checked
       // before it is bound.
       _ <- ZIO.succeed { self.set(ff); ApiInstances.register(api, ff) }
-      _ <- warnIfSlotBound(api, domain, provider)
+      _ <- warnIfSlotBound(api, domain, managed)
       // The bridge is attached before the provider initializes, so exactly one PROVIDER_READY reaches it. See
       // `attachesBeforeRegistration`.
-      early <- attachesBeforeRegistration(api, domain, provider)
+      early <- attachesBeforeRegistration(api, domain, managed)
       _     <- ZIO.when(early)(ff.startEventBridge)
       // Non-blocking registration plus a bounded wait: `setProviderAndWait` would hold the SDK's API write
       // lock across `initialize()`, so after a timeout the finalizer's `api.shutdown()` would block on that lock for
       // as long as `initialize()` hangs. On any init failure the provider itself is shut down (best-effort, bounded,
       // since a provider stuck in `initialize()` often cannot shut down either) so it doesn't keep threads/connections
       // alive — this also covers the domain/registry paths where no API finalizer is registered — and the bridge's
-      // handlers are removed so a failed build leaves none behind.
-      failedBuild = ff.stopEventBridge *>
-        ProviderRegistration.boundedProviderShutdown(
-          provider,
-          "build (failed initialization)",
-          ProviderRegistration.failedProviderShutdownTimeout(initTimeout)
-        )
+      // handlers are removed so a failed build leaves none behind. The status records the failure first: the wait ends
+      // when `initialize()` throws, before the provider's own ERROR, or the SDK's, reaches the bridge.
+      failedBuild = (failure: Throwable) =>
+        ff.markInitFailed(fatal = failure.isInstanceOf[FatalError]) *> ff.stopEventBridge *>
+          ProviderRegistration.boundedProviderShutdown(
+            managed,
+            "build (failed initialization)",
+            ProviderRegistration.failedProviderShutdownTimeout(initTimeout)
+          )
       settled <- ProviderRegistration
-        .registerThenAwait(api, domain, provider, initTimeout)(
+        .registerThenAwait(api, domain, bound, initTimeout)(
           ZIO.unless(early)(ff.startEventBridge).unit
         )
-        .tapError(_ => failedBuild)
+        .tapError(failedBuild)
       // A provider reused from another domain of this API is serving there: the build fails without shutting it down.
-      verified <- ((verifyInitState(settled) <* verifyProviderState(provider)) <*
+      verified <- ((verifyInitState(settled) <* verifyProviderState(managed)) <*
         // A provider whose metadata name only exists once it has initialized (the SDK's MultiProvider) was stamped
         // with the "unknown" fallback; now that it has, record its real name.
-        refreshProviderName(provider, ff))
-        .tapError(_ => if (isReused(settled)) ff.stopEventBridge else failedBuild)
+        refreshProviderName(managed, ff))
+        .tapError(e => if (isReused(settled)) ff.stopEventBridge else failedBuild(e))
       // Only seed status when the caller didn't hand us a shared ref (testkit shares one). Routed through
       // `seedStatus` so the machine's `everReady` flag records a Ready/Stale seed.
       _ <- statusRef.fold(ff.seedStatus(verified))(_ => ZIO.unit)
@@ -471,6 +477,10 @@ private[openfeature] object FeatureFlagsFactories {
   ): ZIO[Scope, Throwable, FeatureFlagsLive] =
     for {
       api <- ZIO.succeed(apiOverride.getOrElse(OpenFeatureAPI.getInstance()))
+      // The SDK registers the library's wrapper, which observes the provider's initialization, shutdown and events; or
+      // the provider itself, when this API already holds it.
+      bound <- ZIO.attempt(Bound.of(api, domain, provider, probe))
+      managed = bound.sdk
       // Register the API shutdown finalizer BEFORE the provider, so a failure later in the build still tears down the
       // registered provider when the scope closes.
       orphans = OrphanedProviders(api, probe)
@@ -481,7 +491,7 @@ private[openfeature] object FeatureFlagsFactories {
       // Every build, owning its API or not: the close marks the instance closed (see `scopeFinalizer`).
       _  <- ZIO.addFinalizer(scopeFinalizer(addShutdownFinalizer, api, orphans, probe, swapLock, closed, self))
       ff <- makeInstance(
-        provider,
+        managed,
         api,
         domain,
         version,
@@ -504,10 +514,10 @@ private[openfeature] object FeatureFlagsFactories {
       // Known to the instance that later tears this API down, which then retires this one; and the slot checked
       // before it is bound.
       _ <- ZIO.succeed { self.set(ff); ApiInstances.register(api, ff) }
-      _ <- warnIfSlotBound(api, domain, provider)
+      _ <- warnIfSlotBound(api, domain, managed)
       // As in the sync build: attach the bridge before the provider initializes, so exactly one PROVIDER_READY
       // reaches it — the post-init emission, or the SDK's replay for a provider that is already ready.
-      early <- attachesBeforeRegistration(api, domain, provider)
+      early <- attachesBeforeRegistration(api, domain, managed)
       _     <- ZIO.when(early)(ff.startEventBridge)
       // `ZIO.attempt` (not `ZIO.succeed`) so a synchronous throw from registration — a null provider, or a provider
       // whose `getMetadata` throws while the SDK reads its name — surfaces in the typed Throwable channel instead of
@@ -518,19 +528,17 @@ private[openfeature] object FeatureFlagsFactories {
       // compute pool. (The sync `build` path uses `attemptBlocking` because `ProviderRegistration` blocks a thread
       // polling for the init outcome.)
       _ <- (domain match {
-        case Some(d) => ZIO.attempt(api.setProvider(d, provider))
-        case None    => ZIO.attempt(api.setProvider(provider))
+        case Some(d) => ZIO.attempt(api.setProvider(d, managed))
+        case None    => ZIO.attempt(api.setProvider(managed))
       }).tapError(_ => ff.stopEventBridge)
       _ <- ZIO.unless(early)(ff.startEventBridge)
-      _ <- ff.reconcileRegistration(provider)
-      // A failed swap must not roll back onto it while its first initialize() still runs.
-      _ <- ff.trackPendingInit(provider)
+      _ <- ff.reconcileRegistration(managed)
       // Init watchdog: after initTimeout, escalate to Fatal ONLY if the provider never became usable
       // (`everReady` gate inside the machine): publish the Error event, release the onReady latch, then shut the
       // provider down, bounded. A provider that was Ready and later dipped to a transient Error is left running. The
       // fiber is forked into the layer's Scope, so it is also interrupted when the layer is released.
       _ <- (ZIO.sleep(initTimeout) *> probe.at(LifecycleProbe.Point.Watchdog) *>
-        ff.escalateInitTimeout(provider, initTimeout)).forkScoped
+        ff.escalateInitTimeout(managed, initTimeout)).forkScoped
     } yield ff
 
   /** Create a FeatureFlags layer with a named domain and shared status ref (non-blocking). */

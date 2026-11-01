@@ -77,7 +77,9 @@ object ApiSharingSpec extends ZIOSpecDefault {
         for {
           ff <- FeatureFlags.fromProvider(provider, FeatureFlagsConfig().withIsolatedApi).build.map(_.get[FeatureFlags])
           read     <- ff.boolean("f", default = false)
-          onGlobal <- ZIO.succeed(OpenFeatureAPI.getInstance().getProvider() eq provider)
+          onGlobal <- ZIO.succeed(
+            zio.openfeature.internal.ManagedProvider.unwrap(OpenFeatureAPI.getInstance().getProvider()) eq provider
+          )
         } yield assertTrue(read, !onGlobal)
       }
     },

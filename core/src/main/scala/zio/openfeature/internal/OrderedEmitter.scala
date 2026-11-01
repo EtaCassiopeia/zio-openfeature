@@ -34,9 +34,12 @@ final private[openfeature] class OrderedEmitter(owner: EventProvider) {
   }
 
   /** Hand `event` to the owner's emitter after every emission enqueued before it. A no-op once closed. */
-  def enqueue(event: ProviderEvent, details: ProviderEventDetails): Unit =
+  def enqueue(event: ProviderEvent, details: ProviderEventDetails): Unit = enqueue(event, details, () => ())
+
+  /** [[enqueue]], then `delivered` on the lane once the SDK has applied the emission (or dropped it). */
+  def enqueue(event: ProviderEvent, details: ProviderEventDetails, delivered: () => Unit): Unit =
     executor().foreach { ex =>
-      try ex.execute(() => emitAndAwait(event, details))
+      try ex.execute { () => emitAndAwait(event, details); delivered() }
       catch { case _: RejectedExecutionException => () } // closed between the read and the submit
     }
 

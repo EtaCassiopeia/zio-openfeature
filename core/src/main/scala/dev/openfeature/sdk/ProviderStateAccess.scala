@@ -35,6 +35,10 @@ object ProviderStateAccess {
     }
   }
 
+  /** Whether `domain`'s slot (the default slot when `domain` is null) holds this exact `provider`. */
+  def boundIn(api: OpenFeatureAPI, domain: String, provider: FeatureProvider): Boolean =
+    api.getFeatureProviderStateManager(domain).getProvider eq provider
+
   /** A reader for the state of the manager `domain`'s slot (the default slot when `domain` is null) holds for
     * `provider`, or `None` when the slot holds another provider. The reader keeps reporting that manager's state after
     * the slot is bound to another provider: it is the state the SDK goes by, once `provider`'s pending `initialize()`

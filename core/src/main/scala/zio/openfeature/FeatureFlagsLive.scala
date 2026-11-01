@@ -10,6 +10,7 @@ import zio.openfeature.internal.{
   FallbackLogLimiter,
   FeatureFlagsState,
   HookPipeline,
+  LifecycleEffect,
   LifecycleInput,
   LifecycleProbe,
   Bound,
@@ -116,7 +117,6 @@ final private[openfeature] class FeatureFlagsLive(
   /** Abandoned provider calls still running — for tests. */
   private[openfeature] def abandonedCallCount: Int = evaluator.abandonedCallCount
 
-  private def swapInProgress   = eventBridge.swapInProgress
   private def lifecycle        = eventBridge.lifecycle
   private def bridgeDeregister = eventBridge.bridgeDeregister
 
@@ -401,24 +401,25 @@ final private[openfeature] class FeatureFlagsLive(
     * event and the latch must not wait on it. A provider that was ever Ready is left running.
     */
   private[openfeature] def escalateInitTimeout(provider: OFFeatureProvider, initTimeout: Duration): UIO[Unit] =
-    applySignal(Signal.InitTimeout).flatMap {
-      // A swap's gate dropped the deadline. Kept for the swap to replay if it ends on this provider still unready.
-      case None if swapInProgress.get() => ZIO.succeed(deferredInitTimeout.set(Some((provider, initTimeout))))
-      case Some(_)                      =>
-        val msg = s"Provider initialization exceeded $initTimeout"
-        state.eventHub
-          .publish(
-            ProviderEvent.Error(
-              new java.util.concurrent.TimeoutException(msg),
-              ProviderMetadata(providerNameRef.get()),
-              Some(ErrorCode.ProviderFatal),
-              Some(msg)
-            )
+    probe.at(Point.ApplySignal(Signal.InitTimeout)) *>
+      lifecycle.run(LifecycleInput.WatchdogFired(provider, initTimeout)).flatMap(o => runEffects(o.effects))
+
+  /** Run what a lifecycle step asked for, after the step, outside its lock. */
+  private def runEffects(effects: Chunk[LifecycleEffect]): UIO[Unit] =
+    ZIO.foreachDiscard(effects) { case LifecycleEffect.EscalateInitTimeout(provider, initTimeout) =>
+      val msg = s"Provider initialization exceeded $initTimeout"
+      state.eventHub
+        .publish(
+          ProviderEvent.Error(
+            new java.util.concurrent.TimeoutException(msg),
+            ProviderMetadata(providerNameRef.get()),
+            Some(ErrorCode.ProviderFatal),
+            Some(msg)
           )
-          .unit *>
-          ZIO.succeed(onReady.foreach(_.countDown())) *>
-          ProviderRegistration.boundedProviderShutdown(provider, "init watchdog")
-      case None => ZIO.unit
+        )
+        .unit *>
+        ZIO.succeed(onReady.foreach(_.countDown())) *>
+        ProviderRegistration.boundedProviderShutdown(provider, "init watchdog")
     }
 
   /** Seed the initial status once the sync build has verified the provider, recording ever-readiness for the machine.
@@ -817,15 +818,10 @@ final private[openfeature] class FeatureFlagsLive(
     * event also reports is applied twice, which the machine absorbs.
     */
   // An init-watchdog deadline that fell inside a swap, which drops it: replayed when the swap ends on that provider.
-  private val deferredInitTimeout =
-    new java.util.concurrent.atomic.AtomicReference[Option[(OFFeatureProvider, Duration)]](None)
-
   private def replayInitTimeout: UIO[Unit] =
-    ZIO.succeed(deferredInitTimeout.getAndSet(None)).flatMap {
-      case Some((provider, timeout)) =>
-        providerRef.get.flatMap(current => escalateInitTimeout(provider, timeout).when(current eq provider).unit)
-      case None => ZIO.unit
-    }
+    providerRef.get
+      .flatMap(current => lifecycle.run(LifecycleInput.ReplayDeferred(current)))
+      .flatMap(o => runEffects(o.effects))
 
   private[openfeature] def reconcileRegistration(provider: OFFeatureProvider): UIO[Unit] =
     ZIO

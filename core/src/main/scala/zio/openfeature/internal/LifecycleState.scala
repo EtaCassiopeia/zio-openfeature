@@ -20,13 +20,17 @@ import zio.openfeature.internal.ProviderStatusMachine.Signal
   *   an explicit shutdown completed; its final `NotReady` is terminal (model: `shutDown`)
   * @param closed
   *   the layer's scope closed, so no swap may start (model: `closed`)
+  * @param deferredInitTimeout
+  *   an init-watchdog deadline that fell inside a swap, whose gate drops it: replayed when the swap ends on that
+  *   provider
   */
 final private[openfeature] case class LifecycleState(
   status: ProviderStatus,
   gate: Boolean,
   everReady: Boolean,
   shutDown: Boolean,
-  closed: Boolean
+  closed: Boolean,
+  deferredInitTimeout: Option[(dev.openfeature.sdk.FeatureProvider, Duration)]
 ) {
 
   /** The context the status table reads. */
@@ -35,7 +39,14 @@ final private[openfeature] case class LifecycleState(
 
 private[openfeature] object LifecycleState {
   val initial: LifecycleState =
-    LifecycleState(status = ProviderStatus.NotReady, gate = false, everReady = false, shutDown = false, closed = false)
+    LifecycleState(
+      status = ProviderStatus.NotReady,
+      gate = false,
+      everReady = false,
+      shutDown = false,
+      closed = false,
+      deferredInitTimeout = None
+    )
 }
 
 /** What moves the lifecycle: a status signal, or a step of the library's own sequences. */
@@ -48,6 +59,13 @@ private[openfeature] object LifecycleInput {
 
   /** The sync build's verified status, applied only while the status is still the initial `NotReady`. */
   final case class Seed(status: ProviderStatus) extends LifecycleInput
+
+  /** The init watchdog's deadline for `provider` passed. */
+  final case class WatchdogFired(provider: dev.openfeature.sdk.FeatureProvider, timeout: Duration)
+      extends LifecycleInput
+
+  /** A swap ended on `installed`: a deadline its gate deferred for that provider is replayed. */
+  final case class ReplayDeferred(installed: dev.openfeature.sdk.FeatureProvider) extends LifecycleInput
 
   /** The layer's scope closed (model: `ScopeClose`). */
   case object ScopeClose extends LifecycleInput
@@ -64,6 +82,15 @@ private[openfeature] object LifecycleInput {
 
 /** What `step` asks the interpreter to do once the record is written. */
 sealed private[openfeature] trait LifecycleEffect
+
+private[openfeature] object LifecycleEffect {
+
+  /** The watchdog made a provider that never became usable Fatal: publish the terminal error, release the onReady
+    * latch, and shut the provider down, in that order.
+    */
+  final case class EscalateInitTimeout(provider: dev.openfeature.sdk.FeatureProvider, timeout: Duration)
+      extends LifecycleEffect
+}
 
 /** The lifecycle's transitions: one pure function from the record and an input to the next record, whether the status
   * moved, and the effects to run. The status part is [[ProviderStatusMachine.transition]].
@@ -90,8 +117,18 @@ private[openfeature] object LifecycleStep {
 
       case LifecycleInput.Idle       => unchanged(state)
       case LifecycleInput.ScopeClose => Outcome(state.copy(closed = true), None, Chunk.empty)
-      case LifecycleInput.GateUp     => Outcome(state.copy(gate = true), None, Chunk.empty)
-      case LifecycleInput.GateDown   => Outcome(state.copy(gate = false), None, Chunk.empty)
+
+      case LifecycleInput.WatchdogFired(provider, timeout) => watchdog(state, provider, timeout)
+
+      case LifecycleInput.ReplayDeferred(installed) =>
+        state.deferredInitTimeout match {
+          case Some((provider, timeout)) if provider eq installed =>
+            watchdog(state.copy(deferredInitTimeout = None), provider, timeout)
+          case Some(_) => Outcome(state.copy(deferredInitTimeout = None), None, Chunk.empty)
+          case None    => unchanged(state)
+        }
+      case LifecycleInput.GateUp   => Outcome(state.copy(gate = true), None, Chunk.empty)
+      case LifecycleInput.GateDown => Outcome(state.copy(gate = false), None, Chunk.empty)
     }
 
   private def status(state: LifecycleState, signal: Signal): Outcome =
@@ -106,6 +143,16 @@ private[openfeature] object LifecycleStep {
         })
         val shutDown = state.shutDown || signal == Signal.ShutdownCompleted
         Outcome(state.copy(status = next, everReady = ready, shutDown = shutDown), Some(next), Chunk.empty)
+    }
+
+  // Escalates only a provider that never became usable; a deadline that falls inside a swap is kept for the swap to
+  // replay if it ends on this provider still unready.
+  private def watchdog(state: LifecycleState, provider: dev.openfeature.sdk.FeatureProvider, timeout: Duration) =
+    status(state, Signal.InitTimeout) match {
+      case moved @ Outcome(_, Some(_), _) =>
+        moved.copy(effects = Chunk(LifecycleEffect.EscalateInitTimeout(provider, timeout)))
+      case same if state.gate => same.copy(state = same.state.copy(deferredInitTimeout = Some((provider, timeout))))
+      case same               => same
     }
 
   private def usable(status: ProviderStatus): Boolean =

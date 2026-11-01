@@ -184,9 +184,11 @@ object WrapperStackFaultSpec extends ZIOSpecDefault {
       // An error the provider reports reaches the status through every wrapper, so the recovery below is a real one.
       // Not past a layer that forwards no events: DeferredProvider documents that it does not forward its delegate's.
       //
-      // The SDK hands a provider's events to their handlers on a thread pool, in no fixed order, so two events emitted
-      // back to back can land in either order and leave the status on the first. Each event here is therefore emitted
-      // only once the one before it has been delivered and handled.
+      // The SDK applies two events a provider emits without awaiting the first in either order, and no wrapper can put
+      // them back: the wrappers keep the order of what they receive, not of what the provider meant. Each event here is
+      // therefore emitted only once the SDK has taken the one before it. The script's own emissions are not awaited:
+      // they come at least the evaluation timeout before this ERROR, which in practice, not by guarantee, applies them
+      // first.
       _     <- emitAndWait(inner, OFProviderEvent.PROVIDER_ERROR)
       erred <-
         if (!c.layers.forall(forwardsEvents)) ZIO.succeed(true)
@@ -218,9 +220,27 @@ object WrapperStackFaultSpec extends ZIOSpecDefault {
   private def report(c: Case, found: Chunk[String]): String =
     if (found.isEmpty) "" else (s"case: $c" +: found).mkString("\n")
 
+  // Cases the property shrank to when an ERROR failed to reach the status in CI: an init STALE, then an evaluation that
+  // emits STALE without awaiting it and parks until the breaker times it out.
+  private val shrunkCases = List(List(Layer.Cache, Layer.Breaker), List(Layer.Breaker, Layer.Cache, Layer.Breaker)).map {
+    layers =>
+      Case(
+        layers,
+        event(OFProviderEvent.PROVIDER_STALE),
+        List(event(OFProviderEvent.PROVIDER_STALE, andThen = Fault.HangUntilReleased)),
+        Fault.Succeed,
+        calls = 1
+      )
+  }
+
   def spec = suite("WrapperStackFaultSpec")(
     test("faults in the innermost provider never escape a generated wrapper stack") {
       check(genCase)(c => runCase(c).map(found => assertTrue(report(c, found) == "")))
-    } @@ PropertyBudget(8) @@ TestAspect.shrinks(10) @@ PropertyBudget.timeout(5.minutes)
+    } @@ PropertyBudget(8) @@ TestAspect.shrinks(10) @@ PropertyBudget.timeout(5.minutes),
+    test("the cases the property once shrank to still pass") {
+      ZIO
+        .foreach(shrunkCases)(c => runCase(c).map(report(c, _)))
+        .map(reports => assertTrue(reports.mkString == ""))
+    }
   ) @@ TestAspect.sequential @@ TestAspect.withLiveClock
 }

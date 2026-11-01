@@ -10,6 +10,7 @@ import zio.openfeature.internal.{
   FallbackLogLimiter,
   FeatureFlagsState,
   HookPipeline,
+  LifecycleInput,
   LifecycleProbe,
   Bound,
   ManagedProvider,
@@ -117,10 +118,9 @@ final private[openfeature] class FeatureFlagsLive(
   /** Abandoned provider calls still running — for tests. */
   private[openfeature] def abandonedCallCount: Int = evaluator.abandonedCallCount
 
-  private def swapInProgress    = eventBridge.swapInProgress
-  private def everReady         = eventBridge.everReady
-  private def shutdownCompleted = eventBridge.shutdownCompleted
-  private def bridgeDeregister  = eventBridge.bridgeDeregister
+  private def swapInProgress   = eventBridge.swapInProgress
+  private def lifecycle        = eventBridge.lifecycle
+  private def bridgeDeregister = eventBridge.bridgeDeregister
 
   private def applySignal(signal: Signal): UIO[Option[ProviderStatus]] = eventBridge.applySignal(signal)
 
@@ -441,12 +441,7 @@ final private[openfeature] class FeatureFlagsLive(
         ZIO.logWarningCause("build: could not read the SDK state; seeding the provider's own", c).as(verified)
       )
       .flatMap { seed =>
-        state.statusRef.update {
-          case ProviderStatus.NotReady =>
-            if (seed == ProviderStatus.Ready || seed == ProviderStatus.Stale) everReady.set(true)
-            seed
-          case moved => moved
-        }
+        lifecycle.run(LifecycleInput.Seed(seed)).unit
       }
 
   /** Every status transition, current first. Test observability only: lets a spec prove a status was never entered. */
@@ -460,7 +455,7 @@ final private[openfeature] class FeatureFlagsLive(
     // — otherwise `awaitReady()` on a shut-down instance would wait forever.
     state.statusRef.changes
       .filter(s =>
-        s.canEvaluate || s == ProviderStatus.Fatal || s == ProviderStatus.ShuttingDown || shutdownCompleted.get()
+        s.canEvaluate || s == ProviderStatus.Fatal || s == ProviderStatus.ShuttingDown || lifecycle.snapshot.shutDown
       )
       .runHead
       .timeout(within)
@@ -541,7 +536,7 @@ final private[openfeature] class FeatureFlagsLive(
           oldName     <- ZIO.succeed(providerNameRef.get())
           // 1. Raise the gate BEFORE the NotReady transition: from here bridge events cannot drive the machine, so a
           //    queued Ready event from the OLD provider cannot mark the instance Ready mid-swap.
-          _ <- ZIO.succeed(swapInProgress.set(true))
+          _ <- lifecycle.run(LifecycleInput.GateUp)
           // Read with the gate up, so no event or watchdog moves it before the swap's own NotReady.
           before <- state.statusRef.get
           _      <- applySignal(Signal.SwapStarted)
@@ -645,7 +640,7 @@ final private[openfeature] class FeatureFlagsLive(
         // waiting for `swapLock` above stays interruptible.
         // The gate must drop on every exit (success, failure, interruption) or bridge events would be suppressed forever.
         swap.uninterruptible
-          .ensuring(ZIO.succeed(swapInProgress.set(false)))
+          .ensuring(lifecycle.run(LifecycleInput.GateDown))
           .tapBoth(
             {
               // A READY that landed between the timeout and the gate dropping was suppressed; pick it up now.
@@ -677,7 +672,7 @@ final private[openfeature] class FeatureFlagsLive(
   private def refuseSwap(newProvider: OFFeatureProvider): IO[FeatureFlagError, Unit] =
     ZIO
       .fail(FeatureFlagError.ProviderNotReady(ProviderStatus.NotReady))
-      .when(shutdownCompleted.get() || closed.get()) *>
+      .when(lifecycle.snapshot.shutDown || closed.get()) *>
       // A provider never wrapped has no earlier registration to refuse it over.
       ZIO.foreachDiscard(ManagedProvider.existing(newProvider)) { managed =>
         refuseStillInitializing(managed) *> refusePendingOrphan(managed) *> refuseReplacedByPendingInit(managed)
@@ -767,7 +762,7 @@ final private[openfeature] class FeatureFlagsLive(
       .withPermit(
         providerRef.get.flatMap { registered =>
           // After a shutdown the SDK has shut the switch down; `construct` then discards the composed stack.
-          if ((ManagedProvider.unwrap(registered) ne switch) || shutdownCompleted.get() || closed.get()) ZIO.none
+          if ((ManagedProvider.unwrap(registered) ne switch) || lifecycle.snapshot.shutDown || closed.get()) ZIO.none
           else
             ZIO.attempt {
               // The name first: the SDK stamps the switch's (now `next`'s) name on every event, and the identity guard

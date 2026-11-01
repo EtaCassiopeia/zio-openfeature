@@ -755,6 +755,9 @@ object ProviderHotSwapSpec extends ZIOSpecDefault {
           _     <- ZIO.succeed(b.release.countDown())
           again <- installOnceReturned(ff, a)
           bDown <- awaitTrue(b.shutdowns.get() >= 1)
+          // The SDK shuts A's old registration down on its executor once B returns: wait for it as for B's.
+          aDown <- awaitTrue(a.shutdowns.get() >= 1)
+          _     <- ZIO.sleep(200.millis)
           shut = (a.shutdowns.get(), b.shutdowns.get())
         } yield assertTrue(
           timedOut.isLeft,
@@ -767,6 +770,7 @@ object ProviderHotSwapSpec extends ZIOSpecDefault {
           again.isRight,
           a.inits.get() == 2,
           bDown,
+          aDown,
           shut == ((1, 1)) // A once, by the SDK when B returned; B once, replaced by A again
         )
       }

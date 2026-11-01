@@ -26,7 +26,7 @@ mutants = {
         '    /\\ status\' = "Ready"'),
     # A timed-out swap forgets the provider it replaced.
     'a timed-out swap forgets the provider it replaced': (
-        '    /\\ orphans\' = IF swap.prev # swap.new THEN orphans \\cup {Watch(swap.prev, swap.new)} ELSE orphans',
+        '    /\\ orphans\' = IF owns /\\ swap.prev # swap.new THEN orphans \\cup {Watch(swap.prev, swap.new)} ELSE orphans',
         '    /\\ orphans\' = orphans'),
     # The bridge applies the event's own type instead of the SDK's state for the slot.
     'the status follows the event type, not the SDK state': (
@@ -81,6 +81,11 @@ mutants = {
     # A provider a timed-out swap's entry still holds is installed again (refusePendingOrphan removed).
     'a provider a timed-out swap still holds is installed again': (
         '    /\\ ~\\E o \\in orphans : o.prev = p\n',
+        ''),
+    # A provider that a registration still initializing replaced is installed again (refuseReplacedByPendingInit
+    # removed): an instance that shares its API, which records no orphans, gets it shut down by the SDK.
+    'a provider a registration still initializing replaced is installed again': (
+        '    /\\ ~\\E q \\in All : prevOf[q] = p /\\ inits[q] > 0\n',
         ''),
     # The gate never goes up.
     'no swap gate': (

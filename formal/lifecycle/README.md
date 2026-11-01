@@ -88,8 +88,9 @@ there is one.
 
 ## The library's variables and the code
 
-The library's variables are the fields of `LifecycleState` (`core/.../internal/LifecycleState.scala`), name for name,
-and every library action is one or more steps of `LifecycleStep.step`, which `LifecycleStepSpec` tests per action.
+The library's variables are held by `LifecycleState` (`core/.../internal/LifecycleState.scala`), mostly under the same
+names; the rows below say where one is held elsewhere. Every library action is one or more steps of
+`LifecycleStep.step`, which `LifecycleStepSpec` tests per action.
 
 | Variable | `LifecycleState` field |
 |:--|:--|
@@ -97,8 +98,9 @@ and every library action is one or more steps of `LifecycleStep.step`, which `Li
 | `installed` | `installed` |
 | `lock` | `lock` (the swap lock serializes the sequences; the field records which holds it) |
 | `gate` | `gate`, mirrored to `swapInProgress` for the evaluator |
-| `swap` | `swap` |
-| `pending` | `replaced`, the registrations still initializing with the provider each replaced |
+| `swap` | `swap` (without `phase`: the swap's for-comprehension is the phase) |
+| `pending` | not a field: whether the previous provider's `initialize()` still runs (its wrapper's count), read in `setProvider`'s failure branch |
+| `prevOf` with `inits` (SDK variables) | `replaced`, the registrations still initializing with the provider each replaced, which the `HeldBy` refusal reads |
 | `orphans` | `orphans`; `OrphanedProviders` keeps the watcher of each entry |
 | `shutDown`, `closed` | `shutDown`, `closed` |
 | `owns` | `ownsApi`, fixed at construction |

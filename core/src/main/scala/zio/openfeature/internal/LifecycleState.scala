@@ -325,9 +325,11 @@ private[openfeature] object LifecycleStep {
   *
   * The status lives in `statusRef`, which the testkit may share and set directly, and every step runs under its
   * `modifyZIO`, whose semaphore makes the status write and the write of the rest of the record one atomic step. The
-  * rest lives in a `Ref` nothing else touches. Inside the same step the interpreter writes the mirrors read
-  * synchronously from SDK threads and the evaluator (the gate, the generation, the provider name), so they never lag
-  * the record. The effects a step returns run after it, never under the semaphore.
+  * rest lives in a `Ref` nothing else touches. The mirrors read synchronously from SDK threads and the evaluator are
+  * written so that none leads the status: the gate and the provider name inside the step, where an early gate only
+  * makes the evaluator stricter; the generation once the step has published the status, so an evaluation that reads a
+  * new generation also reads the swap's NotReady. Only a swap's start moves the generation, under the swap lock, so
+  * these writes cannot reorder. The effects a step returns run after it, never under the semaphore.
   */
 final private[openfeature] class Lifecycle(
   statusRef: SubscriptionRef[ProviderStatus],
@@ -345,22 +347,23 @@ final private[openfeature] class Lifecycle(
 
   /** [[run]] with an input decided from the record under the same semaphore, alongside a value `decide` computes. */
   def runWith[A](decide: LifecycleState => (LifecycleInput, A)): UIO[(A, LifecycleStep.Outcome)] =
-    statusRef.modifyZIO { status =>
-      rest.get.flatMap { stored =>
-        val before        = stored.copy(status = status)
-        val (input, side) = decide(before)
-        val outcome       = LifecycleStep.step(before, input)
-        val after         = outcome.state
-        rest.set(after) *> ZIO
-          .succeed {
-            gateMirror.set(after.gate)
-            generationMirror.set(after.generation)
-            outcome.rename.foreach(nameMirror.set)
-            view.set(after)
-          }
-          .as(((side, outcome), after.status))
+    statusRef
+      .modifyZIO { status =>
+        rest.get.flatMap { stored =>
+          val before        = stored.copy(status = status)
+          val (input, side) = decide(before)
+          val outcome       = LifecycleStep.step(before, input)
+          val after         = outcome.state
+          rest.set(after) *> ZIO
+            .succeed {
+              gateMirror.set(after.gate)
+              outcome.rename.foreach(nameMirror.set)
+              view.set(after)
+            }
+            .as(((side, outcome), after.status))
+        }
       }
-    }
+      .tap { case (_, outcome) => ZIO.succeed(generationMirror.set(outcome.state.generation)) }
 
   /** The record, read under the same semaphore as every step. */
   def read: UIO[LifecycleState] = runWith(state => (LifecycleInput.Idle, state)).map(_._1)

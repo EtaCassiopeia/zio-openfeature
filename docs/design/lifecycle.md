@@ -69,8 +69,9 @@ A provider the user already registered with the API, in the target slot or the d
 it would run its `initialize()` again, or fail on an `EventProvider` the SDK holds. The library binds that registration
 as it is (`Bound.Foreign`), settles on the state the SDK reports for it, and gives it none of the wrapper's guarantees.
 
-**`LifecycleState`** is one record, field for field the model's library variables (status, installed provider, lock,
-gate, swap in flight, the registrations still initializing with what each replaced, orphans, shut down, closed), plus
+**`LifecycleState`** is one record holding the model's library variables (status, installed provider, lock, gate, swap
+in flight, orphans, shut down, closed; `formal/lifecycle/README.md` maps each), the registrations still initializing
+with what each replaced, plus
 ever-readiness, a deferred init deadline and the generation; and **`step`** is one pure function from a state and an
 input to the next state, the status it moved to and the effects to run. Every refusal is decided in `step`, so no entry
 path can skip it. The swap lock stays as the serializer of the multi-step sequences.

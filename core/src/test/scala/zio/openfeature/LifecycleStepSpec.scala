@@ -25,8 +25,12 @@ import zio.openfeature.internal.ProviderStatusMachine.Signal
   * The mutants not here are bugs in a sequence rather than in a step, and are pinned where that sequence is tested: the
   * status following the event type rather than the SDK's state (`EventBridge.applySdkSignal`, `SdkEventOrderSpec`), a
   * failed swap reading the SDK's state once its gate drops (`reconcileRegistration`, `ProviderHotSwapSpec`), the orphan
-  * watcher reading an error after `initialize()` returned (`OrphanedProviders`, `OrphanedProviderSpec`), and shutdown
-  * or the scope close waiting for a swap in flight (the swap lock, `ShutdownDuringSwapSpec`, `LifecycleTeardownSpec`).
+  * watcher reading an error after `initialize()` returned (`OrphanedProviders`, `OrphanedProviderSpec`), shutdown or
+  * the scope close waiting for a swap in flight (the swap lock, `ShutdownDuringSwapSpec`, `LifecycleTeardownSpec`), a
+  * failed swap rolling back onto a provider still initializing (`setProvider`'s failure branch, `ProviderHotSwapSpec`
+  * "a failed swap does not initialize again a provider whose initialize() has not returned"), and the async build
+  * recording its provider as initializing (the wrapper's count, `ProviderHotSwapSpec` "a failed swap on an async-built
+  * instance does not initialize again a provider still initializing").
   */
 object LifecycleStepSpec extends ZIOSpecDefault {
 
@@ -159,10 +163,6 @@ object LifecycleStepSpec extends ZIOSpecDefault {
       test("a provider still initializing is not installed again") {
         assertTrue(refusal(ready, admit(m1, _ eq m1)) == Some(Refusal.StillInitializing(m1)))
       },
-      test("the async build's provider counts as initializing: it is not installed again while its call runs") {
-        val built = LifecycleState.initial(m1)
-        assertTrue(refusal(built, admit(m1, _ eq m1)) == Some(Refusal.StillInitializing(m1)))
-      },
       test("a provider a timed-out swap still holds is not installed again") {
         val (s, _) = run(ready, LifecycleInput.OrphanRecorded(m2, "m1"))
         assertTrue(refusal(s, admit(m2)) == Some(Refusal.PendingOrphan(m2, "m1")))
@@ -178,9 +178,6 @@ object LifecycleStepSpec extends ZIOSpecDefault {
         val pruned   = returned.state.replaced
         val admitted = returned.effects.isEmpty
         assertTrue(held == Some(Refusal.HeldBy(m2, m1)), admitted, pruned.isEmpty)
-      },
-      test("a failed swap does not roll back onto a provider still initializing: it stays refused") {
-        assertTrue(refusal(LifecycleState.initial(m1), admit(m1, _ eq m1)).isDefined)
       },
       test("STALE moves the status from NotReady, Ready and Error") {
         val from = List(ProviderStatus.NotReady, ProviderStatus.Ready, ProviderStatus.Error)
@@ -225,6 +222,47 @@ object LifecycleStepSpec extends ZIOSpecDefault {
             LifecycleInput.WatchdogFired(p0, 1.second)
           )
         assertTrue(s.status == ProviderStatus.NotReady, effects.isEmpty, s.deferredInitTimeout == Some((p0, 1.second)))
+      }
+    ),
+    suite("the init watchdog and the seed")(
+      test("a deadline a swap deferred is replayed once the swap ends on that provider still unready") {
+        val (s, effects) = run(
+          LifecycleState.initial(p0),
+          swapStart(m1),
+          event(Signal.SwapFailed),
+          LifecycleInput.Reinstall(p0, "p0"),
+          LifecycleInput.WatchdogFired(p0, 1.second),
+          event(Signal.RollbackUnbound(ProviderStatus.NotReady)),
+          LifecycleInput.GateDown,
+          LifecycleInput.ReplayDeferred
+        )
+        assertTrue(
+          s.status == ProviderStatus.Fatal,
+          s.deferredInitTimeout.isEmpty,
+          effects == Chunk(LifecycleEffect.EscalateInitTimeout(p0, 1.second))
+        )
+      },
+      test("a deferred deadline for a provider the swap replaced is dropped, not escalated") {
+        val (s, effects) = run(
+          LifecycleState.initial(p0),
+          swapStart(m1),
+          LifecycleInput.WatchdogFired(p0, 1.second),
+          event(Signal.SwapSucceeded(Settled.Ready)),
+          LifecycleInput.GateDown,
+          LifecycleInput.ReplayDeferred
+        )
+        assertTrue(s.status == ProviderStatus.Ready, s.deferredInitTimeout.isEmpty, effects.isEmpty)
+      },
+      test("the seed applies only while the status is the initial NotReady, and records a usable one") {
+        val seeded = LifecycleStep.step(LifecycleState.initial(p0), LifecycleInput.Seed(ProviderStatus.Stale)).state
+        val moved  =
+          LifecycleStep.step(ready.copy(status = ProviderStatus.Error), LifecycleInput.Seed(ProviderStatus.Ready))
+        assertTrue(
+          seeded.status == ProviderStatus.Stale,
+          seeded.everReady,
+          moved.state.status == ProviderStatus.Error,
+          moved.transitioned.isEmpty
+        )
       }
     ),
     suite("properties")(
@@ -300,6 +338,7 @@ object LifecycleStepSpec extends ZIOSpecDefault {
     genSettled.map(s => event(Signal.SwapSucceeded(s))),
     genSettled.map(s => event(Signal.RollbackSucceeded(s))),
     genStatus.map(s => event(Signal.RollbackUnbound(s))),
+    genStatus.map(s => LifecycleInput.Seed(s)),
     Gen.elements[LifecycleInput](
       event(Signal.SwapFailed),
       event(Signal.ShutdownStarted),

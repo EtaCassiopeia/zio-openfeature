@@ -87,6 +87,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   per registration. Three new mutants take each guard out, and `ProviderHotSwapSpec` now pins `refusePendingOrphan`,
   which had no test.
 
+- **Testkit: hostile providers** (#704). `Fault.Answer` returns a malformed evaluation answer (`AnswerShape`: no
+  value, a wrong box, an error code next to a value, no reason, a `null` evaluation) and `Fault.MetadataAnswer`
+  malformed metadata (`MetadataShape`). `HostileProvider` generates scripts of these, thrown exceptions and `Error`s,
+  hostile starts and throwing shutdowns, and builds a scripted `FaultyProvider`. `HostileProviderSweepSpec` runs the
+  evaluation entry points over them and pins each outcome; with the fix for null provider values reverted it fails.
+  `Fault` gains two cases, so an exhaustive match on it needs them.
+
 - **OFREP fault shapes as three axes** (#705, test-only). `OfrepFaultShapeSpec` runs every combination of status
   (400, 401, 403, 404, 429, 500, 502, 503), body (OFREP JSON, other JSON, HTML, empty, truncated) and headers
   (`Retry-After`, `Content-Type` JSON or HTML) against a pure table: a 429 or 5xx is a `ProviderError` whatever it

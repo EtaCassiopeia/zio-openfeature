@@ -112,8 +112,8 @@ trait LibraryLifecycleSteps { self: ZIOSteps[Any, LibraryWorld] =>
   Given("a fallback-first instance whose real provider " / string) { (outcome: String) =>
     for {
       sc        <- Scope.make
-      swapped   <- Ref.make(false)
-      failure   <- Ref.make(Option.empty[Throwable])
+      swapped   <- Promise.make[Nothing, Unit]
+      failure   <- Promise.make[Nothing, Throwable]
       fallbackP <- TestFeatureProvider.makeNamed("fallback", Map[String, Any]("kill.switch" -> false))
       realP     <- TestFeatureProvider.makeNamed("real", Map[String, Any]("kill.switch" -> true))
       acquire = outcome match {
@@ -133,9 +133,9 @@ trait LibraryLifecycleSteps { self: ZIOSteps[Any, LibraryWorld] =>
               // No retry: a scenario asserting the terminal outcome must not wait out an exponential schedule.
               .withConstructionRetry(Schedule.stop)
               .withConstructionTimeout(10.seconds)
-              .withOnConstructionError(t => failure.set(Some(t)))
+              .withOnConstructionError(t => failure.succeed(t).unit)
               .withVerify(Verify.flagExists[Boolean]("kill.switch"))
-              .withOnSwapped(swapped.set(true))
+              .withOnSwapped(swapped.succeed(()).unit)
           )
           .build
       )
@@ -174,21 +174,27 @@ trait LibraryLifecycleSteps { self: ZIOSteps[Any, LibraryWorld] =>
     }
   }
 
+  // The library publishes the outcome before it runs the callback (`Live`, then `onSwapped`; `Failed`, then
+  // `onConstructionError`), so a step that has seen the outcome waits for the callback rather than reading it at once.
+  private val CallbackBound = 5.seconds
+
   Then("the swap callback fired") {
     ScenarioContext.get.flatMap { w =>
-      w.swapped.get.get.flatMap(fired => assertTrue(fired, "onSwapped never fired"))
+      w.swapped.get.await.timeout(CallbackBound).flatMap(fired => assertTrue(fired.isDefined, "onSwapped never fired"))
     }
   }
 
+  // After `Failed` the swap callback can no longer run, so reading it at once can only miss a call in the direction
+  // this step does not assert.
   Then("the swap callback did not fire") {
     ScenarioContext.get.flatMap { w =>
-      w.swapped.get.get.flatMap(fired => assertTrue(!fired, "onSwapped fired unexpectedly"))
+      w.swapped.get.isDone.flatMap(fired => assertTrue(!fired, "onSwapped fired unexpectedly"))
     }
   }
 
   Then("the construction error mentions " / string) { (fragment: String) =>
     ScenarioContext.get.flatMap { w =>
-      w.constructionError.get.get.flatMap { failure =>
+      w.constructionError.get.await.timeout(CallbackBound).flatMap { failure =>
         val text = failure.map(_.toString).getOrElse("")
         assertTrue(text.contains(fragment), s"construction error '$text' does not mention '$fragment'")
       }

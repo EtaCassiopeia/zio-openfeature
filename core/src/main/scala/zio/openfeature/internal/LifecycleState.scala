@@ -18,8 +18,12 @@ import zio.openfeature.internal.ProviderStatusMachine.Signal
   * @param generation
   *   moves when a swap makes the status NotReady, before it touches the SDK: an evaluation that saw it move across its
   *   provider call does not trust the answer
+  * @param lock
+  *   which sequence holds the swap lock, which serializes them (model: `lock`)
   * @param gate
   *   a swap is running, and bridge events do not move the status (model: `gate`)
+  * @param swap
+  *   the swap in flight: the provider it installs, the one it replaced and the status before it (model: `swap`)
   * @param everReady
   *   the provider was ever usable: the init watchdog leaves it running
   * @param shutDown
@@ -41,7 +45,9 @@ final private[openfeature] case class LifecycleState(
   status: ProviderStatus,
   installed: OFFeatureProvider,
   generation: Long,
+  lock: Lock,
   gate: Boolean,
+  swap: Option[SwapInFlight],
   everReady: Boolean,
   shutDown: Boolean,
   closed: Boolean,
@@ -62,7 +68,9 @@ private[openfeature] object LifecycleState {
       status = ProviderStatus.NotReady,
       installed = installed,
       generation = 0L,
+      lock = Lock.Free,
       gate = false,
+      swap = None,
       everReady = false,
       shutDown = false,
       closed = false,
@@ -71,6 +79,22 @@ private[openfeature] object LifecycleState {
       orphans = Nil
     )
 }
+
+/** Which of the library's sequences holds the swap lock (model: `lock`). */
+sealed private[openfeature] trait Lock
+
+private[openfeature] object Lock {
+  case object Free     extends Lock
+  case object Swap     extends Lock
+  case object Shutdown extends Lock
+}
+
+/** A swap in flight (model: `swap`): the provider it installs, the one it replaced, and the status before it. */
+final private[openfeature] case class SwapInFlight(
+  incoming: OFFeatureProvider,
+  previous: OFFeatureProvider,
+  before: ProviderStatus
+)
 
 /** What moves the lifecycle: a status signal, or a step of the library's own sequences. */
 sealed private[openfeature] trait LifecycleInput
@@ -191,7 +215,12 @@ private[openfeature] object LifecycleStep {
       case LifecycleInput.SwapStart(incoming, name) =>
         val notReady = status(state.copy(gate = true), Signal.SwapStarted)
         notReady.copy(
-          state = notReady.state.copy(installed = incoming, generation = state.generation + 1),
+          state = notReady.state.copy(
+            installed = incoming,
+            generation = state.generation + 1,
+            lock = Lock.Swap,
+            swap = Some(SwapInFlight(incoming, state.installed, state.status))
+          ),
           rename = Some(name)
         )
 
@@ -214,7 +243,8 @@ private[openfeature] object LifecycleStep {
         val (before, from) = state.orphans.span { case (p, _) => !(p eq previous) }
         Outcome(state.copy(orphans = before ++ from.drop(1)), None, Chunk.empty)
 
-      case LifecycleInput.GateDown => Outcome(state.copy(gate = false), None, Chunk.empty)
+      case LifecycleInput.GateDown =>
+        Outcome(state.copy(gate = false, lock = Lock.Free, swap = None), None, Chunk.empty)
 
       case LifecycleInput.WatchdogFired(provider, timeout) => watchdog(state, provider, timeout)
 
@@ -263,7 +293,16 @@ private[openfeature] object LifecycleStep {
           case _                                                     => false
         })
         val shutDown = state.shutDown || signal == Signal.ShutdownCompleted
-        Outcome(state.copy(status = next, everReady = ready, shutDown = shutDown), Some(next), Chunk.empty)
+        val lock     = signal match {
+          case Signal.ShutdownStarted   => Lock.Shutdown
+          case Signal.ShutdownCompleted => Lock.Free
+          case _                        => state.lock
+        }
+        Outcome(
+          state.copy(status = next, everReady = ready, shutDown = shutDown, lock = lock),
+          Some(next),
+          Chunk.empty
+        )
     }
 
   // Escalates only a provider that never became usable; a deadline that falls inside a swap is kept for the swap to

@@ -22,6 +22,9 @@ object EnvVarDifferentialSpec extends ZIOSpecDefault {
       deviations = deviations,
       flagSets = DifferentialLaws.scalarFlagSets,
       corpus = DifferentialLaws.scalarCorpus
+    ),
+    DifferentialLaws.absentKeysAreNotFound(oracle)(flags =>
+      ZIO.succeed(EnvVarProvider.withLookup(environment(flags).get))
     )
   )
 

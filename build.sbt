@@ -388,9 +388,9 @@ val jacksonPins = Seq(
 // Kept separate from `extras` so callers who only want HOCON/env vars don't pull in the OFREP contrib provider's
 // transitive HTTP-client stack (Jackson, Guava, Commons Validator, SLF4J).
 lazy val ofrep = (project in file("ofrep"))
-  // testkit's DifferentialLaws for OfrepDifferentialSpec (#526). Test scope only: consumers of ofrep never resolve
-  // testkit.
-  .dependsOn(core, testkit % "test->compile")
+  // testkit's DifferentialLaws for OfrepDifferentialSpec (#526), and extras' CircuitBreakerProvider for the fault-shape
+  // spec. Test scope only: consumers of ofrep never resolve testkit or extras.
+  .dependsOn(core, testkit % "test->compile", extras % "test->compile")
   .settings(
     name := "zio-openfeature-ofrep",
     commonSettings,
@@ -417,7 +417,8 @@ lazy val ofrep = (project in file("ofrep"))
 // at the time of this writing, so this module integrates with Optimizely directly via `com.optimizely.ab:core-api`
 // (decision engine) and `core-httpclient-impl` (datafile poller for the Optimizely CDN / self-hosted Agent).
 lazy val optimizely = (project in file("optimizely"))
-  .dependsOn(core)
+  // testkit's DifferentialLaws for the absent-key law. Test scope only: consumers of optimizely never resolve testkit.
+  .dependsOn(core, testkit % "test->compile")
   .settings(
     name := "zio-openfeature-optimizely",
     commonSettings,

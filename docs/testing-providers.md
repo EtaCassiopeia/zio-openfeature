@@ -40,6 +40,12 @@ The diagram is `script(Op.EvaluateBoolean, Fault.Throw(e), Fault.Succeed)`.
 | `HangUntilReleased` | block until `release` (not `shutdown()`) |
 | `HangUntilShutdown` | block until `shutdown()` or `release` |
 | `Emit(event, details, andThen)` | emit an OpenFeature event (e.g. `PROVIDER_ERROR` inside `initialize()`), then apply `andThen` |
+| `Answer(shape)` | an evaluation op only: return a malformed answer instead of the provider's (`AnswerShape`) |
+| `MetadataAnswer(shape)` | `GetMetadata` only: return `null` or a nameless `Metadata` (`MetadataShape`) |
+
+`AnswerShape` is `NullValue` (no value, no error code), `WrongBox` (an `Integer` from the boolean, string, long and
+double getters, a `Boolean` from the integer getter, a `String` from the object getter), `ErrorCodeWithValue`,
+`NullReason` or `NullEvaluation` (the getter returns `null`).
 
 There is an `Op` for every `FeatureProvider` method: `Initialize` (both overloads), `Shutdown`, `GetMetadata`,
 `GetProviderHooks`, `GetState`, `IsDomainScoped`, `Track`, and `EvaluateBoolean` to `EvaluateObject`.
@@ -64,6 +70,30 @@ Each `Call` has `op`, `flagKey` (the event name for `track`), `thread`, `started
 `Outcome.Threw(error)`) and `arguments`.
 
 The wrapped provider's events do not reach `FeatureFlags`: use `Fault.Emit` or the wrapper's `emit`.
+
+### Hostile providers
+
+`HostileProvider` generates whole scripts of wrong answers for property tests: a `Script` maps each `Op` to its
+faults, and `HostileProvider.scripted(script, flags)` is a `FaultyProvider.scoped` with the script applied.
+`evaluationScripts` gives every evaluation op a malformed answer or a thrown exception from `throwables` (a checked
+exception, an unchecked one and a non-fatal `Error`), and `getMetadata` a malformed answer or its own. `scripts` adds
+a hostile `initialize()` (a `READY` emitted from inside it, or one that returns only at shutdown) and a `shutdown()`
+that throws; build over those with a short init timeout, or each never-returning start waits out the default one. Run
+them against what you build on a provider, and assert that nothing dies:
+
+```scala
+check(HostileProvider.evaluationScripts) { script =>
+  ZIO.scoped {
+    for {
+      provider <- HostileProvider.scripted(script, Map("flag" -> true))
+      result   <- yourLibrary(provider).exit
+    } yield assertTrue(!result.causeOption.exists(_.isDie))
+  }
+}
+```
+
+The library's own sweep, `HostileProviderSweepSpec`, runs the typed getters, `value[A]`, the `*Details` getters,
+`*OrDefault` and `resolveOrDefault` of `FeatureFlags` this way and pins the outcome of each shape.
 
 ## Check a custom `FlagType`
 
@@ -131,6 +161,25 @@ environment variable holds text, so a read of another type parses it:
   counts.
 
 This repository runs it for `HoconProvider`, `EnvVarProvider` and the OFREP provider.
+
+### Absent keys are not found
+
+`absentKeysAreNotFound(oracleName)(seed)` is a second law, for a provider that answers locally. For each key in
+`adversarialKeys` that the provider does not hold (the empty key, every HOCON path character, leading, trailing and
+doubled dots, a path-like `a.b.c`, a character outside the BMP, control characters, a 10 kB key, and `include`,
+`null` and `true`), every typed getter must fail with `FlagNotFound`, never another error or a defect, and the total
+tier must serve the default with `FLAG_NOT_FOUND`. `adversarialKey` draws one of them; `absentKeyViolations` returns
+the violations instead of a test. Pass `ctx` with a targeting key for a provider that checks it before the flag key:
+
+```scala
+DifferentialLaws.absentKeysAreNotFound("hocon")(flags =>
+  ZIO.succeed(HoconProvider.fromConfig(ConfigFactory.parseString(render(flags))))
+)
+```
+
+`flagKey` stays path-safe: it generates keys for flags that exist, which every oracle has to accept. The repository
+applies the law to `TestFeatureProvider`, `CachingReasonProvider`, `HoconProvider`, `EnvVarProvider`, both extras
+wrappers and a ready Optimizely provider. Not to OFREP: the key goes to the server, which decides.
 
 ## Run a scenario matrix with zio-bdd
 

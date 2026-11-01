@@ -122,8 +122,9 @@ The Java SDK sends `READY` or `ERROR` when any provider's initialization finishe
 breaker and `CachingProvider` also pass on the wrapped provider's), and the [testkit](testkit.md) provider sends what a test emits with `emitEvent`. The HOCON,
 environment-variable, deferred and long-widening providers send none.
 
-`providerStatus` follows a provider's events in the order the SDK applies them. If you write a provider whose events
-must arrive in order, await each emission (`emit(...).await()`) before sending the next: the Java SDK delivers two
+`providerStatus` follows a provider's events in the order the SDK applies them. The library registers each provider
+through a wrapper that hands its events to the SDK one at a time, in the order the provider sent them, unless you
+registered the provider with the API yourself. If you write a provider whose events must arrive in order, await each emission (`emit(...).await()`) before sending the next: the Java SDK delivers two
 emissions from one provider on a thread pool, in no fixed order. Don't await one inside `initialize()`: under
 `setProviderAndWait` the SDK holds its write lock across `initialize()`, and an awaited emission there never completes.
 

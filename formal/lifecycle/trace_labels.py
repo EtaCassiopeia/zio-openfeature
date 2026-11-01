@@ -24,6 +24,8 @@ The mapping (formal/lifecycle/README.md, "Trace validation"):
 Everything else is part of one of those steps: the other status writes, LateReady, the SwapDone point that closes
 every swap, deliveries while a swap's gate is up (the model drops those), and deliveries once a shutdown has started
 (the bridge is deregistered then; a handler already running records one anyway). Watchdog is not modelled.
+InitEntered, InitReturned and ProviderShutDown, which the registered wrapper records, are SDK steps (an `initialize()`
+running and returning, `shutDownOld`), which the check leaves free.
 """
 import json
 import re

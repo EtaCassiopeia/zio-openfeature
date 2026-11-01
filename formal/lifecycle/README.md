@@ -127,7 +127,8 @@ per run (`TraceProbe` in testkit's tests; `ZOF_TRACE_DIR` sets the directory, `t
 `trace_labels.py` turns a run into the library actions above, with what the run recorded about each: a delivered
 event's type, whether a swap or its rollback ended `STALE`, whether the rollback succeeded. `TraceValidation.tla` then
 lets TLC search for a behaviour of `Lifecycle` that takes exactly those library steps in that order, with the SDK's
-steps (an `initialize()` returning or throwing, a provider emitting) free. A run is accepted when such a behaviour
+steps (an `initialize()` returning or throwing, a provider emitting) free. The registered wrapper's own points
+(`InitEntered`, `InitReturned`, `ProviderShutDown`) mark those SDK steps and are not labelled. A run is accepted when such a behaviour
 exists. The check is of the order of the library's steps and what was recorded about them; the statuses a run observed
 are not compared, which `LifecycleModelSpec`'s own oracle does. A trace TLC cannot decide in time is reported as
 undecided without failing the run, and a run that checks no trace at all fails.

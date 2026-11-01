@@ -306,6 +306,8 @@ lazy val core = (project in file("core"))
       ProblemFilters.exclude[Problem]("zio.openfeature.internal.ProviderStatusMachine$Signal$SwapSucceeded*"),
       ProblemFilters.exclude[Problem]("zio.openfeature.internal.ProviderStatusMachine#Signal#RollbackSucceeded*"),
       ProblemFilters.exclude[Problem]("zio.openfeature.internal.ProviderStatusMachine$Signal$RollbackSucceeded*"),
+      // The registration waits on the registered wrapper's outcome; the error type of the old slot observer is gone.
+      ProblemFilters.exclude[MissingClassProblem]("zio.openfeature.internal.ProviderRegistration$InitError*"),
       // A top-level `private` class, public bytecode on 2.13; it now carries the registry's config and holds its clients // as the instance.
       // non-public: private[openfeature]
       ProblemFilters.exclude[DirectMissingMethodProblem]("zio.openfeature.FeatureFlagRegistryLive.this")

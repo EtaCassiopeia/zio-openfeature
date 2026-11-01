@@ -76,11 +76,13 @@ object LifecycleTeardownSpec extends ZIOSpecDefault {
     test("closing the scope during an in-flight swap still shuts the previous provider down exactly once") {
       val a = new Counting("A", blocking = false)
       val b = new Counting("B", blocking = true)
+      import zio.openfeature.internal.LifecycleProbe.Point
       for {
-        bound <- Promise.make[Nothing, Unit]
+        bound  <- Promise.make[Nothing, Unit]
+        points <- Ref.make(Vector.empty[Point])
         probe = new zio.openfeature.internal.LifecycleProbe {
-          def at(p: zio.openfeature.internal.LifecycleProbe.Point): UIO[Unit] =
-            if (p == zio.openfeature.internal.LifecycleProbe.Point.SdkBind) bound.succeed(()).unit else ZIO.unit
+          def at(p: Point): UIO[Unit] =
+            points.update(_ :+ p) *> (if (p == Point.SdkBind) bound.succeed(()).unit else ZIO.unit)
         }
         _ <- ZIO.scoped {
           for {
@@ -189,11 +191,13 @@ object LifecycleTeardownSpec extends ZIOSpecDefault {
       val a = new Counting("A", blocking = false)
       val b = new Counting("B", blocking = true)
       val c = new Counting("C", blocking = false)
+      import zio.openfeature.internal.LifecycleProbe.Point
       for {
-        bound <- Promise.make[Nothing, Unit]
+        bound  <- Promise.make[Nothing, Unit]
+        points <- Ref.make(Vector.empty[Point])
         probe = new zio.openfeature.internal.LifecycleProbe {
-          def at(p: zio.openfeature.internal.LifecycleProbe.Point): UIO[Unit] =
-            if (p == zio.openfeature.internal.LifecycleProbe.Point.SdkBind) bound.succeed(()).unit else ZIO.unit
+          def at(p: Point): UIO[Unit] =
+            points.update(_ :+ p) *> (if (p == Point.SdkBind) bound.succeed(()).unit else ZIO.unit)
         }
         scope <- Scope.make
         ff    <- scope.extend[Any](
@@ -212,11 +216,14 @@ object LifecycleTeardownSpec extends ZIOSpecDefault {
         swap <- ff.setProvider(b).either.fork
         _    <- bound.await
         _    <- scope.close(Exit.unit)
-        // The close took the swap lock, so the swap had settled (here: timed out) before the close returned.
-        done <- swap.poll
-        next <- ff.setProvider(c).either
-        _    <- ZIO.succeed(b.release.countDown())
+        // The close takes the swap lock, so the swap settles (here: times out) before the close runs. The swap's fiber
+        // may still be finishing once the lock is free, so the order is read from the probe, not from the fiber.
+        order <- points.get.map(_.filter(p => p == Point.SwapTimeout || p == Point.ScopeClose))
+        done  <- swap.join.timeout(5.seconds)
+        next  <- ff.setProvider(c).either
+        _     <- ZIO.succeed(b.release.countDown())
       } yield assertTrue(
+        order == Vector(Point.SwapTimeout, Point.ScopeClose),
         done.isDefined,
         b.inits.get() == 1,
         next == Left(FeatureFlagError.ProviderNotReady(ProviderStatus.NotReady)),

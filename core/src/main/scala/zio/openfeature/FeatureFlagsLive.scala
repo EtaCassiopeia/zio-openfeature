@@ -124,6 +124,11 @@ final private[openfeature] class FeatureFlagsLive(
 
   private def applySignal(signal: Signal): UIO[Option[ProviderStatus]] = eventBridge.applySignal(signal)
 
+  /** A build whose provider failed to initialize: the status is `Error`, or `Fatal`, as the provider's own error would
+    * make it.
+    */
+  private[openfeature] def markInitFailed(fatal: Boolean): UIO[Unit] = applySignal(Signal.EventError(fatal)).unit
+
   private def effectiveContext(invocation: EvaluationContext): UIO[EvaluationContext] =
     evaluator.effectiveContext(invocation)
 

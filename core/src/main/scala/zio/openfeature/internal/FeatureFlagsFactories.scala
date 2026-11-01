@@ -300,24 +300,26 @@ private[openfeature] object FeatureFlagsFactories {
       // as long as `initialize()` hangs. On any init failure the provider itself is shut down (best-effort, bounded,
       // since a provider stuck in `initialize()` often cannot shut down either) so it doesn't keep threads/connections
       // alive — this also covers the domain/registry paths where no API finalizer is registered — and the bridge's
-      // handlers are removed so a failed build leaves none behind.
-      failedBuild = ff.stopEventBridge *>
-        ProviderRegistration.boundedProviderShutdown(
-          managed,
-          "build (failed initialization)",
-          ProviderRegistration.failedProviderShutdownTimeout(initTimeout)
-        )
+      // handlers are removed so a failed build leaves none behind. The status records the failure first: the wait ends
+      // when `initialize()` throws, before the provider's own ERROR, or the SDK's, reaches the bridge.
+      failedBuild = (failure: Throwable) =>
+        ff.markInitFailed(fatal = failure.isInstanceOf[FatalError]) *> ff.stopEventBridge *>
+          ProviderRegistration.boundedProviderShutdown(
+            managed,
+            "build (failed initialization)",
+            ProviderRegistration.failedProviderShutdownTimeout(initTimeout)
+          )
       settled <- ProviderRegistration
         .registerThenAwait(api, domain, bound, initTimeout)(
           ZIO.unless(early)(ff.startEventBridge).unit
         )
-        .tapError(_ => failedBuild)
+        .tapError(failedBuild)
       // A provider reused from another domain of this API is serving there: the build fails without shutting it down.
       verified <- ((verifyInitState(settled) <* verifyProviderState(managed)) <*
         // A provider whose metadata name only exists once it has initialized (the SDK's MultiProvider) was stamped
         // with the "unknown" fallback; now that it has, record its real name.
         refreshProviderName(managed, ff))
-        .tapError(_ => if (isReused(settled)) ff.stopEventBridge else failedBuild)
+        .tapError(e => if (isReused(settled)) ff.stopEventBridge else failedBuild(e))
       // Only seed status when the caller didn't hand us a shared ref (testkit shares one). Routed through
       // `seedStatus` so the machine's `everReady` flag records a Ready/Stale seed.
       _ <- statusRef.fold(ff.seedStatus(verified))(_ => ZIO.unit)

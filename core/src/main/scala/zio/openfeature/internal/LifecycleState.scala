@@ -1,7 +1,8 @@
 package zio.openfeature.internal
 
-import java.util.concurrent.atomic.{AtomicBoolean, AtomicReference}
+import java.util.concurrent.atomic.{AtomicBoolean, AtomicLong, AtomicReference}
 
+import dev.openfeature.sdk.{FeatureProvider => OFFeatureProvider}
 import zio._
 import zio.stream.SubscriptionRef
 import zio.openfeature.ProviderStatus
@@ -12,8 +13,13 @@ import zio.openfeature.internal.ProviderStatusMachine.Signal
   *
   * @param status
   *   the provider status (model: `status`)
+  * @param installed
+  *   the provider the instance reports and evaluates through, as the SDK binds it (model: `installed`)
+  * @param generation
+  *   moves when a swap makes the status NotReady, before it touches the SDK: an evaluation that saw it move across its
+  *   provider call does not trust the answer
   * @param gate
-  *   a swap is running, and bridge events do not move the status (model: `gate`; `swapInProgress`)
+  *   a swap is running, and bridge events do not move the status (model: `gate`)
   * @param everReady
   *   the provider was ever usable: the init watchdog leaves it running
   * @param shutDown
@@ -26,11 +32,13 @@ import zio.openfeature.internal.ProviderStatusMachine.Signal
   */
 final private[openfeature] case class LifecycleState(
   status: ProviderStatus,
+  installed: OFFeatureProvider,
+  generation: Long,
   gate: Boolean,
   everReady: Boolean,
   shutDown: Boolean,
   closed: Boolean,
-  deferredInitTimeout: Option[(dev.openfeature.sdk.FeatureProvider, Duration)]
+  deferredInitTimeout: Option[(OFFeatureProvider, Duration)]
 ) {
 
   /** The context the status table reads. */
@@ -38,9 +46,13 @@ final private[openfeature] case class LifecycleState(
 }
 
 private[openfeature] object LifecycleState {
-  val initial: LifecycleState =
+
+  /** A built instance before its provider has settled. */
+  def initial(installed: OFFeatureProvider): LifecycleState =
     LifecycleState(
       status = ProviderStatus.NotReady,
+      installed = installed,
+      generation = 0L,
       gate = false,
       everReady = false,
       shutDown = false,
@@ -60,24 +72,28 @@ private[openfeature] object LifecycleInput {
   /** The sync build's verified status, applied only while the status is still the initial `NotReady`. */
   final case class Seed(status: ProviderStatus) extends LifecycleInput
 
-  /** The init watchdog's deadline for `provider` passed. */
-  final case class WatchdogFired(provider: dev.openfeature.sdk.FeatureProvider, timeout: Duration)
-      extends LifecycleInput
+  /** A swap starts (model: `SwapStart`, once admitted): the gate goes up before the status becomes NotReady, the
+    * generation moves, and `incoming` is installed under `name`.
+    */
+  final case class SwapStart(incoming: OFFeatureProvider, name: String) extends LifecycleInput
 
-  /** A swap ended on `installed`: a deadline its gate deferred for that provider is replayed. */
-  final case class ReplayDeferred(installed: dev.openfeature.sdk.FeatureProvider) extends LifecycleInput
+  /** A failed swap installs `provider`, the one it replaced, under `name` again. */
+  final case class Reinstall(provider: OFFeatureProvider, name: String) extends LifecycleInput
+
+  /** A swap drops its gate, on every exit. */
+  case object GateDown extends LifecycleInput
+
+  /** The init watchdog's deadline for `provider` passed. */
+  final case class WatchdogFired(provider: OFFeatureProvider, timeout: Duration) extends LifecycleInput
+
+  /** A swap ended: a deadline its gate deferred is replayed when the swap ended on that provider. */
+  case object ReplayDeferred extends LifecycleInput
 
   /** The layer's scope closed (model: `ScopeClose`). */
   case object ScopeClose extends LifecycleInput
 
-  /** Changes nothing: an SDK event that implies no signal. */
+  /** Changes nothing: an SDK event that implies no signal, or a read. */
   case object Idle extends LifecycleInput
-
-  /** A swap raises its gate (model: the `gate` part of `SwapStart`). */
-  case object GateUp extends LifecycleInput
-
-  /** A swap drops its gate, on every exit. */
-  case object GateDown extends LifecycleInput
 }
 
 /** What `step` asks the interpreter to do once the record is written. */
@@ -88,20 +104,22 @@ private[openfeature] object LifecycleEffect {
   /** The watchdog made a provider that never became usable Fatal: publish the terminal error, release the onReady
     * latch, and shut the provider down, in that order.
     */
-  final case class EscalateInitTimeout(provider: dev.openfeature.sdk.FeatureProvider, timeout: Duration)
-      extends LifecycleEffect
+  final case class EscalateInitTimeout(provider: OFFeatureProvider, timeout: Duration) extends LifecycleEffect
 }
 
 /** The lifecycle's transitions: one pure function from the record and an input to the next record, whether the status
-  * moved, and the effects to run. The status part is [[ProviderStatusMachine.transition]].
+  * moved, and what the interpreter does next. The status part is [[ProviderStatusMachine.transition]].
   */
 private[openfeature] object LifecycleStep {
 
-  /** The outcome of one step. */
+  /** The outcome of one step: the next record, the status it moved to, if it moved, the effects to run after the step,
+    * and the provider name the step installs, which the interpreter mirrors inside the step.
+    */
   final case class Outcome(
     state: LifecycleState,
     transitioned: Option[ProviderStatus],
-    effects: Chunk[LifecycleEffect]
+    effects: Chunk[LifecycleEffect],
+    rename: Option[String] = None
   )
 
   def step(state: LifecycleState, input: LifecycleInput): Outcome =
@@ -115,20 +133,30 @@ private[openfeature] object LifecycleStep {
           case _ => unchanged(state)
         }
 
-      case LifecycleInput.Idle       => unchanged(state)
-      case LifecycleInput.ScopeClose => Outcome(state.copy(closed = true), None, Chunk.empty)
+      case LifecycleInput.SwapStart(incoming, name) =>
+        val notReady = status(state.copy(gate = true), Signal.SwapStarted)
+        notReady.copy(
+          state = notReady.state.copy(installed = incoming, generation = state.generation + 1),
+          rename = Some(name)
+        )
+
+      case LifecycleInput.Reinstall(provider, name) =>
+        Outcome(state.copy(installed = provider), None, Chunk.empty, Some(name))
+
+      case LifecycleInput.GateDown => Outcome(state.copy(gate = false), None, Chunk.empty)
 
       case LifecycleInput.WatchdogFired(provider, timeout) => watchdog(state, provider, timeout)
 
-      case LifecycleInput.ReplayDeferred(installed) =>
+      case LifecycleInput.ReplayDeferred =>
         state.deferredInitTimeout match {
-          case Some((provider, timeout)) if provider eq installed =>
+          case Some((provider, timeout)) if provider eq state.installed =>
             watchdog(state.copy(deferredInitTimeout = None), provider, timeout)
           case Some(_) => Outcome(state.copy(deferredInitTimeout = None), None, Chunk.empty)
           case None    => unchanged(state)
         }
-      case LifecycleInput.GateUp   => Outcome(state.copy(gate = true), None, Chunk.empty)
-      case LifecycleInput.GateDown => Outcome(state.copy(gate = false), None, Chunk.empty)
+
+      case LifecycleInput.ScopeClose => Outcome(state.copy(closed = true), None, Chunk.empty)
+      case LifecycleInput.Idle       => unchanged(state)
     }
 
   private def status(state: LifecycleState, signal: Signal): Outcome =
@@ -147,9 +175,9 @@ private[openfeature] object LifecycleStep {
 
   // Escalates only a provider that never became usable; a deadline that falls inside a swap is kept for the swap to
   // replay if it ends on this provider still unready.
-  private def watchdog(state: LifecycleState, provider: dev.openfeature.sdk.FeatureProvider, timeout: Duration) =
+  private def watchdog(state: LifecycleState, provider: OFFeatureProvider, timeout: Duration): Outcome =
     status(state, Signal.InitTimeout) match {
-      case moved @ Outcome(_, Some(_), _) =>
+      case moved if moved.transitioned.isDefined =>
         moved.copy(effects = Chunk(LifecycleEffect.EscalateInitTimeout(provider, timeout)))
       case same if state.gate => same.copy(state = same.state.copy(deferredInitTimeout = Some((provider, timeout))))
       case same               => same
@@ -166,15 +194,18 @@ private[openfeature] object LifecycleStep {
   * The status lives in `statusRef`, which the testkit may share and set directly, and every step runs under its
   * `modifyZIO`, whose semaphore makes the status write and the write of the rest of the record one atomic step. The
   * rest lives in a `Ref` nothing else touches. Inside the same step the interpreter writes the mirrors read
-  * synchronously from SDK threads and the evaluator, so they never lag the record. The effects a step returns run after
-  * it, never under the semaphore.
+  * synchronously from SDK threads and the evaluator (the gate, the generation, the provider name), so they never lag
+  * the record. The effects a step returns run after it, never under the semaphore.
   */
 final private[openfeature] class Lifecycle(
   statusRef: SubscriptionRef[ProviderStatus],
-  gateMirror: AtomicBoolean
+  installed: OFFeatureProvider,
+  gateMirror: AtomicBoolean,
+  generationMirror: AtomicLong,
+  nameMirror: AtomicReference[String]
 ) {
-  private val rest = Unsafe.unsafe(implicit u => Ref.unsafe.make(LifecycleState.initial))
-  private val view = new AtomicReference[LifecycleState](LifecycleState.initial)
+  private val rest = Unsafe.unsafe(implicit u => Ref.unsafe.make(LifecycleState.initial(installed)))
+  private val view = new AtomicReference[LifecycleState](LifecycleState.initial(installed))
 
   /** Run `input` through `step` and write the record. */
   def run(input: LifecycleInput): UIO[LifecycleStep.Outcome] =
@@ -191,11 +222,16 @@ final private[openfeature] class Lifecycle(
         rest.set(after) *> ZIO
           .succeed {
             gateMirror.set(after.gate)
+            generationMirror.set(after.generation)
+            outcome.rename.foreach(nameMirror.set)
             view.set(after)
           }
           .as(((side, outcome), after.status))
       }
     }
+
+  /** The record, read under the same semaphore as every step. */
+  def read: UIO[LifecycleState] = runWith(state => (LifecycleInput.Idle, state)).map(_._1)
 
   /** The record as of the last step, for a synchronous reader. Its `status` may lag a direct write to `statusRef`. */
   def snapshot: LifecycleState = view.get()

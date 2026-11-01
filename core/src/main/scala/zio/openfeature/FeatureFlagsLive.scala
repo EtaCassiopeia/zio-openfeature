@@ -34,7 +34,8 @@ import dev.openfeature.sdk.{
 
 final private[openfeature] class FeatureFlagsLive(
   client: OFClient,
-  providerRef: Ref[OFFeatureProvider],
+  // The provider the instance is built with; the lifecycle record holds the installed one from then on.
+  initialProvider: OFFeatureProvider,
   // AtomicReference (not Ref): the event bridge reads the name synchronously from Java SDK threads on
   // every event; a Ref would force a runtime.unsafe.run round-trip per event.
   providerNameRef: java.util.concurrent.atomic.AtomicReference[String],
@@ -77,7 +78,7 @@ final private[openfeature] class FeatureFlagsLive(
 
   // The collaborators this instance delegates to. It keeps lifecycle and state: construction, the provider
   // swap, shutdown and status.
-  private val eventBridge = new EventBridge(client, providerNameRef, state, onReady, probe)
+  private val eventBridge = new EventBridge(client, initialProvider, providerNameRef, state, onReady, probe)
 
   private val hookPipeline = new HookPipeline(state, providerNameRef, domain, version)
   private val evaluator    = new Evaluator(
@@ -323,8 +324,7 @@ final private[openfeature] class FeatureFlagsLive(
     ZIO.attemptBlocking(domain.fold(api.getProvider())(d => api.getProvider(d))).orDie.flatMap { bound =>
       if (!(bound eq oldProvider)) ZIO.succeed(false)
       else
-        providerRef.set(oldProvider) *>
-          ZIO.succeed(providerNameRef.set(oldName)) *>
+        lifecycle.run(LifecycleInput.Reinstall(oldProvider, oldName)) *>
           applySignal(Signal.SwapFailed) *>
           probe.at(Point.SwapRollback) *>
           applySignal(Signal.RollbackUnbound(before)).as(true)
@@ -533,23 +533,19 @@ final private[openfeature] class FeatureFlagsLive(
       refuseSwap(newProvider) *> wrap(newProvider).flatMap { incoming =>
         val swap = for {
           _ <- probe.at(Point.SwapStart)
-          // Save old state for rollback on failure. The instance holds the wrapper of each provider it registered.
-          oldProvider <- providerRef.get.map(Bound.ofRegistered)
-          oldName     <- ZIO.succeed(providerNameRef.get())
-          // 1. Raise the gate BEFORE the NotReady transition: from here bridge events cannot drive the machine, so a
-          //    queued Ready event from the OLD provider cannot mark the instance Ready mid-swap.
-          _ <- lifecycle.run(LifecycleInput.GateUp)
-          // Read with the gate up, so no event or watchdog moves it before the swap's own NotReady.
-          before <- state.statusRef.get
-          _      <- applySignal(Signal.SwapStarted)
-          // After the status is NotReady and before the SDK changes: an evaluation that reads the new generation sees
-          // NotReady, and one that read the old one and then reaches the new provider sees the generation move.
-          _ <- ZIO.succeed(eventBridge.swapGeneration.incrementAndGet())
-          // 2. Update refs BEFORE registering with Java SDK, so the event bridge (which fires PROVIDER_READY during
-          //    initialization) and the identity guard see the new provider's metadata.
           newName = nameOf(newProvider)
-          _ <- providerRef.set(incoming.sdk)
-          _ <- ZIO.succeed(providerNameRef.set(newName))
+          _ <- probe.at(Point.ApplySignal(Signal.SwapStarted))
+          // One step, before the SDK changes: the gate goes up before the NotReady transition, so no bridge event (a
+          // queued READY from the OLD provider) drives the status mid-swap; the generation moves, so an evaluation that
+          // read the old one and then reaches the new provider does not trust its answer; and the new provider is
+          // installed under its name, which the bridge's identity guard and the PROVIDER_READY of its initialization
+          // read. The previous provider and status are kept for the rollback.
+          started <- lifecycle.runWith(st =>
+            (LifecycleInput.SwapStart(incoming.sdk, newName), (st.installed, providerNameRef.get(), st.status))
+          )
+          ((previous, oldName, before), _) = started
+          // The instance holds the wrapper of each provider it registered.
+          oldProvider = Bound.ofRegistered(previous)
           // 3. Register the new provider's wrapper with the Java SDK (which shuts the old one down once the new one has
           //    initialized), and await its initialization, bounded by initTimeout. Non-blocking registration plus a
           //    bounded wait: `setProviderAndWait` would hold the SDK's API write lock across `initialize()`, so a
@@ -597,8 +593,7 @@ final private[openfeature] class FeatureFlagsLive(
                     // provider while our refs point back at the old one. Re-registering the old provider restores
                     // routing; on success we restore Ready (the previous provider is serving again), on failure we log
                     // loudly and leave status Error.
-                    providerRef.set(oldProvider.sdk) *>
-                      ZIO.succeed(providerNameRef.set(oldName)) *>
+                    lifecycle.run(LifecycleInput.Reinstall(oldProvider.sdk, oldName)) *>
                       applySignal(Signal.SwapFailed) *>
                       probe.at(Point.SwapRollback) *>
                       restoreSdkRegistration(oldProvider, incoming).foldZIO(
@@ -651,7 +646,7 @@ final private[openfeature] class FeatureFlagsLive(
               // A failed swap ends on the provider it rolled back to, or on the failed one when there was nothing to roll
               // back to. A state the SDK reached for it while the gate was up (a FATAL from its re-initialization, an
               // event during the rollback's wait) was dropped; take it now.
-              case _ => providerRef.get.flatMap(reconcileRegistration) *> replayInitTimeout
+              case _ => lifecycle.read.flatMap(st => reconcileRegistration(st.installed)) *> replayInitTimeout
             },
             // A state the SDK reached for the new provider while the gate was up was dropped; take it now.
             _ => reconcileRegistration(incoming.sdk) *> replayInitTimeout
@@ -762,7 +757,7 @@ final private[openfeature] class FeatureFlagsLive(
   private[openfeature] def switchProvider(switch: SwitchableProvider, next: OFFeatureProvider): Task[Boolean] =
     swapLock
       .withPermit(
-        providerRef.get.flatMap { registered =>
+        lifecycle.read.map(_.installed).flatMap { registered =>
           // After a shutdown the SDK has shut the switch down; `construct` then discards the composed stack.
           if (
             (ManagedProvider.unwrap(registered) ne switch) || lifecycle.snapshot.shutDown || lifecycle.snapshot.closed
@@ -819,9 +814,7 @@ final private[openfeature] class FeatureFlagsLive(
     */
   // An init-watchdog deadline that fell inside a swap, which drops it: replayed when the swap ends on that provider.
   private def replayInitTimeout: UIO[Unit] =
-    providerRef.get
-      .flatMap(current => lifecycle.run(LifecycleInput.ReplayDeferred(current)))
-      .flatMap(o => runEffects(o.effects))
+    lifecycle.run(LifecycleInput.ReplayDeferred).flatMap(o => runEffects(o.effects))
 
   private[openfeature] def reconcileRegistration(provider: OFFeatureProvider): UIO[Unit] =
     ZIO

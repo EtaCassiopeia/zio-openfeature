@@ -18,6 +18,7 @@ import scala.jdk.CollectionConverters._
   */
 final private[openfeature] class EventBridge(
   client: OFClient,
+  initialProvider: dev.openfeature.sdk.FeatureProvider,
   providerNameRef: java.util.concurrent.atomic.AtomicReference[String],
   state: FeatureFlagsState,
   onReady: Option[java.util.concurrent.CountDownLatch],
@@ -29,13 +30,14 @@ final private[openfeature] class EventBridge(
   // provider would clobber the swap's own outcome). Written only by the lifecycle's interpreter.
   private[openfeature] val swapInProgress = new java.util.concurrent.atomic.AtomicBoolean(false)
 
-  /** The instance's lifecycle record and its interpreter: every status write goes through it. */
-  private[openfeature] val lifecycle = new Lifecycle(state.statusRef, swapInProgress)
-
   // Bumped when `setProvider` has made the status NotReady, before it touches the SDK. The SDK client resolves the slot's provider on each
   // call, so an evaluation that passed its readiness check and then met a swap may have been answered by the incoming
   // provider before that provider settled; the evaluator compares this across its provider call to tell.
   private[openfeature] val swapGeneration = new java.util.concurrent.atomic.AtomicLong(0L)
+
+  /** The instance's lifecycle record and its interpreter: every status write goes through it. */
+  private[openfeature] val lifecycle =
+    new Lifecycle(state.statusRef, initialProvider, swapInProgress, swapGeneration, providerNameRef)
 
   // Set by startEventBridge; invoked by `shutdown` BEFORE teardown (so no emitter thread races it) and by the scope
   // finalizer (idempotent — removeHandler on an already-removed handler is a no-op in the SDK, so double-invocation

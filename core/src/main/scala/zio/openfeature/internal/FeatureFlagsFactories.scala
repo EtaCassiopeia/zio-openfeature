@@ -135,14 +135,13 @@ private[openfeature] object FeatureFlagsFactories {
       // (`unreadableNameIsUnknown`) and reads the name again, strictly, once the provider has initialized.
       read = ZIO.attempt(Option(provider.getMetadata).flatMap(m => Option(m.getName)).getOrElse(UnknownProviderName))
       providerName <- if (unreadableNameIsUnknown) read.orElseSucceed(UnknownProviderName) else read
-      providerRef  <- Ref.make(provider)
       baseState    <- FeatureFlagsState.make
       state = statusRef.fold(baseState)(ref => baseState.copy(statusRef = ref))
       _                  <- state.hooksRef.set(initialHooks)
       fallbackLogLimiter <- FallbackLogLimiter.make(fallbackLogging)
     } yield new FeatureFlagsLive(
       client,
-      providerRef,
+      provider,
       new java.util.concurrent.atomic.AtomicReference(providerName),
       domain,
       version,

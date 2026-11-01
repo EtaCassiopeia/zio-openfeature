@@ -54,6 +54,55 @@ object Fault {
     details: ProviderEventDetails = ProviderEventDetails.builder().build(),
     andThen: Fault = Succeed
   ) extends Fault
+
+  /** Replace an evaluation's answer with a malformed one, for the six `Evaluate*` ops. On any other op the call throws
+    * `IllegalStateException`: the shape has no meaning there.
+    */
+  final case class Answer(shape: AnswerShape) extends Fault
+
+  /** Replace `getMetadata`'s answer, for [[Op.GetMetadata]]. On any other op the call throws `IllegalStateException`.
+    */
+  final case class MetadataAnswer(shape: MetadataShape) extends Fault
+}
+
+/** A malformed evaluation answer for [[Fault.Answer]]. */
+sealed trait AnswerShape extends Product with Serializable
+
+object AnswerShape {
+
+  /** A resolution with no value and no error code. */
+  case object NullValue extends AnswerShape
+
+  /** A value of another box than the getter's type: an `Integer` from the boolean, string, long and double getters, a
+    * `Boolean` from the integer getter, a `String` from the object getter. (Not a `String` from the boolean getter:
+    * `FlagType[Boolean]` parses `"true"` and `"false"` on purpose.)
+    */
+  case object WrongBox extends AnswerShape
+
+  /** The delegate's value next to `ErrorCode.GENERAL`. */
+  case object ErrorCodeWithValue extends AnswerShape
+
+  /** The delegate's value with a `null` reason. */
+  case object NullReason extends AnswerShape
+
+  /** The getter returns `null` instead of a `ProviderEvaluation`. */
+  case object NullEvaluation extends AnswerShape
+
+  val values: Chunk[AnswerShape] = Chunk(NullValue, WrongBox, ErrorCodeWithValue, NullReason, NullEvaluation)
+}
+
+/** A malformed `getMetadata` answer for [[Fault.MetadataAnswer]]. */
+sealed trait MetadataShape extends Product with Serializable
+
+object MetadataShape {
+
+  /** `getMetadata` returns `null`. */
+  case object Null extends MetadataShape
+
+  /** A `Metadata` whose `getName` is `null`. */
+  case object Nameless extends MetadataShape
+
+  val values: Chunk[MetadataShape] = Chunk(Null, Nameless)
 }
 
 /** A [[FaultyProvider]] method a script can target: every method of OpenFeature's `FeatureProvider` and `EventProvider`
@@ -178,16 +227,31 @@ final class FaultyProvider[+P <: FeatureProvider] private (val delegate: P, name
   private def hang(onShutdown: Boolean, entry: Entry): Unit =
     if (onShutdown) releasedOrShutdown.await(entry.releasedOrShutdown) else released.await(entry.released)
 
-  private def applyFault[A](fault: Fault, entry: Entry, body: => A): A = fault match {
-    case Fault.Succeed                     => body
-    case Fault.Throw(error)                => throw error
-    case Fault.Delay(duration, andThen)    => Thread.sleep(duration.toMillis); applyFault(andThen, entry, body)
-    case Fault.HangUntilReleased           => hang(onShutdown = false, entry); body
-    case Fault.HangUntilShutdown           => hang(onShutdown = true, entry); body
-    case Fault.Emit(event, details, after) => emit(event, details); applyFault(after, entry, body)
-  }
+  private def applyFault[A](op: Op, fault: Fault, entry: Entry, shaped: PartialFunction[Fault, A], body: => A): A =
+    fault match {
+      case Fault.Succeed                  => body
+      case Fault.Throw(error)             => throw error
+      case Fault.Delay(duration, andThen) =>
+        Thread.sleep(duration.toMillis); applyFault(op, andThen, entry, shaped, body)
+      case Fault.HangUntilReleased            => hang(onShutdown = false, entry); body
+      case Fault.HangUntilShutdown            => hang(onShutdown = true, entry); body
+      case Fault.Emit(event, details, after)  => emit(event, details); applyFault(op, after, entry, shaped, body)
+      case shape if shaped.isDefinedAt(shape) => shaped(shape)
+      case other                              => throw new IllegalStateException(s"$other does not apply to $op")
+    }
 
-  private def run[A](op: Op, flagKey: Option[String], arguments: Any*)(body: => A): A = {
+  private def run[A](op: Op, flagKey: Option[String], arguments: Any*)(body: => A): A =
+    runShaped(op, flagKey, PartialFunction.empty[Fault, A], arguments: _*)(body)
+
+  /** An evaluation, whose [[Fault.Answer]] replaces the delegate's answer with `shape`'s. */
+  private def evaluate[A](op: Op, key: String, defaultValue: A, ctx: OFEvaluationContext, wrong: Any)(
+    body: => ProviderEvaluation[A]
+  ): ProviderEvaluation[A] =
+    runShaped(op, Some(key), FaultyProvider.answers(body, wrong), key, defaultValue, ctx)(body)
+
+  private def runShaped[A](op: Op, flagKey: Option[String], shaped: PartialFunction[Fault, A], arguments: Any*)(
+    body: => A
+  ): A = {
     val args      = Chunk.fromIterable(arguments)
     val startedAt = Instant.now()
     val thread    = Thread.currentThread().getName
@@ -199,7 +263,7 @@ final class FaultyProvider[+P <: FeatureProvider] private (val delegate: P, name
       seen
     }
     try {
-      val result = applyFault(nextFault(op), entry, body)
+      val result = applyFault(op, nextFault(op), entry, shaped, body)
       recorded.add(Call(op, flagKey, thread, startedAt, Outcome.Returned, args))
       result
     } catch {
@@ -210,7 +274,17 @@ final class FaultyProvider[+P <: FeatureProvider] private (val delegate: P, name
   }
 
   @scala.annotation.nowarn("msg=deprecated")
-  override def getMetadata: Metadata = run(Op.GetMetadata, None)(new Metadata { override def getName: String = name })
+  override def getMetadata: Metadata = {
+    val named = new Metadata { override def getName: String = name }
+    runShaped[Metadata](
+      Op.GetMetadata,
+      None,
+      {
+        case Fault.MetadataAnswer(MetadataShape.Null)     => null
+        case Fault.MetadataAnswer(MetadataShape.Nameless) => new Metadata { override def getName: String = null }
+      }
+    )(named)
+  }
 
   override def getProviderHooks = run(Op.GetProviderHooks, None)(delegate.getProviderHooks)
 
@@ -239,45 +313,95 @@ final class FaultyProvider[+P <: FeatureProvider] private (val delegate: P, name
     defaultValue: java.lang.Boolean,
     ctx: OFEvaluationContext
   ): ProviderEvaluation[java.lang.Boolean] =
-    run(Op.EvaluateBoolean, Some(key), key, defaultValue, ctx)(delegate.getBooleanEvaluation(key, defaultValue, ctx))
+    evaluate(Op.EvaluateBoolean, key, defaultValue, ctx, java.lang.Integer.valueOf(1))(
+      delegate.getBooleanEvaluation(key, defaultValue, ctx)
+    )
 
   override def getStringEvaluation(
     key: String,
     defaultValue: String,
     ctx: OFEvaluationContext
   ): ProviderEvaluation[String] =
-    run(Op.EvaluateString, Some(key), key, defaultValue, ctx)(delegate.getStringEvaluation(key, defaultValue, ctx))
+    evaluate(Op.EvaluateString, key, defaultValue, ctx, java.lang.Integer.valueOf(1))(
+      delegate.getStringEvaluation(key, defaultValue, ctx)
+    )
 
   override def getIntegerEvaluation(
     key: String,
     defaultValue: java.lang.Integer,
     ctx: OFEvaluationContext
   ): ProviderEvaluation[java.lang.Integer] =
-    run(Op.EvaluateInteger, Some(key), key, defaultValue, ctx)(delegate.getIntegerEvaluation(key, defaultValue, ctx))
+    evaluate(Op.EvaluateInteger, key, defaultValue, ctx, java.lang.Boolean.TRUE)(
+      delegate.getIntegerEvaluation(key, defaultValue, ctx)
+    )
 
   override def getLongEvaluation(
     key: String,
     defaultValue: java.lang.Long,
     ctx: OFEvaluationContext
   ): ProviderEvaluation[java.lang.Long] =
-    run(Op.EvaluateLong, Some(key), key, defaultValue, ctx)(delegate.getLongEvaluation(key, defaultValue, ctx))
+    evaluate(Op.EvaluateLong, key, defaultValue, ctx, java.lang.Integer.valueOf(1))(
+      delegate.getLongEvaluation(key, defaultValue, ctx)
+    )
 
   override def getDoubleEvaluation(
     key: String,
     defaultValue: java.lang.Double,
     ctx: OFEvaluationContext
   ): ProviderEvaluation[java.lang.Double] =
-    run(Op.EvaluateDouble, Some(key), key, defaultValue, ctx)(delegate.getDoubleEvaluation(key, defaultValue, ctx))
+    evaluate(Op.EvaluateDouble, key, defaultValue, ctx, java.lang.Integer.valueOf(1))(
+      delegate.getDoubleEvaluation(key, defaultValue, ctx)
+    )
 
   override def getObjectEvaluation(
     key: String,
     defaultValue: Value,
     ctx: OFEvaluationContext
   ): ProviderEvaluation[Value] =
-    run(Op.EvaluateObject, Some(key), key, defaultValue, ctx)(delegate.getObjectEvaluation(key, defaultValue, ctx))
+    evaluate(Op.EvaluateObject, key, defaultValue, ctx, "not a Value")(
+      delegate.getObjectEvaluation(key, defaultValue, ctx)
+    )
 }
 
 object FaultyProvider {
+
+  /** The answers [[Fault.Answer]] shapes: built from the delegate's own answer where the shape keeps its value. */
+  private def answers[A](
+    delegateAnswer: => ProviderEvaluation[A],
+    wrong: Any
+  ): PartialFunction[Fault, ProviderEvaluation[A]] = {
+    case Fault.Answer(AnswerShape.NullValue) =>
+      answer[A](None, None, Some("STATIC"), None)
+    case Fault.Answer(AnswerShape.WrongBox) =>
+      // Deliberately unsound: a provider written in Java can return any box, and the library must survive it.
+      answer[Any](Some(wrong), None, Some("STATIC"), None).asInstanceOf[ProviderEvaluation[A]]
+    case Fault.Answer(AnswerShape.ErrorCodeWithValue) =>
+      answer[A](Some(delegateAnswer.getValue), None, Some("ERROR"), Some(dev.openfeature.sdk.ErrorCode.GENERAL))
+    case Fault.Answer(AnswerShape.NullReason) =>
+      val d = delegateAnswer
+      answer[A](Some(d.getValue), Option(d.getVariant), None, None)
+    case Fault.Answer(AnswerShape.NullEvaluation) =>
+      null
+  }
+
+  // Statement by statement and cast, as core's ProviderEvaluations does: Scala 2.13 infers the chained builder's
+  // self type as an existential.
+  private def answer[A](
+    value: Option[A],
+    variant: Option[String],
+    reason: Option[String],
+    errorCode: Option[dev.openfeature.sdk.ErrorCode]
+  ): ProviderEvaluation[A] = {
+    val builder = ProviderEvaluation.builder[A]()
+    value.foreach(builder.value(_))
+    variant.foreach(builder.variant(_))
+    reason.foreach(builder.reason(_))
+    errorCode.foreach { code =>
+      builder.errorCode(code)
+      builder.errorMessage("error code next to a value")
+    }
+    builder.build().asInstanceOf[ProviderEvaluation[A]]
+  }
 
   /** The tickets a call took when it entered. */
   final private case class Entry(released: Int, releasedOrShutdown: Int)

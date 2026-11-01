@@ -239,6 +239,134 @@ object DifferentialLaws {
   val anyValue: Gen[Any, Any] =
     Gen.oneOf(Gen.boolean, hostileString, anyInt, anyLong, hostileDouble, objectValue, Gen.listOfBounded(0, 3)(scalar))
 
+  /** Keys a provider must answer `FLAG_NOT_FOUND` for when it does not hold them, rather than throw: the empty key,
+    * each HOCON path character, leading, trailing and doubled dots, a path-like key, a character outside the BMP,
+    * control characters, a 10 kB key and the HOCON keywords. Not for flags that exist: [[flagKey]] stays path-safe.
+    */
+  val adversarialKeys: List[String] =
+    List("") ++
+      List(":", "@", "#", "$", ",", "=", "+", "!", "*", "?", "&", "^", "[", "]", "{", "}", "`", "\\", "\"")
+        .map(c => s"flag${c}v2") ++
+      List(".flag", "flag.", "fl..ag", "a.b.c", "flag\uD83D\uDE00", "flag\u0000x", "flag\nx", "flag\tx", "k" * 10240) ++
+      List("include", "null", "true")
+
+  /** One of [[adversarialKeys]]. */
+  val adversarialKey: Gen[Any, String] = Gen.elements(adversarialKeys: _*)
+
+  /** The violations of the absent-key law for a provider holding `flags`: for every adversarial key it does not hold,
+    * each typed getter fails with `FlagNotFound`, never another error or a defect, and the total tier serves the
+    * default with `FLAG_NOT_FOUND`. Empty when the law holds. The provider lives until the scope closes. Pass a `ctx`
+    * with a targeting key for a provider that checks it before the flag key.
+    */
+  def absentKeyViolations(
+    seed: FlagSet => URIO[Scope, FeatureProvider],
+    flags: FlagSet = FlagSet(Map("flag-present" -> true)),
+    ctx: EvaluationContext = EvaluationContext.empty
+  ): Task[List[String]] =
+    ZIO.scoped {
+      for {
+        provider <- seed(flags)
+        ff       <- flagsFor(provider)
+        found    <- ZIO.foreach(adversarialKeys.filterNot(flags.flags.contains)) { key =>
+          val printable = key.map(c => if (c.isControl) f"\\u${c.toInt}%04x" else c.toString).mkString
+          val shown     = if (key.length > 40) s"${printable.take(20)}... (${key.length} chars)" else printable
+          ZIO.foreach(absentReads(key, ctx))(_.violations(ff).map(_.map(v => s"key '$shown': $v"))).map(_.flatten)
+        }
+      } yield found.flatten
+    }
+
+  /** A test for the absent-key law; see [[absentKeyViolations]]. */
+  def absentKeysAreNotFound(oracleName: String)(
+    seed: FlagSet => URIO[Scope, FeatureProvider],
+    flags: FlagSet = FlagSet(Map("flag-present" -> true)),
+    ctx: EvaluationContext = EvaluationContext.empty
+  ): Spec[Any, Throwable] =
+    zio.test.test(s"$oracleName answers FLAG_NOT_FOUND for every adversarial key it does not hold") {
+      absentKeyViolations(seed, flags, ctx).map(found => assertTrue(found.mkString("\n") == ""))
+    }
+
+  /** One type's typed and total reads of `key`. */
+  final private case class AbsentRead[A](
+    label: String,
+    default: A,
+    typed: FeatureFlags => IO[FeatureFlagError, FlagResolution[A]],
+    total: FeatureFlags => UIO[A],
+    resolve: FeatureFlags => UIO[FlagResolution[A]]
+  ) {
+    def violations(ff: FeatureFlags): UIO[List[String]] =
+      for {
+        t <- typed(ff).exit
+        v <- total(ff).exit
+        r <- resolve(ff).exit
+      } yield {
+        val typedProblem = t match {
+          case Exit.Failure(c) if c.defects.nonEmpty =>
+            List(s"$label typed read died: ${c.defects.map(_.toString).mkString(", ")}")
+          case Exit.Failure(c)
+              if c.failures.nonEmpty && c.failures.forall(_.isInstanceOf[FeatureFlagError.FlagNotFound]) =>
+            Nil
+          case other => List(s"$label typed read ended $other, not FlagNotFound")
+        }
+        val totalProblem = v match {
+          case Exit.Success(value) if value == default => Nil
+          case other                                   => List(s"$label total read ended $other, not the default")
+        }
+        val resolveProblem = r match {
+          case Exit.Success(res) if res.errorCode.contains(ErrorCode.FlagNotFound) && res.value == default => Nil
+          case other => List(s"$label resolveOrDefault ended $other, not FLAG_NOT_FOUND")
+        }
+        typedProblem ++ totalProblem ++ resolveProblem
+      }
+  }
+
+  private def absentReads(key: String, ctx: EvaluationContext): List[AbsentRead[_]] = {
+    val obj = Map[String, Any]("absent" -> true)
+    List(
+      AbsentRead[Boolean](
+        "boolean",
+        true,
+        _.booleanDetails(key, true, ctx),
+        _.booleanOrDefault(key, true, ctx),
+        _.resolveOrDefault[Boolean](key, true, ctx)
+      ),
+      AbsentRead[String](
+        "string",
+        "dflt",
+        _.stringDetails(key, "dflt", ctx),
+        _.stringOrDefault(key, "dflt", ctx),
+        _.resolveOrDefault[String](key, "dflt", ctx)
+      ),
+      AbsentRead[Int](
+        "int",
+        7,
+        _.intDetails(key, 7, ctx),
+        _.intOrDefault(key, 7, ctx),
+        _.resolveOrDefault[Int](key, 7, ctx)
+      ),
+      AbsentRead[Long](
+        "long",
+        7L,
+        _.longDetails(key, 7L, ctx),
+        _.longOrDefault(key, 7L, ctx),
+        _.resolveOrDefault[Long](key, 7L, ctx)
+      ),
+      AbsentRead[Double](
+        "double",
+        7.5,
+        _.doubleDetails(key, 7.5, ctx),
+        _.doubleOrDefault(key, 7.5, ctx),
+        _.resolveOrDefault[Double](key, 7.5, ctx)
+      ),
+      AbsentRead[Map[String, Any]](
+        "object",
+        obj,
+        _.objDetails(key, obj, ctx),
+        _.objOrDefault(key, obj, ctx),
+        _.resolveOrDefault[Map[String, Any]](key, obj, ctx)
+      )
+    )
+  }
+
   /** Flag sets over every wire type. The default for [[agreesWithTestkit]]. */
   val flagSets: Gen[Any, FlagSet] = Gen.mapOfBounded(1, 6)(flagKey, anyValue).map(FlagSet(_))
 

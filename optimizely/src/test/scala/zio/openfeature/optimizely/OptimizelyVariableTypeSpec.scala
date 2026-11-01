@@ -1,7 +1,6 @@
 package zio.openfeature.optimizely
 
 import com.github.tomakehurst.wiremock.WireMockServer
-import com.github.tomakehurst.wiremock.client.WireMock._
 import com.github.tomakehurst.wiremock.core.WireMockConfiguration
 import dev.openfeature.sdk.{ErrorCode, ImmutableContext, ProviderEvaluation, Reason, Value}
 import zio._
@@ -23,11 +22,13 @@ object OptimizelyVariableTypeSpec extends ZIOSpecDefault {
     val server = new WireMockServer(WireMockConfiguration.options().dynamicPort())
     server.start()
     try {
-      server.stubFor(
-        get(urlEqualTo(DatafilePath)).willReturn(okJson(readResource("/datafiles/typed-variables.json")))
-      )
       val provider = new OptimizelyFeatureProvider(
-        OptimizelyTestSupport.wiredClient(s"http://localhost:${server.port()}$DatafilePath", "typed-variables-key"),
+        OptimizelyTestSupport.readyClient(
+          server,
+          DatafilePath,
+          readResource("/datafiles/typed-variables.json"),
+          "typed-variables-key"
+        ),
         OptimizelyTestSupport.InitWait,
         closeOnShutdown = true
       )

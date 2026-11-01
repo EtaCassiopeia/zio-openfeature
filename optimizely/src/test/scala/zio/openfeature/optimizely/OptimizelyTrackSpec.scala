@@ -1,7 +1,6 @@
 package zio.openfeature.optimizely
 
 import com.github.tomakehurst.wiremock.WireMockServer
-import com.github.tomakehurst.wiremock.client.WireMock._
 import com.github.tomakehurst.wiremock.core.WireMockConfiguration
 import com.optimizely.ab.event.{EventHandler, ForwardingEventProcessor, LogEvent}
 import dev.openfeature.sdk.{ImmutableContext, MutableTrackingEventDetails, Value}
@@ -31,10 +30,11 @@ object OptimizelyTrackSpec extends ZIOSpecDefault {
     val server = new WireMockServer(WireMockConfiguration.options().dynamicPort())
     server.start()
     try {
-      server.stubFor(get(urlEqualTo(DatafilePath)).willReturn(okJson(readResource("/datafiles/track.json"))))
       val events = new Recording
-      val client = OptimizelyTestSupport.wiredClient(
-        s"http://localhost:${server.port()}$DatafilePath",
+      val client = OptimizelyTestSupport.readyClient(
+        server,
+        DatafilePath,
+        readResource("/datafiles/track.json"),
         "track-key",
         customize = _.withEventProcessor(new ForwardingEventProcessor(events, null))
       )

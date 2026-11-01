@@ -98,7 +98,9 @@ object OptimizelyConfigChangedEventSpec extends ZIOSpecDefault {
           OptimizelyTestSupport.wiredClient(
             datafileUrl,
             "event-test-key",
-            pollingInterval = java.time.Duration.ofSeconds(1)
+            pollingInterval = java.time.Duration.ofSeconds(1),
+            // The first fetch serves this same v1, so seeding it keeps READY off the fetch; v2 still arrives by poll.
+            datafile = Some(ValidDatafileV1)
           )
         val provider =
           new OptimizelyFeatureProvider(optimizely, OptimizelyTestSupport.InitWait, closeOnShutdown = true)

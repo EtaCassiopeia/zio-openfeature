@@ -72,6 +72,10 @@ object DifferentialLawsSpec extends ZIOSpecDefault {
   private val samples = 10
 
   def spec = suite("DifferentialLawsSpec")(
+    DifferentialLaws.absentKeysAreNotFound("testkit")(fs => TestFeatureProvider.make(fs.flags)),
+    DifferentialLaws.absentKeysAreNotFound("caching-reason")(fs =>
+      TestFeatureProvider.make(fs.flags).map(new CachingReasonProvider(_))
+    ),
     test("an oracle that is TYPE_MISMATCH for every integer read fails without a deviation") {
       for {
         report <- compare("integer-blind")(integerBlind, Nil, samples)

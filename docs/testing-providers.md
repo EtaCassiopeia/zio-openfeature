@@ -162,6 +162,25 @@ environment variable holds text, so a read of another type parses it:
 
 This repository runs it for `HoconProvider`, `EnvVarProvider` and the OFREP provider.
 
+### Absent keys are not found
+
+`absentKeysAreNotFound(oracleName)(seed)` is a second law, for a provider that answers locally. For each key in
+`adversarialKeys` that the provider does not hold (the empty key, every HOCON path character, leading, trailing and
+doubled dots, a path-like `a.b.c`, a character outside the BMP, control characters, a 10 kB key, and `include`,
+`null` and `true`), every typed getter must fail with `FlagNotFound`, never another error or a defect, and the total
+tier must serve the default with `FLAG_NOT_FOUND`. `adversarialKey` draws one of them; `absentKeyViolations` returns
+the violations instead of a test. Pass `ctx` with a targeting key for a provider that checks it before the flag key:
+
+```scala
+DifferentialLaws.absentKeysAreNotFound("hocon")(flags =>
+  ZIO.succeed(HoconProvider.fromConfig(ConfigFactory.parseString(render(flags))))
+)
+```
+
+`flagKey` stays path-safe: it generates keys for flags that exist, which every oracle has to accept. The repository
+applies the law to `TestFeatureProvider`, `CachingReasonProvider`, `HoconProvider`, `EnvVarProvider`, both extras
+wrappers and a ready Optimizely provider. Not to OFREP: the key goes to the server, which decides.
+
 ## Run a scenario matrix with zio-bdd
 
 [zio-bdd](https://github.com/EtaCassiopeia/zio-bdd) can run one scenario against several flag configurations, one

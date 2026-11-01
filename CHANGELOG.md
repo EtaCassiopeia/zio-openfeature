@@ -101,6 +101,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   headers change nothing. Through `CircuitBreakerProvider` the circuit opens for all of them but a 400 or 404 with a
   JSON body. With the fix for non-JSON error bodies reverted, a 502 with an HTML body no longer opens the circuit.
 
+- **Testkit: an absent-key law** (#706). `DifferentialLaws.adversarialKeys` (and `adversarialKey`) is a corpus of
+  keys a provider must not choke on: empty, every HOCON path character, dots, a path-like key, a character outside
+  the BMP, control characters, a 10 kB key and the HOCON keywords. `absentKeysAreNotFound` checks that every getter
+  fails with `FlagNotFound` for such a key, and the total tier serves the default with `FLAG_NOT_FOUND`; it runs for
+  `TestFeatureProvider`, `CachingReasonProvider`, HOCON, environment variables, `CachingProvider`,
+  `CircuitBreakerProvider` and a seeded Optimizely provider. With the fix for invalid HOCON path keys reverted, the
+  HOCON run fails on `flag@v2`.
+
 ### Changed
 
 - **An OFREP answer that is not OFREP JSON is a `GENERAL` error, so it trips the circuit breaker** (#642). The contrib

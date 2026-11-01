@@ -17,11 +17,12 @@ object HoconDifferentialSpec extends ZIOSpecDefault {
 
   private val oracle = "hocon"
 
+  private val seed: DifferentialLaws.FlagSet => URIO[Scope, dev.openfeature.sdk.FeatureProvider] =
+    flags => ZIO.attempt(HoconProvider.fromConfig(ConfigFactory.parseString(render(flags)))).orDie
+
   def spec = suite("HoconDifferentialSpec")(
-    DifferentialLaws.agreesWithTestkit(oracle)(
-      seed = flags => ZIO.attempt(HoconProvider.fromConfig(ConfigFactory.parseString(render(flags)))).orDie,
-      deviations = deviations
-    )
+    DifferentialLaws.agreesWithTestkit(oracle)(seed = seed, deviations = deviations),
+    DifferentialLaws.absentKeysAreNotFound(oracle)(seed)
   )
 
   // Deviations

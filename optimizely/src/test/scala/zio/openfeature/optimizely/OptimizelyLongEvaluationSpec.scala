@@ -1,7 +1,6 @@
 package zio.openfeature.optimizely
 
 import com.github.tomakehurst.wiremock.WireMockServer
-import com.github.tomakehurst.wiremock.client.WireMock._
 import com.github.tomakehurst.wiremock.core.WireMockConfiguration
 import dev.openfeature.sdk.{ErrorCode, ImmutableContext, Value}
 import zio._
@@ -45,8 +44,7 @@ object OptimizelyLongEvaluationSpec extends ZIOSpecDefault {
   }
 
   private def readyProvider(server: WireMockServer, datafile: String): OptimizelyFeatureProvider = {
-    server.stubFor(get(urlEqualTo(DatafilePath)).willReturn(okJson(datafile)))
-    val client   = OptimizelyTestSupport.wiredClient(s"http://localhost:${server.port()}$DatafilePath", "long-eval-key")
+    val client   = OptimizelyTestSupport.readyClient(server, DatafilePath, datafile, "long-eval-key")
     val provider = new OptimizelyFeatureProvider(client, OptimizelyTestSupport.InitWait, closeOnShutdown = true)
     provider.initialize(new ImmutableContext())
     provider

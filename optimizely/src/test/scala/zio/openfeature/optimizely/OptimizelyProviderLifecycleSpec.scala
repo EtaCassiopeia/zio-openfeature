@@ -52,8 +52,7 @@ object OptimizelyProviderLifecycleSpec extends ZIOSpecDefault {
   def spec: Spec[TestEnvironment & Scope, Any] = suite("OptimizelyFeatureProvider lifecycle")(
     test("initialize is idempotent — second call is a no-op, state stays READY") {
       withMockServer { server =>
-        server.stubFor(get(urlEqualTo(DatafilePath)).willReturn(okJson(ValidDatafile)))
-        val client   = OptimizelyTestSupport.wiredClient(datafileUrl(server), "lifecycle-key")
+        val client   = OptimizelyTestSupport.readyClient(server, DatafilePath, ValidDatafile, "lifecycle-key")
         val provider = new OptimizelyFeatureProvider(client, OptimizelyTestSupport.InitWait, closeOnShutdown = true)
         try {
           val first       = tryInit(provider)
@@ -73,8 +72,7 @@ object OptimizelyProviderLifecycleSpec extends ZIOSpecDefault {
     },
     test("shutdown is idempotent — second call is a no-op") {
       withMockServer { server =>
-        server.stubFor(get(urlEqualTo(DatafilePath)).willReturn(okJson(ValidDatafile)))
-        val client   = OptimizelyTestSupport.wiredClient(datafileUrl(server), "lifecycle-key")
+        val client   = OptimizelyTestSupport.readyClient(server, DatafilePath, ValidDatafile, "lifecycle-key")
         val provider = new OptimizelyFeatureProvider(client, OptimizelyTestSupport.InitWait, closeOnShutdown = true)
         val initRes  = tryInit(provider)
         val firstShutdown =
@@ -96,8 +94,7 @@ object OptimizelyProviderLifecycleSpec extends ZIOSpecDefault {
     },
     test("initialize after shutdown fails loudly when the client was closed") {
       withMockServer { server =>
-        server.stubFor(get(urlEqualTo(DatafilePath)).willReturn(okJson(ValidDatafile)))
-        val client   = OptimizelyTestSupport.wiredClient(datafileUrl(server), "lifecycle-key")
+        val client   = OptimizelyTestSupport.readyClient(server, DatafilePath, ValidDatafile, "lifecycle-key")
         val provider = new OptimizelyFeatureProvider(client, OptimizelyTestSupport.InitWait, closeOnShutdown = true)
         val first    = tryInit(provider)
         provider.shutdown()
@@ -190,8 +187,7 @@ object OptimizelyProviderLifecycleSpec extends ZIOSpecDefault {
     },
     test("state transitions: NOT_READY -> READY -> NOT_READY across init/shutdown") {
       withMockServer { server =>
-        server.stubFor(get(urlEqualTo(DatafilePath)).willReturn(okJson(ValidDatafile)))
-        val client    = OptimizelyTestSupport.wiredClient(datafileUrl(server), "lifecycle-key")
+        val client    = OptimizelyTestSupport.readyClient(server, DatafilePath, ValidDatafile, "lifecycle-key")
         val provider  = new OptimizelyFeatureProvider(client, OptimizelyTestSupport.InitWait, closeOnShutdown = true)
         val initial   = stateOf(provider)
         val init      = tryInit(provider)
@@ -229,8 +225,7 @@ object OptimizelyProviderLifecycleSpec extends ZIOSpecDefault {
     },
     test("concurrent initialize from N threads — exactly one progresses init, all return cleanly, state ends READY") {
       withMockServer { server =>
-        server.stubFor(get(urlEqualTo(DatafilePath)).willReturn(okJson(ValidDatafile)))
-        val client   = OptimizelyTestSupport.wiredClient(datafileUrl(server), "lifecycle-key")
+        val client   = OptimizelyTestSupport.readyClient(server, DatafilePath, ValidDatafile, "lifecycle-key")
         val provider = new OptimizelyFeatureProvider(client, OptimizelyTestSupport.InitWait, closeOnShutdown = true)
         try {
           val N                    = 16

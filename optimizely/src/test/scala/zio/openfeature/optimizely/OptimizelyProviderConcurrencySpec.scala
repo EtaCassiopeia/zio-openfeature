@@ -44,11 +44,25 @@ object OptimizelyProviderConcurrencySpec extends ZIOSpecDefault {
   // `Optimizely.close()`), so it can never become an orphaned "retries forever" thread. The old no-arg `.build()` started a live poller at
   // construction; when WireMock stopped, its Apache HttpClient retried against the dead socket on a thread that
   // outlived every test and kept the (even forked) JVM from exiting — hanging `sbt test` until CI's timeout.
-  private def buildClient(server: WireMockServer): (Optimizely, HttpProjectConfigManager) = {
+  private def buildClient(
+    server: WireMockServer,
+    datafile: Option[String] = None
+  ): (Optimizely, HttpProjectConfigManager) = {
     val (client, mgr) =
-      OptimizelyTestSupport.wiredClientWithManager(datafileUrl(server), "concurrency-key", deferStart = true)
+      OptimizelyTestSupport.wiredClientWithManager(
+        datafileUrl(server),
+        "concurrency-key",
+        deferStart = true,
+        datafile = datafile
+      )
     mgr.stop()
     (client, mgr)
+  }
+
+  // For tests that only need a READY provider: the manager is seeded, so readiness never rides on the fetch.
+  private def buildReadyClient(server: WireMockServer): (Optimizely, HttpProjectConfigManager) = {
+    server.stubFor(get(urlEqualTo(DatafilePath)).willReturn(okJson(ValidDatafile)))
+    buildClient(server, Some(ValidDatafile))
   }
 
   @scala.annotation.nowarn("msg=deprecated")
@@ -100,8 +114,7 @@ object OptimizelyProviderConcurrencySpec extends ZIOSpecDefault {
   def spec: Spec[TestEnvironment & Scope, Any] = suite("OptimizelyFeatureProvider concurrency")(
     test("N concurrent boolean evaluations after init return consistent results without exceptions") {
       withMockServer { server =>
-        server.stubFor(get(urlEqualTo(DatafilePath)).willReturn(okJson(ValidDatafile)))
-        val (client, mgr) = buildClient(server)
+        val (client, mgr) = buildReadyClient(server)
         val provider      =
           new OptimizelyFeatureProvider(
             client,
@@ -129,8 +142,7 @@ object OptimizelyProviderConcurrencySpec extends ZIOSpecDefault {
     },
     test("N concurrent mixed-type evaluations don't trip over each other") {
       withMockServer { server =>
-        server.stubFor(get(urlEqualTo(DatafilePath)).willReturn(okJson(ValidDatafile)))
-        val (client, mgr) = buildClient(server)
+        val (client, mgr) = buildReadyClient(server)
         val provider      =
           new OptimizelyFeatureProvider(
             client,
@@ -202,8 +214,7 @@ object OptimizelyProviderConcurrencySpec extends ZIOSpecDefault {
     },
     test("evaluations racing shutdown never throw — they surface PROVIDER_NOT_READY") {
       withMockServer { server =>
-        server.stubFor(get(urlEqualTo(DatafilePath)).willReturn(okJson(ValidDatafile)))
-        val (client, mgr) = buildClient(server)
+        val (client, mgr) = buildReadyClient(server)
         val provider      =
           new OptimizelyFeatureProvider(
             client,

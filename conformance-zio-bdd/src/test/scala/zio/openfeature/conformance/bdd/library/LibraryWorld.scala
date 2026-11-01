@@ -61,8 +61,8 @@ final case class LibraryWorld(
   logSink: Option[LogSink] = None,
   // fallback-first construction
   acquireStatus: Option[AcquireStatus] = None,
-  swapped: Option[Ref[Boolean]] = None,
-  constructionError: Option[Ref[Option[Throwable]]] = None,
+  swapped: Option[Promise[Nothing, Unit]] = None,
+  constructionError: Option[Promise[Nothing, Throwable]] = None,
   settled: Option[AcquireState] = None,
   // hooks
   hookSeen: Option[Ref[Chunk[FlagValueType]]] = None,

@@ -139,20 +139,46 @@ object LifecycleInterleavingSpec extends ZIOSpecDefault {
 
   /** The points each primary always passes, in no particular order. */
   val reachTable: Map[Primary, Set[String]] = Map(
-    Primary.SwapGood    -> Set("SwapStart", "ApplySignal", "SdkBind", "DeliverEvent", "SwapDone"),
+    Primary.SwapGood ->
+      Set("SwapStart", "ApplySignal", "SdkBind", "InitEntered", "InitReturned", "DeliverEvent", "SwapDone"),
     Primary.SwapFailing ->
-      Set("SwapStart", "ApplySignal", "SdkBind", "DeliverEvent", "SwapRollback", "RollbackBind", "SwapDone"),
+      Set(
+        "SwapStart",
+        "ApplySignal",
+        "SdkBind",
+        "InitEntered",
+        "InitReturned",
+        "DeliverEvent",
+        "SwapRollback",
+        "RollbackBind",
+        "SwapDone"
+      ),
     Primary.SwapHanging ->
-      Set("SwapStart", "ApplySignal", "SdkBind", "SwapTimeout", "OrphanRecorded", "LateReady", "SwapDone"),
-    Primary.Shutdown   -> Set("ShutdownStart", "ApplySignal", "ShutdownDone"),
+      Set(
+        "SwapStart",
+        "ApplySignal",
+        "SdkBind",
+        "InitEntered",
+        "SwapTimeout",
+        "OrphanRecorded",
+        "LateReady",
+        "SwapDone"
+      ),
+    Primary.Shutdown   -> Set("ShutdownStart", "ApplySignal", "ProviderShutDown", "ShutdownDone"),
     Primary.EventError -> Set("DeliverEvent", "ApplySignal")
   )
 
   /** Points a primary may also pass, depending on timing: an event the SDK sends while the provider initializes or
-    * shuts down can reach the bridge before the primary finishes, or after.
+    * shuts down can reach the bridge before the primary finishes, or after; and the SDK shuts the replaced provider
+    * down once the new one has initialized, which can land after a swap's last point.
     */
   val mayReach: Map[Primary, Set[String]] =
-    Map(Primary.SwapHanging -> Set("DeliverEvent"), Primary.Shutdown -> Set("DeliverEvent")).withDefaultValue(Set.empty)
+    Map(
+      Primary.SwapGood    -> Set("ProviderShutDown"),
+      Primary.SwapFailing -> Set("ProviderShutDown"),
+      Primary.SwapHanging -> Set("DeliverEvent"),
+      Primary.Shutdown    -> Set("DeliverEvent")
+    ).withDefaultValue(Set.empty)
 
   // The system under test
 

@@ -5,7 +5,7 @@ import java.util.concurrent.atomic.AtomicInteger
 
 import zio._
 import zio.test._
-import zio.openfeature.internal.{ProviderEvaluations, ProviderRegistration}
+import zio.openfeature.internal.{Bound, ManagedProvider, ProviderEvaluations, ProviderRegistration}
 import dev.openfeature.sdk.{
   EvaluationContext => OFEvaluationContext,
   FeatureProvider,
@@ -217,10 +217,13 @@ object ProviderInitTimeoutSpec extends ZIOSpecDefault {
       Live
         .live(
           for {
-            waiter <- ProviderRegistration.registerAndAwait(api, Some(domain), stuck, 10.seconds).either.fork
-            _      <- ZIO
+            waiter <- ProviderRegistration
+              .registerAndAwait(api, Some(domain), Bound.Managed(ManagedProvider(stuck)), 10.seconds)
+              .either
+              .fork
+            _ <- ZIO
               .attemptBlocking(api.getProvider(domain))
-              .repeatUntil(_ eq stuck)
+              .repeatUntil(p => ManagedProvider.unwrap(p) eq stuck)
               .timeoutFail("first registration never bound")(5.seconds)
             _     <- ZIO.attemptBlocking(api.setProvider(domain, new BoolProvider("winner", true)))
             timed <- elapsedMillis(waiter.join)

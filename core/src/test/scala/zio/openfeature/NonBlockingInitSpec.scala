@@ -881,9 +881,9 @@ object NonBlockingInitSpec extends ZIOSpecDefault {
         }
       } yield out
     },
-    test("watchdog: a provider it shut down is shut down again by the SDK when the instance shuts down") {
-      // The documented limit: the provider stays bound to its slot, and the SDK calls shutdown() on every bound provider
-      // at api.shutdown(). Pinned so that a change making it once is noticed.
+    test("watchdog: a provider it shut down is not shut down again when the instance shuts down") {
+      // The provider stays bound to its slot, and the SDK calls shutdown() on every bound provider at api.shutdown();
+      // the registered wrapper reaches the provider once per cycle.
       val shutdowns = new AtomicInteger(0)
       val provider  = new InertProvider {
         override def shutdown(): Unit = { shutdowns.incrementAndGet(); super.shutdown() }
@@ -897,9 +897,9 @@ object NonBlockingInitSpec extends ZIOSpecDefault {
           }
         }
         count <- Live
-          .live(ZIO.succeed(shutdowns.get()).repeatUntil(_ >= 2).timeout(5.seconds) *> ZIO.sleep(200.millis))
+          .live(ZIO.sleep(300.millis))
           .as(shutdowns.get())
-      } yield assertTrue(count == 2)
+      } yield assertTrue(count == 1)
     }
   ) @@ TestAspect.sequential
 }

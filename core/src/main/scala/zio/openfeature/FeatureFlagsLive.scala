@@ -649,13 +649,13 @@ final private[openfeature] class FeatureFlagsLive(
     *
     * A provider never wrapped has no earlier registration to refuse it over. A provider that a timed-out swap replaced
     * is held by that swap's pending initialization, which shuts it down if it succeeds; a settle of that entry already
-    * under way is waited for.
+    * under way is waited for, after which the entry is gone from the record.
     */
   private def refuseSwap(newProvider: OFFeatureProvider): IO[FeatureFlagError, Unit] = {
     val managed = ManagedProvider.existing(newProvider)
     for {
-      orphan  <- ZIO.foreach(managed)(orphans.pendingFor).map(_.flatten)
-      outcome <- lifecycle.run(LifecycleInput.Admit(newProvider, managed, _.initsInFlightAnywhere > 0, orphan))
+      _       <- ZIO.foreachDiscard(managed)(orphans.awaitSettling)
+      outcome <- lifecycle.run(LifecycleInput.Admit(newProvider, managed, _.initsInFlightAnywhere > 0))
       _       <- ZIO.foreachDiscard(outcome.effects) {
         case LifecycleEffect.Refuse(refusal) => ZIO.fail(refused(refusal))
         case _                               => ZIO.unit
@@ -702,7 +702,14 @@ final private[openfeature] class FeatureFlagsLive(
       .when(ownsApi) {
         incoming match {
           case Some(registration) if registration.provider ne previous.sdk =>
-            orphans.record(previous, previousName, incomingName, registration) *> probe.at(Point.OrphanRecorded)
+            lifecycle.run(LifecycleInput.OrphanRecorded(previous.sdk, incomingName)) *>
+              orphans.record(
+                previous,
+                previousName,
+                incomingName,
+                registration,
+                lifecycle.run(LifecycleInput.OrphanSettled(previous.sdk)).unit
+              ) *> probe.at(Point.OrphanRecorded)
           case Some(_) => ZIO.unit
           case None    =>
             ZIO.logWarning(

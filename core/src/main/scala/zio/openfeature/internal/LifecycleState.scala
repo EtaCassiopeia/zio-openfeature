@@ -33,6 +33,9 @@ import zio.openfeature.internal.ProviderStatusMachine.Signal
   *   registrations whose `initialize()` may still run, each with the provider it replaced: a timed-out swap's and a
   *   timed-out rollback's. Once such a call returns, the SDK shuts the replaced provider down through its old
   *   registration, so that provider is refused until then (model: `prevOf` with `inits`)
+  * @param orphans
+  *   providers a timed-out swap left behind, each with the name of the provider whose pending initialization holds it,
+  *   until that entry settles; refused until then (model: `orphans`)
   */
 final private[openfeature] case class LifecycleState(
   status: ProviderStatus,
@@ -43,7 +46,8 @@ final private[openfeature] case class LifecycleState(
   shutDown: Boolean,
   closed: Boolean,
   deferredInitTimeout: Option[(OFFeatureProvider, Duration)],
-  replaced: List[(ManagedProvider, ManagedProvider)]
+  replaced: List[(ManagedProvider, ManagedProvider)],
+  orphans: List[(OFFeatureProvider, String)]
 ) {
 
   /** The context the status table reads. */
@@ -63,7 +67,8 @@ private[openfeature] object LifecycleState {
       shutDown = false,
       closed = false,
       deferredInitTimeout = None,
-      replaced = Nil
+      replaced = Nil,
+      orphans = Nil
     )
 }
 
@@ -88,15 +93,21 @@ private[openfeature] object LifecycleInput {
 
   /** A swap asks to install `incoming` (`managed`, its wrapper, when it has one): refused on a shut-down or closed
     * instance, and for a provider whose earlier registration is unsettled (model: the guards of `SwapStart`).
-    * `initializing` tells whether a wrapper's `initialize()` runs now; `pendingOrphan` names the provider whose
-    * timed-out swap still holds `incoming`, if one does.
+    * `initializing` tells whether a wrapper's `initialize()` runs now.
     */
   final case class Admit(
     incoming: OFFeatureProvider,
     managed: Option[ManagedProvider],
-    initializing: ManagedProvider => Boolean,
-    pendingOrphan: Option[String]
+    initializing: ManagedProvider => Boolean
   ) extends LifecycleInput
+
+  /** A timed-out swap left `previous` behind, held by the pending initialization of `incoming` (model: the entry
+    * `SwapTimeout` and `SwapFailNoRollback` add to `orphans`).
+    */
+  final case class OrphanRecorded(previous: OFFeatureProvider, incoming: String) extends LifecycleInput
+
+  /** The entry for `previous` settled (model: `OrphanResolved`). */
+  final case class OrphanSettled(previous: OFFeatureProvider) extends LifecycleInput
 
   /** `holder`'s registration, whose `initialize()` may still run, replaced `previous`. Only wrappers are tracked: a
     * foreign provider's initialization is the SDK's, which reports no count.
@@ -195,6 +206,14 @@ private[openfeature] object LifecycleStep {
           case _                  => unchanged(state)
         }
 
+      case LifecycleInput.OrphanRecorded(previous, incoming) =>
+        Outcome(state.copy(orphans = (previous -> incoming) :: state.orphans), None, Chunk.empty)
+
+      case LifecycleInput.OrphanSettled(previous) =>
+        // One entry per settle: a provider left behind twice has two.
+        val (before, from) = state.orphans.span { case (p, _) => !(p eq previous) }
+        Outcome(state.copy(orphans = before ++ from.drop(1)), None, Chunk.empty)
+
       case LifecycleInput.GateDown => Outcome(state.copy(gate = false), None, Chunk.empty)
 
       case LifecycleInput.WatchdogFired(provider, timeout) => watchdog(state, provider, timeout)
@@ -221,8 +240,8 @@ private[openfeature] object LifecycleStep {
         input.managed.flatMap { m =>
           if (input.initializing(m)) Some(Refusal.StillInitializing(m))
           else
-            input.pendingOrphan
-              .map(Refusal.PendingOrphan(m, _))
+            state.orphans
+              .collectFirst { case (previous, incoming) if previous eq m => Refusal.PendingOrphan(m, incoming) }
               .orElse(pending.collectFirst {
                 case (holder, previous) if (previous eq m) && (holder ne m) => Refusal.HeldBy(m, holder)
               })

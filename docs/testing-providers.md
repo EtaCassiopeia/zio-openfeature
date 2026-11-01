@@ -40,6 +40,12 @@ The diagram is `script(Op.EvaluateBoolean, Fault.Throw(e), Fault.Succeed)`.
 | `HangUntilReleased` | block until `release` (not `shutdown()`) |
 | `HangUntilShutdown` | block until `shutdown()` or `release` |
 | `Emit(event, details, andThen)` | emit an OpenFeature event (e.g. `PROVIDER_ERROR` inside `initialize()`), then apply `andThen` |
+| `Answer(shape)` | an evaluation op only: return a malformed answer instead of the provider's (`AnswerShape`) |
+| `MetadataAnswer(shape)` | `GetMetadata` only: return `null` or a nameless `Metadata` (`MetadataShape`) |
+
+`AnswerShape` is `NullValue` (no value, no error code), `WrongBox` (an `Integer` from the boolean, string, long and
+double getters, a `Boolean` from the integer getter, a `String` from the object getter), `ErrorCodeWithValue`,
+`NullReason` or `NullEvaluation` (the getter returns `null`).
 
 There is an `Op` for every `FeatureProvider` method: `Initialize` (both overloads), `Shutdown`, `GetMetadata`,
 `GetProviderHooks`, `GetState`, `IsDomainScoped`, `Track`, and `EvaluateBoolean` to `EvaluateObject`.
@@ -64,6 +70,30 @@ Each `Call` has `op`, `flagKey` (the event name for `track`), `thread`, `started
 `Outcome.Threw(error)`) and `arguments`.
 
 The wrapped provider's events do not reach `FeatureFlags`: use `Fault.Emit` or the wrapper's `emit`.
+
+### Hostile providers
+
+`HostileProvider` generates whole scripts of wrong answers for property tests: a `Script` maps each `Op` to its
+faults, and `HostileProvider.scripted(script, flags)` is a `FaultyProvider.scoped` with the script applied.
+`evaluationScripts` gives every evaluation op a malformed answer or a thrown exception from `throwables` (a checked
+exception, an unchecked one and a non-fatal `Error`), and `getMetadata` a malformed answer or its own. `scripts` adds
+a hostile `initialize()` (a `READY` emitted from inside it, or one that returns only at shutdown) and a `shutdown()`
+that throws; build over those with a short init timeout, or each never-returning start waits out the default one. Run
+them against what you build on a provider, and assert that nothing dies:
+
+```scala
+check(HostileProvider.evaluationScripts) { script =>
+  ZIO.scoped {
+    for {
+      provider <- HostileProvider.scripted(script, Map("flag" -> true))
+      result   <- yourLibrary(provider).exit
+    } yield assertTrue(!result.causeOption.exists(_.isDie))
+  }
+}
+```
+
+The library's own sweep, `HostileProviderSweepSpec`, runs the typed getters, `value[A]`, the `*Details` getters,
+`*OrDefault` and `resolveOrDefault` of `FeatureFlags` this way and pins the outcome of each shape.
 
 ## Check a custom `FlagType`
 

@@ -67,15 +67,16 @@ ThisBuild / versionScheme := Some("semver-spec")
 // consumers can pin one coordinate instead of sbt-dynver's per-commit `x.y.z+<n>-<sha>-SNAPSHOT`. A commit that sits
 // exactly on a `v*` tag keeps that exact release version (no `-SNAPSHOT`), so `sbt ci-release` still publishes a real
 // release on tags and a snapshot everywhere else. Computed from git directly (not `version.value`, which would be a
-// circular self-reference); CI checks out full history so the tags are present.
+// circular self-reference); CI checks out full history so the tags are present. Only `v*` tags count: the repository also
+// carries other tags (`rescue/*`, `tooling/*`), and one of those must never become the version.
 ThisBuild / version := {
   import scala.sys.process._
   def git(cmd: String): Option[String] =
     scala.util.Try(cmd.!!).toOption.map(_.trim).filter(_.nonEmpty)
-  git("git describe --tags --exact-match") match {
+  git("git describe --tags --exact-match --match=v*") match {
     case Some(tag) => tag.stripPrefix("v") // on a release tag → exact release version
     case None      =>
-      val lastTag = git("git describe --tags --abbrev=0").map(_.stripPrefix("v")).getOrElse("0.0.0")
+      val lastTag = git("git describe --tags --abbrev=0 --match=v*").map(_.stripPrefix("v")).getOrElse("0.0.0")
       // bump the final numeric run of the last tag (RC2 -> RC3, 0.5.2 -> 0.5.3, 1.0.0 -> 1.0.1)
       val next = """(\d+)(\D*)$""".r.replaceAllIn(lastTag, m => (m.group(1).toInt + 1).toString + m.group(2))
       s"$next-SNAPSHOT"

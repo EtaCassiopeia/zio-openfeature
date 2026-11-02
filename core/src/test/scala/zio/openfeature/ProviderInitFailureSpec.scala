@@ -119,6 +119,10 @@ object ProviderInitFailureSpec extends ZIOSpecDefault {
 
   private def uniqueDomain(label: String): String = s"init-failure-$label-${java.util.UUID.randomUUID()}"
 
+  // The status, set as a provider report would through the instance's lifecycle step.
+  private def overrideStatus(ff: FeatureFlags, status: ProviderStatus): UIO[Unit] =
+    ff.asInstanceOf[FeatureFlagsLive].overrideStatus(status).orDieWith(r => new IllegalStateException(r.toString))
+
   def spec = suite("ProviderInitFailureSpec")(
     test("[B2 / case 1] sync initialize() that throws -> layer build fails with the thrown exception") {
       val boom     = new IllegalArgumentException("synthetic init failure")
@@ -263,13 +267,13 @@ object ProviderInitFailureSpec extends ZIOSpecDefault {
           // Ready -> proceeds
           readyEval <- ff.booleanDetails("any-flag", default = false).either
           // Error -> proceeds (no longer fail-fast)
-          _         <- statusRef.set(ProviderStatus.Error)
+          _         <- overrideStatus(ff, ProviderStatus.Error)
           errorEval <- ff.booleanDetails("any-flag", default = false).either
           // NotReady -> fail-fast
-          _            <- statusRef.set(ProviderStatus.NotReady)
+          _            <- overrideStatus(ff, ProviderStatus.NotReady)
           notReadyEval <- ff.booleanDetails("any-flag", default = false).either
           // Fatal -> fail-fast
-          _         <- statusRef.set(ProviderStatus.Fatal)
+          _         <- overrideStatus(ff, ProviderStatus.Fatal)
           fatalEval <- ff.booleanDetails("any-flag", default = false).either
         } yield assertTrue(
           readyEval.isRight,

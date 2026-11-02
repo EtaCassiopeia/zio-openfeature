@@ -144,6 +144,10 @@ Evaluations answered without the provider, by a [transaction](transactions.md) o
 `setStatus` changes what the provider reports. While it is `NotReady`, `ShuttingDown` or `Fatal`, evaluations fail fast
 (see [Lifecycle and events](lifecycle.md)). `getStatus` (or `status`) reads it.
 
+`setStatus` moves the instance's status the way a provider report would, through its lifecycle, and it can reset a
+`Fatal` provider. It fails the test, with a defect naming the status and the reason, once the instance is shut down or
+its scope is closed, and while a `setProvider` is in flight, since the swap owns the status until it ends.
+
 ```scala
 --8<-- "TestkitSpec.scala:status"
 ```

@@ -58,6 +58,64 @@ object LifecycleStepSpec extends ZIOSpecDefault {
   private def event(signal: Signal) = LifecycleInput.Status(signal)
 
   def spec = suite("LifecycleStepSpec")(
+    suite("a status override (the testkit's setStatus)")(
+      test("moves the status from every status, Fatal included, and nothing else in the record") {
+        val all = List(
+          ProviderStatus.NotReady,
+          ProviderStatus.Ready,
+          ProviderStatus.Stale,
+          ProviderStatus.Error,
+          ProviderStatus.Fatal,
+          ProviderStatus.ShuttingDown
+        )
+        val moves = for {
+          from <- all
+          to   <- all
+        } yield {
+          val before  = ready.copy(status = from)
+          val outcome = LifecycleStep.step(before, LifecycleInput.Override(to))
+          outcome.state == before.copy(status = to) && outcome.transitioned.contains(to) && outcome.effects.isEmpty
+        }
+        assertTrue(moves.forall(identity))
+      },
+      test("counts as ready when it sets Ready or Stale, and not otherwise") {
+        val fresh                         = LifecycleState.initial(p0)
+        def everReady(to: ProviderStatus) = LifecycleStep.step(fresh, LifecycleInput.Override(to)).state.everReady
+        assertTrue(
+          !fresh.everReady,
+          everReady(ProviderStatus.Ready),
+          everReady(ProviderStatus.Stale),
+          !everReady(ProviderStatus.Error),
+          !everReady(ProviderStatus.Fatal),
+          !everReady(ProviderStatus.NotReady)
+        )
+      },
+      test("an instance made Ready by an override is not escalated to Fatal when the init watchdog fires later") {
+        val async       = LifecycleState.initial(p0)
+        val (after, fx) = run(
+          async,
+          LifecycleInput.Override(ProviderStatus.Ready),
+          LifecycleInput.Override(ProviderStatus.Error),
+          LifecycleInput.WatchdogFired(p0, 1.second)
+        )
+        assertTrue(
+          after.status == ProviderStatus.Error,
+          !fx.exists(_.isInstanceOf[LifecycleEffect.EscalateInitTimeout])
+        )
+      },
+      test("is refused once the instance is shut down or its scope is closed, and while a swap's gate is up") {
+        val shutDown = run(ready, event(Signal.ShutdownStarted), event(Signal.ShutdownCompleted))._1
+        val closed   = LifecycleStep.step(ready, LifecycleInput.ScopeClose).state
+        val swapping = LifecycleStep.step(ready, swapStart(m1)).state
+        val input    = LifecycleInput.Override(ProviderStatus.Ready)
+        assertTrue(
+          refusal(shutDown, input) == Some(Refusal.Closed),
+          refusal(closed, input) == Some(Refusal.Closed),
+          refusal(swapping, input) == Some(Refusal.SwapInFlight),
+          LifecycleStep.step(swapping, input).state == swapping
+        )
+      }
+    ),
     suite("actions")(
       test("SwapStart: the gate goes up, the status becomes NotReady, and the new provider is installed") {
         val outcome = LifecycleStep.step(ready, swapStart(m1))

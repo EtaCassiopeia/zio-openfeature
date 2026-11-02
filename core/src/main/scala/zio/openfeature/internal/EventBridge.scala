@@ -54,9 +54,9 @@ final private[openfeature] class EventBridge(
   /** Whether the bridge's handlers are still registered with the client. */
   private[openfeature] def bridgeAttached: Boolean = attached.get()
 
-  /** A status signal, through the lifecycle's step. Every status write except the testkit's shared-ref control surface
-    * goes through the lifecycle, which serializes it against every other. Returns Some(next) iff a transition happened,
-    * so callers can attach transition-gated side effects (watchdog shutdown, latch release).
+  /** A status signal, through the lifecycle's step. Every status write goes through the lifecycle, the testkit's
+    * overrides included, which serializes it against every other. Returns Some(next) iff a transition happened, so
+    * callers can attach transition-gated side effects (watchdog shutdown, latch release).
     */
   private[openfeature] def applySignal(signal: Signal): UIO[Option[ProviderStatus]] =
     probe.at(LifecycleProbe.Point.ApplySignal(signal)) *>

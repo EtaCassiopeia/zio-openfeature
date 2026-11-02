@@ -324,38 +324,8 @@ final private[openfeature] class Evaluator(
               }
             }
 
-        // Reference identity to the built-in instance, not a name test: this branch casts the default to
-        // `Map[String, Any]` and serves the raw map as `A` past `decode`, which is only sound for that instance. Any
-        // other object-backed type, even one named "Object" (`FlagType.from("Object", ...)`), falls through to the
-        // decode branch below so its own `decode` runs.
-        case None if flagType eq FlagType.objectFlagType =>
-          withTimeout(
-            ZIO.attemptBlocking {
-              // Through `anyToValue` so a `Map` flag encodes its members exactly as a derived product does. Building
-              // the structure with `anyToObject` instead left this path stringifying `Option` members (`"Some(1)"`)
-              // while the custom-type path sent the unwrapped value.
-              client.getObjectDetails(key, anyToValue(default.asInstanceOf[Map[String, Any]]), ofContext)
-            }
-          ).mapError(e => FeatureFlagError.classify(e))
-            .flatMap { details =>
-              Evaluator.objectValue(key, flagType.typeName, details).map(v => (details, valueToMap(v)))
-            }
-            .flatMap { case (details, value) =>
-              toFlagMetadata(details.getFlagMetadata).map { metadata =>
-                FlagResolution(
-                  value = value.asInstanceOf[A],
-                  variant = Option(details.getVariant),
-                  reason = Evaluator.toResolutionReason(details.getReason),
-                  metadata = metadata,
-                  flagKey = key,
-                  errorCode = Option(details.getErrorCode).map(ErrorCodeConverter.fromJava),
-                  errorMessage = Option(details.getErrorMessage)
-                )
-              }
-            }
-
         case None =>
-          // Custom type: resolve through the object surface and decode. The caller's default is ENCODED and sent
+          // An object or custom type: resolve through the object surface and decode. The caller's default is ENCODED and sent
           // down — it used to be an empty `Value()`, which meant a provider could never serve the caller's default
           // for a custom type the way it does for the scalar ones.
           withTimeout(
@@ -466,9 +436,8 @@ final private[openfeature] class Evaluator(
   // The Scala <-> SDK `Value` conversions live in `internal.ValueBridge` so that `testkit.FlagTypeLaws` can check a
   // `FlagType` against the bridge this code actually crosses, rather than against a copy that could drift from it.
   // Kept as local aliases so call sites read unchanged.
-  private def anyToValue(value: Any): dev.openfeature.sdk.Value              = ValueBridge.anyToValue(value)
-  private def valueToMap(value: dev.openfeature.sdk.Value): Map[String, Any] = ValueBridge.valueToMap(value)
-  private def valueToAny(value: dev.openfeature.sdk.Value): Option[Any]      = ValueBridge.valueToAny(value)
+  private def anyToValue(value: Any): dev.openfeature.sdk.Value         = ValueBridge.anyToValue(value)
+  private def valueToAny(value: dev.openfeature.sdk.Value): Option[Any] = ValueBridge.valueToAny(value)
 
   private[openfeature] def evaluateWithDetails[A: FlagType](
     key: String,

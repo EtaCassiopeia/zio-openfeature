@@ -121,6 +121,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   report would, and counts as ready for the init watchdog. It is refused, as a defect naming the reason, once the
   instance is shut down or closed, and while a provider swap is in flight. A provider with no instance attached still
   sets its status directly.
+- **Built with Scala 3.3.9 and sbt 1.13.1** (from 3.3.8 and 1.13.0). CI's build matrix and the release's test step now
+  run on 3.3.9 as well.
 - **An OFREP answer that is not OFREP JSON is a `GENERAL` error, so it trips the circuit breaker** (#642). The contrib
   provider parses the body before it reads the status, so a 502/503/504 with an HTML or empty body, a 401/403 page
   from an auth proxy and a 429 without JSON all surfaced as `PARSE_ERROR`, which `CircuitBreakerProvider` counts as a
@@ -167,6 +169,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **An object flag answered with no value, or a value that is not an object, is a `TypeMismatch`** (#730). It used to
+  resolve to an empty map. The total tier now serves the default with `TYPE_MISMATCH`. This changes `obj` against
+  `EnvVarProvider`, and against a scalar or list key in `HoconProvider`.
 - **A failed swap's cleanup leaves a provider the shared API registered outside the instance to the SDK** (#728). It
   shuts down only a provider the instance wrapped; no current path reaches it with another.
 - **An interrupted `setProvider` still applies a state the SDK reached during the swap** (#717). An interrupt of the

@@ -388,7 +388,7 @@ object HostileValueSweepSpec extends ZIOSpecDefault {
       test("map keys that are empty, emoji or control characters are preserved") {
         check(Gen.listOfBounded(0, 6)(hostileString)) { keys =>
           val m    = keys.zipWithIndex.toMap
-          val back = ValueBridge.valueToMap(ValueBridge.anyToValue(m))
+          val back = ValueBridge.valueToAny(ValueBridge.anyToValue(m)).getOrElse(Map.empty)
           assertTrue(canonAny(back) == canonAny(m))
         }
       },

@@ -476,6 +476,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Tests
 
+- **The lifecycle model's structural invariants are proved for all sizes** (#727). `LifecycleProofs.tla` proves with TLAPS
+  that every variable keeps its type, that a swap and a shutdown never hold the lock together, and that the gate is
+  down whenever no swap holds the lock, for any number of providers, swaps, events and evaluations. CI runs the prover
+  on every pull request that changes the model. Mutants that break an invariant make the proof fail.
 - **A TLA+ model of the ordered event lane** (#725). `formal/lane` models `OrderedEmitter` with the SDK's emitter
   pools and its API lock, in PlusCal. On every pull request TLC checks that the slot follows the order the wrapper
   received the events, that nothing deadlocks, and that no accepted emission is cut off by the lane's close.

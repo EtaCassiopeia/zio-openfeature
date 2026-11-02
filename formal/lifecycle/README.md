@@ -30,6 +30,7 @@ case is pinned only by `ProviderHotSwapSpec`.
 
 | Invariant | Meaning |
 |:--|:--|
+| `TypeInv` | Every variable has its type. |
 | `FinalNotReady` | Once shutdown has completed, the status stays `NotReady` (a later shutdown call shows `ShuttingDown` while it runs). |
 | `NotReadyDuringSwap` | While a swap is in flight the status is `NotReady`, whatever events arrive, until the swap has its outcome. |
 | `OutcomeFollowsSettled` | A successful swap's outcome is the status of the state the SDK reported for the new provider, until the swap reads the slot again. |
@@ -70,6 +71,41 @@ case is pinned only by `ProviderHotSwapSpec`.
 
 The re-read that `SwapReconcile` makes would also correct a swap whose outcome reads the wrong status, as the code's
 does. So the #617 mutant is caught by `OutcomeFollowsSettled`, which checks the outcome before that re-read.
+
+## Proved for all sizes
+
+TLC checks every invariant above, but only at `Lifecycle.cfg`'s bounds, and a bug that needs a fourth swap is beyond it.
+`LifecycleProofs.tla` proves three of them with [TLAPS](https://proofs.tlapl.us/) for **any** number of providers, swaps,
+events and evaluations, for all constants satisfying `ConstantsOK`:
+
+```sh
+tlapm --cleanfp LifecycleProofs.tla
+```
+
+| Invariant | Checked by |
+|:--|:--|
+| `TypeInv`, `OneLockHolder`, `GateDownWhenIdle` | **proved** for all sizes, and model-checked |
+| every other invariant | model-checked at `Lifecycle.cfg`'s bounds |
+
+`IndInv`, the conjunction of the three, is inductive: `NextInd` proves that every action preserves it. The `Formal
+model` workflow's `proofs` job runs the prover on every pull request that changes the model, in a few minutes, and
+fails on any unproved obligation. A change to `lock`, `gate` or `swap`, or a new action, must update the proofs.
+
+`ConstantsOK` states what the proofs assume of the constants, and TLC checks it too. One clause is easy to miss:
+`None \notin SwapRec`. The prover does not know `None` is a model value, so without it a new swap might equal `None`.
+`TypeInv` includes `IsFiniteSet(orphans)`, since the teardown counts orphans.
+
+The proofs have teeth, checked by hand on the mutated model:
+
+| Bug put in | `tlapm` |
+|:--|:--|
+| An interrupted swap leaves its gate up | 2 obligations fail (`GateDownWhenIdle`) |
+| The swap's re-read ends the swap but keeps the lock | 1 obligation fails (`OneLockHolder`) |
+| Shutdown does not wait for a swap in flight; no swap gate | all proved: neither breaks these three, and TLC catches them through `NotReadyDuringSwap` |
+
+On Apple Silicon, the arm64 TLAPS tarball bundles an x86_64 `z3` that cannot run without Rosetta. The SMT backend then
+fails silently, and obligations it would have proved show as failed. Replace `lib/tlapm/backends/bin/z3` with a native
+build.
 
 ## Evaluation
 

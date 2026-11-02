@@ -194,7 +194,9 @@ for name, (invs, edits) in evaluation.items():
 for name, (prop, edits) in liveness.items():
     config = re.sub(r'PROPERTIES\n(    \w+\n)+', f'PROPERTIES\n    {prop}\n', live_cfg)
     out = tlc(mutate(name, edits), config, deadlock=True)
-    m = re.search(r'Temporal propert(?:y|ies) (\w+)? ?was violated', out)
+    # TLC 1.7.4 prints "Temporal properties were violated."; later versions name the property.  The configuration checks
+    # only `prop`, so either wording is its violation.
+    m = re.search(r'Temporal (?:properties were|property (\w+) was) violated', out)
     if m and m.group(1) in (None, prop):
         print(f'{name}: caught by {prop}')
     else:

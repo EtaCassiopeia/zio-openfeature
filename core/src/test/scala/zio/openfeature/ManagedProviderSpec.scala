@@ -203,6 +203,82 @@ object ManagedProviderSpec extends ZIOSpecDefault {
       val missing  = surface.filterNot(declared.contains).map(_._1)
       assertTrue(missing.isEmpty) ?? s"ManagedProvider does not override: ${missing.mkString(", ")}"
     },
+    test("a switchable wrapper is not cached, and only a switchable wrapper switches") {
+      val first  = new Delegate
+      val cached = ManagedProvider(new Delegate)
+      val switch = ManagedProvider.switchable(first)
+      ZIO.attempt(cached.switchTo(new Delegate)).either.map { r =>
+        assertTrue(
+          ManagedProvider.existing(first).isEmpty,
+          switch.switchable,
+          !cached.switchable,
+          r.left.toOption.exists(_.isInstanceOf[IllegalStateException])
+        )
+      }
+    },
+    test("switchTo routes everything to the next provider and returns the one it replaced") {
+      val first = new Delegate
+      val next  = new Delegate {
+        @scala.annotation.nowarn("msg=deprecated")
+        override def getMetadata: Metadata = new Metadata { override def getName: String = "next" }
+      }
+      val switch = ManagedProvider.switchable(first)
+      for {
+        _        <- initOn(switch, None).flatMap(_.join)
+        replaced <- ZIO.attempt(switch.switchTo(next))
+      } yield assertTrue(
+        replaced eq first,
+        switch.delegate eq next,
+        ManagedProvider.unwrap(switch) eq next,
+        switch.getMetadata.getName == "next",
+        first.initsSeen.get() == 1,
+        next.initsSeen.get() == 0
+      )
+    },
+    test("after a switch the next provider's events are forwarded and the replaced one is detached") {
+      val first  = new Delegate
+      val next   = new Delegate
+      val switch = ManagedProvider.switchable(first)
+      val seen   = new CopyOnWriteArrayList[ProviderEvent]()
+      EventProviderAccess.attach(switch, (e, _) => { seen.add(e); () })
+      for {
+        _       <- initOn(switch, None).flatMap(_.join)
+        _       <- ZIO.attempt(switch.switchTo(next))
+        _       <- ZIO.attemptBlocking(first.emitAndWait(ProviderEvent.PROVIDER_ERROR))
+        _       <- ZIO.attemptBlocking(next.emitAndWait(ProviderEvent.PROVIDER_STALE))
+        arrived <- eventually(seen.size == 1)
+        _       <- Live.live(ZIO.sleep(100.millis))
+        // The replaced provider is free to be attached again, as the SDK requires of a provider registered elsewhere.
+        reusable <- ZIO.attempt(EventProviderAccess.attach(first, (_, _) => ())).either
+        _        <- ZIO.attemptBlocking(switch.shutdown())
+      } yield assertTrue(arrived, seen.toArray.toList == List(ProviderEvent.PROVIDER_STALE), reusable.isRight)
+    } @@ TestAspect.withLiveClock,
+    test("switchTo refuses a provider already attached elsewhere and keeps its delegate") {
+      val first  = new Delegate
+      val taken  = new Delegate
+      val switch = ManagedProvider.switchable(first)
+      EventProviderAccess.attach(taken, (_, _) => ())
+      ZIO.attempt(switch.switchTo(taken)).either.map { r =>
+        assertTrue(r.left.toOption.exists(_.isInstanceOf[IllegalStateException]), switch.delegate eq first)
+      }
+    },
+    test("shutdown reaches the provider switched to, and a shut-down wrapper refuses to switch") {
+      val first  = new Delegate
+      val next   = new Delegate
+      val later  = new Delegate
+      val switch = ManagedProvider.switchable(first)
+      for {
+        _     <- initOn(switch, None).flatMap(_.join)
+        _     <- ZIO.attempt(switch.switchTo(next))
+        _     <- ZIO.attemptBlocking(switch.shutdown())
+        after <- ZIO.attempt(switch.switchTo(later)).either
+      } yield assertTrue(
+        first.shutdowns.get() == 0,
+        next.shutdowns.get() == 1,
+        after.left.toOption.exists(_.isInstanceOf[IllegalStateException]),
+        switch.delegate eq next
+      )
+    },
     test("apply returns a wrapper unchanged, and unwrap returns the provider behind it") {
       val delegate = new Delegate
       val wrapper  = ManagedProvider(delegate)

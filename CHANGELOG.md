@@ -138,6 +138,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   providers a timed-out swap left behind are fields of one `LifecycleState`, which `LifecycleStep.step` moves and the
   instance writes under its status ref's lock. A swap's refusals are decided in that step. `LifecycleStepSpec` tests it
   per model action, per model mutant and over random sequences. No behaviour changes.
+- **`fromAcquireAsync` registers the same wrapper as every other factory** (#699, internal). Its switch from the
+  fallback to the real provider is a `ManagedProvider` pointed at the new provider, decided in the lifecycle step, so
+  the separate switchable provider is gone. A provider bound to several domains of a registry is one registration,
+  initialized and shut down once; two equal but distinct providers are two.
 
 ### Documentation
 

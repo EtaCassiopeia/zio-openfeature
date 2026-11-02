@@ -112,7 +112,13 @@ private[openfeature] object LifecycleInput {
     */
   final case class SwapStart(incoming: OFFeatureProvider, name: String) extends LifecycleInput
 
-  /** A failed swap installs `provider`, the one it replaced, under `name` again. */
+  /** `fromAcquireAsync` asks to point `switch`, its switchable wrapper, at a provider named `name`: refused on a
+    * shut-down or closed instance, and once a swap has installed another provider. Not an SDK registration, so the
+    * status, the generation and the installed provider stay as they are; only the name changes.
+    */
+  final case class Switch(switch: OFFeatureProvider, name: String) extends LifecycleInput
+
+  /** A failed swap installs `provider`, the one it replaced, under `name` again; a failed switch restores its name. */
   final case class Reinstall(provider: OFFeatureProvider, name: String) extends LifecycleInput
 
   /** A swap asks to install `incoming` (`managed`, its wrapper, when it has one): refused on a shut-down or closed
@@ -168,7 +174,7 @@ private[openfeature] object LifecycleEffect {
   final case class Refuse(refusal: Refusal) extends LifecycleEffect
 }
 
-/** Why a swap is refused. */
+/** Why a swap or a switch is refused. */
 sealed private[openfeature] trait Refusal
 
 private[openfeature] object Refusal {
@@ -184,6 +190,9 @@ private[openfeature] object Refusal {
 
   /** `holder`'s registration, still initializing, replaced `provider`, and its return shuts `provider` down. */
   final case class HeldBy(provider: OFFeatureProvider, holder: OFFeatureProvider) extends Refusal
+
+  /** A switch of `provider`, which a swap has since replaced as the installed provider. */
+  final case class NotInstalled(provider: OFFeatureProvider) extends Refusal
 }
 
 /** The lifecycle's transitions: one pure function from the record and an input to the next record, whether the status
@@ -228,6 +237,16 @@ private[openfeature] object LifecycleStep {
         Outcome(state.copy(installed = provider), None, Chunk.empty, Some(name))
 
       case admit: LifecycleInput.Admit => this.admit(state, admit)
+
+      case LifecycleInput.Switch(switch, name) =>
+        val refusal =
+          if (state.shutDown || state.closed) Some(Refusal.Closed)
+          else if (!(state.installed eq switch)) Some(Refusal.NotInstalled(switch))
+          else None
+        refusal match {
+          case Some(r) => Outcome(state, None, Chunk(LifecycleEffect.Refuse(r)))
+          case None    => Outcome(state, None, Chunk.empty, Some(name))
+        }
 
       case LifecycleInput.Replaced(holder, previous) =>
         (holder.managed, previous.managed) match {

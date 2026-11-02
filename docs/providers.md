@@ -157,7 +157,8 @@ The strategy decides when the chain moves on:
 
 Some providers do network work in the constructor, so even `fromProviderAsync` blocks. `fromAcquireAsync` takes the
 provider as an effect: the layer starts at once on a fallback while a background fiber builds, verifies and initializes
-the real provider, then switches to it. The status is `Ready` throughout:
+the real provider, then switches to it without registering it again. The SDK holds the library's wrapper, as with every
+factory, and its metadata names the provider serving. The status is `Ready` throughout:
 
 ![fromAcquireAsync: the fallback answers while a background fiber acquires, verifies and initializes the real provider, then switches to it; the status stays Ready and AcquireStatus moves from Constructing to Live.](assets/acquire.svg)
 

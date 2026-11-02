@@ -149,6 +149,28 @@ object LifecycleStepSpec extends ZIOSpecDefault {
       test("ScopeClose: the instance is closed, and a swap is refused") {
         val (s, _) = run(ready, LifecycleInput.ScopeClose)
         assertTrue(s.closed, refusal(s, admit(m1)) == Some(Refusal.Closed))
+      },
+      test("Switch: the installed switchable provider is renamed, and nothing else moves") {
+        val installed = LifecycleStep.step(ready, swapStart(m1)).state.copy(status = ProviderStatus.Ready, gate = false)
+        val outcome   = LifecycleStep.step(installed, LifecycleInput.Switch(m1, "stack"))
+        assertTrue(
+          outcome.state == installed,
+          outcome.transitioned.isEmpty,
+          outcome.effects.isEmpty,
+          outcome.rename.contains("stack")
+        )
+      },
+      test("Switch: refused once a swap installed another provider, and on a shut-down or closed instance") {
+        val (shut, _)   = run(ready, event(Signal.ShutdownStarted), event(Signal.ShutdownCompleted))
+        val (closed, _) = run(ready, LifecycleInput.ScopeClose)
+        val replaced    = LifecycleStep.step(ready, LifecycleInput.Switch(m1, "stack"))
+        assertTrue(
+          refusal(ready, LifecycleInput.Switch(m1, "stack")) == Some(Refusal.NotInstalled(m1)),
+          replaced.rename.isEmpty,
+          replaced.state == ready,
+          refusal(shut, LifecycleInput.Switch(p0, "stack")) == Some(Refusal.Closed),
+          refusal(closed, LifecycleInput.Switch(p0, "stack")) == Some(Refusal.Closed)
+        )
       }
     ),
     suite("the model's mutants, as steps")(
@@ -335,6 +357,7 @@ object LifecycleStepSpec extends ZIOSpecDefault {
   private val genInput: Gen[Any, LifecycleInput] = Gen.oneOf(
     genEventOrWatchdog,
     genAdmit,
+    Gen.elements(providers: _*).map(p => LifecycleInput.Switch(p, "stack")),
     genSettled.map(s => event(Signal.SwapSucceeded(s))),
     genSettled.map(s => event(Signal.RollbackSucceeded(s))),
     genStatus.map(s => event(Signal.RollbackUnbound(s))),

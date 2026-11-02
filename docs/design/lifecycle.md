@@ -114,7 +114,13 @@ provider's own emissions.
 |:--|:--|:--|
 | 1. `ManagedProvider` and the promise-based `Registration`; event-driven orphans | #697 | done |
 | 2. `LifecycleState` and `step` | #698 | done |
-| 3. `SwitchableProvider` merged into `ManagedProvider`; one wrapper per registry provider | #699 | planned |
+| 3. `SwitchableProvider` merged into `ManagedProvider`; one wrapper per registry provider | #699 | done |
+
+The three phases are done. `fromAcquireAsync` registers a switchable `ManagedProvider` on its fallback and points it at
+the composed stack once that is initialized. The switch is not an SDK registration; `step` admits it only while the
+switch is the installed provider and the instance is open. A switchable wrapper is never cached, since what it
+delegates to changes. Every other wrapper is cached by provider identity, so a provider bound to several domains of a
+registry is one registration, initialized once and shut down once.
 
 ## Changing the lifecycle
 

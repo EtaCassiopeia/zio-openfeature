@@ -19,8 +19,8 @@ import dev.openfeature.sdk.internal.{AutoCloseableReentrantReadWriteLock, TriCon
 object EventProviderAccess {
 
   /** Forward every event `provider` emits to `onEvent`, which runs on the provider's emitter executor. No-op for
-    * providers that don't extend `EventProvider` (they never emit). Used by `fromAcquireAsync`'s switchable provider,
-    * whose delegate is never registered with an API, so the SDK never attaches to it. Same call shape as `extras`'
+    * providers that don't extend `EventProvider` (they never emit). Used by `ManagedProvider`, whose delegate is never
+    * registered with an API, so the SDK never attaches to it. Same call shape as `extras`'
     * `EventProviderBridge.attach`: the lock is private to this attachment, since no API serializes against it. Throws
     * `IllegalStateException` if the provider is already attached.
     */

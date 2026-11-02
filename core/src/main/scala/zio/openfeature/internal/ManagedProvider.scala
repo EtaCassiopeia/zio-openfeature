@@ -39,10 +39,17 @@ import zio._
   * writers (`setProvider`'s registration, handler registration, `api.shutdown()`'s prepare step) never wait on a lane,
   * and `setProviderAndWait`, which the library never calls, only delays it.
   *
-  * Equality is identity: one wrapper per provider instance, which the instance or registry holding it reuses.
+  * Equality is identity: one wrapper per provider instance, which every instance and registry binding it reuses.
+  *
+  * A wrapper made by [[ManagedProvider.switchable]] can also be pointed at another, already-initialized provider
+  * ([[switchTo]]) without leaving the slot: `fromAcquireAsync` registers one on its fallback and switches it to the
+  * composed stack, so the slot never goes `NOT_READY`.
   */
-final private[openfeature] class ManagedProvider private (val delegate: OFFeatureProvider, probe: LifecycleProbe)
-    extends EventProvider {
+final private[openfeature] class ManagedProvider private (
+  initial: OFFeatureProvider,
+  probe: LifecycleProbe,
+  val switchable: Boolean
+) extends EventProvider {
   import ManagedProvider.{Armed, Attempt}
 
   private val inFlight  = new ConcurrentHashMap[String, AtomicInteger]()
@@ -50,10 +57,11 @@ final private[openfeature] class ManagedProvider private (val delegate: OFFeatur
   private val lastError = new AtomicReference[String](null)
   private val attached  = new AtomicBoolean(false)
   private val cycleLock = new Object
+  // Replaced only by switchTo, under cycleLock.
+  private val current = new AtomicReference[OFFeatureProvider](initial)
   // The attempt the next initialize() enters, or the running one's.
   private val attempt = new AtomicReference[Attempt](new Attempt)
-  // Replaced under cycleLock, read without it: the provider's emitter calls in holding its attachment's lock, which
-  // `shutdown()` waits on to detach while it holds cycleLock.
+  // Replaced under cycleLock, read without it: the provider's emitter threads read it and never take cycleLock.
   private val lane = new AtomicReference[OrderedEmitter](new OrderedEmitter(this))
   // Guarded by cycleLock. `shutDowns` is the signal of the cycle in progress, or of the next one once a shutdown ended
   // the last: a shutdown captures its own before replacing it.
@@ -61,10 +69,31 @@ final private[openfeature] class ManagedProvider private (val delegate: OFFeatur
   private var generation = 0L
   private var shutDowns  = new CompletableFuture[Unit]()
 
-  // The cache entry's key: held here so the entry lives exactly as long as this wrapper.
-  private[ManagedProvider] val cacheKey = new ManagedProvider.IdentityKey(delegate)
+  // The cache entry's key: held here so the entry lives exactly as long as this wrapper. None for a switchable wrapper,
+  // which is never cached, so it does not keep the provider it switched away from reachable.
+  private[ManagedProvider] val cacheKey: Option[ManagedProvider.IdentityKey] =
+    if (switchable) None else Some(new ManagedProvider.IdentityKey(initial))
 
   attachDelegate()
+
+  /** The provider answering now: the user's, or for a switchable wrapper the one it was last switched to. */
+  def delegate: OFFeatureProvider = current.get()
+
+  /** Route everything to `next`, which must already be initialized, and return the replaced delegate, which the caller
+    * owns and shuts down. `next`'s events are forwarded from now on and the replaced delegate's are dropped and
+    * detached. Throws `IllegalStateException`, changing nothing, when `next` is an `EventProvider` already attached
+    * elsewhere, when this cycle has been shut down (the shutdown reached the delegate it held), or when the wrapper is
+    * not switchable.
+    */
+  def switchTo(next: OFFeatureProvider): OFFeatureProvider =
+    cycleLock.synchronized {
+      if (!switchable) throw new IllegalStateException("this provider's wrapper is not switchable")
+      if (shutDown) throw new IllegalStateException("the provider was shut down; it no longer switches")
+      attachEvents(next)
+      val old = current.getAndSet(next)
+      EventProviderAccess.detach(old)
+      old
+    }
 
   /** How many `initialize()` calls are running for `domain` (the default slot for `None`). */
   def initsInFlight(domain: Option[String]): Int =
@@ -106,10 +135,10 @@ final private[openfeature] class ManagedProvider private (val delegate: OFFeatur
   def shutDownInCycle: Boolean = cycleLock.synchronized(shutDown)
 
   override def initialize(context: OFEvaluationContext): Unit =
-    observeInit(None)(delegate.initialize(context))
+    observeInit(None)(current.get().initialize(context))
 
   override def initialize(context: OFEvaluationContext, domain: String): Unit =
-    observeInit(Option(domain))(delegate.initialize(context, domain))
+    observeInit(Option(domain))(current.get().initialize(context, domain))
 
   /** Reaches the provider once per cycle, then stops that cycle's lane and releases the event attachment, unless a new
     * cycle took it over meanwhile.
@@ -119,18 +148,19 @@ final private[openfeature] class ManagedProvider private (val delegate: OFFeatur
       if (shutDown) None
       else {
         shutDown = true
-        val cycle = (lane.get(), shutDowns, generation)
+        // The delegate too: switchTo refuses from here until the next cycle, so it is the one this shutdown reaches.
+        val cycle = (current.get(), lane.get(), shutDowns, generation)
         shutDowns = new CompletableFuture[Unit]()
         Some(cycle)
       }
     }
-    ended.foreach { case (cycleLane, signal, cycle) =>
+    ended.foreach { case (target, cycleLane, signal, cycle) =>
       at(LifecycleProbe.Point.ProviderShutDown)
-      try delegate.shutdown()
+      try target.shutdown()
       finally {
         cycleLane.close()
         cycleLock.synchronized {
-          if (generation == cycle && attached.compareAndSet(true, false)) EventProviderAccess.detach(delegate)
+          if (generation == cycle && attached.compareAndSet(true, false)) EventProviderAccess.detach(target)
         }
         signal.complete(()): Unit
       }
@@ -182,21 +212,26 @@ final private[openfeature] class ManagedProvider private (val delegate: OFFeatur
   private def attachDelegate(): Unit =
     cycleLock.synchronized {
       if (!attached.get()) {
-        EventProviderAccess.attach(
-          delegate,
-          (event, details) => {
-            // Recorded before the event reaches the slot, so a wait that reads the slot's ERROR finds its message.
-            if (event == dev.openfeature.sdk.ProviderEvent.PROVIDER_ERROR)
-              lastError.set(Option(details).flatMap(d => Option(d.getMessage)).getOrElse(""))
-            val running = attempt.get()
-            if (event == dev.openfeature.sdk.ProviderEvent.PROVIDER_STALE && running.entered && !running.outcome.isDone)
-              currentLane.enqueue(event, details, () => running.stale.complete(()): Unit)
-            else currentLane.enqueue(event, details)
-          }
-        )
+        attachEvents(current.get())
         attached.set(true)
       }
     }
+
+  // Under cycleLock. Events from a provider this wrapper has switched away from are dropped.
+  private def attachEvents(provider: OFFeatureProvider): Unit =
+    EventProviderAccess.attach(
+      provider,
+      (event, details) =>
+        if (current.get() eq provider) {
+          // Recorded before the event reaches the slot, so a wait that reads the slot's ERROR finds its message.
+          if (event == dev.openfeature.sdk.ProviderEvent.PROVIDER_ERROR)
+            lastError.set(Option(details).flatMap(d => Option(d.getMessage)).getOrElse(""))
+          val running = attempt.get()
+          if (event == dev.openfeature.sdk.ProviderEvent.PROVIDER_STALE && running.entered && !running.outcome.isDone)
+            currentLane.enqueue(event, details, () => running.stale.complete(()): Unit)
+          else currentLane.enqueue(event, details)
+        }
+    )
 
   private def at(point: LifecycleProbe.Point): Unit =
     Unsafe.unsafe(implicit u => Runtime.default.unsafe.run(probe.at(point)).getOrThrowFiberFailure())
@@ -207,53 +242,53 @@ final private[openfeature] class ManagedProvider private (val delegate: OFFeatur
     ZIO.fromCompletableFuture(f.thenApply[Unit](_ => ()))
 
   @scala.annotation.nowarn("msg=deprecated")
-  override def getMetadata: Metadata = delegate.getMetadata
+  override def getMetadata: Metadata = current.get().getMetadata
 
   @scala.annotation.nowarn("msg=deprecated")
-  override def getState: ProviderState = delegate.getState
+  override def getState: ProviderState = current.get().getState
 
-  override def getProviderHooks = delegate.getProviderHooks
+  override def getProviderHooks = current.get().getProviderHooks
 
-  override def isDomainScoped(): Boolean = delegate.isDomainScoped()
+  override def isDomainScoped(): Boolean = current.get().isDomainScoped()
 
   override def track(eventName: String, context: OFEvaluationContext, details: TrackingEventDetails): Unit =
-    delegate.track(eventName, context, details)
+    current.get().track(eventName, context, details)
 
   override def getBooleanEvaluation(
     key: String,
     defaultValue: java.lang.Boolean,
     ctx: OFEvaluationContext
-  ): ProviderEvaluation[java.lang.Boolean] = delegate.getBooleanEvaluation(key, defaultValue, ctx)
+  ): ProviderEvaluation[java.lang.Boolean] = current.get().getBooleanEvaluation(key, defaultValue, ctx)
 
   override def getStringEvaluation(
     key: String,
     defaultValue: String,
     ctx: OFEvaluationContext
-  ): ProviderEvaluation[String] = delegate.getStringEvaluation(key, defaultValue, ctx)
+  ): ProviderEvaluation[String] = current.get().getStringEvaluation(key, defaultValue, ctx)
 
   override def getIntegerEvaluation(
     key: String,
     defaultValue: java.lang.Integer,
     ctx: OFEvaluationContext
-  ): ProviderEvaluation[java.lang.Integer] = delegate.getIntegerEvaluation(key, defaultValue, ctx)
+  ): ProviderEvaluation[java.lang.Integer] = current.get().getIntegerEvaluation(key, defaultValue, ctx)
 
   override def getLongEvaluation(
     key: String,
     defaultValue: java.lang.Long,
     ctx: OFEvaluationContext
-  ): ProviderEvaluation[java.lang.Long] = delegate.getLongEvaluation(key, defaultValue, ctx)
+  ): ProviderEvaluation[java.lang.Long] = current.get().getLongEvaluation(key, defaultValue, ctx)
 
   override def getDoubleEvaluation(
     key: String,
     defaultValue: java.lang.Double,
     ctx: OFEvaluationContext
-  ): ProviderEvaluation[java.lang.Double] = delegate.getDoubleEvaluation(key, defaultValue, ctx)
+  ): ProviderEvaluation[java.lang.Double] = current.get().getDoubleEvaluation(key, defaultValue, ctx)
 
   override def getObjectEvaluation(
     key: String,
     defaultValue: Value,
     ctx: OFEvaluationContext
-  ): ProviderEvaluation[Value] = delegate.getObjectEvaluation(key, defaultValue, ctx)
+  ): ProviderEvaluation[Value] = current.get().getObjectEvaluation(key, defaultValue, ctx)
 }
 
 private[openfeature] object ManagedProvider {
@@ -308,12 +343,18 @@ private[openfeature] object ManagedProvider {
         wrappers.synchronized {
           val key = new IdentityKey(other)
           Option(wrappers.get(key)).flatMap(ref => Option(ref.get())).getOrElse {
-            val made = new ManagedProvider(other, probe)
-            wrappers.put(made.cacheKey, new java.lang.ref.WeakReference(made))
+            val made = new ManagedProvider(other, probe, switchable = false)
+            made.cacheKey.foreach(k => wrappers.put(k, new java.lang.ref.WeakReference(made)))
             made
           }
         }
     }
+
+  /** A wrapper starting on `initial` that [[ManagedProvider.switchTo]] can point elsewhere. Never cached: what it
+    * delegates to changes, so it is nobody's wrapper but its creator's.
+    */
+  def switchable(initial: OFFeatureProvider, probe: LifecycleProbe = LifecycleProbe.none): ManagedProvider =
+    new ManagedProvider(initial, probe, switchable = true)
 
   /** The wrapper around `provider` if one exists, without making one. */
   def existing(provider: OFFeatureProvider): Option[ManagedProvider] = provider match {
@@ -322,7 +363,9 @@ private[openfeature] object ManagedProvider {
       wrappers.synchronized(Option(wrappers.get(new IdentityKey(other))).flatMap(ref => Option(ref.get())))
   }
 
-  /** The user's provider behind a wrapper, or `provider` itself. */
+  /** The provider behind a wrapper (for a switchable one, its current delegate), or `provider` itself. Peels one
+    * wrapper only.
+    */
   def unwrap(provider: OFFeatureProvider): OFFeatureProvider = provider match {
     case managed: ManagedProvider => managed.delegate
     case other                    => other

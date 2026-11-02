@@ -582,7 +582,7 @@ private[openfeature] object FeatureFlagsFactories {
         firstFallback <- fallback
         // The one provider the SDK ever sees on this path: it delegates to the fallback until the real provider
         // is initialized, then is flipped to the composed stack. No SDK swap, so no NotReady window.
-        switch = new SwitchableProvider(firstFallback)
+        switch = ManagedProvider.switchable(firstFallback)
         state <- SubscriptionRef.make[AcquireState](AcquireState.Constructing)
         ff    <- buildWithTracking(
           switch,

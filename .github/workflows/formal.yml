@@ -138,9 +138,10 @@ jobs:
           curl -sSfLo tlapm.tar.gz "https://github.com/tlaplus/tlapm/releases/download/${TLAPM_VERSION}/tlapm-${TLAPM_VERSION}-x86_64-linux-gnu.tar.gz"
           echo "${TLAPM_SHA256}  tlapm.tar.gz" | sha256sum -c -
           tar xzf tlapm.tar.gz
+      # --stretch: the largest steps outrun the default prover timeouts on a CI runner.
       - name: Check the lifecycle model's proofs
         working-directory: formal/lifecycle
-        run: ../../tlapm/bin/tlapm --cleanfp LifecycleProofs.tla
+        run: ../../tlapm/bin/tlapm --cleanfp --stretch 5 LifecycleProofs.tla
 
   traces:
     runs-on: ubuntu-latest

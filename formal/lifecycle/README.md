@@ -89,7 +89,8 @@ tlapm --cleanfp LifecycleProofs.tla
 
 `IndInv`, the conjunction of the three, is inductive: `NextInd` proves that every action preserves it. The `Formal
 model` workflow's `proofs` job runs the prover on every pull request that changes the model, in a few minutes, and
-fails on any unproved obligation. A change to `lock`, `gate` or `swap`, or a new action, must update the proofs.
+fails on any unproved obligation. It runs with `--stretch 5`, since the largest steps outrun the default prover
+timeouts on a CI runner; a local failure on `Deliver`, `OrphanResolved` or the teardown steps may need the same. A change to `lock`, `gate` or `swap`, or a new action, must update the proofs.
 
 `ConstantsOK` states what the proofs assume of the constants, and TLC checks it too. One clause is easy to miss:
 `None \notin SwapRec`. The prover does not know `None` is a model value, so without it a new swap might equal `None`.

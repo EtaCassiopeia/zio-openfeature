@@ -22,7 +22,9 @@ import zio.test._
   *
   * What is checked is what the test registered on its own fiber and the fibers it joined (see
   * `zio.openfeature.internal.Quiescence`): an instance built in a fiber never joined, or in a layer built outside the
-  * test's fiber, is not seen. The aspect makes the spec sequential, since the leak baseline is the whole JVM's.
+  * test's fiber, is not seen. Resources held by the test's own `Scope` are still open when the checks run, so a test
+  * closes what it builds in a `ZIO.scoped` of its own. The aspect makes the spec sequential, since the leak baseline is
+  * the whole JVM's.
   */
 object Quiescence {
 

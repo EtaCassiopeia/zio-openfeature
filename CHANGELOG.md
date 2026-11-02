@@ -464,6 +464,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Tests
 
+- **A rollback that times out shuts the failed provider down once** (#728). The rollback's own cleanup shuts it down,
+  and the SDK's later shutdown of it reaches the same wrapper in the same cycle, so it stops there. A hot-swap test now
+  pins the count. The cleanup also leaves a provider the shared API registered outside the instance to the SDK.
 - **The lifecycle model checks the evaluation gate** (#721). Evaluations run alongside swaps in `Evaluation.cfg`, on
   every pull request. TLC checks that a returned answer comes from the provider installed when it returns, and never
   while a swap is in flight. Mutants that drop the re-check, or either half of it, are caught. A new hot-swap test

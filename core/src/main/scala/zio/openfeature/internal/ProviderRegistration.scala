@@ -329,18 +329,21 @@ private[openfeature] object ProviderRegistration {
     provider: OFFeatureProvider,
     timeout: Duration
   ): Task[Unit] =
-    ZIO
-      // The slot's manager holds the provider's wrapper, when the library registered it.
-      .attemptBlocking(
-        ProviderStateAccess
-          .retryFailedInit(
-            api,
-            domain.orNull,
-            ManagedProvider.existing(provider).fold[OFFeatureProvider](provider)(m => m)
-          )
-      )
-      .disconnect
-      .timeoutFail(new TimeoutException(s"Provider initialization exceeded $timeout"))(timeout)
+    Timeouts.failAfter(
+      ZIO
+        // The slot's manager holds the provider's wrapper, when the library registered it.
+        .attemptBlocking(
+          ProviderStateAccess
+            .retryFailedInit(
+              api,
+              domain.orNull,
+              ManagedProvider.existing(provider).fold[OFFeatureProvider](provider)(m => m)
+            )
+        )
+        .disconnect,
+      timeout,
+      new TimeoutException(s"Provider initialization exceeded $timeout")
+    )
 
   /** How long a failure path the caller is waiting on gives the failed provider's `shutdown()`: the initialization
     * budget the caller already granted that provider, capped at [[DefaultShutdownTimeout]].
@@ -353,10 +356,13 @@ private[openfeature] object ProviderRegistration {
     * running in the background, and a failure it reports after the timeout is still logged.
     */
   def boundedInitialize(provider: OFFeatureProvider, context: OFEvaluationContext, timeout: Duration): Task[Unit] =
-    ZIO
-      .attemptBlocking(provider.initialize(context))
-      .tapError(e => ZIO.logWarning(s"provider initialize failed: $e"))
-      .disconnect
-      .timeoutFail(new TimeoutException(s"Provider initialization exceeded $timeout"))(timeout)
+    Timeouts.failAfter(
+      ZIO
+        .attemptBlocking(provider.initialize(context))
+        .tapError(e => ZIO.logWarning(s"provider initialize failed: $e"))
+        .disconnect,
+      timeout,
+      new TimeoutException(s"Provider initialization exceeded $timeout")
+    )
 
 }

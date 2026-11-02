@@ -14,4 +14,11 @@ private[openfeature] object Timeouts {
     */
   def failAfter[R, E, A](effect: ZIO[R, E, A], d: Duration, error: => E)(implicit trace: Trace): ZIO[R, E, A] =
     effect.raceFirst(ZIO.sleep(d) *> ZIO.fail(error))
+
+  /** `effect.timeout(d)`: `effect`'s value, or `None` once `d` has passed, the other side interrupted. An infinite `d`
+    * races nothing.
+    */
+  def within[R, E, A](effect: ZIO[R, E, A], d: Duration)(implicit trace: Trace): ZIO[R, E, Option[A]] =
+    if (d == Duration.Infinity) effect.map(Some(_))
+    else effect.map(Some(_): Option[A]).raceFirst(ZIO.sleep(d).as(None))
 }

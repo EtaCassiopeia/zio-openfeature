@@ -450,9 +450,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **A timed provider call counted as running always reaches the provider** (#707). An interruption, the timeout's or
   the caller's, arriving just after the call was counted could skip the provider while the count stayed; the call now
   runs once counted, as the blocking call would have anyway.
-- **A timed call interrupted by its caller no longer leaves a sleeping timer behind** (#708). The evaluation timeout's
-  timer, and `fromAcquireAsync`'s construction timeout's, kept sleeping until the timeout passed when the caller was
-  interrupted; they now end with it.
+- **A timed call interrupted by its caller no longer leaves a sleeping timer behind** (#708). The timers of the
+  evaluation timeout, `fromAcquireAsync`'s construction and initialization timeouts, the registry's re-initialization
+  and `awaitReady` kept sleeping until the timeout passed when the caller was interrupted; they now end with it.
 
 ### Tests
 

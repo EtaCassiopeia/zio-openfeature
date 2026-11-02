@@ -16,6 +16,7 @@ import zio.openfeature.internal.{
   LifecycleProbe,
   Lock,
   Quiescence,
+  Timeouts,
   Refusal,
   Bound,
   ManagedProvider,
@@ -474,12 +475,15 @@ final private[openfeature] class FeatureFlagsLive(
     // (`None`) or an exhausted stream we return the then-current status, so every path yields a real status.
     // A shut-down instance never becomes evaluable again, so ShuttingDown and the terminal NotReady stop the wait too
     // — otherwise `awaitReady()` on a shut-down instance would wait forever.
-    state.statusRef.changes
-      .filter(s =>
-        s.canEvaluate || s == ProviderStatus.Fatal || s == ProviderStatus.ShuttingDown || lifecycle.snapshot.shutDown
+    Timeouts
+      .within(
+        state.statusRef.changes
+          .filter(s =>
+            s.canEvaluate || s == ProviderStatus.Fatal || s == ProviderStatus.ShuttingDown || lifecycle.snapshot.shutDown
+          )
+          .runHead,
+        within
       )
-      .runHead
-      .timeout(within)
       .flatMap {
         case Some(Some(status)) => ZIO.succeed(status)
         case _                  => state.statusRef.get

@@ -69,7 +69,7 @@ jobs:
       fail-fast: false
       matrix:
         java-version: ['17', '21', '25']
-        scala-version: ['2.13.18', '3.3.8']
+        scala-version: ['2.13.18', '3.3.9']
     steps:
       - uses: actions/checkout@v7
       - name: Set up JDK ${{ matrix.java-version }}

@@ -3,7 +3,7 @@ import com.typesafe.tools.mima.core._
 import tastymima.intf.{ProblemKind, ProblemMatcher}
 
 val scala213Version = "2.13.18"
-val scala3Version   = "3.3.8"
+val scala3Version   = "3.3.9"
 val zioVersion      = "2.1.27"
 val zioBddVersion   = "1.5.0"
 // The embedded Rift engine zio-bdd-rift drives (Rift 0.18.0). Keep in step with zio-bdd-rift's own rift-java pin.

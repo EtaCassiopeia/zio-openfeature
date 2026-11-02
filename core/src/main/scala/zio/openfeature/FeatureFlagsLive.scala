@@ -400,9 +400,22 @@ final private[openfeature] class FeatureFlagsLive(
 
   /** Best-effort teardown of the failed new provider when rollback itself failed and left it unbound. On a successful
     * rollback the SDK's `shutDownOld` already does this; this covers only the rollback-failure path. If the failed
-    * provider is somehow still bound, do nothing.
+    * provider is somehow still bound, do nothing. A foreign provider is left alone: the API registered it outside this
+    * instance and may still serve it in another slot, so its lifecycle is the SDK's. No current path gets here with
+    * one, since a swap to a foreign provider fails only when its slot was taken over, and then nothing is rolled back;
+    * the match keeps the rule if that changes.
     */
-  private def cleanupUnboundFailedProvider(newProvider: OFFeatureProvider): UIO[Unit] =
+  private def cleanupUnboundFailedProvider(incoming: Bound): UIO[Unit] =
+    incoming match {
+      case Bound.Foreign(provider) =>
+        ZIO.logDebug(
+          s"setProvider (rollback failed): provider '${nameOf(provider)}' is registered with the API " +
+            "outside this instance; leaving its lifecycle to the SDK"
+        )
+      case Bound.Managed(managed) => shutDownUnboundFailedProvider(managed)
+    }
+
+  private def shutDownUnboundFailedProvider(newProvider: OFFeatureProvider): UIO[Unit] =
     (for {
       bound <- ZIO.attemptBlocking(domain.fold(api.getProvider())(d => api.getProvider(d)))
       _     <- ZIO.when(bound ne newProvider)(
@@ -659,7 +672,7 @@ final private[openfeature] class FeatureFlagsLive(
                             "Error and evaluations may still route to the failed provider until a later setProvider " +
                             "succeeds",
                           Cause.fail(e)
-                        ) *> cleanupUnboundFailedProvider(incoming.sdk),
+                        ) *> cleanupUnboundFailedProvider(incoming),
                     restored =>
                       // None only when a concurrent sibling swap already won the slot (see restoreSdkRegistration):
                       // leave status Error and log a breadcrumb, don't fight the winner.

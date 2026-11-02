@@ -507,6 +507,53 @@ Spec == Init /\ [][Next]_vars
 ProviderSymmetry == Permutations(Providers)
 
 -----------------------------------------------------------------------------
+(* Recovery: fairness and progress *)
+
+\* The library's own steps of a swap.  The timeout is one of them: it is enabled for as long as the new provider's
+\* initialize() runs, so fairness on it is the code's bounded wait (initTimeout).
+LibrarySwapStep ==
+    \/ SdkBind \/ SdkBindFail \/ SwapDone \/ SwapTimeout \/ SwapFailNoRollback \/ SwapRollbackUnbound \/ SwapReconcile
+    \/ \E ok, early \in BOOLEAN, r \in {"READY", "STALE", "ERROR", "FATAL"} : SwapRollback(ok, r, early)
+
+\* A provider that reported STALE from inside initialize() finishes starting: the assumption the model already makes
+\* (EmitStaleWhileStarting), stated as fairness so the teardown it holds back can run.
+FinishStarting == \E p \in All : inits[p] > 0 /\ sdk[p] = "STALE" /\ SdkInitOk(p)
+
+\* Spec, plus progress for what the library and the SDK do on their own.  Providers get no fairness otherwise: an
+\* initialize() may hang forever, and a provider may never report a state.  Users get none either: nothing forces a
+\* swap, a shutdown or the scope close to start.
+FairSpec ==
+    /\ Spec
+    /\ WF_vars(LibrarySwapStep)                       \* a swap in flight takes its next step; the timeout fires
+    /\ WF_vars(ShutdownDone)                          \* a started shutdown completes
+    /\ WF_vars(\E ev \in events : Deliver(ev))        \* the SDK delivers, or drops, every pending event
+    /\ WF_vars(\E o \in orphans : OrphanResolved(o))  \* a watch that has resolved is acted on
+    /\ WF_vars(FinishStarting)
+
+\* An orphan entry whose watched registration has reached a state its watcher acts on.
+Resolvable(o) == View(o) \in {"READY", "STALE", "ERROR", "FATAL"}
+
+\* Every swap reaches its outcome and lets go of the lock, even against a provider that never returns.
+SwapEnds == (swap # None) ~> (swap = None)
+
+\* A started shutdown completes.
+ShutdownEnds == (lock = "shutdown") ~> (lock = "free" /\ shutDown)
+
+\* The bridge sees, or the SDK drops, every pending event.
+EventsDrain == (events # {}) ~> (events = {})
+
+\* Once the instance stays idle and live, its status ends up as the SDK's state for the installed provider implies,
+\* and stays so.
+StatusCatchesUp ==
+    <>[](lock = "free" /\ ~shutDown /\ ~closed)
+      => <>[](bound = installed /\ (status = "Fatal" \/ Matches(status, sdk[bound])))
+
+\* An orphan whose watch has resolved is settled, unless a teardown settles it first.  One watching a provider that
+\* never settles keeps its entry until a teardown, which nothing forces.
+OrphansSettleOrTearDown ==
+    (\E o \in orphans : Resolvable(o)) ~> ((\A o \in orphans : ~Resolvable(o)) \/ closed \/ shutDown)
+
+-----------------------------------------------------------------------------
 (* Invariants *)
 
 \* Once shutdown has completed the status stays NotReady, apart from a later shutdown call's own ShuttingDown.

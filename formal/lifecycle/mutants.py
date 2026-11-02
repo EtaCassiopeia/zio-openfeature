@@ -1,4 +1,5 @@
-"""Put each fixed lifecycle bug back into the model and check that TLC reports an invariant violated for it.
+"""Put each fixed lifecycle bug back into the model and check that TLC reports an invariant violated for it; then put
+each progress bug in and check that TLC reports its recovery property violated under FairSpec.
 
 Usage: python3 mutants.py <path to tla2tools.jar>.  Exits non-zero when a mutant goes uncaught.
 """
@@ -107,24 +108,65 @@ mutants = {
         '    /\\ gate\' = FALSE\n    /\\ status\' = "NotReady"'),
 }
 
+# Progress bugs: each must make TLC report the named temporal property violated under FairSpec (Liveness.cfg's bounds,
+# checked against that property alone, so the violation is that property's).
+liveness = {
+    # The wait for a new provider has no timeout: a provider whose initialize() never returns holds the swap forever.
+    'a swap waits for a hanging initialize() without a timeout': ('SwapEnds', [
+        ('    \\/ SdkBind \\/ SdkBindFail \\/ SwapDone \\/ SwapTimeout \\/ SwapFailNoRollback',
+         '    \\/ SdkBind \\/ SdkBindFail \\/ SwapDone \\/ SwapFailNoRollback'),
+        ('    \\/ SwapTimeout\n', ''),
+    ]),
+    # The teardown waits for every orphan to settle, which a provider that never settles holds back forever.
+    'shutdown waits for the orphans to settle': ('ShutdownEnds', [
+        ('ShutdownDone ==\n    /\\ lock = "shutdown"\n', 'ShutdownDone ==\n    /\\ lock = "shutdown" /\\ orphans = {}\n'),
+    ]),
+    # A watch that resolved is never acted on.
+    'a resolved orphan is never settled': ('OrphansSettleOrTearDown', [
+        ('OrphanResolved(o) ==\n    /\\ o \\in orphans\n', 'OrphanResolved(o) ==\n    /\\ FALSE /\\ o \\in orphans\n'),
+    ]),
+}
+
 jar = os.path.abspath(sys.argv[1]) if len(sys.argv) > 1 else os.path.join(here, 'tla2tools.jar')
 cfg = open(os.path.join(here, 'Lifecycle.cfg')).read()
+live_cfg = open(os.path.join(here, 'Liveness.cfg')).read()
 missed = []
-for name, edits in mutants.items():
+
+
+def mutate(name, edits):
     mutated = spec
     for old, new in (edits if isinstance(edits, list) else [edits]):
         if mutated.count(old) != 1:
             sys.exit(f'{name}: the mutation no longer applies to Lifecycle.tla; update mutants.py')
         mutated = mutated.replace(old, new)
+    return mutated
+
+
+def tlc(mutated, config, deadlock):
     with tempfile.TemporaryDirectory() as d:
         open(os.path.join(d, 'Lifecycle.tla'), 'w').write(mutated)
-        open(os.path.join(d, 'Lifecycle.cfg'), 'w').write(cfg)
-        out = subprocess.run(['java', '-XX:+UseParallelGC', '-cp', jar, 'tlc2.TLC', '-workers', 'auto', '-deadlock',
-                              '-config', 'Lifecycle.cfg', 'Lifecycle.tla'], cwd=d, capture_output=True, text=True).stdout
+        open(os.path.join(d, 'Lifecycle.cfg'), 'w').write(config)
+        args = ['java', '-XX:+UseParallelGC', '-cp', jar, 'tlc2.TLC', '-workers', 'auto']
+        args += (['-deadlock'] if deadlock else []) + ['-config', 'Lifecycle.cfg', 'Lifecycle.tla']
+        return subprocess.run(args, cwd=d, capture_output=True, text=True).stdout
+
+
+for name, edits in mutants.items():
+    out = tlc(mutate(name, edits), cfg, deadlock=True)
     m = re.search(r'Invariant (\w+) is violated', out)
     if m:
         print(f'{name}: caught by {m.group(1)}')
     else:
         print(f'{name}: NOT CAUGHT\n{out[-600:]}')
+        missed.append(name)
+
+for name, (prop, edits) in liveness.items():
+    config = re.sub(r'PROPERTIES\n(    \w+\n)+', f'PROPERTIES\n    {prop}\n', live_cfg)
+    out = tlc(mutate(name, edits), config, deadlock=True)
+    m = re.search(r'Temporal propert(?:y|ies) (\w+)? ?was violated', out)
+    if m and m.group(1) in (None, prop):
+        print(f'{name}: caught by {prop}')
+    else:
+        print(f'{name}: NOT CAUGHT by {prop}\n{out[-600:]}')
         missed.append(name)
 sys.exit(1 if missed else 0)

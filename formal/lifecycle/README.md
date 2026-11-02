@@ -232,14 +232,39 @@ action. A run that reaches `Watchdog`, which the model leaves out, is skipped.
 | The process crashes | Nothing is durable, and a restart is a fresh `Init`. `ClosedCleanly` cannot hold when no finalizer runs. | not applicable |
 | A provider reports a state from inside `initialize()` and then fails | See "What is outside the model" | `LifecycleInterleavingSpec` |
 
-### Safety only
+### Recovery
 
-Every property is an invariant, and `Spec` has no fairness. So the model shows that nothing wrong happens, never that something eventually happens. Behaviours it allows include:
-- an event that is never delivered;
-- a hung `initialize()` that never times out;
-- an orphan that never settles.
+The invariants show that nothing wrong happens. `FairSpec` adds what makes things happen, and `Liveness.cfg` checks
+that the system recovers under it. The fairness assumptions, in plain words:
 
-On such a behaviour `StatusFollowsSdk` holds vacuously. Recovery, meaning progress after a failure, is covered by the test suites' timeouts, not by TLC. #718 adds fairness and the recovery properties.
+- **The library's own steps.** A swap in flight takes its next step. The timeout eventually fires while a new provider's
+  `initialize()` runs, which is the code's bounded wait. A started shutdown completes, and a watch that has resolved is
+  acted on.
+- **The SDK.** It eventually delivers, or drops, every pending event.
+- **Providers get no fairness.** An `initialize()` may hang forever, and a provider may never report a state. The one
+  exception is the assumption the model already makes: a provider that reported `STALE` from inside `initialize()`
+  finishes starting.
+- **Users get none either.** Nothing forces a swap, a shutdown or the scope close to start.
+
+| Property | Meaning |
+|:--|:--|
+| `SwapEnds` | Every swap reaches its outcome and lets go of the lock, even against a provider that never returns. |
+| `ShutdownEnds` | A started shutdown completes. |
+| `EventsDrain` | The bridge sees, or the SDK drops, every pending event. |
+| `StatusCatchesUp` | Once the instance stays idle and live, its status ends up as the SDK's state for the installed provider implies, and stays so. Without it, `StatusFollowsSdk` held vacuously on a behaviour where an event was never delivered. |
+| `OrphansSettleOrTearDown` | An orphan whose watch has resolved is settled, unless a teardown settles it first. One watching a provider that never settles keeps its entry until a teardown, which nothing forces. |
+
+`Liveness.cfg` has two providers besides `P0`, two swaps and one provider event. It uses no `SYMMETRY`, since TLC's
+liveness checking is unsound under symmetry. It takes about 1.5 minutes on 10 cores (834K distinct states), so the
+`Formal model` workflow runs it on every pull request. Three swaps and two events had not finished after more than two
+hours, so the bounds stay small. `mutants.py` puts in three progress bugs, and TLC must report
+the named property violated:
+
+| Progress bug | Caught by |
+|:--|:--|
+| A swap waits for a hanging `initialize()` without a timeout | `SwapEnds` |
+| Shutdown waits for the orphans to settle | `ShutdownEnds` |
+| A resolved orphan is never settled | `OrphansSettleOrTearDown` |
 
 ## When the lifecycle code changes
 

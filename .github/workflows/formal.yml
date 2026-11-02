@@ -1,8 +1,9 @@
 name: Formal model
 
 # TLC checks the provider-lifecycle model (formal/lifecycle) on every change to it and to the lifecycle code it models.
-# A pull request that changes the lifecycle code without changing the model says why in its description. On main and
-# on demand, the mutants also run: each fixed lifecycle bug is put back into the model and must be caught.
+# A pull request that changes the lifecycle code without changing the model says why in its description. TLC also checks
+# the recovery properties under fairness (Liveness.cfg). On main and on demand, the mutants also run: each fixed
+# lifecycle bug and each progress bug is put back into the model and must be caught.
 # Trace validation checks that runs of the library are behaviours of the model: on pull requests the checker's own
 # fixtures, on main, nightly and on demand also the runs the lifecycle test suites record.
 on:
@@ -75,7 +76,12 @@ jobs:
       - name: Check the lifecycle model
         working-directory: formal/lifecycle
         run: java -XX:+UseParallelGC -cp ../../tla2tools.jar tlc2.TLC -workers auto -deadlock -config Lifecycle.cfg Lifecycle.tla
-      - name: Check that the model catches each fixed lifecycle bug
+      # Recovery: the temporal properties under FairSpec, on Liveness.cfg's small bounds and without symmetry, which
+      # TLC's liveness checking does not support soundly.
+      - name: Check the lifecycle model's recovery properties
+        working-directory: formal/lifecycle
+        run: java -XX:+UseParallelGC -cp ../../tla2tools.jar tlc2.TLC -workers auto -config Liveness.cfg Lifecycle.tla
+      - name: Check that the model catches each fixed lifecycle bug and each progress bug
         if: github.event_name != 'pull_request'
         working-directory: formal/lifecycle
         run: python3 mutants.py ../../tla2tools.jar

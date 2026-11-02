@@ -18,6 +18,11 @@ import java.util.concurrent.{ExecutorService, Executors, RejectedExecutionExcept
   * queues until it is released, then drains. There is no cycle. `Awaitable.await()` ignores interrupts, so `close()`
   * cannot cut a stalled wait short, which is why the thread is a daemon.
   *
+  * `formal/lane` checks this argument with TLC. The slot follows the order of `enqueue`; nothing deadlocks under the
+  * library's lock use; and no emission the lane accepted is cut off by `close()`'s bound. Its mutants show the
+  * argument's load-bearing parts: a lane that holds either lock while it waits deadlocks, and so does a writer that
+  * waits on the lane without a bound. Calling `setProviderAndWait` lets a close cut emissions off, or deadlocks.
+  *
   * Not covered: two emissions the owner's delegate issues back to back without awaiting them. Its own pool can swap
   * them before any lane sees them.
   */

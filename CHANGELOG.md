@@ -450,9 +450,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **A timed provider call counted as running always reaches the provider** (#707). An interruption, the timeout's or
   the caller's, arriving just after the call was counted could skip the provider while the count stayed; the call now
   runs once counted, as the blocking call would have anyway.
+- **A timed call interrupted by its caller no longer leaves a sleeping timer behind** (#708). The evaluation timeout's
+  timer, and `fromAcquireAsync`'s construction timeout's, kept sleeping until the timeout passed when the caller was
+  interrupted; they now end with it.
 
 ### Tests
 
+- **Lifecycle specs check the end state after every test** (#708). A test aspect fails a lifecycle, swap, shutdown or
+  wrapper spec's test that leaves a fiber or thread running, an abandoned call counted, an event bridge attached or an
+  orphan left on a closed instance, a shut-down wrapper's event lane running, or a test provider shut down twice in
+  one initialization cycle.
 - **Every stage of an evaluation is interrupted in a test** (#707). An internal `EvaluationProbe` names eleven points
   of the evaluation path, the steps of "One evaluation, step by step", and `EvaluationInterruptionSpec` holds an
   evaluation at each, then interrupts the caller, lets the timeout elapse where it races the call, or releases it. 23

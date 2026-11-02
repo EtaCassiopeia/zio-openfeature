@@ -36,9 +36,7 @@ object EvaluationInterruptionSpec extends ZIOSpecDefault {
   private val Other = "cached"
 
   private val ShortTimeout = 300.millis
-  // Shorter than the leak check's wait: a caller interrupted while its call races the timeout leaves the timeout's
-  // timer fiber sleeping until the timeout elapses. It holds no thread and ends on its own.
-  private val LongTimeout = 2.seconds
+  private val LongTimeout  = 30.seconds
 
   /** Holds the first evaluation that reaches `target` once armed, and records every point reached once armed. */
   final private class HoldingProbe(target: Point, held: Promise[Nothing, Unit], release: Promise[Nothing, Unit])

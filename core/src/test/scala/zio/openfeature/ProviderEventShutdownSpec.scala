@@ -1,4 +1,6 @@
 package zio.openfeature
+
+import zio.openfeature.testsupport.Quiescence
 import zio.openfeature.internal.ProviderEvaluations
 
 import dev.openfeature.sdk.{
@@ -108,5 +110,5 @@ object ProviderEventShutdownSpec extends ZIOSpecDefault {
         } yield assertCompletes
       }
     } @@ withLiveClock @@ timeout(10.seconds)
-  ) @@ sequential
+  ) @@ sequential @@ Quiescence.aspect
 }

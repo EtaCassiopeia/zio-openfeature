@@ -1,5 +1,7 @@
 package zio.openfeature.extras
 
+import zio.openfeature.testsupport.Quiescence
+
 import dev.openfeature.sdk.{FeatureProvider, OpenFeatureAPI, ProviderEvent => OFProviderEvent, ProviderEventDetails}
 import dev.openfeature.sdk.exceptions.{GeneralError, ProviderNotReadyError}
 import zio._
@@ -242,5 +244,5 @@ object WrapperStackFaultSpec extends ZIOSpecDefault {
         .foreach(shrunkCases)(c => runCase(c).map(report(c, _)))
         .map(reports => assertTrue(reports.mkString == ""))
     }
-  ) @@ TestAspect.sequential @@ TestAspect.withLiveClock
+  ) @@ TestAspect.sequential @@ TestAspect.withLiveClock @@ Quiescence.aspect
 }

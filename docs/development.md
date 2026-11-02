@@ -187,6 +187,18 @@ without leaking a fiber or a non-daemon thread (`LeakCheck` in `zio.openfeature.
 so the nightly run multiplies its budget. `OFREPFailureModeSpec` covers the HTTP side in CI with WireMock: dribbled
 bodies, random bytes, malformed chunks, empty responses, truncated JSON and an HTML page served with status 200.
 
+**End-state checks.** The lifecycle, swap, shutdown and abandoned-call specs, the interleaving grid and the extras
+wrapper specs run under `Quiescence.aspect` (`zio.openfeature.testsupport`). After each test it fails the test if:
+- a fiber or non-daemon thread the test started is still alive;
+- an instance the test built still counts an abandoned call;
+- once closed or shut down, an instance still has its event bridge on the client, an orphan left, a shut-down
+  wrapper whose event lane still runs, or a status other than `NotReady` after `shutdown`;
+- a `TestFeatureProvider` or `FaultyProvider` had `shutdown()` reach it twice in one initialization cycle.
+
+Instances and test providers register on the test's fiber when they are made; one built in a fiber that is never
+joined, or in a layer built outside the test's fiber, is not checked. A live instance skips the bridge and lane
+checks, and checks its orphans only while no swap holds its lock.
+
 **Provider fault tests** run the real OFREP and Optimizely providers through rift's TLS intercept proxy while scripted
 network faults play out; see [Testing real providers](testing-real-providers.md). They are a dev-machine check by
 design: not aggregated into the root project, so `sbt test` never runs them; CI only compiles them; they need JDK 22 or

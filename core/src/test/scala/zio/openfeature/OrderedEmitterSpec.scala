@@ -1,5 +1,7 @@
 package zio.openfeature
 
+import zio.openfeature.testsupport.Quiescence
+
 import zio.openfeature.internal.{OrderedEmitter, ProviderEvaluations}
 
 import dev.openfeature.sdk.{
@@ -75,7 +77,7 @@ object OrderedEmitterSpec extends ZIOSpecDefault {
     test("emissions reach the owner in enqueue order, and enqueue does not wait for a slow one") {
       val owner = new Owner(slow = Set(Error))
       val lane  = new OrderedEmitter(owner)
-      for {
+      (for {
         took <- ZIO.succeed {
           val start = java.lang.System.nanoTime()
           lane.enqueue(Error, details)
@@ -85,23 +87,24 @@ object OrderedEmitterSpec extends ZIOSpecDefault {
         }
         all <- eventually(owner.seen.size == 3)
         _   <- ZIO.succeed(lane.close())
-      } yield assertTrue(all, owner.seen == List(Error, Stale, Ready), took < 50.millis.toNanos)
+      } yield assertTrue(all, owner.seen == List(Error, Stale, Ready), took < 50.millis.toNanos))
+        .ensuring(ZIO.succeed(lane.close()))
     },
     test("a lane closed before any emission starts no thread and drops later emissions") {
       val owner = new Owner()
       val lane  = new OrderedEmitter(owner)
-      for {
+      (for {
         _       <- ZIO.succeed(lane.close())
         running <- ZIO.succeed(lane.isRunning)
         _       <- ZIO.succeed(lane.enqueue(Ready, details))
         _       <- Live.live(ZIO.sleep(100.millis))
         _       <- ZIO.succeed(lane.close())
-      } yield assertTrue(!running, owner.seen.isEmpty)
+      } yield assertTrue(!running, owner.seen.isEmpty)).ensuring(ZIO.succeed(lane.close()))
     },
     test("close runs the emissions already enqueued, stops the thread, and drops what comes after") {
       val owner = new Owner(slow = Set(Error, Stale))
       val lane  = new OrderedEmitter(owner)
-      for {
+      (for {
         _       <- ZIO.succeed { lane.enqueue(Error, details); lane.enqueue(Stale, details) }
         started <- ZIO.succeed(lane.isRunning)
         _       <- ZIO.attemptBlocking(lane.close())
@@ -109,13 +112,14 @@ object OrderedEmitterSpec extends ZIOSpecDefault {
         stopped <- eventually(!lane.isRunning)
         _       <- ZIO.succeed(lane.enqueue(Ready, details))
         _       <- Live.live(ZIO.sleep(100.millis))
-      } yield assertTrue(started, drained == List(Error, Stale), stopped, owner.seen == List(Error, Stale))
+      } yield assertTrue(started, drained == List(Error, Stale), stopped, owner.seen == List(Error, Stale)))
+        .ensuring(ZIO.succeed(lane.close()))
     },
     test("close gives up on a stalled emission within the SDK's bound") {
       val gate  = new CountDownLatch(1)
       val owner = new Owner(gate = Some(gate))
       val lane  = new OrderedEmitter(owner)
-      for {
+      (for {
         _    <- ZIO.succeed { lane.enqueue(Ready, details); lane.enqueue(Stale, details) }
         took <- ZIO.attemptBlocking {
           val start = java.lang.System.nanoTime()
@@ -132,16 +136,16 @@ object OrderedEmitterSpec extends ZIOSpecDefault {
         stillRunning,
         stopped,
         owner.seen == List(Ready) // the queued STALE was discarded by the forced stop
-      )
+      )).ensuring(ZIO.succeed(lane.close()))
     },
     test("an emission the owner rejects is dropped and the ones after it still arrive, in order") {
       val owner = new Owner(reject = Set(Error))
       val lane  = new OrderedEmitter(owner)
-      for {
+      (for {
         _   <- ZIO.succeed { lane.enqueue(Change, details); lane.enqueue(Error, details); lane.enqueue(Stale, details) }
         all <- eventually(owner.seen.size == 2)
         _   <- ZIO.succeed(lane.close())
-      } yield assertTrue(all, owner.seen == List(Change, Stale))
+      } yield assertTrue(all, owner.seen == List(Change, Stale))).ensuring(ZIO.succeed(lane.close()))
     }
-  ) @@ TestAspect.sequential @@ TestAspect.timeout(1.minute)
+  ) @@ TestAspect.sequential @@ TestAspect.timeout(1.minute) @@ Quiescence.aspect
 }

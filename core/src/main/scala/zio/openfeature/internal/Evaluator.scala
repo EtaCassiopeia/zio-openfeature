@@ -261,24 +261,28 @@ final private[openfeature] class Evaluator(
                   abandonedCalls.incrementAndGet(): Unit
                 else call.compareAndSet(FeatureFlagsLive.CallNotStarted, FeatureFlagsLive.CallSkipped): Unit
               }.unit
-              ZIO
-                .suspendSucceed(
-                  // Running means the provider is called: an interruption (the timeout's, or the caller's) arriving
-                  // after the move cannot skip the call, which the blocking call itself would not notice anyway.
-                  if (call.compareAndSet(FeatureFlagsLive.CallNotStarted, FeatureFlagsLive.CallRunning))
-                    (probe.at(Point.CallForked) *> effect).uninterruptible
-                  else ZIO.interrupt
+              Timeouts
+                .failAfter(
+                  ZIO
+                    .suspendSucceed(
+                      // Running means the provider is called: an interruption (the timeout's, or the caller's) arriving
+                      // after the move cannot skip the call, which the blocking call itself would not notice anyway.
+                      if (call.compareAndSet(FeatureFlagsLive.CallNotStarted, FeatureFlagsLive.CallRunning))
+                        (probe.at(Point.CallForked) *> effect).uninterruptible
+                      else ZIO.interrupt
+                    )
+                    // Before `.disconnect`, so the finalizer runs on the disconnected fiber when the provider finally
+                    // returns, however long after the caller moved on.
+                    .ensuring(ZIO.succeed {
+                      if (
+                        !call.compareAndSet(FeatureFlagsLive.CallRunning, FeatureFlagsLive.CallDone) &&
+                        call.get() == FeatureFlagsLive.CallAbandoned
+                      ) abandonedCalls.decrementAndGet(): Unit
+                    })
+                    .disconnect,
+                  d,
+                  new java.util.concurrent.TimeoutException(s"Evaluation of '$key' timed out after $d")
                 )
-                // Before `.disconnect`, so the finalizer runs on the disconnected fiber when the provider finally
-                // returns, however long after the caller moved on.
-                .ensuring(ZIO.succeed {
-                  if (
-                    !call.compareAndSet(FeatureFlagsLive.CallRunning, FeatureFlagsLive.CallDone) &&
-                    call.get() == FeatureFlagsLive.CallAbandoned
-                  ) abandonedCalls.decrementAndGet(): Unit
-                })
-                .disconnect
-                .timeoutFail(new java.util.concurrent.TimeoutException(s"Evaluation of '$key' timed out after $d"))(d)
                 .tapError {
                   case _: java.util.concurrent.TimeoutException => abandon
                   case _                                        => ZIO.unit

@@ -14,6 +14,8 @@ import zio.openfeature.internal.{
   LifecycleEffect,
   LifecycleInput,
   LifecycleProbe,
+  Lock,
+  Quiescence,
   Refusal,
   Bound,
   ManagedProvider,
@@ -99,6 +101,39 @@ final private[openfeature] class FeatureFlagsLive(
 
   /** Abandoned provider calls still running — for tests. */
   private[openfeature] def abandonedCallCount: Int = evaluator.abandonedCallCount
+
+  /** This instance's end state, for a test's end-state check: no abandoned call still counted; once closed or shut
+    * down, the bridge detached, no orphan left, and a wrapper shut down in its cycle with its lane stopped; once shut
+    * down, the status `NotReady`. On a live instance the orphans are checked only while no swap or shutdown holds the
+    * lock, since one may have an orphan legitimately pending.
+    */
+  private[openfeature] def endState: Quiescence.Observed =
+    new Quiescence.Observed {
+      def label: String = s"FeatureFlags(${domain.getOrElse("default")}, '${providerNameRef.get()}')"
+
+      def violations: UIO[Chunk[String]] =
+        providerStatus.map { status =>
+          val record   = lifecycle.snapshot
+          val ended    = record.closed || record.shutDown
+          val wrappers = (record.installed :: record.replaced.flatMap { case (h, p) => List(h, p) }).collect {
+            case m: ManagedProvider => m
+          }.distinct
+          Chunk.fromIterable(
+            List(
+              Option.when(abandonedCallCount != 0)(s"$abandonedCallCount abandoned provider calls still counted"),
+              Option.when(ended && eventBridge.bridgeAttached)("the event bridge is still attached to the client"),
+              Option.when((ended || record.lock == Lock.Free) && record.orphans.nonEmpty)(
+                s"orphans left: ${record.orphans.map(_._2).mkString(", ")}"
+              ),
+              Option.when(record.shutDown && status != ProviderStatus.NotReady)(s"shut down with status $status")
+            ).flatten ++
+              (if (ended) wrappers.filter(w => w.shutDownInCycle && w.laneRunning).map { w =>
+                 s"the event lane of '${nameOf(w)}' still runs after its shutdown"
+               }
+               else Nil)
+          )
+        }
+    }
 
   private def lifecycle        = eventBridge.lifecycle
   private def bridgeDeregister = eventBridge.bridgeDeregister

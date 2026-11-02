@@ -1,6 +1,7 @@
 package zio.openfeature
 
 import zio._
+import zio.openfeature.testsupport.Quiescence
 import zio.test._
 import zio.stream.SubscriptionRef
 import zio.openfeature.internal.ProviderEvaluations
@@ -901,5 +902,5 @@ object NonBlockingInitSpec extends ZIOSpecDefault {
           .as(shutdowns.get())
       } yield assertTrue(count == 1)
     }
-  ) @@ TestAspect.sequential
+  ) @@ TestAspect.sequential @@ Quiescence.aspect
 }

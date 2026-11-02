@@ -209,6 +209,9 @@ final private[openfeature] class ManagedProvider private (
 
   private def currentLane: OrderedEmitter = lane.get()
 
+  /** Whether the current cycle's event lane still runs its thread. */
+  private[openfeature] def laneRunning: Boolean = lane.get().isRunning
+
   private def attachDelegate(): Unit =
     cycleLock.synchronized {
       if (!attached.get()) {

@@ -45,6 +45,12 @@ final private[openfeature] class EventBridge(
   private[openfeature] val bridgeDeregister =
     new java.util.concurrent.atomic.AtomicReference[() => Unit](() => ())
 
+  // Whether the bridge's handlers are on the client: set when they are added, cleared when they are removed.
+  private val attached = new java.util.concurrent.atomic.AtomicBoolean(false)
+
+  /** Whether the bridge's handlers are still registered with the client. */
+  private[openfeature] def bridgeAttached: Boolean = attached.get()
+
   /** A status signal, through the lifecycle's step. Every status write except the testkit's shared-ref control surface
     * goes through the lifecycle, which serializes it against every other. Returns Some(next) iff a transition happened,
     * so callers can attach transition-gated side effects (watchdog shutdown, latch release).
@@ -282,7 +288,7 @@ final private[openfeature] class EventBridge(
         client.removeHandler(JavaProviderEvent.PROVIDER_ERROR, errorHandler)
         client.removeHandler(JavaProviderEvent.PROVIDER_STALE, staleHandler)
         client.removeHandler(JavaProviderEvent.PROVIDER_CONFIGURATION_CHANGED, configHandler)
-        ()
+        attached.set(false)
       }
 
       for {
@@ -291,6 +297,7 @@ final private[openfeature] class EventBridge(
           client.on(JavaProviderEvent.PROVIDER_ERROR, errorHandler)
           client.on(JavaProviderEvent.PROVIDER_STALE, staleHandler)
           client.on(JavaProviderEvent.PROVIDER_CONFIGURATION_CHANGED, configHandler)
+          attached.set(true)
           bridgeDeregister.set(deregister)
           ()
         }

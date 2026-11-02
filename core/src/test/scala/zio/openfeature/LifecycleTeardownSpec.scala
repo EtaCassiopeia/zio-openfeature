@@ -1,5 +1,7 @@
 package zio.openfeature
 
+import zio.openfeature.testsupport.Quiescence
+
 import java.util.concurrent.CountDownLatch
 
 import zio._
@@ -293,5 +295,5 @@ object LifecycleTeardownSpec extends ZIOSpecDefault {
         } yield assertTrue(status == ProviderStatus.NotReady)
       }
     }
-  ) @@ TestAspect.sequential @@ TestAspect.withLiveClock @@ TestAspect.timeout(60.seconds)
+  ) @@ TestAspect.sequential @@ TestAspect.withLiveClock @@ TestAspect.timeout(60.seconds) @@ Quiescence.aspect
 }

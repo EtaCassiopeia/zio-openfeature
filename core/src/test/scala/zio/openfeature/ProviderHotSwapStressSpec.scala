@@ -1,5 +1,7 @@
 package zio.openfeature
 
+import zio.openfeature.testsupport.Quiescence
+
 import zio.openfeature.testsupport.PropertyBudget
 import zio.openfeature.internal.ProviderEvaluations
 
@@ -204,5 +206,5 @@ object ProviderHotSwapStressSpec extends ZIOSpecDefault {
         )
       }
     } @@ withLiveClock @@ timeout(30.seconds)
-  )
+  ) @@ Quiescence.aspect
 }

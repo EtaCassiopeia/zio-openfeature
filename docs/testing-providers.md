@@ -92,6 +92,10 @@ check(HostileProvider.evaluationScripts) { script =>
 }
 ```
 
+A `FaultyProvider` records every call, so a test can also check its end state: `calls(Op.Shutdown)` after
+`calls(Op.Initialize)` tells whether `shutdown()` reached it twice in one initialization cycle. The library's own
+lifecycle specs check that after every test.
+
 The library's own sweep, `HostileProviderSweepSpec`, runs the typed getters, `value[A]`, the `*Details` getters,
 `*OrDefault` and `resolveOrDefault` of `FeatureFlags` this way and pins the outcome of each shape.
 

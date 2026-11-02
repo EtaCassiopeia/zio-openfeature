@@ -1,5 +1,7 @@
 package zio.openfeature.extras
 
+import zio.openfeature.testsupport.Quiescence
+
 import zio.openfeature.internal.ProviderEvaluations
 
 import dev.openfeature.sdk.{
@@ -119,5 +121,5 @@ object WrapperEventChannelSpec extends ZIOSpecDefault {
     test("a CircuitBreakerProvider whose attach failed does not detach the wrapper that owns the delegate") {
       failedAttachKeepsOwner(d => CircuitBreakerProvider(d))
     }
-  ) @@ TestAspect.sequential @@ TestAspect.timeout(60.seconds)
+  ) @@ TestAspect.sequential @@ TestAspect.timeout(60.seconds) @@ Quiescence.aspect
 }

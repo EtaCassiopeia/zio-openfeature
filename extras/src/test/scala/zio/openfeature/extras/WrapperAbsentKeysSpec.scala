@@ -1,5 +1,7 @@
 package zio.openfeature.extras
 
+import zio.openfeature.testsupport.Quiescence
+
 import zio._
 import zio.test._
 import zio.openfeature.testkit.{DifferentialLaws, TestFeatureProvider}
@@ -12,5 +14,5 @@ object WrapperAbsentKeysSpec extends ZIOSpecDefault {
     DifferentialLaws.absentKeysAreNotFound("circuit-breaker")(fs =>
       TestFeatureProvider.make(fs.flags).map(CircuitBreakerProvider(_))
     )
-  )
+  ) @@ Quiescence.aspect
 }

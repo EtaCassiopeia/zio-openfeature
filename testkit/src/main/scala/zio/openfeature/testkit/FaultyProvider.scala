@@ -209,6 +209,22 @@ final class FaultyProvider[+P <: FeatureProvider] private (val delegate: P, name
       }
     }.orDie
 
+  /** This provider's end state: no two completed `shutdown()` calls without an `initialize()` between them. */
+  private[openfeature] def endState: zio.openfeature.internal.Quiescence.Observed =
+    new zio.openfeature.internal.Quiescence.Observed {
+      def label: String                  = s"FaultyProvider('$name')"
+      def violations: UIO[Chunk[String]] = calls.map { recorded =>
+        val most = recorded
+          .foldLeft((0, 0)) {
+            case ((_, most), call) if call.op == Op.Initialize     => (0, most)
+            case ((current, most), call) if call.op == Op.Shutdown => (current + 1, math.max(most, current + 1))
+            case (acc, _)                                          => acc
+          }
+          ._2
+        if (most > 1) Chunk(s"shutdown() reached it $most times in one initialization cycle") else Chunk.empty
+      }
+    }
+
   /** Unpark every call that entered before this release, including one still on its way to its hang. A call that enters
     * later parks again.
     */
@@ -432,7 +448,7 @@ object FaultyProvider {
 
   /** Wrap `delegate`. The wrapper reports `name` as its metadata name. */
   def wrap[P <: FeatureProvider](delegate: P, name: String = DefaultName): UIO[FaultyProvider[P]] =
-    ZIO.succeed(new FaultyProvider(delegate, name))
+    ZIO.succeed(new FaultyProvider(delegate, name)).tap(p => zio.openfeature.internal.Quiescence.register(p.endState))
 
   /** Wrap a fresh [[TestFeatureProvider]] holding `flags`; reach it through `delegate` to change flags. */
   def make(

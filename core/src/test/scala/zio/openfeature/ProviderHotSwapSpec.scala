@@ -1,4 +1,6 @@
 package zio.openfeature
+
+import zio.openfeature.testsupport.Quiescence
 import zio.openfeature.internal.ProviderEvaluations
 
 import dev.openfeature.sdk.{
@@ -1546,5 +1548,5 @@ object ProviderHotSwapSpec extends ZIOSpecDefault {
           assertTrue(initAfter == initBefore)
       }
     }
-  ) @@ TestAspect.sequential
+  ) @@ TestAspect.sequential @@ Quiescence.aspect
 }

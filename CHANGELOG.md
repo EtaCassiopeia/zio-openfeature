@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`zio-openfeature-schema`: a `FlagType` from a zio-schema `Schema`, on Scala 2.13 and 3** (#713). A new opt-in
+  module: `SchemaFlagType[A](schema)` reads and writes a flag through `A`'s `Schema` (zio-schema 1.8.7), so a 2.13
+  project gets a case-class or sealed-trait flag without writing a codec. A case class is an object; a sealed trait of
+  fieldless cases is its case name; a sealed trait with data-carrying cases is `{"<Case>": {<fields>}}`. Missing keys
+  take the declared field default, then `None` for an `Option`. Core's dependencies are unchanged.
+
 - **`FeatureFlagsAdmin`: administering an instance, apart from reading its flags** (#651). Swapping the provider,
   shutting down, the API-level hooks (`addApiHook`, `clearApiHooks`, the ZIO API hooks) and the event-handler
   registrations (`onProviderReady` and the rest, `on`) are on the new `FeatureFlagsAdmin`, with service accessors on its

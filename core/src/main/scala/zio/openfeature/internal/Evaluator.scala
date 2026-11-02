@@ -18,8 +18,10 @@ final private[openfeature] class Evaluator(
   fallbackLogLimiter: FallbackLogLimiter,
   hookPipeline: HookPipeline,
   swapGeneration: java.util.concurrent.atomic.AtomicLong,
-  swapInProgress: java.util.concurrent.atomic.AtomicBoolean
+  swapInProgress: java.util.concurrent.atomic.AtomicBoolean,
+  probe: EvaluationProbe = EvaluationProbe.none
 ) {
+  import EvaluationProbe.Point
   import Evaluator.{convertImmutableMetadata, errorFromResolution}
 
   // Provider calls abandoned by the evaluation timeout that have not returned yet. Each one parks a blocking-pool
@@ -96,14 +98,16 @@ final private[openfeature] class Evaluator(
   private def gated[B](call: IO[FeatureFlagError, B]): IO[FeatureFlagError, B] =
     ZIO.suspendSucceed {
       val generation = swapGeneration.get()
-      checkProviderStatus *> call.exit.flatMap { exit =>
-        val answered = exit match {
-          case Exit.Success(_)     => true
-          case Exit.Failure(cause) => cause.failureOption.isDefined
+      probe.at(Point.StatusGate) *> checkProviderStatus *> call.exit.flatMap { exit =>
+        probe.at(Point.GateRechecked) *> ZIO.suspendSucceed {
+          val answered = exit match {
+            case Exit.Success(_)     => true
+            case Exit.Failure(cause) => cause.failureOption.isDefined
+          }
+          if (answered && (swapGeneration.get() != generation || swapInProgress.get()))
+            ZIO.fail(FeatureFlagError.ProviderNotReady(ProviderStatus.NotReady))
+          else exit
         }
-        if (answered && (swapGeneration.get() != generation || swapInProgress.get()))
-          ZIO.fail(FeatureFlagError.ProviderNotReady(ProviderStatus.NotReady))
-        else exit
       }
     }
 
@@ -120,7 +124,7 @@ final private[openfeature] class Evaluator(
     // deterministic tests without a live provider, and forcing known-safe values while a provider is down). So the gate
     // is pushed down onto the provider-hitting paths (`evaluateFromClient` here, `evaluateAndCache` in
     // `evaluateWithTransaction`) rather than run up front.
-    state.transactionRef.get.flatMap {
+    probe.at(Point.TransactionLookup) *> state.transactionRef.get.flatMap {
       case Some(ts) => evaluateWithTransaction(key, default, context, ts, timeout)
       case None     => gated(evaluateFromClient(key, default, context, timeout))
     }
@@ -232,7 +236,11 @@ final private[openfeature] class Evaluator(
 
     // The only place a provider call can be abandoned, so the abandoned-call cap lives here and nowhere else:
     // the untimed path cannot abandon a call and never touches the counter.
+    // The point fires on an outcome, not on the caller's interruption, so a test parked there can still interrupt it.
     def withTimeout[B](effect: Task[B]): Task[B] =
+      timed(effect).exit.flatMap(exit => probe.at(Point.CallReturned) *> exit)
+
+    def timed[B](effect: Task[B]): Task[B] =
       timeout match {
         case Some(d) =>
           ZIO.suspendSucceed {
@@ -255,7 +263,10 @@ final private[openfeature] class Evaluator(
               }.unit
               ZIO
                 .suspendSucceed(
-                  if (call.compareAndSet(FeatureFlagsLive.CallNotStarted, FeatureFlagsLive.CallRunning)) effect
+                  // Running means the provider is called: an interruption (the timeout's, or the caller's) arriving
+                  // after the move cannot skip the call, which the blocking call itself would not notice anyway.
+                  if (call.compareAndSet(FeatureFlagsLive.CallNotStarted, FeatureFlagsLive.CallRunning))
+                    (probe.at(Point.CallForked) *> effect).uninterruptible
                   else ZIO.interrupt
                 )
                 // Before `.disconnect`, so the finalizer runs on the disconnected fiber when the provider finally
@@ -276,7 +287,7 @@ final private[openfeature] class Evaluator(
                 .onInterrupt(abandon)
             }
           }
-        case None => effect
+        case None => probe.at(Point.CallForked) *> effect
       }
 
     def rejectAbandoned[B](abandoned: Int): Task[B] = {
@@ -417,14 +428,14 @@ final private[openfeature] class Evaluator(
     // Check resolution error codes for provider-level failures (handles TOCTOU race
     // where checkProviderStatus passes but the Java SDK's internal state is stale)
     evaluation.flatMap { resolution =>
-      resolution.errorCode match {
+      probe.at(Point.Decoded) *> (resolution.errorCode match {
         case Some(ErrorCode.ProviderNotReady) =>
           ZIO.fail(FeatureFlagError.ProviderNotReady(ProviderStatus.NotReady))
         case Some(ErrorCode.ProviderFatal) =>
           ZIO.fail(FeatureFlagError.ProviderFatal)
         case _ =>
           ZIO.succeed(resolution)
-      }
+      })
     }
   }
 
@@ -493,6 +504,7 @@ final private[openfeature] class Evaluator(
       case EvaluationTimeout.Default  => evaluationTimeout
     }
     effectiveContext(ctx)
+      .tap(_ => probe.at(Point.ContextMerged))
       .flatMap { effectCtx =>
         hookPipeline.runWithHooks(
           key,

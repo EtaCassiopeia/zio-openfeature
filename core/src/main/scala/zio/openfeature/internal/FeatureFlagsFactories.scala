@@ -125,7 +125,8 @@ private[openfeature] object FeatureFlagsFactories {
     unreadableNameIsUnknown: Boolean,
     orphans: OrphanedProviders,
     probe: LifecycleProbe,
-    swapLock: Semaphore
+    swapLock: Semaphore,
+    evaluationProbe: EvaluationProbe = EvaluationProbe.none
   ): ZIO[Scope, Throwable, FeatureFlagsLive] =
     for {
       client <- ZIO.attempt(api.getClient(domain.orNull, version.orNull))
@@ -159,7 +160,8 @@ private[openfeature] object FeatureFlagsFactories {
       maxAbandonedCalls,
       recordTracking,
       orphans = orphans,
-      probe = probe
+      probe = probe,
+      evaluationProbe = evaluationProbe
     )
 
   /** Whether the event bridge can be attached before `provider` is registered.
@@ -245,7 +247,8 @@ private[openfeature] object FeatureFlagsFactories {
     fallbackLogging: FallbackLogging = FallbackLogging.Default,
     maxAbandonedCalls: Int = DefaultMaxAbandonedCalls,
     recordTracking: Boolean = false,
-    probe: LifecycleProbe = LifecycleProbe.none
+    probe: LifecycleProbe = LifecycleProbe.none,
+    evaluationProbe: EvaluationProbe = EvaluationProbe.none
   ): ZIO[Scope, Throwable, FeatureFlagsLive] =
     for {
       api <- ZIO.succeed(apiOverride.getOrElse(OpenFeatureAPI.getInstance()))
@@ -280,7 +283,8 @@ private[openfeature] object FeatureFlagsFactories {
         unreadableNameIsUnknown = true,
         orphans,
         probe,
-        swapLock
+        swapLock,
+        evaluationProbe
       )
       // Known to the instance that later tears this API down, which then retires this one; and the slot checked
       // before it is bound.

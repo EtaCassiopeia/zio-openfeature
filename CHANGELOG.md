@@ -447,6 +447,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **A provider is shut down once, not twice, after the init watchdog shut it down** (#697). The provider stayed bound
   and the SDK called its `shutdown()` again at `api.shutdown()`; the registered wrapper now reaches it once per
   initialization.
+- **A timed provider call counted as running always reaches the provider** (#707). An interruption, the timeout's or
+  the caller's, arriving just after the call was counted could skip the provider while the count stayed; the call now
+  runs once counted, as the blocking call would have anyway.
+
+### Tests
+
+- **Every stage of an evaluation is interrupted in a test** (#707). An internal `EvaluationProbe` names eleven points
+  of the evaluation path, the steps of "One evaluation, step by step", and `EvaluationInterruptionSpec` holds an
+  evaluation at each, then interrupts the caller, lets the timeout elapse where it races the call, or releases it. 23
+  named rows check that the caller ends interrupted, `finallyAfter` runs once if the hook stage was entered, the
+  provider is entered once if the call started, no abandoned call stays counted, the transaction gains the evaluation
+  only if it completed, and nothing leaks.
 
 ## [1.2.1] — 2026-10-28
 

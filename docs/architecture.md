@@ -38,6 +38,9 @@ fiber-local context, ZIO hooks, transactions, a provider status you can rely on,
 
 Hooks run on every path, including overrides, cache hits and a provider that is not ready.
 
+The tests hold an evaluation at each of these steps and interrupt it there: context merged, before hooks, transaction
+lookup, status gate, call started, call returned, decoded, the swap re-check, after or error hooks, `finallyAfter`.
+
 ## Threads and state
 
 | What | Runs or lives on | Scope |

@@ -464,6 +464,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Tests
 
+- **The lifecycle model checks the evaluation gate** (#721). Evaluations run alongside swaps in `Evaluation.cfg`, on
+  every pull request. TLC checks that a returned answer comes from the provider installed when it returns, and never
+  while a swap is in flight. Mutants that drop the re-check, or either half of it, are caught. A new hot-swap test
+  pins the generation's own job: an evaluation whose provider call outlasts a whole swap is refused, not answered by
+  the replaced provider.
 - **The lifecycle model states that a provider's silent death goes unreported** (#720). `Die`, behind the
   `AllowDeath` constant, lets a provider stop working without emitting anything. `witness.py` checks on every pull
   request that every invariant still holds, and that the instance can then report `Ready` with a dead provider

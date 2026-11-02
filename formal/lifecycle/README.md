@@ -71,6 +71,53 @@ case is pinned only by `ProviderHotSwapSpec`.
 The re-read that `SwapReconcile` makes would also correct a swap whose outcome reads the wrong status, as the code's
 does. So the #617 mutant is caught by `OutcomeFollowsSettled`, which checks the outcome before that re-read.
 
+## Evaluation
+
+`Evaluator.gated` makes a lifecycle decision of its own. It reads `swapGeneration`, checks the status, calls the
+provider, and then re-checks: the answer is returned only if the generation has not moved and no swap is in flight
+(`swapInProgress`). Otherwise the evaluation fails with `ProviderNotReady(NotReady)`. The SDK resolves the slot's
+provider per call, so without the re-check a provider the swap has already replaced or rejected could answer.
+
+The model has `MaxEvals` evaluations running alongside the lifecycle, as `EvalRead`, `EvalCheck`, `EvalCall` and
+`EvalReturn`. The generation is `Gen == swaps`, since only `SwapStart` moves either. `Evaluation.cfg` has one
+evaluation on small bounds (two providers besides `P0`, two swaps, one event): 8.9 million distinct states, about 40
+seconds, on every pull request. Every other configuration has `MaxEvals = 0`, so its state space is unchanged.
+
+The issue that added this stated the contract as: *an answer returned to a caller was produced by a provider that was
+installed, with no swap started or in flight, for the whole window between the generation read and the re-check.*
+Two invariants carry it:
+
+| Invariant | Meaning | The half it carries |
+|:--|:--|:--|
+| `NoRejectedAnswer` | A returned answer came from the provider installed when it returned. | No swap started in the window: one that started and ended inside it leaves a different provider installed. |
+| `NoAnswerDuringSwap` | No answer is returned while a swap is in flight. | No swap in flight. |
+
+The contract's "installed at the generation read" is dropped on purpose. An evaluation can read the generation while a
+swap is in flight that the SDK then refuses before binding. `SwapRollbackUnbound` puts the status back to `Ready`, the
+check passes, and the provider the rollback kept answers. That answer is correct, and the stricter wording would
+refuse it.
+
+`mutants.py` puts in three evaluation bugs:
+
+| Evaluation bug | Caught by |
+|:--|:--|
+| The answer is returned without the re-check | `NoAnswerDuringSwap` or `NoRejectedAnswer`: it breaks both, and TLC's workers report whichever they reach first |
+| The re-check reads only the generation: the provider of a swap past its outcome, with status `Error`, answers | `NoAnswerDuringSwap` |
+| The re-check reads only the gate: a swap that starts and ends inside the window leaves the replaced provider's answer | `NoRejectedAnswer` |
+
+**Where the generation moves does not matter.** Moving its increment to the SDK registration, or to the gate's drop, is
+caught by nothing, and rightly so. The gate is up from `SwapStart` until after the swap's re-read, which covers every
+moment a new provider can be bound before its outcome. The generation's job is a swap that starts and ends inside one
+evaluation's window, and for that it only has to move while the gate is up. `ProviderHotSwapSpec` "an evaluation whose
+provider call spans a whole swap is not served by the provider the swap replaced" pins that job in the code.
+
+**`SwapStart` stays one step.** The code's swap start writes the gate, then the status, then the generation, under the
+swap lock and before the registration. An evaluation that reads the new generation finds the gate already up. One
+that reads the old generation with the status already `NotReady` is refused at its check. So taking the three writes
+in one step loses no outcome.
+
+Trace validation records no evaluations (`MaxEvals = 0`): the recorded runs check the lifecycle only.
+
 ## Actions and the code
 
 Each action is named after the lifecycle probe point (`core/.../internal/LifecycleProbe.scala`) at the same step, where
@@ -90,6 +137,7 @@ there is one.
 | `SwapReconcile` | `setProvider`, after every outcome: `GateDown`, probe point `SwapReconcile`, then `reconcileLateReady` after a timeout or `reconcileRegistration` otherwise; inside the swap's uninterruptible region, with the lock held |
 | `CallerInterrupt` | an interrupt of `setProvider`'s caller, which takes effect only in the phases in `Interruptible`: none, since the swap body and the re-read run uninterruptibly (`runSwap`'s `.uninterruptible`) |
 | `Die` | none: a provider that stops working without reporting it. Only with `AllowDeath` (`Witness.cfg`) |
+| `EvalRead`, `EvalCheck`, `EvalCall`, `EvalReturn` | `Evaluator.gated`: the `swapGeneration` read, `checkProviderStatus`, the provider call through the SDK client, and the re-check (probe point `GateRechecked`) |
 | `Emit`, `EmitStaleWhileStarting` | a provider's `emit`; the SDK's `FeatureProviderStateManager.onEmit` |
 | `Deliver` | `EventBridge.onSdkEvent` and `applySdkSignal` |
 | `OrphanResolved` | `OrphanedProviders.settle` on the registration's outcome, then `OrphanSettled` |
@@ -115,6 +163,8 @@ names; the rows below say where one is held elsewhere. Every library action is o
 | `shutDown`, `closed` | `shutDown`, `closed` |
 | `owns` | `ownsApi`, fixed at construction |
 | `bridgeOn` | the bridge's registered handlers (`EventBridge`), not lifecycle state |
+| `swaps` (as `Gen`) | `generation`, mirrored to `swapGeneration` for the evaluator once the step has published the status |
+| `evals` | not library state: each evaluation's progress through `Evaluator.gated` |
 
 ## Preconditions
 
@@ -237,7 +287,7 @@ action. A run that reaches `Watchdog`, which the model leaves out, is skipped.
 
 A provider can stop working without saying so. Its SDK state stays `READY`, and the instance's status follows the SDK,
 so it reports `Ready` for a dead provider. The library learns a provider's health only from the SDK's state and events,
-and the model has no evaluation action. `Die(p)` states the gap in the model instead of leaving it to prose:
+and the model's evaluations never feed back into the status. `Die(p)` states the gap in the model instead of leaving it to prose:
 
 - `AllowDeath` gates it. It is `FALSE` in `Lifecycle.cfg`, `Liveness.cfg` and the trace-validation configurations, so
   their state spaces are unchanged.

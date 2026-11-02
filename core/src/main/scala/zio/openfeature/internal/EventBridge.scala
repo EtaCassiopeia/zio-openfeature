@@ -18,15 +18,16 @@ import scala.jdk.CollectionConverters._
   */
 final private[openfeature] class EventBridge(
   client: OFClient,
+  initialProvider: dev.openfeature.sdk.FeatureProvider,
   providerNameRef: java.util.concurrent.atomic.AtomicReference[String],
   state: FeatureFlagsState,
   onReady: Option[java.util.concurrent.CountDownLatch],
   probe: LifecycleProbe = LifecycleProbe.none
 ) {
 
-  // True while `setProvider` holds the swap lock and is re-registering the provider. Bridge events must not drive
-  // the status machine during that window: a queued event from the OLD provider would clobber the swap's own
-  // outcome. The successful swap sets Ready explicitly at the end.
+  // The record's `gate`, mirrored for the evaluator, which reads it synchronously: true while `setProvider` holds the
+  // swap lock and re-registers the provider, when bridge events do not drive the status (a queued event from the OLD
+  // provider would clobber the swap's own outcome). Written only by the lifecycle's interpreter.
   private[openfeature] val swapInProgress = new java.util.concurrent.atomic.AtomicBoolean(false)
 
   // Bumped when `setProvider` has made the status NotReady, before it touches the SDK. The SDK client resolves the slot's provider on each
@@ -34,13 +35,9 @@ final private[openfeature] class EventBridge(
   // provider before that provider settled; the evaluator compares this across its provider call to tell.
   private[openfeature] val swapGeneration = new java.util.concurrent.atomic.AtomicLong(0L)
 
-  // Set once the provider has ever been usable (Ready/Stale). Gates the init watchdog: a provider that was Ready and
-  // later dipped to a transient Error must never be escalated to Fatal.
-  private[openfeature] val everReady = new java.util.concurrent.atomic.AtomicBoolean(false)
-
-  // Set when an explicit `shutdown` has run to completion: the final NotReady is terminal. Nothing clears it:
-  // `setProvider` is refused once it is set.
-  private[openfeature] val shutdownCompleted = new java.util.concurrent.atomic.AtomicBoolean(false)
+  /** The instance's lifecycle record and its interpreter: every status write goes through it. */
+  private[openfeature] val lifecycle =
+    new Lifecycle(state.statusRef, initialProvider, swapInProgress, swapGeneration, providerNameRef)
 
   // Set by startEventBridge; invoked by `shutdown` BEFORE teardown (so no emitter thread races it) and by the scope
   // finalizer (idempotent — removeHandler on an already-removed handler is a no-op in the SDK, so double-invocation
@@ -48,13 +45,13 @@ final private[openfeature] class EventBridge(
   private[openfeature] val bridgeDeregister =
     new java.util.concurrent.atomic.AtomicReference[() => Unit](() => ())
 
-  /** The single door to statusRef. Every status write except the sync-build seed and the testkit's shared-ref control
-    * surface goes through here. `SubscriptionRef` is a `Ref.Synchronized`, so `modify` serializes read-decide-write
-    * against every other signal. Returns Some(next) iff a transition happened, so callers can attach transition-gated
-    * side effects (watchdog shutdown, latch release).
+  /** A status signal, through the lifecycle's step. Every status write except the testkit's shared-ref control surface
+    * goes through the lifecycle, which serializes it against every other. Returns Some(next) iff a transition happened,
+    * so callers can attach transition-gated side effects (watchdog shutdown, latch release).
     */
   private[openfeature] def applySignal(signal: Signal): UIO[Option[ProviderStatus]] =
-    probe.at(LifecycleProbe.Point.ApplySignal(signal)) *> state.statusRef.modify(transition(_, signal))
+    probe.at(LifecycleProbe.Point.ApplySignal(signal)) *>
+      lifecycle.run(LifecycleInput.Status(signal)).map(_.transitioned)
 
   /** [[applySignal]] for an event the SDK delivered: the signal is the one the SDK's own state for this client's slot
     * implies, read inside the serialized write; `own` (the event's signal) applies only when the slot is unreadable, or
@@ -68,17 +65,18 @@ final private[openfeature] class EventBridge(
     * applies no signal. Returns the signal applied, if any, and the transition.
     */
   private def applySdkSignal(own: Signal): UIO[(Option[Signal], Option[ProviderStatus])] =
-    probe.at(LifecycleProbe.Point.ApplySignal(own)) *> state.statusRef
-      .modify { current =>
+    probe.at(LifecycleProbe.Point.ApplySignal(own)) *> lifecycle
+      .runWith { _ =>
         // A fatal error is final whatever the slot reports by the time its handler runs.
         val (signal, unreadable) =
           if (own == Signal.EventError(true)) (Some(own), None)
           else
             try (signalForSlot(client.getProviderState), None)
             catch { case scala.util.control.NonFatal(e) => (Some(own), Some(e)) }
-        val (transitioned, next) = signal.map(transition(current, _)).getOrElse((None, current))
-        ((signal, transitioned, unreadable), next)
+        // No signal for the slot: a step that changes nothing.
+        (signal.fold[LifecycleInput](LifecycleInput.Idle)(LifecycleInput.Status(_)), (signal, unreadable))
       }
+      .map { case ((signal, unreadable), outcome) => (signal, outcome.transitioned, unreadable) }
       .flatMap { case (signal, transitioned, unreadable) =>
         ZIO
           .foreachDiscard(unreadable)(e =>
@@ -93,30 +91,6 @@ final private[openfeature] class EventBridge(
     case JavaProviderState.ERROR => Some(Signal.EventError(false))
     case JavaProviderState.FATAL => Some(Signal.EventError(true))
     case _                       => None
-  }
-
-  private def transition(current: ProviderStatus, signal: Signal): (Option[ProviderStatus], ProviderStatus) = {
-    val ctx = ProviderStatusMachine.Context(everReady.get(), swapInProgress.get(), shutdownCompleted.get())
-    ProviderStatusMachine.transition(current, signal, ctx) match {
-      case Some(next) =>
-        // Update the linearization-point flags INSIDE the serialized modify (SubscriptionRef is a
-        // Ref.Synchronized, so the function runs under exclusive access). The writes are idempotent and depend only
-        // on `signal`/`next`, so there is no read-stale window for a concurrent applySignal — closing the tap-lag
-        // gap where a pending `everReady` write could let the watchdog Fatal an already-Ready provider.
-        if (next == ProviderStatus.Ready || next == ProviderStatus.Stale) everReady.set(true)
-        signal match {
-          // A provider that initialized and then reported an error is one that became usable; the init watchdog must
-          // not treat it as one that never did.
-          case Signal.SwapSucceeded(_) | Signal.RollbackSucceeded(_) => everReady.set(true)
-          case _                                                     => ()
-        }
-        signal match {
-          case Signal.ShutdownCompleted => shutdownCompleted.set(true)
-          case _                        => ()
-        }
-        (Some(next), next)
-      case None => (None, current)
-    }
   }
 
   // The SDK stamps every dispatched event with the emitting provider's metadata name — or NULL when the provider has

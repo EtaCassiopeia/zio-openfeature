@@ -20,7 +20,7 @@ that owns its API and for one that shares it (`owns`): only an owner records orp
 The SDK's `shutDownOld` skips the previous provider only while its old registration is still bound. A provider
 installed again gets a new registration, so the SDK shuts it down anyway once the registration that replaced it
 returns; in one slot the skip needs the same provider set again, which the model does not take (#711). `ShutDownOld`
-therefore always shuts the previous provider down, and `refuseReplacedByPendingInit` is what keeps that off a provider
+therefore always shuts the previous provider down, and the step's `HeldBy` refusal is what keeps that off a provider
 that serves again (`BoundNotShutDown`). Two limits of the code's guard the model does not show: it counts a registration
 as returned once the SDK reports `READY`, while the SDK's shutdown of the replaced provider follows just after, under its
 lock; and a rollback that times out is not modelled (its wait is folded into `SwapRollback`), so the guard's rollback
@@ -71,20 +71,40 @@ there is one.
 
 | Action | Code |
 |:--|:--|
-| `SwapStart` | `FeatureFlagsLive.setProvider`: lock taken, gate up, `SwapStarted`; on a shut-down instance `setProvider` fails before this point (`~shutDown`) |
+| `SwapStart` | `FeatureFlagsLive.setProvider`: lock taken, `LifecycleInput.Admit` (the guards, a `Refuse` before any probe point), then `LifecycleInput.SwapStart` (gate up, `SwapStarted`, generation, `installed`) |
 | `SdkBind` | `ProviderRegistration.registerThenAwait`: the SDK binds the new provider and starts `initialize()` |
 | `SdkBindFail` | the SDK's registration throwing before it binds (`EventProvider.attach` or `registerGlobalProvider` refusing the provider) |
 | `SdkInitOk`, `SdkInitFail` | the SDK's `FeatureProviderStateManager.initialize` returning or throwing; after a success, the SDK's `PROVIDER_READY` (`ran`) and `ProviderRepository.shutDownOld` |
-| `SwapDone` | `setProvider`: `SwapSucceeded(settled)`, gate down, `reconcileRegistration`; `ProviderRegistration.awaitOutcome` deciding by the SDK's `PROVIDER_READY` |
-| `SwapTimeout` | `setProvider`, timeout branch: `SwapFailed`, `pendingInit`, `recordOrphan`, `reconcileLateReady` |
-| `SwapFailNoRollback` | `setProvider`, failure branch when `initPending(oldProvider)` |
+| `SwapDone` | `setProvider`: `SwapSucceeded(settled)`, `GateDown`, `reconcileRegistration`; `Registration.settle` deciding by the wrapper's `initialize()` outcome |
+| `SwapTimeout` | `setProvider`, timeout branch: `SwapFailed`, `Replaced`, `OrphanRecorded` (`recordOrphan`), `reconcileLateReady` |
+| `SwapFailNoRollback` | `setProvider`, failure branch when the previous provider's `initialize()` still runs: `SwapFailed`, `OrphanRecorded` |
 | `SwapRollback` | `setProvider`, failure branch: `restoreSdkRegistration` (probe point `RollbackBind`), `RollbackSucceeded(settled)` or `cleanupUnboundFailedProvider` |
 | `SwapRollbackUnbound` | `setProvider`, failure branch: `failedBeforeBinding`, `RollbackUnbound(before)`, then `reconcileRegistration` once the gate drops |
 | `Emit`, `EmitStaleWhileStarting` | a provider's `emit`; the SDK's `FeatureProviderStateManager.onEmit` |
 | `Deliver` | `EventBridge.onSdkEvent` and `applySdkSignal` |
-| `OrphanResolved` | `OrphanedProviders.settle`, with the entry's `ReadyWatch` |
+| `OrphanResolved` | `OrphanedProviders.settle` on the registration's outcome, then `OrphanSettled` |
 | `ShutdownStart`, `ShutdownDone` | `FeatureFlagsLive.shutdown` |
 | `ScopeClose` | the API scope finalizer in `FeatureFlagsFactories`: takes the swap lock, marks the instance closed, then `boundedApiShutdown`, `orphans.resolveAll` |
+
+## The library's variables and the code
+
+The library's variables are held by `LifecycleState` (`core/.../internal/LifecycleState.scala`), mostly under the same
+names; the rows below say where one is held elsewhere. Every library action is one or more steps of
+`LifecycleStep.step`, which `LifecycleStepSpec` tests per action.
+
+| Variable | `LifecycleState` field |
+|:--|:--|
+| `status` | `status` (stored in the instance's `statusRef`, which the testkit may share) |
+| `installed` | `installed` |
+| `lock` | `lock` (the swap lock serializes the sequences; the field records which holds it) |
+| `gate` | `gate`, mirrored to `swapInProgress` for the evaluator |
+| `swap` | `swap` (without `phase`: the swap's for-comprehension is the phase) |
+| `pending` | not a field: whether the previous provider's `initialize()` still runs (its wrapper's count), read in `setProvider`'s failure branch |
+| `prevOf` with `inits` (SDK variables) | `replaced`, the registrations still initializing with the provider each replaced, which the `HeldBy` refusal reads |
+| `orphans` | `orphans`; `OrphanedProviders` keeps the watcher of each entry |
+| `shutDown`, `closed` | `shutDown`, `closed` |
+| `owns` | `ownsApi`, fixed at construction |
+| `bridgeOn` | the bridge's registered handlers (`EventBridge`), not lifecycle state |
 
 ## Preconditions
 
@@ -96,12 +116,12 @@ own actions (`SdkBind`, `SdkInitOk`, `Emit`, `Deliver`, ...) model what those do
 | Action | Precondition | Kind | Code, and what checks it |
 |:---|:---|:---|:---|
 | `SwapStart` | `lock = "free"` | enforced | `setProvider` runs under `swapLock`; fixture `reject/swap-inside-a-swap` |
-| `SwapStart` | `~shutDown` | enforced | `refuseSwap` (`shutdownCompleted`); fixture `reject/swap-after-shutdown`, `FeatureFlagsShutdownSpec`, mutant "a swap after shutdown is not refused" |
-| `SwapStart` | `~closed` | enforced | `refuseSwap` (`closed`, set by the scope finalizer of every build, owning its API or not); `LifecycleTeardownSpec`, mutant "a swap after the scope close is not refused" (a run recorded after `ScopeClose` is not validated) |
+| `SwapStart` | `~shutDown` | enforced | `LifecycleStep.admit` (`shutDown`); fixture `reject/swap-after-shutdown`, `FeatureFlagsShutdownSpec`, mutant "a swap after shutdown is not refused" |
+| `SwapStart` | `~closed` | enforced | `LifecycleStep.admit` (`closed`, set by the scope finalizer's `ScopeClose` of every build, owning its API or not); `LifecycleTeardownSpec`, mutant "a swap after the scope close is not refused" (a run recorded after `ScopeClose` is not validated) |
 | `SwapStart` | `~Settling` | assumed | a provider that reports `STALE` from inside `initialize()` is taken at its word, a documented limit (see below) |
-| `SwapStart` | `inits[p] = 0` | enforced | `refuseStillInitializing`: a provider whose earlier `initialize()` has not returned is refused, however many swaps happened since, and installed again once that call returned; `ProviderHotSwapSpec`, three tests "... is refused while its initialize() runs ...", mutant "a provider still initializing is installed again" (recorded runs carry no provider identity, so no trace fixture can show this one) |
-| `SwapStart` | `~\E q \in All : prevOf[q] = p /\ inits[q] > 0` | enforced | `refuseReplacedByPendingInit`: a provider that a registration still initializing replaced is refused until that `initialize()` returns, since its return makes the SDK shut the replaced provider down; the only such guard of an instance that shares its API; `ProviderHotSwapSpec` "an instance that shares its API refuses the provider a timed-out swap replaced until that swap's provider returns", mutant "a provider a registration still initializing replaced is installed again", and "after a rollback that timed out, the failed provider is refused until the restored provider returns" for the rollback case, which the model does not take (no trace fixture: recorded runs carry no provider identity) |
-| `SwapStart` | `~\E o \in orphans : o.prev = p` | enforced | `refusePendingOrphan` (an instance that owns its API): the provider a timed-out swap replaced is refused until that swap's provider settles, since settling may shut it down; `ProviderHotSwapSpec` "the provider a timed-out swap replaced is refused until the swap's provider settles", mutant "a provider a timed-out swap still holds is installed again" (no trace fixture, for the same reason) |
+| `SwapStart` | `inits[p] = 0` | enforced | `LifecycleStep.admit`, `StillInitializing`: a provider whose earlier `initialize()` has not returned is refused, however many swaps happened since, and installed again once that call returned; `ProviderHotSwapSpec`, three tests "... is refused while its initialize() runs ...", mutant "a provider still initializing is installed again" (recorded runs carry no provider identity, so no trace fixture can show this one) |
+| `SwapStart` | `~\E q \in All : prevOf[q] = p /\ inits[q] > 0` | enforced | `LifecycleStep.admit`, `HeldBy` (the record's `replaced`): a provider that a registration still initializing replaced is refused until that `initialize()` returns, since its return makes the SDK shut the replaced provider down; the only such guard of an instance that shares its API; `ProviderHotSwapSpec` "an instance that shares its API refuses the provider a timed-out swap replaced until that swap's provider returns", mutant "a provider a registration still initializing replaced is installed again", and "after a rollback that timed out, the failed provider is refused until the restored provider returns" for the rollback case, which the model does not take (no trace fixture: recorded runs carry no provider identity) |
+| `SwapStart` | `~\E o \in orphans : o.prev = p` | enforced | `LifecycleStep.admit`, `PendingOrphan` (the record's `orphans`; an instance that owns its API): the provider a timed-out swap replaced is refused until that swap's provider settles, since settling may shut it down; `ProviderHotSwapSpec` "the provider a timed-out swap replaced is refused until the swap's provider settles", mutant "a provider a timed-out swap still holds is installed again" (no trace fixture, for the same reason) |
 | `SwapStart` | `p # bound` | assumed | setting the provider the slot already binds is not modelled (#711): the SDK reuses that provider's registration, and the code runs the swap, rolling back onto the same provider when it is in `ERROR` |
 | `SwapStart` | `swaps < MaxSwaps` | bound | the swap budget that keeps the state space finite; not a property of the code |
 | `ShutdownStart` | `lock = "free"` | enforced | `shutdown` runs under `swapLock`; fixtures `reject/shutdown-inside-a-swap` and `reject/recorded-shutdown-without-the-lock` |

@@ -45,6 +45,8 @@ final class TestFeatureProvider private (
   private val state: AtomicReference[ProviderState],
   private val evaluations: CopyOnWriteArrayList[(String, OFEvaluationContext)],
   private val eventsHub: Hub[ProviderEvent],
+  // Shared with the instance as its status. A write here is a status override that does not go through the
+  // instance's lifecycle step: it moves the status only, not the rest of the lifecycle record.
   private[openfeature] val statusRef: SubscriptionRef[ProviderStatus],
   private val initLatch: Option[CountDownLatch],
   private[testkit] val initDone: Option[CountDownLatch],

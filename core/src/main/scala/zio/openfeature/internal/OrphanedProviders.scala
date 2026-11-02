@@ -32,16 +32,19 @@ final private[openfeature] class OrphanedProviders(api: OpenFeatureAPI, probe: L
   // Completed by `resolveAll`: cuts short a settle's wait for the SDK's own shutdown, which runs uninterruptibly.
   private val closing = new java.util.concurrent.CompletableFuture[AnyRef]()
 
-  /** Watch `incoming`, the registration of the provider that replaced `previous` in a swap that timed out. */
+  /** Watch `incoming`, the registration of the provider that replaced `previous` in a swap that timed out. `settled`
+    * runs once the entry has settled, before a wait for it ends.
+    */
   def record(
     previous: Bound,
     previousName: String,
     incomingName: String,
-    incoming: ProviderRegistration.Registration
+    incoming: ProviderRegistration.Registration,
+    settled: UIO[Unit]
   ): UIO[Unit] =
     for {
       done <- Promise.make[Nothing, Unit]
-      entry = new Entry(previous, previousName, incomingName, done)
+      entry = new Entry(previous, previousName, incomingName, done, settled)
       _ <- ZIO.succeed(entries.updateAndGet(entry :: _))
       // A watcher that starts after a resolve has claimed the entry settles nothing.
       // Settling is uninterruptible, so a resolve that interrupts the watcher waits for a settle already under way.
@@ -51,16 +54,11 @@ final private[openfeature] class OrphanedProviders(api: OpenFeatureAPI, probe: L
       _ <- ZIO.succeed(entry.watcher.set(Some(fiber)))
     } yield ()
 
-  /** The name of the provider whose pending initialization still holds `provider`, if any. Installing `provider` again
-    * meanwhile would hand it a second SDK registration, and the first one's settling would shut it down while it
-    * serves. Waits for a settle already in progress.
+  /** Waits for a settle of an entry for `provider` already under way, so a swap that installs it again sees that entry
+    * gone rather than refusing over it.
     */
-  def pendingFor(provider: ManagedProvider): UIO[Option[String]] =
-    ZIO
-      .foreach(entries.get.filter(_.previous.sdk eq provider)) { entry =>
-        if (entry.claimed.get()) entry.done.await.as(None) else ZIO.some(entry.incomingName)
-      }
-      .map(_.flatten.headOption)
+  def awaitSettling(provider: ManagedProvider): UIO[Unit] =
+    ZIO.foreachDiscard(entries.get.filter(e => (e.previous.sdk eq provider) && e.claimed.get()))(_.done.await)
 
   /** Settle every entry now: those whose new provider has not initialized get their previous provider shut down. */
   def resolveAll: UIO[Unit] =
@@ -115,7 +113,9 @@ final private[openfeature] class OrphanedProviders(api: OpenFeatureAPI, probe: L
                 s"shutting down the previous provider '${entry.previousName}': '${entry.incomingName}' replaced it " +
                   "in a swap that timed out and has not finished initializing"
               ) *> shutDown(entry)
-          }).ensuring(ZIO.succeed(entries.updateAndGet(_.filterNot(_ eq entry))) *> entry.done.succeed(()))
+          }).ensuring(
+            ZIO.succeed(entries.updateAndGet(_.filterNot(_ eq entry))) *> entry.settled *> entry.done.succeed(())
+          )
         )
       }
       .unit
@@ -153,7 +153,8 @@ private[openfeature] object OrphanedProviders {
     val previous: Bound,
     val previousName: String,
     val incomingName: String,
-    val done: Promise[Nothing, Unit]
+    val done: Promise[Nothing, Unit],
+    val settled: UIO[Unit]
   ) {
     val claimed = new AtomicBoolean(false)
     val watcher = new AtomicReference[Option[Fiber.Runtime[Nothing, Unit]]](None)

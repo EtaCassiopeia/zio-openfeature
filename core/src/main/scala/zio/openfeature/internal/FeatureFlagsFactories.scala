@@ -74,13 +74,13 @@ private[openfeature] object FeatureFlagsFactories {
     orphans: OrphanedProviders,
     probe: LifecycleProbe,
     swapLock: Semaphore,
-    closed: java.util.concurrent.atomic.AtomicBoolean,
     self: java.util.concurrent.atomic.AtomicReference[FeatureFlagsLive]
   ): UIO[Unit] =
     // An owner retires the other instances on the API first, as `shutdown` does, and before this one's lock.
     ZIO.when(ownsApi)(ApiInstances.retireSiblings(api, self.get())) *>
       swapLock.withPermit(
-        ZIO.succeed(closed.set(true)) *> probe.at(LifecycleProbe.Point.ScopeClose) *>
+        ZIO.suspendSucceed(ZIO.foreachDiscard(Option(self.get()))(_.markClosed)) *>
+          probe.at(LifecycleProbe.Point.ScopeClose) *>
           ZIO.when(ownsApi)(ProviderRegistration.boundedApiShutdown(api) *> orphans.resolveAll).unit
       )
 
@@ -125,8 +125,7 @@ private[openfeature] object FeatureFlagsFactories {
     unreadableNameIsUnknown: Boolean,
     orphans: OrphanedProviders,
     probe: LifecycleProbe,
-    swapLock: Semaphore,
-    closed: java.util.concurrent.atomic.AtomicBoolean
+    swapLock: Semaphore
   ): ZIO[Scope, Throwable, FeatureFlagsLive] =
     for {
       client <- ZIO.attempt(api.getClient(domain.orNull, version.orNull))
@@ -136,14 +135,13 @@ private[openfeature] object FeatureFlagsFactories {
       // (`unreadableNameIsUnknown`) and reads the name again, strictly, once the provider has initialized.
       read = ZIO.attempt(Option(provider.getMetadata).flatMap(m => Option(m.getName)).getOrElse(UnknownProviderName))
       providerName <- if (unreadableNameIsUnknown) read.orElseSucceed(UnknownProviderName) else read
-      providerRef  <- Ref.make(provider)
       baseState    <- FeatureFlagsState.make
       state = statusRef.fold(baseState)(ref => baseState.copy(statusRef = ref))
       _                  <- state.hooksRef.set(initialHooks)
       fallbackLogLimiter <- FallbackLogLimiter.make(fallbackLogging)
     } yield new FeatureFlagsLive(
       client,
-      providerRef,
+      provider,
       new java.util.concurrent.atomic.AtomicReference(providerName),
       domain,
       version,
@@ -161,8 +159,7 @@ private[openfeature] object FeatureFlagsFactories {
       maxAbandonedCalls,
       recordTracking,
       orphans = orphans,
-      probe = probe,
-      closed = closed
+      probe = probe
     )
 
   /** Whether the event bridge can be attached before `provider` is registered.
@@ -262,10 +259,9 @@ private[openfeature] object FeatureFlagsFactories {
       orphans = OrphanedProviders(api, probe)
       // Created before the finalizer, which takes the lock and sets the flag (see `scopeFinalizer`).
       swapLock <- Semaphore.make(1)
-      closed = new java.util.concurrent.atomic.AtomicBoolean(false)
-      self   = new java.util.concurrent.atomic.AtomicReference[FeatureFlagsLive](null)
+      self = new java.util.concurrent.atomic.AtomicReference[FeatureFlagsLive](null)
       // Every build, owning its API or not: the close marks the instance closed (see `scopeFinalizer`).
-      _  <- ZIO.addFinalizer(scopeFinalizer(addShutdownFinalizer, api, orphans, probe, swapLock, closed, self))
+      _  <- ZIO.addFinalizer(scopeFinalizer(addShutdownFinalizer, api, orphans, probe, swapLock, self))
       ff <- makeInstance(
         managed,
         api,
@@ -284,8 +280,7 @@ private[openfeature] object FeatureFlagsFactories {
         unreadableNameIsUnknown = true,
         orphans,
         probe,
-        swapLock,
-        closed
+        swapLock
       )
       // Known to the instance that later tears this API down, which then retires this one; and the slot checked
       // before it is bound.
@@ -486,10 +481,9 @@ private[openfeature] object FeatureFlagsFactories {
       orphans = OrphanedProviders(api, probe)
       // Created before the finalizer, which takes the lock and sets the flag (see `scopeFinalizer`).
       swapLock <- Semaphore.make(1)
-      closed = new java.util.concurrent.atomic.AtomicBoolean(false)
-      self   = new java.util.concurrent.atomic.AtomicReference[FeatureFlagsLive](null)
+      self = new java.util.concurrent.atomic.AtomicReference[FeatureFlagsLive](null)
       // Every build, owning its API or not: the close marks the instance closed (see `scopeFinalizer`).
-      _  <- ZIO.addFinalizer(scopeFinalizer(addShutdownFinalizer, api, orphans, probe, swapLock, closed, self))
+      _  <- ZIO.addFinalizer(scopeFinalizer(addShutdownFinalizer, api, orphans, probe, swapLock, self))
       ff <- makeInstance(
         managed,
         api,
@@ -508,8 +502,7 @@ private[openfeature] object FeatureFlagsFactories {
         unreadableNameIsUnknown = false,
         orphans,
         probe,
-        swapLock,
-        closed
+        swapLock
       )
       // Known to the instance that later tears this API down, which then retires this one; and the slot checked
       // before it is bound.

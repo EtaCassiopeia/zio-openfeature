@@ -136,6 +136,17 @@ final private[openfeature] class FeatureFlagsLive(
         }
     }
 
+  /** Set the status as a provider report would, through the lifecycle step: the testkit's `setStatus`. Fails with the
+    * refusal on a shut-down or closed instance, and while a swap's gate is up. Publishes no provider event.
+    */
+  private[openfeature] def overrideStatus(status: ProviderStatus): IO[Refusal, Unit] =
+    lifecycle.run(LifecycleInput.Override(status)).flatMap { outcome =>
+      ZIO.foreachDiscard(outcome.effects) {
+        case LifecycleEffect.Refuse(refusal) => ZIO.fail(refusal)
+        case _                               => ZIO.unit
+      }
+    }
+
   private def lifecycle        = eventBridge.lifecycle
   private def bridgeDeregister = eventBridge.bridgeDeregister
 
@@ -764,6 +775,9 @@ final private[openfeature] class FeatureFlagsLive(
       // Only a switch is refused this way, and a switch reports it as `false`, not as an error.
       case Refusal.NotInstalled(provider) =>
         failed(s"'${nameOf(provider)}' is no longer the installed provider")
+      // Only a status override is refused this way, and the testkit reports it as a defect.
+      case Refusal.SwapInFlight =>
+        failed("a setProvider is in flight, and its swap owns the status until it ends")
     }
   }
 

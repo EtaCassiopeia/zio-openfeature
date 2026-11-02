@@ -7,7 +7,60 @@ import dev.openfeature.sdk.{ErrorCode => OFErrorCode, ImmutableContext, MutableC
 
 object TestFeatureProviderSpec extends ZIOSpecDefault {
 
+  // The message of the defect a refused setStatus dies with.
+  private def refusedWith(exit: Exit[Nothing, Unit]): Option[String] =
+    exit.causeOption.flatMap(_.dieOption).map(_.getMessage)
+
   def spec = suite("TestFeatureProviderSpec")(
+    suite("setStatus through the instance's lifecycle")(
+      test("is refused once the instance is shut down, naming the status and the reason") {
+        ZIO.scoped {
+          for {
+            env  <- TestFeatureProvider.layer.build
+            _    <- env.get[FeatureFlags].shutdown
+            exit <- env.get[TestFeatureProvider].setStatus(ProviderStatus.Ready).exit
+          } yield assertTrue(
+            refusedWith(exit).exists(m => m.contains("setStatus(Ready) refused") && m.contains("shut down"))
+          )
+        }
+      },
+      test("is refused while a setProvider is in flight") {
+        ZIO.scoped {
+          val release = new java.util.concurrent.CountDownLatch(1)
+          val slow    = new dev.openfeature.sdk.NoOpProvider() {
+            override def initialize(ctx: dev.openfeature.sdk.EvaluationContext): Unit = {
+              release.await(10, java.util.concurrent.TimeUnit.SECONDS); ()
+            }
+          }
+          for {
+            _   <- ZIO.addFinalizer(ZIO.succeed(release.countDown()))
+            env <- TestFeatureProvider.layer.build
+            ff = env.get[FeatureFlags]
+            swap <- ff.setProvider(slow).fork
+            _    <- (ff.providerStatus <* ZIO.sleep(10.millis)).repeatUntil(_ == ProviderStatus.NotReady)
+            exit <- env.get[TestFeatureProvider].setStatus(ProviderStatus.Ready).exit
+            _    <- ZIO.succeed(release.countDown())
+            _    <- swap.join.ignore
+          } yield assertTrue(refusedWith(exit).exists(_.contains("a setProvider is in flight")))
+        }
+      },
+      test("moves the attached instance's status, and writes the shared status directly once it is closed") {
+        for {
+          provider <- TestFeatureProvider.make(Map.empty[String, Any])
+          attached <- ZIO.scoped {
+            for {
+              _ <- TestFeatureProvider.layerFrom(provider).build
+              n = provider.overrides.get().size
+              _ <- provider.setStatus(ProviderStatus.Stale)
+              s <- provider.getStatus
+            } yield (n, s)
+          }
+          after <- ZIO.succeed(provider.overrides.get().size)
+          _     <- provider.setStatus(ProviderStatus.Error)
+          bare  <- provider.getStatus
+        } yield assertTrue(attached == ((1, ProviderStatus.Stale)), after == 0, bare == ProviderStatus.Error)
+      }
+    ),
     suite("testkit DX")(
       test("G1: getEvaluations returns the library EvaluationContext (no Java SDK type leak)") {
         for {

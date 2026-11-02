@@ -46,11 +46,12 @@ def check(tla_jar, cm_jar, actions):
     Providers = {{{providers}}}
     MaxSwaps = {swaps}
     MaxEvents = {deliveries}
+    MaxEvals = 0
     AllowDeath = FALSE
     None = None
     TraceFile = "{trace}"
 INIT TInit
-NEXT TraceNext
+NEXT TraceStep
 INVARIANT TraceNotDone
 SYMMETRY Symmetry
 """

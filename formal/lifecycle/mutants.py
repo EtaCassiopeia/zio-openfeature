@@ -1,5 +1,6 @@
 """Put each fixed lifecycle bug back into the model and check that TLC reports an invariant violated for it; then put
-each progress bug in and check that TLC reports its recovery property violated under FairSpec.
+each evaluation bug in and check that TLC reports its invariant violated on Evaluation.cfg; then put each progress bug
+in and check that TLC reports its recovery property violated under FairSpec.
 
 Usage: python3 mutants.py <path to tla2tools.jar>.  Exits non-zero when a mutant goes uncaught.
 """
@@ -127,9 +128,29 @@ liveness = {
     ]),
 }
 
+# Evaluation bugs: each must make TLC report the named invariant violated on Evaluation.cfg.  Moving the generation's
+# write (to the SDK registration, or to the gate's drop) is not one: the gate covers every moment a new provider can be
+# bound before its outcome, so the generation only has to move while the gate is up (README.md, "Evaluation").
+evaluation = {
+    # The answer is returned without the re-check.  It breaks both invariants, and TLC's workers report whichever
+    # violation they reach first.
+    'an evaluation returns without the re-check': (('NoAnswerDuringSwap', 'NoRejectedAnswer'), [
+        ('IF Gen = @.gen0 /\\ ~gate', 'IF TRUE'),
+    ]),
+    # The re-check reads only the generation: a swap still in flight, past its outcome with status Error, answers.
+    'the re-check reads only the generation': ('NoAnswerDuringSwap', [
+        ('IF Gen = @.gen0 /\\ ~gate', 'IF Gen = @.gen0'),
+    ]),
+    # The re-check reads only the gate: a swap that starts and ends inside the window leaves the old provider's answer.
+    'the re-check reads only the gate': ('NoRejectedAnswer', [
+        ('IF Gen = @.gen0 /\\ ~gate', 'IF ~gate'),
+    ]),
+}
+
 jar = os.path.abspath(sys.argv[1]) if len(sys.argv) > 1 else os.path.join(here, 'tla2tools.jar')
 cfg = open(os.path.join(here, 'Lifecycle.cfg')).read()
 live_cfg = open(os.path.join(here, 'Liveness.cfg')).read()
+eval_cfg = open(os.path.join(here, 'Evaluation.cfg')).read()
 missed = []
 
 
@@ -158,6 +179,16 @@ for name, edits in mutants.items():
         print(f'{name}: caught by {m.group(1)}')
     else:
         print(f'{name}: NOT CAUGHT\n{out[-600:]}')
+        missed.append(name)
+
+for name, (invs, edits) in evaluation.items():
+    invs = invs if isinstance(invs, tuple) else (invs,)
+    out = tlc(mutate(name, edits), eval_cfg, deadlock=True)
+    m = re.search(r'Invariant (\w+) is violated', out)
+    if m and m.group(1) in invs:
+        print(f'{name}: caught by {m.group(1)}')
+    else:
+        print(f'{name}: NOT CAUGHT by {" or ".join(invs)}: {m.group(1) if m else "no violation"}\n{out[-600:]}')
         missed.append(name)
 
 for name, (prop, edits) in liveness.items():

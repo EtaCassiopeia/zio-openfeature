@@ -362,10 +362,14 @@ object ProviderHotSwapSpec extends ZIOSpecDefault {
           ffA    <- buildOn(api, domain, p)
           ffB    <- buildOn(api, domain, q)
           before <- ZIO.succeed(zio.openfeature.internal.ManagedProvider.unwrap(api.getProvider(domain)))
-          swap   <- ffA.setProvider(p).either
-          after  <- ZIO.succeed(zio.openfeature.internal.ManagedProvider.unwrap(api.getProvider(domain)))
-          _      <- ZIO.succeed(ffB)
-        } yield assertTrue(before eq q, swap.isRight, after eq p)
+          // The SDK shuts the replaced registration down on its own executor, and refuses to register the provider
+          // again until it has: wait for that shutdown, and the SDK's detach after it, before reclaiming the slot.
+          down  <- awaitTrue(p.shutdowns.get() >= 1)
+          _     <- ZIO.sleep(200.millis)
+          swap  <- ffA.setProvider(p).either
+          after <- ZIO.succeed(zio.openfeature.internal.ManagedProvider.unwrap(api.getProvider(domain)))
+          _     <- ZIO.succeed(ffB)
+        } yield assertTrue(before eq q, down, swap.isRight, after eq p)
       }
     } @@ TestAspect.withLiveClock,
     test("setProvider of a provider already bound to another domain and in ERROR succeeds with status Error") {

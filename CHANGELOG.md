@@ -157,6 +157,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A failed swap's cleanup leaves a provider the shared API registered outside the instance to the SDK** (#728). It
+  shuts down only a provider the instance wrapped; no current path reaches it with another.
 - **An interrupted `setProvider` still applies a state the SDK reached during the swap** (#717). An interrupt of the
   caller waits for the swap to finish, but it then skipped the swap's last read of the slot, so a `READY` that arrived
   while the gate was up, after a timeout for instance, never reached the status. That read is now part of the swap's
@@ -464,9 +466,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Tests
 
-- **A rollback that times out shuts the failed provider down once** (#728). The rollback's own cleanup shuts it down,
-  and the SDK's later shutdown of it reaches the same wrapper in the same cycle, so it stops there. A hot-swap test now
-  pins the count. The cleanup also leaves a provider the shared API registered outside the instance to the SDK.
 - **A TLA+ model of the ordered event lane** (#725). `formal/lane` models `OrderedEmitter` with the SDK's emitter
   pools and its API lock, in PlusCal. On every pull request TLC checks that the slot follows the order the wrapper
   received the events, that nothing deadlocks, and that no accepted emission is cut off by the lane's close.

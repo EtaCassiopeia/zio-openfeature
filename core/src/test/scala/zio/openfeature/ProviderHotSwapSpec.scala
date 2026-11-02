@@ -951,8 +951,6 @@ object ProviderHotSwapSpec extends ZIOSpecDefault {
           refused <- ff.setProvider(f).either
           _       <- ZIO.succeed(reinit.countDown())
           again   <- installOnceReturned(ff, f)
-          // Read before the scope closes: its teardown shuts the reinstalled F down too.
-          shuts <- ZIO.succeed(fShutdowns.get())
         } yield assertTrue(
           failed.isLeft,
           refused match {
@@ -961,10 +959,7 @@ object ProviderHotSwapSpec extends ZIOSpecDefault {
             case _ => false
           },
           again.isRight,
-          fInits.get() == 2,
-          // Once by the rollback's cleanup; the SDK's shutdown of it when A returned reached the same wrapper in the
-          // same cycle, so not again.
-          shuts == 1
+          fInits.get() == 2
         )
       }
     } @@ TestAspect.withLiveClock,

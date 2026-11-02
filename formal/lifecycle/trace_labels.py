@@ -21,7 +21,8 @@ The mapping (formal/lifecycle/README.md, "Trace validation"):
     or scope close                   -> OrphanResolved
   ShutdownStart, ShutdownDone,
   ScopeClose                         -> themselves
-Everything else is part of one of those steps: the other status writes, LateReady, the SwapDone point that closes
+Everything else is part of one of those steps, or no action at all: the other status writes, LateReady, SwapSkipped (a
+setProvider of the bound provider, which changes nothing), the SwapDone point that closes
 every swap, deliveries while a swap's gate is up (the model drops those), and deliveries once a shutdown has started
 (the bridge is deregistered then; a handler already running records one anyway). Watchdog is not modelled.
 InitEntered, InitReturned and ProviderShutDown, which the registered wrapper records, are SDK steps (an `initialize()`

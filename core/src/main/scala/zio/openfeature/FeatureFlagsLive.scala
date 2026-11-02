@@ -511,129 +511,145 @@ final private[openfeature] class FeatureFlagsLive(
   override def setProvider(newProvider: OFFeatureProvider): IO[FeatureFlagError, Unit] =
     swapLock.withPermit(
       refuseSwap(newProvider) *> wrap(newProvider).flatMap { incoming =>
-        val swap = for {
-          _ <- probe.at(Point.SwapStart)
-          newName = nameOf(newProvider)
-          _ <- probe.at(Point.ApplySignal(Signal.SwapStarted))
-          // One step, before the SDK changes: the gate goes up before the NotReady transition, so no bridge event (a
-          // queued READY from the OLD provider) drives the status mid-swap; the generation moves, so an evaluation that
-          // read the old one and then reaches the new provider does not trust its answer; and the new provider is
-          // installed under its name, which the bridge's identity guard and the PROVIDER_READY of its initialization
-          // read. The previous provider and status are kept for the rollback.
-          started <- lifecycle.runWith(st =>
-            (LifecycleInput.SwapStart(incoming.sdk, newName), (st.installed, providerNameRef.get(), st.status))
-          )
-          ((previous, oldName, before), _) = started
-          // The instance holds the wrapper of each provider it registered.
-          oldProvider = Bound.ofRegistered(previous)
-          // 3. Register the new provider's wrapper with the Java SDK (which shuts the old one down once the new one has
-          //    initialized), and await its initialization, bounded by initTimeout. Non-blocking registration plus a
-          //    bounded wait: `setProviderAndWait` would hold the SDK's API write lock across `initialize()`, so a
-          //    hanging provider would wedge this swap, the rollback below and `api.shutdown()`.
-          registration <- ProviderRegistration.register(api, domain, incoming).tap(_ => probe.at(Point.SdkBind)).either
-          settled      <- ZIO
-            .fromEither(registration)
-            .flatMap(_.settle(initTimeout))
-            .mapError(e => FeatureFlagError.ProviderInitializationFailed(e))
-            .tapError {
-              // A timed-out swap is NOT rolled back. The new provider's `initialize()` is still running on the SDK's
-              // executor, and if it completes later the SDK shuts down the provider that slot held before it — via that
-              // provider's original state manager, which a re-registration would not reuse. Re-registering the old
-              // instance now would therefore get it shut down and detached under us while we report Ready. Leave the
-              // new provider bound (refs keep pointing at it) with status Error: a late READY recovers to Ready through
-              // the event bridge, and a later setProvider works because no API lock is held.
-              case FeatureFlagError.ProviderInitializationFailed(_: java.util.concurrent.TimeoutException) =>
-                probe.at(Point.SwapTimeout) *>
-                  applySignal(Signal.SwapFailed) *>
-                  ZIO.logWarning(
-                    s"setProvider: '$newName' did not finish initializing within $initTimeout; status is Error and the " +
-                      s"previous provider '$oldName' was not restored (it is shut down once '$newName' settles)"
-                  ) *>
-                  lifecycle.run(LifecycleInput.Replaced(incoming, oldProvider)) *>
-                  recordOrphan(oldProvider, oldName, newName, registration.toOption)
-              case _ =>
-                failedBeforeBinding(oldProvider.sdk, oldName, before).flatMap { handled =>
-                  if (handled) ZIO.unit
-                  else if (oldProvider.initializing)
-                    // The previous provider was installed by a timed-out swap and its initialize() is still running.
-                    // It never served, and registering it again would call initialize() on it a second time while the
-                    // first call runs. Nothing to roll back to: the failed provider stays bound with status Error, and
-                    // the previous provider is the one it replaced, shut down as such.
-                    applySignal(Signal.SwapFailed) *>
-                      ZIO.logWarning(
-                        s"setProvider: '$newName' failed to initialize while '$oldName' is still initializing; " +
-                          s"'$oldName' is not initialized again and is shut down; " +
-                          "status is Error until a later setProvider succeeds"
-                      ) *>
-                      recordOrphan(oldProvider, oldName, newName, registration.toOption)
-                  else {
-                    // Roll back refs FIRST so the identity guard again reflects the previous provider and record the
-                    // failure via the machine, THEN reconcile the SDK client routing: the SDK binds the new provider
-                    // before init and does not revert on a failed init, so evaluations would keep hitting the failed
-                    // provider while our refs point back at the old one. Re-registering the old provider restores
-                    // routing; on success we restore Ready (the previous provider is serving again), on failure we log
-                    // loudly and leave status Error.
-                    lifecycle.run(LifecycleInput.Reinstall(oldProvider.sdk, oldName)) *>
-                      applySignal(Signal.SwapFailed) *>
-                      probe.at(Point.SwapRollback) *>
-                      restoreSdkRegistration(oldProvider, incoming).foldZIO(
-                        e =>
-                          // A rollback that timed out leaves the previous provider's initialize() running, holding the
-                          // failed provider until it returns.
-                          ZIO.whenCase(e) { case _: java.util.concurrent.TimeoutException =>
-                            lifecycle.run(LifecycleInput.Replaced(oldProvider, incoming))
-                          } *>
-                            ZIO.logErrorCause(
-                              s"setProvider rollback: failed to re-register previous provider '$oldName'; status remains " +
-                                "Error and evaluations may still route to the failed provider until a later setProvider " +
-                                "succeeds",
-                              Cause.fail(e)
-                            ) *> cleanupUnboundFailedProvider(incoming.sdk),
-                        restored =>
-                          // None only when a concurrent sibling swap already won the slot (see restoreSdkRegistration):
-                          // leave status Error and log a breadcrumb, don't fight the winner.
-                          restored match {
-                            case Some(settled) =>
-                              applySignal(Signal.RollbackSucceeded(settled)).unit
-                            case None =>
-                              ZIO.logInfo(
-                                "setProvider rollback: slot no longer bound to the failed provider " +
-                                  "(concurrent swap?); " +
-                                  s"leaving status Error for '$oldName'"
-                              )
-                          }
-                      )
-                  }
-                }
-            }
-          // 4. Apply the outcome via the machine: the state the SDK reports for the new provider once it initialized,
-          //    Error or Fatal too when it reported one before the wait read the outcome. The bridge's own events for it
-          //    were dropped while the gate was up; the re-read below picks up any later state.
-          _ <- applySignal(Signal.SwapSucceeded(settled))
-        } yield ()
-        // The swap runs to its outcome even if the caller is interrupted: an interrupt mid-registration would skip
-        // both the success signal and the rollback, leaving status NotReady with the refs on a provider that may or may not
-        // end up bound. The region is bounded — registration and rollback each wait at most `initTimeout` — and
-        // waiting for `swapLock` above stays interruptible.
-        // The gate must drop on every exit (success, failure, interruption) or bridge events would be suppressed forever.
-        swap.uninterruptible
-          .ensuring(lifecycle.run(LifecycleInput.GateDown))
-          .tapBoth(
-            {
-              // A READY that landed between the timeout and the gate dropping was suppressed; pick it up now.
-              case FeatureFlagError.ProviderInitializationFailed(_: java.util.concurrent.TimeoutException) =>
-                reconcileLateReady(incoming.sdk)
-              // A failed swap ends on the provider it rolled back to, or on the failed one when there was nothing to roll
-              // back to. A state the SDK reached for it while the gate was up (a FATAL from its re-initialization, an
-              // event during the rollback's wait) was dropped; take it now.
-              case _ => lifecycle.read.flatMap(st => reconcileRegistration(st.installed)) *> replayInitTimeout
-            },
-            // A state the SDK reached for the new provider while the gate was up was dropped; take it now.
-            _ => reconcileRegistration(incoming.sdk) *> replayInitTimeout
-          )
-          .ensuring(probe.at(Point.SwapDone))
+        ZIO.ifZIO(slotHolds(incoming))(skipSwap(newProvider), runSwap(incoming, newProvider))
       }
     )
+
+  /** Whether the slot already binds `incoming` the way the SDK matches a provider it holds (identity for a
+    * domain-scoped provider, `equals` otherwise). The SDK then reuses that registration: no `initialize()`, no
+    * shutdown, nothing changes, so a swap would only flap the status and fail evaluations while it waits. Read from the
+    * SDK, not from the record, so an instance whose shared slot a sibling rebound still reclaims it.
+    */
+  private def slotHolds(incoming: Bound): UIO[Boolean] =
+    ZIO.succeed(Bound.alreadyBound(domain.fold(api.getProvider())(d => api.getProvider(d)), incoming))
+
+  private def skipSwap(newProvider: OFFeatureProvider): UIO[Unit] =
+    probe.at(Point.SwapSkipped) *>
+      ZIO.logDebug(s"setProvider: '${nameOf(newProvider)}' is already the bound provider; nothing to change")
+
+  private def runSwap(incoming: Bound, newProvider: OFFeatureProvider): IO[FeatureFlagError, Unit] = {
+    val swap = for {
+      _ <- probe.at(Point.SwapStart)
+      newName = nameOf(newProvider)
+      _ <- probe.at(Point.ApplySignal(Signal.SwapStarted))
+      // One step, before the SDK changes: the gate goes up before the NotReady transition, so no bridge event (a
+      // queued READY from the OLD provider) drives the status mid-swap; the generation moves, so an evaluation that
+      // read the old one and then reaches the new provider does not trust its answer; and the new provider is
+      // installed under its name, which the bridge's identity guard and the PROVIDER_READY of its initialization
+      // read. The previous provider and status are kept for the rollback.
+      started <- lifecycle.runWith(st =>
+        (LifecycleInput.SwapStart(incoming.sdk, newName), (st.installed, providerNameRef.get(), st.status))
+      )
+      ((previous, oldName, before), _) = started
+      // The instance holds the wrapper of each provider it registered.
+      oldProvider = Bound.ofRegistered(previous)
+      // 3. Register the new provider's wrapper with the Java SDK (which shuts the old one down once the new one has
+      //    initialized), and await its initialization, bounded by initTimeout. Non-blocking registration plus a
+      //    bounded wait: `setProviderAndWait` would hold the SDK's API write lock across `initialize()`, so a
+      //    hanging provider would wedge this swap, the rollback below and `api.shutdown()`.
+      registration <- ProviderRegistration.register(api, domain, incoming).tap(_ => probe.at(Point.SdkBind)).either
+      settled      <- ZIO
+        .fromEither(registration)
+        .flatMap(_.settle(initTimeout))
+        .mapError(e => FeatureFlagError.ProviderInitializationFailed(e))
+        .tapError {
+          // A timed-out swap is NOT rolled back. The new provider's `initialize()` is still running on the SDK's
+          // executor, and if it completes later the SDK shuts down the provider that slot held before it — via that
+          // provider's original state manager, which a re-registration would not reuse. Re-registering the old
+          // instance now would therefore get it shut down and detached under us while we report Ready. Leave the
+          // new provider bound (refs keep pointing at it) with status Error: a late READY recovers to Ready through
+          // the event bridge, and a later setProvider works because no API lock is held.
+          case FeatureFlagError.ProviderInitializationFailed(_: java.util.concurrent.TimeoutException) =>
+            probe.at(Point.SwapTimeout) *>
+              applySignal(Signal.SwapFailed) *>
+              ZIO.logWarning(
+                s"setProvider: '$newName' did not finish initializing within $initTimeout; status is Error and the " +
+                  s"previous provider '$oldName' was not restored (it is shut down once '$newName' settles)"
+              ) *>
+              lifecycle.run(LifecycleInput.Replaced(incoming, oldProvider)) *>
+              recordOrphan(oldProvider, oldName, newName, registration.toOption)
+          case _ =>
+            failedBeforeBinding(oldProvider.sdk, oldName, before).flatMap { handled =>
+              if (handled) ZIO.unit
+              else if (oldProvider.initializing)
+                // The previous provider was installed by a timed-out swap and its initialize() is still running.
+                // It never served, and registering it again would call initialize() on it a second time while the
+                // first call runs. Nothing to roll back to: the failed provider stays bound with status Error, and
+                // the previous provider is the one it replaced, shut down as such.
+                applySignal(Signal.SwapFailed) *>
+                  ZIO.logWarning(
+                    s"setProvider: '$newName' failed to initialize while '$oldName' is still initializing; " +
+                      s"'$oldName' is not initialized again and is shut down; " +
+                      "status is Error until a later setProvider succeeds"
+                  ) *>
+                  recordOrphan(oldProvider, oldName, newName, registration.toOption)
+              else {
+                // Roll back refs FIRST so the identity guard again reflects the previous provider and record the
+                // failure via the machine, THEN reconcile the SDK client routing: the SDK binds the new provider
+                // before init and does not revert on a failed init, so evaluations would keep hitting the failed
+                // provider while our refs point back at the old one. Re-registering the old provider restores
+                // routing; on success we restore Ready (the previous provider is serving again), on failure we log
+                // loudly and leave status Error.
+                lifecycle.run(LifecycleInput.Reinstall(oldProvider.sdk, oldName)) *>
+                  applySignal(Signal.SwapFailed) *>
+                  probe.at(Point.SwapRollback) *>
+                  restoreSdkRegistration(oldProvider, incoming).foldZIO(
+                    e =>
+                      // A rollback that timed out leaves the previous provider's initialize() running, holding the
+                      // failed provider until it returns.
+                      ZIO.whenCase(e) { case _: java.util.concurrent.TimeoutException =>
+                        lifecycle.run(LifecycleInput.Replaced(oldProvider, incoming))
+                      } *>
+                        ZIO.logErrorCause(
+                          s"setProvider rollback: failed to re-register previous provider '$oldName'; status remains " +
+                            "Error and evaluations may still route to the failed provider until a later setProvider " +
+                            "succeeds",
+                          Cause.fail(e)
+                        ) *> cleanupUnboundFailedProvider(incoming.sdk),
+                    restored =>
+                      // None only when a concurrent sibling swap already won the slot (see restoreSdkRegistration):
+                      // leave status Error and log a breadcrumb, don't fight the winner.
+                      restored match {
+                        case Some(settled) =>
+                          applySignal(Signal.RollbackSucceeded(settled)).unit
+                        case None =>
+                          ZIO.logInfo(
+                            "setProvider rollback: slot no longer bound to the failed provider " +
+                              "(concurrent swap?); " +
+                              s"leaving status Error for '$oldName'"
+                          )
+                      }
+                  )
+              }
+            }
+        }
+      // 4. Apply the outcome via the machine: the state the SDK reports for the new provider once it initialized,
+      //    Error or Fatal too when it reported one before the wait read the outcome. The bridge's own events for it
+      //    were dropped while the gate was up; the re-read below picks up any later state.
+      _ <- applySignal(Signal.SwapSucceeded(settled))
+    } yield ()
+    // The swap runs to its outcome even if the caller is interrupted: an interrupt mid-registration would skip
+    // both the success signal and the rollback, leaving status NotReady with the refs on a provider that may or may not
+    // end up bound. The region is bounded — registration and rollback each wait at most `initTimeout` — and
+    // waiting for `swapLock` above stays interruptible.
+    // The gate must drop on every exit (success, failure, interruption) or bridge events would be suppressed forever.
+    swap.uninterruptible
+      .ensuring(lifecycle.run(LifecycleInput.GateDown))
+      .tapBoth(
+        {
+          // A READY that landed between the timeout and the gate dropping was suppressed; pick it up now.
+          case FeatureFlagError.ProviderInitializationFailed(_: java.util.concurrent.TimeoutException) =>
+            reconcileLateReady(incoming.sdk)
+          // A failed swap ends on the provider it rolled back to, or on the failed one when there was nothing to roll
+          // back to. A state the SDK reached for it while the gate was up (a FATAL from its re-initialization, an
+          // event during the rollback's wait) was dropped; take it now.
+          case _ => lifecycle.read.flatMap(st => reconcileRegistration(st.installed)) *> replayInitTimeout
+        },
+        // A state the SDK reached for the new provider while the gate was up was dropped; take it now.
+        _ => reconcileRegistration(incoming.sdk) *> replayInitTimeout
+      )
+      .ensuring(probe.at(Point.SwapDone))
+  }
 
   /** The wrapper this library registers for `provider`. One that cannot be made — an `EventProvider` attached to
     * something else, which the SDK's own registration would refuse too — refuses the swap before it starts.

@@ -28,6 +28,9 @@ private[openfeature] object LifecycleProbe {
     /** `setProvider` holds the swap lock and has passed the orphan check; the swap gate is not up yet. */
     case object SwapStart extends Point
 
+    /** `setProvider` was given the provider the slot already binds and returns without a swap. */
+    case object SwapSkipped extends Point
+
     /** The SDK registration has returned and binds the new provider; its initialization is in flight. */
     case object SdkBind extends Point
 

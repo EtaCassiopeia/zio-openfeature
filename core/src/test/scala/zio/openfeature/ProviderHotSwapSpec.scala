@@ -257,7 +257,112 @@ object ProviderHotSwapSpec extends ZIOSpecDefault {
       apiOverride = Some(api)
     )
 
+  /** Records the name of every lifecycle point reached. */
+  final private class RecordingProbe extends zio.openfeature.internal.LifecycleProbe {
+    val points = new java.util.concurrent.ConcurrentLinkedQueue[String]()
+    def at(p: zio.openfeature.internal.LifecycleProbe.Point): UIO[Unit] = ZIO.succeed(points.add(p.name)).unit
+    def since(mark: Int): List[String] = points.toArray.toList.map(_.toString).drop(mark)
+  }
+
+  /** Equal to every other instance; domain-scoped or not, as asked. */
+  final private class EqualCounting(name: String, domainScoped: Boolean) extends Counting(name, blocking = false) {
+    override def isDomainScoped(): Boolean   = domainScoped
+    override def equals(other: Any): Boolean = other.isInstanceOf[EqualCounting]
+    override def hashCode: Int               = 1
+  }
+
+  private def fatal(provider: EventProvider): UIO[Unit] =
+    ZIO.succeed {
+      val _ = provider.emitProviderError(
+        dev.openfeature.sdk.ProviderEventDetails
+          .builder()
+          .message("gone")
+          .errorCode(dev.openfeature.sdk.ErrorCode.PROVIDER_FATAL)
+          .build()
+      )
+    }
+
   def spec = suite("Provider Hot-Swap")(
+    test("installing the bound provider changes nothing, from Ready, Stale, Error and Fatal") {
+      val drives: List[(ProviderStatus, Counting => UIO[Unit])] = List(
+        ProviderStatus.Ready -> (_ => ZIO.unit),
+        ProviderStatus.Stale -> (p =>
+          ZIO.succeed { val _ = p.emitProviderStale(dev.openfeature.sdk.ProviderEventDetails.builder().build()) }
+        ),
+        ProviderStatus.Error -> (p => emitError(p, "down")),
+        ProviderStatus.Fatal -> (p => fatal(p))
+      )
+      ZIO
+        .foreach(drives) { case (expected, drive) =>
+          ZIO.scoped {
+            val p     = new Counting("P", blocking = false)
+            val probe = new RecordingProbe
+            for {
+              built <- buildProbed(p, probe)
+              ff = built._1
+              _      <- ff.providerStatus.repeatUntil(_ == ProviderStatus.Ready).timeout(5.seconds)
+              _      <- drive(p)
+              before <- ff.providerStatus.repeatUntil(_ == expected).timeout(5.seconds)
+              mark = probe.points.size
+              swap   <- ff.setProvider(p).either
+              after  <- ff.providerStatus
+              served <- ff.booleanDetails("flag", default = false).either
+              points = probe.since(mark)
+              // Read now: a smart assertion is rendered after the scope's finalizer has shut the provider down.
+              counts <- ZIO.succeed((p.inits.get(), p.shutdowns.get()))
+            } yield assertTrue(
+              before.contains(expected),
+              swap.isRight,
+              after == expected,
+              points == List("SwapSkipped"),
+              counts == ((1, 0)),
+              served.isRight == (expected != ProviderStatus.Fatal)
+            )
+          }
+        }
+        .map(_.reduce(_ && _))
+    } @@ TestAspect.withLiveClock,
+    test("an equal but distinct provider is installed by a swap, domain-scoped or not") {
+      ZIO
+        .foreach(List(false, true)) { domainScoped =>
+          ZIO.scoped {
+            val p     = new EqualCounting("P", domainScoped)
+            val q     = new EqualCounting("Q", domainScoped)
+            val probe = new RecordingProbe
+            for {
+              built <- buildProbed(p, probe)
+              (ff, api, domain) = built
+              mark              = probe.points.size
+              swap  <- ff.setProvider(q).either
+              bound <- ZIO.succeed(zio.openfeature.internal.ManagedProvider.unwrap(api.getProvider(domain)))
+            } yield assertTrue(
+              p == q,
+              swap.isRight,
+              probe.since(mark).contains("SwapStart"),
+              !probe.since(mark).contains("SwapSkipped"),
+              bound eq q,
+              q.inits.get() == 1
+            )
+          }
+        }
+        .map(_.reduce(_ && _))
+    } @@ TestAspect.withLiveClock,
+    test("an instance whose shared slot a sibling rebound installs its own provider again by a swap") {
+      ZIO.scoped {
+        val api    = OpenFeatureAPI.createIsolated()
+        val domain = s"shared-${java.util.UUID.randomUUID()}"
+        val p      = new Counting("P", blocking = false)
+        val q      = new Counting("Q", blocking = false)
+        for {
+          ffA    <- buildOn(api, domain, p)
+          ffB    <- buildOn(api, domain, q)
+          before <- ZIO.succeed(zio.openfeature.internal.ManagedProvider.unwrap(api.getProvider(domain)))
+          swap   <- ffA.setProvider(p).either
+          after  <- ZIO.succeed(zio.openfeature.internal.ManagedProvider.unwrap(api.getProvider(domain)))
+          _      <- ZIO.succeed(ffB)
+        } yield assertTrue(before eq q, swap.isRight, after eq p)
+      }
+    } @@ TestAspect.withLiveClock,
     test("setProvider of a provider already bound to another domain and in ERROR succeeds with status Error") {
       ZIO.scoped {
         val api = OpenFeatureAPI.createIsolated()

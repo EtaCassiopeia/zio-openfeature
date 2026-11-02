@@ -58,6 +58,13 @@ private[openfeature] object Bound {
       case other              => Foreign(other)
     }
 
+  /** Whether `slot`, the provider the SDK binds, is `incoming` by the SDK's own rule for reusing a registration:
+    * identity for a domain-scoped provider, `equals` otherwise. A wrapper is equal only to itself, so for one both
+    * rules are identity.
+    */
+  def alreadyBound(slot: OFFeatureProvider, incoming: Bound): Boolean =
+    (slot eq incoming.sdk) || (slot != null && !incoming.sdk.isDomainScoped && incoming.sdk.equals(slot))
+
   private def heldByApi(api: OpenFeatureAPI, domain: Option[String], provider: OFFeatureProvider): Boolean =
     domain
       .exists(d => ProviderStateAccess.boundIn(api, d, provider)) || ProviderStateAccess.boundIn(api, null, provider)

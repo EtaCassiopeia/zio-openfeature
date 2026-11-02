@@ -4,6 +4,7 @@ import com.typesafe.config.ConfigFactory
 import zio._
 import zio.test._
 import dev.openfeature.sdk.ImmutableContext
+import zio.openfeature.{FeatureFlagError, FeatureFlags}
 
 object HoconProviderSpec extends ZIOSpecDefault {
 
@@ -238,6 +239,21 @@ object HoconProviderSpec extends ZIOSpecDefault {
     test("a dotted key still reads a nested path") {
       val hocon = HoconProvider.fromConfig(ConfigFactory.parseString("feature { sub = true }"))
       assertTrue(hocon.getBooleanEvaluation("feature.sub", false, ctx).getValue == true)
+    },
+    test("an object read of a scalar key is a TypeMismatch, and the total tier serves the default") {
+      val default = Map[String, Any]("a" -> 1)
+      FeatureFlags.fromProvider(HoconProvider.fromConfig(config)).build.map(_.get[FeatureFlags]).flatMap { ff =>
+        for {
+          typed <- ff.obj("max-items", Map.empty[String, Any]).either
+          total <- ff.objOrDefault("max-items", default)
+        } yield assertTrue(
+          typed match {
+            case Left(FeatureFlagError.TypeMismatch(_, "Object", _)) => true
+            case _                                                   => false
+          },
+          total == default
+        )
+      }
     }
-  )
+  ) @@ TestAspect.withLiveClock
 }

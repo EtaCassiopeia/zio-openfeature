@@ -42,7 +42,7 @@ jobs:
         run: sbt "++2.13.18 test"
 
       - name: Run tests (Scala 3)
-        run: sbt "++3.3.8 test"
+        run: sbt "++3.3.9 test"
 
       - name: Publish to Maven Central
         run: sbt ci-release

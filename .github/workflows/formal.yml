@@ -56,7 +56,8 @@ env:
   # one verified build. Its release notes give the provenance: upstream commit, Central build and verification.
   # To move to a newer build: verify its distribution jar with `validate.py --selftest traces` and
   # `preconditions.py`, publish it as a new `tooling/tla2tools-<version>` prerelease, and change both lines below.
-  # Never overwrite a published asset.
+  # Never overwrite a published asset. Put the prerelease's tag on a parentless anchor commit, never on a commit of
+  # main: the build derives its version from tags.
   TRACE_TLA_TOOLS_RELEASE: tooling/tla2tools-1.8.0-20261102.144740-119
   TRACE_TLA_TOOLS_SHA256: 8f719a6126a0922cf5a243f6c0ce73193b5c2e0a4e4cd29288ecc57a547f629d
   COMMUNITY_MODULES_VERSION: '202610262215'

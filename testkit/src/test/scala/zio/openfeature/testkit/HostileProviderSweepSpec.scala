@@ -79,9 +79,8 @@ object HostileProviderSweepSpec extends ZIOSpecDefault {
 
   /** The outcome each shape must have for each type. */
   private def expected(kind: Kind, fault: Fault): Expected = (fault, kind.op) match {
-    // A valueless scalar is a TypeMismatch (never a defect); a valueless object reads as an empty one today.
-    case (Fault.Answer(AnswerShape.NullValue), Op.EvaluateObject) => Expected.Serves(Map.empty[String, Any])
-    case (Fault.Answer(AnswerShape.NullValue), _)                 => Expected.typeMismatch
+    // A valueless answer is a TypeMismatch, never a defect.
+    case (Fault.Answer(AnswerShape.NullValue), _) => Expected.typeMismatch
     // An Integer is a number: the long and double reads widen it; every other wrong box is a TypeMismatch.
     case (Fault.Answer(AnswerShape.WrongBox), Op.EvaluateLong)   => Expected.Serves(1L)
     case (Fault.Answer(AnswerShape.WrongBox), Op.EvaluateDouble) => Expected.Serves(1.0)

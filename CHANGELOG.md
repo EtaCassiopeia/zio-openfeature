@@ -169,6 +169,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **An object flag answered with no value, or a value that is not an object, is a `TypeMismatch`** (#730). It used to
+  resolve to an empty map. The total tier now serves the default with `TYPE_MISMATCH`. This changes `obj` against
+  `EnvVarProvider`, and against a scalar or list key in `HoconProvider`.
 - **A failed swap's cleanup leaves a provider the shared API registered outside the instance to the SDK** (#728). It
   shuts down only a provider the instance wrapped; no current path reaches it with another.
 - **An interrupted `setProvider` still applies a state the SDK reached during the swap** (#717). An interrupt of the

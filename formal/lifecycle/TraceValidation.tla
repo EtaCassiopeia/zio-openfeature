@@ -39,8 +39,8 @@ TInit ==
 \* allows all of these anywhere; restricting them keeps the search small.  The restriction is not proved
 \* to lose no matching behaviour: an SDK step taken later can read state a library step changed.  The swap, timeout
 \* and rollback cases were checked by hand, and the accept fixtures (formal/lifecycle/traces) keep it honest.
-NeedsInit == Next1 \in {"SwapDone", "SwapRollback", "SwapFailNoRollback", "OrphanResolved", "Deliver", "ScopeClose",
-                          "ShutdownDone"}
+NeedsInit == Next1 \in {"SwapDone", "SwapRollback", "SwapFailNoRollback", "SwapReconcile", "OrphanResolved", "Deliver",
+                          "ScopeClose", "ShutdownDone"}
 
 TraceNext ==
     \/ \E p \in Providers : Lib("SwapStart", SwapStart(p))
@@ -50,6 +50,9 @@ TraceNext ==
     \/ Lib("SwapFailNoRollback", SwapFailNoRollback)
     \/ Next1 = "SwapRollbackUnbound" /\ Env(SdkBindFail)
     \/ Lib("SwapRollbackUnbound", SwapRollbackUnbound)
+    \/ Lib("SwapReconcile", SwapReconcile)
+    \* No probe point records an interrupt of the caller, so the model's own steps for it are free.
+    \/ Env(CallerInterrupt)
     \/ \E early \in BOOLEAN, r \in {"READY", "STALE", "ERROR", "FATAL"} :
          Lib("SwapRollback", (Step.ok => r = Step.state) /\ SwapRollback(Step.ok, r, early))
     \/ \E ev \in events : Lib("Deliver", Recorded(ev.e) /\ DeliverToBridge(ev))

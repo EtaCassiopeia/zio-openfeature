@@ -43,6 +43,11 @@ private[openfeature] object LifecycleProbe {
     /** The rollback's registration has returned and binds the previous provider again; its wait has not started. */
     case object RollbackBind extends Point
 
+    /** The swap has its outcome and the gate is down; about to re-read the slot for a state the gate dropped. Inside
+      * the swap's protected region, with the swap lock held.
+      */
+    case object SwapReconcile extends Point
+
     /** The swap has its outcome and the gate is down; the swap lock is still held. */
     case object SwapDone extends Point
 

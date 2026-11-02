@@ -12,5 +12,6 @@
 {"seq":11,"point":"ApplySignal","arg":"ShutdownCompleted"}
 {"seq":12,"point":"ApplySignal","arg":"SwapFailed"}
 {"seq":13,"point":"SwapRollback","arg":""}
-{"seq":14,"point":"SwapDone","arg":""}
-{"seq":15,"point":"ScopeClose","arg":""}
+{"seq":14,"point":"SwapReconcile","arg":""}
+{"seq":15,"point":"SwapDone","arg":""}
+{"seq":16,"point":"ScopeClose","arg":""}

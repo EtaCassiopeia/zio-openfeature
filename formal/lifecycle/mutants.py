@@ -8,6 +8,20 @@ here = os.path.dirname(os.path.abspath(__file__))
 spec = open(os.path.join(here, 'Lifecycle.tla')).read()
 
 mutants = {
+    # The swap body is interruptible: an interrupt of the caller skips the outcome and the rollback.
+    'the swap body is interruptible': (
+        'Interruptible == {}',
+        'Interruptible == {"bind", "wait"}'),
+    # The re-read of the slot after the outcome is interruptible: an interrupt skips it.
+    'the reconcile is interruptible': (
+        'Interruptible == {}',
+        'Interruptible == {"reconcile"}'),
+    # An interrupted swap does not drop its gate.
+    'an interrupted swap leaves its gate up': [
+        ('Interruptible == {}', 'Interruptible == {"reconcile"}'),
+        ("    /\\ gate' = FALSE /\\ lock' = \"free\" /\\ swap' = None\n    /\\ UNCHANGED << status, installed,",
+         "    /\\ lock' = \"free\" /\\ swap' = None\n    /\\ UNCHANGED << gate, status, installed,"),
+    ],
     # A failed swap always rolls back, even onto a provider whose initialize() still runs.
     'a failed swap rolls back onto a provider still initializing': (
         '    /\\ ~(pending = swap.prev /\\ sdk[swap.prev] = "NOT_READY")\n    /\\ ok \\/ r',
@@ -32,10 +46,10 @@ mutants = {
     'the status follows the event type, not the SDK state': (
         '         ELSE Apply(status, sdk[bound])',
         '         ELSE Apply(status, ev.e)'),
-    # A failed swap does not read the SDK state once its gate drops.
-    'a failed swap does not read the SDK state after its gate drops': (
-        '       /\\ status\' = StatusOf(r)',
-        '       /\\ status\' = IF ok THEN StatusOf(r) ELSE "Error"'),
+    # A swap does not read the SDK state once its gate drops.
+    'a swap does not read the SDK state after its gate drops': (
+        '    /\\ status\' = IF sdk[bound] = "NOT_READY" THEN status ELSE Apply(status, sdk[bound])',
+        '    /\\ status\' = status'),
     # The swap's wait reads an ERROR the new provider reports right after initializing as a failed initialize().
     'a swap reads an error after initialize() returned as a failed initialization': [
         ('    /\\ sdk[swap.new] \\in {"READY", "STALE"} \\/ (ran[swap.new] /\\ sdk[swap.new] \\in {"ERROR", "FATAL"})',
@@ -60,8 +74,8 @@ mutants = {
         '    /\\ lock = "free" /\\ ~closed /\\ ~Settling\n    /\\ p # bound /\\ inits[p] = 0'),
     # A failed swap that never bound its provider reads a still-initializing previous provider as Ready.
     'a failed swap that never bound reads a still-initializing provider as Ready': (
-        '    /\\ status\' = IF sdk[swap.prev] = "NOT_READY" THEN swap.before ELSE Apply(swap.before, sdk[swap.prev])',
-        '    /\\ status\' = IF sdk[swap.prev] = "NOT_READY" THEN "Ready" ELSE Apply(swap.before, sdk[swap.prev])'),
+        '    /\\ status\' = swap.before\n',
+        '    /\\ status\' = IF sdk[swap.prev] = "NOT_READY" THEN "Ready" ELSE swap.before\n'),
     # The async build does not record its provider as initializing, so a failed swap rolls back onto it.
     'the async build does not record its provider as initializing': (
         '    /\\ swap = None\n    /\\ pending = P0\n',

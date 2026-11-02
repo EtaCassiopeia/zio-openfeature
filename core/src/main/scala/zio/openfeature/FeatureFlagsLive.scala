@@ -676,21 +676,26 @@ final private[openfeature] class FeatureFlagsLive(
     // end up bound. The region is bounded — registration and rollback each wait at most `initTimeout` — and
     // waiting for `swapLock` above stays interruptible.
     // The gate must drop on every exit (success, failure, interruption) or bridge events would be suppressed forever.
-    swap.uninterruptible
+    // The re-read of the slot after it is part of the protected region too: an interrupt of the caller, held back until
+    // the swap's outcome, would otherwise skip it and leave a state the SDK reached while the gate was up unapplied.
+    swap
       .ensuring(lifecycle.run(LifecycleInput.GateDown))
       .tapBoth(
         {
           // A READY that landed between the timeout and the gate dropping was suppressed; pick it up now.
           case FeatureFlagError.ProviderInitializationFailed(_: java.util.concurrent.TimeoutException) =>
-            reconcileLateReady(incoming.sdk)
+            probe.at(Point.SwapReconcile) *> reconcileLateReady(incoming.sdk)
           // A failed swap ends on the provider it rolled back to, or on the failed one when there was nothing to roll
           // back to. A state the SDK reached for it while the gate was up (a FATAL from its re-initialization, an
           // event during the rollback's wait) was dropped; take it now.
-          case _ => lifecycle.read.flatMap(st => reconcileRegistration(st.installed)) *> replayInitTimeout
+          case _ =>
+            probe.at(Point.SwapReconcile) *>
+              lifecycle.read.flatMap(st => reconcileRegistration(st.installed)) *> replayInitTimeout
         },
         // A state the SDK reached for the new provider while the gate was up was dropped; take it now.
-        _ => reconcileRegistration(incoming.sdk) *> replayInitTimeout
+        _ => probe.at(Point.SwapReconcile) *> reconcileRegistration(incoming.sdk) *> replayInitTimeout
       )
+      .uninterruptible
       .ensuring(probe.at(Point.SwapDone))
   }
 

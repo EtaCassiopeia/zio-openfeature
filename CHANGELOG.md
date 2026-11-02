@@ -157,6 +157,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **An interrupted `setProvider` still applies a state the SDK reached during the swap** (#717). An interrupt of the
+  caller waits for the swap to finish, but it then skipped the swap's last read of the slot, so a `READY` that arrived
+  while the gate was up, after a timeout for instance, never reached the status. That read is now part of the swap's
+  uninterruptible region. The lifecycle model gains the read as `SwapReconcile` and the interrupt as `CallerInterrupt`,
+  enabled in no phase of the swap; mutants that make the swap body or the read interruptible are caught.
 - **`setProvider` with the provider already installed is a no-op** (#711). It used to run a full swap that changed
   nothing in the SDK: the status went `NotReady` and back, and evaluations failed with `ProviderNotReady` while it
   waited. It now returns at once.

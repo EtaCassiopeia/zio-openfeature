@@ -190,6 +190,16 @@ ShutDownOld(p, sh) ==
 -----------------------------------------------------------------------------
 (* setProvider *)
 
+\* The phases of a swap in which an interrupt of setProvider's caller takes effect.  None: the swap body and the re-read
+\* of the slot after it run uninterruptibly, so an interrupt waits for the swap to finish (#433, #434).  An interrupt
+\* while the caller still waits for the lock changes no state, so the model leaves it out.
+Interruptible == {}
+
+\* The swap has its outcome; the gate is still up and the lock held until it has read the slot again.  `settled`: the
+\* SDK state the outcome was read from, for a successful swap; "NONE" otherwise.
+Outcome(settled) == [new |-> swap.new, prev |-> swap.prev, phase |-> "reconcile", before |-> swap.before,
+                     settled |-> settled]
+
 \* SwapStart: the swap holds the lock and raises the gate; the status becomes NotReady.  Any provider but the one
 \* bound can be installed, again too, once no initialize() of it runs (refuseStillInitializing), no registration still
 \* initializing replaced it (refuseReplacedByPendingInit: its return makes the SDK shut the replaced provider down), and
@@ -204,7 +214,7 @@ SwapStart(p) ==
     /\ lock' = "swap"
     /\ gate' = TRUE
     /\ status' = "NotReady"
-    /\ swap' = [new |-> p, prev |-> installed, phase |-> "bind", before |-> status]
+    /\ swap' = [new |-> p, prev |-> installed, phase |-> "bind", before |-> status, settled |-> "NONE"]
     /\ installed' = p
     /\ UNCHANGED << pending, orphans, bridgeOn, shutDown, closed, sdkVars, owns >>
 
@@ -255,15 +265,15 @@ SdkInitFail(p) ==
                     bound, ran, prevOf, emitted, shuts, twoInits, swaps, owns >>
 
 \* SwapDone: the new provider initialized (or reports STALE from inside initialize(), taken at its word).  The swap
-\* ends in the state the SDK reports for it, an ERROR or FATAL it reported since included, drops the gate, and reads
-\* the slot once more (a state the SDK reached while the gate was up is not lost).
+\* ends in the state the SDK reports for it, an ERROR or FATAL it reported since included; SwapReconcile then reads the
+\* slot once more.
 SwapDone ==
     /\ swap # None /\ swap.phase = "wait"
     /\ bound = swap.new
     /\ sdk[swap.new] \in {"READY", "STALE"} \/ (ran[swap.new] /\ sdk[swap.new] \in {"ERROR", "FATAL"})
     /\ status' = StatusOf(sdk[swap.new])
-    /\ gate' = FALSE /\ lock' = "free" /\ swap' = None /\ pending' = None
-    /\ UNCHANGED << installed, orphans, bridgeOn, shutDown, closed, sdkVars, swaps, owns >>
+    /\ swap' = Outcome(sdk[swap.new]) /\ pending' = None
+    /\ UNCHANGED << installed, lock, gate, orphans, bridgeOn, shutDown, closed, sdkVars, swaps, owns >>
 
 \* SwapTimeout: the wait reached initTimeout while the new provider's initialize() runs.  No rollback: the new provider
 \* stays installed with status Error, and the provider it replaced is watched against it.
@@ -273,8 +283,8 @@ SwapTimeout ==
     /\ status' = "Error"
     /\ pending' = swap.new
     /\ orphans' = IF owns /\ swap.prev # swap.new THEN orphans \cup {Watch(swap.prev, swap.new)} ELSE orphans
-    /\ gate' = FALSE /\ lock' = "free" /\ swap' = None
-    /\ UNCHANGED << installed, bridgeOn, shutDown, closed, sdkVars, swaps, owns >>
+    /\ swap' = Outcome("NONE")
+    /\ UNCHANGED << installed, lock, gate, bridgeOn, shutDown, closed, sdkVars, swaps, owns >>
 
 \* The wait saw the new provider fail.  When the previous provider is the one a timed-out swap installed and its
 \* initialize() still runs, there is nothing to roll back to: the failed provider stays, status Error, and the
@@ -286,15 +296,15 @@ SwapFailNoRollback ==
     /\ status' = "Error"
     /\ orphans' = IF owns THEN orphans \cup {Watch(swap.prev, swap.new)} ELSE orphans
     /\ pending' = None
-    /\ gate' = FALSE /\ lock' = "free" /\ swap' = None
-    /\ UNCHANGED << installed, bridgeOn, shutDown, closed, sdkVars, swaps, owns >>
+    /\ swap' = Outcome("NONE")
+    /\ UNCHANGED << installed, lock, gate, bridgeOn, shutDown, closed, sdkVars, swaps, owns >>
 
 \* SwapRollback: otherwise the previous provider is registered again, which initializes it again.  The rollback's own
 \* wait is folded into this step: `ok` when that initialize() returns, and the provider then settles in `r`, which may
 \* be an ERROR or FATAL it reports before the wait reads it; else initialize() throws, `r` ERROR or FATAL.  On success
 \* the SDK shuts the failed provider down; on failure the library does.  The SDK's events for that initialization may
-\* reach the bridge while the gate is still up (`early`), which drops them; so the swap reads the SDK's state for the
-\* previous provider once its gate is down.
+\* reach the bridge while the gate is still up (`early`), which drops them; so SwapReconcile reads the SDK's state for
+\* the previous provider once the outcome is applied.
 SwapRollback(ok, r, early) ==
     /\ swap # None /\ swap.phase = "wait"
     /\ sdk[swap.new] \in {"ERROR", "FATAL"} /\ ~ran[swap.new]
@@ -315,19 +325,35 @@ SwapRollback(ok, r, early) ==
        \* The previous provider's own count needs no reset: a failed swap never shut it down.
        /\ shuts' = [shuts EXCEPT ![failed] = @ + 1]
     /\ orphans' = Freeze(orphans, swap.prev)
-    /\ gate' = FALSE /\ lock' = "free" /\ swap' = None /\ pending' = None
-    /\ UNCHANGED << bridgeOn, shutDown, closed, inits, emitted, swaps, owns >>
+    /\ swap' = Outcome("NONE") /\ pending' = None
+    /\ UNCHANGED << lock, gate, bridgeOn, shutDown, closed, inits, emitted, swaps, owns >>
 
 \* SwapRollbackUnbound: a swap whose registration was refused before binding.  Nothing is registered again: the previous
-\* provider is still bound, in the state its registration has.  The status goes back to the one before the swap, and the
-\* SDK's state for the slot is then applied as an event would be; one still initializing keeps its status (NotReady
-\* while it starts, Error for a timed-out swap's provider), and its own events move it on.
+\* provider is still bound, in the state its registration has.  The status goes back to the one before the swap, and
+\* SwapReconcile then applies the SDK's state for the slot as an event would be; one still initializing keeps its status
+\* (NotReady while it starts, Error for a timed-out swap's provider), and its own events move it on.
 SwapRollbackUnbound ==
     /\ swap # None /\ swap.phase = "unbound"
     /\ installed' = swap.prev
-    /\ status' = IF sdk[swap.prev] = "NOT_READY" THEN swap.before ELSE Apply(swap.before, sdk[swap.prev])
+    /\ status' = swap.before
+    /\ swap' = Outcome("NONE")
+    /\ UNCHANGED << lock, gate, pending, orphans, bridgeOn, shutDown, closed, sdkVars, swaps, owns >>
+
+\* SwapReconcile: the swap drops its gate and reads the slot once more, so a state the SDK reached while the gate was up
+\* is not lost: the SDK's state for the bound provider is applied as an event would be (one still initializing changes
+\* nothing).  Then the swap releases the lock.
+SwapReconcile ==
+    /\ swap # None /\ swap.phase = "reconcile"
+    /\ status' = IF sdk[bound] = "NOT_READY" THEN status ELSE Apply(status, sdk[bound])
     /\ gate' = FALSE /\ lock' = "free" /\ swap' = None
-    /\ UNCHANGED << pending, orphans, bridgeOn, shutDown, closed, sdkVars, swaps, owns >>
+    /\ UNCHANGED << installed, pending, orphans, bridgeOn, shutDown, closed, sdkVars, swaps, owns >>
+
+\* CallerInterrupt: setProvider's caller is interrupted in a phase where that takes effect.  The swap's remaining steps
+\* are skipped; the gate drops (its `ensuring`) and the lock is released.  Never enabled: Interruptible is empty.
+CallerInterrupt ==
+    /\ swap # None /\ swap.phase \in Interruptible
+    /\ gate' = FALSE /\ lock' = "free" /\ swap' = None
+    /\ UNCHANGED << status, installed, pending, orphans, bridgeOn, shutDown, closed, sdkVars, swaps, owns >>
 
 -----------------------------------------------------------------------------
 (* Provider events *)
@@ -465,6 +491,8 @@ Next ==
     \/ SwapTimeout
     \/ SwapFailNoRollback
     \/ \E ok, early \in BOOLEAN, r \in {"READY", "STALE", "ERROR", "FATAL"} : SwapRollback(ok, r, early)
+    \/ SwapReconcile
+    \/ CallerInterrupt
     \/ \E p \in All, e \in {"READY", "STALE", "ERROR", "FATAL"} : Emit(p, e)
     \/ \E p \in All : EmitStaleWhileStarting(p)
     \/ \E ev \in events : Deliver(ev)
@@ -484,8 +512,13 @@ ProviderSymmetry == Permutations(Providers)
 \* Once shutdown has completed the status stays NotReady, apart from a later shutdown call's own ShuttingDown.
 FinalNotReady == shutDown => status = IF lock = "shutdown" THEN "ShuttingDown" ELSE "NotReady"
 
-\* "The status becomes NotReady while the SDK initializes the new provider", whatever events arrive meanwhile.
-NotReadyDuringSwap == (swap # None) => status = "NotReady"
+\* "The status becomes NotReady while the SDK initializes the new provider", whatever events arrive meanwhile, until the
+\* swap has its outcome.
+NotReadyDuringSwap == (swap # None /\ swap.phase # "reconcile") => status = "NotReady"
+
+\* A successful swap's outcome is the status of the state the SDK reported for the new provider, whatever events arrive
+\* before the slot is read again.
+OutcomeFollowsSettled == (swap # None /\ swap.settled # "NONE") => status = StatusOf(swap.settled)
 
 \* The gate is down whenever no swap holds the lock.
 GateDownWhenIdle == lock # "swap" => ~gate

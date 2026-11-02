@@ -14,5 +14,6 @@
 {"seq":13,"point":"ApplySignal","arg":"EventReady"}
 {"seq":14,"point":"ApplySignal","arg":"RollbackSucceeded(Ready)"}
 {"seq":15,"point":"ApplySignal","arg":"EventReady"}
-{"seq":16,"point":"SwapDone","arg":""}
-{"seq":17,"point":"ScopeClose","arg":""}
+{"seq":16,"point":"SwapReconcile","arg":""}
+{"seq":17,"point":"SwapDone","arg":""}
+{"seq":18,"point":"ScopeClose","arg":""}

@@ -31,7 +31,8 @@ case is pinned only by `ProviderHotSwapSpec`.
 | Invariant | Meaning |
 |:--|:--|
 | `FinalNotReady` | Once shutdown has completed, the status stays `NotReady` (a later shutdown call shows `ShuttingDown` while it runs). |
-| `NotReadyDuringSwap` | While a swap is in flight the status is `NotReady`, whatever events arrive. |
+| `NotReadyDuringSwap` | While a swap is in flight the status is `NotReady`, whatever events arrive, until the swap has its outcome. |
+| `OutcomeFollowsSettled` | A successful swap's outcome is the status of the state the SDK reported for the new provider, until the swap reads the slot again. |
 | `GateDownWhenIdle` | The swap gate is down whenever no swap holds the lock. |
 | `OneLockHolder` | A swap and a shutdown never run at once. |
 | `NoConcurrentInit` | No provider has `initialize()` entered while an earlier call runs. |
@@ -47,10 +48,10 @@ case is pinned only by `ProviderHotSwapSpec`.
 | A failed swap rolls back onto a provider still initializing (#619) | `NoConcurrentInit` |
 | Shutdown does not wait for a swap in flight (#565) | `NotReadyDuringSwap` |
 | `STALE` moves the status only from `Ready` (#613) | `StatusFollowsSdk` |
-| A swap into a `STALE` provider ends `Ready` (#617) | `StatusFollowsSdk` |
+| A swap into a `STALE` provider ends `Ready` (#617) | `OutcomeFollowsSettled` |
 | A timed-out swap forgets the provider it replaced (#564) | `ClosedCleanly` |
 | The status follows the event type, not the SDK's state (#601) | `StatusFollowsSdk` |
-| A failed swap does not read the SDK's state once its gate drops (#619) | `StatusFollowsSdk` |
+| A swap does not read the SDK's state once its gate drops (#619) | `StatusFollowsSdk` |
 | A swap reads an `ERROR` reported right after `initialize()` returned as a failed initialization (#623) | `BoundNotShutDown` |
 | A rollback reads such an `ERROR` from the restored provider as a failed rollback (#623) | `ShutDownAtMostOnce` |
 | The watcher of a timed-out swap's provider reads such an `ERROR` as a failed initialization (#623) | `ShutDownAtMostOnce` |
@@ -63,6 +64,12 @@ case is pinned only by `ProviderHotSwapSpec`.
 | A provider a timed-out swap still holds is installed again | `BoundNotShutDown` |
 | A provider a registration still initializing replaced is installed again (an instance sharing its API records no orphans) | `BoundNotShutDown` |
 | The swap gate never goes up | `NotReadyDuringSwap` |
+| The swap body is interruptible: an interrupt of the caller skips the outcome and the rollback | `StatusFollowsSdk` |
+| The re-read of the slot after the outcome is interruptible (#717) | `StatusFollowsSdk` |
+| An interrupted swap does not drop its gate | `GateDownWhenIdle` |
+
+The re-read that `SwapReconcile` makes would also correct a swap whose outcome reads the wrong status, as the code's
+does. So the #617 mutant is caught by `OutcomeFollowsSettled`, which checks the outcome before that re-read.
 
 ## Actions and the code
 
@@ -75,11 +82,13 @@ there is one.
 | `SdkBind` | `ProviderRegistration.registerThenAwait`: the SDK binds the new provider and starts `initialize()` |
 | `SdkBindFail` | the SDK's registration throwing before it binds (`EventProvider.attach` or `registerGlobalProvider` refusing the provider) |
 | `SdkInitOk`, `SdkInitFail` | the SDK's `FeatureProviderStateManager.initialize` returning or throwing; after a success, the SDK's `PROVIDER_READY` (`ran`) and `ProviderRepository.shutDownOld` |
-| `SwapDone` | `setProvider`: `SwapSucceeded(settled)`, `GateDown`, `reconcileRegistration`; `Registration.settle` deciding by the wrapper's `initialize()` outcome |
-| `SwapTimeout` | `setProvider`, timeout branch: `SwapFailed`, `Replaced`, `OrphanRecorded` (`recordOrphan`), `reconcileLateReady` |
+| `SwapDone` | `setProvider`: `SwapSucceeded(settled)`; `Registration.settle` deciding by the wrapper's `initialize()` outcome |
+| `SwapTimeout` | `setProvider`, timeout branch: `SwapFailed`, `Replaced`, `OrphanRecorded` (`recordOrphan`) |
 | `SwapFailNoRollback` | `setProvider`, failure branch when the previous provider's `initialize()` still runs: `SwapFailed`, `OrphanRecorded` |
 | `SwapRollback` | `setProvider`, failure branch: `restoreSdkRegistration` (probe point `RollbackBind`), `RollbackSucceeded(settled)` or `cleanupUnboundFailedProvider` |
-| `SwapRollbackUnbound` | `setProvider`, failure branch: `failedBeforeBinding`, `RollbackUnbound(before)`, then `reconcileRegistration` once the gate drops |
+| `SwapRollbackUnbound` | `setProvider`, failure branch: `failedBeforeBinding`, `RollbackUnbound(before)` |
+| `SwapReconcile` | `setProvider`, after every outcome: `GateDown`, probe point `SwapReconcile`, then `reconcileLateReady` after a timeout or `reconcileRegistration` otherwise; inside the swap's uninterruptible region, with the lock held |
+| `CallerInterrupt` | an interrupt of `setProvider`'s caller, which takes effect only in the phases in `Interruptible`: none, since the swap body and the re-read run uninterruptibly (`runSwap`'s `.uninterruptible`) |
 | `Emit`, `EmitStaleWhileStarting` | a provider's `emit`; the SDK's `FeatureProviderStateManager.onEmit` |
 | `Deliver` | `EventBridge.onSdkEvent` and `applySdkSignal` |
 | `OrphanResolved` | `OrphanedProviders.settle` on the registration's outcome, then `OrphanSettled` |
@@ -98,7 +107,7 @@ names; the rows below say where one is held elsewhere. Every library action is o
 | `installed` | `installed` |
 | `lock` | `lock` (the swap lock serializes the sequences; the field records which holds it) |
 | `gate` | `gate`, mirrored to `swapInProgress` for the evaluator |
-| `swap` | `swap` (without `phase`: the swap's for-comprehension is the phase) |
+| `swap` | `swap` (without `phase` and `settled`: the swap's for-comprehension is the phase) |
 | `pending` | not a field: whether the previous provider's `initialize()` still runs (its wrapper's count), read in `setProvider`'s failure branch |
 | `prevOf` with `inits` (SDK variables) | `replaced`, the registrations still initializing with the provider each replaced, which the `HeldBy` refusal reads |
 | `orphans` | `orphans`; `OrphanedProviders` keeps the watcher of each entry |
@@ -124,6 +133,7 @@ own actions (`SdkBind`, `SdkInitOk`, `Emit`, `Deliver`, ...) model what those do
 | `SwapStart` | `~\E o \in orphans : o.prev = p` | enforced | `LifecycleStep.admit`, `PendingOrphan` (the record's `orphans`; an instance that owns its API): the provider a timed-out swap replaced is refused until that swap's provider settles, since settling may shut it down; `ProviderHotSwapSpec` "the provider a timed-out swap replaced is refused until the swap's provider settles", mutant "a provider a timed-out swap still holds is installed again" (no trace fixture, for the same reason) |
 | `SwapStart` | `p # bound` | enforced | `setProvider` returns at once, without a swap, when the slot already binds the provider by the SDK's own matching rule (`Bound.alreadyBound`, probe point `SwapSkipped`), since the SDK would reuse that registration and change nothing; `ProviderHotSwapSpec` "installing the bound provider changes nothing". No trace fixture: recorded runs carry no provider identity. No mutant: dropping the guard makes the model run an `initialize()` the SDK does not run, which no invariant observes |
 | `SwapStart` | `swaps < MaxSwaps` | bound | the swap budget that keeps the state space finite; not a property of the code |
+| `CallerInterrupt` | `swap.phase \in Interruptible`, which is empty | enforced | `runSwap`: the swap body and the re-read of the slot after it are one `.uninterruptible` region, so an interrupt of the caller waits for the swap to finish; `SetProviderInterruptSpec` "interrupted during a swap that times out, a READY dropped while the gate was up is still applied", fixture `reject/swap-without-reconcile`, mutants "the swap body is interruptible" and "the reconcile is interruptible". An interrupt while the caller waits for the lock changes no state, so it has no action |
 | `ShutdownStart` | `lock = "free"` | enforced | `shutdown` runs under `swapLock`; fixtures `reject/shutdown-inside-a-swap` and `reject/recorded-shutdown-without-the-lock` |
 | `ShutdownDone` | `lock = "shutdown"` | enforced | structural: the second half of `shutdown`, in the same permit as `ShutdownStart`, so no run shows one without the other |
 | `ShutdownDone`, `ScopeClose` | `~Settling` (in `TearDown`) | assumed | the teardown waits for a provider that reported `STALE` from inside `initialize()` to finish starting; the code tears down regardless. The same documented limit as `SwapStart`'s |
@@ -168,7 +178,7 @@ run.
 
 | Probe point | Library action |
 |:--|:--|
-| `SwapStart`, `SdkBind`, `SwapTimeout`, `SwapRollback` | the action of the same name |
+| `SwapStart`, `SdkBind`, `SwapTimeout`, `SwapRollback`, `SwapReconcile` | the action of the same name |
 | `ApplySignal(SwapSucceeded(settled))` | `SwapDone`, pinned to the settled state |
 | `OrphanRecorded` in a swap with no other outcome | `SwapFailNoRollback` |
 | `DeliverEvent` outside a swap, before any shutdown | `Deliver` |
@@ -210,12 +220,12 @@ action. A run that reaches `Watchdog`, which the model leaves out, is skipped.
 | A provider reports a failure at runtime | `Emit(p, "ERROR")` or `Emit(p, "FATAL")`; `Fatal` is sticky (`Apply`), and `StatusFollowsSdk` allows for it |
 | Events arrive late, in any order, or never | `events` is a set, and nothing forces `Deliver` |
 | Shutdown or scope close while work is in flight | Both wait for the swap lock; `TearDown` shuts down the bound provider and the predecessors of the orphans not released |
+| The caller of `setProvider` is interrupted | `CallerInterrupt`, enabled only in the swap phases in `Interruptible`, which is empty: the swap body and the re-read after it run uninterruptibly ([design record](../../docs/design/lifecycle.md), #433, #434), and the mutants that make either interruptible are caught. An interrupt while waiting for the lock changes no state; `shutdown` and the scope close are uninterruptible once they hold it (#435) |
 
 ### Left out, and what checks it instead
 
 | Failure | Why it is out | Checked by |
 |:--|:--|:--|
-| The caller of `setProvider` or `shutdown` is interrupted | The design makes these steps run to completion: a started swap runs to its outcome, and the teardown is uninterruptible ([design record](../../docs/design/lifecycle.md), #433, #434, #435). The model's actions are atomic and assume exactly that. The post-swap reconcile runs after the swap's uninterruptible region, so that window is not yet backed; #717 checks it. | `LifecycleModelSpec` (`InterruptSwap`), `LifecycleInterleavingSpec`, `SetProviderInterruptSpec` |
 | A provider dies silently: evaluations fail and no event is emitted | The model has no evaluation action and knows provider health only from the SDK's state and events. The library cannot detect this either. #720 makes it explicit in the model. | the evaluation error handling; `CircuitBreakerProvider` (extras); the provider fault tests on the real OFREP and Optimizely providers |
 | A provider's `shutdown()` throws or hangs | `TearDown` counts one shutdown, atomically. Every SDK and provider call on a lifecycle path is bounded (#561). #719 models it. | `LifecycleModelSpec` (`SlowShutdown`); `ManagedProvider` shuts a provider down at most once per initialization by construction |
 | A defect in the library: a bridge handler throws, the SDK's executor dies | The library's own actions are assumed to complete | the property and interleaving suites |

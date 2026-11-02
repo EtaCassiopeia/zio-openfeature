@@ -748,6 +748,42 @@ object ProviderHotSwapSpec extends ZIOSpecDefault {
         )
       }
     } @@ TestAspect.withLiveClock,
+    test("an evaluation whose provider call spans a whole swap is not served by the provider the swap replaced") {
+      ZIO.scoped {
+        val entered = new java.util.concurrent.CountDownLatch(1)
+        val resume  = new java.util.concurrent.CountDownLatch(1)
+        // A answers only once released, so its call outlasts the swap that replaces it.
+        val a = new SimpleProvider("A", Map("who" -> "A")) {
+          override def getStringEvaluation(
+            key: String,
+            defaultValue: String,
+            ctx: OFEvaluationContext
+          ): ProviderEvaluation[String] = {
+            entered.countDown()
+            val _ = resume.await(5, java.util.concurrent.TimeUnit.SECONDS)
+            super.getStringEvaluation(key, defaultValue, ctx)
+          }
+        }
+        for {
+          _      <- ZIO.addFinalizer(ZIO.succeed(resume.countDown()))
+          ff     <- buildWithDomain(a)
+          eval   <- ff.string("who", "default").either.fork
+          inside <- ZIO.attemptBlocking(entered.await(5, java.util.concurrent.TimeUnit.SECONDS))
+          // The whole swap runs while A's call is in flight: by the re-check the gate is down again, and only the
+          // generation shows that a swap happened.
+          _      <- ff.setProvider(new SimpleProvider("B", Map("who" -> "B")))
+          status <- ff.providerStatus
+          _      <- ZIO.succeed(resume.countDown())
+          result <- eval.join
+          after  <- ff.string("who", "default")
+        } yield assertTrue(
+          inside,
+          status == ProviderStatus.Ready,
+          result == Left(FeatureFlagError.ProviderNotReady(ProviderStatus.NotReady)),
+          after == "B"
+        )
+      }
+    } @@ TestAspect.withLiveClock,
     test("the async build's provider is refused while its initialize() runs, after a failed swap retired it") {
       ZIO.scoped {
         val api    = OpenFeatureAPI.createIsolated()

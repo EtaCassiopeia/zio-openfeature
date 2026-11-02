@@ -30,9 +30,12 @@ final private[openfeature] class EventBridge(
   // provider would clobber the swap's own outcome). Written only by the lifecycle's interpreter.
   private[openfeature] val swapInProgress = new java.util.concurrent.atomic.AtomicBoolean(false)
 
-  // Bumped when `setProvider` has made the status NotReady, before it touches the SDK. The SDK client resolves the slot's provider on each
-  // call, so an evaluation that passed its readiness check and then met a swap may have been answered by the incoming
-  // provider before that provider settled; the evaluator compares this across its provider call to tell.
+  // Bumped by each swap's start. The evaluator compares it across its provider call to catch a swap that started and
+  // ended inside that call: the gate is down again by the re-check, and the answer came from the provider the swap
+  // replaced. A swap still in flight is the gate's to catch. So the bump only has to land while the gate is up; the
+  // swap's start writes the gate, then the status, then this, so an evaluator that reads the new value finds the gate
+  // up, and one that reads the old value with the status already NotReady is refused at its check. The lifecycle
+  // model checks this (formal/lifecycle/README.md, "Evaluation").
   private[openfeature] val swapGeneration = new java.util.concurrent.atomic.AtomicLong(0L)
 
   /** The instance's lifecycle record and its interpreter: every status write goes through it. */

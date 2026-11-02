@@ -67,7 +67,10 @@ TraceNext ==
 \* The providers a swap installs are interchangeable.
 Symmetry == Permutations(Providers)
 
-TraceSpec == TInit /\ [][TraceNext]_<< vars, i >>
+\* Recorded runs carry no evaluations (MaxEvals = 0).
+TraceStep == TraceNext /\ UNCHANGED evals
+
+TraceSpec == TInit /\ [][TraceStep]_<< vars, i >>
 
 \* Violated exactly when some behaviour of the model matches the whole trace.
 TraceNotDone == i < Len(Trace)

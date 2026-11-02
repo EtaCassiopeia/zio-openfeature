@@ -23,6 +23,7 @@ CONSTANTS
     Providers,   \* providers setProvider can install besides P0
     MaxSwaps,    \* how many swaps may start in one behaviour
     MaxEvents,   \* how many events providers may emit in one behaviour
+    MaxEvals,    \* how many evaluations may run in one behaviour; 0 leaves evaluation out
     AllowDeath,  \* whether a provider may stop working without reporting it (Die); TRUE only in Witness.cfg
     None
 
@@ -56,10 +57,12 @@ ran,         \* whether the provider's current registration's initialize() retur
     twoInits,    \* a provider's initialize() was entered while an earlier call ran
     dead,        \* ghost: the provider's current registration stopped working without reporting it.  Nothing in the
                  \* library reads it: the library learns a provider's health only from the SDK's state and events.
-    swaps        \* how many swaps have started
+    swaps,       \* how many swaps have started
+    \* The evaluators
+    evals        \* each evaluation slot's progress through Evaluator.gated
 
 vars == << status, installed, lock, gate, swap, pending, orphans, bridgeOn, shutDown, closed, owns,
-           bound, sdk, inits, ran, prevOf, events, emitted, shuts, twoInits, dead, swaps >>
+           bound, sdk, inits, ran, prevOf, events, emitted, shuts, twoInits, dead, swaps, evals >>
 sdkVars == << bound, sdk, inits, ran, prevOf, events, emitted, shuts, twoInits, dead >>
 
 Used == {p \in All : sdk[p] # "NONE"}
@@ -77,6 +80,8 @@ TypeOK ==
     /\ shuts \in [All -> Nat]
     /\ twoInits \in BOOLEAN
     /\ dead \in [All -> BOOLEAN]
+    /\ evals \in [1..MaxEvals -> [phase : {"idle", "read", "checked", "called", "returned", "refused"}, gen0 : Nat,
+                                  by : All \cup {None}, instRet : All \cup {None}, swapRet : BOOLEAN]]
     /\ swaps \in Nat
 
 -----------------------------------------------------------------------------
@@ -115,6 +120,24 @@ StatusOf(state) ==
       [] OTHER           -> "Ready"
 
 -----------------------------------------------------------------------------
+(* Evaluation (Evaluator.gated) *)
+
+\* swapGeneration: SwapStart moves it, and only SwapStart, so it is the count of swaps started.  In the code the swap's
+\* start writes the gate, then the status, then the generation, under the swap lock and before the SDK registration;
+\* the model takes the three in one step.  That loses no evaluation outcome: an evaluation that reads the new
+\* generation finds the gate already up, and one that reads the old generation with the status already NotReady is
+\* refused at the check.  The generation's job is the swap that starts and ends inside one evaluation's window, which
+\* the gate alone cannot see; for that it only has to move while the gate is up, so its place relative to the SDK
+\* registration does not matter (README.md, "Evaluation").
+Gen == swaps
+
+\* An evaluation: `phase` "idle", "read" (the generation read), "checked" (past the status check), "called" (the SDK
+\* answered), then "returned" or "refused".  `gen0`: the generation it read; `inst0`: the provider installed then;
+\* `by`: the provider the SDK's call reached.  At its return, `instRet` and `swapRet` record the provider installed and
+\* whether a swap was in flight, for the invariants.
+EvalIdle == [phase |-> "idle", gen0 |-> 0, by |-> None, instRet |-> None, swapRet |-> FALSE]
+
+-----------------------------------------------------------------------------
 \* The state after the build, with `events0` the build's events not yet delivered.
 InitWith(events0) ==
     /\ status = "Ready"
@@ -139,6 +162,7 @@ InitWith(events0) ==
     /\ twoInits = FALSE
     /\ dead = [p \in All |-> FALSE]
     /\ swaps = 0
+    /\ evals = [k \in 1..MaxEvals |-> EvalIdle]
 
 \* The async build: the instance is returned while P0's initialize() runs, recorded as pending so a failed swap does not
 \* roll back onto it.  The init watchdog is outside the model.
@@ -165,6 +189,7 @@ InitAsync ==
     /\ twoInits = FALSE
     /\ dead = [p \in All |-> FALSE]
     /\ swaps = 0
+    /\ evals = [k \in 1..MaxEvals |-> EvalIdle]
 
 Init == InitWith({}) \/ InitAsync
 
@@ -499,7 +524,7 @@ ScopeClose ==
                     bound, sdk, ran, prevOf, events, emitted, twoInits, dead, swaps, owns >>
 
 -----------------------------------------------------------------------------
-Next ==
+LifecycleNext ==
     \/ \E p \in All : SwapStart(p)
     \/ SdkBind
     \/ SdkBindFail
@@ -519,6 +544,38 @@ Next ==
     \/ ShutdownStart
     \/ ShutdownDone
     \/ ScopeClose
+
+\* gated's first read: the generation, before the status check.
+EvalRead(k) ==
+    /\ evals[k].phase = "idle"
+    /\ evals' = [evals EXCEPT ![k] = [@ EXCEPT !.phase = "read", !.gen0 = Gen]]
+
+\* checkProviderStatus: NotReady, Fatal and ShuttingDown fail the evaluation; Ready, Stale and Error let it through.
+EvalCheck(k) ==
+    /\ evals[k].phase = "read"
+    /\ evals' = [evals EXCEPT ![k].phase = IF status \in {"NotReady", "Fatal", "ShuttingDown"} THEN "refused"
+                                                                                               ELSE "checked"]
+
+\* The call: the SDK resolves the slot's provider per call, so whichever provider is bound answers.
+EvalCall(k) ==
+    /\ evals[k].phase = "checked"
+    /\ evals' = [evals EXCEPT ![k] = [@ EXCEPT !.phase = "called", !.by = bound]]
+
+\* The re-check: an answer is returned only if no swap started since the generation read and none is in flight
+\* (swapInProgress, the gate); otherwise the evaluation fails with ProviderNotReady(NotReady).
+EvalReturn(k) ==
+    /\ evals[k].phase = "called"
+    /\ evals' = [evals EXCEPT ![k] =
+                   IF Gen = @.gen0 /\ ~gate
+                     THEN [@ EXCEPT !.phase = "returned", !.instRet = installed, !.swapRet = (swap # None)]
+                     ELSE [@ EXCEPT !.phase = "refused"]]
+
+EvalNext == \E k \in 1..MaxEvals : EvalRead(k) \/ EvalCheck(k) \/ EvalCall(k) \/ EvalReturn(k)
+
+Next ==
+    \/ LifecycleNext /\ UNCHANGED evals
+    \/ EvalNext /\ UNCHANGED << status, installed, lock, gate, swap, pending, orphans, bridgeOn, shutDown, closed, owns,
+                                swaps, sdkVars >>
 
 Spec == Init /\ [][Next]_vars
 
@@ -543,11 +600,11 @@ FinishStarting == \E p \in All : inits[p] > 0 /\ sdk[p] = "STALE" /\ SdkInitOk(p
 \* swap, a shutdown or the scope close to start.
 FairSpec ==
     /\ Spec
-    /\ WF_vars(LibrarySwapStep)                       \* a swap in flight takes its next step; the timeout fires
-    /\ WF_vars(ShutdownDone)                          \* a started shutdown completes
-    /\ WF_vars(\E ev \in events : Deliver(ev))        \* the SDK delivers, or drops, every pending event
-    /\ WF_vars(\E o \in orphans : OrphanResolved(o))  \* a watch that has resolved is acted on
-    /\ WF_vars(FinishStarting)
+    /\ WF_vars(LibrarySwapStep /\ UNCHANGED evals)                       \* a swap in flight takes its next step; the timeout fires
+    /\ WF_vars(ShutdownDone /\ UNCHANGED evals)                          \* a started shutdown completes
+    /\ WF_vars((\E ev \in events : Deliver(ev)) /\ UNCHANGED evals)       \* the SDK delivers, or drops, every pending event
+    /\ WF_vars((\E o \in orphans : OrphanResolved(o)) /\ UNCHANGED evals) \* a watch that has resolved is acted on
+    /\ WF_vars(FinishStarting /\ UNCHANGED evals)
 
 \* An orphan entry whose watched registration has reached a state its watcher acts on.
 Resolvable(o) == View(o) \in {"READY", "STALE", "ERROR", "FATAL"}
@@ -622,4 +679,10 @@ ClosedCleanly ==
 \* state as it was.  Witness.cfg asserts it as an invariant and witness.py requires TLC to report it violated, so the
 \* check fails if a change makes the state unreachable and the README's account of the gap must change with it.
 SilentDeathUndetected == ~(dead[installed] /\ status = "Ready" /\ lock = "free" /\ ~shutDown)
+
+\* An answer returned to a caller came from the provider installed when it returned.
+NoRejectedAnswer == \A k \in 1..MaxEvals : evals[k].phase = "returned" => evals[k].by = evals[k].instRet
+
+\* No answer is returned while a swap is in flight.
+NoAnswerDuringSwap == \A k \in 1..MaxEvals : evals[k].phase = "returned" => ~evals[k].swapRet
 =============================================================================

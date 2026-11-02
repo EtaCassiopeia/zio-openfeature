@@ -464,6 +464,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Tests
 
+- **A TLA+ model of the ordered event lane** (#725). `formal/lane` models `OrderedEmitter` with the SDK's emitter
+  pools and its API lock, in PlusCal. On every pull request TLC checks that the slot follows the order the wrapper
+  received the events, that nothing deadlocks, and that no accepted emission is cut off by the lane's close.
+  Witnesses keep the documented limits reachable: an unawaited delegate's swapped emissions, and what
+  `setProviderAndWait` would do. Mutants show that a lane holding either lock while it waits deadlocks.
 - **The lifecycle model checks the evaluation gate** (#721). Evaluations run alongside swaps in `Evaluation.cfg`, on
   every pull request. TLC checks that a returned answer comes from the provider installed when it returns, and never
   while a swap is in flight. Mutants that drop the re-check, or either half of it, are caught. A new hot-swap test

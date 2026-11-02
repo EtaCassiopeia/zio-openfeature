@@ -104,7 +104,9 @@ provider's own emissions.
   provider issues back to back without awaiting, which the SDK's cached emitter pool can swap before any wrapper
   sees them (a provider that needs order awaits its own emissions), and the handler bodies, which the SDK runs on
   its executor, so the bridge keeps reading the slot when a handler runs and the order in which `events` publishes
-  them is as documented. The extras wrappers get the same lane (#700).
+  them is as documented. The extras wrappers get the same lane (#700). The lane's ordering and its lock argument
+  are checked by a TLA+ model, `formal/lane` (#725). It also keeps both limits reachable as witnesses: the unawaited
+  swap, and what calling `setProviderAndWait` would do (a cut-off emission, or a deadlock).
 - A hanging `initialize()` is still not interruptible; the timeout semantics are unchanged.
 - Two equal but distinct provider instances on one API are two registrations.
 

@@ -8,6 +8,7 @@ import zio.openfeature.internal.{
   ErrorCodeConverter,
   FeatureFlagsState,
   ProviderEvaluations,
+  Refusal,
   ValueBridge
 }
 import dev.openfeature.sdk.{
@@ -45,8 +46,8 @@ final class TestFeatureProvider private (
   private val state: AtomicReference[ProviderState],
   private val evaluations: CopyOnWriteArrayList[(String, OFEvaluationContext)],
   private val eventsHub: Hub[ProviderEvent],
-  // Shared with the instance as its status. A write here is a status override that does not go through the
-  // instance's lifecycle step: it moves the status only, not the rest of the lifecycle record.
+  // Shared with the instance as its published status. The instance's lifecycle step writes it; `setStatus` writes it
+  // directly only while no instance is attached.
   private[openfeature] val statusRef: SubscriptionRef[ProviderStatus],
   private val initLatch: Option[CountDownLatch],
   private[testkit] val initDone: Option[CountDownLatch],
@@ -56,6 +57,10 @@ final class TestFeatureProvider private (
   import TestFeatureProvider.{BehaviorConfig, ErrorMode}
 
   private[testkit] val behaviorRef: AtomicReference[BehaviorConfig] = new AtomicReference(BehaviorConfig())
+
+  // The status override of each instance this provider is attached to, in the order they were built.
+  private[testkit] val overrides: AtomicReference[List[ProviderStatus => IO[Refusal, Unit]]] =
+    new AtomicReference(Nil)
 
   // The shutdowns since the last initialize(), and the most any cycle has seen, for the end-state check.
   private val shutdownsInCycle     = new java.util.concurrent.atomic.AtomicInteger(0)
@@ -323,12 +328,26 @@ final class TestFeatureProvider private (
   /** Set the provider status. For async test layers, setting Ready releases the init latch and waits for the Java SDK's
     * background `initialize()` thread to complete, ensuring the provider is fully ready before returning.
     *
+    * On an attached instance the status moves through its lifecycle step, as a provider report would: from any status,
+    * `Fatal` included. It is refused once the instance is shut down or its scope is closed, and while a `setProvider`
+    * is in flight; a refusal is a bug in the test, so this dies with a message naming the status and the reason.
+    *
     * The wait runs on the blocking pool with a bounded timeout: an unbounded `await` on a runtime thread could starve
     * the ZIO runtime (and hang the whole suite) if the SDK never delivers PROVIDER_READY. On timeout this dies with a
     * descriptive error instead — a fast, diagnosable failure.
     */
   def setStatus(status: ProviderStatus): UIO[Unit] =
-    statusRef.set(status) *> (status match {
+    ZIO.suspendSucceed {
+      overrides.get() match {
+        case Nil      => statusRef.set(status)
+        case attached =>
+          ZIO
+            .foreachDiscard(attached)(_(status))
+            .orDieWith(refusal =>
+              new IllegalStateException(s"setStatus($status) refused: ${TestFeatureProvider.reason(refusal)}")
+            )
+      }
+    } *> (status match {
       case ProviderStatus.Ready =>
         ZIO.succeed {
           state.set(ProviderState.READY)
@@ -779,6 +798,7 @@ object TestFeatureProvider {
             .fromProviderWithDomainAsync(provider, domain, provider.statusRef, api = Some(api), onReady = onReady)
       }
       featureFlags <- layer.build.map(_.get[FeatureFlags])
+      _            <- attach(provider, featureFlags)
       _            <- mode match {
         case LayerMode.Sync(what)            => awaitLatch(onReady, what)
         case LayerMode.Async                 => ZIO.unit
@@ -786,6 +806,25 @@ object TestFeatureProvider {
           (ZIO.sleep(delay) *> provider.setStatus(ProviderStatus.Ready)).forkScoped.unit
       }
     } yield featureFlags
+
+  // Route `setStatus` through `ff`'s lifecycle step for as long as `ff`'s scope is open.
+  private def attach(provider: TestFeatureProvider, ff: FeatureFlags): URIO[Scope, Unit] =
+    ff match {
+      case live: FeatureFlagsLive =>
+        val apply: ProviderStatus => IO[Refusal, Unit] = live.overrideStatus
+        ZIO
+          .acquireRelease(ZIO.succeed(provider.overrides.updateAndGet(_ :+ apply)))(_ =>
+            ZIO.succeed(provider.overrides.updateAndGet(_.filterNot(_ eq apply)))
+          )
+          .unit
+      case _ => ZIO.unit
+    }
+
+  private[testkit] def reason(refusal: Refusal): String = refusal match {
+    case Refusal.Closed       => "the instance is shut down or its scope is closed"
+    case Refusal.SwapInFlight => "a setProvider is in flight, and its swap owns the status until it ends"
+    case other                => other.toString
+  }
 
   /** A fresh provider holding `flags`, connected through [[connect]], exposed with its `FeatureFlags`. */
   private def isolatedLayer(

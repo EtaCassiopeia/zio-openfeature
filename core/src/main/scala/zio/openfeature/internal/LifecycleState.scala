@@ -107,6 +107,11 @@ private[openfeature] object LifecycleInput {
   /** The sync build's verified status, applied only while the status is still the initial `NotReady`. */
   final case class Seed(status: ProviderStatus) extends LifecycleInput
 
+  /** A test sets the status, as a provider report would, from any status: refused on a shut-down or closed instance,
+    * and while a swap's gate is up.
+    */
+  final case class Override(status: ProviderStatus) extends LifecycleInput
+
   /** A swap starts (model: `SwapStart`, once admitted): the gate goes up before the status becomes NotReady, the
     * generation moves, and `incoming` is installed under `name`.
     */
@@ -174,7 +179,7 @@ private[openfeature] object LifecycleEffect {
   final case class Refuse(refusal: Refusal) extends LifecycleEffect
 }
 
-/** Why a swap or a switch is refused. */
+/** Why a swap, a switch or a status override is refused. */
 sealed private[openfeature] trait Refusal
 
 private[openfeature] object Refusal {
@@ -193,6 +198,9 @@ private[openfeature] object Refusal {
 
   /** A switch of `provider`, which a swap has since replaced as the installed provider. */
   final case class NotInstalled(provider: OFFeatureProvider) extends Refusal
+
+  /** A status override while a swap's gate is up: the swap owns the status until it ends. */
+  case object SwapInFlight extends Refusal
 }
 
 /** The lifecycle's transitions: one pure function from the record and an input to the next record, whether the status
@@ -220,6 +228,11 @@ private[openfeature] object LifecycleStep {
             Outcome(state.copy(status = seed, everReady = state.everReady || usable(seed)), Some(seed), Chunk.empty)
           case _ => unchanged(state)
         }
+
+      case LifecycleInput.Override(to) =>
+        if (state.shutDown || state.closed) Outcome(state, None, Chunk(LifecycleEffect.Refuse(Refusal.Closed)))
+        else if (state.gate) Outcome(state, None, Chunk(LifecycleEffect.Refuse(Refusal.SwapInFlight)))
+        else Outcome(state.copy(status = to, everReady = state.everReady || usable(to)), Some(to), Chunk.empty)
 
       case LifecycleInput.SwapStart(incoming, name) =>
         val notReady = status(state.copy(gate = true), Signal.SwapStarted)
@@ -342,13 +355,13 @@ private[openfeature] object LifecycleStep {
 
 /** The interpreter: the one place the record is read and written.
   *
-  * The status lives in `statusRef`, which the testkit may share and set directly, and every step runs under its
-  * `modifyZIO`, whose semaphore makes the status write and the write of the rest of the record one atomic step. The
-  * rest lives in a `Ref` nothing else touches. The mirrors read synchronously from SDK threads and the evaluator are
-  * written so that none leads the status: the gate and the provider name inside the step, where an early gate only
-  * makes the evaluator stricter; the generation once the step has published the status, so an evaluation that reads a
-  * new generation also reads the swap's NotReady. Only a swap's start moves the generation, under the swap lock, so
-  * these writes cannot reorder. The effects a step returns run after it, never under the semaphore.
+  * The status lives in `statusRef`, which the testkit may share and read, and every step runs under its `modifyZIO`,
+  * whose semaphore makes the status write and the write of the rest of the record one atomic step. The rest lives in a
+  * `Ref` nothing else touches. The mirrors read synchronously from SDK threads and the evaluator are written so that
+  * none leads the status: the gate and the provider name inside the step, where an early gate only makes the evaluator
+  * stricter; the generation once the step has published the status, so an evaluation that reads a new generation also
+  * reads the swap's NotReady. Only a swap's start moves the generation, under the swap lock, so these writes cannot
+  * reorder. The effects a step returns run after it, never under the semaphore.
   */
 final private[openfeature] class Lifecycle(
   statusRef: SubscriptionRef[ProviderStatus],
@@ -387,6 +400,6 @@ final private[openfeature] class Lifecycle(
   /** The record, read under the same semaphore as every step. */
   def read: UIO[LifecycleState] = runWith(state => (LifecycleInput.Idle, state)).map(_._1)
 
-  /** The record as of the last step, for a synchronous reader. Its `status` may lag a direct write to `statusRef`. */
+  /** The record as of the last step, for a synchronous reader. */
   def snapshot: LifecycleState = view.get()
 }

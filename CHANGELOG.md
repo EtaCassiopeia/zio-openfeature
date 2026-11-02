@@ -117,6 +117,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`TestFeatureProvider.setStatus` goes through the instance's lifecycle** (#738). It moves the status as a provider
+  report would, and counts as ready for the init watchdog. It is refused, as a defect naming the reason, once the
+  instance is shut down or closed, and while a provider swap is in flight. A provider with no instance attached still
+  sets its status directly.
 - **An OFREP answer that is not OFREP JSON is a `GENERAL` error, so it trips the circuit breaker** (#642). The contrib
   provider parses the body before it reads the status, so a 502/503/504 with an HTML or empty body, a 401/403 page
   from an auth proxy and a 429 without JSON all surfaced as `PARSE_ERROR`, which `CircuitBreakerProvider` counts as a
@@ -470,6 +474,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Tests
 
+- **A TLA+ model of the ordered event lane** (#725). `formal/lane` models `OrderedEmitter` with the SDK's emitter
+  pools and its API lock, in PlusCal. On every pull request TLC checks that the slot follows the order the wrapper
+  received the events, that nothing deadlocks, and that no accepted emission is cut off by the lane's close.
+  Witnesses keep the documented limits reachable: an unawaited delegate's swapped emissions, and what
+  `setProviderAndWait` would do. Mutants show that a lane holding either lock while it waits deadlocks.
 - **The lifecycle model checks the evaluation gate** (#721). Evaluations run alongside swaps in `Evaluation.cfg`, on
   every pull request. TLC checks that a returned answer comes from the provider installed when it returns, and never
   while a swap is in flight. Mutants that drop the re-check, or either half of it, are caught. A new hot-swap test

@@ -89,6 +89,7 @@ there is one.
 | `SwapRollbackUnbound` | `setProvider`, failure branch: `failedBeforeBinding`, `RollbackUnbound(before)` |
 | `SwapReconcile` | `setProvider`, after every outcome: `GateDown`, probe point `SwapReconcile`, then `reconcileLateReady` after a timeout or `reconcileRegistration` otherwise; inside the swap's uninterruptible region, with the lock held |
 | `CallerInterrupt` | an interrupt of `setProvider`'s caller, which takes effect only in the phases in `Interruptible`: none, since the swap body and the re-read run uninterruptibly (`runSwap`'s `.uninterruptible`) |
+| `Die` | none: a provider that stops working without reporting it. Only with `AllowDeath` (`Witness.cfg`) |
 | `Emit`, `EmitStaleWhileStarting` | a provider's `emit`; the SDK's `FeatureProviderStateManager.onEmit` |
 | `Deliver` | `EventBridge.onSdkEvent` and `applySdkSignal` |
 | `OrphanResolved` | `OrphanedProviders.settle` on the registration's outcome, then `OrphanSettled` |
@@ -220,17 +221,38 @@ action. A run that reaches `Watchdog`, which the model leaves out, is skipped.
 | A provider reports a failure at runtime | `Emit(p, "ERROR")` or `Emit(p, "FATAL")`; `Fatal` is sticky (`Apply`), and `StatusFollowsSdk` allows for it |
 | Events arrive late, in any order, or never | `events` is a set, and nothing forces `Deliver` |
 | Shutdown or scope close while work is in flight | Both wait for the swap lock; `TearDown` shuts down the bound provider and the predecessors of the orphans not released |
+| A provider dies silently: its evaluations fail or hang, and it emits nothing | `Die(p)`, only with `AllowDeath`: the ghost `dead[p]` is set and nothing else changes, and nothing in the library reads it. Represented, and undetectable by design: see "Silent death" below |
 | The caller of `setProvider` is interrupted | `CallerInterrupt`, enabled only in the swap phases in `Interruptible`, which is empty: the swap body and the re-read after it run uninterruptibly ([design record](../../docs/design/lifecycle.md), #433, #434), and the mutants that make either interruptible are caught. An interrupt while waiting for the lock changes no state; `shutdown` and the scope close are uninterruptible once they hold it (#435) |
 
 ### Left out, and what checks it instead
 
 | Failure | Why it is out | Checked by |
 |:--|:--|:--|
-| A provider dies silently: evaluations fail and no event is emitted | The model has no evaluation action and knows provider health only from the SDK's state and events. The library cannot detect this either. #720 makes it explicit in the model. | the evaluation error handling; `CircuitBreakerProvider` (extras); the provider fault tests on the real OFREP and Optimizely providers |
 | A provider's `shutdown()` throws or hangs | `TearDown` counts one shutdown, atomically. Every SDK and provider call on a lifecycle path is bounded (#561). #719 models it. | `LifecycleModelSpec` (`SlowShutdown`); `ManagedProvider` shuts a provider down at most once per initialization by construction |
 | A defect in the library: a bridge handler throws, the SDK's executor dies | The library's own actions are assumed to complete | the property and interleaving suites |
 | The process crashes | Nothing is durable, and a restart is a fresh `Init`. `ClosedCleanly` cannot hold when no finalizer runs. | not applicable |
 | A provider reports a state from inside `initialize()` and then fails | See "What is outside the model" | `LifecycleInterleavingSpec` |
+
+### Silent death
+
+A provider can stop working without saying so. Its SDK state stays `READY`, and the instance's status follows the SDK,
+so it reports `Ready` for a dead provider. The library learns a provider's health only from the SDK's state and events,
+and the model has no evaluation action. `Die(p)` states the gap in the model instead of leaving it to prose:
+
+- `AllowDeath` gates it. It is `FALSE` in `Lifecycle.cfg`, `Liveness.cfg` and the trace-validation configurations, so
+  their state spaces are unchanged.
+- A dead provider emits nothing more (`Emit` and `EmitStaleWhileStarting` require `~dead[p]`), or `Die` would only be an
+  early `ERROR`. A new registration of it, by a swap's `SdkBind` or a rollback, starts a new `initialize()` and clears
+  `dead[p]`.
+- `Witness.cfg` sets `AllowDeath = TRUE`. `witness.py` checks it twice: without `SilentDeathUndetected`, every invariant
+  must hold while providers may die; with it, TLC must report `SilentDeathUndetected` violated, and nothing else. That
+  invariant asserts the instance never reports `Ready`, idle and live, with a dead provider installed. CI runs it on
+  every pull request, in about five seconds. If a change makes the state unreachable, because the library learns
+  health from evaluations, the check fails and this section must change with it.
+
+What handles a silent death in practice: the evaluation error handling, which returns the default with an error
+reason; `CircuitBreakerProvider` in `extras`, which opens on repeated evaluation failures and reports `STALE`; and the
+provider fault tests on the real OFREP and Optimizely providers.
 
 ### Recovery
 

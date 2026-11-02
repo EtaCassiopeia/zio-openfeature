@@ -1,7 +1,7 @@
 addSbtPlugin("org.scalameta"  % "sbt-scalafmt"         % "2.5.6")
 addSbtPlugin("org.scoverage"  % "sbt-scoverage"        % "2.0.12")
 addSbtPlugin("com.github.sbt" % "sbt-ci-release"       % "1.12.1")
-addSbtPlugin("net.nmoncho"    % "sbt-dependency-check" % "1.9.2")
+addSbtPlugin("net.nmoncho"    % "sbt-dependency-check" % "2.0.0")
 addSbtPlugin("com.typesafe"   % "sbt-mima-plugin"      % "1.1.6")
 // TASTy compatibility of the Scala 3 artifacts, which MiMa's bytecode check does not see. See RELEASING.md.
 addSbtPlugin("ch.epfl.scala"      % "sbt-tasty-mima" % "1.4.0")

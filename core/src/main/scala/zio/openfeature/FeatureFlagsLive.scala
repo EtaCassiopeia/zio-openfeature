@@ -7,6 +7,7 @@ import zio.openfeature.internal.{
   ApiInstances,
   EventBridge,
   Evaluator,
+  EvaluationProbe,
   FallbackLogLimiter,
   FeatureFlagsState,
   HookPipeline,
@@ -63,7 +64,9 @@ final private[openfeature] class FeatureFlagsLive(
   // Previous providers a timed-out swap left registered nowhere; an owning instance shuts them down once settled.
   orphans: OrphanedProviders,
   // Named lifecycle points a test can hold a fiber at; a no-op in production.
-  probe: LifecycleProbe = LifecycleProbe.none
+  probe: LifecycleProbe = LifecycleProbe.none,
+  // Named evaluation points a test can hold a fiber at; a no-op in production.
+  evaluationProbe: EvaluationProbe = EvaluationProbe.none
 ) extends FeatureFlags
     with FeatureFlagsAdmin {
 
@@ -80,7 +83,7 @@ final private[openfeature] class FeatureFlagsLive(
   // swap, shutdown and status.
   private val eventBridge = new EventBridge(client, initialProvider, providerNameRef, state, onReady, probe)
 
-  private val hookPipeline = new HookPipeline(state, providerNameRef, domain, version)
+  private val hookPipeline = new HookPipeline(state, providerNameRef, domain, version, evaluationProbe)
   private val evaluator    = new Evaluator(
     client,
     state,
@@ -90,7 +93,8 @@ final private[openfeature] class FeatureFlagsLive(
     fallbackLogLimiter,
     hookPipeline,
     eventBridge.swapGeneration,
-    eventBridge.swapInProgress
+    eventBridge.swapInProgress,
+    evaluationProbe
   )
 
   /** Abandoned provider calls still running — for tests. */

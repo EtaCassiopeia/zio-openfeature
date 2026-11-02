@@ -10,7 +10,8 @@ final private[openfeature] class HookPipeline(
   state: FeatureFlagsState,
   providerNameRef: java.util.concurrent.atomic.AtomicReference[String],
   domain: Option[String],
-  version: Option[String]
+  version: Option[String],
+  probe: EvaluationProbe = EvaluationProbe.none
 ) {
 
   private[openfeature] def runWithHooks[A: FlagType](
@@ -64,8 +65,7 @@ final private[openfeature] class HookPipeline(
     // completed. The Ref's third slot holds the details to hand `finallyAfter` when the pipeline fails after a
     // resolution was already replaced by the default (an `after`-hook defect, spec §4.4.8).
     Ref.make((hookCtx, initialHints, Option.empty[FlagResolution[_]])).flatMap { finallyCtxRef =>
-      composedHook
-        .before(hookCtx, initialHints)
+      (probe.at(EvaluationProbe.Point.BeforeHooks) *> composedHook.before(hookCtx, initialHints))
         .foldCauseZIO(
           // `before` is a UIO, so a non-success cause is a Die or an Interrupt. Only a Die is abnormal execution that
           // runs the `error` stage (spec §4.3.8/§4.4.7) — a pure interruption (timeout / scope-close) is a cancellation,
@@ -99,7 +99,7 @@ final private[openfeature] class HookPipeline(
                           .error(hookCtx.flagKey, hookCtx.defaultValue, ErrorCode.TypeMismatch, mismatch.message)
                         finallyCtxRef.set((stageCtx, hints, Some(served)))
                       case _ => ZIO.unit
-                    }) *> composedHook.error(stageCtx, err, hints),
+                    }) *> probe.at(EvaluationProbe.Point.ErrorHooks) *> composedHook.error(stageCtx, err, hints),
                   // A returned resolution can still be *abnormal* execution — it carries an error code (FLAG_NOT_FOUND,
                   // TYPE_MISMATCH, ...) that the Java SDK surfaces as a default value plus a code rather than a throw.
                   // Per spec §4.3.6/§4.4.6 that is the `error` stage's domain, NOT `after`: run `error` for an
@@ -107,7 +107,7 @@ final private[openfeature] class HookPipeline(
                   res =>
                     res.errorCode match {
                       case Some(code) =>
-                        composedHook.error(
+                        probe.at(EvaluationProbe.Point.ErrorHooks) *> composedHook.error(
                           stageCtx,
                           Evaluator
                             .errorFromResolution(res.flagKey, code, res.errorMessage, expected = typeName),
@@ -118,22 +118,23 @@ final private[openfeature] class HookPipeline(
                         // the `error` stage (spec §4.4.5) and replaces the resolution with the default (§4.4.8) — the
                         // same ERROR/GENERAL details the total tier serves for an absorbed defect, so `finallyAfter`
                         // and the caller agree. The defect itself still propagates, as `FeatureHook` documents.
-                        composedHook.after(stageCtx, res, hints).catchAllCause { afterCause =>
-                          afterCause.dieOption match {
-                            case Some(defect) =>
-                              val abnormal =
-                                FlagResolution
-                                  .error(res.flagKey, hookCtx.defaultValue, ErrorCode.General, defect.toString)
-                              finallyCtxRef.set((stageCtx, hints, Some(abnormal))) *>
-                                composedHook
-                                  .error(stageCtx, FeatureFlagError.ProviderError(defect), hints)
-                                  .foldCauseZIO(
-                                    errCause => ZIO.refailCause(afterCause ++ errCause),
-                                    _ => ZIO.refailCause(afterCause)
-                                  )
-                            case None => ZIO.refailCause(afterCause)
+                        (probe.at(EvaluationProbe.Point.AfterHooks) *> composedHook.after(stageCtx, res, hints))
+                          .catchAllCause { afterCause =>
+                            afterCause.dieOption match {
+                              case Some(defect) =>
+                                val abnormal =
+                                  FlagResolution
+                                    .error(res.flagKey, hookCtx.defaultValue, ErrorCode.General, defect.toString)
+                                finallyCtxRef.set((stageCtx, hints, Some(abnormal))) *>
+                                  composedHook
+                                    .error(stageCtx, FeatureFlagError.ProviderError(defect), hints)
+                                    .foldCauseZIO(
+                                      errCause => ZIO.refailCause(afterCause ++ errCause),
+                                      _ => ZIO.refailCause(afterCause)
+                                    )
+                              case None => ZIO.refailCause(afterCause)
+                            }
                           }
-                        }
                     }
                 )
           }
@@ -141,7 +142,7 @@ final private[openfeature] class HookPipeline(
         .onExit { exit =>
           finallyCtxRef.get.flatMap { case (ctx, hints, abnormal) =>
             val details: Option[FlagResolution[_]] = exit.foldExit(_ => abnormal, res => Some(res))
-            composedHook.finallyAfter(ctx, details, hints)
+            probe.at(EvaluationProbe.Point.FinallyAfter) *> composedHook.finallyAfter(ctx, details, hints)
           }
         }
     }

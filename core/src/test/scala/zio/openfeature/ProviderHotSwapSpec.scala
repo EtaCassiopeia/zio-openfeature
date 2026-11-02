@@ -257,10 +257,10 @@ object ProviderHotSwapSpec extends ZIOSpecDefault {
       apiOverride = Some(api)
     )
 
-  /** Records the name of every lifecycle point reached. */
+  /** Records every lifecycle point reached, with its payload. */
   final private class RecordingProbe extends zio.openfeature.internal.LifecycleProbe {
     val points = new java.util.concurrent.ConcurrentLinkedQueue[String]()
-    def at(p: zio.openfeature.internal.LifecycleProbe.Point): UIO[Unit] = ZIO.succeed(points.add(p.name)).unit
+    def at(p: zio.openfeature.internal.LifecycleProbe.Point): UIO[Unit] = ZIO.succeed(points.add(p.toString)).unit
     def since(mark: Int): List[String] = points.toArray.toList.map(_.toString).drop(mark)
   }
 
@@ -307,14 +307,17 @@ object ProviderHotSwapSpec extends ZIOSpecDefault {
               swap   <- ff.setProvider(p).either
               after  <- ff.providerStatus
               served <- ff.booleanDetails("flag", default = false).either
-              points = probe.since(mark)
+              points    = probe.since(mark)
+              swapSteps = Set("SwapStart", "SdkBind", "ApplySignal(SwapStarted)")
               // Read now: a smart assertion is rendered after the scope's finalizer has shut the provider down.
               counts <- ZIO.succeed((p.inits.get(), p.shutdowns.get()))
             } yield assertTrue(
               before.contains(expected),
               swap.isRight,
               after == expected,
-              points == List("SwapSkipped"),
+              // A late event from driving the state may still be delivered; no swap step may run.
+              points.contains("SwapSkipped"),
+              !points.exists(swapSteps.contains),
               counts == ((1, 0)),
               served.isRight == (expected != ProviderStatus.Fatal)
             )

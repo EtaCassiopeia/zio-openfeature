@@ -225,10 +225,19 @@ object SdkEventOrderSpec extends ZIOSpecDefault {
         for {
           built <- build(new Emitting("current"))
           (ff, _, _) = built
-          _      <- ff.onStaleEvent(details("current"))
+          // Fatal, not Stale: the SDK's own READY for the initialization may still reach the bridge after this
+          // event, and would move a Stale status on; nothing moves Fatal.
+          _ <- ff.onErrorEvent(
+            EventDetails
+              .builder()
+              .providerName("current")
+              .errorCode(dev.openfeature.sdk.ErrorCode.PROVIDER_FATAL)
+              .build()
+              .asInstanceOf[EventDetails]
+          )
           _      <- ff.seedStatus(ProviderStatus.Ready)
           status <- ff.providerStatus
-        } yield assertTrue(status == ProviderStatus.Stale)
+        } yield assertTrue(status == ProviderStatus.Fatal)
       }
     },
     test("ERROR then READY in quick succession settles on the state the SDK reports, every time") {

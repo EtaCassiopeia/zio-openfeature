@@ -35,7 +35,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        module: [core, extras, testkit, ofrep, optimizely]
+        module: [core, extras, testkit, ofrep, optimizely, schema]
     steps:
       - uses: actions/checkout@v7
       - name: Set up JDK 21

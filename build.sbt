@@ -278,7 +278,7 @@ val checkOptimizelyJsonParser = taskKey[Unit](
 lazy val root = (project in file("."))
   // `conformance` is intentionally NOT aggregated: it is Scala 3 only, so aggregating it would make `++2.13.18 test`
   // try (and fail) to compile it. CI runs it explicitly on Scala 3 (see ci.yml), the same way `examples` are handled.
-  .aggregate(core, testkit, extras, ofrep, optimizely)
+  .aggregate(core, testkit, extras, ofrep, optimizely, schema)
   .settings(
     name           := "zio-openfeature",
     publish / skip := true,
@@ -472,6 +472,28 @@ lazy val optimizely = (project in file("optimizely"))
         s"${name.value}: consumers resolve a JSON parser via ${found.map { case (g, a) => s"$g:$a" }.mkString(", ")}"
       )
     }
+  )
+
+// zio-schema for the `schema` module. 1.9.x is built with Scala 3.9, whose TASTy a 3.3 compiler cannot read, so it
+// stays on 1.8.x (pinned in `.scala-steward.conf`).
+val zioSchemaVersion = "1.8.7"
+
+// Schema module - a `FlagType` derived from a zio-schema `Schema`, on Scala 2.13 and 3. Opt-in so `core` keeps depending
+// on ZIO and the OpenFeature SDK only. Users bring their own derivation (`DeriveSchema.gen`), so
+// `zio-schema-derivation` is a test dependency here.
+lazy val schema = (project in file("schema"))
+  // testkit's FlagTypeLaws and in-memory provider. Test scope only: consumers of schema never resolve testkit.
+  .dependsOn(core, testkit % "test->compile")
+  .settings(
+    name := "zio-openfeature-schema",
+    commonSettings,
+    libraryDependencies ++= Seq(
+      "dev.zio" %% "zio-schema"            % zioSchemaVersion,
+      "dev.zio" %% "zio-schema-derivation" % zioSchemaVersion % Test
+    ),
+    // A new module has no release to baseline against yet. Move it to the shared baseline after its first release.
+    mimaPreviousArtifacts      := Set.empty,
+    tastyMiMaPreviousArtifacts := Set.empty
   )
 
 // Testkit module - testing utilities
@@ -670,7 +692,7 @@ lazy val examplesOfrepInitTimeout = (project in file("examples/ofrep-init-timeou
 // The documentation site's code. `mkdocs.yml` includes its `--8<--` sections into the pages, so every snippet on the
 // site is compiled here, and its tests run the ones that can run on their own and check what the page says they do.
 lazy val examplesDocs = (project in file("examples/docs"))
-  .dependsOn(core, testkit, extras, ofrep, optimizely)
+  .dependsOn(core, testkit, extras, ofrep, optimizely, schema)
   .settings(examplesCommon)
   // The sources live in `scala-3/` because they are Scala 3 only, and because `.scalafmt.conf` pins every
   // `src/main/scala/**` file to the scala213 dialect (those directories are shared by the cross-built modules).
@@ -678,9 +700,10 @@ lazy val examplesDocs = (project in file("examples/docs"))
   .settings(
     name := "zio-openfeature-example-docs",
     libraryDependencies ++= Seq(
-      "dev.zio" %% "zio"          % zioVersion,
-      "dev.zio" %% "zio-test"     % zioVersion % Test,
-      "dev.zio" %% "zio-test-sbt" % zioVersion % Test
+      "dev.zio" %% "zio"                   % zioVersion,
+      "dev.zio" %% "zio-schema-derivation" % zioSchemaVersion,
+      "dev.zio" %% "zio-test"              % zioVersion % Test,
+      "dev.zio" %% "zio-test-sbt"          % zioVersion % Test
     ),
     // OFREP and Optimizely pull Jackson; hold it at the family the published modules pin (see `jacksonPins`).
     dependencyOverrides ++= jacksonPins,

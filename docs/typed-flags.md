@@ -62,6 +62,38 @@ any type that has one. `Option[A]` is fetched with `A`'s resolver and reads `Non
 `FlagType.derived` is not a `given`, so it never competes with the built-in instances: use `derives`, or write
 `given FlagType[X] = FlagType.derived[X]`.
 
+### Derive it with zio-schema (Scala 2.13 and 3)
+
+The `zio-openfeature-schema` module builds a `FlagType` from a zio-schema `Schema`, on both Scala versions, including
+sealed traits whose cases carry data. Add it, and `zio-schema-derivation` for `DeriveSchema`:
+
+```scala
+libraryDependencies ++= Seq(
+  "io.github.etacassiopeia" %% "zio-openfeature-schema" % "<version>",
+  "dev.zio"                 %% "zio-schema-derivation"  % "1.8.7"
+)
+```
+
+```scala
+--8<-- "SchemaFlags.scala:schema"
+```
+
+On Scala 2.13, write `implicit val tierFlagType: FlagType[Tier] = SchemaFlagType[Tier](DeriveSchema.gen[Tier])`.
+
+- A **case class** is stored as an **object**, as with `derived`: unknown keys are ignored, and a missing key takes
+  the field's declared default, else `None` for an `Option`, else fails naming the field.
+- A **sealed trait** whose cases have no fields is stored as a **string**, the case name, read the same way as a
+  derived enum.
+- A **sealed trait** with a case that has fields is stored as an object with one key naming the case:
+  `{"Percentage": {"pct": 10}}`, and `{"Off": {}}` for a case without fields.
+- `Boolean`, `String`, `Int`, `Long`, `Float` and `Double` are read through the built-in instances, so numbers inside
+  an object may arrive as `Double`. `Option`, `List` and `Map[String, V]` fields work; other primitives (`UUID`,
+  `BigDecimal`, time types) fail to decode.
+
+`SchemaFlagType` is explicit, never an implicit conversion from a `Schema`: zio-schema has schemas for `Int`, `Option`
+and the rest, which would compete with the built-in instances. For an optional flag, ask for `FlagType[Option[Tier]]`;
+core builds it from the instance.
+
 ### Map it from another type
 
 `FlagType.mapped` builds a codec from an existing one and two functions. The flag is stored as the underlying type:
@@ -105,7 +137,8 @@ any type that has one. `Option[A]` is fetched with `A`'s resolver and reads `Non
 
     The string-valued `wireType` is deprecated in favor of `wire`; an instance that still overrides it keeps working.
     [Hooks](hooks.md) filter by the wire type, so a hook scoped to `FlagValueType.String` sees this flag. `mapped` and
-    `from` work on Scala 2.13; derivation is Scala 3 only.
+    `from` work on Scala 2.13; `FlagType.derived` is Scala 3 only, and on 2.13 you can
+    [derive it with zio-schema](#derive-it-with-zio-schema-scala-213-and-3).
 
 ## Test with the same definitions
 

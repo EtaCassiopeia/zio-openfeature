@@ -11,6 +11,7 @@ libraryDependencies ++= Seq(
   "io.github.etacassiopeia" %% "zio-openfeature-extras"     % "<version>", // HOCON, env vars, caching, circuit breaker
   "io.github.etacassiopeia" %% "zio-openfeature-ofrep"      % "<version>", // OpenFeature Remote Evaluation Protocol
   "io.github.etacassiopeia" %% "zio-openfeature-optimizely" % "<version>", // Optimizely Feature Experimentation
+  "io.github.etacassiopeia" %% "zio-openfeature-schema"     % "<version>", // flag types from zio-schema
   "io.github.etacassiopeia" %% "zio-openfeature-testkit"    % "<version>" % Test // in-memory provider for tests
 )
 ```

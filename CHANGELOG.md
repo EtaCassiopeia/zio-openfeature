@@ -464,6 +464,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Tests
 
+- **The lifecycle model checks recovery** (#718). `FairSpec` states the fairness the library and the SDK provide (a
+  swap's next step and its timeout, a started shutdown, event delivery, acting on a resolved orphan watch), with none
+  for providers. `Liveness.cfg` checks five properties under it on every pull request: every swap ends, a started
+  shutdown ends, events drain, the status catches up once the instance is idle, and a resolved orphan is settled.
+  Three progress mutants make them fail.
 - **Lifecycle specs check the end state after every test** (#708). A test aspect fails a lifecycle, swap, shutdown or
   wrapper spec's test that leaves a fiber or thread running, an abandoned call counted, an event bridge attached or an
   orphan left on a closed instance, a shut-down wrapper's event lane running, or a test provider shut down twice in

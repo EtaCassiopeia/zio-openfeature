@@ -1,5 +1,7 @@
 package zio.openfeature
 
+import zio.openfeature.testsupport.Quiescence
+
 import zio.openfeature.testsupport.PropertyBudget
 
 import zio._
@@ -331,5 +333,5 @@ object AbandonedCallCapSpec extends ZIOSpecDefault {
         default == 256
       )
     }
-  ) @@ withLiveClock @@ sequential
+  ) @@ withLiveClock @@ sequential @@ Quiescence.aspect
 }

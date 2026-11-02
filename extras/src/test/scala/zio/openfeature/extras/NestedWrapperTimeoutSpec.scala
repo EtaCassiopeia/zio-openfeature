@@ -1,5 +1,7 @@
 package zio.openfeature.extras
 
+import zio.openfeature.testsupport.Quiescence
+
 import zio.openfeature.testkit.{Fault, FaultyProvider, Op}
 
 import dev.openfeature.sdk.ImmutableContext
@@ -29,5 +31,5 @@ object NestedWrapperTimeoutSpec extends ZIOSpecDefault {
         next.exists(_.getValue.booleanValue())
       )
     } @@ TestAspect.withLiveClock
-  )
+  ) @@ Quiescence.aspect
 }

@@ -1,5 +1,7 @@
 package zio.openfeature.extras
 
+import zio.openfeature.testsupport.Quiescence
+
 import zio.openfeature.internal.ProviderEvaluations
 
 import dev.openfeature.sdk.{
@@ -88,8 +90,9 @@ object WrapperEmissionOrderSpec extends ZIOSpecDefault {
     ZIO
       .attemptBlocking {
         val delegate = new Delegate
-        val reg      = new Registered(make(delegate))
-        try {
+        val wrapper  = make(delegate)
+        val reg      = new Registered(wrapper)
+        val ordered  = try {
           val failure = (1 to Rounds).iterator
             .map { r =>
               delegate.emitAndWait(first)
@@ -103,8 +106,22 @@ object WrapperEmissionOrderSpec extends ZIOSpecDefault {
             .collectFirst { case Some(message) => message }
           failure
         } finally reg.close()
+        // The API's shutdown reached the wrapper, which closes its lane.
+        ordered.orElse(Option.when(!laneStops(wrapper))("the wrapper's event lane still runs after its shutdown"))
       }
       .map(failure => assertTrue(failure.isEmpty))
+
+  /** Whether the outermost wrapper's lane has stopped within the delivery bound. */
+  private def laneStops(wrapper: FeatureProvider): Boolean = {
+    val running: () => Boolean = wrapper match {
+      case c: CachingProvider        => () => c.laneRunning
+      case b: CircuitBreakerProvider => () => b.laneRunning
+      case _                         => () => false
+    }
+    val deadline = java.lang.System.nanoTime() + DeliveryBound
+    while (running() && java.lang.System.nanoTime() < deadline) Thread.sleep(1)
+    !running()
+  }
 
   private def cache(d: FeatureProvider)   = CachingProvider(d)
   private def breaker(d: FeatureProvider) = CircuitBreakerProvider(d)
@@ -158,5 +175,5 @@ object WrapperEmissionOrderSpec extends ZIOSpecDefault {
 
   def spec = suite("WrapperEmissionOrderSpec")(
     orderTests :+ crossSource: _*
-  ) @@ TestAspect.withLiveClock @@ TestAspect.sequential @@ TestAspect.timeout(3.minutes)
+  ) @@ TestAspect.withLiveClock @@ TestAspect.sequential @@ TestAspect.timeout(3.minutes) @@ Quiescence.aspect
 }

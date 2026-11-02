@@ -1,4 +1,6 @@
 package zio.openfeature
+
+import zio.openfeature.testsupport.Quiescence
 import zio.openfeature.internal.ProviderEvaluations
 
 import dev.openfeature.sdk.{
@@ -214,5 +216,5 @@ object FeatureFlagsShutdownSpec extends ZIOSpecDefault {
         } yield assertTrue(both.isDefined, sa == ProviderStatus.NotReady, sb == ProviderStatus.NotReady)
       }
     } @@ withLiveClock
-  )
+  ) @@ Quiescence.aspect
 }

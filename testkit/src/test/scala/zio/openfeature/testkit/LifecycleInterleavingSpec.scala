@@ -1,5 +1,7 @@
 package zio.openfeature.testkit
 
+import zio.openfeature.testsupport.Quiescence
+
 import zio.openfeature.testsupport.LeakCheck.{awaitNoLeaks, snapshot}
 
 import zio._
@@ -583,5 +585,5 @@ object LifecycleInterleavingSpec extends ZIOSpecDefault {
         }
       }
     )
-  ) @@ TestAspect.withLiveClock @@ TestAspect.sequential
+  ) @@ TestAspect.withLiveClock @@ TestAspect.sequential @@ Quiescence.aspect
 }

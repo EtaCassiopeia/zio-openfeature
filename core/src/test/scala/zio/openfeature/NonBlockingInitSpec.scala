@@ -1,6 +1,7 @@
 package zio.openfeature
 
 import zio._
+import zio.openfeature.testsupport.Quiescence
 import zio.test._
 import zio.stream.SubscriptionRef
 import zio.openfeature.internal.ProviderEvaluations
@@ -819,8 +820,9 @@ object NonBlockingInitSpec extends ZIOSpecDefault {
         st == AcquireState.Constructing || st == AcquireState.Live,
         st2.isDefined
       )
-      program.provideSome[Scope](widened) *>
-        ZIO.serviceWith[FeatureFlags](_ => assertCompletes).provideSome[Scope](narrowed)
+      // Each layer in a scope of its own, closed before the test ends.
+      ZIO.scoped(program.provideSome[Scope](widened)) *>
+        ZIO.scoped(ZIO.serviceWith[FeatureFlags](_ => assertCompletes).provideSome[Scope](narrowed))
     },
     // AC6 (a) many concurrent waiters
     test("awaitReady: many concurrent waiters all complete when status becomes Ready") {
@@ -901,5 +903,5 @@ object NonBlockingInitSpec extends ZIOSpecDefault {
           .as(shutdowns.get())
       } yield assertTrue(count == 1)
     }
-  ) @@ TestAspect.sequential
+  ) @@ TestAspect.sequential @@ Quiescence.aspect
 }

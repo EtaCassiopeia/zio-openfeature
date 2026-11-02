@@ -140,29 +140,31 @@ private[openfeature] object FeatureFlagsFactories {
       state = statusRef.fold(baseState)(ref => baseState.copy(statusRef = ref))
       _                  <- state.hooksRef.set(initialHooks)
       fallbackLogLimiter <- FallbackLogLimiter.make(fallbackLogging)
-    } yield new FeatureFlagsLive(
-      client,
-      provider,
-      new java.util.concurrent.atomic.AtomicReference(providerName),
-      domain,
-      version,
-      state,
-      api,
-      // Owns the api iff we also register the api-shutdown scope finalizer — keeps explicit `shutdown` and scope-close
-      // teardown consistent, so a shared-api (registry/domain) client never shuts the whole api.
-      ownsApi = ownsApi,
-      swapLock,
-      fallbackLogLimiter,
-      onReady,
-      evaluationTimeout,
-      contextSource,
-      initTimeout,
-      maxAbandonedCalls,
-      recordTracking,
-      orphans = orphans,
-      probe = probe,
-      evaluationProbe = evaluationProbe
-    )
+      ff = new FeatureFlagsLive(
+        client,
+        provider,
+        new java.util.concurrent.atomic.AtomicReference(providerName),
+        domain,
+        version,
+        state,
+        api,
+        // Owns the api iff we also register the api-shutdown scope finalizer — keeps explicit `shutdown` and scope-close
+        // teardown consistent, so a shared-api (registry/domain) client never shuts the whole api.
+        ownsApi = ownsApi,
+        swapLock,
+        fallbackLogLimiter,
+        onReady,
+        evaluationTimeout,
+        contextSource,
+        initTimeout,
+        maxAbandonedCalls,
+        recordTracking,
+        orphans = orphans,
+        probe = probe,
+        evaluationProbe = evaluationProbe
+      )
+      _ <- Quiescence.register(ff.endState)
+    } yield ff
 
   /** Whether the event bridge can be attached before `provider` is registered.
     *
@@ -614,16 +616,17 @@ private[openfeature] object FeatureFlagsFactories {
             layerScope <- ZIO.scope
             candidate  <- Scope.make
             real       <- restore(
-              candidate
-                .extend[Any](acquire.flatMap(real => verify(real).as(real)))
-                // `.disconnect` so the per-attempt timeout returns promptly even when `acquire` is an uninterruptible
-                // `attemptBlocking(new Provider(...))` — the underlying constructor may keep running in the background,
-                // but the retry advances instead of waiting on a hung attempt. A finalizer it registers late lands in
-                // an already-closed child scope and runs immediately.
-                .disconnect
-                .timeoutFail(new TimeoutException(s"Provider construction exceeded $constructionTimeout"))(
-                  constructionTimeout
-                )
+              Timeouts.failAfter(
+                candidate
+                  .extend[Any](acquire.flatMap(real => verify(real).as(real)))
+                  // `.disconnect` so the per-attempt timeout returns promptly even when `acquire` is an uninterruptible
+                  // `attemptBlocking(new Provider(...))` — the underlying constructor may keep running in the background,
+                  // but the retry advances instead of waiting on a hung attempt. A finalizer it registers late lands in
+                  // an already-closed child scope and runs immediately.
+                  .disconnect,
+                constructionTimeout,
+                new TimeoutException(s"Provider construction exceeded $constructionTimeout")
+              )
             ).onError(cause => candidate.close(Exit.failCause(cause)))
             _ <- layerScope.addFinalizerExit(candidate.close(_))
           } yield (candidate, real)

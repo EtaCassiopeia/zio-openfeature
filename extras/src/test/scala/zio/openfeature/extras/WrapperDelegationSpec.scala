@@ -1,5 +1,7 @@
 package zio.openfeature.extras
 
+import zio.openfeature.testsupport.Quiescence
+
 import zio.openfeature.testkit.{Op, WrapperLaws}
 import zio.test._
 
@@ -24,5 +26,5 @@ object WrapperDelegationSpec extends ZIOSpecDefault {
         Op.EvaluateLong -> "resolves a Long whose default fits an Int through getIntegerEvaluation"
       )
     )
-  )
+  ) @@ Quiescence.aspect
 }

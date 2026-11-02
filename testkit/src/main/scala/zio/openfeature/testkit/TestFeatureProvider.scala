@@ -57,6 +57,20 @@ final class TestFeatureProvider private (
 
   private[testkit] val behaviorRef: AtomicReference[BehaviorConfig] = new AtomicReference(BehaviorConfig())
 
+  // The shutdowns since the last initialize(), and the most any cycle has seen, for the end-state check.
+  private val shutdownsInCycle     = new java.util.concurrent.atomic.AtomicInteger(0)
+  private val mostShutdownsInCycle = new java.util.concurrent.atomic.AtomicInteger(0)
+
+  /** This provider's end state: `shutdown()` reached it at most once per `initialize()`. */
+  private[openfeature] def endState: zio.openfeature.internal.Quiescence.Observed =
+    new zio.openfeature.internal.Quiescence.Observed {
+      def label: String                  = s"TestFeatureProvider('$name')"
+      def violations: UIO[Chunk[String]] = ZIO.succeed {
+        val most = mostShutdownsInCycle.get()
+        if (most > 1) Chunk(s"shutdown() reached it $most times in one initialization cycle") else Chunk.empty
+      }
+    }
+
   // SDK 1.22.0 hands the bound domain to `initialize(ctx, domain)` (null for the default provider). Recorded so
   // tests can assert what a domain-registered client actually delivered — there is no other observation point.
   private val boundDomainRef: AtomicReference[Option[String]] = new AtomicReference(None)
@@ -109,6 +123,7 @@ final class TestFeatureProvider private (
   override def getState: ProviderState = state.get()
 
   override def initialize(context: OFEvaluationContext): Unit = {
+    shutdownsInCycle.set(0)
     initLatch match {
       case Some(latch) => latch.await() // Block until released
       case None        => ()
@@ -129,6 +144,7 @@ final class TestFeatureProvider private (
   }
 
   override def shutdown(): Unit = {
+    mostShutdownsInCycle.accumulateAndGet(shutdownsInCycle.incrementAndGet(), (a, b) => math.max(a, b)): Unit
     initLatch.foreach(_.countDown()) // Release blocked initialize() if still waiting
     initDone.foreach(_.countDown())  // Unblock any waiter if initialize() never ran
     state.set(ProviderState.NOT_READY)
@@ -647,6 +663,7 @@ object TestFeatureProvider {
           name = name
         )
       }
+      _ <- zio.openfeature.internal.Quiescence.register(provider.endState)
     } yield provider
   }
 

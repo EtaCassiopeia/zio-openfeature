@@ -6,6 +6,7 @@ name: Formal model
 # that a provider's silent death stays reachable and unreported (witness.py). On main and on demand, the mutants also
 # run: each fixed lifecycle bug, each evaluation bug and each progress bug is put back into the model and must be
 # caught.
+# The event lane model (formal/lane) checks OrderedEmitter against the SDK's API lock, with its witnesses and mutants.
 # Trace validation checks that runs of the library are behaviours of the model: on pull requests the checker's own
 # fixtures, on main, nightly and on demand also the runs the lifecycle test suites record.
 on:
@@ -23,6 +24,8 @@ on:
       - 'core/src/main/scala/zio/openfeature/internal/SwitchableProvider.scala'
       - 'core/src/main/scala/zio/openfeature/internal/FeatureFlagsFactories.scala'
       - 'core/src/main/scala/zio/openfeature/internal/LifecycleProbe.scala'
+      - 'core/src/main/scala/zio/openfeature/internal/OrderedEmitter.scala'
+      - 'core/src/main/scala/zio/openfeature/internal/ManagedProvider.scala'
       - 'testkit/src/test/scala/zio/openfeature/testkit/TraceProbe.scala'
       - 'testkit/src/test/scala/zio/openfeature/testkit/LifecycleModelSpec.scala'
       - 'testkit/src/test/scala/zio/openfeature/testkit/LifecycleInterleavingSpec.scala'
@@ -40,6 +43,8 @@ on:
       - 'core/src/main/scala/zio/openfeature/internal/SwitchableProvider.scala'
       - 'core/src/main/scala/zio/openfeature/internal/FeatureFlagsFactories.scala'
       - 'core/src/main/scala/zio/openfeature/internal/LifecycleProbe.scala'
+      - 'core/src/main/scala/zio/openfeature/internal/OrderedEmitter.scala'
+      - 'core/src/main/scala/zio/openfeature/internal/ManagedProvider.scala'
       - 'testkit/src/test/scala/zio/openfeature/testkit/TraceProbe.scala'
       - 'testkit/src/test/scala/zio/openfeature/testkit/LifecycleModelSpec.scala'
       - 'testkit/src/test/scala/zio/openfeature/testkit/LifecycleInterleavingSpec.scala'
@@ -99,6 +104,18 @@ jobs:
       - name: Check that a silently dead provider can be reported Ready
         working-directory: formal/lifecycle
         run: python3 witness.py ../../tla2tools.jar
+      # The event lane (formal/lane): the checked-in translation must match the PlusCal, then ordering, deadlock freedom
+      # and no dropped emission (Lane.cfg), the documented limits (witness.py) and the bugs the lane's design excludes
+      # (mutants.py). A few minutes in all, so on every pull request.
+      - name: Check the event lane model
+        working-directory: formal/lane
+        run: |
+          java -cp ../../tla2tools.jar pcal.trans -nocfg Lane.tla
+          rm -f Lane.old
+          git diff --exit-code -- Lane.tla
+          java -XX:+UseParallelGC -cp ../../tla2tools.jar tlc2.TLC -workers auto -config Lane.cfg Lane.tla
+          python3 witness.py ../../tla2tools.jar
+          python3 mutants.py ../../tla2tools.jar
       - name: Check that the model catches each fixed lifecycle bug and each progress bug
         if: github.event_name != 'pull_request'
         working-directory: formal/lifecycle

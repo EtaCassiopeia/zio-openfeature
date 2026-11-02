@@ -467,6 +467,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **A rollback that times out shuts the failed provider down once** (#728). The rollback's own cleanup shuts it down,
   and the SDK's later shutdown of it reaches the same wrapper in the same cycle, so it stops there. A hot-swap test now
   pins the count. The cleanup also leaves a provider the shared API registered outside the instance to the SDK.
+- **A TLA+ model of the ordered event lane** (#725). `formal/lane` models `OrderedEmitter` with the SDK's emitter
+  pools and its API lock, in PlusCal. On every pull request TLC checks that the slot follows the order the wrapper
+  received the events, that nothing deadlocks, and that no accepted emission is cut off by the lane's close.
+  Witnesses keep the documented limits reachable: an unawaited delegate's swapped emissions, and what
+  `setProviderAndWait` would do. Mutants show that a lane holding either lock while it waits deadlocks.
 - **The lifecycle model checks the evaluation gate** (#721). Evaluations run alongside swaps in `Evaluation.cfg`, on
   every pull request. TLC checks that a returned answer comes from the provider installed when it returns, and never
   while a swap is in flight. Mutants that drop the re-check, or either half of it, are caught. A new hot-swap test

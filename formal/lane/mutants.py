@@ -4,11 +4,12 @@
 Usage: python3 mutants.py <path to tla2tools.jar>.  Exits non-zero when a mutant goes uncaught, or is caught by
 anything but its expected verdict.
 """
+import os
 import sys
 
 from lanecheck import edit, lane_cfg, spec, tlc
 
-jar = sys.argv[1] if len(sys.argv) > 1 else 'tla2tools.jar'
+jar = os.path.abspath(sys.argv[1] if len(sys.argv) > 1 else 'tla2tools.jar')
 LANE_WAIT = '''  LEmit:
       task[laneCur] := "lock";
   LAwait:

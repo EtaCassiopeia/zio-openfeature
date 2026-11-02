@@ -23,8 +23,9 @@ def tlc(jar, module, config):
     with tempfile.TemporaryDirectory() as d:
         open(os.path.join(d, 'Lane.tla'), 'w').write(module)
         open(os.path.join(d, 'Lane.cfg'), 'w').write(config)
-        pcal = subprocess.run(['java', '-cp', jar, 'pcal.trans', '-nocfg', 'Lane.tla'], cwd=d, capture_output=True,
-                              text=True).stdout
+        run = subprocess.run(['java', '-cp', jar, 'pcal.trans', '-nocfg', 'Lane.tla'], cwd=d, capture_output=True,
+                             text=True)
+        pcal = run.stdout + run.stderr
         if 'Translation completed' not in pcal:
             return 'pcal failed', pcal[-1500:]
         out = subprocess.run(['java', '-XX:+UseParallelGC', '-cp', jar, 'tlc2.TLC', '-workers', 'auto',

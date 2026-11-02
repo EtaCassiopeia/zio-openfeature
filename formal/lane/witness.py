@@ -4,11 +4,12 @@
 Usage: python3 witness.py <path to tla2tools.jar>.  Each case runs TLC with one change and requires exactly the expected
 verdict; a limit that became unreachable means the code or the model changed, and README.md must change with it.
 """
+import os
 import sys
 
 from lanecheck import edit, lane_cfg, spec, tlc, witness_cfg
 
-jar = sys.argv[1] if len(sys.argv) > 1 else 'tla2tools.jar'
+jar = os.path.abspath(sys.argv[1] if len(sys.argv) > 1 else 'tla2tools.jar')
 order = [('    NoDrop\n', '    NoDrop\n    DelegateOrderKept\n')]
 cases = [
     # A delegate that does not await its own emissions: its pool may hand them over swapped, before any lane.

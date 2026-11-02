@@ -7,6 +7,7 @@
 | `core` | The `FeatureFlags` service, context, hooks, transactions, events |
 | `extras` | HOCON and environment-variable providers; caching, circuit-breaker and deferred wrappers |
 | `ofrep`, `optimizely` | The OFREP and Optimizely providers |
+| `schema` | `SchemaFlagType`, a `FlagType` derived from a zio-schema `Schema` |
 | `testkit` | `TestFeatureProvider` and the test helpers |
 | `conformance`, `conformance-zio-bdd` | The OpenFeature spec's gherkin suite, run with Cucumber and with zio-bdd; `conformance-zio-bdd` also runs the provider TCK |
 | `provider-fault-tests` | Real providers under network faults (local only; see [Extra checks](#extra-checks)) |

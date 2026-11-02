@@ -29,6 +29,7 @@ Flagsmith, Flipt, OFREP, Optimizely, or one of the providers that ship with it.
 | `zio-openfeature-extras` | Providers for HOCON config and environment variables; caching, circuit-breaker and deferred wrappers |
 | `zio-openfeature-ofrep` | A provider for the OpenFeature Remote Evaluation Protocol (OFREP) |
 | `zio-openfeature-optimizely` | A provider for Optimizely Feature Experimentation |
+| `zio-openfeature-schema` | A `FlagType` derived from a zio-schema `Schema`, on Scala 2.13 and 3 |
 | `zio-openfeature-testkit` | `TestFeatureProvider` and test helpers |
 
 The library implements the server-side (dynamic context) paradigm of the OpenFeature specification; see

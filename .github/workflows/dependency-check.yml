@@ -38,7 +38,7 @@ jobs:
           # scan green having skipped the very module this widening exists to cover.
           sbt 'show core/managedClasspath' 'show testkit/managedClasspath' \
               'show extras/managedClasspath' 'show ofrep/managedClasspath' \
-              'show optimizely/managedClasspath' > /tmp/sbt-classpaths.txt
+              'show optimizely/managedClasspath' 'show schema/managedClasspath' > /tmp/sbt-classpaths.txt
           grep -oP '/.+?\.jar' /tmp/sbt-classpaths.txt | sort -u > /tmp/dep-jars.txt || true
           # A silently empty list would make the scan below vacuously green — the exact failure mode
           # this widening exists to remove. Fail loudly instead.

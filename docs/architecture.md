@@ -73,8 +73,10 @@ graph LR
   ofrep["ofrep"] --> core
   optimizely["optimizely"] --> core
   testkit["testkit"] --> core
+  schema["schema"] --> core
   ofrep --> ofrepj["OFREP contrib provider"]
   optimizely --> opt["Optimizely Java SDK"]
+  schema --> zioschema["zio-schema"]
 ```
 
 Only `core` is required; the others are separate artifacts, so you pull in an HTTP stack or the Optimizely SDK only if

@@ -213,8 +213,7 @@ object FlagType {
     }
 
   /** Builds an instance whose [[FlagType.wire]] is read from `name` by [[WireType.fromName]], so unless `name` is one
-    * of the scalar names it is resolved on the object path. Only the built-in [[objectFlagType]] takes the raw-map
-    * shortcut there: an instance built here always has its `decode` run, even when its name is `"Object"`. For a type
+    * of the scalar names it is resolved on the object path. For a type
     * carried over the wire as a *scalar* (a string-backed enum, a newtype over an int) prefer [[mapped]], which
     * inherits its underlying wire type and keeps `encode` consistent with it; failing that, override `wire` and
     * `encode` together.

@@ -75,7 +75,7 @@ the typed tier `errorCode` is always empty, since an error code fails the effect
 | `FeatureFlagError` | When |
 |---|---|
 | `FlagNotFound(key)` | the provider has no such flag |
-| `TypeMismatch(key, expected, actual)` | the flag has another type, or a custom `FlagType` rejected it |
+| `TypeMismatch(key, expected, actual)` | the flag has another type, or a custom `FlagType` rejected it; an object flag answered with no value or a value that is not an object is one too, not an empty object |
 | `ParseError(key, underlying)` | the provider could not parse the flag |
 | `TargetingKeyMissing(key)` | the flag needs a targeting key; the context has none |
 | `InvalidContext(reason)` | the provider rejected the evaluation context |

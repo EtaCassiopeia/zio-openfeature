@@ -69,7 +69,7 @@ private[openfeature] object ValueBridge {
     case other => new dev.openfeature.sdk.Value(other.toString)
   }
 
-  def valueToMap(value: dev.openfeature.sdk.Value): Map[String, Any] =
+  private def valueToMap(value: dev.openfeature.sdk.Value): Map[String, Any] =
     if (value == null || !value.isStructure) Map.empty
     else
       value

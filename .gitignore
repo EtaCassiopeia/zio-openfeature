@@ -26,3 +26,6 @@ coverage-report/
 *~
 __pycache__/
 /site/
+
+# TLAPS proof cache
+.tlacache/

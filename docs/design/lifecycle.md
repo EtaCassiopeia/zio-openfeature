@@ -125,6 +125,8 @@ registry is one registration, initialized once and shut down once.
 ## Changing the lifecycle
 
 A change to the lifecycle code goes with the model: a pull request that touches it either changes
-`formal/lifecycle/Lifecycle.tla` or says why not (`formal: unaffected because ...`). A new step gets a probe point
+`formal/lifecycle/Lifecycle.tla` or says why not (`formal: unaffected because ...`). The model relies on the
+run-to-completion guarantees in the rows for #433/#434 and #435: its actions are atomic, so a change that makes a swap
+or the teardown interruptible must model the interruption (`formal/lifecycle/README.md`, "Failures and crashes"). A new step gets a probe point
 and a row in the interleaving grid's reach table; a fixed bug gets a mutant. A change to the design gets a row in the
 table above. [Development](../development.md) has the commands.

@@ -196,6 +196,41 @@ action. A run that reaches `Watchdog`, which the model leaves out, is skipped.
 - **The async build's init watchdog.** The async start is in (`InitAsync`); its watchdog is not, and
   `LifecycleInterleavingSpec` covers it.
 
+## Failures and crashes
+
+### Represented in the model
+
+| Failure | How the model represents it |
+|:--|:--|
+| `initialize()` throws | `SdkInitFail(p)`: the SDK state becomes `ERROR` and an `ERROR` event is queued; the swap then takes `SwapRollback` or `SwapFailNoRollback` |
+| `initialize()` hangs | `inits[p]` stays above 0, and `SwapTimeout` is enabled for as long as it runs, so the timeout fires at every possible point; `TearDown` interrupts every `initialize()` still running |
+| `initialize()` hangs, then throws | `SwapTimeout`, then `SdkInitFail`; `OrphanResolved` reads `ERROR` from a provider whose `initialize()` never returned, and shuts the replaced provider down |
+| The SDK refuses the registration | `SdkBindFail`, then `SwapRollbackUnbound` |
+| The rollback's provider fails too | `SwapRollback(ok, r, early)` with `ok = FALSE` and `r` in `{"ERROR", "FATAL"}` |
+| A provider reports a failure at runtime | `Emit(p, "ERROR")` or `Emit(p, "FATAL")`; `Fatal` is sticky (`Apply`), and `StatusFollowsSdk` allows for it |
+| Events arrive late, in any order, or never | `events` is a set, and nothing forces `Deliver` |
+| Shutdown or scope close while work is in flight | Both wait for the swap lock; `TearDown` shuts down the bound provider and the predecessors of the orphans not released |
+
+### Left out, and what checks it instead
+
+| Failure | Why it is out | Checked by |
+|:--|:--|:--|
+| The caller of `setProvider` or `shutdown` is interrupted | The design makes these steps run to completion: a started swap runs to its outcome, and the teardown is uninterruptible ([design record](../../docs/design/lifecycle.md), #433, #434, #435). The model's actions are atomic and assume exactly that. The post-swap reconcile runs after the swap's uninterruptible region, so that window is not yet backed; #717 checks it. | `LifecycleModelSpec` (`InterruptSwap`), `LifecycleInterleavingSpec`, `SetProviderInterruptSpec` |
+| A provider dies silently: evaluations fail and no event is emitted | The model has no evaluation action and knows provider health only from the SDK's state and events. The library cannot detect this either. #720 makes it explicit in the model. | the evaluation error handling; `CircuitBreakerProvider` (extras); the provider fault tests on the real OFREP and Optimizely providers |
+| A provider's `shutdown()` throws or hangs | `TearDown` counts one shutdown, atomically. Every SDK and provider call on a lifecycle path is bounded (#561). #719 models it. | `LifecycleModelSpec` (`SlowShutdown`); `ManagedProvider` shuts a provider down at most once per initialization by construction |
+| A defect in the library: a bridge handler throws, the SDK's executor dies | The library's own actions are assumed to complete | the property and interleaving suites |
+| The process crashes | Nothing is durable, and a restart is a fresh `Init`. `ClosedCleanly` cannot hold when no finalizer runs. | not applicable |
+| A provider reports a state from inside `initialize()` and then fails | See "What is outside the model" | `LifecycleInterleavingSpec` |
+
+### Safety only
+
+Every property is an invariant, and `Spec` has no fairness. So the model shows that nothing wrong happens, never that something eventually happens. Behaviours it allows include:
+- an event that is never delivered;
+- a hung `initialize()` that never times out;
+- an orphan that never settles.
+
+On such a behaviour `StatusFollowsSdk` holds vacuously. Recovery, meaning progress after a failure, is covered by the test suites' timeouts, not by TLC. #718 adds fairness and the recovery properties.
+
 ## When the lifecycle code changes
 
 The `Formal model` workflow runs TLC on every pull request that touches the files above or this directory, and the

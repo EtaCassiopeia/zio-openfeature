@@ -145,6 +145,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Documentation
 
+- **How the lifecycle model treats failures and crashes** (#716). `formal/lifecycle/README.md` lists the provider and
+  SDK failures the model represents, the ones it leaves out with what checks them instead, and that it proves safety
+  only. The design record says the model relies on its run-to-completion guarantees.
 - **Lifecycle design record** (#696). `docs/design/lifecycle.md` records how the provider lifecycle is built and why,
   the changes that got it here and what each taught, the options weighed for the managed-registration redesign, and
   its status. Linked from "Under the hood".

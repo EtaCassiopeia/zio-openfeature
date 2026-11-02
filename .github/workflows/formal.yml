@@ -53,11 +53,16 @@ permissions:
 env:
   TLA_TOOLS_VERSION: v1.7.4
   TLA_TOOLS_SHA256: 936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88
-  # Trace validation reads the traces with the community modules' Json, which needs a newer TLC. v1.8.0 is still a
-  # prerelease that upstream re-publishes, so its jar can change under this pin; when the check below fails, verify
-  # the new jar with `validate.py --selftest traces` and re-pin. Pinned to the asset uploaded 2026-11-02T14:04Z.
-  TRACE_TLA_TOOLS_VERSION: v1.8.0
-  TRACE_TLA_TOOLS_SHA256: 5bbff1430f7890695e594bcc95ed94c49e4be0acc27e7cfeb2be49f7794aae58
+  # Trace validation reads the traces with the community modules' Json, which needs TLC 1.8. Upstream has no
+  # immutable 1.8 artifact: it re-publishes the v1.8.0 prerelease asset on every build, and Central purges its
+  # 1.8.0-SNAPSHOT builds after about 90 days. So the jar comes from this repository's own prerelease, a mirror of
+  # one verified build. Its release notes give the provenance: upstream commit, Central build and verification.
+  # To move to a newer build: verify its distribution jar with `validate.py --selftest traces` and
+  # `preconditions.py`, publish it as a new `tooling/tla2tools-<version>` prerelease, and change both lines below.
+  # Never overwrite a published asset. Put the prerelease's tag on a parentless anchor commit, never on a commit of
+  # main: the build derives its version from tags.
+  TRACE_TLA_TOOLS_RELEASE: tooling/tla2tools-1.8.0-20261102.144740-119
+  TRACE_TLA_TOOLS_SHA256: 8f719a6126a0922cf5a243f6c0ce73193b5c2e0a4e4cd29288ecc57a547f629d
   COMMUNITY_MODULES_VERSION: '202610262215'
   COMMUNITY_MODULES_SHA256: 1c77d512e73ae9fde27103bee9115898fc9d62bea3a99313aeb5eb14c6284af6
 
@@ -115,7 +120,7 @@ jobs:
         uses: sbt/setup-sbt@v1
       - name: Download the TLA+ tools and community modules
         run: |
-          curl -sSLo tla2tools.jar "https://github.com/tlaplus/tlaplus/releases/download/${TRACE_TLA_TOOLS_VERSION}/tla2tools.jar"
+          curl -sSfLo tla2tools.jar "https://github.com/${GITHUB_REPOSITORY}/releases/download/${TRACE_TLA_TOOLS_RELEASE}/tla2tools.jar"
           echo "${TRACE_TLA_TOOLS_SHA256}  tla2tools.jar" | sha256sum -c -
           curl -sSLo CommunityModules-deps.jar "https://github.com/tlaplus/CommunityModules/releases/download/${COMMUNITY_MODULES_VERSION}/CommunityModules-deps.jar"
           echo "${COMMUNITY_MODULES_SHA256}  CommunityModules-deps.jar" | sha256sum -c -

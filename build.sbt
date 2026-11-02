@@ -308,6 +308,8 @@ lazy val core = (project in file("core"))
       ProblemFilters.exclude[Problem]("zio.openfeature.internal.ProviderStatusMachine$Signal$RollbackSucceeded*"),
       // The registration waits on the registered wrapper's outcome; the error type of the old slot observer is gone.
       ProblemFilters.exclude[MissingClassProblem]("zio.openfeature.internal.ProviderRegistration$InitError*"),
+      // fromAcquireAsync registers a switchable ManagedProvider; the separate switchable provider is gone.
+      ProblemFilters.exclude[MissingClassProblem]("zio.openfeature.internal.SwitchableProvider"),
       // A top-level `private` class, public bytecode on 2.13; it now carries the registry's config and holds its clients // as the instance.
       // non-public: private[openfeature]
       ProblemFilters.exclude[DirectMissingMethodProblem]("zio.openfeature.FeatureFlagRegistryLive.this")
@@ -318,6 +320,9 @@ lazy val core = (project in file("core"))
         ProblemMatcher.make("zio.openfeature.internal.*"),
         // non-public: private[openfeature]
         ProblemMatcher.make("zio.openfeature.FeatureFlagsLive.<init>"),
+        // fromAcquireAsync's switch takes the switchable ManagedProvider.
+        // non-public: private[openfeature]
+        ProblemMatcher.make("zio.openfeature.FeatureFlagsLive.switchProvider"),
         // A top-level `private` class, visible only inside `zio.openfeature`; it now carries the registry's config and
         // holds its clients as the instance.
         // non-public: private[openfeature]

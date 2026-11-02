@@ -18,7 +18,6 @@ import zio.openfeature.internal.{
   ManagedProvider,
   OrphanedProviders,
   ProviderRegistration,
-  SwitchableProvider,
   TrackingConverter
 }
 import zio.openfeature.internal.LifecycleProbe.Point
@@ -685,6 +684,9 @@ final private[openfeature] class FeatureFlagsLive(
           s"'${nameOf(provider)}' cannot be installed again until '${nameOf(holder)}', which replaced it, finishes " +
             "initializing"
         )
+      // Only a switch is refused this way, and a switch reports it as `false`, not as an error.
+      case Refusal.NotInstalled(provider) =>
+        failed(s"'${nameOf(provider)}' is no longer the installed provider")
     }
   }
 
@@ -720,37 +722,28 @@ final private[openfeature] class FeatureFlagsLive(
       }
       .unit
 
-  /** `fromAcquireAsync`'s swap: flip the registered [[SwitchableProvider]] to `next`, an already-initialized provider,
-    * without going through the SDK — so status never leaves `Ready` and the SDK never refuses an evaluation. Serialized
-    * with [[setProvider]] by `swapLock`. Returns `false`, changing nothing, when `switch` is no longer the registered
-    * provider (a user `setProvider` replaced it first); the caller then owns `next`. On `true` the replaced delegate
-    * has been shut down (bounded). Uninterruptible: a failure means `switchTo` threw and the switch still holds the
-    * replaced delegate, so the caller may discard `next`.
+  /** `fromAcquireAsync`'s swap: point the registered switchable [[ManagedProvider]] at `next`, an already-initialized
+    * provider, without going through the SDK — so status never leaves `Ready` and the SDK never refuses an evaluation.
+    * Serialized with [[setProvider]] by `swapLock`. Returns `false`, changing nothing, when the step refuses the
+    * switch: the instance shut down or closed, or a user `setProvider` installed another provider first; the caller
+    * then owns `next`. On `true` the replaced delegate has been shut down (bounded). Uninterruptible: a failure means
+    * `switchTo` threw and the switch still holds the replaced delegate, so the caller may discard `next`.
     */
-  private[openfeature] def switchProvider(switch: SwitchableProvider, next: OFFeatureProvider): Task[Boolean] =
+  private[openfeature] def switchProvider(switch: ManagedProvider, next: OFFeatureProvider): Task[Boolean] =
     swapLock
-      .withPermit(
-        lifecycle.read.map(_.installed).flatMap { registered =>
-          // After a shutdown the SDK has shut the switch down; `construct` then discards the composed stack.
-          if (
-            (ManagedProvider.unwrap(registered) ne switch) || lifecycle.snapshot.shutDown || lifecycle.snapshot.closed
-          ) ZIO.none
-          else
-            ZIO.attempt {
-              // The name first: the SDK stamps the switch's (now `next`'s) name on every event, and the identity guard
-              // compares that against this ref. Setting it before the flip drops a straggler event from the old
-              // delegate rather than one from `next`.
-              val oldName = providerNameRef.get()
-              providerNameRef.set(Option(next.getMetadata).map(_.getName).getOrElse(FeatureFlags.UnknownProviderName))
-              try Some(switch.switchTo(next))
-              catch {
-                case e: Throwable =>
-                  providerNameRef.set(oldName)
-                  throw e
-              }
-            }
+      .withPermit {
+        val name = nameOf(next)
+        // The step renames before the flip: the SDK stamps the switch's (now `next`'s) name on every event, and the
+        // identity guard compares that against the name. Renaming first drops a straggler event from the old delegate
+        // rather than one from `next`.
+        lifecycle.runWith(_ => (LifecycleInput.Switch(switch, name), providerNameRef.get())).flatMap {
+          case (_, outcome) if outcome.effects.nonEmpty => ZIO.none
+          case (oldName, _)                             =>
+            ZIO
+              .attempt(Some(switch.switchTo(next)))
+              .tapError(_ => lifecycle.run(LifecycleInput.Reinstall(switch, oldName)))
         }
-      )
+      }
       .flatMap {
         case Some(old) =>
           ProviderRegistration.boundedProviderShutdown(old, "fromAcquireAsync (replaced fallback)").as(true)

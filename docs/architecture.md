@@ -17,6 +17,7 @@ fiber-local context, ZIO hooks, transactions, a provider status you can rely on,
 | `OpenFeatureAPI` | The SDK's registry of providers and API-level hooks | the global singleton, or an isolated instance per [`FeatureFlagRegistry`](providers.md) |
 | `Client` | The SDK object that evaluates flags | one per `FeatureFlags`, internal |
 | `FeatureProvider` | Any OpenFeature Java provider | passed to the factory |
+| `ManagedProvider` | What the library registers in place of your provider: it observes its initialization, shutdown and events. One per provider, shared by every domain and instance that binds it; `fromAcquireAsync`'s switches from the fallback to the real provider | internal |
 
 ## One evaluation, step by step
 

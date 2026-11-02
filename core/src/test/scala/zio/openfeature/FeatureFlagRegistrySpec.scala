@@ -67,6 +67,14 @@ object FeatureFlagRegistrySpec extends ZIOSpecDefault {
       ProviderEvaluations.of[Value](defaultValue, "STATIC")
   }
 
+  // Equal to every other instance, as a provider comparing configuration might be.
+  final private class EqualProvider(inits: java.util.concurrent.atomic.AtomicInteger)
+      extends SimpleProvider("Equal", Map("flag" -> true)) {
+    override def initialize(ctx: OFEvaluationContext): Unit = { inits.incrementAndGet(); () }
+    override def equals(other: Any): Boolean                = other.isInstanceOf[EqualProvider]
+    override def hashCode: Int                              = 1
+  }
+
   private def registryLayer(defaultProvider: SimpleProvider): ZLayer[Scope, Throwable, FeatureFlagRegistry] =
     FeatureFlagRegistry.fromProvider(defaultProvider)
 
@@ -236,6 +244,63 @@ object FeatureFlagRegistrySpec extends ZIOSpecDefault {
           slow <- slowFiber.join
           v2   <- slow.string("flag", default = "none")
         } yield assertTrue(v == "fast", v2 == "slow")
+      }
+    },
+    test("one provider bound to three domains is one registration: one wrapper, one init, one shutdown") {
+      val inits    = new java.util.concurrent.atomic.AtomicInteger(0)
+      val shuts    = new java.util.concurrent.atomic.AtomicInteger(0)
+      val provider = new SimpleProvider("Shared", Map("flag" -> true)) {
+        override def initialize(ctx: OFEvaluationContext): Unit = { inits.incrementAndGet(); () }
+        override def shutdown(): Unit                           = { shuts.incrementAndGet(); () }
+      }
+      for {
+        during <- ZIO.scoped {
+          for {
+            registry <- registryLayer(provider).build.map(_.get[FeatureFlagRegistry])
+            clients  <- ZIO.foreach(List("shared-a", "shared-b", "shared-c"))(registry.getClient)
+            values   <- ZIO.foreach(clients)(_.boolean("flag", default = false))
+            wrapper  <- ZIO.succeed(zio.openfeature.internal.ManagedProvider.existing(provider))
+          } yield (values, wrapper.map(_.initsStarted), inits.get(), shuts.get())
+        }
+        after <- awaitCount(shuts, 1)
+        // A second shutdown would land on the SDK's executor too: give it the same window before reading again.
+        _ <- Live.live(ZIO.sleep(300.millis))
+      } yield assertTrue(
+        during._1 == List(true, true, true),
+        during._2.contains(1L),
+        during._3 == 1,
+        during._4 == 0,
+        after == 1,
+        shuts.get() == 1
+      )
+    },
+    test("two equal but distinct providers on two domains are two registrations, each initialized once") {
+      // The SDK matches a non-domain-scoped provider by equals; the library's wrappers are equal only to themselves.
+      val initsA = new java.util.concurrent.atomic.AtomicInteger(0)
+      val initsB = new java.util.concurrent.atomic.AtomicInteger(0)
+      val a      = new EqualProvider(initsA)
+      val b      = new EqualProvider(initsB)
+      ZIO.scoped {
+        for {
+          registry <- registryLayer(new SimpleProvider("Default", Map.empty)).build.map(_.get[FeatureFlagRegistry])
+          _        <- registry.setProvider("equal-a", a)
+          _        <- registry.setProvider("equal-b", b)
+          ca       <- registry.getClient("equal-a")
+          cb       <- registry.getClient("equal-b")
+          va       <- ca.boolean("flag", default = false)
+          vb       <- cb.boolean("flag", default = false)
+          wa       <- ZIO.succeed(zio.openfeature.internal.ManagedProvider.existing(a))
+          wb       <- ZIO.succeed(zio.openfeature.internal.ManagedProvider.existing(b))
+        } yield assertTrue(
+          a == b,
+          va,
+          vb,
+          initsA.get() == 1,
+          initsB.get() == 1,
+          wa.isDefined,
+          wb.isDefined,
+          !wa.exists(x => wb.exists(_ eq x))
+        )
       }
     },
     test("concurrent getClient calls for the same domain build the client exactly once") {

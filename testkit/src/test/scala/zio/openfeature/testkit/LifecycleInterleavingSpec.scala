@@ -142,7 +142,16 @@ object LifecycleInterleavingSpec extends ZIOSpecDefault {
   /** The points each primary always passes, in no particular order. */
   val reachTable: Map[Primary, Set[String]] = Map(
     Primary.SwapGood ->
-      Set("SwapStart", "ApplySignal", "SdkBind", "InitEntered", "InitReturned", "DeliverEvent", "SwapDone"),
+      Set(
+        "SwapStart",
+        "ApplySignal",
+        "SdkBind",
+        "InitEntered",
+        "InitReturned",
+        "DeliverEvent",
+        "SwapReconcile",
+        "SwapDone"
+      ),
     Primary.SwapFailing ->
       Set(
         "SwapStart",
@@ -153,6 +162,7 @@ object LifecycleInterleavingSpec extends ZIOSpecDefault {
         "DeliverEvent",
         "SwapRollback",
         "RollbackBind",
+        "SwapReconcile",
         "SwapDone"
       ),
     Primary.SwapHanging ->
@@ -163,6 +173,7 @@ object LifecycleInterleavingSpec extends ZIOSpecDefault {
         "InitEntered",
         "SwapTimeout",
         "OrphanRecorded",
+        "SwapReconcile",
         "LateReady",
         "SwapDone"
       ),

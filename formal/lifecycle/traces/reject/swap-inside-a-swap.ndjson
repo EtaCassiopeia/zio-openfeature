@@ -4,4 +4,5 @@
 {"seq":3,"point":"SwapStart","arg":""}
 {"seq":4,"point":"SdkBind","arg":""}
 {"seq":5,"point":"ApplySignal","arg":"SwapSucceeded(Ready)"}
-{"seq":6,"point":"SwapDone","arg":""}
+{"seq":6,"point":"SwapReconcile","arg":""}
+{"seq":7,"point":"SwapDone","arg":""}

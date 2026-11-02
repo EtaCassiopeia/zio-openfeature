@@ -69,7 +69,72 @@ object SetProviderInterruptSpec extends ZIOSpecDefault {
       _           <- interrupter.join
     } yield ()
 
+  /** A build on an isolated API with `probe`, handing back the API and domain. */
+  private def buildProbed(
+    probe: zio.openfeature.internal.LifecycleProbe,
+    initTimeout: Duration
+  ): ZIO[Scope, Throwable, (FeatureFlags, OpenFeatureAPI, String)] = {
+    val api    = OpenFeatureAPI.createIsolated()
+    val domain = s"interrupt-${java.util.UUID.randomUUID()}"
+    zio.openfeature.internal.FeatureFlagsFactories
+      .buildWithTracking(
+        new BoolProvider("old", false),
+        domain = Some(domain),
+        version = None,
+        initialHooks = Nil,
+        statusRef = None,
+        addShutdownFinalizer = true,
+        apiOverride = Some(api),
+        initTimeout = initTimeout,
+        probe = probe
+      )
+      .map(ff => (ff, api, domain))
+  }
+
   def spec = suite("SetProviderInterruptSpec")(
+    test("interrupted during a swap that times out, a READY dropped while the gate was up is still applied") {
+      import zio.openfeature.internal.LifecycleProbe.Point
+      val late = new GatedProvider("late", failAfterRelease = false)
+      Live.live(
+        ZIO
+          .scoped {
+            for {
+              held    <- Promise.make[Nothing, Unit]
+              release <- Promise.make[Nothing, Unit]
+              points = new java.util.concurrent.ConcurrentLinkedQueue[String]()
+              probe  = new zio.openfeature.internal.LifecycleProbe {
+                def at(p: Point): UIO[Unit] =
+                  ZIO.succeed(points.add(p.toString)) *>
+                    (if (p == Point.SwapTimeout) held.succeed(()) *> release.await else ZIO.unit)
+              }
+              built <- buildProbed(probe, initTimeout = 300.millis)
+              (ff, api, domain) = built
+              fiber <- ff.setProvider(late).either.fork
+              // The swap timed out and its gate is still up: interrupt the caller now, which waits for the body.
+              _ <- held.await
+              _ <- fiber.interruptFork
+              // The provider finishes initializing; its READY reaches the bridge while the gate is up and is dropped.
+              _       <- ZIO.succeed(late.release.countDown())
+              dropped <- ZIO
+                .succeed(points.toArray.exists(_.toString.contains("PROVIDER_READY")))
+                .repeatUntil(identity)
+                .timeout(5.seconds)
+                .map(_.isDefined)
+              slot = api.getClient(domain).getProviderState
+              _    <- release.succeed(())
+              exit <- fiber.await
+              // Only the swap's re-read of the slot can apply that READY now.
+              status <- ff.providerStatus.repeatUntil(_ == ProviderStatus.Ready).timeout(2.seconds)
+            } yield assertTrue(
+              dropped,
+              slot == dev.openfeature.sdk.ProviderState.READY,
+              exit.isInterrupted,
+              status.contains(ProviderStatus.Ready)
+            )
+          }
+          .ensuring(ZIO.succeed(late.release.countDown()))
+      )
+    },
     test("interrupted while the new provider initializes, then it succeeds: Ready on the new provider") {
       val next = new GatedProvider("next", failAfterRelease = false)
       ZIO.scoped {

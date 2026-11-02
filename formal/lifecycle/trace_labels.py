@@ -11,6 +11,7 @@ The mapping (formal/lifecycle/README.md, "Trace validation"):
   SdkBind                            -> SdkBind
   ApplySignal(SwapSucceeded(_))      -> SwapDone, settled in its state
   SwapTimeout                        -> SwapTimeout
+  SwapReconcile                      -> SwapReconcile
   SwapRollback                       -> SwapRollback, or SwapRollbackUnbound when the swap
                                         recorded no SdkBind (its registration was refused)
   OrphanRecorded, no timeout or
@@ -97,6 +98,8 @@ def labels(records):
             elif point == "OrphanRecorded" and swap_outcome is None:
                 swap_outcome = "SwapFailNoRollback"
                 act("SwapFailNoRollback")
+            elif point == "SwapReconcile":
+                act("SwapReconcile")
             elif point == "SwapDone":
                 in_swap = False
             continue

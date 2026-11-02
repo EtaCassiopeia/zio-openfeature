@@ -122,7 +122,7 @@ own actions (`SdkBind`, `SdkInitOk`, `Emit`, `Deliver`, ...) model what those do
 | `SwapStart` | `inits[p] = 0` | enforced | `LifecycleStep.admit`, `StillInitializing`: a provider whose earlier `initialize()` has not returned is refused, however many swaps happened since, and installed again once that call returned; `ProviderHotSwapSpec`, three tests "... is refused while its initialize() runs ...", mutant "a provider still initializing is installed again" (recorded runs carry no provider identity, so no trace fixture can show this one) |
 | `SwapStart` | `~\E q \in All : prevOf[q] = p /\ inits[q] > 0` | enforced | `LifecycleStep.admit`, `HeldBy` (the record's `replaced`): a provider that a registration still initializing replaced is refused until that `initialize()` returns, since its return makes the SDK shut the replaced provider down; the only such guard of an instance that shares its API; `ProviderHotSwapSpec` "an instance that shares its API refuses the provider a timed-out swap replaced until that swap's provider returns", mutant "a provider a registration still initializing replaced is installed again", and "after a rollback that timed out, the failed provider is refused until the restored provider returns" for the rollback case, which the model does not take (no trace fixture: recorded runs carry no provider identity) |
 | `SwapStart` | `~\E o \in orphans : o.prev = p` | enforced | `LifecycleStep.admit`, `PendingOrphan` (the record's `orphans`; an instance that owns its API): the provider a timed-out swap replaced is refused until that swap's provider settles, since settling may shut it down; `ProviderHotSwapSpec` "the provider a timed-out swap replaced is refused until the swap's provider settles", mutant "a provider a timed-out swap still holds is installed again" (no trace fixture, for the same reason) |
-| `SwapStart` | `p # bound` | assumed | setting the provider the slot already binds is not modelled (#711): the SDK reuses that provider's registration, and the code runs the swap, rolling back onto the same provider when it is in `ERROR` |
+| `SwapStart` | `p # bound` | enforced | `setProvider` returns at once, without a swap, when the slot already binds the provider by the SDK's own matching rule (`Bound.alreadyBound`, probe point `SwapSkipped`), since the SDK would reuse that registration and change nothing; `ProviderHotSwapSpec` "installing the bound provider changes nothing". No trace fixture: recorded runs carry no provider identity. No mutant: dropping the guard makes the model run an `initialize()` the SDK does not run, which no invariant observes |
 | `SwapStart` | `swaps < MaxSwaps` | bound | the swap budget that keeps the state space finite; not a property of the code |
 | `ShutdownStart` | `lock = "free"` | enforced | `shutdown` runs under `swapLock`; fixtures `reject/shutdown-inside-a-swap` and `reject/recorded-shutdown-without-the-lock` |
 | `ShutdownDone` | `lock = "shutdown"` | enforced | structural: the second half of `shutdown`, in the same permit as `ShutdownStart`, so no run shows one without the other |
@@ -175,7 +175,8 @@ run.
 | `OrphanResolved` outside a shutdown | `OrphanResolved` |
 | `ShutdownStart`, `ShutdownDone`, `ScopeClose` | the action of the same name |
 
-The other points belong to one of those steps. A run that reaches `Watchdog`, which the model leaves out, is skipped.
+The other points belong to one of those steps, except `SwapSkipped`, a `setProvider` of the bound provider, which is no
+action. A run that reaches `Watchdog`, which the model leaves out, is skipped.
 
 ## What is outside the model
 

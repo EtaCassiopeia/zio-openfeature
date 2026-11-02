@@ -154,6 +154,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`setProvider` with the provider already installed is a no-op** (#711). It used to run a full swap that changed
+  nothing in the SDK: the status went `NotReady` and back, and evaluations failed with `ProviderNotReady` while it
+  waited. It now returns at once.
+
 - **An instance that shares its API no longer gets a re-installed provider shut down by the SDK** (#693). After a
   timed-out swap, such an instance, which records no orphans, let the replaced provider be installed again while the
   swap's provider still initialized. When that `initialize()` returned, the SDK shut the replaced provider down through

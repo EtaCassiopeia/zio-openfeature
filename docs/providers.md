@@ -256,6 +256,8 @@ A domain names a client, so different parts of an app can use different provider
 `>+> FeatureFlagsAdmin.layer`; the member on `FeatureFlags` is deprecated since 1.3.0). Hooks, context and event
 handlers stay. On an instance that has
 been shut down it fails with `ProviderNotReady(NotReady)` and does not touch the provider: build a new layer instead.
+Installing the provider the slot already binds changes nothing and returns at once: the status does not move and
+evaluations keep going. To initialize a provider again, install a new instance.
 
 ```scala
 --8<-- "Providers.scala:hot-swap"

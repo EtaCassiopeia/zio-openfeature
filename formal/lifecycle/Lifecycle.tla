@@ -23,6 +23,7 @@ CONSTANTS
     Providers,   \* providers setProvider can install besides P0
     MaxSwaps,    \* how many swaps may start in one behaviour
     MaxEvents,   \* how many events providers may emit in one behaviour
+    AllowDeath,  \* whether a provider may stop working without reporting it (Die); TRUE only in Witness.cfg
     None
 
 All == {P0} \cup Providers
@@ -53,11 +54,13 @@ ran,         \* whether the provider's current registration's initialize() retur
     emitted,     \* events emitted so far (bounded by MaxEvents)
     shuts,       \* how many times each provider's current registration was shut down
     twoInits,    \* a provider's initialize() was entered while an earlier call ran
+    dead,        \* ghost: the provider's current registration stopped working without reporting it.  Nothing in the
+                 \* library reads it: the library learns a provider's health only from the SDK's state and events.
     swaps        \* how many swaps have started
 
 vars == << status, installed, lock, gate, swap, pending, orphans, bridgeOn, shutDown, closed, owns,
-           bound, sdk, inits, ran, prevOf, events, emitted, shuts, twoInits, swaps >>
-sdkVars == << bound, sdk, inits, ran, prevOf, events, emitted, shuts, twoInits >>
+           bound, sdk, inits, ran, prevOf, events, emitted, shuts, twoInits, dead, swaps >>
+sdkVars == << bound, sdk, inits, ran, prevOf, events, emitted, shuts, twoInits, dead >>
 
 Used == {p \in All : sdk[p] # "NONE"}
 
@@ -73,6 +76,7 @@ TypeOK ==
     /\ ran \in [All -> BOOLEAN]
     /\ shuts \in [All -> Nat]
     /\ twoInits \in BOOLEAN
+    /\ dead \in [All -> BOOLEAN]
     /\ swaps \in Nat
 
 -----------------------------------------------------------------------------
@@ -133,6 +137,7 @@ InitWith(events0) ==
     /\ emitted = 0
     /\ shuts = [p \in All |-> 0]
     /\ twoInits = FALSE
+    /\ dead = [p \in All |-> FALSE]
     /\ swaps = 0
 
 \* The async build: the instance is returned while P0's initialize() runs, recorded as pending so a failed swap does not
@@ -158,6 +163,7 @@ InitAsync ==
     /\ emitted = 0
     /\ shuts = [p \in All |-> 0]
     /\ twoInits = FALSE
+    /\ dead = [p \in All |-> FALSE]
     /\ swaps = 0
 
 Init == InitWith({}) \/ InitAsync
@@ -228,6 +234,7 @@ SdkBind ==
     /\ twoInits' = (twoInits \/ inits[swap.new] > 0)
     /\ ran' = [ran EXCEPT ![swap.new] = FALSE]
     /\ shuts' = [shuts EXCEPT ![swap.new] = 0]
+    /\ dead' = [dead EXCEPT ![swap.new] = FALSE]
     /\ prevOf' = [prevOf EXCEPT ![swap.new] = bound]
     /\ orphans' = Freeze(orphans, swap.new)
     /\ swap' = [swap EXCEPT !.phase = "wait"]
@@ -251,7 +258,7 @@ SdkInitOk(p) ==
     /\ events' = events \cup {[p |-> p, e |-> "READY"]}
     /\ shuts' = ShutDownOld(p, shuts)
     /\ UNCHANGED << status, installed, lock, gate, swap, pending, orphans, bridgeOn, shutDown, closed,
-                    bound, prevOf, emitted, twoInits, swaps, owns >>
+                    bound, prevOf, emitted, twoInits, dead, swaps, owns >>
 
 \* SdkInitFail: a running initialize() throws.  The SDK reports ERROR; nothing is shut down.  (A provider that reported
 \* STALE while starting and then fails is the documented "taken at its word" limit, outside this model.)
@@ -262,7 +269,7 @@ SdkInitFail(p) ==
     /\ sdk' = [sdk EXCEPT ![p] = "ERROR"]
     /\ events' = events \cup {[p |-> p, e |-> "ERROR"]}
     /\ UNCHANGED << status, installed, lock, gate, swap, pending, orphans, bridgeOn, shutDown, closed,
-                    bound, ran, prevOf, emitted, shuts, twoInits, swaps, owns >>
+                    bound, ran, prevOf, emitted, shuts, twoInits, dead, swaps, owns >>
 
 \* SwapDone: the new provider initialized (or reports STALE from inside initialize(), taken at its word).  The swap
 \* ends in the state the SDK reports for it, an ERROR or FATAL it reported since included; SwapReconcile then reads the
@@ -319,6 +326,7 @@ SwapRollback(ok, r, early) ==
        /\ bound' = prev
        /\ prevOf' = [prevOf EXCEPT ![prev] = failed]
        /\ ran' = [ran EXCEPT ![prev] = ok]
+       /\ dead' = [dead EXCEPT ![prev] = FALSE]
        /\ sdk' = [sdk EXCEPT ![prev] = r]
        /\ status' = StatusOf(r)
        /\ events' = IF early THEN events ELSE events \cup sent
@@ -365,13 +373,13 @@ CallerInterrupt ==
 \* its word.
 Emit(p, e) ==
     /\ emitted < MaxEvents
-    /\ ran[p] /\ inits[p] = 0 /\ shuts[p] = 0
+    /\ ran[p] /\ inits[p] = 0 /\ shuts[p] = 0 /\ ~dead[p]
     /\ sdk[p] \in {"READY", "STALE", "ERROR"}
     /\ sdk' = [sdk EXCEPT ![p] = e]
     /\ events' = events \cup {[p |-> p, e |-> e]}
     /\ emitted' = emitted + 1
     /\ UNCHANGED << status, installed, lock, gate, swap, pending, orphans, bridgeOn, shutDown, closed,
-                    bound, inits, ran, prevOf, shuts, twoInits, swaps, owns >>
+                    bound, inits, ran, prevOf, shuts, twoInits, dead, swaps, owns >>
 
 \* A provider reports STALE from inside initialize(), and then starts.  The SDK's state is STALE until initialize()
 \* returns; a swap waiting on the provider sees it as initialized.  The model holds such a provider to finishing its
@@ -383,14 +391,24 @@ Emit(p, e) ==
 \* (the async build's), which a failed swap reads by its NOT_READY state.
 EmitStaleWhileStarting(p) ==
     /\ emitted < MaxEvents
-    /\ inits[p] > 0 /\ sdk[p] = "NOT_READY"
+    /\ inits[p] > 0 /\ sdk[p] = "NOT_READY" /\ ~dead[p]
     /\ ~\E o \in orphans : o.watch = p /\ o.frozen = "LIVE"
     /\ pending # p
     /\ sdk' = [sdk EXCEPT ![p] = "STALE"]
     /\ events' = events \cup {[p |-> p, e |-> "STALE"]}
     /\ emitted' = emitted + 1
     /\ UNCHANGED << status, installed, lock, gate, swap, pending, orphans, bridgeOn, shutDown, closed,
-                    bound, inits, ran, prevOf, shuts, twoInits, swaps, owns >>
+                    bound, inits, ran, prevOf, shuts, twoInits, dead, swaps, owns >>
+
+\* Die: a provider that initialized stops working without reporting it: its evaluations fail or hang, and it emits
+\* nothing.  Its SDK state stays as it was, so nothing the library reads changes.  A new registration of the provider
+\* (a swap's SdkBind, a rollback) starts a new initialize() cycle and clears it.  Only Witness.cfg allows it.
+Die(p) ==
+    /\ AllowDeath
+    /\ ran[p] /\ shuts[p] = 0 /\ ~dead[p]
+    /\ dead' = [dead EXCEPT ![p] = TRUE]
+    /\ UNCHANGED << status, installed, lock, gate, swap, pending, orphans, bridgeOn, shutDown, closed, owns, swaps,
+                    bound, sdk, inits, ran, prevOf, events, emitted, shuts, twoInits >>
 
 \* DeliverEvent + ApplySignal: the SDK delivers a pending event, in any order, to the handlers of the domains its
 \* provider is bound to; the bridge's handler runs only for the provider bound to the slot and while it is registered.
@@ -406,7 +424,7 @@ DeliverToBridge(ev) ==
          ELSE IF sdk[bound] = "NOT_READY" THEN status
          ELSE Apply(status, sdk[bound])
     /\ UNCHANGED << installed, lock, gate, swap, pending, orphans, bridgeOn, shutDown, closed,
-                    bound, sdk, inits, ran, prevOf, emitted, shuts, twoInits, swaps, owns >>
+                    bound, sdk, inits, ran, prevOf, emitted, shuts, twoInits, dead, swaps, owns >>
 
 \* An event no handler of this instance receives: from a provider no longer bound, or after the bridge is gone.
 Discard(ev) ==
@@ -414,7 +432,7 @@ Discard(ev) ==
     /\ ~(bridgeOn /\ ev.p = bound)
     /\ events' = events \ {ev}
     /\ UNCHANGED << status, installed, lock, gate, swap, pending, orphans, bridgeOn, shutDown, closed,
-                    bound, sdk, inits, ran, prevOf, emitted, shuts, twoInits, swaps, owns >>
+                    bound, sdk, inits, ran, prevOf, emitted, shuts, twoInits, dead, swaps, owns >>
 
 Deliver(ev) == DeliverToBridge(ev) \/ Discard(ev)
 
@@ -430,7 +448,7 @@ OrphanResolved(o) ==
     /\ orphans' = orphans \ {o}
     /\ shuts' = IF Released(o) THEN shuts ELSE [shuts EXCEPT ![o.prev] = @ + 1]
     /\ UNCHANGED << status, installed, lock, gate, swap, pending, bridgeOn, shutDown, closed,
-                    bound, sdk, inits, ran, prevOf, events, emitted, twoInits, swaps, owns >>
+                    bound, sdk, inits, ran, prevOf, events, emitted, twoInits, dead, swaps, owns >>
 
 \* The API's shutdown, then the forced resolve of every pending entry: the API shuts the provider bound to the slot
 \* down and interrupts every initialize() still running; an entry whose watched provider is not READY or STALE gets
@@ -467,7 +485,7 @@ ShutdownDone ==
     /\ shutDown' = TRUE
     /\ lock' = "free"
     /\ UNCHANGED << installed, gate, swap, pending, bridgeOn, closed,
-                    bound, sdk, ran, prevOf, events, emitted, twoInits, swaps, owns >>
+                    bound, sdk, ran, prevOf, events, emitted, twoInits, dead, swaps, owns >>
 
 \* ScopeClose: the API's scope finalizer.  After a shutdown there is nothing left to tear down.
 ScopeClose ==
@@ -478,7 +496,7 @@ ScopeClose ==
          THEN UNCHANGED << shuts, inits, orphans >>
          ELSE TearDown
     /\ UNCHANGED << status, installed, lock, gate, swap, pending, shutDown,
-                    bound, sdk, ran, prevOf, events, emitted, twoInits, swaps, owns >>
+                    bound, sdk, ran, prevOf, events, emitted, twoInits, dead, swaps, owns >>
 
 -----------------------------------------------------------------------------
 Next ==
@@ -495,6 +513,7 @@ Next ==
     \/ CallerInterrupt
     \/ \E p \in All, e \in {"READY", "STALE", "ERROR", "FATAL"} : Emit(p, e)
     \/ \E p \in All : EmitStaleWhileStarting(p)
+    \/ \E p \in All : Die(p)
     \/ \E ev \in events : Deliver(ev)
     \/ \E o \in orphans : OrphanResolved(o)
     \/ ShutdownStart
@@ -594,4 +613,13 @@ BoundNotShutDown == (~shutDown /\ ~closed) => shuts[bound] = 0
 ClosedCleanly ==
     closed /\ owns => /\ orphans = {}
               /\ \A p \in Used : shuts[p] = 1
+
+-----------------------------------------------------------------------------
+(* A blind spot, stated as a check *)
+
+\* The instance reports Ready, idle and live, while the provider it reports has silently stopped working.  This is
+\* reachable, by design: the status follows the SDK's state, and a provider that dies without reporting it leaves that
+\* state as it was.  Witness.cfg asserts it as an invariant and witness.py requires TLC to report it violated, so the
+\* check fails if a change makes the state unreachable and the README's account of the gap must change with it.
+SilentDeathUndetected == ~(dead[installed] /\ status = "Ready" /\ lock = "free" /\ ~shutDown)
 =============================================================================

@@ -46,6 +46,7 @@ def check(tla_jar, cm_jar, actions):
     Providers = {{{providers}}}
     MaxSwaps = {swaps}
     MaxEvents = {deliveries}
+    AllowDeath = FALSE
     None = None
     TraceFile = "{trace}"
 INIT TInit

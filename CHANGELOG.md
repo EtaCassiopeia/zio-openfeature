@@ -464,6 +464,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Tests
 
+- **The lifecycle model states that a provider's silent death goes unreported** (#720). `Die`, behind the
+  `AllowDeath` constant, lets a provider stop working without emitting anything. `witness.py` checks on every pull
+  request that every invariant still holds, and that the instance can then report `Ready` with a dead provider
+  installed. The check fails if that becomes unreachable, so the README's account of the gap stays true.
 - **The lifecycle model checks recovery** (#718). `FairSpec` states the fairness the library and the SDK provide (a
   swap's next step and its timeout, a started shutdown, event delivery, acting on a resolved orphan watch), with none
   for providers. `Liveness.cfg` checks five properties under it on every pull request: every swap ends, a started

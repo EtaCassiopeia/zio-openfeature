@@ -339,7 +339,9 @@ outcome).
   it would call `initialize()` again.
 - **The watcher's two-tick wait.** The orphan watcher acts on an `ERROR` only when it persists across two ticks, which
   gives the SDK's `PROVIDER_READY` time to arrive; the model reads whether `initialize()` returned directly.
-- **Time.** A timeout is an action enabled while `initialize()` runs; how long anything takes is not modelled.
+- **Time.** A timeout is an action enabled while `initialize()` runs; how long anything takes is not modelled. `SdkInitOk`
+  returns from `initialize()` and writes the slot in one step: for the library, "returned but not yet written" is the same
+  observation as "still running", with the same timeout and the same recovery by the late `READY`.
 - **The registry, shared APIs and `fromAcquireAsync`.** The model is one instance that owns its API.
 - **The async build's init watchdog.** The async start is in (`InitAsync`); its watchdog is not, and
   `LifecycleInterleavingSpec` covers it.

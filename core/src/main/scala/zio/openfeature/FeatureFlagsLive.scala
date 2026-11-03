@@ -359,8 +359,8 @@ final private[openfeature] class FeatureFlagsLive(
           applySignal(Signal.RollbackUnbound(before)).as(true)
     }
 
-  /** Re-register `oldProvider` with the SDK iff the failed swap left the SDK routing to `newProvider`. Returns true iff
-    * the SDK is verified to route to `oldProvider` afterwards.
+  /** Re-register `oldProvider` with the SDK iff the failed swap left the SDK routing to `newProvider`, returning that
+    * registration, whose initialization the caller waits on.
     *
     * The Java SDK binds the new provider's state manager into the domain/default slot before calling its `initialize()`
     * and does not revert that binding when init throws, so after a failed swap the SDK client still routes evaluations
@@ -376,15 +376,14 @@ final private[openfeature] class FeatureFlagsLive(
   private def restoreSdkRegistration(
     oldProvider: Bound,
     newProvider: Bound
-  ): Task[Option[ProviderRegistration.Settled]] =
+  ): Task[Option[ProviderRegistration.Registration]] =
     ZIO.attemptBlocking(domain.fold(api.getProvider())(d => api.getProvider(d))).flatMap { bound =>
       // A concurrent sibling swap (shared-api topology) won the slot: leave it alone and report no restore, so status
       // stays Error rather than us fighting the winner. The refs stay rolled back to oldProvider — a benign skew in
       // this rare topology, deliberately not reconciled here.
       if (bound ne newProvider.sdk) ZIO.none
       else {
-        val register =
-          ProviderRegistration.registerThenAwait(api, domain, oldProvider, initTimeout)(probe.at(Point.RollbackBind))
+        val register = ProviderRegistration.register(api, domain, oldProvider).tap(_ => probe.at(Point.RollbackBind))
         register.catchSome { case _: IllegalStateException =>
           // The "already attached" state a failed swap leaves an EventProvider in: its state manager was evicted from
           // the slot but its `attach` CAS was never reset, so re-registration throws. Detach and retry once; any
@@ -398,12 +397,72 @@ final private[openfeature] class FeatureFlagsLive(
       }
     }
 
+  /** A failed swap's rollback: register `oldProvider` again and wait for it.
+    *
+    * It returned: the SDK shuts the failed provider down. It did not return in time, or a sibling swap on a shared API
+    * took the slot first: that call still holds the failed provider, which the SDK shuts down once it returns, so
+    * shutting it down here too would use up the wait a later swap makes for that shutdown. An instance that owns its
+    * API watches the call instead, for when it throws or never finishes; one that shares its API leaves the provider to
+    * the SDK, as it leaves a timed-out swap's, so if the call then throws nothing shuts it down. It threw, or the
+    * registration failed: the failed provider is unbound and no SDK shutdown is coming, so it is shut down here.
+    */
+  private def rollBack(oldProvider: Bound, oldName: String, incoming: Bound, newName: String): UIO[Unit] = {
+    // Losing the slot to a sibling swap ends the wait, not the call: the SDK still shuts the failed provider down when it
+    // returns. An instance that owns its API has no sibling: for it a lost slot means the API is going down, the call
+    // may never run, and nothing is left to wait for.
+    def stillHolds(e: Throwable) = e match {
+      case _: java.util.concurrent.TimeoutException       => true
+      case _: ProviderRegistration.RegistrationSuperseded => !ownsApi
+      case _                                              => false
+    }
+    def failed(e: Throwable, what: String) =
+      ZIO.logErrorCause(s"setProvider rollback: $what; status remains Error", Cause.fail(e))
+    def unrestored(e: Throwable) =
+      failed(
+        e,
+        s"failed to re-register previous provider '$oldName'; evaluations may still route to the failed provider " +
+          "until a later setProvider succeeds"
+      ) *> cleanupUnboundFailedProvider(incoming)
+
+    restoreSdkRegistration(oldProvider, incoming).foldZIO(
+      unrestored,
+      {
+        case Some(restored) =>
+          restored
+            .settle(initTimeout)
+            .foldZIO(
+              {
+                case e if stillHolds(e) =>
+                  lifecycle.run(LifecycleInput.Replaced(restored, incoming)) *>
+                    ZIO.when(incoming.managed.isDefined)(recordOrphan(incoming, newName, oldName, Some(restored))) *>
+                    failed(
+                      e,
+                      s"previous provider '$oldName' did not settle in its slot within $initTimeout; it holds the " +
+                        s"failed provider '$newName', which is shut down once it settles"
+                    )
+                case e => unrestored(e)
+              },
+              settled =>
+                lifecycle.run(LifecycleInput.Replaced(restored, incoming)) *>
+                  applySignal(Signal.RollbackSucceeded(settled)).unit
+            )
+        // A concurrent sibling swap already won the slot (see restoreSdkRegistration): leave status Error and log a
+        // breadcrumb, don't fight the winner.
+        case None =>
+          ZIO.logInfo(
+            "setProvider rollback: slot no longer bound to the failed provider (concurrent swap?); " +
+              s"leaving status Error for '$oldName'"
+          )
+      }
+    )
+  }
+
   /** Best-effort teardown of the failed new provider when rollback itself failed and left it unbound. On a successful
-    * rollback the SDK's `shutDownOld` already does this; this covers only the rollback-failure path. If the failed
-    * provider is somehow still bound, do nothing. A foreign provider is left alone: the API registered it outside this
-    * instance and may still serve it in another slot, so its lifecycle is the SDK's. No current path gets here with
-    * one, since a swap to a foreign provider fails only when its slot was taken over, and then nothing is rolled back;
-    * the match keeps the rule if that changes.
+    * rollback the SDK's `shutDownOld` already does this, and a rollback that timed out leaves it to that call too; this
+    * covers only the rollback-failure path. If the failed provider is somehow still bound, do nothing. A foreign
+    * provider is left alone: the API registered it outside this instance and may still serve it in another slot, so its
+    * lifecycle is the SDK's. No current path gets here with one, since a swap to a foreign provider fails only when its
+    * slot was taken over, and then nothing is rolled back; the match keeps the rule if that changes.
     */
   private def cleanupUnboundFailedProvider(incoming: Bound): UIO[Unit] =
     incoming match {
@@ -449,8 +508,8 @@ final private[openfeature] class FeatureFlagsLive(
   /** Run what a lifecycle step asked for, after the step, outside its lock. */
   private def runEffects(effects: Chunk[LifecycleEffect]): UIO[Unit] =
     ZIO.foreachDiscard(effects) {
-      case LifecycleEffect.Refuse(_)                                  => ZIO.unit
-      case LifecycleEffect.EscalateInitTimeout(provider, initTimeout) =>
+      case LifecycleEffect.Refuse(_) | LifecycleEffect.AwaitSdkShutDown(_) => ZIO.unit
+      case LifecycleEffect.EscalateInitTimeout(provider, initTimeout)      =>
         val msg = s"Provider initialization exceeded $initTimeout"
         state.eventHub
           .publish(
@@ -635,7 +694,7 @@ final private[openfeature] class FeatureFlagsLive(
                 s"setProvider: '$newName' did not finish initializing within $initTimeout; status is Error and the " +
                   s"previous provider '$oldName' was not restored (it is shut down once '$newName' settles)"
               ) *>
-              lifecycle.run(LifecycleInput.Replaced(incoming, oldProvider)) *>
+              ZIO.foreachDiscard(registration.toOption)(r => lifecycle.run(LifecycleInput.Replaced(r, oldProvider))) *>
               recordOrphan(oldProvider, oldName, newName, registration.toOption)
           case _ =>
             failedBeforeBinding(oldProvider.sdk, previousName, before).flatMap { handled =>
@@ -662,36 +721,12 @@ final private[openfeature] class FeatureFlagsLive(
                 lifecycle.run(LifecycleInput.Reinstall(oldProvider.sdk, previousName)) *>
                   applySignal(Signal.SwapFailed) *>
                   probe.at(Point.SwapRollback) *>
-                  restoreSdkRegistration(oldProvider, incoming).foldZIO(
-                    e =>
-                      // A rollback that timed out leaves the previous provider's initialize() running, holding the
-                      // failed provider until it returns.
-                      ZIO.whenCase(e) { case _: java.util.concurrent.TimeoutException =>
-                        lifecycle.run(LifecycleInput.Replaced(oldProvider, incoming))
-                      } *>
-                        ZIO.logErrorCause(
-                          s"setProvider rollback: failed to re-register previous provider '$oldName'; status remains " +
-                            "Error and evaluations may still route to the failed provider until a later setProvider " +
-                            "succeeds",
-                          Cause.fail(e)
-                        ) *> cleanupUnboundFailedProvider(incoming),
-                    restored =>
-                      // None only when a concurrent sibling swap already won the slot (see restoreSdkRegistration):
-                      // leave status Error and log a breadcrumb, don't fight the winner.
-                      restored match {
-                        case Some(settled) =>
-                          applySignal(Signal.RollbackSucceeded(settled)).unit
-                        case None =>
-                          ZIO.logInfo(
-                            "setProvider rollback: slot no longer bound to the failed provider " +
-                              "(concurrent swap?); " +
-                              s"leaving status Error for '$oldName'"
-                          )
-                      }
-                  )
+                  rollBack(oldProvider, oldName, incoming, newName)
               }
             }
         }
+      // Its return makes the SDK shut the previous provider down, on the SDK's executor: a swap to that provider waits.
+      _ <- ZIO.foreachDiscard(registration.toOption)(r => lifecycle.run(LifecycleInput.Replaced(r, oldProvider)))
       // It has initialized, so its name is final; before the outcome, which makes it evaluable.
       _ <- eventBridge.readName(incoming.sdk)
       // 4. Apply the outcome via the machine: the state the SDK reports for the new provider once it initialized,
@@ -740,18 +775,27 @@ final private[openfeature] class FeatureFlagsLive(
     * is torn down; then for a provider whose earlier registration is unsettled. Run under the swap lock, which
     * `shutdown` and the scope finalizer hold when they close the instance.
     *
-    * A provider never wrapped has no earlier registration to refuse it over. A provider that a timed-out swap replaced
-    * is held by that swap's pending initialization, which shuts it down if it succeeds; a settle of that entry already
-    * under way is waited for, after which the entry is gone from the record.
+    * A provider never wrapped has no earlier registration to refuse it over. A provider that a timed-out swap or
+    * rollback replaced is held by that pending initialization, which shuts it down if it succeeds; a settle of that
+    * entry already under way is waited for, after which the entry is gone from the record.
     */
   private def refuseSwap(newProvider: OFFeatureProvider): IO[FeatureFlagError, Unit] = {
     val managed = ManagedProvider.existing(newProvider)
     for {
       _       <- ZIO.foreachDiscard(managed)(orphans.awaitSettling)
-      outcome <- lifecycle.run(LifecycleInput.Admit(newProvider, managed, _.initsInFlightAnywhere > 0))
-      _       <- ZIO.foreachDiscard(outcome.effects) {
+      outcome <- lifecycle.run(
+        LifecycleInput.Admit(newProvider, managed, _.initsInFlightAnywhere > 0, _.initializing, _.released(_))
+      )
+      _ <- ZIO.foreachDiscard(outcome.effects) {
         case LifecycleEffect.Refuse(refusal) => ZIO.fail(refused(refusal))
-        case _                               => ZIO.unit
+        // Bounded, by the same bound the orphan watcher uses, and the swap then proceeds: the SDK skips the shutdown of
+        // a provider still registered in another slot of a shared API, and its executor can be wedged. Interruptible,
+        // and before the swap changes anything.
+        case LifecycleEffect.AwaitSdkShutDown(provider) =>
+          probe.at(Point.AwaitSdkShutDown) *>
+            provider.awaitShutDown(OrphanedProviders.SdkShutDownWait) *>
+            lifecycle.run(LifecycleInput.SdkShutDownAwaited(provider)).unit
+        case _ => ZIO.unit
       }
     } yield ()
   }
@@ -767,8 +811,8 @@ final private[openfeature] class FeatureFlagsLive(
         )
       case Refusal.PendingOrphan(provider, incoming) =>
         failed(
-          s"'${ProviderNames.of(provider)}' cannot be installed again until '$incoming', which replaced it in a swap that timed " +
-            "out, finishes initializing"
+          s"'${ProviderNames.of(provider)}' cannot be installed again until '$incoming', which replaced it in a swap or rollback " +
+            "that timed out, finishes initializing"
         )
       case Refusal.HeldBy(provider, holder) =>
         failed(
@@ -784,9 +828,9 @@ final private[openfeature] class FeatureFlagsLive(
     }
   }
 
-  /** After a timed-out swap the SDK holds `previous` only in `incoming`'s pending initialization, and shuts it down
-    * only if that succeeds; [[orphans]] covers the other outcomes. A non-owning instance leaves it alone, as it leaves
-    * every provider of its shared API: another client may be serving it.
+  /** After a timed-out swap or rollback the SDK holds `previous` only in `incoming`'s pending initialization, and shuts
+    * it down only if that succeeds; [[orphans]] covers the other outcomes. A non-owning instance leaves it alone, as it
+    * leaves every provider of its shared API: another client may be serving it.
     */
   private def recordOrphan(
     previous: Bound,

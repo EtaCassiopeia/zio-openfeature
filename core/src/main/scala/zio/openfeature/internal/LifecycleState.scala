@@ -37,12 +37,13 @@ import zio.openfeature.internal.ProviderStatusMachine.Signal
   *   an init-watchdog deadline that fell inside a swap, whose gate drops it: replayed when the swap ends on that
   *   provider
   * @param replaced
-  *   registrations whose `initialize()` may still run, each with the provider it replaced: a timed-out swap's and a
-  *   timed-out rollback's. Once such a call returns, the SDK shuts the replaced provider down through its old
-  *   registration, so that provider is refused until then (model: `prevOf` with `inits`)
+  *   registrations of a swap or rollback, each with the provider it replaced, until the SDK has nothing left to do to
+  *   that provider. Once such a registration's `initialize()` returns, the SDK queues the replaced provider's shutdown
+  *   on its executor, so that provider is refused until the call returns, and a swap to it then waits for the shutdown
+  *   (model: `prevOf` with `inits`, and `oldPending`)
   * @param orphans
-  *   providers a timed-out swap left behind, each with the name of the provider whose pending initialization holds it,
-  *   until that entry settles; refused until then (model: `orphans`)
+  *   providers a timed-out swap or rollback left behind, each with the name of the provider whose pending
+  *   initialization holds it, until that entry settles; refused until then (model: `orphans`)
   */
 final private[openfeature] case class LifecycleState(
   status: ProviderStatus,
@@ -56,7 +57,7 @@ final private[openfeature] case class LifecycleState(
   shutDown: Boolean,
   closed: Boolean,
   deferredInitTimeout: Option[(OFFeatureProvider, Duration)],
-  replaced: List[(ManagedProvider, ManagedProvider)],
+  replaced: List[(ProviderRegistration.Registration, ManagedProvider)],
   orphans: List[(OFFeatureProvider, String)]
 ) {
 
@@ -138,26 +139,35 @@ private[openfeature] object LifecycleInput {
 
   /** A swap asks to install `incoming` (`managed`, its wrapper, when it has one): refused on a shut-down or closed
     * instance, and for a provider whose earlier registration is unsettled (model: the guards of `SwapStart`).
-    * `initializing` tells whether a wrapper's `initialize()` runs now.
+    * `initializing` tells whether a wrapper's `initialize()` runs now, `holderInitializing` whether a registration's
+    * own does, and `released` whether a registration has nothing left to do to the provider it replaced.
     */
   final case class Admit(
     incoming: OFFeatureProvider,
     managed: Option[ManagedProvider],
-    initializing: ManagedProvider => Boolean
+    initializing: ManagedProvider => Boolean,
+    holderInitializing: ProviderRegistration.Registration => Boolean,
+    released: (ProviderRegistration.Registration, ManagedProvider) => Boolean
   ) extends LifecycleInput
 
-  /** A timed-out swap left `previous` behind, held by the pending initialization of `incoming` (model: the entry
-    * `SwapTimeout` and `SwapFailNoRollback` add to `orphans`).
+  /** A timed-out swap or rollback left `previous` behind, held by the pending initialization of `incoming` (model: the
+    * entry `SwapTimeout` and `SwapFailNoRollback` add to `orphans`).
     */
   final case class OrphanRecorded(previous: OFFeatureProvider, incoming: String) extends LifecycleInput
 
   /** The entry for `previous` settled (model: `OrphanResolved`). */
   final case class OrphanSettled(previous: OFFeatureProvider) extends LifecycleInput
 
-  /** `holder`'s registration, whose `initialize()` may still run, replaced `previous`. Only wrappers are tracked: a
-    * foreign provider's initialization is the SDK's, which reports no count.
+  /** `holder` replaced `previous` in a swap or a rollback: the SDK shuts `previous` down through it once its
+    * `initialize()` returns. Only wrappers are tracked: a foreign provider's initialization is the SDK's, which reports
+    * no outcome.
     */
-  final case class Replaced(holder: Bound, previous: Bound) extends LifecycleInput
+  final case class Replaced(holder: ProviderRegistration.Registration, previous: Bound) extends LifecycleInput
+
+  /** The wait [[LifecycleEffect.AwaitSdkShutDown]] asked for ended, or its bound elapsed: nothing still holds
+    * `provider` back.
+    */
+  final case class SdkShutDownAwaited(provider: ManagedProvider) extends LifecycleInput
 
   /** A swap drops its gate, on every exit. */
   case object GateDown extends LifecycleInput
@@ -187,6 +197,13 @@ private[openfeature] object LifecycleEffect {
 
   /** The swap is refused: the caller fails, and the record is unchanged. */
   final case class Refuse(refusal: Refusal) extends LifecycleEffect
+
+  /** The swap is admitted, but a registration that replaced `provider` has returned, so the SDK has queued `provider`'s
+    * shutdown on its executor, with no ordering against what the swap does next: started again now, `provider` would
+    * receive it in its new cycle, while serving. The swap waits for it first, then reports
+    * [[LifecycleInput.SdkShutDownAwaited]].
+    */
+  final case class AwaitSdkShutDown(provider: ManagedProvider) extends LifecycleEffect
 }
 
 /** Why a swap, a switch or a status override is refused. */
@@ -200,7 +217,9 @@ private[openfeature] object Refusal {
   /** An earlier `initialize()` of `provider` has not returned: the SDK would run a second one alongside it. */
   final case class StillInitializing(provider: OFFeatureProvider) extends Refusal
 
-  /** A timed-out swap's provider, `incoming`, still holds `provider`, and shuts it down if it initializes. */
+  /** The provider of a timed-out swap or rollback, `incoming`, still holds `provider`, and shuts it down if it
+    * initializes.
+    */
   final case class PendingOrphan(provider: OFFeatureProvider, incoming: String) extends Refusal
 
   /** `holder`'s registration, still initializing, replaced `provider`, and its return shuts `provider` down. */
@@ -276,10 +295,13 @@ private[openfeature] object LifecycleStep {
         }
 
       case LifecycleInput.Replaced(holder, previous) =>
-        (holder.managed, previous.managed) match {
-          case (Some(h), Some(p)) => Outcome(state.copy(replaced = (h -> p) :: state.replaced), None, Chunk.empty)
+        (holder.bound.managed, previous.managed) match {
+          case (Some(_), Some(p)) => Outcome(state.copy(replaced = (holder -> p) :: state.replaced), None, Chunk.empty)
           case _                  => unchanged(state)
         }
+
+      case LifecycleInput.SdkShutDownAwaited(provider) =>
+        Outcome(state.copy(replaced = state.replaced.filterNot(_._2 eq provider)), None, Chunk.empty)
 
       case LifecycleInput.OrphanRecorded(previous, incoming) =>
         Outcome(state.copy(orphans = (previous -> incoming) :: state.orphans), None, Chunk.empty)
@@ -307,9 +329,10 @@ private[openfeature] object LifecycleStep {
     }
 
   // In the order the swap checks them: what can never be revived, then the provider's own call, then what still holds it.
-  // Refusing leaves the record as it was; admitting drops the replacements whose call has returned.
+  // Refusing leaves the record as it was; admitting drops the replacements with nothing left to do. Refusing and asking
+  // for the wait read the same record, so a holder returning between them cannot skip the wait. An entry the wait is for
+  // stays until the wait ends: a caller interrupted during it leaves the next swap to wait in its place.
   private def admit(state: LifecycleState, input: LifecycleInput.Admit): Outcome = {
-    val pending = state.replaced.filter { case (holder, _) => input.initializing(holder) }
     val refusal =
       if (state.shutDown || state.closed) Some(Refusal.Closed)
       else
@@ -318,13 +341,24 @@ private[openfeature] object LifecycleStep {
           else
             state.orphans
               .collectFirst { case (previous, incoming) if previous eq m => Refusal.PendingOrphan(m, incoming) }
-              .orElse(pending.collectFirst {
-                case (holder, previous) if (previous eq m) && (holder ne m) => Refusal.HeldBy(m, holder)
+              .orElse(state.replaced.collectFirst {
+                case (holder, previous)
+                    if (previous eq m) && (holder.provider ne m) && input.holderInitializing(holder) =>
+                  Refusal.HeldBy(m, holder.provider)
               })
         }
     refusal match {
       case Some(r) => Outcome(state, None, Chunk(LifecycleEffect.Refuse(r)))
-      case None    => Outcome(state.copy(replaced = pending), None, Chunk.empty)
+      case None    =>
+        val (own, others) = state.replaced.partition { case (_, previous) => input.managed.exists(_ eq previous) }
+        val kept          = others.filterNot { case (holder, previous) => input.released(holder, previous) }
+        val due           = own.exists { case (holder, previous) =>
+          (holder.provider ne previous) && !input.released(holder, previous)
+        }
+        input.managed.filter(_ => due) match {
+          case Some(m) => Outcome(state.copy(replaced = own ++ kept), None, Chunk(LifecycleEffect.AwaitSdkShutDown(m)))
+          case None    => Outcome(state.copy(replaced = kept), None, Chunk.empty)
+        }
     }
   }
 

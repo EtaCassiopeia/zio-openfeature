@@ -8,10 +8,10 @@ library action, the record's library variables must equal the model's.
 | Model action | Inputs replayed | Where the code sends them |
 |:--|:--|:--|
 | `SwapStart(p)` | `Admit(p, Some(wrapper), initializing)`, which must not refuse, then `SwapStart(p, name)` | `FeatureFlagsLive.refuseSwap`, `runSwap` |
-| `SwapDone` | `Status(SwapSucceeded(settled))`, with `settled` the SDK's state the swap read | `runSwap`, the outcome |
-| `SwapTimeout` | `Status(SwapFailed)`, `Replaced(new, prev)`, then `OrphanRecorded(prev, new)` if the instance owns its API | `runSwap`, the timeout branch; `recordOrphan` |
+| `SwapDone` | `Replaced(new's registration, prev)`, then `Status(SwapSucceeded(settled))`, with `settled` the SDK's state the swap read | `runSwap`, the outcome |
+| `SwapTimeout` | `Status(SwapFailed)`, `Replaced(new's registration, prev)`, then `OrphanRecorded(prev, new)` if the instance owns its API | `runSwap`, the timeout branch; `recordOrphan` |
 | `SwapFailNoRollback` | `Status(SwapFailed)`, then `OrphanRecorded(prev, new)` if the instance owns its API | `runSwap`, the failure branch while the previous provider still initializes |
-| `SwapRollback(ok, r, early)` | `Reinstall(prev, name)`, `Status(SwapFailed)`, then `Status(RollbackSucceeded(r))` when `ok`; nothing more when the rollback's registration throws | `runSwap`, the failure branch; `restoreSdkRegistration`. A rollback whose registration times out (`Replaced(prev, failed)`), and one a sibling's swap wins the slot from, are outside the model |
+| `SwapRollback(ok, r, early)` | `Reinstall(prev, name)`, `Status(SwapFailed)`, then `Replaced(prev's new registration, failed)` and `Status(RollbackSucceeded(r))` when `ok`; nothing more when the rollback's registration throws | `runSwap`, the failure branch; `restoreSdkRegistration`. A rollback whose registration times out (`Replaced(prev, failed)`), and one a sibling's swap wins the slot from, are outside the model |
 | `SwapRollbackUnbound` | `Reinstall(prev, name)`, `Status(SwapFailed)`, `Status(RollbackUnbound(before))` | `failedBeforeBinding` |
 | `SwapReconcile` | `GateDown`; `Status(signal)` for the SDK's state of the slot, none while it is `NOT_READY`; `ReplayDeferred` | the swap's `ensuring`, `reconcileRegistration`, `replayInitTimeout`, after every outcome |
 | `Deliver(ev)` | `Status(EventError(true))` for a `FATAL` event; otherwise `Status(signal)` for the SDK's state of the slot, or `Idle` while it is `NOT_READY` | `EventBridge.applySdkSignal` |
@@ -19,7 +19,7 @@ library action, the record's library variables must equal the model's.
 | `ShutdownStart` | `Status(ShutdownStarted)` | `FeatureFlagsLive.teardown` |
 | `ShutdownDone` | `OrphanSettled(prev)` for every orphan entry, if the instance owns its API; then `Status(ShutdownCompleted)` | `teardown`: `orphans.resolveAll`, then the signal |
 | `ScopeClose` | `ScopeClose`; then `OrphanSettled(prev)` for every orphan entry, if the instance owns its API | the API scope finalizer in `FeatureFlagsFactories`: `markClosed`, then `orphans.resolveAll` |
-| `SdkBind`, `SdkBindFail`, `SdkInitOk`, `SdkInitFail`, `Emit`, `EmitStaleWhileStarting`, `Die`, and `Deliver`'s `Discard` case | none: they change the SDK's variables, which the next library input reads | the SDK |
+| `SdkBind`, `SdkBindFail`, `SdkInitOk`, `SdkInitFail`, `SdkShutDownOld`, `Emit`, `EmitStaleWhileStarting`, `Die`, and `Deliver`'s `Discard` case | none: they change the SDK's variables, which the next library input reads | the SDK |
 | `CallerInterrupt` | never generated: `Interruptible` is empty | |
 
 Where the model folds several code steps into one action, the replay sends them in order and compares after the last.
@@ -27,7 +27,8 @@ Where the code chooses a branch from something the model carries as a variable, 
 rollback only while the previous provider's `initialize()` still runs (`inits`), a rollback only once it returned, and
 the unbound rollback only while the slot still binds the previous provider (`bound`).
 Where an input needs a value the model does not carry, the replay uses a stand-in: one `ManagedProvider` per model
-provider, named after it; `"replay"` as a settled error's message.
+provider, named after it; one `Registration` per registration the model makes of it, from an isolated API, whose
+`initializing` and `released` the replay answers from the model's variables; `"replay"` as a settled error's message.
 
 ## What is compared
 
@@ -41,7 +42,7 @@ registrations still initializing hold):
 | `lock` | `lock` | `free`, `swap` or `shutdown` |
 | `gate` | `gate` | |
 | `swap` | `swap` | the new and previous provider and the status before; the model's `phase` and `settled` have no field |
-| `prevOf` with `inits` | `replaced` | the registrations a timed-out swap made whose `initialize()` still runs, with the provider each replaced: the model's `q` with `inits[q] > 0` and `prevOf[q] # None` among the providers a `SwapTimeout` installed since their last registration (the replay keeps that set from the actions: `SwapTimeout` adds the new provider, `SdkBind` and `SwapRollback` register afresh); the record's entries whose holder the model still has initializing. A swap in flight is awaited, not recorded, and a swap that settled on a `STALE` reported from inside `initialize()` takes the provider at its word |
+| `prevOf` with `inits`, and `oldPending` | `replaced` | the registrations the SDK still has something to do for, with the provider each replaced: the model's `q` with `inits[q] > 0` and `prevOf[q] # None` (its `initialize()` runs), and for each `p` with `oldPending[p]` the registration that queued the shutdown (the replay keeps that from the actions: `SdkInitOk(q)` queues `prevOf[q]`'s, a successful `SwapRollback` the failed provider's); the record's entries not yet released, where a registration is released once its `initialize()` ended and no shutdown of the provider it replaced is queued. The swap in flight's own registration, once bound, is left out: the code records it at the swap's outcome |
 | `orphans` | `orphans` | the set of (provider left behind, provider watched) |
 | `shutDown`, `closed` | `shutDown`, `closed` | |
 
@@ -59,9 +60,11 @@ The inputs of a library action the model took produce no `Refuse` and no `Escala
 the lock free, for every provider `p`, `Admit(p)` is refused exactly when the model's `SwapStart(p)` is disabled for a
 reason the code checks: the instance shut down or closed (`Closed`), `inits[p] > 0` (`StillInitializing`), an orphan
 entry with `prev = p` (`PendingOrphan`), or a registration still initializing that replaced `p` (`HeldBy`), with the
-refusal naming one of the reasons that hold. The model's other guards (the lock, `Settling`, `p # bound`, the swap
-bound) are not the step's: the lock is a semaphore, the bound provider is read from the SDK, and a provider settling
-from a `STALE` it reported while starting is taken at its word. At every state, `Switch(q)` is refused with
+refusal naming one of the reasons that hold; and, not refused, `Admit(p)` asks for the wait (`AwaitSdkShutDown(p)`)
+exactly when `oldPending[p]`, the guard the model takes in one step with the swap. The model's other guards (the lock,
+`Settling`, `p # bound`, the swap bound) are not the step's: the lock is a semaphore, the bound provider is read from
+the SDK, and a provider settling from a `STALE` it reported while starting is taken at its word. At every state,
+`Switch(q)` is refused with
 `NotInstalled` for a `q` other than the installed provider, with `Closed` on a shut-down or closed instance, and not
 otherwise.
 
@@ -71,11 +74,12 @@ The spec fails if any of the twelve library actions above never occurs in the se
 counts never occurs (the async build, a shared API, a timed-out swap on a shared API, a rollback whose registration
 failed, one that failed with a fatal state, a delivery to a slot still initializing, a delivery under the gate, a
 second shutdown, a shutdown after the scope closed, a provider installed again, a swap settled by a `STALE` reported
-while starting, an orphan settled by the library and one released by the SDK, a teardown settling orphans, and each
-refusal: closed, still initializing, pending orphan, held). It logs how often each action and each ordered pair of
+while starting, an orphan settled by the library and one released by the SDK, a teardown settling orphans, a queued
+shutdown run by the SDK, each refusal: closed, still initializing, pending orphan, held, and the wait for a queued
+shutdown). It logs how often each action and each ordered pair of
 consecutive library actions occurred. Two test-only decorators of the code must each make the replay fail: a step
 whose `SwapStart` leaves the gate down, and a bridge that applies the event's type instead of the SDK's state for the
 slot. A second suite, run without generated behaviours, replays one hand-written behaviour and checks that each
-comparison can fail: a step that admits everything, one that ignores `OrphanSettled`, one that records the wrong
+comparison can fail: a step that admits everything, one that ignores `OrphanSettled`, one that forgets a
 replacement, one that leaves a watchdog deadline deferred, one that does not close, and one that does not record the
 shutdown.

@@ -40,6 +40,7 @@ Work ==
     \/ SwapRollbackUnbound /\ act' = [name |-> "SwapRollbackUnbound"]
     \/ \E p \in All : \/ SdkInitOk(p) /\ act' = [name |-> "SdkInitOk", p |-> p]
                       \/ SdkInitFail(p) /\ act' = [name |-> "SdkInitFail", p |-> p]
+    \/ \E p \in All : SdkShutDownOld(p) /\ act' = [name |-> "SdkShutDownOld", p |-> p]
     \/ SwapDone /\ act' = [name |-> "SwapDone", settled |-> sdk[swap.new]]
     \/ SwapTimeout /\ act' = [name |-> "SwapTimeout"]
     \/ SwapFailNoRollback /\ act' = [name |-> "SwapFailNoRollback"]

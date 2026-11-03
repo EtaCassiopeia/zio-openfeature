@@ -292,9 +292,15 @@ evaluations keep going. To initialize a provider again, install a new instance.
   [owns its API](#who-shuts-down-the-api) does this: on a shared API the old provider is left to the API's owner.
   Until the new provider has settled, `setProvider` refuses the old provider with `ProviderInitializationFailed`:
   installing it again then would get it shut down later, while it serves. On a shared API the refusal lasts until the
-  new provider's `initialize()` returns, since the SDK shuts the old provider down when that call succeeds, whatever the
-  slot holds by then. After a rollback that timed out, every instance refuses the failed provider the same way until
-  the restored provider's `initialize()` returns. A provider whose earlier `initialize()` has
+  new provider's `initialize()` returns, after which the SDK shuts the old provider down, whatever the slot holds by
+  then. After a rollback that timed out, the failed provider is left to the SDK the same way: it shuts the provider
+  down once the restored provider's `initialize()` returns, an instance that owns its API does so if that call fails or
+  the scope closes first, and the provider is refused until then. On a shared API, if that call fails, nothing shuts the
+  failed provider down: it stays with the API's owner, and `setProvider` of it fails, so install a new instance. Between that return and the SDK's shutdown, which runs
+  on the SDK's own executor, `setProvider` of the replaced provider waits for the shutdown, for up to three seconds. It
+  waits the same way after a swap or rollback that did not time out. Three seconds is also how long installing again a
+  provider another slot of a shared API still serves takes: the SDK does not shut that one down, and the swap then
+  proceeds. A provider whose earlier `initialize()` has
   not returned (the one an async start was built with, or one a timed-out swap or rollback installed) is refused the
   same way, however many swaps have happened since, until that call returns. If `setProvider` is called while the
   timed-out provider, or the provider an async start was built with, is still initializing and the new provider's

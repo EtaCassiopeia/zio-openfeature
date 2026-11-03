@@ -2,13 +2,19 @@ package zio.openfeature
 
 import java.nio.file.{Files, Path, Paths}
 
+import scala.collection.mutable
 import scala.jdk.CollectionConverters._
 import scala.util.{Try, Using}
 
 import zio._
 import zio.test._
 
-import dev.openfeature.sdk.{FeatureProvider => OFFeatureProvider, NoOpProvider, ProviderState => JavaProviderState}
+import dev.openfeature.sdk.{
+  FeatureProvider => OFFeatureProvider,
+  NoOpProvider,
+  OpenFeatureAPI,
+  ProviderState => JavaProviderState
+}
 import zio.openfeature.internal.{
   Bound,
   EventBridge,
@@ -19,9 +25,10 @@ import zio.openfeature.internal.{
   Lock,
   ManagedProvider,
   ProviderName,
+  ProviderRegistration,
   Refusal
 }
-import zio.openfeature.internal.ProviderRegistration.Settled
+import zio.openfeature.internal.ProviderRegistration.{Registration, Settled}
 import zio.openfeature.internal.ProviderStatusMachine.Signal
 
 /** Behaviours of the TLA+ model (`formal/lifecycle/Generate.tla`, written by `generate.py`), replayed through
@@ -171,11 +178,12 @@ object LifecycleReplaySpec extends ZIOSpecDefault {
       case Json.Num(n) => n
       case other       => sys.error(s"not a number: $other")
     }
-    private def str(name: String): String   = asStr(field(name))
-    private def bool(name: String): Boolean = field(name) match {
+    private def asBool(j: Json): Boolean = j match {
       case Json.Bool(b) => b
-      case other        => sys.error(s"$name is not a boolean: $other")
+      case other        => sys.error(s"not a boolean: $other")
     }
+    private def str(name: String): String            = asStr(field(name))
+    private def bool(name: String): Boolean          = asBool(field(name))
     private def fun(name: String): Map[String, Json] = field(name) match {
       case Json.Obj(fields) => fields
       case other            => sys.error(s"$name is not a function: $other")
@@ -183,17 +191,18 @@ object LifecycleReplaySpec extends ZIOSpecDefault {
     private def record(name: String, fields: Map[String, Json], key: String): String =
       asStr(fields.getOrElse(key, sys.error(s"$name has no field $key")))
 
-    lazy val status: String              = str("status")
-    lazy val installed: String           = str("installed")
-    lazy val lock: String                = str("lock")
-    lazy val gate: Boolean               = bool("gate")
-    lazy val shutDown: Boolean           = bool("shutDown")
-    lazy val closed: Boolean             = bool("closed")
-    lazy val owns: Boolean               = bool("owns")
-    lazy val bound: String               = str("bound")
-    lazy val sdk: Map[String, String]    = fun("sdk").map { case (p, s) => p -> asStr(s) }
-    lazy val inits: Map[String, Long]    = fun("inits").map { case (p, n) => p -> asNum(n) }
-    lazy val prevOf: Map[String, String] = fun("prevOf").map { case (p, s) => p -> asStr(s) }
+    lazy val status: String                   = str("status")
+    lazy val installed: String                = str("installed")
+    lazy val lock: String                     = str("lock")
+    lazy val gate: Boolean                    = bool("gate")
+    lazy val shutDown: Boolean                = bool("shutDown")
+    lazy val closed: Boolean                  = bool("closed")
+    lazy val owns: Boolean                    = bool("owns")
+    lazy val bound: String                    = str("bound")
+    lazy val sdk: Map[String, String]         = fun("sdk").map { case (p, s) => p -> asStr(s) }
+    lazy val inits: Map[String, Long]         = fun("inits").map { case (p, n) => p -> asNum(n) }
+    lazy val prevOf: Map[String, String]      = fun("prevOf").map { case (p, s) => p -> asStr(s) }
+    lazy val oldPending: Map[String, Boolean] = fun("oldPending").map { case (p, b) => p -> asBool(b) }
 
     /** The swap in flight: its new and previous provider, the status before it, and its phase. */
     lazy val swap: Option[(String, String, String, String)] = field("swap") match {
@@ -210,6 +219,9 @@ object LifecycleReplaySpec extends ZIOSpecDefault {
       case other => sys.error(s"swap is neither None nor a record: $other")
     }
 
+    /** The provider a swap in flight is registering, whose replacement the code has not recorded yet. */
+    lazy val inFlight: Option[String] = swap.collect { case (p, _, _, "wait") => p }
+
     /** Each orphan entry as the provider left behind and the one watched. */
     lazy val orphans: Set[(String, String)] = field("orphans") match {
       case Json.Arr(items) =>
@@ -221,21 +233,13 @@ object LifecycleReplaySpec extends ZIOSpecDefault {
       case other => sys.error(s"orphans is not a set: $other")
     }
 
-    /** The registrations still initializing with the provider each replaced, as the code's `replaced` holds them:
-      * `timedOut` is the providers whose current registration a timed-out swap made (the replay derives it from the
-      * behaviour's actions), the only ones the code records. A swap in flight is awaited rather than recorded, and a
-      * swap that settled on a `STALE` reported from inside `initialize()` takes the provider at its word.
-      */
-    def held(timedOut: Set[String]): Set[(String, String)] =
-      inits.collect { case (q, n) if n > 0 && prevOf(q) != "None" && timedOut.contains(q) => (q, prevOf(q)) }.toSet
-
-    def lib(timedOut: Set[String]): Lib = Lib(
+    def lib(held: Set[(String, String)]): Lib = Lib(
       status = status,
       installed = installed,
       lock = lock,
       gate = gate,
       swap = swap.map { case (p, prev, before, _) => (p, prev, before) },
-      held = held(timedOut),
+      held = held,
       orphans = orphans,
       shutDown = shutDown,
       closed = closed
@@ -317,6 +321,7 @@ object LifecycleReplaySpec extends ZIOSpecDefault {
     "SdkBindFail",
     "SdkInitOk",
     "SdkInitFail",
+    "SdkShutDownOld",
     "Emit",
     "EmitStaleWhileStarting",
     "Die",
@@ -324,7 +329,7 @@ object LifecycleReplaySpec extends ZIOSpecDefault {
     "CallerInterrupt"
   )
 
-  /** The cases the generated set must contain, counted by `casesOf` and by the refusals `guards` sees. */
+  /** The cases the generated set must contain, counted by `casesOf` and by what `guards` sees. */
   val expectedCases: Set[String] = Set(
     "async build",
     "shared API",
@@ -340,10 +345,12 @@ object LifecycleReplaySpec extends ZIOSpecDefault {
     "orphan released by the SDK",
     "orphan settled by the library",
     "teardown settling orphans",
+    "queued shutdown run by the SDK",
     "refused: closed",
     "refused: still initializing",
     "refused: pending orphan",
-    "refused: held"
+    "refused: held",
+    "awaits: queued shutdown"
   )
 
   /** The signal the bridge applies for the SDK's state of the slot, as the bridge maps it. */
@@ -374,24 +381,139 @@ object LifecycleReplaySpec extends ZIOSpecDefault {
     case other   => sys.error(s"not a settled state: $other")
   }
 
-  /** The stand-ins for the model's providers: one wrapper per name, which `Admit` and `Replaced` take. */
+  /** The stand-ins for the model's providers: one wrapper per name, which `Admit` and `Replaced` take, and one
+    * registration per registration the model makes of it, which the record holds and only compares; they come from an
+    * isolated API, as the step spec's do, and the replay decides what they report.
+    */
   final class Providers(names: Set[String]) {
+    val api: OpenFeatureAPI                  = OpenFeatureAPI.createIsolated()
     val byName: Map[String, ManagedProvider] = names.map(n => n -> ManagedProvider(new NoOpProvider())).toMap
     private val byIdentity: Map[OFFeatureProvider, String] =
       byName.map { case (n, m) => (m: OFFeatureProvider) -> n }
+    private val pool    = mutable.Map.empty[(String, Int), Registration]
+    private val holders = mutable.Map.empty[Registration, String]
 
     def apply(name: String): ManagedProvider        = byName(name)
     def nameOf(provider: OFFeatureProvider): String =
       byIdentity.getOrElse(provider, sys.error(s"a provider the replay did not make: $provider"))
+
+    /** The `k`th registration of `name` in a behaviour. */
+    // The tests of a suite run in parallel and share these stand-ins.
+    def registration(name: String, k: Int): Registration = pool.synchronized {
+      pool.getOrElseUpdate(
+        (name, k), {
+          val made = Unsafe.unsafe { implicit u =>
+            Runtime.default.unsafe
+              .run(ProviderRegistration.register(api, Some(s"$name-$k"), Bound.Managed(byName(name))))
+              .getOrThrowFiberFailure()
+          }
+          holders(made) = name
+          made
+        }
+      )
+    }
+
+    def holderOf(registration: Registration): String = pool.synchronized {
+      holders.getOrElse(registration, sys.error("a registration the replay did not make"))
+    }
   }
 
-  /** The inputs the code sends for a library action, in order, given the model's state before it; None for an SDK
-    * action.
+  /** The replay's view of the SDK's registrations at a state: each provider's current registration, and for every
+    * shutdown the SDK has queued, the registration that queued it.
     */
-  def inputsFor(act: Act, pre: ModelState, providers: Providers, code: Code): Option[List[LifecycleInput]] = {
-    def named(p: String)                          = ProviderName.Named(p)
-    def swap                                      = pre.swap.getOrElse(sys.error(s"${act.name} with no swap in flight"))
-    def initializing(m: ManagedProvider): Boolean = pre.inits(providers.nameOf(m)) > 0
+  final case class Registrations(current: Map[String, Registration], queuedBy: Map[String, Registration]) {
+
+    /** The registrations the code's `replaced` holds, as the model has them: a registration still initializing with the
+      * provider it replaced (`prevOf` with `inits`), and the registration that queued a shutdown the SDK has yet to run
+      * (`oldPending`; `queuedBy` says which). Not the swap in flight's own, once bound: the code records it at the
+      * swap's outcome.
+      */
+    def held(model: ModelState, providers: Providers): Set[(String, String)] = {
+      val bound        = model.inFlight.flatMap(current.get)
+      val initializing = model.inits.toList.collect {
+        case (q, n) if n > 0 && model.prevOf(q) != "None" && !model.inFlight.contains(q) => (q, model.prevOf(q))
+      }
+      val queued = model.oldPending.toList.collect {
+        case (p, true) if !bound.exists(_ eq queuedBy(p)) => (providers.holderOf(queuedBy(p)), p)
+      }
+      (initializing ++ queued).toSet
+    }
+
+    def initializing(model: ModelState, providers: Providers)(m: ManagedProvider): Boolean =
+      model.inits(providers.nameOf(m)) > 0
+
+    /** Whether a registration's own `initialize()` still runs: only a current one's can. */
+    def holderInitializing(model: ModelState, providers: Providers)(registration: Registration): Boolean = {
+      val holder = providers.holderOf(registration)
+      current.get(holder).contains(registration) && model.inits(holder) > 0
+    }
+
+    /** Whether a registration has nothing left to do to the provider it replaced: its `initialize()` ended, and no
+      * shutdown of that provider is queued.
+      */
+    def released(model: ModelState, providers: Providers)(registration: Registration, previous: ManagedProvider) =
+      !holderInitializing(model, providers)(registration) && !model.oldPending(providers.nameOf(previous))
+
+    def admit(model: ModelState, providers: Providers, p: String): LifecycleInput.Admit =
+      LifecycleInput.Admit(
+        providers(p),
+        Some(providers(p)),
+        initializing(model, providers),
+        holderInitializing(model, providers),
+        released(model, providers)
+      )
+  }
+
+  object Registrations {
+
+    /** The build's registration of its provider. */
+    def initial(providers: Providers, p0: String): Registrations =
+      Registrations(Map(p0 -> providers.registration(p0, 0)), Map.empty)
+
+    /** The registrations after an action: a swap's bind and a rollback register anew, a returned `initialize()` queues
+      * the previous provider's shutdown, and the SDK's executor or a teardown runs it.
+      */
+    def after(regs: Registrations, act: Act, pre: ModelState, post: ModelState, providers: Providers): Registrations = {
+      def next(p: String) = {
+        val k = regs.current.get(p).map(r => counter(regs, providers, p) + 1).getOrElse(0)
+        regs.current + (p -> providers.registration(p, k))
+      }
+      val moved = act.name match {
+        case "SdkBind" => regs.copy(current = next(pre.swap.map(_._1).getOrElse(sys.error("SdkBind with no swap"))))
+        case "SwapRollback" =>
+          val (failed, prev, _, _) = pre.swap.getOrElse(sys.error("SwapRollback with no swap"))
+          val registered           = regs.copy(current = next(prev))
+          if (act.bool("ok")) registered.copy(queuedBy = registered.queuedBy + (failed -> registered.current(prev)))
+          else registered
+        case "SdkInitOk" =>
+          val q = act.str("p")
+          if (pre.prevOf(q) == "None") regs
+          else regs.copy(queuedBy = regs.queuedBy + (pre.prevOf(q) -> regs.current(q)))
+        case _ => regs
+      }
+      // A shutdown that has run, by the executor or a teardown, is no longer queued.
+      moved.copy(queuedBy = moved.queuedBy.filter { case (p, _) => post.oldPending.getOrElse(p, false) })
+    }
+
+    private def counter(regs: Registrations, providers: Providers, p: String): Int =
+      // The pool is keyed by (name, k); the current registration's k is recovered from it.
+      Iterator.from(0).find(k => providers.registration(p, k) eq regs.current(p)).getOrElse(0)
+  }
+
+  /** The inputs the code sends for a library action, in order, given the model's state before it and the registrations
+    * after it; None for an action that sends none.
+    */
+  def inputsFor(
+    act: Act,
+    pre: ModelState,
+    regs: Registrations,
+    providers: Providers,
+    code: Code
+  ): Option[List[LifecycleInput]] = {
+    def named(p: String) = ProviderName.Named(p)
+    def swap             = pre.swap.getOrElse(sys.error(s"${act.name} with no swap in flight"))
+    def replaced(holder: String, previous: String) =
+      LifecycleInput.Replaced(regs.current(holder), Bound.Managed(providers(previous)))
     def orphanRecorded(prev: String, incoming: String): List[LifecycleInput] =
       if (pre.owns) List(LifecycleInput.OrphanRecorded(providers(prev), incoming)) else Nil
     // The owner's teardown settles every entry (`OrphanedProviders.resolveAll`).
@@ -401,22 +523,13 @@ object LifecycleReplaySpec extends ZIOSpecDefault {
     act.name match {
       case "SwapStart" =>
         val p = act.str("p")
-        Some(
-          List(
-            LifecycleInput.Admit(providers(p), Some(providers(p)), initializing),
-            LifecycleInput.SwapStart(providers(p), named(p))
-          )
-        )
+        Some(List(regs.admit(pre, providers, p), LifecycleInput.SwapStart(providers(p), named(p))))
       case "SwapDone" =>
-        Some(List(LifecycleInput.Status(Signal.SwapSucceeded(settled(act.str("settled"))))))
+        val (p, prev, _, _) = swap
+        Some(List(replaced(p, prev), LifecycleInput.Status(Signal.SwapSucceeded(settled(act.str("settled"))))))
       case "SwapTimeout" =>
         val (p, prev, _, _) = swap
-        Some(
-          List(
-            LifecycleInput.Status(Signal.SwapFailed),
-            LifecycleInput.Replaced(Bound.Managed(providers(p)), Bound.Managed(providers(prev)))
-          ) ++ orphanRecorded(prev, p)
-        )
+        Some(List(LifecycleInput.Status(Signal.SwapFailed), replaced(p, prev)) ++ orphanRecorded(prev, p))
       // The failure branch the code takes is decided by the previous provider's wrapper count (the model's `inits`),
       // and the unbound one by the slot still binding the previous provider; the label must agree with them.
       case "SwapFailNoRollback" =>
@@ -424,10 +537,12 @@ object LifecycleReplaySpec extends ZIOSpecDefault {
         if (pre.inits(prev) == 0) sys.error(s"${act.name} with the previous provider's initialize() returned")
         Some(List(LifecycleInput.Status(Signal.SwapFailed)) ++ orphanRecorded(prev, p))
       case "SwapRollback" =>
-        val (_, prev, _, _) = swap
+        val (failed, prev, _, _) = swap
         if (pre.inits(prev) > 0) sys.error(s"${act.name} with the previous provider still initializing")
         val succeeded =
-          if (act.bool("ok")) List(LifecycleInput.Status(Signal.RollbackSucceeded(settled(act.str("r"))))) else Nil
+          if (act.bool("ok"))
+            List(replaced(prev, failed), LifecycleInput.Status(Signal.RollbackSucceeded(settled(act.str("r")))))
+          else Nil
         Some(
           List(LifecycleInput.Reinstall(providers(prev), named(prev)), LifecycleInput.Status(Signal.SwapFailed)) ++
             succeeded
@@ -461,7 +576,7 @@ object LifecycleReplaySpec extends ZIOSpecDefault {
     }
   }
 
-  /** The named cases a library action is an instance of, for the coverage check. */
+  /** The named cases an action is an instance of, for the coverage check. */
   def casesOf(act: Act, pre: ModelState): List[String] = {
     def swapNew = pre.swap.map(_._1).getOrElse("")
     act.name match {
@@ -482,6 +597,7 @@ object LifecycleReplaySpec extends ZIOSpecDefault {
       case "ShutdownDone" if pre.owns && !pre.shutDown && !pre.closed && pre.orphans.nonEmpty =>
         List("teardown settling orphans")
       case "ScopeClose" if pre.owns && !pre.shutDown && pre.orphans.nonEmpty => List("teardown settling orphans")
+      case "SdkShutDownOld"                                                  => List("queued shutdown run by the SDK")
       case _                                                                 => Nil
     }
   }
@@ -501,10 +617,11 @@ object LifecycleReplaySpec extends ZIOSpecDefault {
     case ProviderStatus.ShuttingDown => "ShuttingDown"
   }
 
-  /** The record's library variables, with `replaced` read as the model reads `prevOf`: only the holders whose
-    * `initialize()` still runs (the model's `inits`) hold anything.
+  /** The record's library variables, with `replaced` read as the model reads `prevOf` and `oldPending`: an entry the
+    * SDK has nothing left to do for (its `initialize()` ended and no shutdown is queued) holds nothing, until the next
+    * `Admit` drops it.
     */
-  def abstraction(state: LifecycleState, inits: Map[String, Long], providers: Providers): Lib =
+  def abstraction(state: LifecycleState, model: ModelState, regs: Registrations, providers: Providers): Lib =
     Lib(
       status = statusName(state.status),
       installed = providers.nameOf(state.installed),
@@ -512,26 +629,24 @@ object LifecycleReplaySpec extends ZIOSpecDefault {
       gate = state.gate,
       swap = state.swap.map(s => (providers.nameOf(s.incoming), providers.nameOf(s.previous), statusName(s.before))),
       held = state.replaced.collect {
-        case (holder, previous) if inits(providers.nameOf(holder)) > 0 =>
-          (providers.nameOf(holder), providers.nameOf(previous))
+        case (holder, previous) if !regs.released(model, providers)(holder, previous) =>
+          (providers.holderOf(holder), providers.nameOf(previous))
       }.toSet,
       orphans = state.orphans.map { case (previous, incoming) => (providers.nameOf(previous), incoming) }.toSet,
       shutDown = state.shutDown,
       closed = state.closed
     )
 
-  private def refusalOf(outcome: LifecycleStep.Outcome): Option[Refusal] =
-    outcome.effects.collectFirst { case LifecycleEffect.Refuse(r) => r }
-
-  /** What the step refuses at a state, against the model's guards the code has: a swap of a provider on a shut-down or
-    * closed instance, of one still initializing, of one a timed-out swap left behind, or of one a registration still
-    * initializing replaced; and a switch of a provider other than the installed one. Returns the mismatches and the
-    * refusals that were expected and given, for the coverage check.
+  /** What the step refuses or asks to wait for at a state, against the model's guards the code has: a swap of a
+    * provider on a shut-down or closed instance, of one still initializing, of one a timed-out swap left behind, or of
+    * one a registration still initializing replaced is refused; a swap of one whose shutdown the SDK has queued waits
+    * for it; and a switch of a provider other than the installed one is refused. Returns the mismatches and the
+    * refusals and waits that were expected and given, for the coverage check.
     */
   def guards(
     state: LifecycleState,
     model: ModelState,
-    timedOut: Set[String],
+    regs: Registrations,
     providers: Providers,
     code: Code
   ): (List[String], List[String]) = {
@@ -539,28 +654,33 @@ object LifecycleReplaySpec extends ZIOSpecDefault {
     val admits =
       if (model.lock != "free") Nil
       else
-        providers.byName.toList.sortBy(_._1).map { case (p, m) =>
+        model.inits.keys.toList.sorted.map { p =>
           val still   = model.inits(p) > 0
           val orphan  = model.orphans.exists(_._1 == p)
-          val held    = model.held(timedOut).exists(_._2 == p)
-          val refusal = refusalOf(
-            code.step(state, LifecycleInput.Admit(m, Some(m), h => model.inits(providers.nameOf(h)) > 0))
-          )
-          val expected = closed || still || orphan || held
-          val seen     = refusal match {
-            case None                               => if (expected) None else Some(Nil)
-            case Some(Refusal.Closed)               => if (closed) Some(List("refused: closed")) else None
-            case Some(Refusal.StillInitializing(_)) => if (still) Some(List("refused: still initializing")) else None
-            case Some(Refusal.PendingOrphan(_, _))  => if (orphan) Some(List("refused: pending orphan")) else None
-            case Some(Refusal.HeldBy(_, _))         => if (held) Some(List("refused: held")) else None
-            case Some(_)                            => None
+          val held    = model.inits.exists { case (q, n) => n > 0 && model.prevOf(q) == p }
+          val queued  = model.oldPending(p)
+          val effects = code.step(state, regs.admit(model, providers, p)).effects
+          val refusal = effects.collectFirst { case LifecycleEffect.Refuse(r) => r }
+          val waits   = effects.collectFirst { case LifecycleEffect.AwaitSdkShutDown(m) => providers.nameOf(m) }
+          val refused = closed || still || orphan || held
+          val seen    = (refusal, waits) match {
+            case (None, None)    => if (refused || queued) None else Some(Nil)
+            case (None, Some(w)) => if (!refused && queued && w == p) Some(List("awaits: queued shutdown")) else None
+            case (Some(Refusal.Closed), None)               => if (closed) Some(List("refused: closed")) else None
+            case (Some(Refusal.StillInitializing(_)), None) =>
+              if (still) Some(List("refused: still initializing")) else None
+            case (Some(Refusal.PendingOrphan(_, _)), None) =>
+              if (orphan) Some(List("refused: pending orphan")) else None
+            case (Some(Refusal.HeldBy(_, _)), None) => if (held) Some(List("refused: held")) else None
+            case _                                  => None
           }
           seen.toRight(
-            s"Admit($p): refused $refusal, model guards closed=$closed still=$still orphan=$orphan held=$held"
+            s"Admit($p): refused $refusal, waits $waits; model guards closed=$closed still=$still orphan=$orphan " +
+              s"held=$held queued=$queued"
           )
         }
-    val switches = providers.byName.toList.sortBy(_._1).map { case (q, m) =>
-      val refusal = refusalOf(code.step(state, LifecycleInput.Switch(m, ProviderName.Named(q))))
+    val switches = model.inits.keys.toList.sorted.map { q =>
+      val refusal = effects(code.step(state, LifecycleInput.Switch(providers(q), ProviderName.Named(q))))
       val fits    = refusal match {
         case None                          => !closed && q == model.installed
         case Some(Refusal.Closed)          => closed
@@ -572,6 +692,9 @@ object LifecycleReplaySpec extends ZIOSpecDefault {
     val all = admits ++ switches
     (all.collect { case Left(what) => what }, all.collect { case Right(seen) => seen }.flatten)
   }
+
+  private def effects(outcome: LifecycleStep.Outcome): Option[Refusal] =
+    outcome.effects.collectFirst { case LifecycleEffect.Refuse(r) => r }
 
   /** Replay one behaviour: the mismatches, the library actions it took in order, and the cases it covered. */
   def replayOne(
@@ -594,17 +717,17 @@ object LifecycleReplaySpec extends ZIOSpecDefault {
       action: String,
       state: LifecycleState,
       model: ModelState,
-      timedOut: Set[String]
+      regs: Registrations
     ): (Chunk[Mismatch], List[String]) = {
-      val actual   = abstraction(state, model.inits, providers)
-      val expected = model.lib(timedOut)
+      val actual   = abstraction(state, model, regs, providers)
+      val expected = model.lib(regs.held(model, providers))
       val fields   = Chunk(
         ("status", actual.status, expected.status),
         ("installed", actual.installed, expected.installed),
         ("lock", actual.lock, expected.lock),
         ("gate", actual.gate, expected.gate),
         ("swap", actual.swap, expected.swap),
-        ("replaced (prevOf with inits)", actual.held, expected.held),
+        ("replaced (prevOf with inits, oldPending)", actual.held, expected.held),
         ("orphans", actual.orphans, expected.orphans),
         ("shutDown", actual.shutDown, expected.shutDown),
         ("closed", actual.closed, expected.closed)
@@ -615,20 +738,12 @@ object LifecycleReplaySpec extends ZIOSpecDefault {
           Chunk(
             mismatch(step, action, s"deferredInitTimeout: code ${state.deferredInitTimeout}, model has no watchdog")
           )
-      val (refused, seen) = guards(state, model, timedOut, providers, code)
+      val (refused, seen) = guards(state, model, regs, providers, code)
       (fields ++ deferred ++ Chunk.fromIterable(refused).map(mismatch(step, action, _)), seen)
     }
 
-    // The providers whose current registration a timed-out swap made: recorded by the code as `replaced` until that
-    // registration's initialize() returns; a new registration (the next swap's bind, a rollback) replaces it.
-    def timedOutAfter(timedOut: Set[String], act: Act, pre: ModelState): Set[String] = act.name match {
-      case "SwapTimeout"  => timedOut ++ pre.swap.map(_._1)
-      case "SdkBind"      => timedOut -- pre.swap.map(_._1)
-      case "SwapRollback" => timedOut -- pre.swap.map(_._2)
-      case _              => timedOut
-    }
-
-    val (initial, initialCases) = check(0, "Init", seeded, first, Set.empty)
+    val initialRegs             = Registrations.initial(providers, p0)
+    val (initial, initialCases) = check(0, "Init", seeded, first, initialRegs)
     val buildCases              =
       List(
         if (first.status == "NotReady") "async build" else "sync build",
@@ -640,21 +755,22 @@ object LifecycleReplaySpec extends ZIOSpecDefault {
         .zip(states.tail)
         .zipWithIndex
         .foldLeft(
-          (seeded, initial, List.empty[String], initialCases ++ buildCases, Set.empty[String])
-        ) { case ((state, found, taken, cases, timedOut), ((pre, model), index)) =>
+          (seeded, initial, List.empty[String], initialCases ++ buildCases, initialRegs)
+        ) { case ((state, found, taken, cases, regs), ((pre, model), index)) =>
           val step  = index + 1
-          val after = timedOutAfter(timedOut, model.act, pre)
-          inputsFor(model.act, pre, providers, code) match {
+          val after = Registrations.after(regs, model.act, pre, model, providers)
+          inputsFor(model.act, pre, after, providers, code) match {
             case None =>
-              // An SDK step: the record does not move, but what the registrations still initializing hold does.
+              // An SDK step: the record does not move, but what the registrations it holds have left to do does.
               val (checked, seen) = check(step, model.act.name, state, model, after)
-              (state, found ++ checked, taken, seen ++ cases, after)
+              (state, found ++ checked, taken, casesOf(model.act, pre) ++ seen ++ cases, after)
             case Some(inputs) =>
               val (next, effects) = inputs.foldLeft((state, Chunk.empty[LifecycleEffect])) { case ((s, fx), input) =>
                 val outcome = code.step(s, input)
                 (outcome.state, fx ++ outcome.effects)
               }
               val refused   = effects.collect { case LifecycleEffect.Refuse(r) => r }
+              val waited    = effects.collect { case LifecycleEffect.AwaitSdkShutDown(m) => providers.nameOf(m) }
               val escalated = effects.collect { case e: LifecycleEffect.EscalateInitTimeout => e }
               val onEffects =
                 (if (refused.isEmpty) Chunk.empty
@@ -662,6 +778,11 @@ object LifecycleReplaySpec extends ZIOSpecDefault {
                    Chunk(
                      mismatch(step, model.act.name, s"refused ${refused.mkString(", ")} on an action the model took")
                    )) ++
+                  (if (waited.isEmpty) Chunk.empty
+                   else
+                     Chunk(
+                       mismatch(step, model.act.name, s"waits for ${waited.mkString(", ")} on an action the model took")
+                     )) ++
                   (if (escalated.isEmpty) Chunk.empty
                    else Chunk(mismatch(step, model.act.name, s"escalated $escalated; the model has no watchdog")))
               val (checked, seen) = check(step, model.act.name, next, model, after)
@@ -677,9 +798,10 @@ object LifecycleReplaySpec extends ZIOSpecDefault {
     (mismatches, taken.reverse, cases)
   }
 
+  /** The stand-ins every replay shares; shut down after the suite. */
+  lazy val providers: Providers = new Providers(Set("p0", "p1", "p2"))
+
   def replay(behaviours: List[Behaviour], code: Code): Replay = {
-    val names                              = behaviours.flatMap(_.states).flatMap(s => s.inits.keys).toSet
-    val providers                          = new Providers(names)
     val runs                               = behaviours.map(b => replayOne(b, providers, code))
     def count[A](as: List[A]): Map[A, Int] = as.groupBy(identity).map { case (a, xs) => a -> xs.size }
     Replay(
@@ -768,7 +890,8 @@ object LifecycleReplaySpec extends ZIOSpecDefault {
     bound: String = "p0",
     sdk: Map[String, String] = Map("p0" -> "READY", "p1" -> "NONE"),
     inits: Map[String, Long] = Map("p0" -> 0L, "p1" -> 0L),
-    prevOf: Map[String, String] = Map("p0" -> "None", "p1" -> "None")
+    prevOf: Map[String, String] = Map("p0" -> "None", "p1" -> "None"),
+    oldPending: Map[String, Boolean] = Map("p0" -> false, "p1" -> false)
   ) {
     def after(act: Act): ModelState = {
       def fun[A](m: Map[String, A])(f: A => Json) = Json.Obj(m.map { case (k, v) => k -> f(v) })
@@ -801,13 +924,14 @@ object LifecycleReplaySpec extends ZIOSpecDefault {
               )
             )
           }),
-          "shutDown" -> Json.Bool(shutDown),
-          "closed"   -> Json.Bool(closed),
-          "owns"     -> Json.Bool(owns),
-          "bound"    -> Json.Str(bound),
-          "sdk"      -> fun(sdk)(Json.Str(_)),
-          "inits"    -> fun(inits)(Json.Num(_)),
-          "prevOf"   -> fun(prevOf)(Json.Str(_))
+          "shutDown"   -> Json.Bool(shutDown),
+          "closed"     -> Json.Bool(closed),
+          "owns"       -> Json.Bool(owns),
+          "bound"      -> Json.Str(bound),
+          "sdk"        -> fun(sdk)(Json.Str(_)),
+          "inits"      -> fun(inits)(Json.Num(_)),
+          "prevOf"     -> fun(prevOf)(Json.Str(_)),
+          "oldPending" -> fun(oldPending)(Json.Bool(_))
         )
       )
     }
@@ -905,14 +1029,14 @@ object LifecycleReplaySpec extends ZIOSpecDefault {
         }
       },
       test("a step that never raises the swap gate fails the replay") {
-        ZIO.serviceWith[List[Behaviour]](behaviours =>
+        ZIO.serviceWith[List[Behaviour]] { behaviours =>
           assertTrue(mismatchOn(replay(behaviours, noGate), "SwapStart", "gate"))
-        )
+        }
       },
       test("a bridge that follows the event's type instead of the SDK's state fails the replay") {
-        ZIO.serviceWith[List[Behaviour]](behaviours =>
+        ZIO.serviceWith[List[Behaviour]] { behaviours =>
           assertTrue(mismatchOn(replay(behaviours, byEvent), "Deliver", "status"))
-        )
+        }
       }
     ).provideShared(ZLayer.fromZIO(loaded)) @@ (
       if (location.isEmpty && !sys.env.contains("ZOF_LIFECYCLE_BEHAVIOURS_REQUIRED")) TestAspect.ignore
@@ -953,8 +1077,8 @@ object LifecycleReplaySpec extends ZIOSpecDefault {
         )
       },
       test("an action the map does not know fails the replay rather than being skipped") {
-        val providers = new Providers(Set("p0", "p1"))
-        assertTrue(Try(inputsFor(Act("SdkShutDownOld"), handWritten.states.head, providers, real)).isFailure)
+        val regs = Registrations.initial(providers, "p0")
+        assertTrue(Try(inputsFor(Act("SdkRebind"), handWritten.states.head, regs, providers, real)).isFailure)
       },
       test("the hand-written behaviour replays with no mismatch and covers its cases") {
         val result = replay(List(handWritten), real)
@@ -976,12 +1100,10 @@ object LifecycleReplaySpec extends ZIOSpecDefault {
         ) ?? result.mismatches.mkString("\n")
       },
       test("each comparison can fail: six planted bugs each fail the hand-written behaviour") {
-        val admitsEverything = planted { case (state, _: LifecycleInput.Admit, _) => unchanged(state) }
-        val keepsOrphans     = planted { case (state, _: LifecycleInput.OrphanSettled, _) => unchanged(state) }
-        val wrongReplacement = planted { case (state, LifecycleInput.Replaced(_, previous), outcome) =>
-          outcome.copy(state = state.copy(replaced = previous.managed.map(p => (p, p)).toList ++ state.replaced))
-        }
-        val defersWatchdog = planted { case (_, LifecycleInput.ReplayDeferred, outcome) =>
+        val admitsEverything   = planted { case (state, _: LifecycleInput.Admit, _) => unchanged(state) }
+        val keepsOrphans       = planted { case (state, _: LifecycleInput.OrphanSettled, _) => unchanged(state) }
+        val forgetsReplacement = planted { case (state, _: LifecycleInput.Replaced, _) => unchanged(state) }
+        val defersWatchdog     = planted { case (_, LifecycleInput.ReplayDeferred, outcome) =>
           outcome.copy(state = outcome.state.copy(deferredInitTimeout = Some((outcome.state.installed, 1.second))))
         }
         val neverCloses     = planted { case (state, LifecycleInput.ScopeClose, _) => unchanged(state) }
@@ -992,12 +1114,12 @@ object LifecycleReplaySpec extends ZIOSpecDefault {
         assertTrue(
           mismatchOn(on(admitsEverything), "SwapReconcile", "Admit(p0)"),
           mismatchOn(on(keepsOrphans), "OrphanResolved", "orphans"),
-          mismatchOn(on(wrongReplacement), "SwapTimeout", "replaced"),
+          mismatchOn(on(forgetsReplacement), "SwapTimeout", "replaced"),
           mismatchOn(on(defersWatchdog), "SwapReconcile", "deferredInitTimeout"),
           mismatchOn(on(neverCloses), "ScopeClose", "closed"),
           mismatchOn(on(forgetsShutdown), "ShutdownDone", "shutDown")
         )
       }
     )
-  )
+  ) @@ TestAspect.afterAll(ZIO.attemptBlocking(providers.api.shutdown()).ignore)
 }

@@ -300,6 +300,9 @@ lazy val core = (project in file("core"))
       "dev.zio"        %% "zio-streams" % zioVersion,
       "dev.openfeature" % "sdk"         % openFeatureSdkVersion
     ),
+    // The lifecycle replay (LifecycleReplaySpec) reads the model's behaviours from this property; the forked test JVM
+    // does not inherit the build JVM's properties, so it is passed on.
+    Test / javaOptions ++= sys.props.get("zof.lifecycle.behaviours").map("-Dzof.lifecycle.behaviours=" + _).toList,
     // `private[openfeature]` internals compile to public bytecode on 2.13, so MiMa sees them. The swap's outcome signals
     // carry how the new provider settled; nothing outside the library can name them.
     mimaBinaryIssueFilters ++= Seq(

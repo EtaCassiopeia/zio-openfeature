@@ -368,7 +368,8 @@ SwapFailNoRollback ==
 \* SwapRollback: otherwise the previous provider is registered again, which initializes it again.  The rollback's own
 \* wait is folded into this step: `ok` when that initialize() returns, and the provider then settles in `r`, which may
 \* be an ERROR or FATAL it reports before the wait reads it; else initialize() throws, `r` ERROR or FATAL.  On success
-\* the SDK queues the failed provider's shutdown; on failure the library does it.  The SDK's events for that initialization may
+\* the SDK queues the failed provider's shutdown and the status is that of `r`; on failure the library does it, and
+\* the status stays the failed swap's Error until SwapReconcile reads `r`.  The SDK's events for that initialization may
 \* reach the bridge while the gate is still up (`early`), which drops them; so SwapReconcile reads the SDK's state for
 \* the previous provider once the outcome is applied.
 SwapRollback(ok, r, early) ==
@@ -387,7 +388,7 @@ SwapRollback(ok, r, early) ==
        /\ ran' = [ran EXCEPT ![prev] = ok]
        /\ dead' = [dead EXCEPT ![prev] = FALSE]
        /\ sdk' = [sdk EXCEPT ![prev] = r]
-       /\ status' = StatusOf(r)
+       /\ status' = IF ok THEN StatusOf(r) ELSE "Error"
        /\ events' = IF early THEN events ELSE events \cup sent
        \* The previous provider's own count needs no reset: a failed swap never shut it down.
        /\ oldPending' = IF ok THEN [oldPending EXCEPT ![failed] = TRUE] ELSE oldPending

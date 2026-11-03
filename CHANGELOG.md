@@ -510,6 +510,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **A timed call interrupted by its caller no longer leaves a sleeping timer behind** (#708). The timers of the
   evaluation timeout, `fromAcquireAsync`'s construction and initialization timeouts, the registry's re-initialization
   and `awaitReady` kept sleeping until the timeout passed when the caller was interrupted; they now end with it.
+- **A `FATAL` the new provider reports during a timed-out swap is applied when the swap's gate drops** (#726). The
+  re-read of the slot after a timeout picked up only a late `READY` or `STALE`, so a provider that reported `FATAL`
+  while the gate suppressed its events stayed `Error` until its next event; the re-read now applies the slot's state as
+  it does after every other outcome, and replays a deferred init watchdog deadline the same way. Found by the
+  model-based replay under Tests.
 
 ### Tests
 
@@ -557,6 +562,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   named rows check that the caller ends interrupted, `finallyAfter` runs once if the hook stage was entered, the
   provider is entered once if the call started, no abandoned call stays counted, the transaction gains the evaluation
   only if it completed, and nothing leaks.
+- **Behaviours of the lifecycle model are replayed against the code** (#726). `generate.py` has TLC write random
+  behaviours of `Lifecycle.tla`, labelled with the action that produced each state, and `LifecycleReplaySpec` folds
+  each one through `LifecycleStep.step`, comparing the record's library variables with the model's after every library
+  action and checking that the step refuses a swap, or waits for a queued shutdown, exactly where the model's guards
+  say so. CI replays 2000 behaviours on
+  every run and 20000 nightly, fails if any library action or named case is never generated, and checks that planted
+  bugs fail the replay. Writing it found one fold in the model, now fixed (after a failed rollback the status stays
+  `Error` until the reconcile, as in the code), and the timed-out swap's reconcile gap under Fixed.
 
 ## [1.2.1] — 2026-10-28
 

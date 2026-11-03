@@ -5,13 +5,15 @@ import java.util.concurrent.atomic.{AtomicBoolean, AtomicReference}
 import dev.openfeature.sdk.{EventProviderAccess, OpenFeatureAPI}
 import zio._
 
-/** Providers that a timed-out swap left registered nowhere, until the swap's new provider settles.
+/** Providers that a timed-out swap or rollback left registered nowhere, until the registration that replaced them
+  * settles.
   *
-  * The SDK binds the new provider to the slot before its `initialize()` runs, and shuts the provider it replaced down
+  * The SDK binds a new provider to the slot before its `initialize()` runs, and shuts the provider it replaced down
   * only once that `initialize()` returns normally. A swap that times out leaves the previous provider held by nothing
-  * but that pending call: if it later fails, or never finishes, nothing shuts the previous provider down, and the API's
-  * own shutdown cannot reach it. Each entry awaits the new registration's `initialize()` outcome, which the registered
-  * [[ManagedProvider]] reports directly, and settles once:
+  * but that pending call, and a rollback that times out leaves the failed provider the same way: if the call later
+  * fails, or never finishes, nothing shuts the replaced provider down, and the API's own shutdown cannot reach it. Each
+  * entry awaits the new registration's `initialize()` outcome, which the registered [[ManagedProvider]] reports
+  * directly, and settles once:
   *   - it returned: the SDK then shuts the previous provider down (`shutDownOld`, on its own executor), which the
   *     wrapper signals ([[ManagedProvider.shutDownSignal]]); one the SDK has not shut down within its own executor
   *     bound, because the slot was rebound meanwhile, is shut down here. A foreign previous provider is left to the
@@ -32,8 +34,8 @@ final private[openfeature] class OrphanedProviders(api: OpenFeatureAPI, probe: L
   // Completed by `resolveAll`: cuts short a settle's wait for the SDK's own shutdown, which runs uninterruptibly.
   private val closing = new java.util.concurrent.CompletableFuture[AnyRef]()
 
-  /** Watch `incoming`, the registration of the provider that replaced `previous` in a swap that timed out. `settled`
-    * runs once the entry has settled, before a wait for it ends.
+  /** Watch `incoming`, the registration of the provider that replaced `previous` in a swap or rollback that timed out.
+    * `settled` runs once the entry has settled, before a wait for it ends.
     */
   def record(
     previous: Bound,
@@ -47,8 +49,10 @@ final private[openfeature] class OrphanedProviders(api: OpenFeatureAPI, probe: L
       entry = new Entry(previous, previousName, incomingName, done, settled)
       _ <- ZIO.succeed(entries.updateAndGet(entry :: _))
       // A watcher that starts after a resolve has claimed the entry settles nothing.
-      // Settling is uninterruptible, so a resolve that interrupts the watcher waits for a settle already under way.
-      fiber <- incoming.initOutcome.exit
+      // Settling is uninterruptible, so a resolve that interrupts the watcher waits for a settle already under way. The
+      // wait itself must stay interruptible whatever region the caller is in, since a fork inherits it: a rollback records
+      // from inside the swap's uninterruptible region, and the call may never run, so only a resolve can end this wait.
+      fiber <- incoming.initOutcome.interruptible.exit
         .flatMap(outcome => settle(entry, Some(outcome.isSuccess)).uninterruptible)
         .forkDaemon
       _ <- ZIO.succeed(entry.watcher.set(Some(fiber)))
@@ -82,19 +86,7 @@ final private[openfeature] class OrphanedProviders(api: OpenFeatureAPI, probe: L
                 case None    => ZIO.unit
                 case Some(m) =>
                   // The SDK shuts it down right after the incoming `initialize()` returns, on its executor.
-                  ZIO
-                    .unless(m.shutDownInCycle)(
-                      ZIO.fromCompletableFuture(
-                        java.util.concurrent.CompletableFuture
-                          .anyOf(m.shutDownStage, closing)
-                          .completeOnTimeout(
-                            null,
-                            OrphanedProviders.SdkShutDownWait.toMillis,
-                            java.util.concurrent.TimeUnit.MILLISECONDS
-                          )
-                      )
-                    )
-                    .ignore *>
+                  m.awaitShutDown(OrphanedProviders.SdkShutDownWait, closing) *>
                     ZIO.unless(m.shutDownInCycle)(
                       ZIO.logWarning(
                         s"shutting down the previous provider '${entry.previousName}': '${entry.incomingName}' " +
@@ -104,14 +96,14 @@ final private[openfeature] class OrphanedProviders(api: OpenFeatureAPI, probe: L
               }
             case Some(false) =>
               ZIO.logWarning(
-                s"setProvider: '${entry.incomingName}' failed to initialize before it ever served; shutting down the " +
-                  s"previous provider '${entry.previousName}', which the OpenFeature SDK no longer holds. The status " +
-                  "stays Error until a later setProvider succeeds"
+                s"setProvider: '${entry.incomingName}' failed to initialize; shutting down '${entry.previousName}', " +
+                  "the provider it replaced, which the OpenFeature SDK no longer holds. The status stays Error until " +
+                  "a later setProvider succeeds"
               ) *> shutDown(entry)
             case None =>
               ZIO.logWarning(
                 s"shutting down the previous provider '${entry.previousName}': '${entry.incomingName}' replaced it " +
-                  "in a swap that timed out and has not finished initializing"
+                  "in a swap or rollback that timed out and has not finished initializing"
               ) *> shutDown(entry)
           }).ensuring(
             ZIO.succeed(entries.updateAndGet(_.filterNot(_ eq entry))) *> entry.settled *> entry.done.succeed(())
@@ -125,7 +117,7 @@ final private[openfeature] class OrphanedProviders(api: OpenFeatureAPI, probe: L
   private def shutDown(entry: Entry): UIO[Unit] =
     ProviderRegistration.boundedProviderShutdown(
       entry.previous.sdk,
-      "setProvider (previous provider of a timed-out swap)"
+      "setProvider (provider a timed-out swap or rollback left behind)"
     ) *>
       ZIO
         .attemptBlocking {
@@ -144,7 +136,7 @@ final private[openfeature] class OrphanedProviders(api: OpenFeatureAPI, probe: L
 private[openfeature] object OrphanedProviders {
 
   // How long the SDK's own shutdown of a replaced provider is waited for: its executor's bound.
-  private val SdkShutDownWait = 3.seconds
+  private[openfeature] val SdkShutDownWait = 3.seconds
 
   def apply(api: OpenFeatureAPI, probe: LifecycleProbe = LifecycleProbe.none): OrphanedProviders =
     new OrphanedProviders(api, probe)

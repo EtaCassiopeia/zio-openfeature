@@ -3,7 +3,7 @@ package zio.openfeature
 import zio._
 import zio.test._
 
-import dev.openfeature.sdk.{FeatureProvider => OFFeatureProvider, NoOpProvider}
+import dev.openfeature.sdk.{FeatureProvider => OFFeatureProvider, NoOpProvider, OpenFeatureAPI}
 import zio.openfeature.internal.{
   Bound,
   LifecycleEffect,
@@ -13,6 +13,7 @@ import zio.openfeature.internal.{
   Lock,
   ManagedProvider,
   ProviderName,
+  ProviderRegistration,
   Refusal,
   SwapInFlight
 }
@@ -38,6 +39,22 @@ object LifecycleStepSpec extends ZIOSpecDefault {
   private val p0: OFFeatureProvider = new NoOpProvider()
   private val m1: ManagedProvider   = ManagedProvider(new NoOpProvider())
   private val m2: ManagedProvider   = ManagedProvider(new NoOpProvider())
+  private val m3: ManagedProvider   = ManagedProvider(new NoOpProvider())
+
+  // The record holds a holder's registration as the SDK bound it; the step only compares it.
+  private val api = OpenFeatureAPI.createIsolated()
+
+  private val registrations: Map[ManagedProvider, ProviderRegistration.Registration] =
+    List(m1, m2, m3).map { m =>
+      m -> Unsafe.unsafe { implicit u =>
+        Runtime.default.unsafe
+          .run(ProviderRegistration.register(api, Some(java.util.UUID.randomUUID().toString), Bound.Managed(m)))
+          .getOrThrowFiberFailure()
+      }
+    }.toMap
+
+  private def replaced(holder: ManagedProvider, previous: ManagedProvider): LifecycleInput =
+    LifecycleInput.Replaced(registrations(holder), Bound.Managed(previous))
 
   private val p0Name: ProviderName   = ProviderName.Named("p0")
   private val incoming: ProviderName = ProviderName.Named("incoming")
@@ -56,8 +73,14 @@ object LifecycleStepSpec extends ZIOSpecDefault {
   private def refusal(state: LifecycleState, input: LifecycleInput): Option[Refusal] =
     LifecycleStep.step(state, input).effects.collectFirst { case LifecycleEffect.Refuse(r) => r }
 
-  private def admit(m: ManagedProvider, initializing: ManagedProvider => Boolean = _ => false) =
-    LifecycleInput.Admit(m, Some(m), initializing)
+  private def admit(
+    m: ManagedProvider,
+    initializing: ManagedProvider => Boolean = _ => false,
+    released: Boolean = true
+  ) =
+    LifecycleInput.Admit(m, Some(m), initializing, _.bound.managed.exists(initializing), (_, _) => released)
+
+  private val admitUnwrapped = LifecycleInput.Admit(p0, None, _ => false, _ => false, (_, _) => true)
 
   private def swapStart(p: OFFeatureProvider) = LifecycleInput.SwapStart(p, incoming)
 
@@ -145,14 +168,14 @@ object LifecycleStepSpec extends ZIOSpecDefault {
           ready.copy(installed = m2),
           swapStart(m1),
           event(Signal.SwapFailed),
-          LifecycleInput.Replaced(Bound.Managed(m1), Bound.Managed(m2)),
+          replaced(m1, m2),
           LifecycleInput.OrphanRecorded(m2, "m1"),
           LifecycleInput.GateDown
         )
         assertTrue(
           s.status == ProviderStatus.Error,
           s.installed eq m1,
-          s.replaced == List(m1 -> m2),
+          s.replaced == List(registrations(m1) -> m2),
           s.orphans == List((m2: OFFeatureProvider) -> "m1"),
           !s.gate
         )
@@ -266,11 +289,11 @@ object LifecycleStepSpec extends ZIOSpecDefault {
     suite("the model's mutants, as steps")(
       test("a swap after shutdown is refused") {
         val (s, _) = run(ready, event(Signal.ShutdownStarted), event(Signal.ShutdownCompleted))
-        assertTrue(refusal(s, LifecycleInput.Admit(p0, None, _ => false)) == Some(Refusal.Closed))
+        assertTrue(refusal(s, admitUnwrapped) == Some(Refusal.Closed))
       },
       test("a swap after the scope close is refused") {
         val (s, _) = run(ready, LifecycleInput.ScopeClose)
-        assertTrue(refusal(s, LifecycleInput.Admit(p0, None, _ => false)) == Some(Refusal.Closed))
+        assertTrue(refusal(s, admitUnwrapped) == Some(Refusal.Closed))
       },
       test("a provider still initializing is not installed again") {
         assertTrue(refusal(ready, admit(m1, _ eq m1)) == Some(Refusal.StillInitializing(m1)))
@@ -284,12 +307,42 @@ object LifecycleStepSpec extends ZIOSpecDefault {
         assertTrue(s.orphans.map(_._1) == List(m2))
       },
       test("a provider a registration still initializing replaced is not installed again, until that call returns") {
-        val (s, _)   = run(ready, LifecycleInput.Replaced(Bound.Managed(m1), Bound.Managed(m2)))
+        val (s, _)   = run(ready, replaced(m1, m2))
         val held     = refusal(s, admit(m2, _ eq m1))
         val returned = LifecycleStep.step(s, admit(m2, _ => false))
         val pruned   = returned.state.replaced
         val admitted = returned.effects.isEmpty
         assertTrue(held == Some(Refusal.HeldBy(m2, m1)), admitted, pruned.isEmpty)
+      },
+      test("a replacement whose shutdown the SDK has yet to run outlives admitting another provider") {
+        val (s, _) = run(ready, replaced(m1, m2))
+        val other  = LifecycleStep.step(s, admit(m3, released = false))
+        val done   = LifecycleStep.step(s, admit(m3, released = true))
+        assertTrue(other.effects.isEmpty, other.state.replaced.size == 1, done.state.replaced.isEmpty)
+      },
+      test(
+        "admitting a provider whose shutdown the SDK has yet to run asks for the wait and keeps the entry until it ends"
+      ) {
+        val (s, _)  = run(ready, replaced(m1, m2))
+        val asked   = LifecycleStep.step(s, admit(m2, released = false))
+        val ended   = LifecycleStep.step(asked.state, LifecycleInput.SdkShutDownAwaited(m2))
+        val retried = LifecycleStep.step(asked.state, admit(m2, released = false))
+        assertTrue(
+          asked.effects == Chunk(LifecycleEffect.AwaitSdkShutDown(m2)),
+          asked.state.replaced.size == 1,
+          ended.state.replaced.isEmpty,
+          retried.effects == Chunk(LifecycleEffect.AwaitSdkShutDown(m2))
+        )
+      },
+      test("admitting a provider its replacement has released asks for no wait") {
+        val (s, _) = run(ready, replaced(m1, m2))
+        val done   = LifecycleStep.step(s, admit(m2, released = true))
+        assertTrue(done.effects.isEmpty, done.state.replaced.isEmpty)
+      },
+      test("a refusal asks for no wait, whatever the SDK has yet to do") {
+        val (s, _) = run(ready, replaced(m1, m2), LifecycleInput.ScopeClose)
+        val closed = LifecycleStep.step(s, admit(m2, released = false))
+        assertTrue(closed.effects == Chunk(LifecycleEffect.Refuse(Refusal.Closed)), closed.state.replaced.size == 1)
       },
       test("STALE moves the status from NotReady, Ready and Error") {
         val from = List(ProviderStatus.NotReady, ProviderStatus.Ready, ProviderStatus.Error)
@@ -414,7 +467,7 @@ object LifecycleStepSpec extends ZIOSpecDefault {
         }
       }
     )
-  )
+  ) @@ TestAspect.afterAll(ZIO.attemptBlocking(api.shutdown()).ignore)
 
   // Generators: providers from a small pool, so identities repeat.
 
@@ -443,7 +496,7 @@ object LifecycleStepSpec extends ZIOSpecDefault {
     for {
       m    <- Gen.elements(managed: _*)
       busy <- Gen.listOf(Gen.elements(managed: _*))
-    } yield LifecycleInput.Admit(m, Some(m), (x: ManagedProvider) => busy.exists(_ eq x))
+    } yield admit(m, (x: ManagedProvider) => busy.exists(_ eq x))
 
   private val genInput: Gen[Any, LifecycleInput] = Gen.oneOf(
     genEventOrWatchdog,
@@ -467,9 +520,7 @@ object LifecycleStepSpec extends ZIOSpecDefault {
     Gen.elements(providers: _*).map(p => LifecycleInput.NameRead(p, stack)),
     Gen.elements(providers: _*).map(p => LifecycleInput.OrphanRecorded(p, "holder")),
     Gen.elements(providers: _*).map(p => LifecycleInput.OrphanSettled(p)),
-    Gen.elements(managed: _*).zip(Gen.elements(managed: _*)).map { case (h, r) =>
-      LifecycleInput.Replaced(Bound.Managed(h), Bound.Managed(r))
-    }
+    Gen.elements(managed: _*).zip(Gen.elements(managed: _*)).map { case (h, r) => replaced(h, r) }
   )
 
   private val genState: Gen[Any, LifecycleState] =

@@ -178,6 +178,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **An object flag answered with no value, or a value that is not an object, is a `TypeMismatch`** (#730). It used to
   resolve to an empty map. The total tier now serves the default with `TYPE_MISMATCH`. This changes `obj` against
   `EnvVarProvider`, and against a scalar or list key in `HoconProvider`.
+- **A provider replaced by a swap or rollback is no longer shut down while serving again** (#728). The library waited
+  at most for the holder's `initialize()` to return; the SDK shuts the replaced provider down just after, on its own
+  executor, and a re-install in that gap received the shutdown. The re-install now waits for that shutdown, for up to
+  three seconds, whether the swap or rollback timed out or not. A failed provider a timed-out rollback left behind is
+  no longer shut down at once, so the SDK's shutdown of it is the only one. An instance that owns its API hands it to
+  the orphan watcher, which also shuts it down if the restored provider then fails to initialize. An instance that
+  shares its API leaves it to the SDK, as it leaves a timed-out swap's previous provider, so in that case nothing shuts
+  it down, it stays with the API's owner, and `setProvider` of it fails: install a new instance.
 - **A failed swap's cleanup leaves a provider the shared API registered outside the instance to the SDK** (#728). It
   shuts down only a provider the instance wrapped; no current path reaches it with another.
 - **A provider with no name is called `unknown` everywhere** (#732). Every read of a provider's name now goes through
@@ -505,6 +513,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Tests
 
+- **The lifecycle model's pull request check uses smaller bounds** (#728). Modelling the SDK's late shutdown as its own step
+  tripled the state space, past the job's time limit, so pull requests check `LifecyclePR.cfg` (one provider event) and
+  main and manual runs keep the full `Lifecycle.cfg`.
 - **The lifecycle model's structural invariants are proved for all sizes** (#727). `LifecycleProofs.tla` proves with TLAPS
   that every variable keeps its type, that a swap and a shutdown never hold the lock together, and that the gate is
   down whenever no swap holds the lock, for any number of providers, swaps, events and evaluations. CI runs the prover

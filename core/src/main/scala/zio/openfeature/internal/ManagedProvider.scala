@@ -68,6 +68,8 @@ final private[openfeature] class ManagedProvider private (
   private var shutDown   = false
   private var generation = 0L
   private var shutDowns  = new CompletableFuture[Unit]()
+  // Guarded by cycleLock. The signal of the cycle the last shutdown ended, which completes once that shutdown has run.
+  private var lastEnded: CompletableFuture[Unit] = shutDowns
 
   // The cache entry's key: held here so the entry lives exactly as long as this wrapper. None for a switchable wrapper,
   // which is never cached, so it does not keep the provider it switched away from reachable.
@@ -126,13 +128,31 @@ final private[openfeature] class ManagedProvider private (
   /** Completes when the provider is shut down in the current cycle, or in the next one once a shutdown has ended the
     * last: what the SDK does to a registration a later one replaced, once that one has initialized.
     */
-  def shutDownSignal: Task[Unit] = awaitStage(shutDownStage)
-
-  /** The stage behind [[shutDownSignal]], for a wait that composes it without ZIO interruption. */
-  private[internal] def shutDownStage: CompletableFuture[Unit] = cycleLock.synchronized(shutDowns)
+  def shutDownSignal: Task[Unit] = awaitStage(cycleLock.synchronized(shutDowns))
 
   /** Whether the provider's `shutdown()` has run since the last `initialize()`. */
   def shutDownInCycle: Boolean = cycleLock.synchronized(shutDown)
+
+  // Completes when this cycle's shutdown has finished, whether it has yet to start, is running or is done.
+  private def cycleShutDown: CompletableFuture[Unit] = cycleLock.synchronized(if (shutDown) lastEnded else shutDowns)
+
+  /** Whether this cycle's shutdown has finished: a provider `shutdown()` still running does not count. */
+  private[internal] def shutDownFinished: Boolean = cycleShutDown.isDone
+
+  /** Waits for this cycle's shutdown to finish, at most `within` and no longer than `cutShort` stays incomplete. On a
+    * wall clock, like every wait on the SDK. Interrupting it cancels nothing shared.
+    */
+  private[openfeature] def awaitShutDown(
+    within: Duration,
+    cutShort: CompletableFuture[AnyRef] = new CompletableFuture[AnyRef]()
+  ): UIO[Unit] =
+    ZIO
+      .fromCompletableFuture(
+        CompletableFuture
+          .anyOf(cycleShutDown, cutShort)
+          .completeOnTimeout(null, within.toMillis, java.util.concurrent.TimeUnit.MILLISECONDS)
+      )
+      .ignore
 
   override def initialize(context: OFEvaluationContext): Unit =
     observeInit(None)(current.get().initialize(context))
@@ -150,6 +170,7 @@ final private[openfeature] class ManagedProvider private (
         shutDown = true
         // The delegate too: switchTo refuses from here until the next cycle, so it is the one this shutdown reaches.
         val cycle = (current.get(), lane.get(), shutDowns, generation)
+        lastEnded = shutDowns
         shutDowns = new CompletableFuture[Unit]()
         Some(cycle)
       }

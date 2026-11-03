@@ -171,7 +171,7 @@ there is one.
 | `SwapFailNoRollback` | `setProvider`, failure branch when the previous provider's `initialize()` still runs: `SwapFailed`, `OrphanRecorded` |
 | `SwapRollback` | `setProvider`, failure branch: `restoreSdkRegistration` (probe point `RollbackBind`), `RollbackSucceeded(settled)` or `cleanupUnboundFailedProvider` |
 | `SwapRollbackUnbound` | `setProvider`, failure branch: `failedBeforeBinding`, `RollbackUnbound(before)` |
-| `SwapReconcile` | `setProvider`, after every outcome: `GateDown`, probe point `SwapReconcile`, then `reconcileLateReady` after a timeout or `reconcileRegistration` otherwise; inside the swap's uninterruptible region, with the lock held |
+| `SwapReconcile` | `setProvider`, after every outcome: `GateDown`, probe point `SwapReconcile` (and `LateReady` after a timeout), then `reconcileRegistration` and the replay of a deferred watchdog deadline; inside the swap's uninterruptible region, with the lock held |
 | `CallerInterrupt` | an interrupt of `setProvider`'s caller, which takes effect only in the phases in `Interruptible`: none, since the swap body and the re-read run uninterruptibly (`runSwap`'s `.uninterruptible`) |
 | `Die` | none: a provider that stops working without reporting it. Only with `AllowDeath` (`Witness.cfg`) |
 | `EvalRead`, `EvalCheck`, `EvalCall`, `EvalReturn` | `Evaluator.gated`: the `swapGeneration` read, `checkProviderStatus`, the provider call through the SDK client, and the re-check (probe point `GateRechecked`) |
@@ -276,6 +276,44 @@ run.
 
 The other points belong to one of those steps, except `SwapSkipped`, a `setProvider` of the bound provider, which is no
 action. A run that reaches `Watchdog`, which the model leaves out, is skipped.
+
+### Model-based replay
+
+Trace validation checks the order of a run's library steps; it does not compare states, and it checks only the runs
+the suites produce. The replay checks the other direction, with states. `Generate.tla` is `Lifecycle` with every
+disjunct of `LifecycleNext` labelled by a ghost variable `act` (the action and its parameters), and `generate.py` runs
+TLC in generation mode on it (`-generate`, TLC 1.8): random behaviours of 20 states, written as one ndjson file each,
+with every variable of the model after every step. Shutdown and the scope close are held back to the last levels
+unless nothing else is enabled, so the sample is not spent in the shut-down state; that only removes choices, so every
+behaviour is a behaviour of `Lifecycle`. `generate.py` fails if an action of `LifecycleNext` has no label.
+
+`LifecycleReplaySpec` (core's tests) folds each behaviour through `LifecycleStep.step`, with no fibers, SDK or timing.
+Each library action becomes the inputs the code sends for it, by [replay-map.md](replay-map.md); the SDK's actions
+send no input and only change the SDK variables the next input reads. After every step the record's library
+variables (`status`, `installed`, `lock`, `gate`, `swap`, `replaced` as `prevOf` with `inits`, `orphans`, `shutDown`,
+`closed`) must equal the model's, a library action's inputs must produce no `Refuse` and no `EscalateInitTimeout`, and
+at every state the step must refuse a swap or a switch exactly where the model's guards the code has are false. Not
+compared: `bridgeOn` and `owns` (not fields of the record), `pending` (no field; the action label carries the branch),
+and the SDK's variables. The spec also fails if any library action, or any of the cases it counts (a shared API, a
+failed rollback, a second shutdown, a provider installed again, each refusal, and so on; the list is in
+`replay-map.md`), never occurs in the set. It checks its own teeth: a step whose `SwapStart` leaves the gate down and
+a bridge that follows the event's type instead of the SDK's state must each fail the replay, and a second suite that
+needs no generated behaviours replays one hand-written behaviour under six planted bugs, each of which must fail it.
+
+```sh
+python3 generate.py tla2tools-1.8.0.jar CommunityModules-deps.jar /tmp/behaviours --num 2000 --depth 20 --seed 7
+cd ../.. && sbt "-Dzof.lifecycle.behaviours=/tmp/behaviours" "core/testOnly zio.openfeature.LifecycleReplaySpec"
+```
+
+`zof.lifecycle.behaviours` (a system property, or the `ZOF_LIFECYCLE_BEHAVIOURS` environment variable) takes files or
+directories, comma-separated; without it the suite is ignored. The `traces` job runs both on every pull request and
+push, 2000 behaviours from a fixed seed, and nightly 20000 from the run's id as the seed; a behaviour the nightly run
+fails on is checked in under `mbt-regressions/`, which every run replays too. Writing the replay found one fold in the
+model and one gap in the code: after a rollback whose registration failed, the model set the status to the state the
+provider settled in while the code leaves the failed swap's `Error` until the reconcile reads it (the model now does
+the same); and after a timed-out swap the code's reconcile picked up only a late `READY` or `STALE`, not a `FATAL` the
+provider reported under the gate, which `StatusFollowsSdk` requires (the code now reads the slot as after every other
+outcome).
 
 ## What is outside the model
 

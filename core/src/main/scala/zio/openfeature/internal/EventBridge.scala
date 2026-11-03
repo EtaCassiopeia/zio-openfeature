@@ -80,7 +80,7 @@ final private[openfeature] class EventBridge(
         val (signal, unreadable) =
           if (own == Signal.EventError(true)) (Some(own), None)
           else
-            try (signalForSlot(client.getProviderState), None)
+            try (EventBridge.signalForSlot(client.getProviderState), None)
             catch { case scala.util.control.NonFatal(e) => (Some(own), Some(e)) }
         // No signal for the slot: a step that changes nothing.
         (signal.fold[LifecycleInput](LifecycleInput.Idle)(LifecycleInput.Status(_)), (signal, unreadable))
@@ -93,14 +93,6 @@ final private[openfeature] class EventBridge(
           )
           .as((signal, transitioned))
       }
-
-  private def signalForSlot(slot: JavaProviderState): Option[Signal] = slot match {
-    case JavaProviderState.READY => Some(Signal.EventReady)
-    case JavaProviderState.STALE => Some(Signal.EventStale)
-    case JavaProviderState.ERROR => Some(Signal.EventError(false))
-    case JavaProviderState.FATAL => Some(Signal.EventError(true))
-    case _                       => None
-  }
 
   // The SDK stamps every dispatched event with the emitting provider's metadata name — or NULL when the provider has
   // no metadata/name (verified sdk-1.21.0, OpenFeatureAPI.runHandlersForProvider). An event that does not match the
@@ -462,4 +454,18 @@ final private[openfeature] class EventBridge(
     }
 
   private def providerStatus: UIO[ProviderStatus] = state.statusRef.get
+}
+
+private[openfeature] object EventBridge {
+
+  /** The status signal the SDK's state for the slot implies; none while it is `NOT_READY` or unknown. Also the
+    * lifecycle replay's bridge, so the replay checks the mapping as written.
+    */
+  def signalForSlot(slot: JavaProviderState): Option[Signal] = slot match {
+    case JavaProviderState.READY => Some(Signal.EventReady)
+    case JavaProviderState.STALE => Some(Signal.EventStale)
+    case JavaProviderState.ERROR => Some(Signal.EventError(false))
+    case JavaProviderState.FATAL => Some(Signal.EventError(true))
+    case _                       => None
+  }
 }

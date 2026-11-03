@@ -9,7 +9,9 @@ name: Formal model
 # TLAPS proves the lifecycle model's structural invariants for all sizes (LifecycleProofs.tla).
 # The event lane model (formal/lane) checks OrderedEmitter against the SDK's API lock, with its witnesses and mutants.
 # Trace validation checks that runs of the library are behaviours of the model: on pull requests the checker's own
-# fixtures, on main, nightly and on demand also the runs the lifecycle test suites record.
+# fixtures, on main, nightly and on demand also the runs the lifecycle test suites record. The replay checks the other
+# direction: behaviours generated from the model are replayed against the lifecycle's pure step (formal/lifecycle/
+# replay-map.md), 2000 from a fixed seed on every run and 20000 from a rotating seed nightly.
 on:
   pull_request:
     types: [opened, synchronize, reopened, edited]
@@ -27,6 +29,8 @@ on:
       - 'core/src/main/scala/zio/openfeature/internal/LifecycleProbe.scala'
       - 'core/src/main/scala/zio/openfeature/internal/OrderedEmitter.scala'
       - 'core/src/main/scala/zio/openfeature/internal/ManagedProvider.scala'
+      - 'core/src/main/scala/zio/openfeature/internal/LifecycleState.scala'
+      - 'core/src/test/scala/zio/openfeature/LifecycleReplaySpec.scala'
       - 'extras/src/main/scala/zio/openfeature/extras/CircuitBreaker.scala'
       - 'extras/src/main/scala/zio/openfeature/extras/CircuitBreakerProvider.scala'
       - 'testkit/src/test/scala/zio/openfeature/testkit/TraceProbe.scala'
@@ -49,6 +53,8 @@ on:
       - 'core/src/main/scala/zio/openfeature/internal/LifecycleProbe.scala'
       - 'core/src/main/scala/zio/openfeature/internal/OrderedEmitter.scala'
       - 'core/src/main/scala/zio/openfeature/internal/ManagedProvider.scala'
+      - 'core/src/main/scala/zio/openfeature/internal/LifecycleState.scala'
+      - 'core/src/test/scala/zio/openfeature/LifecycleReplaySpec.scala'
       - 'extras/src/main/scala/zio/openfeature/extras/CircuitBreaker.scala'
       - 'extras/src/main/scala/zio/openfeature/extras/CircuitBreakerProvider.scala'
       - 'testkit/src/test/scala/zio/openfeature/testkit/TraceProbe.scala'
@@ -194,7 +200,6 @@ jobs:
           distribution: 'temurin'
           cache: sbt
       - name: Set up sbt
-        if: github.event_name != 'pull_request'
         uses: sbt/setup-sbt@v1
       - name: Download the TLA+ tools and community modules
         run: |
@@ -208,6 +213,25 @@ jobs:
       - name: Check that each library precondition is exercised by a fixture
         working-directory: formal/lifecycle
         run: python3 preconditions.py ../../tla2tools.jar ../../CommunityModules-deps.jar
+      # The seed is fixed except nightly, where it rotates; a behaviour the nightly run fails on is checked in under
+      # mbt-regressions, which every run replays as well.
+      - name: Generate behaviours of the lifecycle model
+        working-directory: formal/lifecycle
+        env:
+          NUM: ${{ github.event_name == 'schedule' && '20000' || '2000' }}
+          SEED: ${{ github.event_name == 'schedule' && github.run_id || '7' }}
+        run: |
+          echo "seed ${SEED}, ${NUM} behaviours"
+          python3 generate.py ../../tla2tools.jar ../../CommunityModules-deps.jar "${GITHUB_WORKSPACE}/behaviours" --num "${NUM}" --depth 20 --seed "${SEED}"
+      - name: Replay the behaviours against the lifecycle step
+        run: sbt "-Dzof.lifecycle.behaviours=${GITHUB_WORKSPACE}/behaviours,${GITHUB_WORKSPACE}/formal/lifecycle/mbt-regressions" "core/testOnly zio.openfeature.LifecycleReplaySpec"
+      - name: Keep the behaviours
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: lifecycle-behaviours
+          path: behaviours/
+          retention-days: 14
       - name: Record the lifecycle test suites' runs
         if: github.event_name != 'pull_request'
         env:

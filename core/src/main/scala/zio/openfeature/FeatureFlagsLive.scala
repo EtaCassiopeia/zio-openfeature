@@ -710,9 +710,11 @@ final private[openfeature] class FeatureFlagsLive(
       .ensuring(lifecycle.run(LifecycleInput.GateDown))
       .tapBoth(
         {
-          // A READY that landed between the timeout and the gate dropping was suppressed; pick it up now.
+          // A state the SDK reached for the new provider between the timeout and the gate dropping was suppressed: a
+          // late READY, or a FATAL it reported. Pick it up now, as after every other outcome.
           case FeatureFlagError.ProviderInitializationFailed(_: java.util.concurrent.TimeoutException) =>
-            probe.at(Point.SwapReconcile) *> reconcileLateReady(incoming.sdk)
+            probe.at(Point.SwapReconcile) *> probe.at(Point.LateReady) *> reconcileRegistration(incoming.sdk) *>
+              replayInitTimeout
           // A failed swap ends on the provider it rolled back to, or on the failed one when there was nothing to roll
           // back to. A state the SDK reached for it while the gate was up (a FATAL from its re-initialization, an
           // event during the rollback's wait) was dropped; take it now.
@@ -849,22 +851,6 @@ final private[openfeature] class FeatureFlagsLive(
     * stack itself and passes the same.
     */
   private[openfeature] def apiEvaluationContext: dev.openfeature.sdk.EvaluationContext = api.getEvaluationContext
-
-  private def reconcileLateReady(newProvider: OFFeatureProvider): UIO[Unit] =
-    probe.at(Point.LateReady) *> ZIO
-      .attemptBlocking {
-        val bound = domain.fold(api.getProvider())(d => api.getProvider(d))
-        if (bound eq newProvider) client.getProviderState match {
-          case JavaProviderState.READY => Some(Signal.EventReady)
-          case JavaProviderState.STALE => Some(Signal.EventStale)
-          case _                       => None
-        }
-        else None
-      }
-      .flatMap(signal => ZIO.foreachDiscard(signal)(applySignal))
-      .catchAllCause(c => ZIO.logWarningCause("setProvider: could not re-check a timed-out provider's state", c)) *>
-      // The READY this stands in for was dropped under the gate, and no other comes.
-      eventBridge.settlePendingName
 
   /** Take the SDK's state for this instance's slot once `provider` is registered there. A registration that reuses an
     * existing one — the same provider already initialized, or failed, for another domain — sends no lifecycle event, so

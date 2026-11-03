@@ -12,13 +12,16 @@ trap 'rm -rf "$TMP"' EXIT
 passed=0
 failed=0
 
+# The baseline line of the fixture's build file.
+BASELINE='mimaPreviousArtifacts := Set(organization.value %% moduleName.value % "1.2.1"),'
+
 # expect <name> <exit code> <latest tag> <filter lines...>
 expect() {
   local name="$1" want="$2" tag="$3"
   shift 3
   local file="$TMP/$name.sbt"
   {
-    echo 'mimaPreviousArtifacts := Set(organization.value %% moduleName.value % "1.2.1"),'
+    echo "$BASELINE"
     printf '%s\n' "$@"
   } > "$file"
   local got=0
@@ -93,6 +96,23 @@ expect wrapped-target-never-found 2 v1.2.1 \
   'x' \
   'y' \
   'z'
+
+BASELINE='mimaPreviousArtifacts := Set.empty, // no baseline: 2.0 in development'
+expect no-baseline-no-filters-passes 0 v1.2.1 \
+  'name := "x"'
+expect no-baseline-public-filter-fails 1 v1.2.1 \
+  'ProblemFilters.exclude[DirectMissingMethodProblem]("zio.openfeature.FeatureFlags.build"),'
+expect no-baseline-internal-filter-fails 1 v1.2.1 \
+  'ProblemFilters.exclude[Problem]("zio.openfeature.internal.Foo*"),'
+expect no-baseline-unlock-tag-does-not-excuse-a-filter 1 v2.0.0-RC1 \
+  'ProblemFilters.exclude[DirectMissingMethodProblem]("zio.openfeature.FeatureFlags.build"),'
+
+BASELINE='mimaPreviousArtifacts := Set.empty,'
+expect empty-baseline-without-the-marker-is-an-error 2 v1.2.1 \
+  'name := "x"'
+BASELINE='mimaPreviousArtifacts := Set.empty, // no baseline: '
+expect marker-without-a-reason-is-an-error 2 v1.2.1 \
+  'name := "x"'
 
 echo "$passed passed, $failed failed"
 [ "$failed" -eq 0 ]

@@ -33,7 +33,12 @@ Run through this on `main` (or the release branch) **before** tagging:
 ## Binary compatibility policy
 
 `versionScheme` is `semver-spec`, so sbt's eviction treats every 1.x release as a drop-in replacement for any earlier
-one. The build has to make that true:
+one. The build has to make that true.
+
+**While 2.0 is in development** `main` has no baseline and the rules below are suspended: no release comes before 2.0.0,
+so nothing on `main` has to link against 1.x. `mimaPreviousArtifacts` is `Set.empty` with a `// no baseline:` marker, and
+the check rejects any filter, since none can excuse anything. After 2.0.0 is published, set the baseline to it and remove
+the marker; the rules below then apply to 2.x:
 
 - **Minor and patch releases are binary compatible on both Scala versions.** `sbt +mimaReportBinaryIssues` checks the
   bytecode against the last release, and `sbt tastyMiMaReportIssues` checks the Scala 3 artifacts' TASTy.

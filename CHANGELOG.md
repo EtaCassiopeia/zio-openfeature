@@ -117,6 +117,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`main` is the 2.0 line: no release comes before 2.0.0.** Breaking changes land directly on it, so it has no MiMa or
+  TASTy-MiMa baseline for now, and the filters that excused 1.x breaks are gone. After 2.0.0 the baseline moves to it and
+  the binary compatibility policy applies to 2.x. Snapshots from `main` can break between builds until then.
 - **`TestFeatureProvider.setStatus` goes through the instance's lifecycle** (#738). It moves the status as a provider
   report would, and counts as ready for the init watchdog. It is refused, as a defect naming the reason, once the
   instance is shut down or closed, and while a provider swap is in flight. A provider with no instance attached still

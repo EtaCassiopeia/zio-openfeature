@@ -678,6 +678,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   bugs fail the replay. Writing it found one fold in the model, now fixed (after a failed rollback the status stays
   `Error` until the reconcile, as in the code), and the timed-out swap's reconcile gap under Fixed.
 
+### Security
+
+- **Raised Guava to 33.7.2-jre**, closing Dependabot alert #73 (GHSA-xxph-c9ww-hj94, CVE-2026-102554). The OFREP contrib
+  provider declares 33.4.8-jre, and WireMock brought 33.5.0-jre into the test classpaths; both are inside the advisory's
+  window. A hostile Java serialized stream naming `CompactHashMap`, `CompactHashSet` or `MapMakerInternalMap` forces a
+  huge allocation. This library never deserializes Java streams, so an application is exposed only if it runs
+  `ObjectInputStream.readObject()` on untrusted data itself. The pin is part of the published `zio-openfeature-ofrep`
+  POM, so consumers resolve the patched version too.
+
 ## [1.2.1] — 2026-10-28
 
 **A patch release with two fixes. Nothing to change when upgrading:** MiMa is green against 1.2.0 and no public

@@ -25,6 +25,9 @@ val wiremockVersion = "3.13.2"
 val jacksonVersion            = "2.22.4"
 val jacksonAnnotationsVersion = "2.22"
 
+// Guava reaches us through the OFREP contrib provider, and through WireMock in tests; see `guavaPin`.
+val guavaVersion = "33.7.2-jre"
+
 // OpenFeature Specification Compatibility
 // Spec version: v0.9.0 (https://github.com/open-feature/spec)
 // This library implements the dynamic-context (server-side) paradigm
@@ -341,6 +344,11 @@ val jacksonPins = Seq(
   "com.fasterxml.jackson.datatype" % "jackson-datatype-jsr310" % jacksonVersion
 )
 
+// The OFREP contrib provider declares Guava 33.4.8-jre, inside the window of GHSA-xxph-c9ww-hj94 (a hostile Java
+// serialized stream forces a huge allocation; patched in 33.7.2). A pair on `ofrep`, for the reasons `jacksonPins`
+// gives, and the same MAINTENANCE note applies: raise this floor when the provider or WireMock moves past it.
+val guavaPin = "com.google.guava" % "guava" % guavaVersion
+
 // OFREP module - OpenFeature Remote Evaluation Protocol provider.
 // Kept separate from `extras` so callers who only want HOCON/env vars don't pull in the OFREP contrib provider's
 // transitive HTTP-client stack (Jackson, Guava, Commons Validator, SLF4J).
@@ -365,8 +373,8 @@ lazy val ofrep = (project in file("ofrep"))
     // `optimizely` ships it too, for the Optimizely SDK's JSON parser (#431); `conformance-zio-bdd` repeats the
     // pin for its own test classpath only (see there).
     // `core`/`extras`/`testkit` carry no Jackson at all.
-    libraryDependencies ++= jacksonPins,
-    dependencyOverrides ++= jacksonPins
+    libraryDependencies ++= jacksonPins :+ guavaPin,
+    dependencyOverrides ++= jacksonPins :+ guavaPin
   )
 
 // Optimizely module - direct OpenFeature provider on top of the Optimizely Java SDK.
@@ -386,7 +394,9 @@ lazy val optimizely = (project in file("optimizely"))
       // `getHttpClient()` (the staleness fetch-observation seam for #267). A version bump breaks it at compile time.
       "com.optimizely.ab" % "core-api"             % "4.6.0",
       "com.optimizely.ab" % "core-httpclient-impl" % "4.6.0",
-      "org.wiremock"      % "wiremock"             % wiremockVersion % Test
+      "org.wiremock"      % "wiremock"             % wiremockVersion % Test,
+      // WireMock's Guava is the only one on this module's classpaths, so the pin is test scope and ships to no consumer.
+      guavaPin % Test
     ),
     // The Optimizely SDK needs a JSON parser it does not declare (see `checkOptimizelyJsonParser`), so this module
     // ships jackson-databind at compile scope (#431). Jackson rather than gson because it is the family this build

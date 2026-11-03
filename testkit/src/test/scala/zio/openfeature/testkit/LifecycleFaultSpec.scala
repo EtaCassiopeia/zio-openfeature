@@ -18,7 +18,7 @@ object LifecycleFaultSpec extends ZIOSpecDefault {
   private def buildIsolated(
     provider: FeatureProvider,
     timeout: Duration = initTimeout
-  ): ZIO[Scope, Throwable, FeatureFlags] =
+  ): ZIO[Scope, Throwable, FeatureFlagsLive] =
     FeatureFlags.build(
       provider,
       domain = Some(s"lifecycle-fault-${java.util.UUID.randomUUID()}"),

@@ -16,7 +16,7 @@ object OrphanedProviderSpec extends ZIOSpecDefault {
   private val testBound   = 30.seconds
   private val LeakBound   = 5.seconds
 
-  private def build(provider: FeatureProvider, owned: Boolean = true): ZIO[Scope, Throwable, FeatureFlags] =
+  private def build(provider: FeatureProvider, owned: Boolean = true): ZIO[Scope, Throwable, FeatureFlagsLive] =
     FeatureFlags.build(
       provider,
       domain = Some(s"orphaned-provider-${java.util.UUID.randomUUID()}"),

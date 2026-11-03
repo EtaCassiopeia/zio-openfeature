@@ -81,7 +81,7 @@ class ConformanceSteps extends ScalaDsl with EN {
             api = Some(api)
           )
           .build
-          .map(_.get)
+          .map(_.get[FeatureFlags])
       )
     )
     scope = sc; flags = ff; testProvider = null

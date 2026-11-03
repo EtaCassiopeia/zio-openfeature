@@ -16,7 +16,7 @@ trait FeatureFlagRegistry {
   def getClient(domain: String): IO[FeatureFlagError, FeatureFlags]
 
   /** Register (or replace) a provider for a domain. If a client already exists for the domain, the provider is
-    * hot-swapped via `FeatureFlags.setProvider`.
+    * hot-swapped via `FeatureFlagsAdmin.setProvider`.
     */
   def setProvider(domain: String, provider: OFFeatureProvider): IO[FeatureFlagError, Unit]
 

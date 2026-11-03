@@ -40,7 +40,7 @@ object EventHandlerIsolationSpec extends ZIOSpecDefault {
       emitProviderConfigurationChanged(ProviderEventDetails.builder().flagsChanged(List("f").asJava).build())
   }
 
-  private def buildFF(provider: EventProvider): ZIO[Scope, Throwable, FeatureFlags] =
+  private def buildFF(provider: EventProvider): ZIO[Scope, Throwable, FeatureFlagsLive] =
     FeatureFlags.build(
       provider,
       domain = Some(s"handler-isolation-${java.util.UUID.randomUUID()}"),

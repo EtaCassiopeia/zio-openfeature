@@ -153,12 +153,14 @@ object NamedProviderSpec extends ZIOSpecDefault {
         // because the testkit provider could not supply one.
         ZIO.scoped {
           for {
-            a      <- TestFeatureProvider.makeNamed("provider-a", Map("flag" -> "from-a"))
-            b      <- TestFeatureProvider.makeNamed("provider-b", Map("flag" -> "from-b"))
-            ff     <- TestFeatureProvider.layerFrom(a).build.map(_.get[FeatureFlags])
+            a   <- TestFeatureProvider.makeNamed("provider-a", Map("flag" -> "from-a"))
+            b   <- TestFeatureProvider.makeNamed("provider-b", Map("flag" -> "from-b"))
+            env <- TestFeatureProvider.layerFrom(a).build
+            ff    = env.get[FeatureFlags]
+            admin = env.get[FeatureFlagsAdmin]
             before <- ff.providerMetadata
             valueA <- ff.string("flag", "fallback")
-            _      <- ff.setProvider(b)
+            _      <- admin.setProvider(b)
             after  <- ff.providerMetadata
             valueB <- ff.string("flag", "fallback")
           } yield assertTrue(

@@ -60,7 +60,7 @@ object ProviderInitTimeoutSpec extends ZIOSpecDefault {
   private def bounded[E, A](label: String)(effect: ZIO[Scope, E, A]): ZIO[Any, Any, A] =
     Live.live(ZIO.scoped(effect).timeoutFail(s"$label did not complete within $testBound")(testBound))
 
-  private def buildIsolated(provider: FeatureProvider): ZIO[Scope, Throwable, FeatureFlags] =
+  private def buildIsolated(provider: FeatureProvider): ZIO[Scope, Throwable, FeatureFlagsLive] =
     FeatureFlags.build(
       provider,
       domain = Some(s"init-timeout-${java.util.UUID.randomUUID()}"),

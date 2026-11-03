@@ -74,7 +74,7 @@ object ApiHookIsolationSpec extends ZIOSpecDefault {
   private def buildIsolated(
     provider: EventProvider,
     owned: Boolean = false
-  ): ZIO[Scope, Throwable, FeatureFlags] = {
+  ): ZIO[Scope, Throwable, FeatureFlagsLive] = {
     val api    = OpenFeatureAPI.createIsolated()
     val domain = s"api-hook-iso-${java.util.UUID.randomUUID()}"
     for {

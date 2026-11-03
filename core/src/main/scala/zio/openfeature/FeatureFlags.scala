@@ -562,65 +562,10 @@ trait FeatureFlags {
   def providerMetadata: UIO[ProviderMetadata]
   def clientMetadata: UIO[ClientMetadata]
 
-  // Administration: the provider, the API's hooks, the event handlers and the instance's lifetime moved to
-  // [[FeatureFlagsAdmin]] (`>+> FeatureFlagsAdmin.layer` adds it to any layer). The members below are kept for 1.x.
-
-  /** Moved to [[FeatureFlagsAdmin.onProviderReady]]. */
-  @deprecated(FeatureFlags.MovedToAdmin, "1.3.0")
-  def onProviderReady(handler: ProviderMetadata => UIO[Unit]): UIO[UIO[Unit]]
-
-  /** Moved to [[FeatureFlagsAdmin.onProviderError]]. */
-  @deprecated(FeatureFlags.MovedToAdmin, "1.3.0")
-  def onProviderError(handler: (Throwable, ProviderMetadata) => UIO[Unit]): UIO[UIO[Unit]]
-
-  /** Moved to [[FeatureFlagsAdmin.onProviderStale]]. */
-  @deprecated(FeatureFlags.MovedToAdmin, "1.3.0")
-  def onProviderStale(handler: (String, ProviderMetadata) => UIO[Unit]): UIO[UIO[Unit]]
-
-  /** Moved to [[FeatureFlagsAdmin.onConfigurationChanged]]. */
-  @deprecated(FeatureFlags.MovedToAdmin, "1.3.0")
-  def onConfigurationChanged(handler: (Set[String], ProviderMetadata) => UIO[Unit]): UIO[UIO[Unit]]
-
-  /** Moved to [[FeatureFlagsAdmin.on]]. */
-  @deprecated(FeatureFlags.MovedToAdmin, "1.3.0")
-  def on(eventType: ProviderEventType, handler: ProviderEvent => UIO[Unit]): UIO[UIO[Unit]]
-
   def addHook(hook: FeatureHook): UIO[Unit]
   def addHooks(hooks: List[FeatureHook]): UIO[Unit]
   def clearHooks: UIO[Unit]
   def hooks: UIO[List[FeatureHook]]
-
-  /** Moved to [[FeatureFlagsAdmin.addZioApiHook]]. */
-  @deprecated(FeatureFlags.MovedToAdmin, "1.3.0")
-  def addZioApiHook(hook: FeatureHook): UIO[Unit]
-
-  /** Moved to [[FeatureFlagsAdmin.addZioApiHooks]]. */
-  @deprecated(FeatureFlags.MovedToAdmin, "1.3.0")
-  def addZioApiHooks(hooks: List[FeatureHook]): UIO[Unit]
-
-  /** Moved to [[FeatureFlagsAdmin.clearZioApiHooks]]. */
-  @deprecated(FeatureFlags.MovedToAdmin, "1.3.0")
-  def clearZioApiHooks: UIO[Unit]
-
-  /** Moved to [[FeatureFlagsAdmin.zioApiHooks]]. */
-  @deprecated(FeatureFlags.MovedToAdmin, "1.3.0")
-  def zioApiHooks: UIO[List[FeatureHook]]
-
-  /** Moved to [[FeatureFlagsAdmin.addApiHook]]. */
-  @deprecated(FeatureFlags.MovedToAdmin, "1.3.0")
-  def addApiHook(hook: dev.openfeature.sdk.Hook[_]): UIO[Unit]
-
-  /** Moved to [[FeatureFlagsAdmin.clearApiHooks]]. */
-  @deprecated(FeatureFlags.MovedToAdmin, "1.3.0")
-  def clearApiHooks: UIO[Unit]
-
-  /** Moved to [[FeatureFlagsAdmin.setProvider]]. */
-  @deprecated(FeatureFlags.MovedToAdmin, "1.3.0")
-  def setProvider(provider: OFFeatureProvider): IO[FeatureFlagError, Unit]
-
-  /** Moved to [[FeatureFlagsAdmin.shutdown]]. */
-  @deprecated(FeatureFlags.MovedToAdmin, "1.3.0")
-  def shutdown: UIO[Unit]
 
   // Tracking API
   def track(eventName: String): IO[FeatureFlagError, Unit]
@@ -637,9 +582,6 @@ trait FeatureFlags {
 }
 
 object FeatureFlags {
-
-  /** The deprecation message of the administration members, which moved to [[FeatureFlagsAdmin]]. */
-  final val MovedToAdmin = "Moved to FeatureFlagsAdmin: add it to a layer with `>+> FeatureFlagsAdmin.layer`"
 
   // Service Accessors - simple evaluation. Typed tier: `default` is what the provider and hooks receive for this evaluation; it is not served on failure: use the
   // `*OrDefault` form for that.
@@ -1040,37 +982,6 @@ object FeatureFlags {
 
   // Event Handlers - return cancellation effects
 
-  /** Register a handler for provider ready events. Returns a cancellation effect. */
-  @deprecated(MovedToAdmin, "1.3.0")
-  def onProviderReady(handler: ProviderMetadata => UIO[Unit]): ZIO[FeatureFlags, Nothing, UIO[Unit]] =
-    ZIO.serviceWithZIO(_.onProviderReady(handler))
-
-  /** Register a handler for provider error events. Returns a cancellation effect. */
-  @deprecated(MovedToAdmin, "1.3.0")
-  def onProviderError(handler: (Throwable, ProviderMetadata) => UIO[Unit]): ZIO[FeatureFlags, Nothing, UIO[Unit]] =
-    ZIO.serviceWithZIO(_.onProviderError(handler))
-
-  /** Register a handler for provider stale events. Returns a cancellation effect. */
-  @deprecated(MovedToAdmin, "1.3.0")
-  def onProviderStale(handler: (String, ProviderMetadata) => UIO[Unit]): ZIO[FeatureFlags, Nothing, UIO[Unit]] =
-    ZIO.serviceWithZIO(_.onProviderStale(handler))
-
-  /** Register a handler for configuration changed events. Returns a cancellation effect. */
-  @deprecated(MovedToAdmin, "1.3.0")
-  def onConfigurationChanged(
-    handler: (Set[String], ProviderMetadata) => UIO[Unit]
-  ): ZIO[FeatureFlags, Nothing, UIO[Unit]] =
-    ZIO.serviceWithZIO(_.onConfigurationChanged(handler))
-
-  /** Register a handler for any provider event type. Returns a cancellation effect. */
-  @deprecated(MovedToAdmin, "1.3.0")
-  def on(eventType: ProviderEventType, handler: ProviderEvent => UIO[Unit]): ZIO[FeatureFlags, Nothing, UIO[Unit]] =
-    ZIO.serviceWithZIO(_.on(eventType, handler))
-
-  @deprecated(MovedToAdmin, "1.3.0")
-  def shutdown: ZIO[FeatureFlags, Nothing, Unit] =
-    ZIO.serviceWithZIO(_.shutdown)
-
   def addHook(hook: FeatureHook): ZIO[FeatureFlags, Nothing, Unit] =
     ZIO.serviceWithZIO(_.addHook(hook))
 
@@ -1083,31 +994,7 @@ object FeatureFlags {
   def hooks: ZIO[FeatureFlags, Nothing, List[FeatureHook]] =
     ZIO.serviceWithZIO(_.hooks)
 
-  @deprecated(MovedToAdmin, "1.3.0")
-  def addZioApiHook(hook: FeatureHook): ZIO[FeatureFlags, Nothing, Unit] =
-    ZIO.serviceWithZIO(_.addZioApiHook(hook))
-
-  @deprecated(MovedToAdmin, "1.3.0")
-  def addZioApiHooks(hooks: List[FeatureHook]): ZIO[FeatureFlags, Nothing, Unit] =
-    ZIO.serviceWithZIO(_.addZioApiHooks(hooks))
-
-  @deprecated(MovedToAdmin, "1.3.0")
-  def clearZioApiHooks: ZIO[FeatureFlags, Nothing, Unit] =
-    ZIO.serviceWithZIO(_.clearZioApiHooks)
-
-  @deprecated(MovedToAdmin, "1.3.0")
-  def zioApiHooks: ZIO[FeatureFlags, Nothing, List[FeatureHook]] =
-    ZIO.serviceWithZIO(_.zioApiHooks)
-
   // API-level Hooks (per OpenFeature spec 4.4.1)
-
-  @deprecated(MovedToAdmin, "1.3.0")
-  def addApiHook(hook: dev.openfeature.sdk.Hook[_]): ZIO[FeatureFlags, Nothing, Unit] =
-    ZIO.serviceWithZIO(_.addApiHook(hook))
-
-  @deprecated(MovedToAdmin, "1.3.0")
-  def clearApiHooks: ZIO[FeatureFlags, Nothing, Unit] =
-    ZIO.serviceWithZIO(_.clearApiHooks)
 
   // Tracking API
 
@@ -1130,10 +1017,6 @@ object FeatureFlags {
   @deprecated("Use TestFeatureProvider.trackedEvents, which records what the provider received", "1.2.0")
   def trackedEvents: ZIO[FeatureFlags, Nothing, List[(String, EvaluationContext, Option[TrackingEventDetails])]] =
     ZIO.serviceWithZIO(_.trackedEvents)
-
-  @deprecated(MovedToAdmin, "1.3.0")
-  def setProvider(provider: OFFeatureProvider): ZIO[FeatureFlags, FeatureFlagError, Unit] =
-    ZIO.serviceWithZIO(_.setProvider(provider))
 
   // Factory Methods
 
@@ -1258,7 +1141,10 @@ object FeatureFlags {
     * `FeatureFlagsConfig()` reproduces `fromProvider(provider)` exactly (sync init, no domain, `Owned` API — the `Auto`
     * truth table's `domain.isEmpty` branch).
     */
-  def fromProvider(provider: OFFeatureProvider, config: FeatureFlagsConfig): ZLayer[Any, Throwable, FeatureFlags] =
+  def fromProvider(
+    provider: OFFeatureProvider,
+    config: FeatureFlagsConfig
+  ): ZLayer[Any, Throwable, FeatureFlags with FeatureFlagsAdmin] =
     fromProvider(provider, config, statusRef = None)
 
   /** `private[openfeature]` variant of [[fromProvider(OFFeatureProvider, FeatureFlagsConfig)]] that additionally
@@ -1273,7 +1159,7 @@ object FeatureFlags {
     statusRef: Option[SubscriptionRef[ProviderStatus]],
     apiOverride: Option[OpenFeatureAPI] = None,
     onReady: Option[java.util.concurrent.CountDownLatch] = None
-  ): ZLayer[Any, Throwable, FeatureFlags] =
+  ): ZLayer[Any, Throwable, FeatureFlags with FeatureFlagsAdmin] =
     FeatureFlagsFactories.fromProvider(provider, config, statusRef, apiOverride, onReady)
 
   /** Combine multiple providers into one via the SDK's `MultiProvider`, defaulting to a first-match strategy. Pairs
@@ -1312,7 +1198,7 @@ object FeatureFlags {
     * `IllegalStateException` wrapped at the layer boundary. Use `fromProvider(provider, FeatureFlagsConfig())` with
     * `.withInitTimeout(...)` to override.
     */
-  def fromProvider(provider: OFFeatureProvider): ZLayer[Any, Throwable, FeatureFlags] =
+  def fromProvider(provider: OFFeatureProvider): ZLayer[Any, Throwable, FeatureFlags with FeatureFlagsAdmin] =
     fromProvider(provider, FeatureFlagsConfig())
 
   /** Create a FeatureFlags layer with a global evaluation timeout.
@@ -1364,7 +1250,7 @@ object FeatureFlags {
     statusRef: SubscriptionRef[ProviderStatus],
     api: Option[OpenFeatureAPI] = None,
     onReady: Option[java.util.concurrent.CountDownLatch] = None
-  ): ZLayer[Any, Throwable, FeatureFlags] =
+  ): ZLayer[Any, Throwable, FeatureFlags with FeatureFlagsAdmin] =
     FeatureFlagsFactories.fromProviderWithDomain(provider, domain, statusRef, api, onReady)
 
   /** Create a FeatureFlags layer from multiple providers using the first-match strategy. */
@@ -1467,7 +1353,7 @@ object FeatureFlags {
     * `providerStatus` stop waiting. Use `fromProvider(provider, FeatureFlagsConfig(initMode = InitMode.Async))` with
     * `.withInitTimeout(...)` to override.
     */
-  def fromProviderAsync(provider: OFFeatureProvider): ZLayer[Any, Throwable, FeatureFlags] =
+  def fromProviderAsync(provider: OFFeatureProvider): ZLayer[Any, Throwable, FeatureFlags with FeatureFlagsAdmin] =
     fromProvider(provider, FeatureFlagsConfig(initMode = InitMode.Async))
 
   /** Create a FeatureFlags layer with a global evaluation timeout (non-blocking).
@@ -1534,7 +1420,7 @@ object FeatureFlags {
     statusRef: SubscriptionRef[ProviderStatus],
     api: Option[OpenFeatureAPI] = None,
     onReady: Option[java.util.concurrent.CountDownLatch] = None
-  ): ZLayer[Any, Throwable, FeatureFlags] =
+  ): ZLayer[Any, Throwable, FeatureFlags with FeatureFlagsAdmin] =
     FeatureFlagsFactories.fromProviderWithDomainAsync(provider, domain, statusRef, api, onReady)
 
   /** Create a FeatureFlags layer with initial hooks (non-blocking). */
@@ -1637,7 +1523,7 @@ object FeatureFlags {
     fallback: URIO[Scope, OFFeatureProvider],
     config: FeatureFlagsConfig,
     acquireConfig: AcquireConfig
-  ): URLayer[Any, FeatureFlags with AcquireStatus] =
+  ): URLayer[Any, FeatureFlags with FeatureFlagsAdmin with AcquireStatus] =
     FeatureFlagsFactories.fromAcquireAsync(acquire, fallback, config, acquireConfig)
 
   /** [[fromAcquireAsync(RIO[Scope, OFFeatureProvider], URIO[Scope, OFFeatureProvider], FeatureFlagsConfig, AcquireConfig)]]
@@ -1647,7 +1533,7 @@ object FeatureFlags {
     acquire: RIO[Scope, OFFeatureProvider],
     fallback: URIO[Scope, OFFeatureProvider],
     config: FeatureFlagsConfig
-  ): URLayer[Any, FeatureFlags with AcquireStatus] =
+  ): URLayer[Any, FeatureFlags with FeatureFlagsAdmin with AcquireStatus] =
     fromAcquireAsync(acquire, fallback, config, AcquireConfig.default)
 
   /** [[fromAcquireAsync(RIO[Scope, OFFeatureProvider], URIO[Scope, OFFeatureProvider], FeatureFlagsConfig, AcquireConfig)]]
@@ -1656,6 +1542,6 @@ object FeatureFlags {
   def fromAcquireAsync(
     acquire: RIO[Scope, OFFeatureProvider],
     fallback: URIO[Scope, OFFeatureProvider]
-  ): URLayer[Any, FeatureFlags with AcquireStatus] =
+  ): URLayer[Any, FeatureFlags with FeatureFlagsAdmin with AcquireStatus] =
     fromAcquireAsync(acquire, fallback, FeatureFlagsConfig(), AcquireConfig.default)
 }

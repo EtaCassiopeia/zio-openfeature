@@ -62,8 +62,8 @@ ready. Serve the default meanwhile (the `*OrDefault` calls do this for every err
 ## React to events
 
 Registering handlers, swapping the provider and shutting down are on `FeatureFlagsAdmin`, so code that only reads flags
-can depend on `FeatureFlags` alone. Add it to the layer with `>+> FeatureFlagsAdmin.layer`: it administers the same
-instance.
+can depend on `FeatureFlags` alone. The factories and the testkit layers provide both services for the same instance;
+a client from a [`FeatureFlagRegistry`](providers.md) gets it through `FeatureFlagsAdmin.layer` or the registry.
 
 Register a handler for the events you care about. Each registration returns an effect that unsubscribes it:
 

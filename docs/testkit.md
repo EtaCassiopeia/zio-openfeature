@@ -18,7 +18,7 @@ Say your service reads a flag:
 --8<-- "TestkitSpec.scala:service"
 ```
 
-Provide `TestFeatureProvider.layer` in place of the real `FeatureFlags` layer. It provides both `FeatureFlags` and the
+Provide `TestFeatureProvider.layer` in place of the real `FeatureFlags` layer. It provides `FeatureFlags`, `FeatureFlagsAdmin` and the
 `TestFeatureProvider`, so a test can set flags and then run the code under test:
 
 ```scala
@@ -35,7 +35,8 @@ Each test gets its own provider and its own isolated OpenFeature API instance, s
 
 ## Choosing a layer
 
-Every layer provides `TestFeatureProvider & FeatureFlags`.
+Every layer provides `TestFeatureProvider`, `FeatureFlags` and `FeatureFlagsAdmin` (`layerFrom` the last two), all for
+the same instance.
 
 | Layer | Provider starts | Use it when |
 |:------|:----------------|:------------|
@@ -49,7 +50,7 @@ provides just a `TestFeatureProvider`, without `FeatureFlags`.
 
 `flags` is a `Map[String, Any]`, or typed overrides (`Flag := value`, below). To build a provider without a layer, use
 `TestFeatureProvider.make(flags)`, or `makeNamed(name, flags)` to give it its own metadata name. A name matters when you
-swap providers with `FeatureFlags.setProvider`, which tells the old and new provider apart by name. Every other factory
+swap providers with `FeatureFlagsAdmin.setProvider`, which tells the old and new provider apart by name. Every other factory
 uses `TestFeatureProvider.DefaultName`.
 
 ??? note "Deprecated aliases"

@@ -8,7 +8,7 @@ object SpecComplianceSpec extends ZIOSpecDefault {
 
   private def testLayer(
     flags: Map[String, Any] = Map.empty
-  ): ZLayer[Any, Throwable, TestFeatureProvider with FeatureFlags] =
+  ): ZLayer[Any, Throwable, TestFeatureProvider with FeatureFlags with FeatureFlagsAdmin] =
     Scope.default >>> TestFeatureProvider.layer(flags)
 
   def spec = suite("SpecComplianceSpec")(
@@ -17,7 +17,7 @@ object SpecComplianceSpec extends ZIOSpecDefault {
         for {
           tp       <- ZIO.service[TestFeatureProvider]
           received <- Ref.make(Option.empty[Set[String]])
-          _        <- FeatureFlags.onConfigurationChanged((flags, _) => received.set(Some(flags)))
+          _        <- FeatureFlagsAdmin.onConfigurationChanged((flags, _) => received.set(Some(flags)))
           _        <- ZIO.sleep(200.millis)
           _        <- tp.emitEvent(ProviderEvent.ConfigurationChanged(Set("flag-a", "flag-b"), tp.metadata))
           result   <- received.get.repeatUntil(_.isDefined).timeout(5.seconds)
@@ -42,9 +42,9 @@ object SpecComplianceSpec extends ZIOSpecDefault {
           tp       <- ZIO.service[TestFeatureProvider]
           received <- Ref.make(false)
           // First handler dies
-          _ <- FeatureFlags.onConfigurationChanged((_, _) => ZIO.die(new RuntimeException("boom")))
+          _ <- FeatureFlagsAdmin.onConfigurationChanged((_, _) => ZIO.die(new RuntimeException("boom")))
           // Second handler records that it fired
-          _       <- FeatureFlags.onConfigurationChanged((_, _) => received.set(true))
+          _       <- FeatureFlagsAdmin.onConfigurationChanged((_, _) => received.set(true))
           _       <- ZIO.sleep(200.millis)
           _       <- tp.emitEvent(ProviderEvent.ConfigurationChanged(Set("flag-1"), tp.metadata))
           didFire <- received.get.repeatUntil(identity).timeout(5.seconds)

@@ -10,7 +10,7 @@ import zio.openfeature._
   */
 object EventSubscriptionSpec extends ZIOSpecDefault {
 
-  private def testLayer: ZLayer[Any, Throwable, TestFeatureProvider with FeatureFlags] =
+  private def testLayer: ZLayer[Any, Throwable, TestFeatureProvider with FeatureFlags with FeatureFlagsAdmin] =
     Scope.default >>> TestFeatureProvider.layer
 
   private def awaitCount(ref: Ref[Int], atLeast: Int): UIO[Int] =
@@ -21,7 +21,7 @@ object EventSubscriptionSpec extends ZIOSpecDefault {
       for {
         ref          <- Ref.make(0)
         testProvider <- ZIO.service[TestFeatureProvider]
-        _            <- FeatureFlags.onConfigurationChanged((_, _) => ref.update(_ + 1))
+        _            <- FeatureFlagsAdmin.onConfigurationChanged((_, _) => ref.update(_ + 1))
         _            <- testProvider.emitEvent(ProviderEvent.ConfigurationChanged(Set("f"), testProvider.metadata))
         n            <- awaitCount(ref, 1).timeoutFail(new RuntimeException("event never delivered"))(10.seconds)
       } yield assertTrue(n >= 1)
@@ -30,7 +30,7 @@ object EventSubscriptionSpec extends ZIOSpecDefault {
       for {
         ref          <- Ref.make(0)
         testProvider <- ZIO.service[TestFeatureProvider]
-        _            <- FeatureFlags.on(ProviderEventType.ConfigurationChanged, _ => ref.update(_ + 1))
+        _            <- FeatureFlagsAdmin.on(ProviderEventType.ConfigurationChanged, _ => ref.update(_ + 1))
         _            <- testProvider.emitEvent(ProviderEvent.ConfigurationChanged(Set("g"), testProvider.metadata))
         n            <- awaitCount(ref, 1).timeoutFail(new RuntimeException("event never delivered"))(10.seconds)
       } yield assertTrue(n >= 1)
@@ -42,7 +42,7 @@ object EventSubscriptionSpec extends ZIOSpecDefault {
           for {
             ref          <- Ref.make(0)
             testProvider <- ZIO.service[TestFeatureProvider]
-            cancel       <- FeatureFlags.onConfigurationChanged((_, _) => ref.update(_ + 1))
+            cancel       <- FeatureFlagsAdmin.onConfigurationChanged((_, _) => ref.update(_ + 1))
             _ <- testProvider.emitEvent(ProviderEvent.ConfigurationChanged(Set(s"flag-$i"), testProvider.metadata))
             n <- awaitCount(ref, 1).timeoutFail(new RuntimeException(s"cycle $i lost the event"))(10.seconds)
             _ <- cancel
@@ -54,7 +54,7 @@ object EventSubscriptionSpec extends ZIOSpecDefault {
       for {
         ref          <- Ref.make(0)
         testProvider <- ZIO.service[TestFeatureProvider]
-        cancel       <- FeatureFlags.onConfigurationChanged((_, _) => ref.update(_ + 1))
+        cancel       <- FeatureFlagsAdmin.onConfigurationChanged((_, _) => ref.update(_ + 1))
         _            <- testProvider.emitEvent(ProviderEvent.ConfigurationChanged(Set("a"), testProvider.metadata))
         _            <- awaitCount(ref, 1).timeoutFail(new RuntimeException("first event never delivered"))(10.seconds)
         _            <- cancel

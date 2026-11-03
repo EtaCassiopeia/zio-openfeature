@@ -97,9 +97,9 @@ private[openfeature] object FeatureFlagsFactories {
           case p                                       => p
         }
         Option(bound).filter(b => !(b eq provider) && !b.isInstanceOf[NoOpProvider]).map { b =>
-          def name(p: OFFeatureProvider) = Option(p.getMetadata).flatMap(m => Option(m.getName)).getOrElse("unnamed")
-          val slot                       = domain.fold("the default slot")(d => s"domain '$d'")
-          s"$slot of this OpenFeatureAPI already holds provider '${name(b)}'; binding '${name(provider)}' makes the SDK " +
+          val slot = domain.fold("the default slot")(d => s"domain '$d'")
+          s"$slot of this OpenFeatureAPI already holds provider '${ProviderNames.of(b)}'; binding " +
+            s"'${ProviderNames.of(provider)}' makes the SDK " +
             "shut it down once the new one is ready, under whatever was using it. Use FeatureFlagsConfig.withIsolatedApi, " +
             "a domain, or FeatureFlagRegistry to keep instances apart."
         }
@@ -134,7 +134,7 @@ private[openfeature] object FeatureFlagsFactories {
       // initialized, and a wrapper around one throws reading it. `ZIO.attempt` makes a throw a typed failure, never a
       // defect that would strand the registry's build fiber with its promise unsettled. The sync build tolerates it
       // (`unreadableNameIsUnknown`) and reads the name again, strictly, once the provider has initialized.
-      read = ZIO.attempt(Option(provider.getMetadata).flatMap(m => Option(m.getName)).getOrElse(UnknownProviderName))
+      read = ZIO.attempt(ProviderNames.of(provider))
       providerName <- if (unreadableNameIsUnknown) read.orElseSucceed(UnknownProviderName) else read
       baseState    <- FeatureFlagsState.make
       state = statusRef.fold(baseState)(ref => baseState.copy(statusRef = ref))
@@ -197,7 +197,7 @@ private[openfeature] object FeatureFlagsFactories {
     * still-"unknown" name is replaced, so a name the bridge already took from the READY event is kept.
     */
   private def refreshProviderName(provider: OFFeatureProvider, ff: FeatureFlagsLive): Task[Unit] =
-    ZIO.attempt(Option(provider.getMetadata).flatMap(m => Option(m.getName))).map {
+    ZIO.attempt(ProviderNames.optional(provider)).map {
       case Some(name) => ff.refreshUnknownProviderName(name)
       case None       => ()
     }

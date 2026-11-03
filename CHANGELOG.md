@@ -174,6 +174,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `EnvVarProvider`, and against a scalar or list key in `HoconProvider`.
 - **A failed swap's cleanup leaves a provider the shared API registered outside the instance to the SDK** (#728). It
   shuts down only a provider the instance wrapped; no current path reaches it with another.
+- **A provider with no name is called `unknown` everywhere** (#732). Every read of a provider's name now goes through
+  one helper, so the warning about a slot's existing provider says `unknown` instead of `unnamed`, as
+  `providerMetadata` does. Swaps and switches to a provider whose metadata or name is `null` are now pinned by tests.
 - **An interrupted `setProvider` still applies a state the SDK reached during the swap** (#717). An interrupt of the
   caller waits for the swap to finish, but it then skipped the swap's last read of the slot, so a `READY` that arrived
   while the gate was up, after a timeout for instance, never reached the status. That read is now part of the swap's

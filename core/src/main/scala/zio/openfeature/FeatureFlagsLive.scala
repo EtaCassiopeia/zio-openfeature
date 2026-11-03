@@ -21,6 +21,7 @@ import zio.openfeature.internal.{
   Bound,
   ManagedProvider,
   OrphanedProviders,
+  ProviderNames,
   ProviderRegistration,
   TrackingConverter
 }
@@ -129,7 +130,7 @@ final private[openfeature] class FeatureFlagsLive(
               Option.when(record.shutDown && status != ProviderStatus.NotReady)(s"shut down with status $status")
             ).flatten ++
               (if (ended) wrappers.filter(w => w.shutDownInCycle && w.laneRunning).map { w =>
-                 s"the event lane of '${nameOf(w)}' still runs after its shutdown"
+                 s"the event lane of '${ProviderNames.of(w)}' still runs after its shutdown"
                }
                else Nil)
           )
@@ -409,7 +410,7 @@ final private[openfeature] class FeatureFlagsLive(
     incoming match {
       case Bound.Foreign(provider) =>
         ZIO.logDebug(
-          s"setProvider (rollback failed): provider '${nameOf(provider)}' is registered with the API " +
+          s"setProvider (rollback failed): provider '${ProviderNames.of(provider)}' is registered with the API " +
             "outside this instance; leaving its lifecycle to the SDK"
         )
       case Bound.Managed(managed) => shutDownUnboundFailedProvider(managed)
@@ -592,12 +593,12 @@ final private[openfeature] class FeatureFlagsLive(
 
   private def skipSwap(newProvider: OFFeatureProvider): UIO[Unit] =
     probe.at(Point.SwapSkipped) *>
-      ZIO.logDebug(s"setProvider: '${nameOf(newProvider)}' is already the bound provider; nothing to change")
+      ZIO.logDebug(s"setProvider: '${ProviderNames.of(newProvider)}' is already the bound provider; nothing to change")
 
   private def runSwap(incoming: Bound, newProvider: OFFeatureProvider): IO[FeatureFlagError, Unit] = {
     val swap = for {
       _ <- probe.at(Point.SwapStart)
-      newName = nameOf(newProvider)
+      newName = ProviderNames.of(newProvider)
       _ <- probe.at(Point.ApplySignal(Signal.SwapStarted))
       // One step, before the SDK changes: the gate goes up before the NotReady transition, so no bridge event (a
       // queued READY from the OLD provider) drives the status mid-swap; the generation moves, so an evaluation that
@@ -750,31 +751,28 @@ final private[openfeature] class FeatureFlagsLive(
     } yield ()
   }
 
-  private def nameOf(provider: OFFeatureProvider): String =
-    Option(provider.getMetadata).flatMap(m => Option(m.getName)).getOrElse(FeatureFlags.UnknownProviderName)
-
   private def refused(refusal: Refusal): FeatureFlagError = {
     def failed(message: String) = FeatureFlagError.ProviderInitializationFailed(new IllegalStateException(message))
     refusal match {
       case Refusal.Closed                      => FeatureFlagError.ProviderNotReady(ProviderStatus.NotReady)
       case Refusal.StillInitializing(provider) =>
         failed(
-          s"'${nameOf(provider)}' is still initializing from an earlier registration and cannot be installed again " +
+          s"'${ProviderNames.of(provider)}' is still initializing from an earlier registration and cannot be installed again " +
             "until that initialize() returns"
         )
       case Refusal.PendingOrphan(provider, incoming) =>
         failed(
-          s"'${nameOf(provider)}' cannot be installed again until '$incoming', which replaced it in a swap that timed " +
+          s"'${ProviderNames.of(provider)}' cannot be installed again until '$incoming', which replaced it in a swap that timed " +
             "out, finishes initializing"
         )
       case Refusal.HeldBy(provider, holder) =>
         failed(
-          s"'${nameOf(provider)}' cannot be installed again until '${nameOf(holder)}', which replaced it, finishes " +
+          s"'${ProviderNames.of(provider)}' cannot be installed again until '${ProviderNames.of(holder)}', which replaced it, finishes " +
             "initializing"
         )
       // Only a switch is refused this way, and a switch reports it as `false`, not as an error.
       case Refusal.NotInstalled(provider) =>
-        failed(s"'${nameOf(provider)}' is no longer the installed provider")
+        failed(s"'${ProviderNames.of(provider)}' is no longer the installed provider")
       // Only a status override is refused this way, and the testkit reports it as a defect.
       case Refusal.SwapInFlight =>
         failed("a setProvider is in flight, and its swap owns the status until it ends")
@@ -823,7 +821,7 @@ final private[openfeature] class FeatureFlagsLive(
   private[openfeature] def switchProvider(switch: ManagedProvider, next: OFFeatureProvider): Task[Boolean] =
     swapLock
       .withPermit {
-        val name = nameOf(next)
+        val name = ProviderNames.of(next)
         // The step renames before the flip: the SDK stamps the switch's (now `next`'s) name on every event, and the
         // identity guard compares that against the name. Renaming first drops a straggler event from the old delegate
         // rather than one from `next`.

@@ -146,8 +146,17 @@ object ProviderHotSwapStressSpec extends ZIOSpecDefault {
         ZIO.scoped {
           val api    = OpenFeatureAPI.createIsolated()
           val domain = s"stress-gen-${java.util.UUID.randomUUID()}"
+          // What the final read passed through, which tells the three sources of its NotReady apart: stopped at StatusGate
+          // is the status check; Decoded without a later success is the SDK's PROVIDER_NOT_READY; GateRechecked alone with
+          // no failure before it is the recheck against a swap.
+          val finalRead = new java.util.concurrent.ConcurrentLinkedQueue[String]()
+          val recording = new java.util.concurrent.atomic.AtomicBoolean(false)
+          val probe     = new zio.openfeature.internal.LifecycleProbe {
+            def at(p: zio.openfeature.internal.LifecycleProbe.Point): UIO[Unit] =
+              ZIO.succeed(if (recording.get()) { finalRead.add(p.toString); () })
+          }
           for {
-            ff <- FeatureFlags.build(
+            ff <- zio.openfeature.internal.FeatureFlagsFactories.build(
               new ConstantProvider("init", true),
               domain = Some(domain),
               version = None,
@@ -155,15 +164,20 @@ object ProviderHotSwapStressSpec extends ZIOSpecDefault {
               statusRef = None,
               addShutdownFinalizer = false,
               apiOverride = Some(api),
-              evaluationTimeout = Some(5.seconds)
+              evaluationTimeout = Some(5.seconds),
+              probe = probe
             )
             evalFibers <- ZIO.foreach(1 to evaluators)(_ => ZIO.foreach(1 to EvalsPerFiber)(_ => runOne(ff)).fork)
             _          <- ZIO.foreachDiscard(swaps) {
               case Some(v) => ff.setProvider(new ConstantProvider(s"good-$v", v)).either.ignore
               case None    => ff.setProvider(new FailingInitProvider).either.ignore
             }
-            flat   <- ZIO.foreach(evalFibers)(_.join).map(_.toList.flatten)
+            flat         <- ZIO.foreach(evalFibers)(_.join).map(_.toList.flatten)
+            statusBefore <- ff.providerStatus
+            slotBefore = api.getClient(domain).getProviderState
+            _      <- ZIO.succeed(recording.set(true))
             last   <- ff.boolean("flag", default = !swaps.lastOption.flatten.getOrElse(true)).either
+            _      <- ZIO.succeed(recording.set(false))
             status <- ff.providerStatus
             slot = api.getClient(domain).getProviderState
           } yield {
@@ -173,7 +187,10 @@ object ProviderHotSwapStressSpec extends ZIOSpecDefault {
               flat.size == evaluators * EvalsPerFiber,
               last.isRight,
               expectedLast.forall(v => last == Right(v))
-            ).label(s"schedule=$swaps status=$status slot=$slot last=$last")
+            ).label(
+              s"schedule=$swaps before: status=$statusBefore slot=$slotBefore; last=$last; " +
+                s"final read passed ${finalRead.toArray.mkString(",")}; after: status=$status slot=$slot"
+            )
           }
         }
       }

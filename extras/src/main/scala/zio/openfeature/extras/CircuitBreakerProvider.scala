@@ -43,7 +43,11 @@ object StalePolicy {
   *   `Duration.Infinity` disables the timeout and evaluates the delegate on the calling thread, which lets the members
   *   of a wrapped `MultiProvider` chain see the caller's client metadata in their provider hooks. Any finite value
   *   needs the delegate on another thread, where that context is out of reach. Without a timeout a hanging delegate
-  *   blocks the caller and is never counted as a failure. Must be `> 0` (`Duration.Infinity` is legal).
+  *   blocks the caller and is never counted as a failure. When the hanging call is the half-open probe it also holds
+  *   the probe slot: every other call is rejected as `half-open, probe in progress` and `getState` reports `STALE`
+  *   until it returns. The takeover that frees a dead probe's slot needs a finite `evaluationTimeout`, since without
+  *   one a slow probe cannot be told from a dead one and a live probe is never stolen. Must be `> 0`
+  *   (`Duration.Infinity` is legal).
   * @param halfOpenMaxCalls
   *   Number of successful probes in half-open state required to close the circuit. Must be `>= 1`.
   * @param stalePolicy
@@ -69,7 +73,8 @@ final case class CircuitBreakerProviderConfig(
       resetTimeout = resetTimeout,
       halfOpenMaxCalls = halfOpenMaxCalls,
       // A probe should never be considered wedged before the evaluation it runs could itself time out; add a
-      // margin so a legitimately slow probe is not stolen out from under itself.
+      // margin so a legitimately slow probe is not stolen out from under itself. With no evaluation timeout this is
+      // infinite and there is no takeover, for the same reason: a slow probe cannot be told from a dead one.
       probeTimeout = evaluationTimeout + CircuitBreakerProvider.ProbeTimeoutMargin
     )
 }

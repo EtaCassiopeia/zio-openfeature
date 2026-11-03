@@ -183,7 +183,7 @@ half-open probe, `half-open, probe in progress`.
 |---|---|---|
 | `failureThreshold` | `5` | consecutive failures that open it; at least `1` |
 | `resetTimeout` | `30.seconds` | how long the circuit stays open before a probe; greater than zero. `Duration.Infinity`: only a `READY` signal closes it, so a circuit opened by failures stays open |
-| `evaluationTimeout` | `500.millis` | longest wait for one call, above zero; `Duration.Infinity` disables it |
+| `evaluationTimeout` | `500.millis` | longest wait for one call, above zero; `Duration.Infinity` disables it, and a hung probe then keeps the circuit half-open until it returns |
 | `halfOpenMaxCalls` | `1` | successful probes that close the circuit; at least `1` |
 | `stalePolicy` | `StalePolicy.Open` | what a `STALE` provider does: `Open`, `HalfOpen` or `Ignore` |
 | `stateCheckInterval` | `1.second` | state poll interval; `Duration.Zero` polls every call, `Duration.Infinity` once |
@@ -191,7 +191,8 @@ half-open probe, `half-open, probe in progress`.
 ??? note "Timeouts and provider hooks"
     A finite `evaluationTimeout` runs the wrapped provider on another thread, so a wrapped `MultiProvider`'s members see
     the hook domain `"multiprovider"`. Wrap each member in its own breaker, or set `evaluationTimeout = Duration.Infinity`
-    (keeps the caller's thread, but a hung provider then blocks the caller without counting as a failure).
+    (keeps the caller's thread, but a hung provider then blocks the caller without counting as a failure, and a hung
+    half-open probe keeps every other call rejected until it returns).
 
 ## Deferred provider
 

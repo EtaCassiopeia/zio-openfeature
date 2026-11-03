@@ -260,6 +260,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A provider-event handler interrupted by the SDK's own shutdown is logged at DEBUG, not ERROR** (#789). When the SDK
+  stops its event executor, the interrupt reaches the handler running on that thread, and the bridge logged it as a
+  failure. An interruption-only cause now logs at DEBUG and the thread's interrupt flag is set again for the executor's
+  stop; every other cause still logs at ERROR.
 - **`setProvider` no longer reports `Ready` before the SDK's slot is** (#777). The SDK writes `READY` just after
   `initialize()` returns, and the library waited a fixed second for that, then treated a slot still `NOT_READY` as ready.
   On a starved host the instance reported `Ready` while evaluations failed `ProviderNotReady`, with nothing logged. The
@@ -608,6 +612,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Tests
 
+- **Specs no longer measure cold-start latency against production bounds** (#789). The provider-status bridge specs wait
+  on the READY the bridge publishes instead of polling a clock; the OFREP fault-shape, long-evaluation and auth-failure
+  specs raise the evaluation timeout they are not about (the breaker's warm-up request goes straight to the delegate, so
+  the breaker does not count it); the hostile-response properties retry once on the contrib's IO error and fail on any
+  other `GENERAL`.
 - **A TLA+ model of the registry and shared APIs** (#724). `formal/registry/Registry.tla` checks one API shared by
   several instances on several domains: one owner tears the API down, a non-owner's close touches nothing shared,
   every registered provider is shut down exactly once, concurrent `getClient` calls on one domain yield one client,

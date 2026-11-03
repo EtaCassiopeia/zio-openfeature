@@ -12,6 +12,7 @@ import dev.openfeature.sdk.{
 }
 
 import scala.jdk.CollectionConverters._
+import EventBridge.runHandler
 
 /** The event bridge of a [[FeatureFlagsLive]]: the status-machine glue, the Java SDK event handlers that drive it, and
   * the ZIO-side event subscriptions (`onProviderReady`, `on`, ...).
@@ -239,16 +240,7 @@ final private[openfeature] class EventBridge(
     }
 
   // Bridge Java SDK provider events to ZIO event system
-  private[openfeature] def startEventBridge: ZIO[Scope, Nothing, Unit] = {
-    // Run an event-publish effect from a Java SDK thread. Failures are logged via the ZIO logger
-    // rather than thrown, so the Java SDK's event dispatch thread is never killed by a defect.
-    def runHandler(runtime: Runtime[Any], label: String)(effect: UIO[Unit]): Unit =
-      Unsafe.unsafe { implicit u =>
-        runtime.unsafe
-          .run(effect.catchAllCause(c => ZIO.logErrorCause(s"event bridge: $label", c)))
-          .getOrElse(_ => ())
-      }
-
+  private[openfeature] def startEventBridge: ZIO[Scope, Nothing, Unit] =
     ZIO.runtime[Any].flatMap { runtime =>
       // `suspendSucceed` defers the handler bodies (metadata extraction, identity check, payload construction) into the
       // effect so a synchronous throw while building them on the Java emitter thread becomes a defect caught by
@@ -308,7 +300,6 @@ final private[openfeature] class EventBridge(
         _ <- ZIO.addFinalizer(ZIO.attempt(deregister()).ignore)
       } yield ()
     }
-  }
 
   // Event Handlers - return cancellation effects per OpenFeature spec 5.2.7
 
@@ -467,5 +458,30 @@ private[openfeature] object EventBridge {
     case JavaProviderState.ERROR => Some(Signal.EventError(false))
     case JavaProviderState.FATAL => Some(Signal.EventError(true))
     case _                       => None
+  }
+
+  /** Run an event-publish effect from a Java SDK thread. Failures are logged via the ZIO logger rather than thrown, so
+    * the Java SDK's event dispatch thread is never killed by a defect.
+    *
+    * A cause that is only an interruption means the SDK is stopping its event executor (a pending interrupt on this
+    * thread interrupts the fiber), which is routine at teardown: it is logged at DEBUG, and the thread's interrupt flag
+    * is set again for the executor's stop to see. Every other cause is an ERROR.
+    */
+  private[internal] def runHandler(runtime: Runtime[Any], label: String)(effect: UIO[Unit]): Unit = {
+    val reported                             = new java.util.concurrent.atomic.AtomicBoolean(false)
+    val interrupted                          = new java.util.concurrent.atomic.AtomicBoolean(false)
+    def report(c: Cause[Nothing]): UIO[Unit] =
+      ZIO.succeed(reported.set(true)) *> {
+        if (c.isInterruptedOnly) ZIO.succeed(interrupted.set(true)) *> ZIO.logDebugCause(s"event bridge: $label", c)
+        else ZIO.logErrorCause(s"event bridge: $label", c)
+      }
+    Unsafe.unsafe { implicit u =>
+      // A fiber interrupted from the outside skips its own recovery, so its failure is reported here instead.
+      runtime.unsafe.run(effect.catchAllCause(report)) match {
+        case Exit.Failure(c) if !reported.get() => runtime.unsafe.run(report(c)).getOrElse(_ => ())
+        case _                                  => ()
+      }
+    }
+    if (interrupted.get()) Thread.currentThread().interrupt()
   }
 }

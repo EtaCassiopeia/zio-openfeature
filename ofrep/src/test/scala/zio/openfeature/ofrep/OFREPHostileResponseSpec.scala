@@ -5,7 +5,7 @@ import zio.openfeature.testsupport.PropertyBudget
 import com.github.tomakehurst.wiremock.WireMockServer
 import com.github.tomakehurst.wiremock.client.WireMock._
 import com.github.tomakehurst.wiremock.core.WireMockConfiguration
-import dev.openfeature.sdk.{ImmutableContext, Value}
+import dev.openfeature.sdk.{ErrorCode => JErrorCode, ImmutableContext, ProviderEvaluation, Value}
 import zio._
 import zio.openfeature.{ErrorCode, FeatureFlagError, FeatureFlags}
 import zio.test._
@@ -49,6 +49,20 @@ object OFREPHostileResponseSpec extends ZIOSpecDefault {
         .willReturn(okJson(s"""{"key":"$key","value":$valueJson,"reason":"STATIC","variant":"v"}"""))
     )
     key
+  }
+
+  /** The contrib's answer to an `IOException` from the HTTP client: `GENERAL`, with the message
+    * `general error for flag: <key>; IO error: <cause>` (`Resolver` wrapping `OfrepApi`'s `GeneralError`). A reset or
+    * dropped keep-alive connection looks like this and says nothing about the decoding under test; no other `GENERAL`
+    * does (a rate limit, an unknown status, an interrupted request and an unauthorized answer have their own messages).
+    */
+  private def isTransientIoError(key: String, code: JErrorCode, message: String): Boolean =
+    code == JErrorCode.GENERAL && message != null && message.startsWith(s"general error for flag: $key; IO error: ")
+
+  /** Evaluate once more, and only once, when the first answer is a transient IO error. */
+  private def retryingTransientIo[T](key: String)(call: => ProviderEvaluation[T]): ProviderEvaluation[T] = {
+    val first = call
+    if (isTransientIoError(key, first.getErrorCode, first.getErrorMessage)) call else first
   }
 
   // JSON building
@@ -207,6 +221,45 @@ object OFREPHostileResponseSpec extends ZIOSpecDefault {
   }
 
   def spec = suite("OFREP hostile response decoding (WireMock)")(
+    test("only the contrib's IO error for the same flag is retried; every other GENERAL fails at once") {
+      val key = "hostile-1"
+      assertTrue(
+        isTransientIoError(key, JErrorCode.GENERAL, "general error for flag: hostile-1; IO error: Connection reset"),
+        !isTransientIoError(key, JErrorCode.GENERAL, "general error for flag: hostile-2; IO error: Connection reset"),
+        !isTransientIoError(
+          key,
+          JErrorCode.GENERAL,
+          "general error for flag: hostile-1; Rate limit exceeded. Please wait before making another request."
+        ),
+        !isTransientIoError(
+          key,
+          JErrorCode.GENERAL,
+          "general error for flag: hostile-1; Request interrupted: sleep interrupted"
+        ),
+        !isTransientIoError(
+          key,
+          JErrorCode.GENERAL,
+          "Unknown error while retrieving flag: hostile-1, status code: 500"
+        ),
+        !isTransientIoError(key, JErrorCode.GENERAL, "authentication/authorization error for flag: hostile-1"),
+        !isTransientIoError(key, JErrorCode.GENERAL, null),
+        !isTransientIoError(
+          key,
+          JErrorCode.PARSE_ERROR,
+          "general error for flag: hostile-1; IO error: Connection reset"
+        )
+      )
+    },
+    test("a refused connection is answered with the message the retry recognises") {
+      ZIO.scoped {
+        for {
+          server   <- serverScoped
+          provider <- providerFor(server)
+          _        <- ZIO.succeed(server.stop())
+          result   <- ZIO.attemptBlocking(provider.getStringEvaluation("hostile-down", "DEFAULT", emptyContext))
+        } yield assertTrue(isTransientIoError("hostile-down", result.getErrorCode, result.getErrorMessage))
+      }
+    },
     test("a string value of any shape decodes exactly: empty, emoji, control characters, lone surrogates") {
       ZIO.scoped {
         for {
@@ -214,7 +267,7 @@ object OFREPHostileResponseSpec extends ZIOSpecDefault {
           provider <- providerFor(server)
           r        <- check(hostileString) { s =>
             val key    = serve(server, jsonString(s))
-            val result = provider.getStringEvaluation(key, "DEFAULT", emptyContext)
+            val result = retryingTransientIo(key)(provider.getStringEvaluation(key, "DEFAULT", emptyContext))
             val value  = result.getValue
             val code   = result.getErrorCode
             assertTrue(value == s, code == null)
@@ -229,9 +282,11 @@ object OFREPHostileResponseSpec extends ZIOSpecDefault {
           provider <- providerFor(server)
           r        <- check(finiteDouble) { d =>
             val key    = serve(server, d.toString)
-            val result = provider.getDoubleEvaluation(key, java.lang.Double.valueOf(12345.0), emptyContext)
-            val value  = result.getValue
-            val code   = result.getErrorCode
+            val result = retryingTransientIo(key)(
+              provider.getDoubleEvaluation(key, java.lang.Double.valueOf(12345.0), emptyContext)
+            )
+            val value = result.getValue
+            val code  = result.getErrorCode
             assertTrue(code == null, java.lang.Double.compare(value.doubleValue(), d) == 0)
           }
         } yield r
@@ -244,7 +299,7 @@ object OFREPHostileResponseSpec extends ZIOSpecDefault {
           provider <- providerFor(server)
           r        <- check(Gen.oneOf(Gen.fromIterable(List(Int.MinValue, -1, 0, 1, Int.MaxValue)), Gen.int)) { i =>
             val key    = serve(server, i.toString)
-            val result = provider.getIntegerEvaluation(key, Integer.valueOf(7), emptyContext)
+            val result = retryingTransientIo(key)(provider.getIntegerEvaluation(key, Integer.valueOf(7), emptyContext))
             val value  = result.getValue
             val code   = result.getErrorCode
             assertTrue(code == null, value.intValue() == i)
@@ -293,7 +348,7 @@ object OFREPHostileResponseSpec extends ZIOSpecDefault {
           r        <- check(Gen.int(0, 3).flatMap(d => Gen.mapOfBounded(0, 4)(wellFormedKey, jsonGen(d)))) { fields =>
             val json   = JObj(fields)
             val key    = serve(server, render(json))
-            val result = provider.getObjectEvaluation(key, new Value(), emptyContext)
+            val result = retryingTransientIo(key)(provider.getObjectEvaluation(key, new Value(), emptyContext))
             val got    = actual(result.getValue)
             val want   = expected(json)
             val code   = result.getErrorCode

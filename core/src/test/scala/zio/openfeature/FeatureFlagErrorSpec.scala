@@ -3,11 +3,7 @@ package zio.openfeature
 import zio._
 import zio.test._
 
-@scala.annotation.nowarn("cat=deprecation")
 object FeatureFlagErrorSpec extends ZIOSpecDefault {
-
-  // Built outside the assertTrue macros, which report deprecations at their own position (past @nowarn).
-  private val emptyFlagVariables: FeatureFlagError = FeatureFlagError.EmptyFlagVariables("key")
 
   def spec = suite("FeatureFlagErrorSpec")(
     suite("Evaluation errors")(
@@ -26,10 +22,6 @@ object FeatureFlagErrorSpec extends ZIOSpecDefault {
         val error      = FeatureFlagError.ParseError("my-flag", underlying)
         assertTrue(error.message == "Failed to parse flag 'my-flag': Parse failed") &&
         assertTrue(error.cause == Some(underlying))
-      },
-      test("EmptyFlagVariables has correct message") {
-        val error: FeatureFlagError = FeatureFlagError.EmptyFlagVariables("my-flag")
-        assertTrue(error.message == "Flag 'my-flag' has no variables but non-boolean type requested")
       },
       test("TargetingKeyMissing has correct message") {
         val error = FeatureFlagError.TargetingKeyMissing("my-flag")
@@ -88,7 +80,6 @@ object FeatureFlagErrorSpec extends ZIOSpecDefault {
         assertTrue(FeatureFlagError.isFlagError(FeatureFlagError.FlagNotFound("key"))) &&
         assertTrue(FeatureFlagError.isFlagError(FeatureFlagError.TypeMismatch("key", "A", "B"))) &&
         assertTrue(FeatureFlagError.isFlagError(FeatureFlagError.ParseError("key", new Exception))) &&
-        assertTrue(FeatureFlagError.isFlagError(emptyFlagVariables)) &&
         assertTrue(FeatureFlagError.isFlagError(FeatureFlagError.TargetingKeyMissing("key"))) &&
         assertTrue(FeatureFlagError.isFlagError(FeatureFlagError.InvalidContext("reason")))
       },
@@ -150,9 +141,6 @@ object FeatureFlagErrorSpec extends ZIOSpecDefault {
         ) &&
         assertTrue(
           FeatureFlagError.toErrorCode(FeatureFlagError.ParseError("key", new Exception)) == ErrorCode.ParseError
-        ) &&
-        assertTrue(
-          FeatureFlagError.toErrorCode(emptyFlagVariables) == ErrorCode.TypeMismatch
         ) &&
         assertTrue(
           FeatureFlagError.toErrorCode(FeatureFlagError.TargetingKeyMissing("key")) == ErrorCode.TargetingKeyMissing
@@ -224,8 +212,8 @@ object FeatureFlagErrorSpec extends ZIOSpecDefault {
       test("RuntimeException with 401 in message is classified as Unauthorized") {
         val cause = new RuntimeException("HTTP 401: Unauthorized")
         val ok    = FeatureFlagError.classify(cause) match {
-          case FeatureFlagError.Unauthorized(reason) => reason.contains("401")
-          case _                                     => false
+          case FeatureFlagError.Unauthorized(reason, _) => reason.contains("401")
+          case _                                        => false
         }
         assertTrue(ok)
       },
@@ -263,7 +251,6 @@ object FeatureFlagErrorSpec extends ZIOSpecDefault {
           (FlagNotFound("k"), true, false, false),
           (TypeMismatch("k", "Boolean", "String"), true, false, false),
           (ParseError("k", boom), true, false, false),
-          (emptyFlagVariables, true, false, false),
           (TargetingKeyMissing("k"), true, false, false),
           (InvalidContext("r"), true, false, false),
           (ProviderNotReady(ProviderStatus.NotReady), true, true, false),
@@ -291,36 +278,96 @@ object FeatureFlagErrorSpec extends ZIOSpecDefault {
         assertTrue(describe(FeatureFlagError.NestedTransactionNotAllowed) == "nested")
       }
     ),
-    suite("Throwable bridge")(
-      test("toThrowable carries the message, the cause and the error, with no stack trace") {
-        val boom = new RuntimeException("boom")
-        val err  = FeatureFlagError.ProviderError(boom)
-        val t    = err.toThrowable
-        assertTrue(
-          t.getMessage == err.message,
-          t.getCause eq boom,
-          t.getStackTrace.isEmpty,
-          t match {
-            case e: FeatureFlagException => e.error == err
-            case _                       => false
-          }
+    suite("Throwable")(
+      test("a FeatureFlagError is a Throwable and orDie dies with that exact value") {
+        val err: FeatureFlagError = FeatureFlagError.FlagNotFound("k")
+        val widened: Throwable    = err
+        for {
+          exit <- ZIO.fail(err).orDie.exit
+        } yield assertTrue(
+          widened eq err,
+          exit.causeOption.flatMap(_.dieOption).exists(_ eq err)
         )
       },
-      test("asThrowable composes with orDie") {
-        for {
-          exit <- ZIO.fail(FeatureFlagError.FlagNotFound("k")).mapError(FeatureFlagError.asThrowable).orDie.exit
-        } yield assertTrue(exit.causeOption.flatMap(_.dieOption).exists {
-          case e: FeatureFlagException => e.error == FeatureFlagError.FlagNotFound("k")
-          case _                       => false
-        })
+      test("getMessage is the message") {
+        val err = FeatureFlagError.TargetingKeyMissing("k")
+        assertTrue(
+          err.getMessage == "Targeting key required for flag 'k' but not provided",
+          err.getMessage == err.message
+        )
+      },
+      test("getCause is the underlying for a case with a cause and null for one without") {
+        val boom = new RuntimeException("boom")
+        assertTrue(
+          FeatureFlagError.ProviderError(boom).getCause eq boom,
+          FeatureFlagError.ParseError("k", boom).getCause eq boom,
+          FeatureFlagError.Unreachable(boom).getCause eq boom,
+          FeatureFlagError.Unauthorized("r", Some(boom)).getCause eq boom,
+          FeatureFlagError.Unauthorized("r").getCause == null,
+          FeatureFlagError.FlagNotFound("k").getCause == null,
+          FeatureFlagError.NestedTransactionNotAllowed.getCause == null
+        )
+      },
+      test("carries no stack frames") {
+        assertTrue(
+          FeatureFlagError.FlagNotFound("k").getStackTrace.isEmpty,
+          FeatureFlagError.ProviderError(new RuntimeException("boom")).getStackTrace.isEmpty,
+          FeatureFlagError.NestedTransactionNotAllowed.getStackTrace.isEmpty
+        )
+      },
+      test("two equal-valued errors are equal, with equal hash codes") {
+        val boom = new RuntimeException("boom")
+        assertTrue(
+          FeatureFlagError.FlagNotFound("k") == FeatureFlagError.FlagNotFound("k"),
+          FeatureFlagError.FlagNotFound("k").hashCode == FeatureFlagError.FlagNotFound("k").hashCode,
+          FeatureFlagError.FlagNotFound("k") != FeatureFlagError.FlagNotFound("j"),
+          FeatureFlagError.ProviderError(boom) == FeatureFlagError.ProviderError(boom),
+          FeatureFlagError.TypeMismatch("k", "Boolean", "String") == FeatureFlagError.TypeMismatch(
+            "k",
+            "Boolean",
+            "String"
+          )
+        )
+      },
+      test("toString renders the case with its fields") {
+        assertTrue(
+          FeatureFlagError.TypeMismatch("k", "Boolean", "String").toString == "TypeMismatch(k,Boolean,String)",
+          FeatureFlagError.Unauthorized("r").toString == "Unauthorized(r,None)",
+          FeatureFlagError.NestedTransactionNotAllowed.toString == "NestedTransactionNotAllowed"
+        )
       }
     ),
-    suite("Compat")(
-      test("the deprecated zio.openfeature.Compat merges as the internal one does") {
-        val e: Either[String, FeatureFlagError] = Right(FeatureFlagError.ProviderFatal)
-        // Outside the assertTrue macro, which reports a deprecation at its own position, past this object's @nowarn.
-        val viaAlias: Any = Compat.merge(e)
-        assertTrue(viaAlias == zio.openfeature.internal.Compat.merge(e))
+    suite("Unauthorized and Unreachable")(
+      test("Unauthorized keeps its cause as a field that takes part in equality") {
+        val t = new RuntimeException("boom")
+        assertTrue(
+          FeatureFlagError.Unauthorized("r", Some(t)).cause == Some(t),
+          FeatureFlagError.Unauthorized("r").cause.isEmpty,
+          FeatureFlagError.Unauthorized("r") == FeatureFlagError.Unauthorized("r"),
+          FeatureFlagError.Unauthorized("r", Some(t)) == FeatureFlagError.Unauthorized("r", Some(t)),
+          FeatureFlagError.Unauthorized("r", Some(t)) != FeatureFlagError.Unauthorized("r"),
+          FeatureFlagError.Unauthorized("r", Some(t)) != FeatureFlagError.Unauthorized(
+            "r",
+            Some(new RuntimeException("other"))
+          )
+        )
+      },
+      test("Unauthorized matches on its reason and cause") {
+        val t       = new RuntimeException("boom")
+        val matched = (FeatureFlagError.Unauthorized("bad key", Some(t)): FeatureFlagError) match {
+          case FeatureFlagError.Unauthorized(r, Some(c)) => r == "bad key" && (c eq t)
+          case _                                         => false
+        }
+        assertTrue(matched)
+      },
+      test("Unreachable keeps the throwable it is built from as underlying and as its cause") {
+        val t       = new java.net.ConnectException("refused")
+        val err     = FeatureFlagError.Unreachable(t)
+        val matched = (err: FeatureFlagError) match {
+          case FeatureFlagError.Unreachable(u) => u eq t
+          case _                               => false
+        }
+        assertTrue(err.underlying eq t, err.cause == Some(t), err.message == "Provider unreachable: refused", matched)
       }
     )
   )

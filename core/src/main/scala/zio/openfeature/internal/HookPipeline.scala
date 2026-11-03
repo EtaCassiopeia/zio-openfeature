@@ -2,6 +2,7 @@ package zio.openfeature.internal
 
 import zio._
 import zio.openfeature._
+import zio.openfeature.FeatureFlagError.EvaluationError
 
 /** The hook pipeline of a [[FeatureFlagsLive]]: orders the API, client and invocation hooks and runs their stages
   * around one evaluation.
@@ -18,10 +19,10 @@ final private[openfeature] class HookPipeline(
     key: String,
     default: A,
     context: EvaluationContext,
-    evaluate: EvaluationContext => IO[FeatureFlagError, FlagResolution[A]],
+    evaluate: EvaluationContext => IO[EvaluationError, FlagResolution[A]],
     extraHooks: List[FeatureHook] = Nil,
     initialHints: HookHints = HookHints.empty
-  ): IO[FeatureFlagError, FlagResolution[A]] =
+  ): IO[EvaluationError, FlagResolution[A]] =
     for {
       apiHooks     <- state.zioApiHooksRef.get
       currentHooks <- state.hooksRef.get
@@ -51,10 +52,10 @@ final private[openfeature] class HookPipeline(
     hooks: List[FeatureHook],
     context: EvaluationContext,
     initialHints: HookHints,
-    evaluate: EvaluationContext => IO[FeatureFlagError, FlagResolution[A]],
+    evaluate: EvaluationContext => IO[EvaluationError, FlagResolution[A]],
     // The type the caller asked for, which a `TypeMismatch` names: `hookCtx.flagType` is the resolver's wire type.
     typeName: String
-  ): IO[FeatureFlagError, FlagResolution[A]] = {
+  ): IO[EvaluationError, FlagResolution[A]] = {
     val composedHook = FeatureHook.compose(hooks)
 
     // `finallyAfter` must run on EVERY exit — including an interruption of `before` itself — so it is attached as one

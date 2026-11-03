@@ -71,7 +71,7 @@ object TransactionCrossTypeReadSpec extends ZIOSpecDefault {
         val p = new StringFlagsProvider
         for {
           ff  <- build(p)
-          out <- ff.transaction()(ff.string("mode", "").zip(ff.boolean("mode", default = false).either))
+          out <- ff.transactionEither()(ff.string("mode", "").zip(ff.boolean("mode", default = false).either))
           (s, b) = out.result
           calls  = p.booleanCalls.get()
         } yield assertTrue(s == "true", isTypeMismatch(b, "mode"), calls == 1)
@@ -82,7 +82,7 @@ object TransactionCrossTypeReadSpec extends ZIOSpecDefault {
         val p = new StringFlagsProvider
         for {
           ff  <- build(p)
-          out <- ff.transaction()(ff.string("n", "").zip(ff.int("n", 0).either))
+          out <- ff.transactionEither()(ff.string("n", "").zip(ff.int("n", 0).either))
           (s, i) = out.result
           calls  = p.integerCalls.get()
         } yield assertTrue(s == "42", isTypeMismatch(i, "n"), calls == 1)
@@ -93,7 +93,7 @@ object TransactionCrossTypeReadSpec extends ZIOSpecDefault {
         val p = new StringFlagsProvider
         for {
           ff  <- build(p)
-          out <- ff.transaction()(ff.int("n7", 0).zip(ff.doubleDetails("n7", 0.0)))
+          out <- ff.transactionEither()(ff.int("n7", 0).zip(ff.doubleDetails("n7", 0.0)))
           (i, d) = out.result
           calls  = p.doubleCalls.get()
         } yield assertTrue(i == 7, d.value == 7.0, d.reason == ResolutionReason.Cached, calls == 0)

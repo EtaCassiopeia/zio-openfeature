@@ -1,27 +1,33 @@
 package zio.openfeature
 
-sealed trait FeatureFlagError extends Product with Serializable {
+/** What can go wrong evaluating a flag, building an instance, swapping a provider or running a transaction.
+  *
+  * Every case is a value (structural equality, matchable) and also a `Throwable` without a stack trace, so `.orDie` and
+  * logging work on it directly; the error says where it came from and building a trace per failed evaluation would cost
+  * on a hot path. `getMessage` is [[message]] and `getCause` is [[cause]], or null for none.
+  *
+  * Each operation fails with the sub-trait that lists what it can raise, not with this trait:
+  *   - evaluating a flag (`boolean`, `value`, `valueDetails`, ...) and `track` fail with
+  *     [[FeatureFlagError.EvaluationError]]
+  *   - `setProvider` fails with [[FeatureFlagError.LifecycleError]]
+  *   - `transaction` and `transactionEither` raise [[FeatureFlagError.TransactionError]] themselves, besides the
+  *     block's own errors
+  */
+sealed trait FeatureFlagError extends Throwable with scala.util.control.NoStackTrace with Product with Serializable {
   def message: String
   def cause: Option[Throwable] = None
 
-  /** This error as a `Throwable`, for an API that wants one: a [[FeatureFlagException]] carrying it, with this message
-    * and cause and no stack trace.
-    */
-  def toThrowable: Throwable = new FeatureFlagException(this)
+  override def getMessage: String  = message
+  override def getCause: Throwable = cause.orNull
+
+  // Throwable defines toString, so the case classes do not generate theirs: render as a case class would.
+  override def toString: String =
+    if (productArity == 0) productPrefix else scala.runtime.ScalaRunTime._toString(this)
 }
 
-/** A [[FeatureFlagError]] as a `Throwable` (see [[FeatureFlagError.toThrowable]]). No stack trace: the error says where
-  * it came from, and building one per failed evaluation would cost on a hot path.
-  */
-final class FeatureFlagException(val error: FeatureFlagError)
-    extends RuntimeException(error.message, error.cause.orNull)
-    with scala.util.control.NoStackTrace
-
-// The deprecated EmptyFlagVariables case is still part of this ADT, so the compiler's generated members reference it.
-@scala.annotation.nowarn("cat=deprecation")
 object FeatureFlagError {
 
-  // Which operations raise each case. A case can be in more than one; return types keep `FeatureFlagError` in 1.x.
+  // Which operations raise each case. A case can be in more than one.
 
   /** Raised by evaluating a flag (and by `track`, for the provider-scoped cases). */
   sealed trait EvaluationError extends FeatureFlagError
@@ -32,25 +38,17 @@ object FeatureFlagError {
   /** Raised by `transaction` and `transactionEither` themselves, as opposed to the block they run. */
   sealed trait TransactionError extends FeatureFlagError
 
-  /** [[FeatureFlagError.toThrowable]] as a function, for `mapError`: `ff.boolean(k, d).mapError(asThrowable).orDie`. */
-  val asThrowable: FeatureFlagError => Throwable = _.toThrowable
-
   final case class FlagNotFound(key: String) extends EvaluationError {
     def message: String = s"Flag '$key' not found"
   }
 
-  final case class TypeMismatch(key: String, expected: String, actual: String) extends EvaluationError {
-    def message: String = s"Flag '$key' type mismatch: expected $expected, got $actual"
+  final case class TypeMismatch(key: String, expected: String, detail: String) extends EvaluationError {
+    def message: String = s"Flag '$key' type mismatch: expected $expected, got $detail"
   }
 
   final case class ParseError(key: String, underlying: Throwable) extends EvaluationError {
     def message: String                   = s"Failed to parse flag '$key': ${underlying.getMessage}"
     override def cause: Option[Throwable] = Some(underlying)
-  }
-
-  @deprecated("Never raised by any module; kept for binary compatibility", "1.2.0")
-  final case class EmptyFlagVariables(key: String) extends EvaluationError {
-    def message: String = s"Flag '$key' has no variables but non-boolean type requested"
   }
 
   final case class TargetingKeyMissing(key: String) extends EvaluationError {
@@ -81,30 +79,18 @@ object FeatureFlagError {
     * errors — it almost always indicates a misconfigured SDK key. Its `toErrorCode` stays `General`, since the
     * OpenFeature spec has no auth error code.
     */
-  final case class Unauthorized(reason: String) extends EvaluationError with LifecycleError {
+  final case class Unauthorized(reason: String, override val cause: Option[Throwable] = None)
+      extends EvaluationError
+      with LifecycleError {
     def message: String = s"Provider rejected request: $reason"
-
-    // Write-once, set only by `FeatureFlagError.unauthorized` before the instance escapes. Not a case field, so
-    // `Unauthorized(reason)` patterns, equality and the binary shape stay as they were; and the factory lives
-    // outside the companion because an explicit companion changes its type hierarchy on 2.13. `copy` does not carry it.
-    private[FeatureFlagError] var underlying: Option[Throwable] = None
-
-    override def cause: Option[Throwable] = underlying
-  }
-
-  /** An [[Unauthorized]] that keeps the throwable it was classified from as its `cause`. */
-  def unauthorized(reason: String, cause: Throwable): Unauthorized = {
-    val error = Unauthorized(reason)
-    error.underlying = Option(cause)
-    error
   }
 
   /** The remote provider could not be reached at the network layer (DNS failure, connection refused, no route).
     * Distinct from a slow response (`ProviderError(TimeoutException)`) or an HTTP-level rejection (`Unauthorized`).
     */
-  final case class Unreachable(cause0: Throwable) extends EvaluationError with LifecycleError {
-    def message: String                   = s"Provider unreachable: ${cause0.getMessage}"
-    override def cause: Option[Throwable] = Some(cause0)
+  final case class Unreachable(underlying: Throwable) extends EvaluationError with LifecycleError {
+    def message: String                   = s"Provider unreachable: ${underlying.getMessage}"
+    override def cause: Option[Throwable] = Some(underlying)
   }
 
   final case class InvalidConfiguration(reason: String) extends LifecycleError {
@@ -119,32 +105,24 @@ object FeatureFlagError {
     def message: String = "Provider is in an irrecoverable error state"
   }
 
-  final case class OverrideTypeMismatch(key: String, expected: String, actual: String)
+  final case class OverrideTypeMismatch(key: String, expected: String, detail: String)
       extends EvaluationError
       with TransactionError {
-    def message: String = s"Override for flag '$key' type mismatch: expected $expected, got $actual"
+    def message: String = s"Override for flag '$key' type mismatch: expected $expected, got $detail"
   }
 
   /** Whether `error` is about the flag being evaluated (missing, wrong type, unparsable, bad context) rather than about
     * the provider or this library. Unrelated to [[ProviderStatus.isRecoverable]], and says nothing about whether a
     * retry would help.
     */
-  @scala.annotation.nowarn("cat=deprecation")
   def isFlagError(error: FeatureFlagError): Boolean = error match {
     case _: FlagNotFound        => true
     case _: TypeMismatch        => true
     case _: ParseError          => true
-    case _: EmptyFlagVariables  => true
     case _: TargetingKeyMissing => true
     case _: InvalidContext      => true
     case _                      => false
   }
-
-  @deprecated(
-    "Use isFlagError: this is true for flag-scoped evaluation errors, not about retrying or ProviderStatus.isRecoverable",
-    "1.2.0"
-  )
-  def isRecoverable(error: FeatureFlagError): Boolean = isFlagError(error)
 
   def isProviderError(error: FeatureFlagError): Boolean = error match {
     case _: ProviderNotReady             => true
@@ -157,12 +135,10 @@ object FeatureFlagError {
     case _                               => false
   }
 
-  @scala.annotation.nowarn("cat=deprecation")
   def toErrorCode(error: FeatureFlagError): ErrorCode = error match {
     case _: FlagNotFound                 => ErrorCode.FlagNotFound
     case _: TypeMismatch                 => ErrorCode.TypeMismatch
     case _: ParseError                   => ErrorCode.ParseError
-    case _: EmptyFlagVariables           => ErrorCode.TypeMismatch
     case _: TargetingKeyMissing          => ErrorCode.TargetingKeyMissing
     case _: InvalidContext               => ErrorCode.InvalidContext
     case _: ProviderNotReady             => ErrorCode.ProviderNotReady
@@ -183,7 +159,7 @@ object FeatureFlagError {
     * Used by both `core` (wrapping evaluation/tracking failures) and downstream provider modules (OFREP, Optimizely) so
     * operators see consistent error types regardless of which provider is in use.
     */
-  def classify(t: Throwable): FeatureFlagError = {
+  def classify(t: Throwable): EvaluationError with LifecycleError = {
     val msg = Option(t.getMessage).getOrElse("")
     t match {
       case _: java.net.UnknownHostException   => Unreachable(t)
@@ -193,9 +169,9 @@ object FeatureFlagError {
         Unreachable(t)
       case _ =>
         httpStatus(t) match {
-          case Some(status) if AuthStatuses.contains(status) => unauthorized(extractAuthReason(t, msg), t)
+          case Some(status) if AuthStatuses.contains(status) => Unauthorized(extractAuthReason(t, msg), Option(t))
           case Some(_)                                       => ProviderError(t)
-          case None if isHttpAuthFailure(t, msg)             => unauthorized(extractAuthReason(t, msg), t)
+          case None if isHttpAuthFailure(t, msg)             => Unauthorized(extractAuthReason(t, msg), Option(t))
           case None                                          => ProviderError(t)
         }
     }

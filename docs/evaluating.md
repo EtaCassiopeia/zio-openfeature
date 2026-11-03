@@ -75,28 +75,30 @@ the typed tier `errorCode` is always empty, since an error code fails the effect
 | `FeatureFlagError` | When |
 |---|---|
 | `FlagNotFound(key)` | the provider has no such flag |
-| `TypeMismatch(key, expected, actual)` | the flag has another type, or a custom `FlagType` rejected it; an object flag answered with no value or a value that is not an object is one too, not an empty object |
+| `TypeMismatch(key, expected, detail)` | the flag has another type, or a custom `FlagType` rejected it; an object flag answered with no value or a value that is not an object is one too, not an empty object |
 | `ParseError(key, underlying)` | the provider could not parse the flag |
 | `TargetingKeyMissing(key)` | the flag needs a targeting key; the context has none |
 | `InvalidContext(reason)` | the provider rejected the evaluation context |
 | `ProviderNotReady(status)` | the provider is not started or is shutting down |
 | `ProviderFatal` | the provider failed for good, e.g. never started within `initTimeout` |
 | `ProviderInitializationFailed(underlying)` | `setProvider` or a `FeatureFlagRegistry` client: the new provider failed or did not start within `initTimeout` |
-| `Unauthorized(reason)` | the provider refused us, typically a wrong SDK key (401, 403) |
-| `Unreachable(cause0)` | DNS failure, connection refused, no route |
+| `Unauthorized(reason, cause)` | the provider refused us, typically a wrong SDK key (401, 403) |
+| `Unreachable(underlying)` | DNS failure, connection refused, no route |
 | `ProviderError(underlying)` | anything else the provider threw, including a timeout |
 | `InvalidConfiguration(reason)` | bad settings building an [OFREP](ofrep.md) or [Optimizely](optimizely.md) provider |
-| `OverrideTypeMismatch(key, expected, actual)` | a [transaction](transactions.md) override of the wrong type |
+| `OverrideTypeMismatch(key, expected, detail)` | a [transaction](transactions.md) override of the wrong type |
 | `NestedTransactionNotAllowed` | a transaction inside another, under the default nesting policy |
 
 Every error has a `message`, and a `cause` when there is an underlying exception. `isFlagError` and `isProviderError`
 on `FeatureFlagError` group them by flag and by provider. By operation, each case is also an `EvaluationError` (raised
 by an evaluation, and by `track`), a `LifecycleError` (building an instance, `setProvider`, a provider's constructor)
-or a `TransactionError` (`transaction` itself), some of them more than one; the methods still declare
-`FeatureFlagError`.
+or a `TransactionError` (`transaction` itself), some of them more than one. Evaluating and `track` fail with
+`EvaluationError`, and `setProvider` with `LifecycleError`, so a `match` over the former need not name
+`ProviderInitializationFailed`. The `FeatureFlags` and `FeatureFlagsAdmin` factories still fail with a `Throwable`,
+since they can also fail with an `IllegalStateException`.
 
-Where a `Throwable` is wanted, `toThrowable` gives a `FeatureFlagException` carrying the error, its message and its
-cause, with no stack trace: `ff.boolean("dark-mode", false).mapError(FeatureFlagError.asThrowable).orDie`.
+A `FeatureFlagError` is also a `Throwable`, without a stack trace, so `.orDie` takes it as it is:
+`ff.boolean("dark-mode", false).orDie`. Its `getMessage` is `message` and its `getCause` is `cause`, or `null` for none.
 
 `FeatureFlagError.classify` sorts what a provider throws: network failures become `Unreachable`, HTTP 401 and 403
 `Unauthorized`, the rest `ProviderError`. Recover from the cases you expect and let the rest fail:

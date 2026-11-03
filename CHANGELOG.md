@@ -30,12 +30,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   **Deprecated:** the 13-parameter `fromAcquireAsync`. Its `evaluationTimeout`, `initTimeout`, `contextSource`,
   `fallbackLogging` and `maxAbandonedCalls` are `FeatureFlagsConfig` fields; the rest are `AcquireConfig` settings.
 
-- **`FeatureFlagError` by operation, and as a `Throwable`** (#653). Each case also extends one or more of the sealed
-  `FeatureFlagError.EvaluationError`, `LifecycleError` and `TransactionError`, by the operations that raise it; the
-  methods still declare `FeatureFlagError`, so nothing that matches on it changes. `toThrowable` (and
-  `FeatureFlagError.asThrowable`, for `mapError`) wraps an error in a `FeatureFlagException` with its message and
-  cause and no stack trace. `zio.openfeature.Compat` moved to `zio.openfeature.internal.Compat`; the old name is a
-  deprecated alias of the same types.
+- **`FeatureFlagError` by operation** (#653). Each case also extends one or more of the sealed
+  `FeatureFlagError.EvaluationError`, `LifecycleError` and `TransactionError`, by the operations that raise it. The
+  methods that declare them are under Changed.
 - **`FeatureFlagsConfig.withIsolatedApi`** (#652): a private `OpenFeatureAPI` for the instance, which owns it, so
   nothing else on the JVM shares its slot (`ApiOwnership.Isolated`). Building an instance on a slot that already holds
   another provider now logs a warning naming both: the SDK shuts the previous one down once the new one is ready.
@@ -115,6 +112,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- **`toThrowable`, `asThrowable`, `FeatureFlagException`, `EmptyFlagVariables` and `FeatureFlagError.isRecoverable`
+  are gone** (#653). A `FeatureFlagError` is a `Throwable` itself, so `.orDie` takes it directly. `EmptyFlagVariables`
+  was never raised. `isRecoverable` was `isFlagError` under a name that read as "worth retrying"; use `isFlagError`.
+  `ProviderStatus.isRecoverable` stays. `FeatureFlagError.unauthorized(reason, cause)` is gone: build
+  `Unauthorized(reason, Some(cause))`.
+
+- **`transaction` does not exist on Scala 2.13** (#653). Its error channel there was `Any`, which is what a typed
+  version would replace, so use `transactionEither`, whose `Either[E, TransactionError]` is the same information on
+  both Scala versions. Scala 3 keeps `transaction` with the union `E | TransactionError`. `zio.openfeature.Compat` and
+  its `OrError` are gone on both.
+
 - **`FeatureFlags.fromAcquireAsync` no longer takes its settings as named arguments** (#654). Use
   `fromAcquireAsync(acquire, fallback, config, acquireConfig)`: `evaluationTimeout`, `initTimeout`, `contextSource`,
   `fallbackLogging` and `maxAbandonedCalls` are `FeatureFlagsConfig` fields, and `compose`, `constructionRetry`,
@@ -138,6 +146,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`FeatureFlagError` is a `Throwable`, without a stack trace** (#653). `ff.boolean(k, d).orDie` dies with the error
+  itself. `getMessage` is `message` and `getCause` is `cause`, or null for none; equality, matching and `toString` are
+  those of the case class.
+- **Evaluation, `track` and `setProvider` fail with the sub-trait of what they can raise** (#653). `valueDetails` and
+  everything defined through it, on `FeatureFlags` and its companion, and the four `track` forms fail with
+  `FeatureFlagError.EvaluationError`; `FeatureFlagsAdmin.setProvider` with `LifecycleError`; `transaction` and
+  `transactionEither` with `TransactionError` besides the block's own error. An implementor of `valueDetails` or `track`
+  declares the narrower type. `FeatureFlagError.classify` returns an error that is both an `EvaluationError` and a
+  `LifecycleError`. The factories still fail with `Throwable`.
+- **`Unauthorized` and `Unreachable` have real fields, and `TypeMismatch` says `detail`** (#653).
+  `Unauthorized(reason, cause: Option[Throwable] = None)` keeps its cause as a field, so it takes part in equality and
+  `copy`; it was a hidden `var` that neither saw. `Unreachable(underlying)` is named as `ProviderError(underlying)` is
+  (it was `cause0`), and its `cause` is still `Some(underlying)`. The second `String` of `TypeMismatch` and
+  `OverrideTypeMismatch` is `detail` (it was `actual`): it holds a provider's message or a decode reason, not a type.
+  The `message` text is unchanged.
 - **`main` is the 2.0 line: no release comes before 2.0.0.** Breaking changes land directly on it, so it has no MiMa or
   TASTy-MiMa baseline for now, and the filters that excused 1.x breaks are gone. After 2.0.0 the baseline moves to it and
   the binary compatibility policy applies to 2.x. Snapshots from `main` can break between builds until then.

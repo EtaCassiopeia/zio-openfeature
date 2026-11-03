@@ -63,9 +63,6 @@ final private[openfeature] class FeatureFlagsLive(
   initTimeout: Duration = FeatureFlags.DefaultInitTimeout,
   // Cap on provider calls abandoned by the evaluation timeout and still running; see `withTimeout`.
   maxAbandonedCalls: Int = FeatureFlags.DefaultMaxAbandonedCalls,
-  // Whether `track` keeps a copy of each event and its merged context for `trackedEvents`. Only testkit-built
-  // instances set it: a production instance must not retain contexts, which routinely hold PII.
-  recordTracking: Boolean = false,
   // Previous providers a timed-out swap left registered nowhere; an owning instance shuts them down once settled.
   orphans: OrphanedProviders,
   // Named lifecycle points a test can hold a fiber at; a no-op in production.
@@ -903,7 +900,6 @@ final private[openfeature] class FeatureFlagsLive(
         state.zioApiHooksRef.set(List.empty) *>
         state.globalContextRef.set(EvaluationContext.empty) *>
         state.clientContextRef.set(EvaluationContext.empty) *>
-        state.trackRecorder.set(Chunk.empty) *>
         state.eventHub.shutdown *>
         // Only tear down the provider/API when this instance solely owns the API (the sole-owner factories). A
         // non-owning instance — a registry/domain client that shares its API, and possibly its provider, with sibling
@@ -949,38 +945,17 @@ final private[openfeature] class FeatureFlagsLive(
       )
       .flatMap { ofDetails =>
         effectiveContext(context).flatMap { merged =>
-          recordTrack(eventName, merged, details) *>
-            ZIO
-              .attemptBlocking {
-                val ofContext = toJavaContext(merged)
-                ofDetails match {
-                  case Some(d) => client.track(eventName, ofContext, d)
-                  case None    => client.track(eventName, ofContext)
-                }
+          ZIO
+            .attemptBlocking {
+              val ofContext = toJavaContext(merged)
+              ofDetails match {
+                case Some(d) => client.track(eventName, ofContext, d)
+                case None    => client.track(eventName, ofContext)
               }
-              .mapError(e => FeatureFlagError.classify(e))
+            }
+            .mapError(e => FeatureFlagError.classify(e))
         }
       }
-
-  // The recorder is bounded: when full, the oldest entries are dropped so long-running apps that
-  // call `track` per request don't accumulate events (and their merged contexts) without limit.
-  private def recordTrack(
-    eventName: String,
-    merged: EvaluationContext,
-    details: Option[TrackingEventDetails]
-  ): UIO[Unit] =
-    ZIO
-      .when(recordTracking)(state.trackRecorder.update { rec =>
-        val appended = rec :+ ((eventName, merged, details))
-        val overflow = appended.length - FeatureFlagsState.MaxTrackedEvents
-        if (overflow > 0) appended.drop(overflow) else appended
-      })
-      .unit
-
-  @scala.annotation.nowarn("cat=deprecation")
-  override def trackedEvents: UIO[List[(String, EvaluationContext, Option[TrackingEventDetails])]] =
-    state.trackRecorder.get.map(_.toList)
-
 }
 
 private[openfeature] object FeatureFlagsLive {

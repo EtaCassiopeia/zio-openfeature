@@ -20,7 +20,7 @@ object BoundDomainSpec extends ZIOSpecDefault {
       ZIO.scoped {
         for {
           provider <- TestFeatureProvider.make
-          _        <- FeatureFlags.fromProvider(provider, FeatureFlagsConfig(domain = Some("checkout"))).build
+          _        <- FeatureFlags.fromProvider(provider, FeatureFlagsConfig.default.withDomain("checkout")).build
           domain   <- provider.boundDomain
         } yield assertTrue(domain.contains("checkout"))
       }

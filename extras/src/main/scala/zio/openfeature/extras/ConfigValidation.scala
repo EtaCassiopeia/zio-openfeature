@@ -6,8 +6,8 @@ import zio.openfeature.FeatureFlagError
 /** Bounds checks for the wrapper configs. Each violation names the config class, the field, the rule and the offending
   * value, and every violation of a config is reported together.
   *
-  * The checks live here rather than on the config companions: an explicit companion of a case class drops the
-  * `AbstractFunctionN` parent Scala 2.13 gives the synthetic one, which breaks binary compatibility.
+  * The checks run when a provider is built from a config, not when the config is: a config is a plain value, and the
+  * constructors that take one report every violation together.
   */
 private[extras] object ConfigValidation {
 

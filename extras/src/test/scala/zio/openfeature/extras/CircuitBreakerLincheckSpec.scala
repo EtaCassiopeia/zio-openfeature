@@ -15,7 +15,7 @@ import zio.test._
   */
 class CircuitBreakerLincheckTest {
   private val breaker = CircuitBreaker(
-    CircuitBreakerConfig(failureThreshold = 2, halfOpenMaxCalls = 2),
+    CircuitBreakerConfig.default.withFailureThreshold(2).withHalfOpenMaxCalls(2),
     new Ticker { def nanos(): Long = 0L }
   )
 

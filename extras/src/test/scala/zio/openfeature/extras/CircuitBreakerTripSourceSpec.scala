@@ -57,7 +57,7 @@ object CircuitBreakerTripSourceSpec extends ZIOSpecDefault {
   }
 
   private val ctx    = new ImmutableContext()
-  private val config = CircuitBreakerProviderConfig(resetTimeout = 1.minute, stateCheckInterval = 1.second)
+  private val config = CircuitBreakerProviderConfig.default.withResetTimeout(1.minute).withStateCheckInterval(1.second)
 
   private def rejected(cb: CircuitBreakerProvider): Boolean =
     scala.util.Try(cb.getBooleanEvaluation("flag", false, ctx)).isFailure

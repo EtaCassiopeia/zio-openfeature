@@ -24,7 +24,7 @@ object NamedProviderSpec extends ZIOSpecDefault {
     FeatureFlags
       .fromProvider(
         FeatureFlags.multiProvider(providers.toList),
-        FeatureFlagsConfig(),
+        FeatureFlagsConfig.default,
         statusRef = None,
         apiOverride = Some(OpenFeatureAPI.createIsolated())
       )

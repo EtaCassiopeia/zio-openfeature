@@ -141,9 +141,7 @@ object AcquireNoNotReadyWindowSpec extends ZIOSpecDefault {
             .fromAcquireAsync(
               acquire,
               fallbacks.effect,
-              FeatureFlagsConfig(
-                initTimeout = 300.millis
-              ),
+              FeatureFlagsConfig.default.withInitTimeout(300.millis),
               AcquireConfig.default
                 .withOnConstructionError(e => errP.succeed(e).unit)
             )
@@ -181,7 +179,7 @@ object AcquireNoNotReadyWindowSpec extends ZIOSpecDefault {
             .fromAcquireAsync(
               acquire,
               fallbacks.effect,
-              FeatureFlagsConfig(),
+              FeatureFlagsConfig.default,
               AcquireConfig.default
                 .withCompose((r, _) => r)
                 .withOnConstructionError(e => errP.succeed(e).unit)
@@ -216,7 +214,7 @@ object AcquireNoNotReadyWindowSpec extends ZIOSpecDefault {
             .fromAcquireAsync(
               ZIO.succeed(real),
               fallbacks.effect,
-              FeatureFlagsConfig(),
+              FeatureFlagsConfig.default,
               AcquireConfig.default
                 .withCompose((r, _) => r)
             )
@@ -284,7 +282,7 @@ object AcquireNoNotReadyWindowSpec extends ZIOSpecDefault {
             .fromAcquireAsync(
               acquire,
               fallbacks.effect,
-              FeatureFlagsConfig(),
+              FeatureFlagsConfig.default,
               AcquireConfig.default
                 .withOnConstructionError(e => errP.succeed(e).unit)
             )
@@ -321,7 +319,7 @@ object AcquireNoNotReadyWindowSpec extends ZIOSpecDefault {
             .fromAcquireAsync(
               ZIO.succeed(real),
               fallbacks.effect,
-              FeatureFlagsConfig(),
+              FeatureFlagsConfig.default,
               AcquireConfig.default
                 // Initialize the real provider through the composed stack, as MultiProvider does.
                 .withCompose((r, _) =>

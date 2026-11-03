@@ -88,7 +88,7 @@ object LifecycleTeardownSpec extends ZIOSpecDefault {
         }
         _ <- ZIO.scoped {
           for {
-            ff <- zio.openfeature.internal.FeatureFlagsFactories.buildWithTracking(
+            ff <- zio.openfeature.internal.FeatureFlagsFactories.build(
               a,
               domain = Some(s"teardown-${java.util.UUID.randomUUID()}"),
               version = None,
@@ -114,7 +114,7 @@ object LifecycleTeardownSpec extends ZIOSpecDefault {
       val p1 = new Counting("p1", blocking = false)
       for {
         ff <- ZIO.scoped {
-          zio.openfeature.internal.FeatureFlagsFactories.buildWithTracking(
+          zio.openfeature.internal.FeatureFlagsFactories.build(
             p1,
             domain = Some(s"teardown-${java.util.UUID.randomUUID()}"),
             version = None,
@@ -135,7 +135,7 @@ object LifecycleTeardownSpec extends ZIOSpecDefault {
       val p2 = new Counting("p2", blocking = false)
       for {
         ff <- ZIO.scoped {
-          zio.openfeature.internal.FeatureFlagsFactories.buildWithTracking(
+          zio.openfeature.internal.FeatureFlagsFactories.build(
             new Counting("p1", blocking = false),
             domain = Some(s"teardown-${java.util.UUID.randomUUID()}"),
             version = None,
@@ -156,7 +156,7 @@ object LifecycleTeardownSpec extends ZIOSpecDefault {
       val p2     = new Counting("p2", blocking = false)
       for {
         ff <- ZIO.scoped {
-          zio.openfeature.internal.FeatureFlagsFactories.buildWithTracking(
+          zio.openfeature.internal.FeatureFlagsFactories.build(
             p1,
             domain = Some(domain),
             version = None,
@@ -202,7 +202,7 @@ object LifecycleTeardownSpec extends ZIOSpecDefault {
         }
         scope <- Scope.make
         ff    <- scope.extend[Any](
-          zio.openfeature.internal.FeatureFlagsFactories.buildWithTracking(
+          zio.openfeature.internal.FeatureFlagsFactories.build(
             a,
             domain = Some(s"teardown-${java.util.UUID.randomUUID()}"),
             version = None,

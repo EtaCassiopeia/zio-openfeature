@@ -89,7 +89,7 @@ object Evaluating:
 
   // --8<-- [start:instance-config]
   val instanceConfig: FeatureFlagsConfig =
-    FeatureFlagsConfig()
+    FeatureFlagsConfig.default
       .withEvaluationTimeout(500.millis) // every evaluation; the default is 1 second
       // .withoutEvaluationTimeout                               // or no timeout at all
       .withMaxAbandonedCalls(128)                                // cap on timed-out calls still running; default 256

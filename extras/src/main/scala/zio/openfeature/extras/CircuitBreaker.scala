@@ -30,12 +30,40 @@ object Ticker {
   *   How long a single half-open probe may hold the probe slot before another caller may steal it. Guards against a
   *   probe that dies without recording an outcome pinning the circuit half-open forever. Must be `> 0`.
   */
-final case class CircuitBreakerConfig(
-  failureThreshold: Int = CircuitBreaker.DefaultFailureThreshold,
-  resetTimeout: Duration = CircuitBreaker.DefaultResetTimeout,
-  halfOpenMaxCalls: Int = CircuitBreaker.DefaultHalfOpenMaxCalls,
-  probeTimeout: Duration = CircuitBreaker.DefaultProbeTimeout
-)
+final class CircuitBreakerConfig private (
+  val failureThreshold: Int,
+  val resetTimeout: Duration,
+  val halfOpenMaxCalls: Int,
+  val probeTimeout: Duration
+) {
+  private def copy(
+    failureThreshold: Int = failureThreshold,
+    resetTimeout: Duration = resetTimeout,
+    halfOpenMaxCalls: Int = halfOpenMaxCalls,
+    probeTimeout: Duration = probeTimeout
+  ): CircuitBreakerConfig = new CircuitBreakerConfig(failureThreshold, resetTimeout, halfOpenMaxCalls, probeTimeout)
+
+  def withFailureThreshold(n: Int): CircuitBreakerConfig  = copy(failureThreshold = n)
+  def withResetTimeout(d: Duration): CircuitBreakerConfig = copy(resetTimeout = d)
+  def withHalfOpenMaxCalls(n: Int): CircuitBreakerConfig  = copy(halfOpenMaxCalls = n)
+  def withProbeTimeout(d: Duration): CircuitBreakerConfig = copy(probeTimeout = d)
+
+  override def toString: String =
+    "CircuitBreakerConfig(" +
+      s"failureThreshold=$failureThreshold, resetTimeout=$resetTimeout, " +
+      s"halfOpenMaxCalls=$halfOpenMaxCalls, probeTimeout=$probeTimeout)"
+}
+
+object CircuitBreakerConfig {
+
+  /** The `CircuitBreaker.Default*` values. */
+  val default: CircuitBreakerConfig = new CircuitBreakerConfig(
+    CircuitBreaker.DefaultFailureThreshold,
+    CircuitBreaker.DefaultResetTimeout,
+    CircuitBreaker.DefaultHalfOpenMaxCalls,
+    CircuitBreaker.DefaultProbeTimeout
+  )
+}
 
 /** Why the circuit was opened — determines which recovery applies. */
 sealed private[extras] trait OpenReason extends Product with Serializable
@@ -80,8 +108,8 @@ private[extras] object GateResult {
 }
 
 /** The state machine behind [[CircuitBreakerProvider]]: three states, Closed, Open and Half-Open. It is an internal
-  * engine — use [[CircuitBreakerProvider]]; standalone construction is deprecated, since the shape of its gate result
-  * is internal and still changing.
+  * engine — use [[CircuitBreakerProvider]]; it has no public constructor, since the shape of its gate result is
+  * internal and still changing.
   *
   * This class manages only the state transitions and failure counting. It has no knowledge of OpenFeature, providers,
   * or ZIO effects — it is a pure concurrency-safe state machine backed by `AtomicReference` with CAS.
@@ -354,15 +382,6 @@ object CircuitBreaker {
 
   /** Proof that a call was admitted, tied to the circuit state that admitted it. */
   final private[extras] case class Permit(epoch: Long)
-
-  /** @throws IllegalArgumentException
-    *   if `config` violates the bounds documented on [[CircuitBreakerConfig]]
-    */
-  @deprecated("Use CircuitBreakerProvider; the standalone breaker's gate result is internal", "1.2.0")
-  def apply(
-    config: CircuitBreakerConfig = CircuitBreakerConfig()
-  ): CircuitBreaker =
-    apply(config, Ticker.system)
 
   private[extras] def apply(
     config: CircuitBreakerConfig,

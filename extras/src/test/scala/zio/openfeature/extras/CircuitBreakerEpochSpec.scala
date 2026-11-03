@@ -19,12 +19,11 @@ object CircuitBreakerEpochSpec extends ZIOSpecDefault {
     probeTimeout: Duration = 1.hour
   ): (CircuitBreaker, ManualTicker) = {
     val ticker = new ManualTicker
-    val config = CircuitBreakerConfig(
-      failureThreshold = failureThreshold,
-      resetTimeout = 1.second,
-      halfOpenMaxCalls = 1,
-      probeTimeout = probeTimeout
-    )
+    val config = CircuitBreakerConfig.default
+      .withFailureThreshold(failureThreshold)
+      .withResetTimeout(1.second)
+      .withHalfOpenMaxCalls(1)
+      .withProbeTimeout(probeTimeout)
     (CircuitBreaker(config, ticker), ticker)
   }
 

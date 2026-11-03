@@ -144,6 +144,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   getters, `*OrDefault` and `value` are one method each with defaulted `ctx` and `options`: a caller's source is
   unchanged, a method reference to a particular arity or an override is not. The `FlagDef` forms keep their arities.
 
+- **The deprecated members are gone** (#648). Each was deprecated with a replacement; 2.0 is the release that can remove
+  them.
+  - `FeatureFlags` factories (0.2.0), all forwards to `fromProvider(provider, config)`: `fromProvider(provider,
+    evaluationTimeout)` and `(provider, evaluationTimeout, initTimeout)`, `fromProviderWithDomain(provider, domain)` and
+    `(provider, domain, version)`, `fromProviderWithHooks`, `fromMultiProvider(providers)` and `(providers, strategy)`,
+    `fromProviderAsync(provider, evaluationTimeout)` and `(provider, evaluationTimeout, initTimeout)`,
+    `fromProviderWithDomainAsync(provider, domain)` and `(provider, domain, version)`, `fromProviderWithHooksAsync`,
+    `fromMultiProviderAsync(providers)` and `(providers, strategy)`. Use `fromProvider(provider, config)`, with
+    `.withAsyncInit` for the async ones.
+  - `FeatureFlags.trackedEvents`, on the trait and the companion, and the recorder behind it. It was empty outside
+    testkit-built instances; use `TestFeatureProvider.trackedEvents`, which lists what the provider received.
+  - `OFREPProvider()`, `OFREPProvider(baseUrl)` and `OFREPProvider.fromOptions(options)`: use `OFREPProvider.make`,
+    `scoped` or `layer`, which validate the URL and return the `OFREPFeatureProvider` with `Long` support.
+  - `TestFeatureProvider.scopedLayer` and `scopedAsyncLayer`, in every overload: use `layer` and `asyncLayer`.
+  - `CircuitBreaker.apply(config)`: use `CircuitBreakerProvider`; the standalone breaker has no public constructor.
+  - `AttributeValue.isNull`: use `isEmptyValue`.
+  - `FlagType.wireType`: override `wire` instead; the default `wire` now reads `typeName`.
+
 ### Changed
 
 - **`FeatureFlagError` is a `Throwable`, without a stack trace** (#653). `ff.boolean(k, d).orDie` dies with the error
@@ -185,8 +203,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `OptimizelyProviderConfig`, and `fromAcquireAsync`'s 13-parameter descriptor), and 1.1.0 also the `build`,
   `buildAsync`, `make` and `transaction` overloads. The build now checks the Scala 3 artifacts' TASTy too (TASTy-MiMa),
   baselines against 1.2.1, and fails CI on a compatibility filter for a public symbol before a major release.
-  `RELEASING.md` states the policy, including the freeze on new fields in the public configuration case classes for
-  the rest of 1.x.
+  `RELEASING.md` states the policy.
 
 - **The library registers a wrapper of each provider and awaits its `initialize()` directly** (#697). A swap, a build
   and a timed-out swap's previous provider settle on the outcome the wrapper reports when `initialize()` returns or
@@ -204,6 +221,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fallback to the real provider is a `ManagedProvider` pointed at the new provider, decided in the lifecycle step, so
   the separate switchable provider is gone. A provider bound to several domains of a registry is one registration,
   initialized and shut down once; two equal but distinct providers are two.
+- **The configuration types are final classes built with `with*` methods** (#648). `FeatureFlagsConfig`,
+  `EvaluationOptions`, `OptimizelyProviderConfig`, `OFREPProviderConfig`, `CachingConfig`, `CircuitBreakerConfig` and
+  `CircuitBreakerProviderConfig` are no longer case classes: no positional or named `apply`, no `copy`, no `unapply`, no
+  structural `equals`. Start from the companion's `default` (`FeatureFlagsConfig.default`, `CachingConfig.default`, ...;
+  `EvaluationOptions.empty` as before) and call a `with*` method per field; `OptimizelyProviderConfig(sdkKey)` and
+  `OFREPProviderConfig(baseUrl)` take their required field and then `with*`. Migrating: `FeatureFlagsConfig()` is
+  `FeatureFlagsConfig.default`; `FeatureFlagsConfig(initMode = InitMode.Async, domain = Some("d"))` is
+  `FeatureFlagsConfig.default.withAsyncInit.withDomain("d")`; `CachingConfig(ttl = t)` is `CachingConfig.default.withTtl(t)`;
+  an `Option` field takes the bare value (`withDatafileUrl(url)`, not `Some(url)`); `config.copy(x = y)` is
+  `config.withX(y)`. Defaults, the `require` on `maxAbandonedCalls` (now also on `withMaxAbandonedCalls`) and the
+  bounds the wrappers check when they are built are unchanged. Each config has a `toString` naming its fields;
+  `OptimizelyProviderConfig` prints its SDK key as `<redacted>` and `OFREPProviderConfig` prints header names without
+  their values. Adding a knob is now one `with*` method and a private field, and breaks no caller.
+- **`MultiProviderStrategy.Strategy` is this library's own type** (#648). It was an alias of the Java SDK's
+  `dev.openfeature.sdk.multiprovider.Strategy`, so a change to the SDK's interface changed this API (SDK 1.23.0 did).
+  It is now a sealed trait with `MultiProviderStrategy.FirstMatch`, `FirstSuccessful` and `Custom(strategy)`, where a
+  `MultiProviderStrategy.CustomStrategy` has the SDK interface's `evaluate` with a Scala `List` of providers and a Scala
+  function in place of the Java ones. `MultiProviderStrategy.firstMatch` and `firstSuccessful` return the first two.
+  `FeatureFlags.multiProvider` takes this type. Migrating: a class that extended the SDK's `Strategy` extends
+  `CustomStrategy` and is passed as `MultiProviderStrategy.Custom(it)`; `new FirstMatchStrategy()` is
+  `MultiProviderStrategy.FirstMatch`.
 
 ### Documentation
 

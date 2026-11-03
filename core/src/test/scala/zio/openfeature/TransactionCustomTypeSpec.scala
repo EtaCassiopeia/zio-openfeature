@@ -80,7 +80,7 @@ object TransactionCustomTypeSpec extends ZIOSpecDefault {
 
   implicit val tierFlagType: FlagType[Tier] = new FlagType[Tier] {
     def typeName: String                         = "Tier"
-    override def wireType: String                = "String"
+    override def wire: WireType                  = WireType.String
     def defaultValue: Tier                       = Tier.Free
     def decode(value: Any): Either[String, Tier] = Tier.parseStrict(value)
     override def encode(value: Tier): Any        = Tier.render(value)

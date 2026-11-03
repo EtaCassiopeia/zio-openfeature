@@ -88,7 +88,7 @@ object FallbackLoggingSpec extends ZIOSpecDefault {
       ZIO.scoped {
         for {
           base  <- baseline
-          ff    <- layer(FeatureFlagsConfig()).build.map(_.get[FeatureFlags])
+          ff    <- layer(FeatureFlagsConfig.default).build.map(_.get[FeatureFlags])
           v1    <- ff.booleanOrDefault("hot", default = true)
           _     <- ff.booleanOrDefault("hot", default = true)
           _     <- ff.stringOrDefault("hot", default = "s") // same key, different type — same bucket
@@ -115,7 +115,7 @@ object FallbackLoggingSpec extends ZIOSpecDefault {
       ZIO.scoped {
         for {
           base <- baseline
-          ff   <- layer(FeatureFlagsConfig()).build.map(_.get[FeatureFlags])
+          ff   <- layer(FeatureFlagsConfig.default).build.map(_.get[FeatureFlags])
           res  <- ff.resolveOrDefault[Boolean]("k", default = false)
           logs <- warnings(base)
         } yield assertTrue(
@@ -131,7 +131,8 @@ object FallbackLoggingSpec extends ZIOSpecDefault {
       ZIO.scoped {
         for {
           base <- baseline
-          ff   <- layer(FeatureFlagsConfig().withFallbackLogging(FallbackLogging.Always)).build.map(_.get[FeatureFlags])
+          ff   <- layer(FeatureFlagsConfig.default.withFallbackLogging(FallbackLogging.Always)).build
+            .map(_.get[FeatureFlags])
           _    <- ZIO.foreachDiscard(1 to 4)(_ => ff.booleanOrDefault("k", default = true))
           logs <- warnings(base)
         } yield assertTrue(logs.length == 4, logs.forall(!_.contains("suppressed")))
@@ -141,7 +142,8 @@ object FallbackLoggingSpec extends ZIOSpecDefault {
       ZIO.scoped {
         for {
           base <- baseline
-          ff   <- layer(FeatureFlagsConfig().withFallbackLogging(FallbackLogging.Off)).build.map(_.get[FeatureFlags])
+          ff   <- layer(FeatureFlagsConfig.default.withFallbackLogging(FallbackLogging.Off)).build
+            .map(_.get[FeatureFlags])
           _    <- ZIO.foreachDiscard(1 to 4)(_ => ff.booleanOrDefault("k", default = true))
           logs <- warnings(base)
         } yield assertTrue(logs.isEmpty)
@@ -151,7 +153,7 @@ object FallbackLoggingSpec extends ZIOSpecDefault {
       ZIO.scoped {
         for {
           base <- baseline
-          ff   <- layer(FeatureFlagsConfig()).build.map(_.get[FeatureFlags])
+          ff   <- layer(FeatureFlagsConfig.default).build.map(_.get[FeatureFlags])
           d    <- ff.booleanDetails("k", true).either
           logs <- warnings(base)
         } yield assertTrue(d == Left(FeatureFlagError.FlagNotFound("k")), logs.isEmpty)
@@ -161,7 +163,8 @@ object FallbackLoggingSpec extends ZIOSpecDefault {
       ZIO.scoped {
         for {
           base <- baseline
-          ff   <- layer(FeatureFlagsConfig().withFallbackLogging(FallbackLogging.Always)).build.map(_.get[FeatureFlags])
+          ff   <- layer(FeatureFlagsConfig.default.withFallbackLogging(FallbackLogging.Always)).build
+            .map(_.get[FeatureFlags])
           v    <- ff.booleanOrDefault("known", default = false)
           r    <- ff.resolveOrDefault[Boolean]("known", default = false)
           logs <- warnings(base)
@@ -172,7 +175,7 @@ object FallbackLoggingSpec extends ZIOSpecDefault {
       ZIO.scoped {
         for {
           base <- baseline
-          ff   <- layer(FeatureFlagsConfig().withAsyncInit.withFallbackLogging(FallbackLogging.Always)).build
+          ff   <- layer(FeatureFlagsConfig.default.withAsyncInit.withFallbackLogging(FallbackLogging.Always)).build
             .map(_.get[FeatureFlags])
           _    <- Live.live(ff.awaitReady(10.seconds))
           _    <- ZIO.foreachDiscard(1 to 3)(_ => ff.booleanOrDefault("k", default = true))
@@ -189,7 +192,7 @@ object FallbackLoggingSpec extends ZIOSpecDefault {
             override def finallyAfter(c: HookContext, d: Option[FlagResolution[_]], h: HookHints): UIO[Unit] =
               seen.update(_ + 1)
           }
-          ff   <- layer(FeatureFlagsConfig().withHook(hook)).build.map(_.get[FeatureFlags])
+          ff   <- layer(FeatureFlagsConfig.default.withHook(hook)).build.map(_.get[FeatureFlags])
           _    <- ZIO.foreachDiscard(1 to 5)(_ => ff.booleanOrDefault("k", default = true))
           n    <- seen.get
           logs <- warnings(base)
@@ -207,9 +210,7 @@ object FallbackLoggingSpec extends ZIOSpecDefault {
             .fromAcquireAsync(
               acquire,
               fallback,
-              FeatureFlagsConfig(
-                fallbackLogging = FallbackLogging.Off
-              ),
+              FeatureFlagsConfig.default.withFallbackLogging(FallbackLogging.Off),
               AcquireConfig.default
             )
             .build

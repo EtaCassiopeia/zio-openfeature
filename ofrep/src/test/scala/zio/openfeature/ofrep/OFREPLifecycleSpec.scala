@@ -50,7 +50,7 @@ object OFREPLifecycleSpec extends ZIOSpecDefault {
         } yield assertTrue(shutdown, terminated)
       },
       test("layer(config) builds and releases without hanging") {
-        val config = OFREPProviderConfig(ValidUrl, requestTimeout = Some(Duration.ofSeconds(3)))
+        val config = OFREPProviderConfig(ValidUrl).withRequestTimeout(Duration.ofSeconds(3))
         for {
           _ <- ZIO.scoped(OFREPProvider.layer(config).build.unit)
         } yield assertCompletes
@@ -58,12 +58,10 @@ object OFREPLifecycleSpec extends ZIOSpecDefault {
     ),
     suite("Fix 2 — OFREPProviderConfig factory")(
       test("make(config) with timeouts + a header builds an OFREP provider") {
-        val config = OFREPProviderConfig(
-          baseUrl = ValidUrl,
-          requestTimeout = Some(Duration.ofSeconds(5)),
-          connectTimeout = Some(Duration.ofSeconds(2)),
-          headers = Map("Authorization" -> List("Bearer test-token"))
-        )
+        val config = OFREPProviderConfig(ValidUrl)
+          .withRequestTimeout(Duration.ofSeconds(5))
+          .withConnectTimeout(Duration.ofSeconds(2))
+          .withHeaders(Map("Authorization" -> List("Bearer test-token")))
         for {
           provider <- OFREPProvider.make(config)
         } yield
@@ -72,7 +70,7 @@ object OFREPLifecycleSpec extends ZIOSpecDefault {
       },
       test("make(config) with a proxy selector builds an OFREP provider") {
         val proxy  = java.net.ProxySelector.getDefault
-        val config = OFREPProviderConfig(baseUrl = ValidUrl, proxy = Some(proxy))
+        val config = OFREPProviderConfig(ValidUrl).withProxy(proxy)
         for {
           provider <- OFREPProvider.make(config)
         } yield
@@ -82,7 +80,7 @@ object OFREPLifecycleSpec extends ZIOSpecDefault {
       test("make(config) with an invalid baseUrl fails fast with InvalidConfiguration (no pool leak)") {
         // Validation runs before any executor/options are built, so the rejection cannot orphan a pool.
         val config =
-          OFREPProviderConfig(baseUrl = "ftp://flags.example.com", requestTimeout = Some(Duration.ofSeconds(5)))
+          OFREPProviderConfig("ftp://flags.example.com").withRequestTimeout(Duration.ofSeconds(5))
         for {
           result <- OFREPProvider.make(config).either
         } yield assertTrue(
@@ -92,7 +90,7 @@ object OFREPLifecycleSpec extends ZIOSpecDefault {
         )
       },
       test("make(config) with a null baseUrl fails fast with InvalidConfiguration") {
-        val config = OFREPProviderConfig(baseUrl = null)
+        val config = OFREPProviderConfig(null)
         for {
           result <- OFREPProvider.make(config).either
         } yield assertTrue(
@@ -101,7 +99,7 @@ object OFREPLifecycleSpec extends ZIOSpecDefault {
         )
       },
       test("scoped(config) builds and releases without hanging") {
-        val config = OFREPProviderConfig(ValidUrl, headers = Map("X-Env" -> List("test")))
+        val config = OFREPProviderConfig(ValidUrl).withHeaders(Map("X-Env" -> List("test")))
         for {
           _ <- ZIO.scoped(OFREPProvider.scoped(config).unit)
         } yield assertCompletes

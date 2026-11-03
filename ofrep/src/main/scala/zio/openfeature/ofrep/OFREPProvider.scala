@@ -28,13 +28,38 @@ import scala.jdk.CollectionConverters._
   * @param proxy
   *   Optional `java.net.ProxySelector` routing OFREP HTTP traffic through a proxy; `None` uses the JVM default
   */
-final case class OFREPProviderConfig(
-  baseUrl: String,
-  requestTimeout: Option[java.time.Duration] = None,
-  connectTimeout: Option[java.time.Duration] = None,
-  headers: Map[String, List[String]] = Map.empty,
-  proxy: Option[java.net.ProxySelector] = None
-)
+final class OFREPProviderConfig private (
+  val baseUrl: String,
+  val requestTimeout: Option[java.time.Duration],
+  val connectTimeout: Option[java.time.Duration],
+  val headers: Map[String, List[String]],
+  val proxy: Option[java.net.ProxySelector]
+) {
+  private def copy(
+    baseUrl: String = baseUrl,
+    requestTimeout: Option[java.time.Duration] = requestTimeout,
+    connectTimeout: Option[java.time.Duration] = connectTimeout,
+    headers: Map[String, List[String]] = headers,
+    proxy: Option[java.net.ProxySelector] = proxy
+  ): OFREPProviderConfig = new OFREPProviderConfig(baseUrl, requestTimeout, connectTimeout, headers, proxy)
+
+  def withBaseUrl(url: String): OFREPProviderConfig                    = copy(baseUrl = url)
+  def withRequestTimeout(d: java.time.Duration): OFREPProviderConfig   = copy(requestTimeout = Some(d))
+  def withConnectTimeout(d: java.time.Duration): OFREPProviderConfig   = copy(connectTimeout = Some(d))
+  def withHeaders(h: Map[String, List[String]]): OFREPProviderConfig   = copy(headers = h)
+  def withProxy(selector: java.net.ProxySelector): OFREPProviderConfig = copy(proxy = Some(selector))
+
+  // Header values are credentials (an `Authorization` bearer token), so only the names are printed.
+  override def toString: String =
+    s"OFREPProviderConfig(baseUrl=$baseUrl, requestTimeout=$requestTimeout, connectTimeout=$connectTimeout, " +
+      s"headers=${headers.keys.mkString("[", ", ", "]")} (values redacted), proxy=$proxy)"
+}
+
+object OFREPProviderConfig {
+
+  /** A config for `baseUrl` with the contrib provider's timeouts, no extra headers and the JVM's default proxy. */
+  def apply(baseUrl: String): OFREPProviderConfig = new OFREPProviderConfig(baseUrl, None, None, Map.empty, None)
+}
 
 /** Scala-friendly factories for the OpenFeature Java SDK's OFREP contrib provider
   * ([[dev.openfeature.contrib.providers.ofrep.OfrepProvider]]).
@@ -45,10 +70,8 @@ final case class OFREPProviderConfig(
   * `FeatureFlags.fromProviderAsync` like any other provider. It wraps the contrib provider (reachable as `.underlying`)
   * and adds the `getLongEvaluation` the contrib one lacks, so `FeatureFlags.long` reads integer flags exactly.
   *
-  * '''Recommended''': use [[make]] / [[layer]] for validated construction. The legacy throwing factories (`apply`,
-  * `fromOptions`) are kept for backwards compatibility but flagged deprecated — they accept any `baseUrl` string and
-  * surface configuration mistakes only at the first evaluation, as opaque `ProviderError(MalformedURLException)`. They
-  * also still return the bare contrib `OfrepProvider`, whose long reads fail with `TYPE_MISMATCH` for integer flags.
+  * Construction goes through [[make]], [[scoped]] or [[layer]], which validate the base URL up front: a configuration
+  * mistake fails at construction as `FeatureFlagError.InvalidConfiguration`, not at the first evaluation.
   *
   * '''Experimental:''' the underlying contrib provider artifact is at version 0.0.2. The OFREP protocol itself is
   * pre-1.0; both the wire format and this Scala facade may evolve in breaking ways. Pin the dependency deliberately.
@@ -200,34 +223,6 @@ object OFREPProvider {
   /** ZLayer from an [[OFREPProviderConfig]]. Owns the provider lifecycle — see [[layer(baseUrl:String)*]]. */
   def layer(config: OFREPProviderConfig): ZLayer[Any, FeatureFlagError.InvalidConfiguration, OFREPFeatureProvider] =
     ZLayer.scoped(scoped(config))
-
-  /** Create an OFREP provider with the contrib provider's built-in default options (baseUrl defaults to whatever the
-    * contrib library declares — currently `http://localhost:8016`).
-    *
-    * @deprecated
-    *   Use `OFREPProvider.make(...)` or `OFREPProvider.layer(...)` for validated construction.
-    */
-  @deprecated("Use OFREPProvider.make(...) or OFREPProvider.layer(...) for validated construction", "0.2.0")
-  def apply(): OfrepProvider =
-    OfrepProvider.constructProvider(daemonOptionsBuilder().build())
-
-  /** Create an OFREP provider pointed at a specific endpoint, otherwise using contrib defaults.
-    *
-    * @deprecated
-    *   Use `OFREPProvider.make(baseUrl)` or `OFREPProvider.layer(baseUrl)` for validated construction.
-    */
-  @deprecated("Use OFREPProvider.make(baseUrl) or OFREPProvider.layer(baseUrl) for validated construction", "0.2.0")
-  def apply(baseUrl: String): OfrepProvider =
-    OfrepProvider.constructProvider(daemonOptionsBuilder().baseUrl(baseUrl).build())
-
-  /** Create an OFREP provider with a fully configured [[OfrepProviderOptions]].
-    *
-    * @deprecated
-    *   Use `OFREPProvider.make(options)` or `OFREPProvider.layer(options)` for validated construction.
-    */
-  @deprecated("Use OFREPProvider.make(options) or OFREPProvider.layer(options) for validated construction", "0.2.0")
-  def fromOptions(options: OfrepProviderOptions): OfrepProvider =
-    OfrepProvider.constructProvider(options)
 
   // Options assembly
 

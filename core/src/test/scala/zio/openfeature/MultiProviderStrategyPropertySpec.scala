@@ -8,7 +8,6 @@ import dev.openfeature.sdk.{
   OpenFeatureAPI,
   Value
 }
-import dev.openfeature.sdk.multiprovider.Strategy
 import zio._
 import zio.openfeature.internal.ProviderEvaluations
 import zio.openfeature.testsupport.PropertyBudget
@@ -76,13 +75,13 @@ object MultiProviderStrategyPropertySpec extends ZIOSpecDefault {
       case (Throws, _) :: _               => None
     }
 
-  private def run(answers: List[Answer], strategy: Strategy): UIO[FlagResolution[String]] =
+  private def run(answers: List[Answer], strategy: MultiProviderStrategy.Strategy): UIO[FlagResolution[String]] =
     ZIO.scoped {
       val members = answers.zipWithIndex.map { case (a, i) => new Member(i, a): FeatureProvider }
       FeatureFlags
         .fromProvider(
           FeatureFlags.multiProvider(members, strategy),
-          FeatureFlagsConfig(),
+          FeatureFlagsConfig.default,
           statusRef = None,
           apiOverride = Some(OpenFeatureAPI.createIsolated())
         )

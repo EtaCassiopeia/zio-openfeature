@@ -45,7 +45,8 @@ object BreakerStaleReportingSpec extends ZIOSpecDefault {
       ProviderEvaluations.of(d, "DEFAULT")
   }
 
-  private val polling = CircuitBreakerProviderConfig(stateCheckInterval = Duration.Zero, resetTimeout = 1.minute)
+  private val polling =
+    CircuitBreakerProviderConfig.default.withResetTimeout(1.minute).withStateCheckInterval(Duration.Zero)
 
   private def rejected(cb: CircuitBreakerProvider): Boolean =
     scala.util.Try(cb.getBooleanEvaluation("flag", false, ctx)).isFailure
@@ -63,7 +64,7 @@ object BreakerStaleReportingSpec extends ZIOSpecDefault {
     },
     test("a circuit a STALE event opened reports STALE") {
       val delegate = new Settable
-      val cb       = CircuitBreakerProvider(delegate, CircuitBreakerProviderConfig(resetTimeout = 1.minute))
+      val cb       = CircuitBreakerProvider(delegate, CircuitBreakerProviderConfig.default.withResetTimeout(1.minute))
       for {
         _ <- ZIO.attemptBlocking(cb.initialize(ctx))
         _ <- emitted(delegate, OFProviderEvent.PROVIDER_STALE)
@@ -71,7 +72,7 @@ object BreakerStaleReportingSpec extends ZIOSpecDefault {
     },
     test("a circuit an ERROR event opened reports ERROR") {
       val delegate = new Settable
-      val cb       = CircuitBreakerProvider(delegate, CircuitBreakerProviderConfig(resetTimeout = 1.minute))
+      val cb       = CircuitBreakerProvider(delegate, CircuitBreakerProviderConfig.default.withResetTimeout(1.minute))
       for {
         _ <- ZIO.attemptBlocking(cb.initialize(ctx))
         _ <- emitted(delegate, OFProviderEvent.PROVIDER_ERROR)
@@ -79,7 +80,7 @@ object BreakerStaleReportingSpec extends ZIOSpecDefault {
     },
     test("an ERROR after a STALE opened the circuit makes it report ERROR") {
       val delegate = new Settable
-      val cb       = CircuitBreakerProvider(delegate, CircuitBreakerProviderConfig(resetTimeout = 1.minute))
+      val cb       = CircuitBreakerProvider(delegate, CircuitBreakerProviderConfig.default.withResetTimeout(1.minute))
       for {
         _     <- ZIO.attemptBlocking(cb.initialize(ctx))
         _     <- emitted(delegate, OFProviderEvent.PROVIDER_STALE)
@@ -89,7 +90,7 @@ object BreakerStaleReportingSpec extends ZIOSpecDefault {
     },
     test("a STALE after an ERROR opened the circuit leaves it reporting ERROR") {
       val delegate = new Settable
-      val cb       = CircuitBreakerProvider(delegate, CircuitBreakerProviderConfig(resetTimeout = 1.minute))
+      val cb       = CircuitBreakerProvider(delegate, CircuitBreakerProviderConfig.default.withResetTimeout(1.minute))
       for {
         _ <- ZIO.attemptBlocking(cb.initialize(ctx))
         _ <- emitted(delegate, OFProviderEvent.PROVIDER_ERROR)
@@ -126,7 +127,7 @@ object BreakerStaleReportingSpec extends ZIOSpecDefault {
     },
     test("a circuit consecutive failures opened reports ERROR") {
       val delegate = new Settable
-      val cb       = CircuitBreakerProvider(delegate, CircuitBreakerProviderConfig(failureThreshold = 2))
+      val cb       = CircuitBreakerProvider(delegate, CircuitBreakerProviderConfig.default.withFailureThreshold(2))
       delegate.failEvaluate.set(true)
       val _ = (1 to 3).map(_ => rejected(cb))
       assertTrue(cb.getState == ProviderState.ERROR)

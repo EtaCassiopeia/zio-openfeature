@@ -94,17 +94,16 @@ object WrapperStackFaultSpec extends ZIOSpecDefault {
   private def wrap(provider: FeatureProvider, layer: Layer): UIO[FeatureProvider] = layer match {
     case Layer.Cache =>
       CachingProvider
-        .make(provider, CachingConfig(ttl = 200.millis))
+        .make(provider, CachingConfig.default.withTtl(200.millis))
         .orDieWith(e => new IllegalArgumentException(e.message))
     case Layer.Breaker =>
       CircuitBreakerProvider
         .make(
           provider,
-          CircuitBreakerProviderConfig(
-            failureThreshold = 2,
-            resetTimeout = 200.millis,
-            evaluationTimeout = EvaluationTimeout
-          )
+          CircuitBreakerProviderConfig.default
+            .withFailureThreshold(2)
+            .withResetTimeout(200.millis)
+            .withEvaluationTimeout(EvaluationTimeout)
         )
         .orDieWith(e => new IllegalArgumentException(e.message))
     case Layer.Deferred => ZIO.succeed(DeferredProvider("deferred")(() => provider))

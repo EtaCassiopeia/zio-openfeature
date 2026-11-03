@@ -135,7 +135,6 @@ core builds it from the instance.
     --8<-- "TypedFlags.scala:fallible"
     ```
 
-    The string-valued `wireType` is deprecated in favor of `wire`; an instance that still overrides it keeps working.
     [Hooks](hooks.md) filter by the wire type, so a hook scoped to `FlagValueType.String` sees this flag. `mapped` and
     `from` work on Scala 2.13; `FlagType.derived` is Scala 3 only, and on 2.13 you can
     [derive it with zio-schema](#derive-it-with-zio-schema-scala-213-and-3).

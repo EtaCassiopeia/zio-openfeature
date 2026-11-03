@@ -32,12 +32,12 @@ object Extras:
   // --8<-- [start:caching]
   def cached(remote: FeatureProvider): ZLayer[Any, Throwable | FeatureFlagError, FeatureFlags] =
     ZLayer
-      .scoped(CachingProvider.scoped(remote, CachingConfig(maxEntries = 1000, ttl = 1.minute)))
+      .scoped(CachingProvider.scoped(remote, CachingConfig.default.withMaxEntries(1000).withTtl(1.minute)))
       .flatMap(cache => FeatureFlags.fromProvider(cache.get[CachingProvider]))
   // --8<-- [end:caching]
 
   // --8<-- [start:caching-context-keys]
-  val byPlanAndRegion: CachingConfig = CachingConfig(ttl = 5.minutes, contextKeys = Some(Set("plan", "region")))
+  val byPlanAndRegion: CachingConfig = CachingConfig.default.withTtl(5.minutes).withContextKeys(Set("plan", "region"))
   // --8<-- [end:caching-context-keys]
 
   // --8<-- [start:caching-invalidate]
@@ -46,11 +46,10 @@ object Extras:
   // --8<-- [end:caching-invalidate]
 
   // --8<-- [start:circuit-breaker]
-  val breakerConfig: CircuitBreakerProviderConfig = CircuitBreakerProviderConfig(
-    failureThreshold = 3,          // open after 3 consecutive infrastructure failures
-    resetTimeout = 30.seconds,     // then wait 30 s before letting one probe through
-    evaluationTimeout = 200.millis // a call slower than this counts as a failure
-  )
+  val breakerConfig: CircuitBreakerProviderConfig = CircuitBreakerProviderConfig.default
+    .withFailureThreshold(3)          // open after 3 consecutive infrastructure failures
+    .withResetTimeout(30.seconds)     // then wait 30 s before letting one probe through
+    .withEvaluationTimeout(200.millis) // a call slower than this counts as a failure
 
   // While the circuit is open the breaker fails at once, and the next provider answers
   def resilient(remote: FeatureProvider): ZLayer[Any, Throwable | FeatureFlagError, FeatureFlags] =

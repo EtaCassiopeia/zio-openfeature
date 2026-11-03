@@ -50,7 +50,7 @@ object FactoryConfigPathsSpec extends ZIOSpecDefault {
         ZIO.scoped {
           for {
             registry <- FeatureFlagRegistry
-              .fromProvider(new Provider("p"), FeatureFlagsConfig().withHook(countingHook(calls)))
+              .fromProvider(new Provider("p"), FeatureFlagsConfig.default.withHook(countingHook(calls)))
               .build
               .map(_.get[FeatureFlagRegistry])
             a <- registry.getClient("a").flatMap(_.boolean("f", default = false))
@@ -64,7 +64,7 @@ object FactoryConfigPathsSpec extends ZIOSpecDefault {
             registry <- FeatureFlagRegistry
               .fromProvider(
                 new Provider("slow", evalDelay = 2.seconds),
-                FeatureFlagsConfig().withEvaluationTimeout(50.millis)
+                FeatureFlagsConfig.default.withEvaluationTimeout(50.millis)
               )
               .build
               .map(_.get[FeatureFlagRegistry])
@@ -76,7 +76,7 @@ object FactoryConfigPathsSpec extends ZIOSpecDefault {
         ZIO.scoped {
           for {
             registry <- FeatureFlagRegistry
-              .fromProvider(new Provider("starting", initDelay = 1.second), FeatureFlagsConfig().withAsyncInit)
+              .fromProvider(new Provider("starting", initDelay = 1.second), FeatureFlagsConfig.default.withAsyncInit)
               .build
               .map(_.get[FeatureFlagRegistry])
             got    <- registry.getClient("a").timed
@@ -95,7 +95,7 @@ object FactoryConfigPathsSpec extends ZIOSpecDefault {
               .fromAcquireAsync(
                 ZIO.succeed(new Provider("real")),
                 ZIO.succeed(new Provider("fallback")),
-                FeatureFlagsConfig().withDomain("acquired").withHook(countingHook(calls)).withIsolatedApi,
+                FeatureFlagsConfig.default.withDomain("acquired").withHook(countingHook(calls)).withIsolatedApi,
                 AcquireConfig.default
               )
               .build
@@ -112,7 +112,7 @@ object FactoryConfigPathsSpec extends ZIOSpecDefault {
             layer = FeatureFlags.fromAcquireAsync(
               ZIO.succeed(new Provider("real")),
               ZIO.succeed(new Provider("fallback")),
-              FeatureFlagsConfig().withIsolatedApi,
+              FeatureFlagsConfig.default.withIsolatedApi,
               AcquireConfig.default
                 .withVerify(_ => ZIO.fail(new IllegalStateException("not answering")))
                 .withConstructionRetry(Schedule.stop)
@@ -137,7 +137,7 @@ object FactoryConfigPathsSpec extends ZIOSpecDefault {
               .fromAcquireAsync(
                 ZIO.never,
                 ZIO.succeed(new Provider("slow fallback", evalDelay = 2.seconds)),
-                FeatureFlagsConfig().withEvaluationTimeout(50.millis)
+                FeatureFlagsConfig.default.withEvaluationTimeout(50.millis)
               )
               .build
               .map(_.get[FeatureFlags])

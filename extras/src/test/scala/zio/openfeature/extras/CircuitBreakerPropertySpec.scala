@@ -48,12 +48,11 @@ object CircuitBreakerPropertySpec extends ZIOSpecDefault {
     for {
       threshold <- Gen.int(1, 3)
       maxCalls  <- Gen.int(1, 3)
-    } yield CircuitBreakerConfig(
-      failureThreshold = threshold,
-      resetTimeout = 1.second,
-      halfOpenMaxCalls = maxCalls,
-      probeTimeout = 2.seconds
-    )
+    } yield CircuitBreakerConfig.default
+      .withFailureThreshold(threshold)
+      .withResetTimeout(1.second)
+      .withHalfOpenMaxCalls(maxCalls)
+      .withProbeTimeout(2.seconds)
 
   // Sequential schedule
 
@@ -207,7 +206,7 @@ object CircuitBreakerPropertySpec extends ZIOSpecDefault {
       }
     } @@ PropertyBudget(200),
     test("concurrent fibers with injected delays keep the same invariants") {
-      check(configs.map(_.copy(resetTimeout = 3.millis, probeTimeout = 3.millis)), fiberScripts) { (config, scripts) =>
+      check(configs.map(_.withResetTimeout(3.millis).withProbeTimeout(3.millis)), fiberScripts) { (config, scripts) =>
         runConcurrent(config, scripts).map(violations => assertTrue(violations.isEmpty))
       }
     } @@ PropertyBudget(30)

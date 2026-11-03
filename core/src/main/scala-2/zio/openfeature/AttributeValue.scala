@@ -53,9 +53,6 @@ sealed trait AttributeValue extends Product with Serializable {
     case AttributeValue.StructValue(m) if m.isEmpty => true
     case _                                          => false
   }
-
-  @deprecated("isNull tests emptiness, not null-ness; use isEmptyValue", "0.9.2")
-  def isNull: Boolean = isEmptyValue
 }
 
 object AttributeValue {

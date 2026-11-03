@@ -9,10 +9,16 @@ object TuningDefaultsSpec extends ZIOSpecDefault {
 
   def spec = suite("TuningDefaultsSpec")(
     test("CircuitBreakerConfig defaults are unchanged") {
-      assertTrue(CircuitBreakerConfig() == CircuitBreakerConfig(5, 30.seconds, 1, 1.second))
+      val c = CircuitBreakerConfig.default
+      assertTrue(
+        c.failureThreshold == 5,
+        c.resetTimeout == 30.seconds,
+        c.halfOpenMaxCalls == 1,
+        c.probeTimeout == 1.second
+      )
     },
     test("CircuitBreakerProviderConfig defaults are unchanged, and its probe timeout is the evaluation timeout + 1s") {
-      val c = CircuitBreakerProviderConfig()
+      val c = CircuitBreakerProviderConfig.default
       assertTrue(
         c.evaluationTimeout == 500.millis,
         c.stateCheckInterval == 1.second,
@@ -20,8 +26,8 @@ object TuningDefaultsSpec extends ZIOSpecDefault {
       )
     },
     test("the two circuit breaker configs share their common defaults") {
-      val breaker  = CircuitBreakerConfig()
-      val provider = CircuitBreakerProviderConfig()
+      val breaker  = CircuitBreakerConfig.default
+      val provider = CircuitBreakerProviderConfig.default
       assertTrue(
         provider.failureThreshold == breaker.failureThreshold,
         provider.resetTimeout == breaker.resetTimeout,
@@ -29,11 +35,11 @@ object TuningDefaultsSpec extends ZIOSpecDefault {
       )
     },
     test("CachingConfig defaults are unchanged") {
-      val c = CachingConfig()
+      val c = CachingConfig.default
       assertTrue(c.maxEntries == 1000, c.ttl == 5.minutes)
     },
     test("FeatureFlags timeout defaults are unchanged, and the config uses the abandoned-call cap default") {
-      val config = zio.openfeature.FeatureFlagsConfig()
+      val config = zio.openfeature.FeatureFlagsConfig.default
       assertTrue(
         zio.openfeature.FeatureFlags.DefaultEvaluationTimeout == 1.second,
         zio.openfeature.FeatureFlags.DefaultMaxAbandonedCalls == 256,

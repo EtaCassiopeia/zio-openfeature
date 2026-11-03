@@ -2,7 +2,6 @@ package zio.openfeature
 
 import scala.compiletime.{constValue, constValueTuple, summonAll}
 import scala.deriving.Mirror
-import scala.annotation.nowarn
 import scala.util.Try
 
 /** Codec between a domain type `A` and the value a provider carries — its ''wire'' value. For the built-in instances
@@ -27,9 +26,8 @@ trait FlagType[A]:
     * case selects the matching resolver; [[WireType.Object]] selects the object path.
     *
     * The built-in instances, [[FlagType.mapped]] (which inherits its underlying instance's wire type) and `Option[A]`
-    * (which takes `A`'s) set this themselves. The default reads the deprecated [[wireType]] through
-    * [[WireType.fromName]], so an instance that overrides neither is resolved on the object path, and a legacy
-    * `wireType` override keeps working (its spelling is matched case-insensitively).
+    * (which takes `A`'s) set this themselves. The default reads [[typeName]] through [[WireType.fromName]], so an
+    * instance whose `typeName` is not a scalar's name is resolved on the object path.
     *
     * '''If you override this with a scalar, [[encode]] must return the matching boxed type''': `java.lang.Boolean`,
     * `String`, `java.lang.Integer`, `java.lang.Long`, `java.lang.Float` or `java.lang.Double` respectively. The pairing
@@ -37,14 +35,7 @@ trait FlagType[A]:
     * type, the declared wire type, and the type `encode` actually produced. [[FlagType.mapped]] gets the pairing right
     * by construction, so prefer it where it fits.
     */
-  @nowarn("cat=deprecation")
-  def wire: WireType = WireType.fromName(wireType)
-
-  /** The wire type as a free-form name, read only by the default [[wire]] through [[WireType.fromName]]. Defaults to
-    * [[typeName]]. Override [[wire]] instead.
-    */
-  @deprecated("Override `wire` instead; `wireType` is read only through wire's default", "1.2.0")
-  def wireType: String = typeName
+  def wire: WireType = WireType.fromName(typeName)
 
   def decode(value: Any): Either[String, A]
   def encode(value: A): Any = value
@@ -281,10 +272,8 @@ object FlagType:
     cases: Vector[A],
     mirror: Mirror.SumOf[A]
   ): FlagType[A] = new FlagType[A]:
-    def typeName: String        = name
-    override def wire: WireType = WireType.String
-    @nowarn("cat=deprecation")
-    override def wireType: String      = wire.name
+    def typeName: String               = name
+    override def wire: WireType        = WireType.String
     def defaultValue: A                = cases.head
     override def encode(value: A): Any = labels(mirror.ordinal(value))
 
@@ -385,10 +374,7 @@ object FlagType:
     def typeName: String = name
     // A mapped instance is by construction carried over the wire as its underlying type, so it inherits that
     // wire type — this is what makes `mapped` scalar-backed types evaluatable without any user action.
-    override def wire: WireType = underlying.wire
-    // Kept in step with `wire` for code that still reads the deprecated name.
-    @nowarn("cat=deprecation")
-    override def wireType: String             = wire.name
+    override def wire: WireType               = underlying.wire
     def defaultValue: A                       = default
     def decode(value: Any): Either[String, A] = underlying.decode(value).map(map)
     override def encode(value: A): Any        = underlying.encode(contramap(value))

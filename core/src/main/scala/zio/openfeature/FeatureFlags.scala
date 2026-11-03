@@ -5,7 +5,6 @@ import zio.stream._
 import zio.openfeature.FeatureFlagError.{EvaluationError, TransactionError}
 import zio.openfeature.internal.{Evaluator, FallbackLogLimiter, FeatureFlagsFactories, LongAwareMultiProvider}
 import dev.openfeature.sdk.{FeatureProvider => OFFeatureProvider, OpenFeatureAPI}
-import dev.openfeature.sdk.multiprovider.{Strategy, FirstMatchStrategy, FirstSuccessfulStrategy}
 
 /** The ZIO face of an OpenFeature client. Evaluation comes in two tiers, and which one you call is a statement about
   * what a missing or broken flag should do to the caller:
@@ -467,13 +466,6 @@ trait FeatureFlags extends FeatureFlagsTransactions {
   def track(eventName: String, context: EvaluationContext): IO[EvaluationError, Unit]
   def track(eventName: String, details: TrackingEventDetails): IO[EvaluationError, Unit]
   def track(eventName: String, context: EvaluationContext, details: TrackingEventDetails): IO[EvaluationError, Unit]
-
-  /** The most recent tracking events recorded by this instance, oldest first — only for instances built by the testkit.
-    * Production instances retain nothing (the merged contexts would routinely hold PII), so this is empty for them.
-    * Testkit-built instances keep the last 1000 events.
-    */
-  @deprecated("Use TestFeatureProvider.trackedEvents, which records what the provider received", "1.2.0")
-  def trackedEvents: UIO[List[(String, EvaluationContext, Option[TrackingEventDetails])]] = ZIO.succeed(Nil)
 }
 
 object FeatureFlags extends FeatureFlagsTransactionAccessors {
@@ -803,10 +795,6 @@ object FeatureFlags extends FeatureFlagsTransactionAccessors {
   ): ZIO[FeatureFlags, EvaluationError, Unit] =
     ZIO.serviceWithZIO(_.track(eventName, context, details))
 
-  @deprecated("Use TestFeatureProvider.trackedEvents, which records what the provider received", "1.2.0")
-  def trackedEvents: ZIO[FeatureFlags, Nothing, List[(String, EvaluationContext, Option[TrackingEventDetails])]] =
-    ZIO.serviceWithZIO(_.trackedEvents)
-
   // Factory Methods
 
   /** Default cap on how long initialization may take before the layer build fails or — for async layers — transitions
@@ -833,10 +821,10 @@ object FeatureFlags extends FeatureFlagsTransactionAccessors {
     * provider call takes longer fails with `FeatureFlagError.ProviderError` wrapping a `TimeoutException` — so a remote
     * provider with cold-start latency can fail its first evaluations out of the box. The provider call itself is
     * abandoned, not interrupted: the Java SDK offers no way to cancel it, so it runs on to completion on the blocking
-    * pool. To change it for an instance: `FeatureFlagsConfig().withEvaluationTimeout(d)`, or `withoutEvaluationTimeout`
-    * to disable it; per call, `EvaluationOptions.empty.withTimeout(d)` bounds a single evaluation and `.withoutTimeout`
-    * disables it (the latter also skips the timeout scaffolding, which matters for microsecond-latency in-memory
-    * providers).
+    * pool. To change it for an instance: `FeatureFlagsConfig.default.withEvaluationTimeout(d)`, or
+    * `withoutEvaluationTimeout` to disable it; per call, `EvaluationOptions.empty.withTimeout(d)` bounds a single
+    * evaluation and `.withoutTimeout` disables it (the latter also skips the timeout scaffolding, which matters for
+    * microsecond-latency in-memory providers).
     *
     * Each timed-out call keeps a blocking-pool thread until the provider returns, and that pool is unbounded, so
     * against a provider that never returns every timeout parks one more thread. [[DefaultMaxAbandonedCalls]] caps how
@@ -855,8 +843,8 @@ object FeatureFlags extends FeatureFlagsTransactionAccessors {
     *
     * Only abandoned calls count, so healthy traffic never gets near the cap however concurrent it is, and untimed
     * evaluations (`withoutEvaluationTimeout`, `EvaluationOptions.withoutTimeout`) can never be rejected. Change it with
-    * `FeatureFlagsConfig().withMaxAbandonedCalls(n)` (or `fromAcquireAsync`'s `maxAbandonedCalls`); `Int.MaxValue`
-    * disables the cap.
+    * `FeatureFlagsConfig.default.withMaxAbandonedCalls(n)` (or `fromAcquireAsync`'s `maxAbandonedCalls`);
+    * `Int.MaxValue` disables the cap.
     */
   val DefaultMaxAbandonedCalls: Int = 256
 
@@ -873,7 +861,8 @@ object FeatureFlags extends FeatureFlagsTransactionAccessors {
     initTimeout: Duration = DefaultInitTimeout,
     onReady: Option[java.util.concurrent.CountDownLatch] = None,
     contextSource: ContextSource = ContextSource.empty,
-    fallbackLogging: FallbackLogging = FallbackLogging.Default
+    fallbackLogging: FallbackLogging = FallbackLogging.Default,
+    maxAbandonedCalls: Int = DefaultMaxAbandonedCalls
   ): ZIO[Scope, Throwable, FeatureFlagsLive] =
     FeatureFlagsFactories.build(
       provider,
@@ -887,48 +876,15 @@ object FeatureFlags extends FeatureFlagsTransactionAccessors {
       initTimeout,
       onReady,
       contextSource,
-      fallbackLogging
-    )
-
-  /** [[build]], optionally keeping tracked events for `trackedEvents` (testkit only). */
-  private[openfeature] def buildWithTracking(
-    provider: OFFeatureProvider,
-    domain: Option[String],
-    version: Option[String],
-    initialHooks: List[FeatureHook],
-    statusRef: Option[SubscriptionRef[ProviderStatus]],
-    addShutdownFinalizer: Boolean,
-    apiOverride: Option[OpenFeatureAPI] = None,
-    evaluationTimeout: Option[Duration] = Some(DefaultEvaluationTimeout),
-    initTimeout: Duration = DefaultInitTimeout,
-    onReady: Option[java.util.concurrent.CountDownLatch] = None,
-    contextSource: ContextSource = ContextSource.empty,
-    fallbackLogging: FallbackLogging = FallbackLogging.Default,
-    maxAbandonedCalls: Int = DefaultMaxAbandonedCalls,
-    recordTracking: Boolean = false
-  ): ZIO[Scope, Throwable, FeatureFlagsLive] =
-    FeatureFlagsFactories.buildWithTracking(
-      provider,
-      domain,
-      version,
-      initialHooks,
-      statusRef,
-      addShutdownFinalizer,
-      apiOverride,
-      evaluationTimeout,
-      initTimeout,
-      onReady,
-      contextSource,
       fallbackLogging,
-      maxAbandonedCalls,
-      recordTracking
+      maxAbandonedCalls
     )
 
   /** The config-driven factory: every retired overload forwards here. See [[FeatureFlagsConfig]] for field semantics
     * (`domain`, `version`, `initialHooks`, `evaluationTimeout`, `initTimeout`, `initMode`, `apiOwnership`).
     *
-    * `FeatureFlagsConfig()` reproduces `fromProvider(provider)` exactly (sync init, no domain, `Owned` API — the `Auto`
-    * truth table's `domain.isEmpty` branch).
+    * `FeatureFlagsConfig.default` reproduces `fromProvider(provider)` exactly (sync init, no domain, `Owned` API — the
+    * `Auto` truth table's `domain.isEmpty` branch).
     */
   def fromProvider(
     provider: OFFeatureProvider,
@@ -953,8 +909,8 @@ object FeatureFlags extends FeatureFlagsTransactionAccessors {
 
   /** Combine multiple providers into one via the SDK's `MultiProvider`, defaulting to a first-match strategy. Pairs
     * with [[fromProvider(OFFeatureProvider, FeatureFlagsConfig)]] to express combinations `fromMultiProvider` could
-    * not, e.g. multi-provider + domain: `fromProvider(multiProvider(ps), FeatureFlagsConfig(domain =
-    * Some("checkout")))`.
+    * not, e.g. multi-provider + domain: `fromProvider(multiProvider(ps),
+    * FeatureFlagsConfig.default.withDomain("checkout"))`.
     *
     * Every provider stays in the chain, in order, even when two report the same metadata name (Java SDK 1.23.0; earlier
     * SDKs kept only the last of a name). The `getProviderHooks` of each provider the strategy consults run too; see
@@ -974,7 +930,7 @@ object FeatureFlags extends FeatureFlagsTransactionAccessors {
     */
   def multiProvider(
     providers: List[OFFeatureProvider],
-    strategy: Strategy = new FirstMatchStrategy()
+    strategy: MultiProviderStrategy.Strategy = MultiProviderStrategy.FirstMatch
   ): OFFeatureProvider = {
     import scala.jdk.CollectionConverters._
     new LongAwareMultiProvider(providers.asJava, strategy)
@@ -984,53 +940,11 @@ object FeatureFlags extends FeatureFlagsTransactionAccessors {
     *
     * Initialization is bounded by the default 30s init timeout: if the provider's `initialize()` takes longer, or it
     * reports `ERROR`/`FATAL`/`NOT_READY` afterwards, the layer build fails with a `TimeoutException` or
-    * `IllegalStateException` wrapped at the layer boundary. Use `fromProvider(provider, FeatureFlagsConfig())` with
-    * `.withInitTimeout(...)` to override.
+    * `IllegalStateException` wrapped at the layer boundary. Use `fromProvider(provider, FeatureFlagsConfig.default)`
+    * with `.withInitTimeout(...)` to override.
     */
   def fromProvider(provider: OFFeatureProvider): ZLayer[Any, Throwable, FeatureFlags with FeatureFlagsAdmin] =
-    fromProvider(provider, FeatureFlagsConfig())
-
-  /** Create a FeatureFlags layer with a global evaluation timeout.
-    *
-    * If a provider evaluation takes longer than `evaluationTimeout`, it fails with `ProviderError` containing a
-    * `TimeoutException`. This prevents hung providers from blocking fibers indefinitely. Per-call timeouts set via
-    * `EvaluationOptions.timeout` override this global default. Initialization uses the default 30s init timeout.
-    */
-  @deprecated("Use fromProvider(p, FeatureFlagsConfig().withEvaluationTimeout(evalTimeout))", "0.2.0")
-  def fromProvider(provider: OFFeatureProvider, evaluationTimeout: Duration): ZLayer[Any, Throwable, FeatureFlags] =
-    fromProvider(provider, FeatureFlagsConfig().withEvaluationTimeout(evaluationTimeout))
-
-  /** Create a FeatureFlags layer with explicit evaluation and initialization timeouts.
-    *
-    * `initTimeout` bounds the sync init: if the provider's `initialize()` takes longer, the layer build fails with a
-    * `TimeoutException`. After init, if the provider reports `ERROR`/`FATAL`/`NOT_READY`, the build also fails so
-    * misconfiguration surfaces at startup rather than at first evaluation. Pass a very large duration to effectively
-    * disable the init timeout.
-    */
-  @deprecated(
-    "Use fromProvider(p, FeatureFlagsConfig().withEvaluationTimeout(evalT).withInitTimeout(initT))",
-    "0.2.0"
-  )
-  def fromProvider(
-    provider: OFFeatureProvider,
-    evaluationTimeout: Duration,
-    initTimeout: Duration
-  ): ZLayer[Any, Throwable, FeatureFlags] =
-    fromProvider(provider, FeatureFlagsConfig().withEvaluationTimeout(evaluationTimeout).withInitTimeout(initTimeout))
-
-  /** Create a FeatureFlags layer with a named domain/client. */
-  @deprecated("Use fromProvider(p, FeatureFlagsConfig().withDomain(d))", "0.2.0")
-  def fromProviderWithDomain(provider: OFFeatureProvider, domain: String): ZLayer[Any, Throwable, FeatureFlags] =
-    fromProvider(provider, FeatureFlagsConfig().withDomain(domain))
-
-  /** Create a FeatureFlags layer with a named domain/client and version. */
-  @deprecated("Use fromProvider(p, FeatureFlagsConfig().withDomain(d).withVersion(v))", "0.2.0")
-  def fromProviderWithDomain(
-    provider: OFFeatureProvider,
-    domain: String,
-    version: String
-  ): ZLayer[Any, Throwable, FeatureFlags] =
-    fromProvider(provider, FeatureFlagsConfig().withDomain(domain).withVersion(version))
+    fromProvider(provider, FeatureFlagsConfig.default)
 
   /** Create a FeatureFlags layer with a named domain/client and a shared status ref. */
   private[openfeature] def fromProviderWithDomain(
@@ -1041,27 +955,6 @@ object FeatureFlags extends FeatureFlagsTransactionAccessors {
     onReady: Option[java.util.concurrent.CountDownLatch] = None
   ): ZLayer[Any, Throwable, FeatureFlags with FeatureFlagsAdmin] =
     FeatureFlagsFactories.fromProviderWithDomain(provider, domain, statusRef, api, onReady)
-
-  /** Create a FeatureFlags layer from multiple providers using the first-match strategy. */
-  @deprecated("Use fromProvider(FeatureFlags.multiProvider(ps), FeatureFlagsConfig())", "0.2.0")
-  def fromMultiProvider(providers: List[OFFeatureProvider]): ZLayer[Any, Throwable, FeatureFlags] =
-    fromProvider(multiProvider(providers), FeatureFlagsConfig())
-
-  /** Create a FeatureFlags layer from multiple providers with a custom strategy. */
-  @deprecated("Use fromProvider(FeatureFlags.multiProvider(ps, strategy), FeatureFlagsConfig())", "0.2.0")
-  def fromMultiProvider(
-    providers: List[OFFeatureProvider],
-    strategy: Strategy
-  ): ZLayer[Any, Throwable, FeatureFlags] =
-    fromProvider(multiProvider(providers, strategy), FeatureFlagsConfig())
-
-  /** Create a FeatureFlags layer with initial hooks. */
-  @deprecated("Use fromProvider(p, FeatureFlagsConfig().withHooks(hooks))", "0.2.0")
-  def fromProviderWithHooks(
-    provider: OFFeatureProvider,
-    initialHooks: List[FeatureHook]
-  ): ZLayer[Any, Throwable, FeatureFlags] =
-    fromProvider(provider, FeatureFlagsConfig().withHooks(initialHooks))
 
   // Async Factory Methods (non-blocking provider initialization)
 
@@ -1083,7 +976,8 @@ object FeatureFlags extends FeatureFlagsTransactionAccessors {
     evaluationTimeout: Option[Duration] = Some(DefaultEvaluationTimeout),
     initTimeout: Duration = DefaultInitTimeout,
     contextSource: ContextSource = ContextSource.empty,
-    fallbackLogging: FallbackLogging = FallbackLogging.Default
+    fallbackLogging: FallbackLogging = FallbackLogging.Default,
+    maxAbandonedCalls: Int = DefaultMaxAbandonedCalls
   ): ZIO[Scope, Throwable, FeatureFlagsLive] =
     FeatureFlagsFactories.buildAsync(
       provider,
@@ -1097,41 +991,8 @@ object FeatureFlags extends FeatureFlagsTransactionAccessors {
       evaluationTimeout,
       initTimeout,
       contextSource,
-      fallbackLogging
-    )
-
-  /** [[buildAsync]], optionally keeping tracked events for `trackedEvents` (testkit only). */
-  private[openfeature] def buildAsyncWithTracking(
-    provider: OFFeatureProvider,
-    domain: Option[String],
-    version: Option[String],
-    initialHooks: List[FeatureHook],
-    statusRef: Option[SubscriptionRef[ProviderStatus]],
-    addShutdownFinalizer: Boolean,
-    apiOverride: Option[OpenFeatureAPI] = None,
-    onReady: Option[java.util.concurrent.CountDownLatch] = None,
-    evaluationTimeout: Option[Duration] = Some(DefaultEvaluationTimeout),
-    initTimeout: Duration = DefaultInitTimeout,
-    contextSource: ContextSource = ContextSource.empty,
-    fallbackLogging: FallbackLogging = FallbackLogging.Default,
-    maxAbandonedCalls: Int = DefaultMaxAbandonedCalls,
-    recordTracking: Boolean = false
-  ): ZIO[Scope, Throwable, FeatureFlagsLive] =
-    FeatureFlagsFactories.buildAsyncWithTracking(
-      provider,
-      domain,
-      version,
-      initialHooks,
-      statusRef,
-      addShutdownFinalizer,
-      apiOverride,
-      onReady,
-      evaluationTimeout,
-      initTimeout,
-      contextSource,
       fallbackLogging,
-      maxAbandonedCalls,
-      recordTracking
+      maxAbandonedCalls
     )
 
   /** Create a FeatureFlags layer from any OpenFeature provider (non-blocking).
@@ -1139,68 +1000,11 @@ object FeatureFlags extends FeatureFlagsTransactionAccessors {
     * The provider initializes in the background. Evaluations fail with `ProviderNotReady` until the provider is ready.
     * Use `onProviderReady` or `providerStatus` to detect when the provider becomes available. If the provider has not
     * become ready within the default 30s init timeout, status atomically transitions to `Fatal` so callers polling
-    * `providerStatus` stop waiting. Use `fromProvider(provider, FeatureFlagsConfig(initMode = InitMode.Async))` with
+    * `providerStatus` stop waiting. Use `fromProvider(provider, FeatureFlagsConfig.default.withAsyncInit)` with
     * `.withInitTimeout(...)` to override.
     */
   def fromProviderAsync(provider: OFFeatureProvider): ZLayer[Any, Throwable, FeatureFlags with FeatureFlagsAdmin] =
-    fromProvider(provider, FeatureFlagsConfig(initMode = InitMode.Async))
-
-  /** Create a FeatureFlags layer with a global evaluation timeout (non-blocking).
-    *
-    * Combines async initialization with evaluation timeout protection. The provider initializes in the background;
-    * evaluations fail with `ProviderNotReady` until ready. Once ready, evaluations that exceed `evaluationTimeout` fail
-    * with `ProviderError` containing a `TimeoutException`. The init-side default 30s watchdog still applies.
-    */
-  @deprecated(
-    "Use fromProvider(p, FeatureFlagsConfig(initMode = InitMode.Async).withEvaluationTimeout(evalT))",
-    "0.2.0"
-  )
-  def fromProviderAsync(
-    provider: OFFeatureProvider,
-    evaluationTimeout: Duration
-  ): ZLayer[Any, Throwable, FeatureFlags] =
-    fromProvider(provider, FeatureFlagsConfig(initMode = InitMode.Async).withEvaluationTimeout(evaluationTimeout))
-
-  /** Create a FeatureFlags layer with explicit evaluation and initialization timeouts (non-blocking).
-    *
-    * `initTimeout` bounds the async ready window: after that duration, if status is still `NotReady` or `Error`, it
-    * atomically transitions to `Fatal`. Pass a very large duration to effectively disable the watchdog.
-    */
-  @deprecated(
-    "Use fromProvider(p, FeatureFlagsConfig(initMode = InitMode.Async).withEvaluationTimeout(evalT).withInitTimeout(initT))",
-    "0.2.0"
-  )
-  def fromProviderAsync(
-    provider: OFFeatureProvider,
-    evaluationTimeout: Duration,
-    initTimeout: Duration
-  ): ZLayer[Any, Throwable, FeatureFlags] =
-    fromProvider(
-      provider,
-      FeatureFlagsConfig(initMode = InitMode.Async)
-        .withEvaluationTimeout(evaluationTimeout)
-        .withInitTimeout(initTimeout)
-    )
-
-  /** Create a FeatureFlags layer with a named domain (non-blocking). */
-  @deprecated("Use fromProvider(p, FeatureFlagsConfig(initMode = InitMode.Async).withDomain(d))", "0.2.0")
-  def fromProviderWithDomainAsync(
-    provider: OFFeatureProvider,
-    domain: String
-  ): ZLayer[Any, Throwable, FeatureFlags] =
-    fromProvider(provider, FeatureFlagsConfig(initMode = InitMode.Async).withDomain(domain))
-
-  /** Create a FeatureFlags layer with a named domain and version (non-blocking). */
-  @deprecated(
-    "Use fromProvider(p, FeatureFlagsConfig(initMode = InitMode.Async).withDomain(d).withVersion(v))",
-    "0.2.0"
-  )
-  def fromProviderWithDomainAsync(
-    provider: OFFeatureProvider,
-    domain: String,
-    version: String
-  ): ZLayer[Any, Throwable, FeatureFlags] =
-    fromProvider(provider, FeatureFlagsConfig(initMode = InitMode.Async).withDomain(domain).withVersion(version))
+    fromProvider(provider, FeatureFlagsConfig.default.withAsyncInit)
 
   /** Create a FeatureFlags layer with a named domain and shared status ref (non-blocking). */
   private[openfeature] def fromProviderWithDomainAsync(
@@ -1212,33 +1016,6 @@ object FeatureFlags extends FeatureFlagsTransactionAccessors {
   ): ZLayer[Any, Throwable, FeatureFlags with FeatureFlagsAdmin] =
     FeatureFlagsFactories.fromProviderWithDomainAsync(provider, domain, statusRef, api, onReady)
 
-  /** Create a FeatureFlags layer with initial hooks (non-blocking). */
-  @deprecated("Use fromProvider(p, FeatureFlagsConfig(initMode = InitMode.Async).withHooks(hooks))", "0.2.0")
-  def fromProviderWithHooksAsync(
-    provider: OFFeatureProvider,
-    initialHooks: List[FeatureHook]
-  ): ZLayer[Any, Throwable, FeatureFlags] =
-    fromProvider(provider, FeatureFlagsConfig(initMode = InitMode.Async).withHooks(initialHooks))
-
-  /** Create a FeatureFlags layer from multiple providers (non-blocking, first-match strategy). */
-  @deprecated(
-    "Use fromProvider(FeatureFlags.multiProvider(ps), FeatureFlagsConfig(initMode = InitMode.Async))",
-    "0.2.0"
-  )
-  def fromMultiProviderAsync(providers: List[OFFeatureProvider]): ZLayer[Any, Throwable, FeatureFlags] =
-    fromProvider(multiProvider(providers), FeatureFlagsConfig(initMode = InitMode.Async))
-
-  /** Create a FeatureFlags layer from multiple providers with a custom strategy (non-blocking). */
-  @deprecated(
-    "Use fromProvider(FeatureFlags.multiProvider(ps, strategy), FeatureFlagsConfig(initMode = InitMode.Async))",
-    "0.2.0"
-  )
-  def fromMultiProviderAsync(
-    providers: List[OFFeatureProvider],
-    strategy: Strategy
-  ): ZLayer[Any, Throwable, FeatureFlags] =
-    fromProvider(multiProvider(providers, strategy), FeatureFlagsConfig(initMode = InitMode.Async))
-
   /** Default `compose` for [[fromAcquireAsync]]: layer the real provider over the fallback with a first-successful
     * strategy, so a sick real provider transparently falls through to the fallback. Both stay in the chain even if they
     * report the same metadata name (Java SDK 1.23.0; earlier SDKs dropped the real provider in that case). Long reads
@@ -1246,7 +1023,7 @@ object FeatureFlags extends FeatureFlagsTransactionAccessors {
     */
   def defaultAcquireCompose(real: OFFeatureProvider, fallback: OFFeatureProvider): OFFeatureProvider = {
     import scala.jdk.CollectionConverters._
-    new LongAwareMultiProvider(List(real, fallback).asJava, new FirstSuccessfulStrategy())
+    new LongAwareMultiProvider(List(real, fallback).asJava, MultiProviderStrategy.FirstSuccessful)
   }
 
   /** Fallback-first async factory: build the layer immediately on a fresh `fallback`, construct the real provider in a
@@ -1332,5 +1109,5 @@ object FeatureFlags extends FeatureFlagsTransactionAccessors {
     acquire: RIO[Scope, OFFeatureProvider],
     fallback: URIO[Scope, OFFeatureProvider]
   ): URLayer[Any, FeatureFlags with FeatureFlagsAdmin with AcquireStatus] =
-    fromAcquireAsync(acquire, fallback, FeatureFlagsConfig(), AcquireConfig.default)
+    fromAcquireAsync(acquire, fallback, FeatureFlagsConfig.default, AcquireConfig.default)
 }

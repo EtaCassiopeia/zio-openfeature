@@ -85,11 +85,10 @@ object OfrepFaultShapeSpec extends ZIOSpecDefault {
         // No state polling: only the evaluations' outcomes move the circuit.
         breaker = CircuitBreakerProvider(
           provider,
-          CircuitBreakerProviderConfig(
-            failureThreshold = Threshold,
-            resetTimeout = 1.hour,
-            stateCheckInterval = Duration.Infinity
-          )
+          CircuitBreakerProviderConfig.default
+            .withFailureThreshold(Threshold)
+            .withResetTimeout(1.hour)
+            .withStateCheckInterval(Duration.Infinity)
         )
         _ <- ZIO.addFinalizer(ZIO.attemptBlocking(breaker.shutdown()).ignore)
         _ <- ZIO.attemptBlocking(breaker.initialize(new ImmutableContext()))

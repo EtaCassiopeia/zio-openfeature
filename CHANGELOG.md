@@ -163,6 +163,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Documentation
 
+- **What an infinite `evaluationTimeout` does to a hung half-open probe** (#772). It keeps the probe slot until it returns,
+  so every other call is rejected and `getState` reports `STALE`. The ScalaDoc and `docs/extras.md` say so; the takeover
+  that frees a dead probe's slot needs a finite timeout.
 - **How the lifecycle model treats failures and crashes** (#716). `formal/lifecycle/README.md` lists the provider and
   SDK failures the model represents, the ones it leaves out with what checks them instead, and that it proves safety
   only. The design record says the model relies on its run-to-completion guarantees.

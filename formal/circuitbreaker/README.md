@@ -116,7 +116,8 @@ terminate.
 - **Real time.** The model only knows whether a deadline has passed. How long `resetTimeout` and `probeTimeout` are, and
   the clock itself, are not modelled. `SlotFreed` needs a finite `probeTimeout`. `CircuitBreakerProviderConfig` derives it
   as `evaluationTimeout` plus a margin, so `evaluationTimeout = Duration.Infinity` makes it infinite, and that mode behaves
-  as the "no `probeTimeout` takeover" mutant does: a probe that never returns holds the slot.
+  as the "no `probeTimeout` takeover" mutant does: a probe that never returns holds the slot. That is a documented limit of
+  the config, not a gap in the model: see `evaluationTimeout` in `CircuitBreakerProviderConfig`'s ScalaDoc.
 - **The provider wrapper.** `CircuitBreakerProvider`'s event plumbing, its evaluation timeout and its error
   classification are not modelled. Signals arrive in any order, at any time. An outcome is any of the three, or a death.
 - **The permit-less API.** `recordSuccess()`, `recordReachable()` and `recordFailure()` without a permit apply to whatever

@@ -504,6 +504,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   while a swap is in flight. Mutants that drop the re-check, or either half of it, are caught. A new hot-swap test
   pins the generation's own job: an evaluation whose provider call outlasts a whole swap is refused, not answered by
   the replaced provider.
+- **A TLA+ model of the circuit breaker** (#723). `formal/circuitbreaker` models `CircuitBreaker`'s CAS state machine
+  in PlusCal, with each operation split at its `compareAndSet`. On pull requests touching it, TLC checks that at most
+  one probe holds the half-open slot, that a stale permit's outcome changes nothing, that each recovery respects why
+  the circuit opened, the `stale` flag's rules, and that a dead probe cannot pin the breaker. Eleven mutants are caught.
 - **The lifecycle model states that a provider's silent death goes unreported** (#720). `Die`, behind the
   `AllowDeath` constant, lets a provider stop working without emitting anything. `witness.py` checks on every pull
   request that every invariant still holds, and that the instance can then report `Ready` with a dead provider

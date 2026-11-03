@@ -131,7 +131,7 @@ Set instance-wide defaults on the `FeatureFlagsConfig` (all fields are in the [c
 ??? note "Slow or hung providers"
     A timed-out evaluation fails with `ProviderError` wrapping a `TimeoutException`. The provider's call is abandoned,
     not cancelled, and holds a blocking-pool thread until it returns. So each instance caps abandoned calls still
-    running: **256** by default (`withMaxAbandonedCalls(n)`, or `fromAcquireAsync`'s `maxAbandonedCalls`). At the cap, a
+    running: **256** by default (`withMaxAbandonedCalls(n)`). At the cap, a
     timed evaluation fails at once with `ProviderError` wrapping a `RejectedExecutionException`, without calling the
     provider; slots free as calls return. Untimed evaluations are never rejected. For a remote provider, consider the
     [circuit breaker](extras.md#circuit-breaker-provider) too.

@@ -47,7 +47,7 @@ object SetProviderInterruptSpec extends ZIOSpecDefault {
     }
   }
 
-  private def buildIsolated(initTimeout: Duration = 10.seconds): ZIO[Scope, Throwable, FeatureFlags] =
+  private def buildIsolated(initTimeout: Duration = 10.seconds): ZIO[Scope, Throwable, FeatureFlagsLive] =
     FeatureFlags.build(
       new BoolProvider("old", false),
       domain = Some(s"interrupt-${java.util.UUID.randomUUID()}"),
@@ -59,7 +59,7 @@ object SetProviderInterruptSpec extends ZIOSpecDefault {
       initTimeout = initTimeout
     )
 
-  private def interruptMidInit(ff: FeatureFlags, provider: GatedProvider): UIO[Unit] =
+  private def interruptMidInit(ff: FeatureFlagsLive, provider: GatedProvider): UIO[Unit] =
     for {
       fiber       <- ff.setProvider(provider).either.fork
       _           <- ZIO.attemptBlocking(provider.entered.await()).orDie
@@ -73,7 +73,7 @@ object SetProviderInterruptSpec extends ZIOSpecDefault {
   private def buildProbed(
     probe: zio.openfeature.internal.LifecycleProbe,
     initTimeout: Duration
-  ): ZIO[Scope, Throwable, (FeatureFlags, OpenFeatureAPI, String)] = {
+  ): ZIO[Scope, Throwable, (FeatureFlagsLive, OpenFeatureAPI, String)] = {
     val api    = OpenFeatureAPI.createIsolated()
     val domain = s"interrupt-${java.util.UUID.randomUUID()}"
     zio.openfeature.internal.FeatureFlagsFactories

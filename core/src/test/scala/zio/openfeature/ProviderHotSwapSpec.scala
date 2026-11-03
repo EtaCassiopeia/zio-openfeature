@@ -70,7 +70,7 @@ object ProviderHotSwapSpec extends ZIOSpecDefault {
       ProviderEvaluations.of[Value](defaultValue, "STATIC")
   }
 
-  private def buildWithDomain(provider: SimpleProvider): ZIO[Scope, Throwable, FeatureFlags] = {
+  private def buildWithDomain(provider: SimpleProvider): ZIO[Scope, Throwable, FeatureFlagsLive] = {
     val api    = OpenFeatureAPI.createIsolated()
     val domain = s"test-swap-${java.util.UUID.randomUUID()}"
     for {
@@ -89,7 +89,7 @@ object ProviderHotSwapSpec extends ZIOSpecDefault {
     } yield ff
   }
 
-  private def buildNoDomain(provider: SimpleProvider): ZIO[Scope, Throwable, FeatureFlags] = {
+  private def buildNoDomain(provider: SimpleProvider): ZIO[Scope, Throwable, FeatureFlagsLive] = {
     val api = OpenFeatureAPI.createIsolated()
     for {
       ff <- FeatureFlags.build(
@@ -192,7 +192,7 @@ object ProviderHotSwapSpec extends ZIOSpecDefault {
     owns: Boolean,
     api: OpenFeatureAPI = OpenFeatureAPI.createIsolated(),
     domain: String = s"held-${java.util.UUID.randomUUID()}"
-  ): ZIO[Scope, Throwable, FeatureFlags] =
+  ): ZIO[Scope, Throwable, FeatureFlagsLive] =
     ZIO.unless(owns)(ZIO.addFinalizer(ZIO.attemptBlocking(api.shutdown()).ignore)) *>
       zio.openfeature.internal.FeatureFlagsFactories.buildWithTracking(
         provider,
@@ -320,7 +320,7 @@ object ProviderHotSwapSpec extends ZIOSpecDefault {
   private def buildProbed(
     provider: SimpleProvider,
     probe: zio.openfeature.internal.LifecycleProbe
-  ): ZIO[Scope, Throwable, (FeatureFlags, OpenFeatureAPI, String)] = {
+  ): ZIO[Scope, Throwable, (FeatureFlagsLive, OpenFeatureAPI, String)] = {
     val api    = OpenFeatureAPI.createIsolated()
     val domain = s"test-swap-${java.util.UUID.randomUUID()}"
     zio.openfeature.internal.FeatureFlagsFactories
@@ -346,7 +346,7 @@ object ProviderHotSwapSpec extends ZIOSpecDefault {
   // Once released, the provider's first initialize() returns on the SDK's executor; until the instance reads that, a
   // reinstall is still refused, so retry the refusal for a moment.
   private def installOnceReturned(
-    ff: FeatureFlags,
+    ff: FeatureFlagsLive,
     provider: dev.openfeature.sdk.FeatureProvider
   ): UIO[Either[FeatureFlagError, Unit]] =
     ff.setProvider(provider)
@@ -367,7 +367,7 @@ object ProviderHotSwapSpec extends ZIOSpecDefault {
   private def buildExposed(
     provider: SimpleProvider,
     initTimeout: Duration = FeatureFlags.DefaultInitTimeout
-  ): ZIO[Scope, Throwable, (FeatureFlags, OpenFeatureAPI, String)] = {
+  ): ZIO[Scope, Throwable, (FeatureFlagsLive, OpenFeatureAPI, String)] = {
     val api    = OpenFeatureAPI.createIsolated()
     val domain = s"test-swap-${java.util.UUID.randomUUID()}"
     FeatureFlags
@@ -389,7 +389,7 @@ object ProviderHotSwapSpec extends ZIOSpecDefault {
     api: dev.openfeature.sdk.OpenFeatureAPI,
     domain: String,
     provider: SimpleProvider
-  ): ZIO[Scope, Throwable, FeatureFlags] =
+  ): ZIO[Scope, Throwable, FeatureFlagsLive] =
     FeatureFlags.build(
       provider,
       domain = Some(domain),

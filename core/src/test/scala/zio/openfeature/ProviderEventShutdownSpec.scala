@@ -41,7 +41,7 @@ object ProviderEventShutdownSpec extends ZIOSpecDefault {
       ProviderEvaluations.of[Value](d, "DEFAULT")
   }
 
-  private def buildFF: ZIO[Scope, Throwable, FeatureFlags] = {
+  private def buildFF: ZIO[Scope, Throwable, FeatureFlagsLive] = {
     val api    = OpenFeatureAPI.createIsolated()
     val domain = s"event-shutdown-${java.util.UUID.randomUUID()}"
     FeatureFlags.build(

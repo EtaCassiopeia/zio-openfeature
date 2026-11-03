@@ -115,15 +115,12 @@ ThisBuild / scalacOptions ++= {
 lazy val lintSettings = Seq(
   // Test inherits Compile's options; on 2.13 only main code is held to zero warnings. On Scala 3 the last matching
   // `-Wconf` rule wins, so the effect-type errors come after the catch-all silencing.
-  // The administration members moved to FeatureFlagsAdmin but stay supported for 1.x, and the specs that exercise them
-  // through `FeatureFlags` keep doing so: that deprecation alone is silenced in tests.
   Test / scalacOptions := {
-    val inherited    = (Test / scalacOptions).value
-    val movedToAdmin = "-Wconf:cat=deprecation&msg=Moved to FeatureFlagsAdmin:s"
+    val inherited = (Test / scalacOptions).value
     CrossVersion.partialVersion(scalaVersion.value) match {
-      case Some((2, _)) => inherited.filterNot(_ == "-Werror") :+ "-Wconf:cat=scala3-migration:s" :+ movedToAdmin
+      case Some((2, _)) => inherited.filterNot(_ == "-Werror") :+ "-Wconf:cat=scala3-migration:s"
       case Some((3, _)) =>
-        inherited :+ "-Wconf:id=E175:s,id=E176:s,id=E175&msg=.*type zio\\.(ZIO|UIO|URIO|IO|Task|RIO)\\b.*:e,id=E176&msg=.*type zio\\.(ZIO|UIO|URIO|IO|Task|RIO)\\b.*:e" :+ movedToAdmin
+        inherited :+ "-Wconf:id=E175:s,id=E176:s,id=E175&msg=.*type zio\\.(ZIO|UIO|URIO|IO|Task|RIO)\\b.*:e,id=E176&msg=.*type zio\\.(ZIO|UIO|URIO|IO|Task|RIO)\\b.*:e"
       case _ => inherited
     }
   },

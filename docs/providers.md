@@ -249,9 +249,8 @@ A domain names a client, so different parts of an app can use different provider
 
 ## Replace the provider at runtime
 
-`FeatureFlagsAdmin.setProvider` swaps the provider of a running instance (add `FeatureFlagsAdmin` to the layer with
-`>+> FeatureFlagsAdmin.layer`; the member on `FeatureFlags` is deprecated since 1.3.0). Hooks, context and event
-handlers stay. On an instance that has
+`FeatureFlagsAdmin.setProvider` swaps the provider of a running instance (the factories' layers provide
+`FeatureFlagsAdmin` next to `FeatureFlags`). Hooks, context and event handlers stay. On an instance that has
 been shut down it fails with `ProviderNotReady(NotReady)` and does not touch the provider: build a new layer instead.
 Installing the provider the slot already binds changes nothing and returns at once: the status does not move and
 evaluations keep going. To initialize a provider again, install a new instance.

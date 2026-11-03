@@ -38,7 +38,7 @@ and runs them on every build, twice: the `conformance` module runs them with Cuc
 | **Providers (§1.6, §1.7, §2)** | |
 | Set a provider and wait for it (blocking init) | `FeatureFlags.fromProvider` |
 | Set a provider without waiting (async init) | `fromProviderAsync`, or `FeatureFlagsConfig().withAsyncInit` |
-| Shut down (§1.6.1) | when the layer's `Scope` closes, or `FeatureFlags.shutdown` |
+| Shut down (§1.6.1) | when the layer's `Scope` closes, or `FeatureFlagsAdmin.shutdown` |
 | Domains | `FeatureFlagsConfig().withDomain(d)` (and `.withVersion(v)` for the client version); `FeatureFlagRegistry` for many domains |
 | Provider and client metadata | `providerMetadata`, `clientMetadata` |
 | Provider status (§1.7) | `providerStatus`: `NotReady`, `Ready`, `Stale`, `Error`, `Fatal`, plus `ShuttingDown`; a `STALE` event moves any status but `Fatal` and `ShuttingDown` to `Stale`, as §5.3.5 maps it |

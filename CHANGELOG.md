@@ -18,10 +18,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`FeatureFlagsAdmin`: administering an instance, apart from reading its flags** (#651). Swapping the provider,
   shutting down, the API-level hooks (`addApiHook`, `clearApiHooks`, the ZIO API hooks) and the event-handler
   registrations (`onProviderReady` and the rest, `on`) are on the new `FeatureFlagsAdmin`, with service accessors on its
-  companion. `FeatureFlags.fromProvider(p) >+> FeatureFlagsAdmin.layer` adds it, administering the same instance, so a
-  program that needs only `FeatureFlags` can no longer swap the provider or shut the instance down. The factories'
-  layer types are unchanged. **Deprecated:** those 13 members on `FeatureFlags` and its companion; they still work
-  for 1.x.
+  companion. The factories' layers provide it next to `FeatureFlags`, for the same instance, so a program that needs
+  only `FeatureFlags` can no longer swap the provider or shut the instance down.
 
 - **`fromAcquireAsync` and `FeatureFlagRegistry` take a `FeatureFlagsConfig`** (#654). `fromAcquireAsync(acquire,
   fallback, config, acquireConfig)` reads what every instance takes from the config, now including domain, version,
@@ -122,6 +120,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `fallbackLogging` and `maxAbandonedCalls` are `FeatureFlagsConfig` fields, and `compose`, `constructionRetry`,
   `constructionTimeout`, `onConstructionError`, `verify` and `onSwapped` are `AcquireConfig` settings. The
   `private[openfeature]` overload kept for callers compiled against 1.1.2 is gone too.
+
+- **The administration members are gone from `FeatureFlags`** (#651). `onProviderReady`, `onProviderError`,
+  `onProviderStale`, `onConfigurationChanged`, `on`, `addZioApiHook`, `addZioApiHooks`, `clearZioApiHooks`,
+  `zioApiHooks`, `addApiHook`, `clearApiHooks`, `setProvider` and `shutdown`, with their accessors on its companion, are
+  on `FeatureFlagsAdmin`. The factories' layers and the testkit's layers (`layer`, `asyncLayer`, `asyncReadyLayer`,
+  `layerFrom`) now provide both services, so `layer.build.map(_.get)` needs `_.get[FeatureFlags]`: a `Tag` cannot hold
+  the intersection. `FeatureFlagsAdmin.layer` stays, for a client from a `FeatureFlagRegistry`, and dies for a
+  hand-written `FeatureFlags` that is not an admin.
 
 ### Changed
 

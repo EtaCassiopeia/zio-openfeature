@@ -9,7 +9,7 @@ object FeatureFlagsSpec extends ZIOSpecDefault {
 
   private def testLayer(
     flags: Map[String, Any] = Map.empty
-  ): ZLayer[Any, Throwable, TestFeatureProvider with FeatureFlags] =
+  ): ZLayer[Any, Throwable, TestFeatureProvider with FeatureFlags with FeatureFlagsAdmin] =
     Scope.default >>> TestFeatureProvider.layer(flags)
 
   def spec = suite("FeatureFlagsSpec")(
@@ -463,34 +463,34 @@ object FeatureFlagsSpec extends ZIOSpecDefault {
     suite("Event Handlers")(
       test("onProviderReady registers handler and returns cancellation") {
         for {
-          cancel <- FeatureFlags.onProviderReady(_ => ZIO.unit)
+          cancel <- FeatureFlagsAdmin.onProviderReady(_ => ZIO.unit)
         } yield assertTrue(cancel != null)
       }.provide(testLayer()),
       test("onProviderError registers handler and returns cancellation") {
         for {
-          cancel <- FeatureFlags.onProviderError((_, _) => ZIO.unit)
+          cancel <- FeatureFlagsAdmin.onProviderError((_, _) => ZIO.unit)
         } yield assertTrue(cancel != null)
       }.provide(testLayer()),
       test("onProviderStale registers handler and returns cancellation") {
         for {
-          cancel <- FeatureFlags.onProviderStale((_, _) => ZIO.unit)
+          cancel <- FeatureFlagsAdmin.onProviderStale((_, _) => ZIO.unit)
         } yield assertTrue(cancel != null)
       }.provide(testLayer()),
       test("onConfigurationChanged registers handler and returns cancellation") {
         for {
-          cancel <- FeatureFlags.onConfigurationChanged((_, _) => ZIO.unit)
+          cancel <- FeatureFlagsAdmin.onConfigurationChanged((_, _) => ZIO.unit)
         } yield assertTrue(cancel != null)
       }.provide(testLayer()),
       test("multiple handlers can be registered") {
         for {
-          cancel1 <- FeatureFlags.onProviderReady(_ => ZIO.unit)
-          cancel2 <- FeatureFlags.onProviderReady(_ => ZIO.unit)
-          cancel3 <- FeatureFlags.onProviderError((_, _) => ZIO.unit)
+          cancel1 <- FeatureFlagsAdmin.onProviderReady(_ => ZIO.unit)
+          cancel2 <- FeatureFlagsAdmin.onProviderReady(_ => ZIO.unit)
+          cancel3 <- FeatureFlagsAdmin.onProviderError((_, _) => ZIO.unit)
         } yield assertTrue(cancel1 != null && cancel2 != null && cancel3 != null)
       }.provide(testLayer()),
       test("handler can be cancelled") {
         for {
-          cancel <- FeatureFlags.onProviderReady(_ => ZIO.unit)
+          cancel <- FeatureFlagsAdmin.onProviderReady(_ => ZIO.unit)
           _      <- cancel
         } yield assertTrue(true)
       }.provide(testLayer()),
@@ -499,7 +499,7 @@ object FeatureFlagsSpec extends ZIOSpecDefault {
           Runtime.default.unsafe.run(Ref.make(0)).getOrThrow()
         }
         for {
-          _     <- FeatureFlags.onProviderReady(_ => callsRef.update(_ + 1))
+          _     <- FeatureFlagsAdmin.onProviderReady(_ => callsRef.update(_ + 1))
           calls <- callsRef.get
         } yield assertTrue(calls == 1)
       }.provide(testLayer()),
@@ -510,7 +510,7 @@ object FeatureFlagsSpec extends ZIOSpecDefault {
         for {
           testProvider <- ZIO.service[TestFeatureProvider]
           _            <- testProvider.setStatus(ProviderStatus.Stale)
-          _            <- FeatureFlags.onProviderStale((_, _) => callsRef.update(_ + 1))
+          _            <- FeatureFlagsAdmin.onProviderStale((_, _) => callsRef.update(_ + 1))
           calls        <- callsRef.get
         } yield assertTrue(calls == 1)
       }.provide(testLayer()),
@@ -519,7 +519,7 @@ object FeatureFlagsSpec extends ZIOSpecDefault {
           Runtime.default.unsafe.run(Ref.make(0)).getOrThrow()
         }
         for {
-          cancel <- FeatureFlags.on(ProviderEventType.Ready, _ => callsRef.update(_ + 1))
+          cancel <- FeatureFlagsAdmin.on(ProviderEventType.Ready, _ => callsRef.update(_ + 1))
           calls  <- callsRef.get
         } yield assertTrue(calls == 1) &&
           assertTrue(cancel != null)
@@ -531,7 +531,7 @@ object FeatureFlagsSpec extends ZIOSpecDefault {
         for {
           testProvider <- ZIO.service[TestFeatureProvider]
           _            <- testProvider.setStatus(ProviderStatus.Stale)
-          _            <- FeatureFlags.on(ProviderEventType.Stale, _ => callsRef.update(_ + 1))
+          _            <- FeatureFlagsAdmin.on(ProviderEventType.Stale, _ => callsRef.update(_ + 1))
           calls        <- callsRef.get
         } yield assertTrue(calls == 1)
       }.provide(testLayer())
@@ -629,7 +629,7 @@ object FeatureFlagsSpec extends ZIOSpecDefault {
           _      <- FeatureFlags.addHook(hook)
           _      <- FeatureFlags.addHook(hook)
           before <- FeatureFlags.hooks
-          _      <- FeatureFlags.shutdown
+          _      <- FeatureFlagsAdmin.shutdown
           after  <- FeatureFlags.hooks
         } yield assertTrue(before.length == 2) &&
           assertTrue(after.isEmpty)
@@ -639,7 +639,7 @@ object FeatureFlagsSpec extends ZIOSpecDefault {
         for {
           _      <- FeatureFlags.setGlobalContext(ctx)
           before <- FeatureFlags.globalContext
-          _      <- FeatureFlags.shutdown
+          _      <- FeatureFlagsAdmin.shutdown
           after  <- FeatureFlags.globalContext
         } yield assertTrue(before.targetingKey.contains("user-123")) &&
           assertTrue(after.isEmpty)
@@ -649,7 +649,7 @@ object FeatureFlagsSpec extends ZIOSpecDefault {
         for {
           _      <- FeatureFlags.setClientContext(ctx)
           before <- FeatureFlags.clientContext
-          _      <- FeatureFlags.shutdown
+          _      <- FeatureFlagsAdmin.shutdown
           after  <- FeatureFlags.clientContext
         } yield assertTrue(before.targetingKey.contains("client-user")) &&
           assertTrue(after.isEmpty)
@@ -657,16 +657,16 @@ object FeatureFlagsSpec extends ZIOSpecDefault {
       test("shutdown clears ZIO API-level hooks") {
         val hook = FeatureHook.noop
         for {
-          _      <- FeatureFlags.addZioApiHook(hook)
-          before <- FeatureFlags.zioApiHooks
-          _      <- FeatureFlags.shutdown
-          after  <- FeatureFlags.zioApiHooks
+          _      <- FeatureFlagsAdmin.addZioApiHook(hook)
+          before <- FeatureFlagsAdmin.zioApiHooks
+          _      <- FeatureFlagsAdmin.shutdown
+          after  <- FeatureFlagsAdmin.zioApiHooks
         } yield assertTrue(before.length == 1) &&
           assertTrue(after.isEmpty)
       }.provide(testLayer()),
       test("shutdown ends in NotReady and evaluations fail afterwards") {
         for {
-          _      <- FeatureFlags.shutdown
+          _      <- FeatureFlagsAdmin.shutdown
           status <- FeatureFlags.providerStatus
           result <- FeatureFlags.boolean("flag", default = false).exit
         } yield assertTrue(status == ProviderStatus.NotReady) &&
@@ -1017,7 +1017,7 @@ object FeatureFlagsSpec extends ZIOSpecDefault {
         for {
           tp       <- ZIO.service[TestFeatureProvider]
           received <- Ref.make(0)
-          cancel   <- FeatureFlags.onConfigurationChanged((_, _) => received.update(_ + 1))
+          cancel   <- FeatureFlagsAdmin.onConfigurationChanged((_, _) => received.update(_ + 1))
           _        <- ZIO.sleep(200.millis)
           _        <- tp.emitEvent(ProviderEvent.ConfigurationChanged(Set("a"), tp.metadata))
           _        <- received.get.repeatUntil(_ > 0).timeout(5.seconds)
@@ -1035,7 +1035,7 @@ object FeatureFlagsSpec extends ZIOSpecDefault {
       test("shutdown sets status to NotReady") {
         for {
           before <- FeatureFlags.providerStatus
-          _      <- FeatureFlags.shutdown
+          _      <- FeatureFlagsAdmin.shutdown
           after  <- FeatureFlags.providerStatus
         } yield assertTrue(before == ProviderStatus.Ready) &&
           assertTrue(after == ProviderStatus.NotReady)
@@ -1044,14 +1044,14 @@ object FeatureFlagsSpec extends ZIOSpecDefault {
         for {
           _      <- FeatureFlags.track("event-1")
           before <- FeatureFlags.trackedEvents
-          _      <- FeatureFlags.shutdown
+          _      <- FeatureFlagsAdmin.shutdown
           after  <- FeatureFlags.trackedEvents
         } yield assertTrue(before.nonEmpty) &&
           assertTrue(after.isEmpty)
       }.provide(testLayer()),
       test("evaluation fails after shutdown") {
         for {
-          _      <- FeatureFlags.shutdown
+          _      <- FeatureFlagsAdmin.shutdown
           result <- FeatureFlags.boolean("flag", default = false).exit
         } yield assertTrue(result.isFailure)
       }.provide(testLayer(Map("flag" -> true)))

@@ -341,14 +341,21 @@ private[openfeature] object FeatureFlagsFactories {
       case _                     => apiOverride
     }
 
+  // One instance as both services: `scopedEnvironment` rather than `scoped`, since a layer emits two services only through
+  // an explicit ZEnvironment.
+  private def bothServices(
+    instance: ZIO[Scope, Throwable, FeatureFlagsLive]
+  ): ZLayer[Any, Throwable, FeatureFlags with FeatureFlagsAdmin] =
+    ZLayer.scopedEnvironment(instance.map(ff => ZEnvironment[FeatureFlags](ff).add[FeatureFlagsAdmin](ff)))
+
   def fromProvider(
     provider: OFFeatureProvider,
     config: FeatureFlagsConfig,
     statusRef: Option[SubscriptionRef[ProviderStatus]],
     apiOverride: Option[OpenFeatureAPI] = None,
     onReady: Option[java.util.concurrent.CountDownLatch] = None
-  ): ZLayer[Any, Throwable, FeatureFlags] =
-    ZLayer.scoped {
+  ): ZLayer[Any, Throwable, FeatureFlags with FeatureFlagsAdmin] =
+    bothServices {
       val evalTimeout = evaluationTimeoutOf(config)
       val resolvedApi = apiOverrideOf(config, apiOverride)
       val ownsApi     = ownsApiOf(config)
@@ -398,8 +405,8 @@ private[openfeature] object FeatureFlagsFactories {
     statusRef: SubscriptionRef[ProviderStatus],
     api: Option[OpenFeatureAPI] = None,
     onReady: Option[java.util.concurrent.CountDownLatch] = None
-  ): ZLayer[Any, Throwable, FeatureFlags] =
-    ZLayer.scoped(
+  ): ZLayer[Any, Throwable, FeatureFlags with FeatureFlagsAdmin] =
+    bothServices(
       buildWithTracking(
         provider,
         domain = Some(domain),
@@ -539,8 +546,8 @@ private[openfeature] object FeatureFlagsFactories {
     statusRef: SubscriptionRef[ProviderStatus],
     api: Option[OpenFeatureAPI] = None,
     onReady: Option[java.util.concurrent.CountDownLatch] = None
-  ): ZLayer[Any, Throwable, FeatureFlags] =
-    ZLayer.scoped(
+  ): ZLayer[Any, Throwable, FeatureFlags with FeatureFlagsAdmin] =
+    bothServices(
       buildAsyncWithTracking(
         provider,
         domain = Some(domain),
@@ -561,7 +568,7 @@ private[openfeature] object FeatureFlagsFactories {
     fallback: URIO[Scope, OFFeatureProvider],
     config: FeatureFlagsConfig,
     acquireConfig: AcquireConfig
-  ): URLayer[Any, FeatureFlags with AcquireStatus] = {
+  ): URLayer[Any, FeatureFlags with FeatureFlagsAdmin with AcquireStatus] = {
     val compose             = acquireConfig.compose
     val constructionRetry   = acquireConfig.constructionRetry
     val constructionTimeout = acquireConfig.constructionTimeout
@@ -672,7 +679,7 @@ private[openfeature] object FeatureFlagsFactories {
               }
           record *> ZIO.when(cause.isDie || cause.isInterrupted)(ZIO.refailCause(cause))
         }.forkScoped
-      } yield ZEnvironment[FeatureFlags](ff).add[AcquireStatus](AcquireStatus.fromRef(state))
+      } yield ZEnvironment[FeatureFlags](ff).add[FeatureFlagsAdmin](ff).add[AcquireStatus](AcquireStatus.fromRef(state))
     }
   }
 }

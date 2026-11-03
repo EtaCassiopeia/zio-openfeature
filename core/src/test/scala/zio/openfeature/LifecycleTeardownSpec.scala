@@ -41,7 +41,7 @@ object LifecycleTeardownSpec extends ZIOSpecDefault {
   private def buildIsolated(
     provider: FeatureProvider,
     initTimeout: Duration = FeatureFlags.DefaultInitTimeout
-  ): ZIO[Scope, Throwable, FeatureFlags] =
+  ): ZIO[Scope, Throwable, FeatureFlagsLive] =
     FeatureFlags.build(
       provider,
       domain = Some(s"teardown-${java.util.UUID.randomUUID()}"),
@@ -178,15 +178,14 @@ object LifecycleTeardownSpec extends ZIOSpecDefault {
     test("a registry client refuses setProvider once the registry's scope has closed") {
       val p2 = new Counting("p2", blocking = false)
       for {
-        client <- ZIO.scoped(
+        admin <- ZIO.scoped(
           FeatureFlagRegistry
             .fromProvider(new Counting("p1", blocking = false))
             .build
-            .flatMap(
-              _.get[FeatureFlagRegistry].getClient("d")
-            )
+            .flatMap(_.get[FeatureFlagRegistry].getClient("d"))
+            .flatMap(client => (ZLayer.succeed(client) >>> FeatureFlagsAdmin.layer).build.map(_.get[FeatureFlagsAdmin]))
         )
-        swap <- client.setProvider(p2).either
+        swap <- admin.setProvider(p2).either
       } yield assertTrue(swap == Left(FeatureFlagError.ProviderNotReady(ProviderStatus.NotReady)), p2.inits.get() == 0)
     },
     test("a shared instance's scope close waits for a swap in flight, then refuses the next") {

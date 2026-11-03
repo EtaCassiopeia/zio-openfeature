@@ -131,7 +131,7 @@ object FactoryConfigSpec extends ZIOSpecDefault {
       val api   = OpenFeatureAPI.createIsolated()
       ZIO.scoped {
         for {
-          ffA <- FeatureFlags
+          envA <- FeatureFlags
             .fromProvider(
               new TrackingProvider("A", shutA),
               FeatureFlagsConfig(initMode = InitMode.Async).withDomain(uniqueDomain("t4a-A")),
@@ -139,7 +139,7 @@ object FactoryConfigSpec extends ZIOSpecDefault {
               apiOverride = Some(api)
             )
             .build
-            .map(_.get[FeatureFlags])
+          ffA = envA.get[FeatureFlags]
           ffB <- FeatureFlags
             .fromProvider(
               new TrackingProvider("B", shutB),
@@ -151,7 +151,7 @@ object FactoryConfigSpec extends ZIOSpecDefault {
             .map(_.get[FeatureFlags])
           _      <- ffA.awaitReady(5.seconds)
           _      <- ffB.awaitReady(5.seconds)
-          _      <- ffA.shutdown
+          _      <- envA.get[FeatureFlagsAdmin].shutdown
           sibRes <- ffB.boolean("flag", default = false)
         } yield assertTrue(
           !shutA.get(),   // own provider left to the (still-alive) shared api

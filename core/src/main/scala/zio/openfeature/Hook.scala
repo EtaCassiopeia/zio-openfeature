@@ -141,7 +141,7 @@ object HookHints {
   *
   * Provider-level hooks are not modeled here: they run inside the Java SDK evaluation call, per the OpenFeature
   * architecture. Java `dev.openfeature.sdk.Hook` instances can be registered at the Java API level via
-  * `FeatureFlags.addApiHook` and likewise run inside the SDK.
+  * `FeatureFlagsAdmin.addApiHook` and likewise run inside the SDK.
   */
 trait FeatureHook {
 

@@ -631,9 +631,9 @@ object TestFeatureProvider {
 
   /** Like [[make]], but the provider reports `name` as its metadata name instead of [[DefaultName]].
     *
-    * The event-identity guard behind `FeatureFlags.setProvider` compares the old and new provider's names, so a swap
-    * between two identically-named instances is invisible to it. A `MultiProvider` keeps same-named providers since
-    * Java SDK 1.23.0 (earlier SDKs kept only the last of a name). Give each one a distinct name when swapping:
+    * The event-identity guard behind `FeatureFlagsAdmin.setProvider` compares the old and new provider's names, so a
+    * swap between two identically-named instances is invisible to it. A `MultiProvider` keeps same-named providers
+    * since Java SDK 1.23.0 (earlier SDKs kept only the last of a name). Give each one a distinct name when swapping:
     *
     * {{{
     * for {
@@ -710,7 +710,9 @@ object TestFeatureProvider {
     make(toFlagMap(overrides))
 
   /** Create a FeatureFlags layer from typed overrides. */
-  def layer(overrides: FlagOverride*): ZLayer[Any, Throwable, TestFeatureProvider with FeatureFlags] =
+  def layer(
+    overrides: FlagOverride*
+  ): ZLayer[Any, Throwable, TestFeatureProvider with FeatureFlags with FeatureFlagsAdmin] =
     layer(toFlagMap(overrides))
 
   /** Same as [[layer(overrides*]]; kept for source compatibility from before layers stopped needing a `Scope`. */
@@ -719,7 +721,9 @@ object TestFeatureProvider {
     layer(toFlagMap(overrides))
 
   /** Create an async-init layer from typed overrides. */
-  def asyncLayer(overrides: FlagOverride*): ZLayer[Any, Throwable, TestFeatureProvider with FeatureFlags] =
+  def asyncLayer(
+    overrides: FlagOverride*
+  ): ZLayer[Any, Throwable, TestFeatureProvider with FeatureFlags with FeatureFlagsAdmin] =
     asyncLayer(toFlagMap(overrides))
 
   /** Create just the TestFeatureProvider layer from typed overrides. */
@@ -744,11 +748,11 @@ object TestFeatureProvider {
   def asyncReadyLayer(
     delay: Duration,
     overrides: FlagOverride*
-  ): ZLayer[Any, Throwable, TestFeatureProvider with FeatureFlags] =
+  ): ZLayer[Any, Throwable, TestFeatureProvider with FeatureFlags with FeatureFlagsAdmin] =
     asyncReadyLayer(toFlagMap(overrides), delay)
 
   /** Create a FeatureFlags layer from TestFeatureProvider. */
-  def layer: ZLayer[Any, Throwable, TestFeatureProvider with FeatureFlags] =
+  def layer: ZLayer[Any, Throwable, TestFeatureProvider with FeatureFlags with FeatureFlagsAdmin] =
     layer(Map.empty[String, Any])
 
   /** Create a FeatureFlags layer with initial flags.
@@ -756,7 +760,9 @@ object TestFeatureProvider {
     * Each invocation creates an isolated OpenFeatureAPI instance and a unique domain, ensuring full test isolation.
     * Tests using this layer can safely run in parallel without cross-test event contamination.
     */
-  def layer(flags: Map[String, Any]): ZLayer[Any, Throwable, TestFeatureProvider with FeatureFlags] =
+  def layer(
+    flags: Map[String, Any]
+  ): ZLayer[Any, Throwable, TestFeatureProvider with FeatureFlags with FeatureFlagsAdmin] =
     isolatedLayer(flags, LayerMode.Sync("initial PROVIDER_READY during layer construction"))
 
   /** How an isolated layer connects its provider to the SDK. */
@@ -786,7 +792,7 @@ object TestFeatureProvider {
     provider: TestFeatureProvider,
     mode: LayerMode,
     onReady: Option[CountDownLatch]
-  ): ZIO[Scope, Throwable, FeatureFlags] =
+  ): ZIO[Scope, Throwable, ZEnvironment[FeatureFlags with FeatureFlagsAdmin]] =
     for {
       api    <- ZIO.succeed(OpenFeatureAPI.createIsolated())
       domain <- ZIO.succeed(s"${mode.domainPrefix}${java.util.UUID.randomUUID()}")
@@ -797,15 +803,15 @@ object TestFeatureProvider {
           FeatureFlags
             .fromProviderWithDomainAsync(provider, domain, provider.statusRef, api = Some(api), onReady = onReady)
       }
-      featureFlags <- layer.build.map(_.get[FeatureFlags])
-      _            <- attach(provider, featureFlags)
-      _            <- mode match {
+      env <- layer.build
+      _   <- attach(provider, env.get[FeatureFlags])
+      _   <- mode match {
         case LayerMode.Sync(what)            => awaitLatch(onReady, what)
         case LayerMode.Async                 => ZIO.unit
         case LayerMode.AsyncAutoReady(delay) =>
           (ZIO.sleep(delay) *> provider.setStatus(ProviderStatus.Ready)).forkScoped.unit
       }
-    } yield featureFlags
+    } yield env
 
   // Route `setStatus` through `ff`'s lifecycle step for as long as `ff`'s scope is open.
   private def attach(provider: TestFeatureProvider, ff: FeatureFlags): URIO[Scope, Unit] =
@@ -830,22 +836,17 @@ object TestFeatureProvider {
   private def isolatedLayer(
     flags: Map[String, Any],
     mode: LayerMode
-  ): ZLayer[Any, Throwable, TestFeatureProvider with FeatureFlags] = {
+  ): ZLayer[Any, Throwable, TestFeatureProvider with FeatureFlags with FeatureFlagsAdmin] = {
     val start = mode match {
       case LayerMode.Sync(_) => Start.ReadyWithHandshake
       case _                 => Start.NotReady
     }
-    ZLayer
-      .scoped {
-        for {
-          testProvider <- build(DefaultName, flags, start)
-          featureFlags <- connect(testProvider, mode, testProvider.initDone)
-        } yield (testProvider, featureFlags)
-      }
-      .flatMap { env =>
-        val (testProvider, featureFlags) = env.get[(TestFeatureProvider, FeatureFlags)]
-        ZLayer.succeed(testProvider) ++ ZLayer.succeed(featureFlags)
-      }
+    ZLayer.scopedEnvironment {
+      for {
+        testProvider <- build(DefaultName, flags, start)
+        env          <- connect(testProvider, mode, testProvider.initDone)
+      } yield ZEnvironment[TestFeatureProvider](testProvider) ++ env
+    }
   }
 
   /** Create just the TestFeatureProvider layer (without FeatureFlags). */
@@ -862,8 +863,8 @@ object TestFeatureProvider {
     * straight after the build is not overwritten by that late event. The latch is the layer's own: a provider from
     * [[make]] carries none, and giving it one would make its `setStatus(Ready)` wait for an event no layer delivers.
     */
-  def layerFrom(provider: TestFeatureProvider): ZLayer[Any, Throwable, FeatureFlags] =
-    ZLayer.scoped {
+  def layerFrom(provider: TestFeatureProvider): ZLayer[Any, Throwable, FeatureFlags with FeatureFlagsAdmin] =
+    ZLayer.scopedEnvironment {
       ZIO
         .succeed(new CountDownLatch(1))
         .flatMap(ready => connect(provider, LayerMode.Sync("initial PROVIDER_READY during layerFrom"), Some(ready)))
@@ -884,7 +885,7 @@ object TestFeatureProvider {
     * The provider starts in NotReady state. Use `setStatus(ProviderStatus.Ready)` or emit a `ProviderEvent.Ready` event
     * to simulate the provider becoming ready. Evaluations will fail with `ProviderNotReady` until then.
     */
-  def asyncLayer: ZLayer[Any, Throwable, TestFeatureProvider with FeatureFlags] =
+  def asyncLayer: ZLayer[Any, Throwable, TestFeatureProvider with FeatureFlags with FeatureFlagsAdmin] =
     asyncLayer(Map.empty[String, Any])
 
   /** Create a FeatureFlags layer with async initialization and initial flags.
@@ -892,7 +893,9 @@ object TestFeatureProvider {
     * The provider starts in NotReady state and does not auto-initialize. Call `setStatus(ProviderStatus.Ready)` to
     * simulate the provider becoming ready. Evaluations will fail with `ProviderNotReady` until then.
     */
-  def asyncLayer(flags: Map[String, Any]): ZLayer[Any, Throwable, TestFeatureProvider with FeatureFlags] =
+  def asyncLayer(
+    flags: Map[String, Any]
+  ): ZLayer[Any, Throwable, TestFeatureProvider with FeatureFlags with FeatureFlagsAdmin] =
     isolatedLayer(flags, LayerMode.Async)
 
   /** Create a TestFeatureProvider that starts in NotReady state.
@@ -915,7 +918,7 @@ object TestFeatureProvider {
   def asyncReadyLayer(
     flags: Map[String, Any] = Map.empty,
     initDelay: Duration = TestFeatureProvider.DefaultInitDelay
-  ): ZLayer[Any, Throwable, TestFeatureProvider with FeatureFlags] =
+  ): ZLayer[Any, Throwable, TestFeatureProvider with FeatureFlags with FeatureFlagsAdmin] =
     isolatedLayer(flags, LayerMode.AsyncAutoReady(initDelay))
 
   /** Same as [[asyncLayer]]; kept for source compatibility from before layers stopped needing a `Scope`. */

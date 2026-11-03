@@ -16,7 +16,7 @@ object HooksSpec extends ZIOSpecDefault:
 
   private def withHooks(log: Ref[List[String]]) =
     for
-      _ <- FeatureFlags.addZioApiHook(recorder("api", log))
+      _ <- FeatureFlagsAdmin.addZioApiHook(recorder("api", log))
       _ <- FeatureFlags.addHooks(List(recorder("client1", log), recorder("client2", log)))
     yield EvaluationOptions(recorder("invocation", log))
 
@@ -165,6 +165,5 @@ object HooksSpec extends ZIOSpecDefault:
       yield assertTrue(out.head.exists(_.errorCode.isDefined), out(1).isEmpty)
     }
   ).provide(
-    TestFeatureProvider.layer(Map("on" -> true, "color" -> "blue", "new-ui" -> true)),
-    FeatureFlagsAdmin.layer
+    TestFeatureProvider.layer(Map("on" -> true, "color" -> "blue", "new-ui" -> true))
   ) @@ TestAspect.withLiveClock

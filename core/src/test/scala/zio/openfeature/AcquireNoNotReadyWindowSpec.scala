@@ -221,10 +221,11 @@ object AcquireNoNotReadyWindowSpec extends ZIOSpecDefault {
                 .withCompose((r, _) => r)
             )
             .build
-          ff = env.get[FeatureFlags]
+          ff    = env.get[FeatureFlags]
+          admin = env.get[FeatureFlagsAdmin]
           _       <- awaitOutcome(env)
           changed <- Promise.make[Nothing, Set[String]]
-          _       <- ff.on(
+          _       <- admin.on(
             ProviderEventType.ConfigurationChanged,
             {
               case ProviderEvent.ConfigurationChanged(flags, _, _) => changed.succeed(flags).unit
@@ -288,9 +289,10 @@ object AcquireNoNotReadyWindowSpec extends ZIOSpecDefault {
                 .withOnConstructionError(e => errP.succeed(e).unit)
             )
             .build
-          ff = env.get[FeatureFlags]
+          ff    = env.get[FeatureFlags]
+          admin = env.get[FeatureFlagsAdmin]
           _        <- awaitLatch(real.initStarted, "the real provider's initialize()")
-          _        <- ff.setProvider(other)
+          _        <- admin.setProvider(other)
           _        <- ZIO.succeed(gate.countDown())
           err      <- errP.await.timeoutFail(new RuntimeException("onConstructionError did not run"))(bound)
           state    <- env.get[AcquireStatus].get

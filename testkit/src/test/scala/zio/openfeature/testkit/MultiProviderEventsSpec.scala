@@ -18,7 +18,7 @@ object MultiProviderEventsSpec extends ZIOSpecDefault {
 
   private val Settle = 300.millis
 
-  private def build(chain: FeatureProvider): ZIO[Scope, Throwable, FeatureFlags] =
+  private def build(chain: FeatureProvider): ZIO[Scope, Throwable, FeatureFlagsLive] =
     FeatureFlags.build(
       chain,
       domain = Some(s"multi-events-${java.util.UUID.randomUUID()}"),
@@ -42,7 +42,7 @@ object MultiProviderEventsSpec extends ZIOSpecDefault {
   /** Records the chain's status events from now on: after the build's own READY, and after the READY a handler gets at
     * once when it is added to a ready instance.
     */
-  private def recorded(ff: FeatureFlags): URIO[Scope, Ref[Chunk[ProviderEvent]]] =
+  private def recorded(ff: FeatureFlagsLive): URIO[Scope, Ref[Chunk[ProviderEvent]]] =
     ZIO.sleep(Settle) *> Ref.make(Chunk.empty[ProviderEvent]).tap { seen =>
       ZIO.foreachDiscard(
         List(ProviderEventType.Ready, ProviderEventType.Error, ProviderEventType.Stale)

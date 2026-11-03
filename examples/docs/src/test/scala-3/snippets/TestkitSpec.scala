@@ -165,7 +165,7 @@ object TestkitSpec extends ZIOSpecDefault:
     for
       provider <- ZIO.service[TestFeatureProvider]
       changed  <- Promise.make[Nothing, Set[String]]
-      _        <- FeatureFlags.onConfigurationChanged((keys, _) => changed.succeed(keys).unit)
+      _        <- FeatureFlagsAdmin.onConfigurationChanged((keys, _) => changed.succeed(keys).unit)
       _        <- provider.emitEvent(ProviderEvent.ConfigurationChanged(Set("banner"), provider.metadata))
       keys     <- changed.await
     yield assertTrue(keys == Set("banner"))

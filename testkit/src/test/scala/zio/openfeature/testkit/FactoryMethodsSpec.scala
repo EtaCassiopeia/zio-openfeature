@@ -101,7 +101,7 @@ object FactoryMethodsSpec extends ZIOSpecDefault {
             ff       <- FeatureFlags
               .fromProvider(FeatureFlags.multiProvider(List(provider)), FeatureFlagsConfig())
               .build
-              .map(_.get)
+              .map(_.get[FeatureFlags])
             result <- ff.boolean("flag", default = false)
           } yield assertTrue(result == true)
         }
@@ -117,7 +117,7 @@ object FactoryMethodsSpec extends ZIOSpecDefault {
                 FeatureFlagsConfig()
               )
               .build
-              .map(_.get)
+              .map(_.get[FeatureFlags])
             result <- ff.string("flag", default = "none")
           } yield assertTrue(result == "hello")
         }
@@ -207,6 +207,45 @@ object FactoryMethodsSpec extends ZIOSpecDefault {
           }
         } yield assertTrue(result == true)
       }
+    ),
+    suite("every layer provides FeatureFlagsAdmin for its FeatureFlags")(
+      test("fromProvider(provider, config)") {
+        for {
+          tp <- TestFeatureProvider.make
+          r  <- sameInstance(FeatureFlags.fromProvider(tp, FeatureFlagsConfig().withIsolatedApi))
+        } yield r
+      },
+      test("fromProvider(provider)") {
+        for {
+          tp <- TestFeatureProvider.make
+          r  <- sameInstance(FeatureFlags.fromProvider(tp))
+        } yield r
+      },
+      test("fromProviderAsync(provider)") {
+        for {
+          tp <- TestFeatureProvider.make
+          r  <- sameInstance(FeatureFlags.fromProviderAsync(tp))
+        } yield r
+      },
+      test("TestFeatureProvider.layer")(sameInstance(TestFeatureProvider.layer)),
+      test("TestFeatureProvider.layer(flags)")(sameInstance(TestFeatureProvider.layer(Map("flag" -> true)))),
+      test("TestFeatureProvider.asyncLayer")(sameInstance(TestFeatureProvider.asyncLayer)),
+      test("TestFeatureProvider.asyncLayer(flags)")(sameInstance(TestFeatureProvider.asyncLayer(Map("flag" -> true)))),
+      test("TestFeatureProvider.asyncReadyLayer")(sameInstance(TestFeatureProvider.asyncReadyLayer())),
+      test("TestFeatureProvider.layerFrom") {
+        for {
+          tp <- TestFeatureProvider.make
+          r  <- sameInstance(TestFeatureProvider.layerFrom(tp))
+        } yield r
+      }
     )
   ) @@ TestAspect.sequential @@ TestAspect.withLiveClock
+
+  // The layer's FeatureFlagsAdmin is the instance behind its FeatureFlags.
+  private def sameInstance[R <: FeatureFlags with FeatureFlagsAdmin](
+    layer: ZLayer[Any, Throwable, R]
+  ): ZIO[Any, Throwable, TestResult] =
+    ZIO.scoped(
+      layer.build.map(env => assertTrue(env.get[FeatureFlagsAdmin].asInstanceOf[AnyRef] eq env.get[FeatureFlags]))
+    )
 }

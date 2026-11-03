@@ -171,11 +171,11 @@ there is one.
 | `SdkBind` | `ProviderRegistration.registerThenAwait`: the SDK binds the new provider and starts `initialize()` |
 | `SdkBindFail` | the SDK's registration throwing before it binds (`EventProvider.attach` or `registerGlobalProvider` refusing the provider) |
 | `SdkInitOk`, `SdkInitFail` | the SDK's `FeatureProviderStateManager.initialize` returning or throwing; after a success, the SDK's `PROVIDER_READY` (`ran`) and `ProviderRepository.shutDownOld`, which queues the previous provider's shutdown |
-| `SdkShutDownOld` | that shutdown running on the SDK's executor (`ProviderRepository.shutdownProvider`); no probe point records it, though the wrapper's `ProviderShutDown` marks it |
+| `SdkShutDownOld` | that shutdown running on the SDK's executor (`ProviderRepository.shutdownProvider`), through `CallShutdown`: the wrapper reaches the provider's `shutdown()` once per cycle and records `ProviderShutDown`, then `ShutdownReturned(ok)` if it returns; a throw is logged by the SDK, a hang is the executor's |
 | `SwapDone` | `setProvider`: `Replaced`, `SwapSucceeded(settled)`; `Registration.settle` deciding by the wrapper's `initialize()` outcome |
 | `SwapTimeout` | `setProvider`, timeout branch: `SwapFailed`, `Replaced`, `OrphanRecorded` (`recordOrphan`) |
 | `SwapFailNoRollback` | `setProvider`, failure branch when the previous provider's `initialize()` still runs: `SwapFailed`, `OrphanRecorded` |
-| `SwapRollback` | `setProvider`, failure branch, `rollBack`: `restoreSdkRegistration` (probe point `RollbackBind`), then `Replaced` and `RollbackSucceeded(settled)`; or `cleanupUnboundFailedProvider` when `initialize()` threw. On a timeout, which the model folds into this step, `Replaced` and `OrphanRecorded` |
+| `SwapRollback` | `setProvider`, failure branch, `rollBack`: `restoreSdkRegistration` (probe point `RollbackBind`), then `Replaced` and `RollbackSucceeded(settled)`; or `cleanupUnboundFailedProvider` when `initialize()` threw, which is `CallShutdown` of the failed provider through `boundedProviderShutdown` (a throw is logged, a hang abandoned at the bound). On a timeout, which the model folds into this step, `Replaced` and `OrphanRecorded` |
 | `SwapRollbackUnbound` | `setProvider`, failure branch: `failedBeforeBinding`, `RollbackUnbound(before)` |
 | `SwapReconcile` | `setProvider`, after every outcome: `GateDown`, probe point `SwapReconcile` (and `LateReady` after a timeout), then `reconcileRegistration` and the replay of a deferred watchdog deadline; inside the swap's uninterruptible region, with the lock held |
 | `CallerInterrupt` | an interrupt of `setProvider`'s caller, which takes effect only in the phases in `Interruptible`: none, since the swap body and the re-read run uninterruptibly (`runSwap`'s `.uninterruptible`) |
@@ -183,9 +183,9 @@ there is one.
 | `EvalRead`, `EvalCheck`, `EvalCall`, `EvalReturn` | `Evaluator.gated`: the `swapGeneration` read, `checkProviderStatus`, the provider call through the SDK client, and the re-check (probe point `GateRechecked`) |
 | `Emit`, `EmitStaleWhileStarting` | a provider's `emit`; the SDK's `FeatureProviderStateManager.onEmit` |
 | `Deliver` | `EventBridge.onSdkEvent` and `applySdkSignal` |
-| `OrphanResolved` | `OrphanedProviders.settle` on the registration's outcome, after its bounded wait for the SDK's shutdown when `initialize()` returned; then `OrphanSettled` |
-| `ShutdownStart`, `ShutdownDone` | `FeatureFlagsLive.shutdown` |
-| `ScopeClose` | the API scope finalizer in `FeatureFlagsFactories`: takes the swap lock, marks the instance closed, then `boundedApiShutdown`, `orphans.resolveAll` |
+| `OrphanResolved` | `OrphanedProviders.settle` on the registration's outcome, after its bounded wait for the SDK's shutdown when `initialize()` returned; otherwise `CallShutdown` of the previous provider through `boundedProviderShutdown`; then `OrphanSettled` |
+| `ShutdownStart`, `ShutdownDone` | `FeatureFlagsLive.shutdown`; the teardown's `CallShutdowns` is `boundedApiShutdown` (the SDK shuts the bound provider down and runs the shutdowns it queued) and `orphans.resolveAll` (`boundedProviderShutdown` of each unreleased entry's provider) |
+| `ScopeClose` | the API scope finalizer in `FeatureFlagsFactories`: takes the swap lock, marks the instance closed, then `boundedApiShutdown`, `orphans.resolveAll`, the same `CallShutdowns` as `ShutdownDone` |
 
 ## The library's variables and the code
 
@@ -254,7 +254,13 @@ per run (`TraceProbe` in testkit's tests; `ZOF_TRACE_DIR` sets the directory, `t
 event's type, whether a swap or its rollback ended `STALE`, whether the rollback succeeded. `TraceValidation.tla` then
 lets TLC search for a behaviour of `Lifecycle` that takes exactly those library steps in that order, with the SDK's
 steps (an `initialize()` returning or throwing, a provider emitting) free. The registered wrapper's own points
-(`InitEntered`, `InitReturned`, `ProviderShutDown`) mark those SDK steps and are not labelled. A run is accepted when such a behaviour
+(`InitEntered`, `InitReturned`) mark those SDK steps and are not labelled; its `ProviderShutDown` and `ShutdownReturned(ok)` points
+are counted on the teardown they fall in (how many providers the teardown shut down, how many of those calls threw,
+how many returned at all), and `TearDown` may shut down no more providers, and no more of each behaviour, than the
+run counted (the SDK's executor can run a queued shutdown inside the teardown that the model placed before it, when
+the watcher's bound elapsed, so the run may count one more); an `OrphanRecorded` point marks the run's instance as
+owning its API, the topology whose teardown the counts constrain; the shutdown
+points outside a teardown (the SDK's queued shutdown, an orphan's settle, a rollback's cleanup) stay free. A run is accepted when such a behaviour
 exists. The check is of the order of the library's steps and what was recorded about them; the statuses a run observed
 are not compared, which `LifecycleModelSpec`'s own oracle does. A trace TLC cannot decide in time is reported as
 undecided without failing the run, and a run that checks no trace at all fails.
@@ -359,7 +365,8 @@ outcome).
 | The rollback's provider fails too | `SwapRollback(ok, r, early)` with `ok = FALSE` and `r` in `{"ERROR", "FATAL"}` |
 | A provider reports a failure at runtime | `Emit(p, "ERROR")` or `Emit(p, "FATAL")`; `Fatal` is sticky (`Apply`), and `StatusFollowsSdk` allows for it |
 | Events arrive late, in any order, or never | `events` is a set, and nothing forces `Deliver` |
-| Shutdown or scope close while work is in flight | Both wait for the swap lock; `TearDown` shuts down the bound provider and the predecessors of the orphans not released |
+| Shutdown or scope close while work is in flight | Both wait for the swap lock; `TearDown` shuts down the bound provider, the providers whose shutdown the SDK had queued, and the predecessors of the orphans not released |
+| A provider's `shutdown()` throws or hangs | `shutBehaviour[p]`, fixed when the provider is registered (`Behaviours`): every shutdown site goes through `CallShutdowns`, which counts the call and records `shutOutcome[p]` as `ok`, `threw` or `timedOut` (the bound elapsed; time is not modelled, so in the same step). Nothing reads the outcome: the library logs a throw and abandons a hang at its bound, as `boundedProviderShutdown` and `boundedApiShutdown` do, so every invariant holds for every mix, `NoRetryAfterFailure` says no failed call is repeated (today `ShutDownAtMostOnce` implies it; it names the policy for the failed case), and `ShutdownEnds` holds under `FairSpec`. A behaviour per registration multiplies the state space, so `Lifecycle.cfg`, `LifecyclePR.cfg` and `Evaluation.cfg` keep `Behaviours = {"ok"}`; `Shutdowns.cfg` (the liveness bounds, about 23 million distinct states, a few minutes) checks every invariant with the full set on every pull request, `Witness.cfg` uses it too, and `ShutdownsLiveness.cfg` (one swap, providers that return or hang) checks `ShutdownEnds` under `FairSpec` against a hung shutdown, which liveness checking cannot afford on `Liveness.cfg`'s bounds. A `Bound.Foreign` provider, registered with the API outside the instance, is never shut down by the library and is outside this model, which is one instance owning its API |
 | A provider dies silently: its evaluations fail or hang, and it emits nothing | `Die(p)`, only with `AllowDeath`: the ghost `dead[p]` is set and nothing else changes, and nothing in the library reads it. Represented, and undetectable by design: see "Silent death" below |
 | The caller of `setProvider` is interrupted | `CallerInterrupt`, enabled only in the swap phases in `Interruptible`, which is empty: the swap body and the re-read after it run uninterruptibly ([design record](../../docs/design/lifecycle.md), #433, #434), and the mutants that make either interruptible are caught. An interrupt while waiting for the lock changes no state; `shutdown` and the scope close are uninterruptible once they hold it (#435) |
 
@@ -367,7 +374,6 @@ outcome).
 
 | Failure | Why it is out | Checked by |
 |:--|:--|:--|
-| A provider's `shutdown()` throws or hangs | `TearDown` counts one shutdown, atomically. Every SDK and provider call on a lifecycle path is bounded (#561). #719 models it. | `LifecycleModelSpec` (`SlowShutdown`); `ManagedProvider` shuts a provider down at most once per initialization by construction |
 | A defect in the library: a bridge handler throws, the SDK's executor dies | The library's own actions are assumed to complete | the property and interleaving suites |
 | The process crashes | Nothing is durable, and a restart is a fresh `Init`. `ClosedCleanly` cannot hold when no finalizer runs. | not applicable |
 | A provider reports a state from inside `initialize()` and then fails | See "What is outside the model" | `LifecycleInterleavingSpec` |

@@ -1,0 +1,18 @@
+{"seq": 0, "point": "Begin", "arg": ""}
+{"seq": 1, "point": "SwapStart", "arg": ""}
+{"seq": 2, "point": "ApplySignal", "arg": "SwapStarted"}
+{"seq": 3, "point": "SdkBind", "arg": ""}
+{"seq": 4, "point": "InitEntered", "arg": ""}
+{"seq": 5, "point": "SwapTimeout", "arg": ""}
+{"seq": 6, "point": "ApplySignal", "arg": "SwapFailed"}
+{"seq": 7, "point": "OrphanRecorded", "arg": ""}
+{"seq": 8, "point": "SwapReconcile", "arg": ""}
+{"seq": 9, "point": "LateReady", "arg": ""}
+{"seq": 10, "point": "SwapDone", "arg": ""}
+{"seq": 11, "point": "ProviderShutDown", "arg": "1"}
+{"seq": 12, "point": "ShutdownReturned", "arg": "1 true"}
+{"seq": 13, "point": "ShutdownStart", "arg": ""}
+{"seq": 14, "point": "ApplySignal", "arg": "ShutdownStarted"}
+{"seq": 15, "point": "ShutdownDone", "arg": ""}
+{"seq": 16, "point": "ApplySignal", "arg": "ShutdownCompleted"}
+{"seq": 17, "point": "ScopeClose", "arg": ""}

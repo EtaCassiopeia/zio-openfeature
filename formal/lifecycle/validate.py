@@ -32,6 +32,12 @@ def check(tla_jar, cm_jar, actions):
     """ACCEPTED when TLC finds a behaviour matching `actions`, REJECTED when it shows there is none, else UNDECIDED."""
     swaps = sum(1 for a in actions if a["action"] == "SwapStart")
     deliveries = sum(1 for a in actions if a["action"] == "Deliver")
+    # Only the shutdown behaviours the run observed: each one multiplies the search by the registrations.
+    behaviours = ['"ok"']
+    if any(a["threw"] > 0 for a in actions):
+        behaviours.append('"throws"')
+    if any(a["shuts"] > a["returned"] >= 0 for a in actions):
+        behaviours.append('"hangs"')
     with tempfile.TemporaryDirectory() as d:
         for name in ("Lifecycle.tla", "TraceValidation.tla"):
             with open(os.path.join(here, name)) as src, open(os.path.join(d, name), "w") as dst:
@@ -48,6 +54,7 @@ def check(tla_jar, cm_jar, actions):
     MaxEvents = {deliveries}
     MaxEvals = 0
     AllowDeath = FALSE
+    Behaviours = {{{", ".join(behaviours)}}}
     None = None
     TraceFile = "{trace}"
 INIT TInit

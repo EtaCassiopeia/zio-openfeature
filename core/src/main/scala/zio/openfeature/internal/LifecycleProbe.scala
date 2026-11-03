@@ -77,8 +77,15 @@ private[openfeature] object LifecycleProbe {
     /** A registered provider's `initialize()` returned or threw; its outcome is recorded. */
     case object InitReturned extends Point
 
-    /** A registered provider's `shutdown()` is about to run, for the first time in its cycle. */
-    case object ProviderShutDown extends Point
+    /** A registered provider's `shutdown()` is about to run, for the first time in its cycle; `call` numbers the call,
+      * so that its return can be told from another call's.
+      */
+    final case class ProviderShutDown(call: Long) extends Point
+
+    /** The `shutdown()` call `call` returned (`ok`) or threw. Not reached while it hangs: the caller's bound elapses
+      * without it.
+      */
+    final case class ShutdownReturned(call: Long, ok: Boolean) extends Point
 
     /** The async build's init watchdog woke up, before it escalates. */
     case object Watchdog extends Point

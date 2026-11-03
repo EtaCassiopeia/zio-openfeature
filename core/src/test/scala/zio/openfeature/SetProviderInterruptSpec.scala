@@ -120,14 +120,18 @@ object SetProviderInterruptSpec extends ZIOSpecDefault {
                 .repeatUntil(identity)
                 .timeout(5.seconds)
                 .map(_.isDefined)
-              slot = api.getClient(domain).getProviderState
+              // The SDK can deliver the event just before it writes the state.
+              slot <- ZIO
+                .succeed(api.getClient(domain).getProviderState)
+                .repeatUntil(_ == dev.openfeature.sdk.ProviderState.READY)
+                .timeout(5.seconds)
               _    <- release.succeed(())
               exit <- fiber.await
               // Only the swap's re-read of the slot can apply that READY now.
               status <- ff.providerStatus.repeatUntil(_ == ProviderStatus.Ready).timeout(2.seconds)
             } yield assertTrue(
               dropped,
-              slot == dev.openfeature.sdk.ProviderState.READY,
+              slot.contains(dev.openfeature.sdk.ProviderState.READY),
               exit.isInterrupted,
               status.contains(ProviderStatus.Ready)
             )

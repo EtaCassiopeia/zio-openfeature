@@ -260,6 +260,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`setProvider` no longer reports `Ready` before the SDK's slot is** (#777). The SDK writes `READY` just after
+  `initialize()` returns, and the library waited a fixed second for that, then treated a slot still `NOT_READY` as ready.
+  On a starved host the instance reported `Ready` while evaluations failed `ProviderNotReady`, with nothing logged. The
+  wait now shares `initTimeout` with `initialize()`, and running out of it is a timeout: status `Error`, recovered by the
+  SDK's late `READY`, like any provider that initializes after its timeout.
 - **An object flag answered with no value, or a value that is not an object, is a `TypeMismatch`** (#730). It used to
   resolve to an empty map. The total tier now serves the default with `TYPE_MISMATCH`. This changes `obj` against
   `EnvVarProvider`, and against a scalar or list key in `HoconProvider`.

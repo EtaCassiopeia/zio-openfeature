@@ -345,7 +345,9 @@ outcome).
   it would call `initialize()` again.
 - **The watcher's two-tick wait.** The orphan watcher acts on an `ERROR` only when it persists across two ticks, which
   gives the SDK's `PROVIDER_READY` time to arrive; the model reads whether `initialize()` returned directly.
-- **Time.** A timeout is an action enabled while `initialize()` runs; how long anything takes is not modelled.
+- **Time.** A timeout is an action enabled while `initialize()` runs; how long anything takes is not modelled. `SdkInitOk`
+  returns from `initialize()` and writes the slot in one step: for the library, "returned but not yet written" is the same
+  observation as "still running", with the same timeout and the same recovery by the late `READY`.
 - **Several instances on one API.** The model is one instance, owning its API or sharing it (`owns`). The registry
   and the shared-API topology, with their ownership rules, are `formal/registry` (`Registry.tla`), a coarser model
   composed with this one by assumption: this one checks each instance's swap protocol, that one who tears the API

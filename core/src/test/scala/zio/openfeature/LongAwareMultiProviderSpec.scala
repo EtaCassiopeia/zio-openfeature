@@ -22,7 +22,6 @@ import dev.openfeature.sdk.{
   TrackingEventDetails => OFTrackingEventDetails,
   Value
 }
-import dev.openfeature.sdk.multiprovider.{FirstMatchStrategy, Strategy}
 
 import scala.jdk.CollectionConverters._
 
@@ -97,16 +96,17 @@ object LongAwareMultiProviderSpec extends ZIOSpecDefault {
     }
 
   /** Records the children it is handed and evaluates only the first one. */
-  private class RecordingStrategy(seen: ConcurrentLinkedQueue[List[String]]) extends Strategy {
+  private class RecordingStrategy(seen: ConcurrentLinkedQueue[List[String]])
+      extends MultiProviderStrategy.CustomStrategy {
     override def evaluate[T](
-      providers: java.util.List[FeatureProvider],
+      providers: List[FeatureProvider],
       key: String,
       defaultValue: T,
       ctx: OFEvaluationContext,
-      providerFunction: java.util.function.Function[FeatureProvider, ProviderEvaluation[T]]
+      call: FeatureProvider => ProviderEvaluation[T]
     ): ProviderEvaluation[T] = {
-      seen.add(providers.asScala.toList.map(_.getMetadata.getName))
-      providerFunction.apply(providers.get(0))
+      seen.add(providers.map(_.getMetadata.getName))
+      call(providers.head)
     }
   }
 
@@ -114,7 +114,7 @@ object LongAwareMultiProviderSpec extends ZIOSpecDefault {
     FeatureFlags
       .fromProvider(
         provider,
-        FeatureFlagsConfig(),
+        FeatureFlagsConfig.default,
         statusRef = None,
         apiOverride = Some(OpenFeatureAPI.createIsolated())
       )
@@ -192,7 +192,9 @@ object LongAwareMultiProviderSpec extends ZIOSpecDefault {
         val b    = new LongChild("b", Map("n" -> Holds(1L)))
         ZIO.scoped {
           for {
-            ff  <- ffOver(FeatureFlags.multiProvider(List(a, b), new RecordingStrategy(seen)))
+            ff <- ffOver(
+              FeatureFlags.multiProvider(List(a, b), MultiProviderStrategy.Custom(new RecordingStrategy(seen)))
+            )
             res <- ff.longDetails("n", 0L)
           } yield assertTrue(
             res.value == 7L,
@@ -307,7 +309,7 @@ object LongAwareMultiProviderSpec extends ZIOSpecDefault {
         val a      = new TrackChild("a", Some(first))
         val b      = new TrackChild("b")
         val c      = new TrackChild("c", Some(second))
-        val chain  = new LongAwareMultiProvider(List[FeatureProvider](a, b, c).asJava, new FirstMatchStrategy())
+        val chain  = new LongAwareMultiProvider(List[FeatureProvider](a, b, c).asJava, MultiProviderStrategy.FirstMatch)
         val thrown = scala.util.Try(chain.track("signup", new ImmutableContext("user-4"), null)).failed.toOption
         assertTrue(
           thrown.exists(_ eq first),
@@ -319,7 +321,7 @@ object LongAwareMultiProviderSpec extends ZIOSpecDefault {
         val shared = new RuntimeException("shared backend down")
         val a      = new TrackChild("a", Some(shared))
         val b      = new TrackChild("b", Some(shared))
-        val chain  = new LongAwareMultiProvider(List[FeatureProvider](a, b).asJava, new FirstMatchStrategy())
+        val chain  = new LongAwareMultiProvider(List[FeatureProvider](a, b).asJava, MultiProviderStrategy.FirstMatch)
         val thrown = scala.util.Try(chain.track("signup", new ImmutableContext("user-5"), null)).failed.toOption
         assertTrue(
           thrown.exists(_ eq shared),
@@ -336,7 +338,7 @@ object LongAwareMultiProviderSpec extends ZIOSpecDefault {
             new TrackChild("b", Some(shared)),
             new TrackChild("c", Some(shared))
           ).asJava,
-          new FirstMatchStrategy()
+          MultiProviderStrategy.FirstMatch
         )
         val thrown = scala.util.Try(chain.track("signup", new ImmutableContext("user-7"), null)).failed.toOption
         assertTrue(thrown.exists(_ eq first), first.getSuppressed.toList == List(shared))
@@ -346,7 +348,7 @@ object LongAwareMultiProviderSpec extends ZIOSpecDefault {
         val cachedB = new IllegalStateException("b down")
         val chain   = new LongAwareMultiProvider(
           List[FeatureProvider](new TrackChild("a", Some(cachedA)), new TrackChild("b", Some(cachedB))).asJava,
-          new FirstMatchStrategy()
+          MultiProviderStrategy.FirstMatch
         )
         val ctx = new ImmutableContext("user-8")
         scala.util.Try(chain.track("one", ctx, null))
@@ -370,7 +372,7 @@ object LongAwareMultiProviderSpec extends ZIOSpecDefault {
         }
         val chain = new LongAwareMultiProvider(
           List[FeatureProvider](child("x"), child("y"), child("z")).asJava,
-          new FirstMatchStrategy()
+          MultiProviderStrategy.FirstMatch
         )
         chain.track("signup", new ImmutableContext("user-6"), null)
         assertTrue(order.asScala.toList == List("x", "y", "z"))

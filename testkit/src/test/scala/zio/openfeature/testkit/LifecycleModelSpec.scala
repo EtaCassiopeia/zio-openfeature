@@ -532,7 +532,7 @@ object LifecycleModelSpec extends ZIOSpecDefault {
     for {
       initial <- newProvider(first, Kind.Good)
       ff      <- FeatureFlagsFactories
-        .buildWithTracking(
+        .build(
           initial,
           domain = Some(s"lifecycle-model-${java.util.UUID.randomUUID()}"),
           version = None,

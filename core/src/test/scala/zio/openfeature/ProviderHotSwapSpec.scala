@@ -194,7 +194,7 @@ object ProviderHotSwapSpec extends ZIOSpecDefault {
     domain: String = s"held-${java.util.UUID.randomUUID()}"
   ): ZIO[Scope, Throwable, FeatureFlagsLive] =
     ZIO.unless(owns)(ZIO.addFinalizer(ZIO.attemptBlocking(api.shutdown()).ignore)) *>
-      zio.openfeature.internal.FeatureFlagsFactories.buildWithTracking(
+      zio.openfeature.internal.FeatureFlagsFactories.build(
         provider,
         domain = Some(domain),
         version = None,
@@ -324,7 +324,7 @@ object ProviderHotSwapSpec extends ZIOSpecDefault {
     val api    = OpenFeatureAPI.createIsolated()
     val domain = s"test-swap-${java.util.UUID.randomUUID()}"
     zio.openfeature.internal.FeatureFlagsFactories
-      .buildWithTracking(
+      .build(
         provider,
         domain = Some(domain),
         version = None,
@@ -676,7 +676,7 @@ object ProviderHotSwapSpec extends ZIOSpecDefault {
           }
           api    = OpenFeatureAPI.createIsolated()
           domain = s"test-swap-${java.util.UUID.randomUUID()}"
-          ff <- zio.openfeature.internal.FeatureFlagsFactories.buildWithTracking(
+          ff <- zio.openfeature.internal.FeatureFlagsFactories.build(
             new SimpleProvider("A", Map("flag" -> true)),
             domain = Some(domain),
             version = None,
@@ -721,7 +721,7 @@ object ProviderHotSwapSpec extends ZIOSpecDefault {
           held    <- Promise.make[Nothing, Unit]
           release <- Promise.make[Nothing, Unit]
           _       <- ZIO.addFinalizer(release.succeed(()))
-          ff      <- zio.openfeature.internal.FeatureFlagsFactories.buildWithTracking(
+          ff      <- zio.openfeature.internal.FeatureFlagsFactories.build(
             new SimpleProvider("A", Map("flag" -> true)),
             domain = Some(domain),
             version = None,
@@ -1501,7 +1501,7 @@ object ProviderHotSwapSpec extends ZIOSpecDefault {
           held    <- Promise.make[Nothing, Unit]
           release <- Promise.make[Nothing, Unit]
           _       <- ZIO.addFinalizer(release.succeed(()))
-          ff      <- zio.openfeature.internal.FeatureFlagsFactories.buildAsyncWithTracking(
+          ff      <- zio.openfeature.internal.FeatureFlagsFactories.buildAsync(
             a,
             domain = Some(domain),
             version = None,

@@ -126,20 +126,18 @@ object TrackingAttributesSpec extends ZIOSpecDefault {
         )
       }
     },
-    test("an unsupported attribute type fails track with InvalidContext and nothing is sent or recorded") {
+    test("an unsupported attribute type fails track with InvalidContext and nothing is sent") {
       ZIO.scoped {
         for {
           provider <- ZIO.succeed(new CapturingProvider)
           ff       <- buildFF(provider)
           result   <- ff.track("purchase", TrackingEventDetails(Map("odd" -> NotAnAttribute(1)))).either
-          recorded <- ff.trackedEvents
         } yield assertTrue(
           result.left.toOption.exists {
             case FeatureFlagError.InvalidContext(reason) => reason.contains("odd")
             case _                                       => false
           },
-          provider.captured.get().isEmpty,
-          recorded.isEmpty
+          provider.captured.get().isEmpty
         )
       }
     },

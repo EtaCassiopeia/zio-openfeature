@@ -20,7 +20,7 @@ works, for example [flagd](https://flagd.dev/), [LaunchDarkly](https://launchdar
 |:--|:--|
 | Start the provider first, failing at startup if it cannot | `FeatureFlags.fromProvider(provider)` |
 | Start the app at once; the provider readies in the background | `FeatureFlags.fromProviderAsync(provider)` |
-| A domain, hooks, timeouts or other settings | `FeatureFlags.fromProvider(provider, FeatureFlagsConfig(...))` |
+| A domain, hooks, timeouts or other settings | `FeatureFlags.fromProvider(provider, FeatureFlagsConfig.default.with...)` |
 | Several providers asked in order | [`FeatureFlags.multiProvider(providers)`](#ask-several-providers-in-order), then any factory above |
 | Serve a fallback while a slow provider is built | [`FeatureFlags.fromAcquireAsync`](#start-on-a-fallback-fromacquireasync) |
 | One client per domain, created on demand | [`FeatureFlagRegistry.fromProvider`](#one-client-per-domain-featureflagregistry) |
@@ -111,7 +111,7 @@ One API has one default slot and one slot per domain, so instances on it are not
   directly under a different domain is not reused: an `EventProvider` fails the build with the SDK's "already
   attached" error, and any other provider is initialized again. Bind it through the library instead.
 
-To keep instances apart, give each one `FeatureFlagsConfig().withIsolatedApi`, a domain of its own, or build them all
+To keep instances apart, give each one `FeatureFlagsConfig.default.withIsolatedApi`, a domain of its own, or build them all
 from one [`FeatureFlagRegistry`](#one-client-per-domain-featureflagregistry).
 
 ## Ask several providers in order
@@ -137,7 +137,9 @@ The strategy decides when the chain moves on:
   match and ends the chain.
 - When no provider has the flag, `firstMatch` gives `FLAG_NOT_FOUND` (the caller's default); `firstSuccessful` gives a
   `GENERAL` error carrying every provider's error.
-- A custom strategy implements `MultiProviderStrategy.Strategy`. For `track` in a chain, see [Tracking](tracking.md);
+- A custom strategy implements `MultiProviderStrategy.CustomStrategy` and is passed as
+  `MultiProviderStrategy.Custom(strategy)`; the built-in ones are `MultiProviderStrategy.FirstMatch` and
+  `MultiProviderStrategy.FirstSuccessful`. For `track` in a chain, see [Tracking](tracking.md);
   for a `DeferredProvider` member, see [Extras](extras.md#deferred-provider).
 - The chain's status is the worst of its members' (`Fatal`, then `NotReady`, `Error`, `Stale`, `Ready`), as the
   specification's Multi-Provider appendix prescribes. Once the chain has initialized, a member's `READY`, `STALE` or
@@ -244,7 +246,7 @@ A domain names a client, so different parts of an app can use different provider
 - `fromProvider(defaultProvider, config)` applies `version`, initial hooks, the evaluation and init timeouts, context
   source, fallback logging, `maxAbandonedCalls` and init mode to every client (with `withAsyncInit`, `getClient`
   returns before the provider is ready). `domain` and `apiOwnership` do not apply: the registry names each client's
-  domain and owns its private API. `fromProvider(defaultProvider)` is the same with `FeatureFlagsConfig()`. Closing
+  domain and owns its private API. `fromProvider(defaultProvider)` is the same with `FeatureFlagsConfig.default`. Closing
   the scope shuts down the API and every provider.
 
 ## Replace the provider at runtime

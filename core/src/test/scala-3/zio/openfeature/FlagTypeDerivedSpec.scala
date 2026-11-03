@@ -260,7 +260,7 @@ object FlagTypeDerivedSpec extends ZIOSpecDefault:
     // --- integration: derivation + wire dispatch + object path ---
     test("a derived ENUM flag evaluates through the provider's string resolver") {
       ZIO.scoped {
-        // Only reachable if wireType routed this to getStringEvaluation. The object path would not yield Enterprise.
+        // Only reachable if wire routed this to getStringEvaluation. The object path would not yield Enterprise.
         build(new DerivedProvider("enterprise"), "enum").flatMap { ff =>
           ff.value[Plan]("plan.flag", Plan.Free).map(p => assertTrue(p == Plan.Enterprise))
         }

@@ -29,8 +29,8 @@ object CustomTypeObjectPathSpec extends ZIOSpecDefault {
 
   final case class Cfg(tier: String, pct: Int)
 
-  /** An object-backed custom type: `wireType` stays the domain name, so evaluation takes the object path. Numbers come
-    * back from the `Value` bridge as `Double`, which is why `pct` decodes through `FlagType[Int]` rather than casting.
+  /** An object-backed custom type: `wire` stays Object, so evaluation takes the object path. Numbers come back from the
+    * `Value` bridge as `Double`, which is why `pct` decodes through `FlagType[Int]` rather than casting.
     */
   implicit val cfgFlagType: FlagType[Cfg] = FlagType.from[Cfg](
     "Cfg",

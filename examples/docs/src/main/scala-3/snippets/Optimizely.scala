@@ -31,21 +31,16 @@ object Optimizely:
   // --8<-- [start:config]
   val tuned: IO[FeatureFlagError.InvalidConfiguration, OptimizelyFeatureProvider] =
     OptimizelyProvider.make(
-      OptimizelyProviderConfig(
-        sdkKey = "abcd1234efgh5678",
-        pollingInterval = Some(java.time.Duration.ofMinutes(1)), // also turns on the staleness watchdog
-        staleAfter = Some(java.time.Duration.ofMinutes(5))       // STALE after 5 min without a successful fetch
-      )
+      OptimizelyProviderConfig("abcd1234efgh5678")
+        .withPollingInterval(java.time.Duration.ofMinutes(1)) // also turns on the staleness watchdog
+        .withStaleAfter(java.time.Duration.ofMinutes(5))      // STALE after 5 min without a successful fetch
     )
   // --8<-- [end:config]
 
   // --8<-- [start:events-tuned]
   val batched: IO[FeatureFlagError.InvalidConfiguration, OptimizelyFeatureProvider] =
     OptimizelyProvider.make(
-      OptimizelyProviderConfig(
-        sdkKey = "abcd1234efgh5678",
-        events = OptimizelyEvents.Batched(batchSize = 50, flushInterval = java.time.Duration.ofSeconds(10))
-      )
+      OptimizelyProviderConfig("abcd1234efgh5678").withEvents(OptimizelyEvents.Batched(batchSize = 50, flushInterval = java.time.Duration.ofSeconds(10)))
     )
   // --8<-- [end:events-tuned]
 
@@ -94,7 +89,7 @@ object Optimizely:
 
   // --8<-- [start:fail-fast]
   def failFast(provider: OptimizelyFeatureProvider): ZLayer[Any, Throwable, FeatureFlags] =
-    FeatureFlags.fromProvider(provider, FeatureFlagsConfig().withInitTimeout(15.seconds)) // build fails if not ready
+    FeatureFlags.fromProvider(provider, FeatureFlagsConfig.default.withInitTimeout(15.seconds)) // build fails if not ready
   // --8<-- [end:fail-fast]
 
   // --8<-- [start:readiness]
@@ -107,13 +102,13 @@ object Optimizely:
 
   // --8<-- [start:circuit-breaker]
   def resilient(provider: OptimizelyFeatureProvider): ZLayer[Any, Throwable | FeatureFlagError, FeatureFlags] =
-    ZLayer.fromZIO(CircuitBreakerProvider.make(provider, CircuitBreakerProviderConfig(failureThreshold = 5))).flatMap {
+    ZLayer.fromZIO(CircuitBreakerProvider.make(provider, CircuitBreakerProviderConfig.default.withFailureThreshold(5))).flatMap {
       env =>
         val chain = FeatureFlags.multiProvider(
           List(env.get[CircuitBreakerProvider], EnvVarProvider()), // env vars answer while Optimizely is out
           MultiProviderStrategy.firstSuccessful
         )
-        FeatureFlags.fromProvider(chain, FeatureFlagsConfig().withAsyncInit)
+        FeatureFlags.fromProvider(chain, FeatureFlagsConfig.default.withAsyncInit)
     }
   // --8<-- [end:circuit-breaker]
 

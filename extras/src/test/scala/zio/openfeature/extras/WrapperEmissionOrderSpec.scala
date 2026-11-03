@@ -153,7 +153,7 @@ object WrapperEmissionOrderSpec extends ZIOSpecDefault {
             val delegate = new Delegate
             val wrapper  = CircuitBreakerProvider(
               delegate,
-              CircuitBreakerProviderConfig(failureThreshold = 1, evaluationTimeout = Duration.Infinity)
+              CircuitBreakerProviderConfig.default.withFailureThreshold(1).withEvaluationTimeout(Duration.Infinity)
             )
             val reg = new Registered(wrapper)
             try {

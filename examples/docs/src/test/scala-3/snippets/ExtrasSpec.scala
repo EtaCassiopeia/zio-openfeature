@@ -55,7 +55,7 @@ object ExtrasSpec extends ZIOSpecDefault:
 
   private def flags[A](provider: FeatureProvider)(program: ZIO[FeatureFlags, Any, A]): ZIO[Any, Any, A] =
     val domain = s"extras-spec-${domains.incrementAndGet()}"
-    ZIO.scoped(program.provideSome[Scope](FeatureFlags.fromProvider(provider, FeatureFlagsConfig().withDomain(domain))))
+    ZIO.scoped(program.provideSome[Scope](FeatureFlags.fromProvider(provider, FeatureFlagsConfig.default.withDomain(domain))))
 
   def spec = suite("Extras")(
     suite("HoconProvider")(
@@ -133,7 +133,7 @@ object ExtrasSpec extends ZIOSpecDefault:
       test("a repeat evaluation is served from the cache with reason Cached") {
         val remote = new CountingProvider
         for
-          cached <- CachingProvider.make(remote, CachingConfig(ttl = 1.minute))
+          cached <- CachingProvider.make(remote, CachingConfig.default.withTtl(1.minute))
           r      <- flags(cached)(FeatureFlags.booleanDetails("f", false) <*> FeatureFlags.booleanDetails("f", false))
         yield assertTrue(remote.calls.get == 1, r._1.reason == ResolutionReason.TargetingMatch, r._2.isCached)
       },
@@ -149,7 +149,7 @@ object ExtrasSpec extends ZIOSpecDefault:
         val remote = new CountingProvider
         val ctx    = (user: String) => EvaluationContext(user).withAttribute("plan", "pro")
         for
-          cached <- CachingProvider.make(remote, CachingConfig(contextKeys = Some(Set("plan"))))
+          cached <- CachingProvider.make(remote, CachingConfig.default.withContextKeys(Set("plan")))
           _ <- flags(cached)(
             FeatureFlags.boolean("f", false, ctx("ann")) *> FeatureFlags.boolean("f", false, ctx("bob"))
           )
@@ -169,7 +169,7 @@ object ExtrasSpec extends ZIOSpecDefault:
       val remote = new CountingProvider
       remote.failing = true
       for
-        breaker <- CircuitBreakerProvider.make(remote, CircuitBreakerProviderConfig(failureThreshold = 2))
+        breaker <- CircuitBreakerProvider.make(remote, CircuitBreakerProviderConfig.default.withFailureThreshold(2))
         chain = FeatureFlags.multiProvider(List(breaker, hocon("f = false")), MultiProviderStrategy.firstSuccessful)
         answers <- flags(chain)(ZIO.foreach(1 to 5)(_ => FeatureFlags.boolean("f", default = true)))
       yield assertTrue(answers.forall(_ == false), remote.calls.get == 2)

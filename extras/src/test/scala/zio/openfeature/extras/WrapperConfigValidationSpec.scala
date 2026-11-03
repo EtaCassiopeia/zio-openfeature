@@ -38,56 +38,56 @@ object WrapperConfigValidationSpec extends ZIOSpecDefault {
   private val invalidBreakerConfigs: List[(String, CircuitBreakerProviderConfig, String)] = List(
     (
       "failureThreshold = 0",
-      CircuitBreakerProviderConfig(failureThreshold = 0),
+      CircuitBreakerProviderConfig.default.withFailureThreshold(0),
       "CircuitBreakerProviderConfig.failureThreshold must be >= 1, got 0"
     ),
     (
       "failureThreshold = -1",
-      CircuitBreakerProviderConfig(failureThreshold = -1),
+      CircuitBreakerProviderConfig.default.withFailureThreshold(-1),
       "CircuitBreakerProviderConfig.failureThreshold must be >= 1, got -1"
     ),
     (
       "halfOpenMaxCalls = 0",
-      CircuitBreakerProviderConfig(halfOpenMaxCalls = 0),
+      CircuitBreakerProviderConfig.default.withHalfOpenMaxCalls(0),
       "CircuitBreakerProviderConfig.halfOpenMaxCalls must be >= 1, got 0"
     ),
     (
       "halfOpenMaxCalls = -1",
-      CircuitBreakerProviderConfig(halfOpenMaxCalls = -1),
+      CircuitBreakerProviderConfig.default.withHalfOpenMaxCalls(-1),
       "CircuitBreakerProviderConfig.halfOpenMaxCalls must be >= 1, got -1"
     ),
     (
       "resetTimeout = Zero",
-      CircuitBreakerProviderConfig(resetTimeout = Duration.Zero),
+      CircuitBreakerProviderConfig.default.withResetTimeout(Duration.Zero),
       "CircuitBreakerProviderConfig.resetTimeout must be > 0, got PT0S"
     ),
     (
       "resetTimeout = -1s",
-      CircuitBreakerProviderConfig(resetTimeout = minusOneSecond),
+      CircuitBreakerProviderConfig.default.withResetTimeout(minusOneSecond),
       "CircuitBreakerProviderConfig.resetTimeout must be > 0, got PT-1S"
     ),
     (
       "evaluationTimeout = Zero",
-      CircuitBreakerProviderConfig(evaluationTimeout = Duration.Zero),
+      CircuitBreakerProviderConfig.default.withEvaluationTimeout(Duration.Zero),
       "CircuitBreakerProviderConfig.evaluationTimeout must be > 0, got PT0S"
     ),
     (
       "evaluationTimeout = -1s",
-      CircuitBreakerProviderConfig(evaluationTimeout = minusOneSecond),
+      CircuitBreakerProviderConfig.default.withEvaluationTimeout(minusOneSecond),
       "CircuitBreakerProviderConfig.evaluationTimeout must be > 0, got PT-1S"
     ),
     (
       "stateCheckInterval = -1s",
-      CircuitBreakerProviderConfig(stateCheckInterval = minusOneSecond),
+      CircuitBreakerProviderConfig.default.withStateCheckInterval(minusOneSecond),
       "CircuitBreakerProviderConfig.stateCheckInterval must be >= 0, got PT-1S"
     )
   )
 
   private val invalidCachingConfigs: List[(String, CachingConfig, String)] = List(
-    ("maxEntries = 0", CachingConfig(maxEntries = 0), "CachingConfig.maxEntries must be >= 1, got 0"),
-    ("maxEntries = -1", CachingConfig(maxEntries = -1), "CachingConfig.maxEntries must be >= 1, got -1"),
-    ("ttl = Zero", CachingConfig(ttl = Duration.Zero), "CachingConfig.ttl must be > 0, got PT0S"),
-    ("ttl = -1s", CachingConfig(ttl = minusOneSecond), "CachingConfig.ttl must be > 0, got PT-1S")
+    ("maxEntries = 0", CachingConfig.default.withMaxEntries(0), "CachingConfig.maxEntries must be >= 1, got 0"),
+    ("maxEntries = -1", CachingConfig.default.withMaxEntries(-1), "CachingConfig.maxEntries must be >= 1, got -1"),
+    ("ttl = Zero", CachingConfig.default.withTtl(Duration.Zero), "CachingConfig.ttl must be > 0, got PT0S"),
+    ("ttl = -1s", CachingConfig.default.withTtl(minusOneSecond), "CachingConfig.ttl must be > 0, got PT-1S")
   )
 
   def spec = suite("WrapperConfigValidation")(
@@ -99,7 +99,9 @@ object WrapperConfigValidationSpec extends ZIOSpecDefault {
       } ++ List(
         test("reports every violation together") {
           for {
-            failure <- breakerFailure(CircuitBreakerProviderConfig(failureThreshold = 0, halfOpenMaxCalls = 0))
+            failure <- breakerFailure(
+              CircuitBreakerProviderConfig.default.withFailureThreshold(0).withHalfOpenMaxCalls(0)
+            )
           } yield assertTrue(
             failure == Some(
               "CircuitBreakerProviderConfig.failureThreshold must be >= 1, got 0; " +
@@ -109,19 +111,22 @@ object WrapperConfigValidationSpec extends ZIOSpecDefault {
         },
         test("accepts Infinity timeouts, a zero state-check interval and the default config") {
           val accepted = List(
-            CircuitBreakerProviderConfig(),
-            CircuitBreakerProviderConfig(evaluationTimeout = Duration.Infinity),
-            CircuitBreakerProviderConfig(resetTimeout = Duration.Infinity),
-            CircuitBreakerProviderConfig(stateCheckInterval = Duration.Zero),
-            CircuitBreakerProviderConfig(stateCheckInterval = Duration.Infinity),
-            CircuitBreakerProviderConfig(failureThreshold = 1, halfOpenMaxCalls = 1, resetTimeout = 1.nanos)
+            CircuitBreakerProviderConfig.default,
+            CircuitBreakerProviderConfig.default.withEvaluationTimeout(Duration.Infinity),
+            CircuitBreakerProviderConfig.default.withResetTimeout(Duration.Infinity),
+            CircuitBreakerProviderConfig.default.withStateCheckInterval(Duration.Zero),
+            CircuitBreakerProviderConfig.default.withStateCheckInterval(Duration.Infinity),
+            CircuitBreakerProviderConfig.default
+              .withFailureThreshold(1)
+              .withResetTimeout(1.nanos)
+              .withHalfOpenMaxCalls(1)
           )
           for (failures <- ZIO.foreach(accepted)(breakerFailure)) yield assertTrue(failures.forall(_.isEmpty))
         },
         test("the ticker overload validates too") {
           for {
             failure <- CircuitBreakerProvider
-              .make(new CountingDelegate, CircuitBreakerProviderConfig(failureThreshold = 0), Ticker.system)
+              .make(new CountingDelegate, CircuitBreakerProviderConfig.default.withFailureThreshold(0), Ticker.system)
               .flip
               .option
           } yield assertTrue(
@@ -140,9 +145,9 @@ object WrapperConfigValidationSpec extends ZIOSpecDefault {
       } ++ List(
         test("accepts an Infinity ttl, empty contextKeys and the default config") {
           val accepted = List(
-            CachingConfig(),
-            CachingConfig(ttl = Duration.Infinity),
-            CachingConfig(maxEntries = 1, contextKeys = Some(Set.empty))
+            CachingConfig.default,
+            CachingConfig.default.withTtl(Duration.Infinity),
+            CachingConfig.default.withMaxEntries(1).withContextKeys(Set.empty)
           )
           for (failures <- ZIO.foreach(accepted)(cachingFailure)) yield assertTrue(failures.forall(_.isEmpty))
         }
@@ -152,27 +157,28 @@ object WrapperConfigValidationSpec extends ZIOSpecDefault {
       test("CircuitBreakerProvider.apply") {
         val thrown =
           scala.util.Try(
-            CircuitBreakerProvider(new CountingDelegate, CircuitBreakerProviderConfig(failureThreshold = 0))
+            CircuitBreakerProvider(new CountingDelegate, CircuitBreakerProviderConfig.default.withFailureThreshold(0))
           )
         val message = thrown.failed.toOption.collect { case e: IllegalArgumentException => e.getMessage }
         assertTrue(message == Some("CircuitBreakerProviderConfig.failureThreshold must be >= 1, got 0"))
       },
       test("CachingProvider.apply") {
-        val thrown  = scala.util.Try(CachingProvider(new CountingDelegate, CachingConfig(maxEntries = 0)))
+        val thrown  = scala.util.Try(CachingProvider(new CountingDelegate, CachingConfig.default.withMaxEntries(0)))
         val message = thrown.failed.toOption.collect { case e: IllegalArgumentException => e.getMessage }
         assertTrue(message == Some("CachingConfig.maxEntries must be >= 1, got 0"))
       },
       test("CircuitBreaker standalone construction validates CircuitBreakerConfig, probeTimeout included") {
-        val thrown  = scala.util.Try(CircuitBreaker(CircuitBreakerConfig(probeTimeout = Duration.Zero), Ticker.system))
+        val thrown =
+          scala.util.Try(CircuitBreaker(CircuitBreakerConfig.default.withProbeTimeout(Duration.Zero), Ticker.system))
         val message = thrown.failed.toOption.collect { case e: IllegalArgumentException => e.getMessage }
         assertTrue(message == Some("CircuitBreakerConfig.probeTimeout must be > 0, got PT0S"))
       },
       test("valid configs still construct") {
         val delegate = new CountingDelegate
         val built    = scala.util.Try {
-          CircuitBreakerProvider(delegate, CircuitBreakerProviderConfig(resetTimeout = Duration.Infinity))
-          CachingProvider(delegate, CachingConfig(ttl = Duration.Infinity))
-          CircuitBreaker(CircuitBreakerConfig(probeTimeout = Duration.Infinity), Ticker.system)
+          CircuitBreakerProvider(delegate, CircuitBreakerProviderConfig.default.withResetTimeout(Duration.Infinity))
+          CachingProvider(delegate, CachingConfig.default.withTtl(Duration.Infinity))
+          CircuitBreaker(CircuitBreakerConfig.default.withProbeTimeout(Duration.Infinity), Ticker.system)
         }
         assertTrue(built.isSuccess)
       }
@@ -223,11 +229,13 @@ object WrapperConfigValidationSpec extends ZIOSpecDefault {
         val delegate = new CountingDelegate
         for {
           breakerFailure <- ZIO
-            .scoped(CircuitBreakerProvider.scoped(delegate, CircuitBreakerProviderConfig(failureThreshold = 0)))
+            .scoped(
+              CircuitBreakerProvider.scoped(delegate, CircuitBreakerProviderConfig.default.withFailureThreshold(0))
+            )
             .flip
             .map(_.reason)
           cachingFailure <- ZIO
-            .scoped(CachingProvider.scoped(delegate, CachingConfig(ttl = Duration.Zero)))
+            .scoped(CachingProvider.scoped(delegate, CachingConfig.default.withTtl(Duration.Zero)))
             .flip
             .map(_.reason)
           count = delegate.shutdownCount.get()

@@ -249,7 +249,7 @@ object TypedTierErrorPromotionSpec extends ZIOSpecDefault {
       // "v" from the string resolver is not a Level; the strict decoder rejects it → TypeMismatch, as before.
       implicit val strict: FlagType[Int] = new FlagType[Int] {
         def typeName: String                        = "Strict"
-        override def wireType: String               = "String"
+        override def wire: WireType                 = WireType.String
         def defaultValue: Int                       = 0
         def decode(value: Any): Either[String, Int] = Left(s"nope: $value")
         override def encode(value: Int): Any        = value.toString
@@ -293,7 +293,7 @@ object TypedTierErrorPromotionSpec extends ZIOSpecDefault {
       // and the wire type the provider was asked for is `ctx.flagType`.
       implicit val strict: FlagType[Int] = new FlagType[Int] {
         def typeName: String                        = "Strict"
-        override def wireType: String               = "String"
+        override def wire: WireType                 = WireType.String
         def defaultValue: Int                       = 0
         def decode(value: Any): Either[String, Int] = Right(0)
         override def encode(value: Int): Any        = value.toString

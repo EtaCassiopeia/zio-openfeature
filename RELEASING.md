@@ -50,9 +50,9 @@ the marker; the rules below then apply to 2.x:
   release. [`check-mima-filters.sh`](.github/scripts/check-mima-filters.sh) enforces this in CI: it rejects an
   unmarked filter on a public symbol unless the latest `v*` tag already has a higher major than the baseline (a
   `v2.0.0-RC1` tag unlocks them for 2.0).
-- **No new fields on the public configuration case classes for the rest of 1.x.** A field changes `apply`, `copy` and
-  the constructor (1.1.0 and 1.2.0 both broke `FeatureFlagsConfig` this way, and 1.2.0 also
-  `OptimizelyProviderConfig`). A knob that cannot wait for 2.0 needs a shape that keeps those descriptors.
+- **A new configuration knob is one `with*` method and a private field.** The configuration classes are final classes
+  with private constructors, so adding a field changes no public descriptor. (Until 2.0 they were case classes, and a
+  new field broke `apply`, `copy` and the constructor: 1.1.0 and 1.2.0 both did this to `FeatureFlagsConfig`.)
 - **Some breaks are invisible to MiMa** and still count: a changed result type inside `ZIO` or `ZLayer` (1.2.0's OFREP
   `make`/`layer`/`scoped`), or a change to an aliased SDK interface (`MultiProviderStrategy.Strategy` with SDK 1.23.0).
   Such a change waits for a major, and its CHANGELOG entry says it breaks.

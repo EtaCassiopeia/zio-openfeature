@@ -515,7 +515,7 @@ object DifferentialLaws {
     FeatureFlags
       .fromProvider(
         provider,
-        FeatureFlagsConfig(),
+        FeatureFlagsConfig.default,
         statusRef = None,
         apiOverride = Some(OpenFeatureAPI.createIsolated())
       )

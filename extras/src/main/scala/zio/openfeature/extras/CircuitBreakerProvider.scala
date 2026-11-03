@@ -59,24 +59,65 @@ object StalePolicy {
   *   the hot path. `Duration.Zero` checks on every evaluation. Failure-count tripping is unaffected and reacts to every
   *   evaluation outcome immediately. Must be `>= 0`; `Duration.Infinity` polls only once.
   */
-final case class CircuitBreakerProviderConfig(
-  failureThreshold: Int = CircuitBreaker.DefaultFailureThreshold,
-  resetTimeout: Duration = CircuitBreaker.DefaultResetTimeout,
-  evaluationTimeout: Duration = CircuitBreakerProvider.DefaultEvaluationTimeout,
-  halfOpenMaxCalls: Int = CircuitBreaker.DefaultHalfOpenMaxCalls,
-  stalePolicy: StalePolicy = StalePolicy.Open,
-  stateCheckInterval: Duration = CircuitBreakerProvider.DefaultStateCheckInterval
+final class CircuitBreakerProviderConfig private (
+  val failureThreshold: Int,
+  val resetTimeout: Duration,
+  val evaluationTimeout: Duration,
+  val halfOpenMaxCalls: Int,
+  val stalePolicy: StalePolicy,
+  val stateCheckInterval: Duration
 ) {
+  private def copy(
+    failureThreshold: Int = failureThreshold,
+    resetTimeout: Duration = resetTimeout,
+    evaluationTimeout: Duration = evaluationTimeout,
+    halfOpenMaxCalls: Int = halfOpenMaxCalls,
+    stalePolicy: StalePolicy = stalePolicy,
+    stateCheckInterval: Duration = stateCheckInterval
+  ): CircuitBreakerProviderConfig =
+    new CircuitBreakerProviderConfig(
+      failureThreshold,
+      resetTimeout,
+      evaluationTimeout,
+      halfOpenMaxCalls,
+      stalePolicy,
+      stateCheckInterval
+    )
+
+  def withFailureThreshold(n: Int): CircuitBreakerProviderConfig         = copy(failureThreshold = n)
+  def withResetTimeout(d: Duration): CircuitBreakerProviderConfig        = copy(resetTimeout = d)
+  def withEvaluationTimeout(d: Duration): CircuitBreakerProviderConfig   = copy(evaluationTimeout = d)
+  def withHalfOpenMaxCalls(n: Int): CircuitBreakerProviderConfig         = copy(halfOpenMaxCalls = n)
+  def withStalePolicy(policy: StalePolicy): CircuitBreakerProviderConfig = copy(stalePolicy = policy)
+  def withStateCheckInterval(d: Duration): CircuitBreakerProviderConfig  = copy(stateCheckInterval = d)
+
   private[extras] def toCircuitBreakerConfig: CircuitBreakerConfig =
-    CircuitBreakerConfig(
-      failureThreshold = failureThreshold,
-      resetTimeout = resetTimeout,
-      halfOpenMaxCalls = halfOpenMaxCalls,
+    CircuitBreakerConfig.default
+      .withFailureThreshold(failureThreshold)
+      .withResetTimeout(resetTimeout)
+      .withHalfOpenMaxCalls(halfOpenMaxCalls)
       // A probe should never be considered wedged before the evaluation it runs could itself time out; add a
       // margin so a legitimately slow probe is not stolen out from under itself. With no evaluation timeout this is
       // infinite and there is no takeover, for the same reason: a slow probe cannot be told from a dead one.
-      probeTimeout = evaluationTimeout + CircuitBreakerProvider.ProbeTimeoutMargin
-    )
+      .withProbeTimeout(evaluationTimeout + CircuitBreakerProvider.ProbeTimeoutMargin)
+
+  override def toString: String =
+    "CircuitBreakerProviderConfig(" +
+      s"failureThreshold=$failureThreshold, resetTimeout=$resetTimeout, evaluationTimeout=$evaluationTimeout, " +
+      s"halfOpenMaxCalls=$halfOpenMaxCalls, stalePolicy=$stalePolicy, stateCheckInterval=$stateCheckInterval)"
+}
+
+object CircuitBreakerProviderConfig {
+
+  /** The `CircuitBreaker.Default*` and `CircuitBreakerProvider.Default*` values, and [[StalePolicy.Open]]. */
+  val default: CircuitBreakerProviderConfig = new CircuitBreakerProviderConfig(
+    CircuitBreaker.DefaultFailureThreshold,
+    CircuitBreaker.DefaultResetTimeout,
+    CircuitBreakerProvider.DefaultEvaluationTimeout,
+    CircuitBreaker.DefaultHalfOpenMaxCalls,
+    StalePolicy.Open,
+    CircuitBreakerProvider.DefaultStateCheckInterval
+  )
 }
 
 /** A provider wrapper that implements the circuit breaker pattern for fast failover.
@@ -446,7 +487,7 @@ object CircuitBreakerProvider {
     */
   def make(
     underlying: FeatureProvider,
-    config: CircuitBreakerProviderConfig = CircuitBreakerProviderConfig()
+    config: CircuitBreakerProviderConfig = CircuitBreakerProviderConfig.default
   ): IO[FeatureFlagError.InvalidConfiguration, CircuitBreakerProvider] =
     make(underlying, config, Ticker.system)
 
@@ -468,7 +509,7 @@ object CircuitBreakerProvider {
     */
   def scoped(
     underlying: FeatureProvider,
-    config: CircuitBreakerProviderConfig = CircuitBreakerProviderConfig()
+    config: CircuitBreakerProviderConfig = CircuitBreakerProviderConfig.default
   ): ZIO[Scope, FeatureFlagError.InvalidConfiguration, CircuitBreakerProvider] =
     ZIO.acquireRelease(make(underlying, config))(p =>
       WrapperRelease.release("CircuitBreakerProvider", ShutdownTimeout)(p.shutdown())
@@ -481,7 +522,7 @@ object CircuitBreakerProvider {
     */
   def apply(
     underlying: FeatureProvider,
-    config: CircuitBreakerProviderConfig = CircuitBreakerProviderConfig()
+    config: CircuitBreakerProviderConfig = CircuitBreakerProviderConfig.default
   ): CircuitBreakerProvider =
     apply(underlying, config, Ticker.system)
 

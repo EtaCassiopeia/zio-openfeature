@@ -35,7 +35,7 @@ object ScopeFreeLayerSpec extends ZIOSpecDefault {
       ProviderEvaluations.of(d, "DEFAULT")
   }
 
-  private def isolated(config: FeatureFlagsConfig = FeatureFlagsConfig()) = {
+  private def isolated(config: FeatureFlagsConfig = FeatureFlagsConfig.default) = {
     val provider                                    = new FlagProvider("scope-free")
     val layer: ZLayer[Any, Throwable, FeatureFlags] =
       FeatureFlags.fromProvider(provider, config, statusRef = None, apiOverride = Some(OpenFeatureAPI.createIsolated()))
@@ -48,7 +48,7 @@ object ScopeFreeLayerSpec extends ZIOSpecDefault {
       FeatureFlags.boolean("f", false).provide(layer).map(v => assertTrue(v))
     },
     test("an async-init fromProvider can be provided with no Scope") {
-      val (_, layer) = isolated(FeatureFlagsConfig(initMode = InitMode.Async))
+      val (_, layer) = isolated(FeatureFlagsConfig.default.withAsyncInit)
       (FeatureFlags.awaitReady(5.seconds) *> FeatureFlags.boolean("f", false))
         .provide(layer)
         .map(v => assertTrue(v))

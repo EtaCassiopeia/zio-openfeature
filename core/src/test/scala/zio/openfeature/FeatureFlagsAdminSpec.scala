@@ -29,7 +29,7 @@ object FeatureFlagsAdminSpec extends ZIOSpecDefault {
     override def getObjectEvaluation(k: String, d: Value, c: OFEvaluationContext) = ProviderEvaluations.of(d, "DEFAULT")
   }
 
-  private val config = FeatureFlagsConfig().withIsolatedApi
+  private val config = FeatureFlagsConfig.default.withIsolatedApi
 
   def spec = suite("FeatureFlagsAdminSpec")(
     test("FeatureFlagsAdmin administers the instance the factory built") {

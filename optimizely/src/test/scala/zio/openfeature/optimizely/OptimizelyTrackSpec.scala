@@ -101,7 +101,7 @@ object OptimizelyTrackSpec extends ZIOSpecDefault {
               program.provide(
                 FeatureFlags.fromProvider(
                   provider,
-                  FeatureFlagsConfig(),
+                  FeatureFlagsConfig.default,
                   statusRef = None,
                   apiOverride = Some(dev.openfeature.sdk.OpenFeatureAPI.createIsolated())
                 )

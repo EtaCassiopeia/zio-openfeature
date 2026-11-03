@@ -334,7 +334,7 @@ object TestkitSpec extends ZIOSpecDefault:
       for
         faulty <- FaultyProvider.scoped(Map("flag" -> true))            // the scope releases any hang left parked
         _      <- faulty.script(Op.Initialize, Fault.HangUntilReleased) // ignores shutdown(), like a stuck SDK
-        error  <- FeatureFlags.fromProvider(faulty, FeatureFlagsConfig().withInitTimeout(200.millis)).build.flip
+        error  <- FeatureFlags.fromProvider(faulty, FeatureFlagsConfig.default.withInitTimeout(200.millis)).build.flip
       yield assertTrue(error.isInstanceOf[java.util.concurrent.TimeoutException])
     },
     test("the first evaluation fails, the ones after it succeed") {

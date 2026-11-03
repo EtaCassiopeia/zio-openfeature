@@ -55,7 +55,7 @@ object ContextSpec extends ZIOSpecDefault:
         provider <- TestFeatureProvider.make(Map("f" -> true))
         domain = s"docs-${java.util.UUID.randomUUID()}"
         env <- FeatureFlags
-          .fromProvider(provider, FeatureFlagsConfig().withDomain(domain).withContextSource(source))
+          .fromProvider(provider, FeatureFlagsConfig.default.withDomain(domain).withContextSource(source))
           .build
         ff = env.get[FeatureFlags]
         _ <- ff.setGlobalContext(layer("p", "global").withAttribute("global", "global"))
@@ -84,7 +84,7 @@ object ContextSpec extends ZIOSpecDefault:
       for
         provider <- TestFeatureProvider.make(Map("f" -> true))
         domain = s"docs-${java.util.UUID.randomUUID()}"
-        env <- FeatureFlags.fromProvider(provider, FeatureFlagsConfig().withDomain(domain)).build
+        env <- FeatureFlags.fromProvider(provider, FeatureFlagsConfig.default.withDomain(domain)).build
         ff = env.get[FeatureFlags]
         _ <- ff.setGlobalContext(EvaluationContext.empty.withAttribute("p", "global"))
         _ <- ff.transaction(context = EvaluationContext.empty.withAttribute("p", "tx"))(ff.boolean("f", false))

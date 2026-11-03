@@ -17,7 +17,7 @@ object ProvidersModulesSpec extends ZIOSpecDefault:
       for
         empty  <- rejected(OFREPProvider.make(""))
         scheme <- rejected(OFREPProvider.make("ftp://flags.example.com"))
-        host   <- rejected(OFREPProvider.make(OFREPProviderConfig(baseUrl = "https://")))
+        host   <- rejected(OFREPProvider.make(OFREPProviderConfig("https://")))
       yield assertTrue(empty, scheme, host)
     },
     test("OFREPProvider.scoped accepts a valid URL without contacting it") {
@@ -31,15 +31,12 @@ object ProvidersModulesSpec extends ZIOSpecDefault:
         url         <- rejected(OptimizelyProvider.make("abcd1234efgh5678", "not a url"))
         polling <- rejected(
           OptimizelyProvider.make(
-            OptimizelyProviderConfig("abcd1234efgh5678", pollingInterval = Some(java.time.Duration.ZERO))
+            OptimizelyProviderConfig("abcd1234efgh5678").withPollingInterval(java.time.Duration.ZERO)
           )
         )
         closeTimeout <- rejected(
           OptimizelyProvider.make(
-            OptimizelyProviderConfig(
-              "abcd1234efgh5678",
-              events = OptimizelyEvents.Batched(closeTimeout = java.time.Duration.ofSeconds(5))
-            )
+            OptimizelyProviderConfig("abcd1234efgh5678").withEvents(OptimizelyEvents.Batched(closeTimeout = java.time.Duration.ofSeconds(5)))
           )
         )
       yield assertTrue(placeholder, short, spaces, url, polling, closeTimeout)

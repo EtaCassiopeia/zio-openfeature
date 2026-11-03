@@ -67,7 +67,7 @@ trait LibrarySetupSteps { self: ZIOSteps[Any, LibraryWorld] =>
         ref <- Ref.make(EvaluationContext.builder.attribute(key, value).build)
         tp  <- TestFeatureProvider.make(Map[String, Any]("kill.switch" -> true))
         ff <- sc.extend[Any](
-          LibraryHarness.build(tp, FeatureFlagsConfig().withContextSource(ContextSource(ref.get)))
+          LibraryHarness.build(tp, FeatureFlagsConfig.default.withContextSource(ContextSource(ref.get)))
         )
         _ <- ScenarioContext.update(
           _.copy(scope = Some(sc), testProvider = Some(tp), flags = Some(ff), ambient = Some(ref))
@@ -81,7 +81,7 @@ trait LibrarySetupSteps { self: ZIOSteps[Any, LibraryWorld] =>
       ff <- sc.extend[Any](
         LibraryHarness.build(
           new LibraryProviders.EmptyProvider("flagless"),
-          FeatureFlagsConfig().withFallbackLogging(LibraryHarness.fallbackPolicy(policy))
+          FeatureFlagsConfig.default.withFallbackLogging(LibraryHarness.fallbackPolicy(policy))
         )
       )
       _ <- ScenarioContext.update(_.copy(scope = Some(sc), flags = Some(ff), logSink = Some(new LogSink)))

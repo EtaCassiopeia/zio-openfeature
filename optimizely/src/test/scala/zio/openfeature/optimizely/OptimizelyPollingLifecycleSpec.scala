@@ -51,11 +51,9 @@ object OptimizelyPollingLifecycleSpec extends ZIOSpecDefault {
         for {
           start    <- ZIO.succeed(java.lang.System.nanoTime())
           provider <- OptimizelyProvider.make(
-            OptimizelyProviderConfig(
-              sdkKey = "polling-key-1",
-              datafileUrl = Some(datafileUrl(server)),
-              initWait = java.time.Duration.ofSeconds(1)
-            ),
+            OptimizelyProviderConfig("polling-key-1")
+              .withDatafileUrl(datafileUrl(server))
+              .withInitWait(java.time.Duration.ofSeconds(1)),
             Some(TestHttpClient.failFast())
           )
           tookMs = (java.lang.System.nanoTime() - start) / 1000000L
@@ -75,12 +73,10 @@ object OptimizelyPollingLifecycleSpec extends ZIOSpecDefault {
     test("polling runs only between initialize and shutdown") {
       withMockServer { server =>
         server.stubFor(get(urlEqualTo(DatafilePath)).willReturn(okJson(ValidDatafile)))
-        val config = OptimizelyProviderConfig(
-          sdkKey = "polling-key-2",
-          datafileUrl = Some(datafileUrl(server)),
-          initWait = OptimizelyTestSupport.InitWait,
-          pollingInterval = Some(java.time.Duration.ofMillis(200))
-        )
+        val config = OptimizelyProviderConfig("polling-key-2")
+          .withDatafileUrl(datafileUrl(server))
+          .withInitWait(OptimizelyTestSupport.InitWait)
+          .withPollingInterval(java.time.Duration.ofMillis(200))
         for {
           provider   <- OptimizelyProvider.make(config, Some(TestHttpClient.failFast()))
           beforeInit <- ZIO.succeed(requestCount(server))
@@ -114,13 +110,11 @@ object OptimizelyPollingLifecycleSpec extends ZIOSpecDefault {
     test("scoped releases the provider even when initialization failed against a 403 CDN") {
       withMockServer { server =>
         server.stubFor(get(urlEqualTo(DatafilePath)).willReturn(aResponse().withStatus(403)))
-        val config = OptimizelyProviderConfig(
-          sdkKey = "polling-key-3",
-          datafileUrl = Some(datafileUrl(server)),
+        val config = OptimizelyProviderConfig("polling-key-3")
+          .withDatafileUrl(datafileUrl(server))
           // Short on purpose: init is expected to fail, and the polling window is what the test observes.
-          initWait = java.time.Duration.ofMillis(400),
-          pollingInterval = Some(java.time.Duration.ofMillis(150))
-        )
+          .withInitWait(java.time.Duration.ofMillis(400))
+          .withPollingInterval(java.time.Duration.ofMillis(150))
         for {
           initResult <- ZIO.scoped {
             for {
@@ -146,12 +140,10 @@ object OptimizelyPollingLifecycleSpec extends ZIOSpecDefault {
     test("layer finalizer shuts polling down on release") {
       withMockServer { server =>
         server.stubFor(get(urlEqualTo(DatafilePath)).willReturn(okJson(ValidDatafile)))
-        val config = OptimizelyProviderConfig(
-          sdkKey = "polling-key-4",
-          datafileUrl = Some(datafileUrl(server)),
-          initWait = OptimizelyTestSupport.InitWait,
-          pollingInterval = Some(java.time.Duration.ofMillis(200))
-        )
+        val config = OptimizelyProviderConfig("polling-key-4")
+          .withDatafileUrl(datafileUrl(server))
+          .withInitWait(OptimizelyTestSupport.InitWait)
+          .withPollingInterval(java.time.Duration.ofMillis(200))
         for {
           _ <- ZIO.scoped {
             OptimizelyProvider.layer(config, Some(TestHttpClient.failFast())).build.flatMap { env =>
@@ -170,10 +162,7 @@ object OptimizelyPollingLifecycleSpec extends ZIOSpecDefault {
       }
     },
     test("non-positive pollingInterval is rejected at construction") {
-      val config = OptimizelyProviderConfig(
-        sdkKey = "polling-key-5",
-        pollingInterval = Some(java.time.Duration.ZERO)
-      )
+      val config = OptimizelyProviderConfig("polling-key-5").withPollingInterval(java.time.Duration.ZERO)
       OptimizelyProvider.make(config, Some(TestHttpClient.failFast())).exit.map { exit =>
         assertTrue(exit.isFailure)
       }

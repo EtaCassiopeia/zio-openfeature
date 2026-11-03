@@ -32,7 +32,7 @@ object Providers:
   def configured(provider: FeatureProvider): ZLayer[Any, Throwable, FeatureFlags] =
     FeatureFlags.fromProvider(
       provider,
-      FeatureFlagsConfig()
+      FeatureFlagsConfig.default
         .withDomain("checkout")            // a named client
         .withVersion("2.4.0")              // reported in clientMetadata
         .withHook(FeatureHook.logging())   // client-level hooks from the start
@@ -48,7 +48,7 @@ object Providers:
   def checkoutClient(provider: FeatureProvider): ZLayer[Any, Throwable, FeatureFlags] =
     FeatureFlags.fromProvider(
       provider,
-      FeatureFlagsConfig().withDomain("checkout").withApiOwnership(ApiOwnership.Owned)
+      FeatureFlagsConfig.default.withDomain("checkout").withApiOwnership(ApiOwnership.Owned)
     )
   // --8<-- [end:owned-domain]
 
@@ -57,7 +57,7 @@ object Providers:
   def layered(overrides: FeatureProvider, remote: FeatureProvider): ZLayer[Any, Throwable, FeatureFlags] =
     FeatureFlags.fromProvider(
       FeatureFlags.multiProvider(List(overrides, remote)), // MultiProviderStrategy.firstMatch by default
-      FeatureFlagsConfig()
+      FeatureFlagsConfig.default
     )
   // --8<-- [end:multi-provider]
 
@@ -74,7 +74,7 @@ object Providers:
     FeatureFlags.fromAcquireAsync(
       acquire = ZIO.attemptBlocking(buildRealProvider()),
       fallback = ZIO.succeed(EnvVarProvider()), // a fresh instance each time it runs
-      config = FeatureFlagsConfig(),         // what every instance takes
+      config = FeatureFlagsConfig.default,         // what every instance takes
       acquireConfig = AcquireConfig.default // what only this path takes
         .withVerify(Verify.flagExists[Boolean]("kill-switch"))
         .withOnSwapped(ZIO.logInfo("real provider is live"))

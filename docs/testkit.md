@@ -53,9 +53,6 @@ provides just a `TestFeatureProvider`, without `FeatureFlags`.
 swap providers with `FeatureFlagsAdmin.setProvider`, which tells the old and new provider apart by name. Every other factory
 uses `TestFeatureProvider.DefaultName`.
 
-??? note "Deprecated aliases"
-    `scopedLayer` and `scopedAsyncLayer` are deprecated aliases of `layer` and `asyncLayer`.
-
 ## Typed fixtures
 
 A fixture keyed by string accepts any value, so a typo such as `"premum"` passes the test and fails in production.

@@ -54,7 +54,7 @@ From lowest to highest; each level wins over the ones above it in the table:
 | Global | `FeatureFlags.setGlobalContext(ctx)` | every evaluation of this `FeatureFlags` instance (not shared with other instances or registry clients) |
 | Transaction | `FeatureFlags.transaction(context = ctx)` | evaluations inside the [transaction](transactions.md) |
 | Client | `FeatureFlags.setClientContext(ctx)` | evaluations of this `FeatureFlags` instance |
-| Context source | `FeatureFlagsConfig().withContextSource(source)` | every evaluation, pulled when it runs |
+| Context source | `FeatureFlagsConfig.default.withContextSource(source)` | every evaluation, pulled when it runs |
 | Scoped | `FeatureFlags.withContext(ctx) { ... }` | the block, on this fiber and the fibers it forks |
 | Invocation | the `ctx` argument of a call | that call |
 

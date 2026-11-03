@@ -41,5 +41,3 @@ The instance does not keep tracked events: their merged contexts routinely hold 
 ```scala
 --8<-- "Tracking.scala:assert"
 ```
-
-`FeatureFlags.trackedEvents` is deprecated and empty outside testkit-built instances.

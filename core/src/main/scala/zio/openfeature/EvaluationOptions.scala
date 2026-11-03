@@ -15,11 +15,17 @@ package zio.openfeature
   *   [[EvaluationTimeout.After]] (via `withTimeout`) to bound this call, or [[EvaluationTimeout.Disabled]] (via
   *   `withoutTimeout`) to run it with no timeout at all.
   */
-final case class EvaluationOptions(
-  hooks: List[FeatureHook] = Nil,
-  hookHints: HookHints = HookHints.empty,
-  timeout: EvaluationTimeout = EvaluationTimeout.Default
+final class EvaluationOptions private (
+  val hooks: List[FeatureHook],
+  val hookHints: HookHints,
+  val timeout: EvaluationTimeout
 ) {
+  private def copy(
+    hooks: List[FeatureHook] = hooks,
+    hookHints: HookHints = hookHints,
+    timeout: EvaluationTimeout = timeout
+  ): EvaluationOptions = new EvaluationOptions(hooks, hookHints, timeout)
+
   def withHook(hook: FeatureHook): EvaluationOptions =
     copy(hooks = hooks :+ hook)
 
@@ -29,6 +35,10 @@ final case class EvaluationOptions(
   def withHint(key: String, value: Any): EvaluationOptions =
     copy(hookHints = hookHints + (key -> value))
 
+  /** Replace all hints. */
+  def withHookHints(hints: HookHints): EvaluationOptions =
+    copy(hookHints = hints)
+
   /** Bound this evaluation at `duration`, overriding the global default. */
   def withTimeout(duration: zio.Duration): EvaluationOptions =
     copy(timeout = EvaluationTimeout.After(duration))
@@ -36,14 +46,17 @@ final case class EvaluationOptions(
   /** Run this evaluation with no timeout, overriding the global default. */
   def withoutTimeout: EvaluationOptions =
     copy(timeout = EvaluationTimeout.Disabled)
+
+  override def toString: String =
+    s"EvaluationOptions(hooks=$hooks, hookHints=$hookHints, timeout=$timeout)"
 }
 
 object EvaluationOptions {
-  val empty: EvaluationOptions = EvaluationOptions()
+  val empty: EvaluationOptions = new EvaluationOptions(Nil, HookHints.empty, EvaluationTimeout.Default)
 
   def apply(hook: FeatureHook): EvaluationOptions =
-    EvaluationOptions(hooks = List(hook))
+    empty.withHook(hook)
 
   def apply(hooks: FeatureHook*): EvaluationOptions =
-    EvaluationOptions(hooks = hooks.toList)
+    empty.withHooks(hooks.toList)
 }

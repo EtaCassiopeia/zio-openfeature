@@ -25,12 +25,10 @@ object RealProviderFaultSpec extends ZIOSpecDefault:
   private val vendorProvider: RIO[Scope, FeatureProvider] =
     acquired(
       OptimizelyProvider.scoped(
-        OptimizelyProviderConfig(
-          sdkKey = "fault-test-key",
-          datafileUrl = Some("https://cdn.example.com/datafiles/fault-test-key.json"),
-          initWait = java.time.Duration.ofSeconds(2),
-          events = OptimizelyEvents.Disabled // datafile behaviour only; keep events off the network
-        )
+        OptimizelyProviderConfig("fault-test-key")
+          .withDatafileUrl("https://cdn.example.com/datafiles/fault-test-key.json")
+          .withInitWait(java.time.Duration.ofSeconds(2))
+          .withEvents(OptimizelyEvents.Disabled) // datafile behaviour only; keep events off the network
       )
     )
 

@@ -61,9 +61,6 @@ enum AttributeValue:
     case StructValue(m) if m.isEmpty => true
     case _                           => false
 
-  @deprecated("isNull tests emptiness, not null-ness; use isEmptyValue", "0.9.2")
-  def isNull: Boolean = isEmptyValue
-
 object AttributeValue:
   def bool(value: Boolean): AttributeValue                      = BoolValue(value)
   def string(value: String): AttributeValue                     = StringValue(value)

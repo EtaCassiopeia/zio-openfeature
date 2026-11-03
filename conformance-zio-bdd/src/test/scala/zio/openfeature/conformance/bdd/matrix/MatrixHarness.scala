@@ -35,7 +35,7 @@ object MatrixHarness {
 
   /** A scoped ZLayer that owns one Rift mock space + one Optimizely provider for the named datafile.
     *
-    * Bound to a freshly-generated domain (`FeatureFlagsConfig().withDomain(...)`) rather than the plain
+    * Bound to a freshly-generated domain (`FeatureFlagsConfig.default.withDomain(...)`) rather than the plain
     * `fromProvider` factory. `fromProvider` registers its provider as the *unnamed default* client on
     * the process-wide `OpenFeatureAPI` singleton — concurrent calls from different scenarios would race
     * to overwrite that single default slot, and since the OpenFeature SDK looks up the active provider
@@ -59,17 +59,15 @@ object MatrixHarness {
         space  <- ZIO.fromOption(spaces.headOption).orElseFail(new RuntimeException("no mock space provisioned"))
         _      <- ZIO.addFinalizer(mc.destroy(space).ignore)
         dataUrl = s"${space.baseUri}$DatafilePath"
-        config  = OptimizelyProviderConfig(
-                    sdkKey = SdkKey,
-                    datafileUrl = Some(dataUrl),
-                    initWait = java.time.Duration.ofSeconds(5),
-                    pollingInterval = Some(java.time.Duration.ofSeconds(3600)), // no polling in tests
-                    blockingTimeout = Some(java.time.Duration.ofSeconds(2)),
-                    events = OptimizelyEvents.Disabled // datafile behaviour only; keep events off the network
-                  )
+        config  = OptimizelyProviderConfig(SdkKey)
+                    .withDatafileUrl(dataUrl)
+                    .withInitWait(java.time.Duration.ofSeconds(5))
+                    .withPollingInterval(java.time.Duration.ofSeconds(3600)) // no polling in tests
+                    .withBlockingTimeout(java.time.Duration.ofSeconds(2))
+                    .withEvents(OptimizelyEvents.Disabled) // datafile behaviour only; keep events off the network
         provider <- OptimizelyProvider.scoped(config).mapError(e => new RuntimeException(e.message))
         domain    = s"flag-matrix-${java.util.UUID.randomUUID()}"
-        env      <- FeatureFlags.fromProvider(provider, FeatureFlagsConfig().withDomain(domain)).build
+        env      <- FeatureFlags.fromProvider(provider, FeatureFlagsConfig.default.withDomain(domain)).build
         ff        = env.get[FeatureFlags]
         _ <- ZIO.foreachDiscard(plan)(p =>
                ff.setGlobalContext(EvaluationContext.empty.withAttribute("plan", AttributeValue.StringValue(p)))

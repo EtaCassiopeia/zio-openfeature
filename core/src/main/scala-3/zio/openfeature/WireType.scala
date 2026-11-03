@@ -25,9 +25,9 @@ object WireType:
   /** Every case except `Object`: the wire types with a scalar resolver of their own. */
   val scalars: Set[WireType] = Set(Boolean, String, Int, Long, Float, Double)
 
-  /** Reads a legacy `FlagType.wireType` string. The match ignores case, so `"string"` is [[WireType.String]]; any other
-    * name (a domain type name such as `"Rollout"`, or `null`) is [[WireType.Object]], the documented meaning of "not
-    * one of the scalars".
+  /** Reads a type name, as `FlagType.typeName` spells it. The match ignores case, so `"string"` is [[WireType.String]];
+    * any other name (a domain type name such as `"Rollout"`, or `null`) is [[WireType.Object]], the documented meaning
+    * of "not one of the scalars".
     */
   def fromName(name: String): WireType =
     if name == null then Object

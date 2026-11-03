@@ -4,6 +4,7 @@ import zio._
 import zio.test._
 import zio.test.TestAspect.{sequential, withLiveClock}
 import zio.openfeature.internal.ProviderEvaluations
+import scala.jdk.CollectionConverters._
 import dev.openfeature.sdk.{
   EvaluationContext => OFEvaluationContext,
   EventProvider,
@@ -32,6 +33,17 @@ object ContextSourceSpec extends ZIOSpecDefault {
     override def getState: ProviderState                    = ProviderState.READY
     override def initialize(ctx: OFEvaluationContext): Unit = ()
     override def shutdown(): Unit                           = ()
+
+    /** The context each `track` call delivered, after the SDK merged it. */
+    val tracked = new java.util.concurrent.CopyOnWriteArrayList[(String, OFEvaluationContext)]()
+    override def track(
+      eventName: String,
+      context: OFEvaluationContext,
+      details: dev.openfeature.sdk.TrackingEventDetails
+    ): Unit = {
+      tracked.add((eventName, context))
+      ()
+    }
     override def getBooleanEvaluation(k: String, d: java.lang.Boolean, c: OFEvaluationContext) =
       ProviderEvaluations.of[java.lang.Boolean](d, "DEFAULT")
     override def getStringEvaluation(k: String, d: String, c: OFEvaluationContext) = {
@@ -52,9 +64,13 @@ object ContextSourceSpec extends ZIOSpecDefault {
       ProviderEvaluations.of[Value](d, "DEFAULT")
   }
 
-  private def build(source: ContextSource, tag: String): ZIO[Scope, Throwable, FeatureFlags] =
-    FeatureFlags.buildWithTracking(
-      new ContextEchoProvider,
+  private def build(
+    source: ContextSource,
+    tag: String,
+    provider: ContextEchoProvider = new ContextEchoProvider
+  ): ZIO[Scope, Throwable, FeatureFlags] =
+    FeatureFlags.build(
+      provider,
       domain = Some(s"ctxsrc-$tag-${java.util.UUID.randomUUID()}"),
       version = None,
       initialHooks = Nil,
@@ -62,8 +78,7 @@ object ContextSourceSpec extends ZIOSpecDefault {
       addShutdownFinalizer = true,
       apiOverride = Some(OpenFeatureAPI.createIsolated()),
       evaluationTimeout = Some(5.seconds),
-      contextSource = source,
-      recordTracking = true // this spec reads FeatureFlags.trackedEvents
+      contextSource = source
     )
 
   private def attr(k: String, v: String): EvaluationContext =
@@ -173,7 +188,7 @@ object ContextSourceSpec extends ZIOSpecDefault {
     suite("configuration and robustness")(
       test("withContextSource on FeatureFlagsConfig carries the source") {
         val source = ContextSource(ZIO.succeed(EvaluationContext("configured")))
-        val config = FeatureFlagsConfig().withContextSource(source)
+        val config = FeatureFlagsConfig.default.withContextSource(source)
         assertTrue(config.contextSource eq source)
       },
       test("a source is consulted per evaluation, not once per client") {
@@ -191,16 +206,17 @@ object ContextSourceSpec extends ZIOSpecDefault {
         // `trackImpl` shares `effectiveContext` with evaluation, which is what makes the "on every evaluation and on
         // track" claim in the scaladoc/docs true. Pin it, so a future refactor cannot quietly drop the source here.
         ZIO.scoped {
-          build(ContextSource(ZIO.succeed(attr("ambient", "yes"))), "track").flatMap { ff =>
+          val provider = new ContextEchoProvider
+          build(ContextSource(ZIO.succeed(attr("ambient", "yes"))), "track", provider).flatMap { ff =>
             for {
-              _      <- ff.track("checkout", EvaluationContext("from-call"))
-              events <- ff.trackedEvents
+              _ <- ff.track("checkout", EvaluationContext("from-call"))
+              events = provider.tracked.asScala.toList
             } yield assertTrue(
               events.size == 1,
               events.head._1 == "checkout",
-              events.head._2.getString("ambient").contains("yes"),
+              events.head._2.getValue("ambient").asString == "yes",
               // The per-call context still wins, exactly as on the evaluation path.
-              events.head._2.targetingKey.contains("from-call")
+              events.head._2.getTargetingKey == "from-call"
             )
           }
         }

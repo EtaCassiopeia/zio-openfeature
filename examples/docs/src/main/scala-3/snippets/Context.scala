@@ -103,7 +103,7 @@ object Context:
 
   // Combine sources with ++; the right-hand one wins on a key both set
   val config: FeatureFlagsConfig =
-    FeatureFlagsConfig().withContextSource(fromRegion ++ fromLogAnnotations)
+    FeatureFlagsConfig.default.withContextSource(fromRegion ++ fromLogAnnotations)
 
   // Anything logged-annotated with a userId is now targeted at that user, with no context passed by hand
   val handleRequest: ZIO[FeatureFlags, FeatureFlagError, Boolean] =

@@ -12,7 +12,7 @@ import zio.UIO
   * {{{
   * val fromMdc = ContextSource(ZIO.succeed(EvaluationContext(Mdc.get("userId"))))
   *
-  * FeatureFlags.fromProvider(provider, FeatureFlagsConfig().withContextSource(fromMdc))
+  * FeatureFlags.fromProvider(provider, FeatureFlagsConfig.default.withContextSource(fromMdc))
   * }}}
   *
   * ==Precedence==

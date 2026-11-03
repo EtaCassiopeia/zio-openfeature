@@ -77,7 +77,7 @@ object SetProviderInterruptSpec extends ZIOSpecDefault {
     val api    = OpenFeatureAPI.createIsolated()
     val domain = s"interrupt-${java.util.UUID.randomUUID()}"
     zio.openfeature.internal.FeatureFlagsFactories
-      .buildWithTracking(
+      .build(
         new BoolProvider("old", false),
         domain = Some(domain),
         version = None,

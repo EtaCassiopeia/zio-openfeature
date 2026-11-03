@@ -116,7 +116,6 @@ private[openfeature] object FeatureFlagsFactories {
     fallbackLogging: FallbackLogging,
     initTimeout: Duration,
     maxAbandonedCalls: Int,
-    recordTracking: Boolean,
     unreadableNameIsUnknown: Boolean,
     orphans: OrphanedProviders,
     probe: LifecycleProbe,
@@ -153,7 +152,6 @@ private[openfeature] object FeatureFlagsFactories {
         contextSource,
         initTimeout,
         maxAbandonedCalls,
-        recordTracking,
         orphans = orphans,
         probe = probe,
         evaluationProbe = evaluationProbe
@@ -207,40 +205,8 @@ private[openfeature] object FeatureFlagsFactories {
     initTimeout: Duration = DefaultInitTimeout,
     onReady: Option[java.util.concurrent.CountDownLatch] = None,
     contextSource: ContextSource = ContextSource.empty,
-    fallbackLogging: FallbackLogging = FallbackLogging.Default
-  ): ZIO[Scope, Throwable, FeatureFlagsLive] =
-    buildWithTracking(
-      provider = provider,
-      domain = domain,
-      version = version,
-      initialHooks = initialHooks,
-      statusRef = statusRef,
-      addShutdownFinalizer = addShutdownFinalizer,
-      apiOverride = apiOverride,
-      evaluationTimeout = evaluationTimeout,
-      initTimeout = initTimeout,
-      onReady = onReady,
-      contextSource = contextSource,
-      fallbackLogging = fallbackLogging,
-      recordTracking = false
-    )
-
-  /** [[build]], optionally keeping tracked events for `trackedEvents` (testkit only). */
-  def buildWithTracking(
-    provider: OFFeatureProvider,
-    domain: Option[String],
-    version: Option[String],
-    initialHooks: List[FeatureHook],
-    statusRef: Option[SubscriptionRef[ProviderStatus]],
-    addShutdownFinalizer: Boolean,
-    apiOverride: Option[OpenFeatureAPI] = None,
-    evaluationTimeout: Option[Duration] = Some(DefaultEvaluationTimeout),
-    initTimeout: Duration = DefaultInitTimeout,
-    onReady: Option[java.util.concurrent.CountDownLatch] = None,
-    contextSource: ContextSource = ContextSource.empty,
     fallbackLogging: FallbackLogging = FallbackLogging.Default,
     maxAbandonedCalls: Int = DefaultMaxAbandonedCalls,
-    recordTracking: Boolean = false,
     probe: LifecycleProbe = LifecycleProbe.none,
     evaluationProbe: EvaluationProbe = EvaluationProbe.none
   ): ZIO[Scope, Throwable, FeatureFlagsLive] =
@@ -273,7 +239,6 @@ private[openfeature] object FeatureFlagsFactories {
         fallbackLogging,
         initTimeout,
         maxAbandonedCalls,
-        recordTracking,
         unreadableNameIsUnknown = true,
         orphans,
         probe,
@@ -360,11 +325,8 @@ private[openfeature] object FeatureFlagsFactories {
       val resolvedApi = apiOverrideOf(config, apiOverride)
       val ownsApi     = ownsApiOf(config)
       config.initMode match {
-        // The `WithTracking` variants, not `build`/`buildAsync`: those keep their released signatures (they are
-        // package-private but compiled into the published testkit), so newer knobs like `maxAbandonedCalls`
-        // reach the instance only through these.
         case InitMode.Sync =>
-          buildWithTracking(
+          build(
             provider,
             config.domain,
             config.version,
@@ -380,7 +342,7 @@ private[openfeature] object FeatureFlagsFactories {
             maxAbandonedCalls = config.maxAbandonedCalls
           )
         case InitMode.Async =>
-          buildAsyncWithTracking(
+          buildAsync(
             provider,
             config.domain,
             config.version,
@@ -407,7 +369,7 @@ private[openfeature] object FeatureFlagsFactories {
     onReady: Option[java.util.concurrent.CountDownLatch] = None
   ): ZLayer[Any, Throwable, FeatureFlags with FeatureFlagsAdmin] =
     bothServices(
-      buildWithTracking(
+      build(
         provider,
         domain = Some(domain),
         version = None,
@@ -415,9 +377,7 @@ private[openfeature] object FeatureFlagsFactories {
         statusRef = Some(statusRef),
         addShutdownFinalizer = false,
         apiOverride = api,
-        onReady = onReady,
-        // These overloads exist for the testkit, whose instances keep tracked events for assertions.
-        recordTracking = true
+        onReady = onReady
       )
     )
 
@@ -439,40 +399,8 @@ private[openfeature] object FeatureFlagsFactories {
     evaluationTimeout: Option[Duration] = Some(DefaultEvaluationTimeout),
     initTimeout: Duration = DefaultInitTimeout,
     contextSource: ContextSource = ContextSource.empty,
-    fallbackLogging: FallbackLogging = FallbackLogging.Default
-  ): ZIO[Scope, Throwable, FeatureFlagsLive] =
-    buildAsyncWithTracking(
-      provider = provider,
-      domain = domain,
-      version = version,
-      initialHooks = initialHooks,
-      statusRef = statusRef,
-      addShutdownFinalizer = addShutdownFinalizer,
-      apiOverride = apiOverride,
-      onReady = onReady,
-      evaluationTimeout = evaluationTimeout,
-      initTimeout = initTimeout,
-      contextSource = contextSource,
-      fallbackLogging = fallbackLogging,
-      recordTracking = false
-    )
-
-  /** [[buildAsync]], optionally keeping tracked events for `trackedEvents` (testkit only). */
-  def buildAsyncWithTracking(
-    provider: OFFeatureProvider,
-    domain: Option[String],
-    version: Option[String],
-    initialHooks: List[FeatureHook],
-    statusRef: Option[SubscriptionRef[ProviderStatus]],
-    addShutdownFinalizer: Boolean,
-    apiOverride: Option[OpenFeatureAPI] = None,
-    onReady: Option[java.util.concurrent.CountDownLatch] = None,
-    evaluationTimeout: Option[Duration] = Some(DefaultEvaluationTimeout),
-    initTimeout: Duration = DefaultInitTimeout,
-    contextSource: ContextSource = ContextSource.empty,
     fallbackLogging: FallbackLogging = FallbackLogging.Default,
     maxAbandonedCalls: Int = DefaultMaxAbandonedCalls,
-    recordTracking: Boolean = false,
     probe: LifecycleProbe = LifecycleProbe.none
   ): ZIO[Scope, Throwable, FeatureFlagsLive] =
     for {
@@ -503,7 +431,6 @@ private[openfeature] object FeatureFlagsFactories {
         fallbackLogging,
         initTimeout,
         maxAbandonedCalls,
-        recordTracking,
         unreadableNameIsUnknown = false,
         orphans,
         probe,
@@ -548,7 +475,7 @@ private[openfeature] object FeatureFlagsFactories {
     onReady: Option[java.util.concurrent.CountDownLatch] = None
   ): ZLayer[Any, Throwable, FeatureFlags with FeatureFlagsAdmin] =
     bothServices(
-      buildAsyncWithTracking(
+      buildAsync(
         provider,
         domain = Some(domain),
         version = None,
@@ -556,9 +483,7 @@ private[openfeature] object FeatureFlagsFactories {
         statusRef = Some(statusRef),
         addShutdownFinalizer = false,
         apiOverride = api,
-        onReady = onReady,
-        // These overloads exist for the testkit, whose instances keep tracked events for assertions.
-        recordTracking = true
+        onReady = onReady
       )
     )
 
@@ -589,7 +514,7 @@ private[openfeature] object FeatureFlagsFactories {
         // is initialized, then is flipped to the composed stack. No SDK swap, so no NotReady window.
         switch = ManagedProvider.switchable(firstFallback)
         state <- SubscriptionRef.make[AcquireState](AcquireState.Constructing)
-        ff    <- buildWithTracking(
+        ff    <- build(
           switch,
           domain = config.domain,
           version = config.version,

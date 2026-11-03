@@ -31,17 +31,38 @@ import scala.jdk.CollectionConverters._
   * @param contextKeys
   *   If set, only these context attribute keys are included in the cache key hash — the targeting key is NOT included
   *   unless you list `"targetingKey"` yourself. Use this when contexts contain high-cardinality fields (e.g.,
-  *   per-request UUIDs) that would defeat caching. For example, `contextKeys = Some(Set("plan", "region"))` caches by
-  *   plan and region, ignoring `userId` and the targeting key — so every user shares one entry, which breaks percentage
-  *   rollouts; add `"targetingKey"` when the flag targets individual users. If `None` (default), the full context,
+  *   per-request UUIDs) that would defeat caching. For example, `withContextKeys(Set("plan", "region"))` caches by plan
+  *   and region, ignoring `userId` and the targeting key — so every user shares one entry, which breaks percentage
+  *   rollouts; add `"targetingKey"` when the flag targets individual users. If unset (default), the full context,
   *   targeting key included, is hashed. `openfeature.variableKey` is always part of the key: it chooses which
   *   Optimizely variable a read returns.
   */
-final case class CachingConfig(
-  maxEntries: Int = CachingProvider.DefaultMaxEntries,
-  ttl: Duration = CachingProvider.DefaultTtl,
-  contextKeys: Option[Set[String]] = None
-)
+final class CachingConfig private (
+  val maxEntries: Int,
+  val ttl: Duration,
+  val contextKeys: Option[Set[String]]
+) {
+  private def copy(
+    maxEntries: Int = maxEntries,
+    ttl: Duration = ttl,
+    contextKeys: Option[Set[String]] = contextKeys
+  ): CachingConfig = new CachingConfig(maxEntries, ttl, contextKeys)
+
+  def withMaxEntries(n: Int): CachingConfig = copy(maxEntries = n)
+  def withTtl(d: Duration): CachingConfig   = copy(ttl = d)
+
+  /** Hash only these context attribute keys into the cache key; see the `contextKeys` note above. */
+  def withContextKeys(keys: Set[String]): CachingConfig = copy(contextKeys = Some(keys))
+
+  override def toString: String = s"CachingConfig(maxEntries=$maxEntries, ttl=$ttl, contextKeys=$contextKeys)"
+}
+
+object CachingConfig {
+
+  /** [[CachingProvider.DefaultMaxEntries]] entries, a [[CachingProvider.DefaultTtl]] ttl, and the full context hashed.
+    */
+  val default: CachingConfig = new CachingConfig(CachingProvider.DefaultMaxEntries, CachingProvider.DefaultTtl, None)
+}
 
 /** A cache key combining the flag key, evaluation type, and a fingerprint of the evaluation context. Uses a string
   * fingerprint instead of a hash to avoid collisions that could serve wrong flag values to different users.
@@ -375,7 +396,7 @@ object CachingProvider {
     */
   def make(
     underlying: FeatureProvider,
-    config: CachingConfig = CachingConfig()
+    config: CachingConfig = CachingConfig.default
   ): IO[FeatureFlagError.InvalidConfiguration, CachingProvider] =
     for {
       _     <- ZIO.fromEither(ConfigValidation.caching(config))
@@ -398,7 +419,7 @@ object CachingProvider {
     */
   def scoped(
     underlying: FeatureProvider,
-    config: CachingConfig = CachingConfig()
+    config: CachingConfig = CachingConfig.default
   ): ZIO[Scope, FeatureFlagError.InvalidConfiguration, CachingProvider] =
     ZIO.acquireRelease(make(underlying, config))(p =>
       WrapperRelease.release("CachingProvider", ShutdownTimeout)(p.shutdown())
@@ -409,7 +430,7 @@ object CachingProvider {
     * @throws IllegalArgumentException
     *   if `config` breaks the bounds documented on [[CachingConfig]]
     */
-  def apply(underlying: FeatureProvider, config: CachingConfig = CachingConfig()): CachingProvider = {
+  def apply(underlying: FeatureProvider, config: CachingConfig = CachingConfig.default): CachingProvider = {
     val _  = ConfigValidation.orThrow(ConfigValidation.caching(config))
     val rt = Runtime.default
     Unsafe.unsafe { implicit u =>

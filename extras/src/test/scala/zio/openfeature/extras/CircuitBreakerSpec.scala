@@ -33,12 +33,12 @@ object CircuitBreakerSpec extends ZIOSpecDefault {
   def spec = suite("CircuitBreaker")(
     suite("Closed state")(
       test("allows calls when closed") {
-        val cb = CircuitBreaker(CircuitBreakerConfig(), Ticker.system)
+        val cb = CircuitBreaker(CircuitBreakerConfig.default, Ticker.system)
         assertTrue(cb.tryAcquire == GateResult.Allowed) &&
         assertTrue(cb.isClosed)
       },
       test("recordSuccess resets failure counter") {
-        val cb = CircuitBreaker(CircuitBreakerConfig(failureThreshold = 5), Ticker.system)
+        val cb = CircuitBreaker(CircuitBreakerConfig.default.withFailureThreshold(5), Ticker.system)
         cb.recordFailure()
         cb.recordFailure()
         cb.recordSuccess()
@@ -48,13 +48,13 @@ object CircuitBreakerSpec extends ZIOSpecDefault {
         assertTrue(cb.isClosed)
       },
       test("recordSuccess returns false when staying closed") {
-        val cb = CircuitBreaker(CircuitBreakerConfig(), Ticker.system)
+        val cb = CircuitBreaker(CircuitBreakerConfig.default, Ticker.system)
         assertTrue(!cb.recordSuccess())
       }
     ),
     suite("Opening")(
       test("opens after failureThreshold consecutive failures") {
-        val cb = CircuitBreaker(CircuitBreakerConfig(failureThreshold = 3), Ticker.system)
+        val cb = CircuitBreaker(CircuitBreakerConfig.default.withFailureThreshold(3), Ticker.system)
         cb.recordFailure()
         cb.recordFailure()
         val didOpen = cb.recordFailure()
@@ -62,12 +62,12 @@ object CircuitBreakerSpec extends ZIOSpecDefault {
         assertTrue(cb.isOpen)
       },
       test("does not open on fewer failures than threshold") {
-        val cb = CircuitBreaker(CircuitBreakerConfig(failureThreshold = 5), Ticker.system)
+        val cb = CircuitBreaker(CircuitBreakerConfig.default.withFailureThreshold(5), Ticker.system)
         (1 to 4).foreach(_ => cb.recordFailure())
         assertTrue(cb.isClosed)
       },
       test("recordFailure returns true only on the tripping failure") {
-        val cb = CircuitBreaker(CircuitBreakerConfig(failureThreshold = 3), Ticker.system)
+        val cb = CircuitBreaker(CircuitBreakerConfig.default.withFailureThreshold(3), Ticker.system)
         assertTrue(!cb.recordFailure()) &&
         assertTrue(!cb.recordFailure()) &&
         assertTrue(cb.recordFailure()) // this one trips
@@ -76,13 +76,13 @@ object CircuitBreakerSpec extends ZIOSpecDefault {
     suite("Open state")(
       test("rejects calls when open") {
         val ticker = new TestTicker()
-        val cb     = CircuitBreaker(CircuitBreakerConfig(failureThreshold = 1, resetTimeout = 1.minute), ticker)
+        val cb = CircuitBreaker(CircuitBreakerConfig.default.withFailureThreshold(1).withResetTimeout(1.minute), ticker)
         cb.recordFailure()
         assertTrue(cb.tryAcquire == GateResult.Rejected)
       },
       test("transitions to half-open after resetTimeout") {
         val ticker = new TestTicker()
-        val cb     = CircuitBreaker(CircuitBreakerConfig(failureThreshold = 1, resetTimeout = 1.second), ticker)
+        val cb = CircuitBreaker(CircuitBreakerConfig.default.withFailureThreshold(1).withResetTimeout(1.second), ticker)
         cb.recordFailure()
         ticker.advance(2.seconds)
         assertTrue(cb.tryAcquire == GateResult.Allowed)
@@ -92,7 +92,7 @@ object CircuitBreakerSpec extends ZIOSpecDefault {
       test("stays rejected before resetTimeout, allowed at/after it — elapsed uses the injected ticker") {
         val ticker = new TestTicker()
         val cb     =
-          CircuitBreaker(CircuitBreakerConfig(failureThreshold = 1, resetTimeout = 30.seconds), ticker)
+          CircuitBreaker(CircuitBreakerConfig.default.withFailureThreshold(1).withResetTimeout(30.seconds), ticker)
         cb.recordFailure() // opens
         ticker.advance(29.seconds)
         val beforeTimeout = cb.tryAcquire
@@ -108,7 +108,7 @@ object CircuitBreakerSpec extends ZIOSpecDefault {
         // small forward advances keep the circuit open until their sum reaches resetTimeout.
         val ticker = new TestTicker()
         val cb     =
-          CircuitBreaker(CircuitBreakerConfig(failureThreshold = 1, resetTimeout = 10.seconds), ticker)
+          CircuitBreaker(CircuitBreakerConfig.default.withFailureThreshold(1).withResetTimeout(10.seconds), ticker)
         cb.recordFailure()
         ticker.advance(3.seconds)
         val a = cb.tryAcquire
@@ -125,7 +125,7 @@ object CircuitBreakerSpec extends ZIOSpecDefault {
       test("closes after halfOpenMaxCalls successes") {
         val ticker = new TestTicker()
         val cb     = CircuitBreaker(
-          CircuitBreakerConfig(failureThreshold = 1, resetTimeout = 1.second, halfOpenMaxCalls = 2),
+          CircuitBreakerConfig.default.withFailureThreshold(1).withResetTimeout(1.second).withHalfOpenMaxCalls(2),
           ticker
         )
         cb.recordFailure()
@@ -139,7 +139,7 @@ object CircuitBreakerSpec extends ZIOSpecDefault {
       },
       test("re-opens on failed probe") {
         val ticker = new TestTicker()
-        val cb     = CircuitBreaker(CircuitBreakerConfig(failureThreshold = 1, resetTimeout = 1.second), ticker)
+        val cb = CircuitBreaker(CircuitBreakerConfig.default.withFailureThreshold(1).withResetTimeout(1.second), ticker)
         cb.recordFailure()
         ticker.advance(2.seconds)
         cb.tryAcquire // transition to half-open
@@ -149,7 +149,7 @@ object CircuitBreakerSpec extends ZIOSpecDefault {
       },
       test("only one probe at a time") {
         val ticker = new TestTicker()
-        val cb     = CircuitBreaker(CircuitBreakerConfig(failureThreshold = 1, resetTimeout = 1.second), ticker)
+        val cb = CircuitBreaker(CircuitBreakerConfig.default.withFailureThreshold(1).withResetTimeout(1.second), ticker)
         cb.recordFailure()
         ticker.advance(2.seconds)
         val first  = cb.tryAcquire
@@ -162,7 +162,7 @@ object CircuitBreakerSpec extends ZIOSpecDefault {
       test("a wedged probe slot is stolen after probeTimeout") {
         val ticker = new TestTicker()
         val cb     = CircuitBreaker(
-          CircuitBreakerConfig(failureThreshold = 1, resetTimeout = 1.second, probeTimeout = 5.seconds),
+          CircuitBreakerConfig.default.withFailureThreshold(1).withResetTimeout(1.second).withProbeTimeout(5.seconds),
           ticker
         )
         cb.recordFailure()
@@ -182,7 +182,7 @@ object CircuitBreakerSpec extends ZIOSpecDefault {
       test("stealing resets the probe window, so an immediately-following caller is rejected") {
         val ticker = new TestTicker()
         val cb     = CircuitBreaker(
-          CircuitBreakerConfig(failureThreshold = 1, resetTimeout = 1.second, probeTimeout = 5.seconds),
+          CircuitBreakerConfig.default.withFailureThreshold(1).withResetTimeout(1.second).withProbeTimeout(5.seconds),
           ticker
         )
         cb.recordFailure()
@@ -197,27 +197,27 @@ object CircuitBreakerSpec extends ZIOSpecDefault {
     ),
     suite("External trip/reset")(
       test("trip forces circuit open") {
-        val cb = CircuitBreaker(CircuitBreakerConfig(), Ticker.system)
+        val cb = CircuitBreaker(CircuitBreakerConfig.default, Ticker.system)
         cb.trip()
         assertTrue(cb.isOpen) &&
         assertTrue(cb.tryAcquire == GateResult.Rejected)
       },
       test("reset closes externally-tripped circuit") {
-        val cb = CircuitBreaker(CircuitBreakerConfig(), Ticker.system)
+        val cb = CircuitBreaker(CircuitBreakerConfig.default, Ticker.system)
         cb.trip()
         cb.reset()
         assertTrue(cb.isClosed)
       },
       test("reset does not close failure-tripped circuit") {
         val ticker = new TestTicker()
-        val cb     = CircuitBreaker(CircuitBreakerConfig(failureThreshold = 1, resetTimeout = 1.minute), ticker)
+        val cb = CircuitBreaker(CircuitBreakerConfig.default.withFailureThreshold(1).withResetTimeout(1.minute), ticker)
         cb.recordFailure() // trip via failures
         cb.reset()         // should NOT close
         assertTrue(cb.isOpen)
       },
       test("transitionToHalfOpen leaves a failure-opened circuit open until resetTimeout") {
         val ticker = new TestTicker()
-        val cb     = CircuitBreaker(CircuitBreakerConfig(failureThreshold = 1, resetTimeout = 1.minute), ticker)
+        val cb = CircuitBreaker(CircuitBreakerConfig.default.withFailureThreshold(1).withResetTimeout(1.minute), ticker)
         cb.recordFailure()
         cb.transitionToHalfOpen()
         val openAfter = cb.isOpen
@@ -226,7 +226,7 @@ object CircuitBreakerSpec extends ZIOSpecDefault {
         assertTrue(openAfter, rejected, cb.tryAcquire == GateResult.Allowed)
       },
       test("transitionToHalfOpen allows a probe") {
-        val cb = CircuitBreaker(CircuitBreakerConfig(), Ticker.system)
+        val cb = CircuitBreaker(CircuitBreakerConfig.default, Ticker.system)
         cb.trip()
         cb.transitionToHalfOpen()
         assertTrue(cb.tryAcquire == GateResult.Allowed)
@@ -235,7 +235,7 @@ object CircuitBreakerSpec extends ZIOSpecDefault {
     suite("recordReachable")(
       test("frees probe slot in half-open without closing the circuit") {
         val ticker = new TestTicker()
-        val cb     = CircuitBreaker(CircuitBreakerConfig(halfOpenMaxCalls = 3), ticker)
+        val cb     = CircuitBreaker(CircuitBreakerConfig.default.withHalfOpenMaxCalls(3), ticker)
         cb.trip()
         cb.transitionToHalfOpen()
         cb.tryAcquire // acquire probe slot
@@ -246,7 +246,7 @@ object CircuitBreakerSpec extends ZIOSpecDefault {
       },
       test("repeated reachability does not close the circuit") {
         val ticker = new TestTicker()
-        val cb     = CircuitBreaker(CircuitBreakerConfig(halfOpenMaxCalls = 2), ticker)
+        val cb     = CircuitBreaker(CircuitBreakerConfig.default.withHalfOpenMaxCalls(2), ticker)
         cb.trip()
         cb.transitionToHalfOpen()
         (1 to 10).foreach { _ =>
@@ -256,7 +256,7 @@ object CircuitBreakerSpec extends ZIOSpecDefault {
         assertTrue(cb.isHalfOpen)
       },
       test("resets consecutive failures in closed state") {
-        val cb = CircuitBreaker(CircuitBreakerConfig(failureThreshold = 5), Ticker.system)
+        val cb = CircuitBreaker(CircuitBreakerConfig.default.withFailureThreshold(5), Ticker.system)
         cb.recordFailure()
         cb.recordFailure()
         cb.recordReachable()
@@ -264,7 +264,7 @@ object CircuitBreakerSpec extends ZIOSpecDefault {
       },
       test("no-op in open state") {
         val ticker = new TestTicker()
-        val cb     = CircuitBreaker(CircuitBreakerConfig(failureThreshold = 1, resetTimeout = 1.minute), ticker)
+        val cb = CircuitBreaker(CircuitBreakerConfig.default.withFailureThreshold(1).withResetTimeout(1.minute), ticker)
         cb.recordFailure() // trip
         cb.recordReachable()
         assertTrue(cb.isOpen)
@@ -275,7 +275,7 @@ object CircuitBreakerSpec extends ZIOSpecDefault {
         // Mirrors the provider's VirtualMachineError catch, which calls breaker.recordFailure() before re-throwing:
         // a probe that dies after winning the CAS must re-open the circuit rather than wedge it half-open.
         val ticker = new TestTicker()
-        val cb     = CircuitBreaker(CircuitBreakerConfig(failureThreshold = 1, resetTimeout = 1.second), ticker)
+        val cb = CircuitBreaker(CircuitBreakerConfig.default.withFailureThreshold(1).withResetTimeout(1.second), ticker)
         cb.recordFailure()
         ticker.advance(2.seconds)
         val probe = cb.tryAcquire // enters half-open, acquires the probe slot
@@ -288,7 +288,7 @@ object CircuitBreakerSpec extends ZIOSpecDefault {
     suite("Probe claim racing another state change")(
       test("a half-open caller still probes when a success lands between its read and its swap") {
         val ticker = new InterferingTicker()
-        val cb     = CircuitBreaker(CircuitBreakerConfig(halfOpenMaxCalls = 3), ticker)
+        val cb     = CircuitBreaker(CircuitBreakerConfig.default.withHalfOpenMaxCalls(3), ticker)
         cb.trip()
         cb.transitionToHalfOpen()
         ticker.interfere = () => { val _ = cb.recordSuccess() }
@@ -300,8 +300,8 @@ object CircuitBreakerSpec extends ZIOSpecDefault {
       },
       test("an open circuit past its reset timeout still admits a probe when it turns half-open meanwhile") {
         val ticker = new InterferingTicker()
-        val cb     = CircuitBreaker(CircuitBreakerConfig(failureThreshold = 1, resetTimeout = 1.second), ticker)
-        val _      = cb.recordFailure()
+        val cb = CircuitBreaker(CircuitBreakerConfig.default.withFailureThreshold(1).withResetTimeout(1.second), ticker)
+        val _  = cb.recordFailure()
         ticker.advance(2.seconds)
         ticker.interfere = () => cb.transitionToHalfOpen()
         assertTrue(cb.tryAcquire == GateResult.Allowed) && assertTrue(cb.isHalfOpen)
@@ -309,7 +309,7 @@ object CircuitBreakerSpec extends ZIOSpecDefault {
       test("a caller stealing a wedged probe slot still probes when a reachability signal frees it meanwhile") {
         val ticker = new InterferingTicker()
         val cb     = CircuitBreaker(
-          CircuitBreakerConfig(failureThreshold = 1, resetTimeout = 1.second, probeTimeout = 5.seconds),
+          CircuitBreakerConfig.default.withFailureThreshold(1).withResetTimeout(1.second).withProbeTimeout(5.seconds),
           ticker
         )
         val _ = cb.recordFailure()
@@ -323,7 +323,7 @@ object CircuitBreakerSpec extends ZIOSpecDefault {
       },
       test("a caller that loses the probe to another caller is still rejected") {
         val ticker = new InterferingTicker()
-        val cb     = CircuitBreaker(CircuitBreakerConfig(), ticker)
+        val cb     = CircuitBreaker(CircuitBreakerConfig.default, ticker)
         cb.trip()
         cb.transitionToHalfOpen()
         val rival = new AtomicReference[GateResult](GateResult.Rejected)

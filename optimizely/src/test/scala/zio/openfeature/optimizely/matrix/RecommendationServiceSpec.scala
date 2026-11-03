@@ -40,20 +40,18 @@ object RecommendationServiceSpec extends ZIOSpecDefault {
           s
         })(s => ZIO.succeed(s.stop()))
         dataUrl = s"http://localhost:${server.port()}$DatafilePath"
-        config  = OptimizelyProviderConfig(
-          sdkKey = SdkKey,
-          datafileUrl = Some(dataUrl),
-          initWait = OptimizelyTestSupport.InitWait,
-          pollingInterval = Some(java.time.Duration.ofSeconds(3600)),
-          blockingTimeout = Some(java.time.Duration.ofSeconds(2)),
-          events = OptimizelyEvents.Disabled // nothing here is about events; keep them off the network
-        )
+        config  = OptimizelyProviderConfig(SdkKey)
+          .withDatafileUrl(dataUrl)
+          .withInitWait(OptimizelyTestSupport.InitWait)
+          .withPollingInterval(java.time.Duration.ofSeconds(3600))
+          .withBlockingTimeout(java.time.Duration.ofSeconds(2))
+          .withEvents(OptimizelyEvents.Disabled) // nothing here is about events; keep them off the network
         provider <- OptimizelyProvider.scoped(config).mapError(e => new RuntimeException(e.message))
         // A domain config (not the plain fromProvider) so each call gets its own named slot on the global
         // OpenFeatureAPI singleton instead of overwriting the shared unnamed default client — fromProvider would
         // let concurrently-running tests race to swap each other's active provider.
         domain = s"flag-matrix-${java.util.UUID.randomUUID()}"
-        env <- FeatureFlags.fromProvider(provider, FeatureFlagsConfig().withDomain(domain)).build
+        env <- FeatureFlags.fromProvider(provider, FeatureFlagsConfig.default.withDomain(domain)).build
         ff  = env.get[FeatureFlags]
         svc = new RecommendationService(ff)
         result <- body(svc)

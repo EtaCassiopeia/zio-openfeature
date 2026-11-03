@@ -60,7 +60,7 @@ object ProviderNameSpec extends ZIOSpecDefault {
               .fromAcquireAsync(
                 ZIO.succeed(real),
                 ZIO.succeed(fallback),
-                FeatureFlagsConfig().withIsolatedApi,
+                FeatureFlagsConfig.default.withIsolatedApi,
                 AcquireConfig.default.withCompose((r, _) => r)
               )
               .build

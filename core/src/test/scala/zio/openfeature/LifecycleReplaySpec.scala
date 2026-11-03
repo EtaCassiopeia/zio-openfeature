@@ -31,9 +31,9 @@ import zio.openfeature.internal.ProviderStatusMachine.Signal
   *
   * The behaviours come from the paths in `zof.lifecycle.behaviours` (a system property, or the
   * `ZOF_LIFECYCLE_BEHAVIOURS` environment variable), comma-separated files or directories of `*.ndjson`; without it
-  * that suite is ignored, except under CI, where it fails. The `Formal model` workflow generates them and runs this
-  * suite in its `traces` job. The second suite needs no behaviours: it replays a hand-written one and checks that each
-  * comparison can fail.
+  * that suite is ignored, unless `ZOF_LIFECYCLE_BEHAVIOURS_REQUIRED` is set, when it fails. The `Formal model` workflow
+  * generates them and runs this suite in its `traces` job, with that variable set so a lost property cannot pass as a
+  * skip. The second suite needs no behaviours: it replays a hand-written one and checks that each comparison can fail.
   */
 object LifecycleReplaySpec extends ZIOSpecDefault {
 
@@ -915,7 +915,8 @@ object LifecycleReplaySpec extends ZIOSpecDefault {
         )
       }
     ).provideShared(ZLayer.fromZIO(loaded)) @@ (
-      if (location.isEmpty && !sys.env.contains("CI")) TestAspect.ignore else TestAspect.identity
+      if (location.isEmpty && !sys.env.contains("ZOF_LIFECYCLE_BEHAVIOURS_REQUIRED")) TestAspect.ignore
+      else TestAspect.identity
     ),
     suite("the replay's own checks")(
       test("the JSON reader reads what TLC writes") {

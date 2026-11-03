@@ -306,7 +306,8 @@ cd ../.. && sbt "-Dzof.lifecycle.behaviours=/tmp/behaviours" "core/testOnly zio.
 ```
 
 `zof.lifecycle.behaviours` (a system property, or the `ZOF_LIFECYCLE_BEHAVIOURS` environment variable) takes files or
-directories, comma-separated; without it the suite is ignored. The `traces` job runs both on every pull request and
+directories, comma-separated; without it the suite is ignored, unless `ZOF_LIFECYCLE_BEHAVIOURS_REQUIRED` is set, when
+it fails (the `traces` job sets it). The `traces` job runs both on every pull request and
 push, 2000 behaviours from a fixed seed, and nightly 20000 from the run's id as the seed; a behaviour the nightly run
 fails on is checked in under `mbt-regressions/`, which every run replays too. Writing the replay found one fold in the
 model and one gap in the code: after a rollback whose registration failed, the model set the status to the state the

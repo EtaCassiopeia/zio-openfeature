@@ -185,6 +185,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`setProvider` with the provider already installed is a no-op** (#711). It used to run a full swap that changed
   nothing in the SDK: the status went `NotReady` and back, and evaluations failed with `ProviderNotReady` while it
   waited. It now returns at once.
+- **A provider whose `shutdown()` hangs no longer hangs the scope close of `CachingProvider`,
+  `CircuitBreakerProvider`, `OFREPProvider` or `OptimizelyProvider`** (#744). The release's `timeout` ran inside the
+  uninterruptible finalizer, so once the bound passed it waited on a call it could not interrupt. The shutdown is now
+  abandoned after the module's bound, and a failure or timeout is logged, OFREP's and Optimizely's included. The bound
+  is core's, shared with the API and provider shutdowns. `CircuitBreakerProvider`'s evaluation timeout also ends its
+  timer with the call, instead of leaving it sleeping when the call is interrupted.
 
 - **An instance that shares its API no longer gets a re-installed provider shut down by the SDK** (#693). After a
   timed-out swap, such an instance, which records no orphans, let the replaced provider be installed again while the

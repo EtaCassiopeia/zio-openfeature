@@ -15,7 +15,7 @@ import dev.openfeature.sdk.{
 import dev.openfeature.sdk.exceptions.GeneralError
 import zio._
 import zio.openfeature.FeatureFlagError
-import zio.openfeature.internal.OrderedEmitter
+import zio.openfeature.internal.{OrderedEmitter, Timeouts}
 import java.util.concurrent.atomic.AtomicBoolean
 
 /** Policy for how the circuit breaker reacts to `STALE` provider state. */
@@ -287,12 +287,15 @@ final class CircuitBreakerProvider private (
     try {
       val guarded = config.evaluationTimeout match {
         case Duration.Finite(_) =>
-          ZIO
-            // attemptBlockingInterrupt (not attemptBlocking) so the timeout delivers Thread.interrupt to the
-            // blocking-pool thread instead of leaking it while the delegate call runs on unbounded.
-            .attemptBlockingInterrupt(evaluate())
-            .disconnect // detach so timeout completes without waiting for the blocking call
-            .timeoutFail(new java.util.concurrent.TimeoutException("Evaluation timed out"))(config.evaluationTimeout)
+          Timeouts.failAfter(
+            ZIO
+              // attemptBlockingInterrupt (not attemptBlocking) so the timeout delivers Thread.interrupt to the
+              // blocking-pool thread instead of leaking it while the delegate call runs on unbounded.
+              .attemptBlockingInterrupt(evaluate())
+              .disconnect, // detach so timeout completes without waiting for the blocking call
+            config.evaluationTimeout,
+            new java.util.concurrent.TimeoutException("Evaluation timed out")
+          )
         // No timeout to enforce, so stay on the calling thread: the SDK's MultiProvider hands hook context to its
         // resolvers through a thread-local, which another thread cannot see.
         case _ => ZIO.attempt(evaluate())

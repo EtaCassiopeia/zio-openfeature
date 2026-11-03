@@ -25,7 +25,7 @@ design are not listed.
 | The instance's resources have one owner: the hub closes with the scope, `awaitReady` ends on shutdown | #435 | Teardown is one uninterruptible path. |
 | `fromAcquireAsync` registers a wrapper that switches its delegate, never a second SDK registration | #512 | The library can register its own object. The SDK refuses evaluations while a slot is `NOT_READY`, so a swap that goes through the SDK always has a window. |
 | The event bridge attaches before the provider is registered | #531 | A `READY` dispatched during registration is otherwise missed or doubled. |
-| Every SDK and provider call on a lifecycle path is bounded, enforced by a source guard | #561 | A provider that cannot shut down must not hang the scope. |
+| Every SDK and provider call on a lifecycle path is bounded, enforced by a source guard | #561, #744 | A provider that cannot shut down must not hang the scope. The bound is `Timeouts.boundedFinalizer`, which every module's release uses: a plain `timeout` in a finalizer cannot abandon an uninterruptible call. |
 | The status follows the SDK's state for the slot, read when the event is handled, not the event's type | #563, #601, #613, #617, #634 | Events have no order; the slot does. Status is a function of the slot plus the two sticky terminals, `Fatal` and shutdown. |
 | Shutdown and the scope close take the swap lock | #565, #636 | A swap that settles after the final `NotReady` moves the status out of it. |
 | A timed-out swap's previous provider is tracked until the new one settles | #564 | The SDK shuts the replaced provider down only if `initialize()` returns; on a timeout nothing else will. |

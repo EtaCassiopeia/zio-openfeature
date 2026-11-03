@@ -17,7 +17,7 @@ object TestFeatureProviderSpec extends ZIOSpecDefault {
         ZIO.scoped {
           for {
             env  <- TestFeatureProvider.layer.build
-            _    <- env.get[FeatureFlags].shutdown
+            _    <- env.get[FeatureFlagsAdmin].shutdown
             exit <- env.get[TestFeatureProvider].setStatus(ProviderStatus.Ready).exit
           } yield assertTrue(
             refusedWith(exit).exists(m => m.contains("setStatus(Ready) refused") && m.contains("shut down"))
@@ -35,8 +35,9 @@ object TestFeatureProviderSpec extends ZIOSpecDefault {
           for {
             _   <- ZIO.addFinalizer(ZIO.succeed(release.countDown()))
             env <- TestFeatureProvider.layer.build
-            ff = env.get[FeatureFlags]
-            swap <- ff.setProvider(slow).fork
+            ff    = env.get[FeatureFlags]
+            admin = env.get[FeatureFlagsAdmin]
+            swap <- admin.setProvider(slow).fork
             _    <- (ff.providerStatus <* ZIO.sleep(10.millis)).repeatUntil(_ == ProviderStatus.NotReady)
             exit <- env.get[TestFeatureProvider].setStatus(ProviderStatus.Ready).exit
             _    <- ZIO.succeed(release.countDown())

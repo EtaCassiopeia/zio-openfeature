@@ -188,9 +188,6 @@ The layer's error type is `Nothing`: a real provider that never comes up is retr
 | `withOnSwapped(effect)` | nothing | Runs once the real provider serves. |
 | `withOnConstructionError(f)` | nothing | Runs when all attempts or the swap failed. |
 
-The earlier form, which took `evaluationTimeout`, `initTimeout`, `contextSource`, `fallbackLogging` and
-`maxAbandonedCalls` as named arguments next to the `AcquireConfig` settings, is deprecated since 1.3.0.
-
 ### Verify the candidate
 
 A provider with a wrong key can still answer, with wrong values. `Verify.flagExists[A](key, context)` asks the
@@ -252,9 +249,8 @@ A domain names a client, so different parts of an app can use different provider
 
 ## Replace the provider at runtime
 
-`FeatureFlagsAdmin.setProvider` swaps the provider of a running instance (add `FeatureFlagsAdmin` to the layer with
-`>+> FeatureFlagsAdmin.layer`; the member on `FeatureFlags` is deprecated since 1.3.0). Hooks, context and event
-handlers stay. On an instance that has
+`FeatureFlagsAdmin.setProvider` swaps the provider of a running instance (the factories' layers provide
+`FeatureFlagsAdmin` next to `FeatureFlags`). Hooks, context and event handlers stay. On an instance that has
 been shut down it fails with `ProviderNotReady(NotReady)` and does not touch the provider: build a new layer instead.
 Installing the provider the slot already binds changes nothing and returns at once: the status does not move and
 evaluations keep going. To initialize a provider again, install a new instance.

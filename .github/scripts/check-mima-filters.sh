@@ -15,6 +15,10 @@
 # Any other filter is a break of the public API, allowed only on the way to a major release: when the highest `v*` tag
 # has a higher major than the `mimaPreviousArtifacts` baseline (a `v2.0.0-RC1` tag unlocks breaking filters for 2.0).
 #
+# While a major is in development there is no baseline: `mimaPreviousArtifacts := Set.empty, // no baseline: <why>`. No
+# filter can then excuse anything, so any filter fails, and having none passes. A build with neither a baseline nor that
+# marker is a usage error, since it more likely means the parse broke.
+#
 # Usage:
 #   check-mima-filters.sh [<build file>]
 #
@@ -30,7 +34,12 @@ die() { echo "error: $*" >&2; exit 2; }
 [ -f "$BUILD_FILE" ] || die "no build file at $BUILD_FILE"
 
 baseline=$(sed -n 's/.*mimaPreviousArtifacts[^"]*"\([0-9][0-9.]*\)".*/\1/p' "$BUILD_FILE" | head -1)
-[ -n "$baseline" ] || die "no mimaPreviousArtifacts version in $BUILD_FILE"
+no_baseline=false
+if [ -z "$baseline" ]; then
+  grep -q 'mimaPreviousArtifacts.*// no baseline: ..*' "$BUILD_FILE" ||
+    die "no mimaPreviousArtifacts version, and no '// no baseline: <why>' marker, in $BUILD_FILE"
+  no_baseline=true
+fi
 baseline_major="${baseline%%.*}"
 
 # The highest `v*` tag by version, not `git describe`: CI checks out shallow, where no tag is reachable from HEAD.
@@ -59,6 +68,11 @@ classify() {
     -e 's/.*ProblemMatcher\.make( *ProblemKind\.\([A-Za-z]*\),.*/\1/p')
   checked=$((checked + 1))
 
+  if [ "$no_baseline" = true ]; then
+    echo "$BUILD_FILE:$at: there is no baseline, so this filter excuses nothing; delete it: $target"
+    violations=$((violations + 1))
+    return
+  fi
   case "$target" in
     *.internal.*) return ;;
   esac
@@ -117,6 +131,10 @@ while IFS= read -r line || [ -n "$line" ]; do
 done < "$BUILD_FILE"
 [ -z "$pending" ] || die "$BUILD_FILE:$pending_at: a filter whose quoted target was not found"
 
+if [ "$no_baseline" = true ] && [ "$violations" -eq 0 ]; then
+  echo "OK: no baseline while a major is in development, and no filters."
+  exit 0
+fi
 [ "$checked" -gt 0 ] || die "no MiMa or TASTy-MiMa filter found in $BUILD_FILE; is the parse still right?"
 
 if [ "$violations" -gt 0 ]; then

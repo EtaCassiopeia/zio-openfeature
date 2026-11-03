@@ -57,7 +57,7 @@ object ZioApiHookSpec extends ZIOSpecDefault {
       ProviderEvaluations.of[dev.openfeature.sdk.Value](defaultValue, "STATIC")
   }
 
-  private def buildIsolated(provider: EventProvider): ZIO[Scope, Throwable, FeatureFlags] = {
+  private def buildIsolated(provider: EventProvider): ZIO[Scope, Throwable, FeatureFlagsLive] = {
     val api    = OpenFeatureAPI.createIsolated()
     val domain = s"zio-api-hook-${java.util.UUID.randomUUID()}"
     FeatureFlags.build(

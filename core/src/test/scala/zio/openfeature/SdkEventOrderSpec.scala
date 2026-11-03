@@ -81,7 +81,7 @@ object SdkEventOrderSpec extends ZIOSpecDefault {
   private def awaitStatus(ff: FeatureFlags, status: ProviderStatus): UIO[Boolean] =
     ff.providerStatus.repeatUntil(_ == status).timeout(5.seconds).map(_.isDefined)
 
-  private def published(ff: FeatureFlags, eventType: ProviderEventType): URIO[Scope, Ref[Int]] =
+  private def published(ff: FeatureFlagsLive, eventType: ProviderEventType): URIO[Scope, Ref[Int]] =
     Ref.make(0).tap(count => ZIO.acquireRelease(ff.on(eventType, _ => count.update(_ + 1)))(cancel => cancel))
 
   private def matches(observed: (ProviderStatus, ProviderState)): Boolean = observed match {

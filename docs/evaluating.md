@@ -108,7 +108,8 @@ cause, with no stack trace: `ff.boolean("dark-mode", false).mapError(FeatureFlag
 ## Options for one call
 
 `EvaluationOptions` adds hooks, hints or a timeout to a single evaluation. Pass it after the context to any evaluation
-method, `FlagDef` forms included:
+method, `FlagDef` forms included. On the key-based methods the context and the options both default to empty, so name
+the one you need: `boolean("k", false, options = opts)`.
 
 ```scala
 --8<-- "Evaluating.scala:options"
@@ -131,7 +132,7 @@ Set instance-wide defaults on the `FeatureFlagsConfig` (all fields are in the [c
 ??? note "Slow or hung providers"
     A timed-out evaluation fails with `ProviderError` wrapping a `TimeoutException`. The provider's call is abandoned,
     not cancelled, and holds a blocking-pool thread until it returns. So each instance caps abandoned calls still
-    running: **256** by default (`withMaxAbandonedCalls(n)`, or `fromAcquireAsync`'s `maxAbandonedCalls`). At the cap, a
+    running: **256** by default (`withMaxAbandonedCalls(n)`). At the cap, a
     timed evaluation fails at once with `ProviderError` wrapping a `RejectedExecutionException`, without calling the
     provider; slots free as calls return. Untimed evaluations are never rejected. For a remote provider, consider the
     [circuit breaker](extras.md#circuit-breaker-provider) too.

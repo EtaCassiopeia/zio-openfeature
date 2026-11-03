@@ -87,7 +87,7 @@ object HookOrderPropertySpec extends ZIOSpecDefault {
     Tiers(api, client, invocation)
   }
 
-  private def build(provider: EventProvider, hooks: List[FeatureHook]): ZIO[Scope, Throwable, FeatureFlags] =
+  private def build(provider: EventProvider, hooks: List[FeatureHook]): ZIO[Scope, Throwable, FeatureFlagsLive] =
     FeatureFlags.build(
       provider,
       domain = Some(s"hook-order-${java.util.UUID.randomUUID()}"),

@@ -7,20 +7,14 @@ import zio.stream.ZStream
 /** The total (never-fails) methods are concrete on the `FeatureFlags` trait, so they must behave correctly for ANY
   * `*Details` implementation — including ones that die or get interrupted. The real provider pipeline funnels every
   * failure through `ZIO.attemptBlocking` into the typed channel, so it can never produce a defect; these branches are
-  * reachable only via a custom implementation. `BoomFlags` is a minimal such implementation whose `*Details` fail via a
-  * configurable `boom` effect (a defect or an interruption).
+  * reachable only via a custom implementation. `BoomFlags` is a minimal such implementation whose `valueDetails` fails
+  * via a configurable `boom` effect (a defect or an interruption).
   */
 object TotalEvaluationDefectSpec extends ZIOSpecDefault {
 
   abstract private class BoomFlags extends FeatureFlags {
     protected def boom[A]: IO[FeatureFlagError, FlagResolution[A]]
 
-    override def booleanDetails(k: String, d: Boolean, ctx: EvaluationContext, o: EvaluationOptions)      = boom
-    override def stringDetails(k: String, d: String, ctx: EvaluationContext, o: EvaluationOptions)        = ???
-    override def intDetails(k: String, d: Int, ctx: EvaluationContext, o: EvaluationOptions)              = ???
-    override def longDetails(k: String, d: Long, ctx: EvaluationContext, o: EvaluationOptions)            = ???
-    override def doubleDetails(k: String, d: Double, ctx: EvaluationContext, o: EvaluationOptions)        = ???
-    override def objDetails(k: String, d: Map[String, Any], ctx: EvaluationContext, o: EvaluationOptions) = ???
     override def valueDetails[A: FlagType](k: String, d: A, ctx: EvaluationContext, o: EvaluationOptions) = boom
 
     override def setGlobalContext(ctx: EvaluationContext): UIO[Unit]                           = ???
@@ -33,34 +27,21 @@ object TotalEvaluationDefectSpec extends ZIOSpecDefault {
     ): ZIO[R, _root_.zio.openfeature.internal.Compat.OrError[E, FeatureFlagError], TransactionResult[A]] = ???
     override def transactionEither[R, E, A](o: Map[String, Any], c: EvaluationContext, ce: Boolean, n: NestedPolicy)(
       zio: ZIO[R, E, A]
-    ): ZIO[R, Either[E, FeatureFlagError], TransactionResult[A]]                                         = ???
-    override def inTransaction: UIO[Boolean]                                                             = ???
-    override def currentEvaluatedFlags: UIO[Map[String, FlagEvaluation[_]]]                              = ???
-    override def events: ZStream[Any, Nothing, ProviderEvent]                                            = ???
-    override def providerStatus: UIO[ProviderStatus]                                                     = ???
-    override def awaitReady(within: Duration): UIO[ProviderStatus]                                       = ???
-    override def providerMetadata: UIO[ProviderMetadata]                                                 = ???
-    override def clientMetadata: UIO[ClientMetadata]                                                     = ???
-    override def onProviderReady(h: ProviderMetadata => UIO[Unit]): UIO[UIO[Unit]]                       = ???
-    override def onProviderError(h: (Throwable, ProviderMetadata) => UIO[Unit]): UIO[UIO[Unit]]          = ???
-    override def onProviderStale(h: (String, ProviderMetadata) => UIO[Unit]): UIO[UIO[Unit]]             = ???
-    override def onConfigurationChanged(h: (Set[String], ProviderMetadata) => UIO[Unit]): UIO[UIO[Unit]] = ???
-    override def on(t: ProviderEventType, h: ProviderEvent => UIO[Unit]): UIO[UIO[Unit]]                 = ???
-    override def addHook(hook: FeatureHook): UIO[Unit]                                                   = ???
-    override def addHooks(hooks: List[FeatureHook]): UIO[Unit]                                           = ???
-    override def clearHooks: UIO[Unit]                                                                   = ???
-    override def hooks: UIO[List[FeatureHook]]                                                           = ???
-    override def addZioApiHook(hook: FeatureHook): UIO[Unit]                                             = ???
-    override def addZioApiHooks(hooks: List[FeatureHook]): UIO[Unit]                                     = ???
-    override def clearZioApiHooks: UIO[Unit]                                                             = ???
-    override def zioApiHooks: UIO[List[FeatureHook]]                                                     = ???
-    override def addApiHook(hook: dev.openfeature.sdk.Hook[_]): UIO[Unit]                                = ???
-    override def clearApiHooks: UIO[Unit]                                                                = ???
-    override def setProvider(p: dev.openfeature.sdk.FeatureProvider): IO[FeatureFlagError, Unit]         = ???
-    override def shutdown: UIO[Unit]                                                                     = ???
-    override def track(eventName: String): IO[FeatureFlagError, Unit]                                    = ???
-    override def track(eventName: String, context: EvaluationContext): IO[FeatureFlagError, Unit]        = ???
-    override def track(eventName: String, details: TrackingEventDetails): IO[FeatureFlagError, Unit]     = ???
+    ): ZIO[R, Either[E, FeatureFlagError], TransactionResult[A]]                                     = ???
+    override def inTransaction: UIO[Boolean]                                                         = ???
+    override def currentEvaluatedFlags: UIO[Map[String, FlagEvaluation[_]]]                          = ???
+    override def events: ZStream[Any, Nothing, ProviderEvent]                                        = ???
+    override def providerStatus: UIO[ProviderStatus]                                                 = ???
+    override def awaitReady(within: Duration): UIO[ProviderStatus]                                   = ???
+    override def providerMetadata: UIO[ProviderMetadata]                                             = ???
+    override def clientMetadata: UIO[ClientMetadata]                                                 = ???
+    override def addHook(hook: FeatureHook): UIO[Unit]                                               = ???
+    override def addHooks(hooks: List[FeatureHook]): UIO[Unit]                                       = ???
+    override def clearHooks: UIO[Unit]                                                               = ???
+    override def hooks: UIO[List[FeatureHook]]                                                       = ???
+    override def track(eventName: String): IO[FeatureFlagError, Unit]                                = ???
+    override def track(eventName: String, context: EvaluationContext): IO[FeatureFlagError, Unit]    = ???
+    override def track(eventName: String, details: TrackingEventDetails): IO[FeatureFlagError, Unit] = ???
     override def track(
       eventName: String,
       context: EvaluationContext,

@@ -41,7 +41,7 @@ object CoreApiTidySpec extends ZIOSpecDefault {
       ProviderEvaluations.of(default, "DEFAULT")
   }
 
-  private def buildFF(provider: FeatureProvider): ZIO[Scope, Throwable, FeatureFlags] =
+  private def buildFF(provider: FeatureProvider): ZIO[Scope, Throwable, FeatureFlagsLive] =
     FeatureFlags.build(
       provider,
       domain = Some(s"tidy-${java.util.UUID.randomUUID()}"),

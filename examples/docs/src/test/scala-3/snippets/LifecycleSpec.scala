@@ -42,7 +42,7 @@ object LifecycleSpec extends ZIOSpecDefault:
     test("a Stale event moves Ready to Stale and reaches onProviderStale") {
       for
         seen     <- Promise.make[Nothing, String]
-        cancel   <- FeatureFlags.onProviderStale((reason, _) => seen.succeed(reason).unit)
+        cancel   <- FeatureFlagsAdmin.onProviderStale((reason, _) => seen.succeed(reason).unit)
         provider <- ZIO.service[TestFeatureProvider]
         _        <- provider.emitEvent(ProviderEvent.Stale("datafile is old", ProviderMetadata("test")))
         reason   <- seen.await
@@ -94,4 +94,4 @@ object LifecycleSpec extends ZIOSpecDefault:
         result == Left(FeatureFlagError.ProviderNotReady(ProviderStatus.NotReady))
       )
     }
-  ).provide(layer, FeatureFlagsAdmin.layer, Scope.default) @@ TestAspect.sequential
+  ).provide(layer, Scope.default) @@ TestAspect.sequential

@@ -65,7 +65,7 @@ object EventSystemSpec extends ZIOSpecDefault {
       )
   }
 
-  private def buildFF(provider: EventProvider): ZIO[Scope, Throwable, FeatureFlags] = {
+  private def buildFF(provider: EventProvider): ZIO[Scope, Throwable, FeatureFlagsLive] = {
     val api = OpenFeatureAPI.createIsolated()
     FeatureFlags.build(
       provider,

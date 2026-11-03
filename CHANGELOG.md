@@ -18,10 +18,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`FeatureFlagsAdmin`: administering an instance, apart from reading its flags** (#651). Swapping the provider,
   shutting down, the API-level hooks (`addApiHook`, `clearApiHooks`, the ZIO API hooks) and the event-handler
   registrations (`onProviderReady` and the rest, `on`) are on the new `FeatureFlagsAdmin`, with service accessors on its
-  companion. `FeatureFlags.fromProvider(p) >+> FeatureFlagsAdmin.layer` adds it, administering the same instance, so a
-  program that needs only `FeatureFlags` can no longer swap the provider or shut the instance down. The factories'
-  layer types are unchanged. **Deprecated:** those 13 members on `FeatureFlags` and its companion; they still work
-  for 1.x.
+  companion. The factories' layers provide it next to `FeatureFlags`, for the same instance, so a program that needs
+  only `FeatureFlags` can no longer swap the provider or shut the instance down.
 
 - **`fromAcquireAsync` and `FeatureFlagRegistry` take a `FeatureFlagsConfig`** (#654). `fromAcquireAsync(acquire,
   fallback, config, acquireConfig)` reads what every instance takes from the config, now including domain, version,
@@ -115,8 +113,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `CircuitBreakerProvider` and a seeded Optimizely provider. With the fix for invalid HOCON path keys reverted, the
   HOCON run fails on `flag@v2`.
 
+### Removed
+
+- **`FeatureFlags.fromAcquireAsync` no longer takes its settings as named arguments** (#654). Use
+  `fromAcquireAsync(acquire, fallback, config, acquireConfig)`: `evaluationTimeout`, `initTimeout`, `contextSource`,
+  `fallbackLogging` and `maxAbandonedCalls` are `FeatureFlagsConfig` fields, and `compose`, `constructionRetry`,
+  `constructionTimeout`, `onConstructionError`, `verify` and `onSwapped` are `AcquireConfig` settings. The
+  `private[openfeature]` overload kept for callers compiled against 1.1.2 is gone too.
+
+- **The administration members are gone from `FeatureFlags`** (#651). `onProviderReady`, `onProviderError`,
+  `onProviderStale`, `onConfigurationChanged`, `on`, `addZioApiHook`, `addZioApiHooks`, `clearZioApiHooks`,
+  `zioApiHooks`, `addApiHook`, `clearApiHooks`, `setProvider` and `shutdown`, with their accessors on its companion, are
+  on `FeatureFlagsAdmin`. The factories' layers and the testkit's layers (`layer`, `asyncLayer`, `asyncReadyLayer`,
+  `layerFrom`) now provide both services, so `layer.build.map(_.get)` needs `_.get[FeatureFlags]`: a `Tag` cannot hold
+  the intersection. `FeatureFlagsAdmin.layer` stays, for a client from a `FeatureFlagRegistry`, and dies for a
+  hand-written `FeatureFlags` that is not an admin.
+
+- **Implementors of `FeatureFlags` write `valueDetails` only** (#650). It is the one abstract evaluation method.
+  `booleanDetails`, `stringDetails`, `intDetails`, `longDetails`, `doubleDetails` and `objDetails` are final aliases of
+  `valueDetails[T]`, and `boolean` ... `obj`, `value`, `booleanOrDefault` ... `objOrDefault`, `valueOrDefault` and
+  `resolveOrDefault` are defined through it; the per-type ones cannot be overridden. The arity overloads of the per-type
+  getters, `*OrDefault` and `value` are one method each with defaulted `ctx` and `options`: a caller's source is
+  unchanged, a method reference to a particular arity or an override is not. The `FlagDef` forms keep their arities.
+
 ### Changed
 
+- **`main` is the 2.0 line: no release comes before 2.0.0.** Breaking changes land directly on it, so it has no MiMa or
+  TASTy-MiMa baseline for now, and the filters that excused 1.x breaks are gone. After 2.0.0 the baseline moves to it and
+  the binary compatibility policy applies to 2.x. Snapshots from `main` can break between builds until then.
 - **`TestFeatureProvider.setStatus` goes through the instance's lifecycle** (#738). It moves the status as a provider
   report would, and counts as ready for the init watchdog. It is refused, as a defect naming the reason, once the
   instance is shut down or closed, and while a provider swap is in flight. A provider with no instance attached still
@@ -160,6 +184,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Documentation
 
+- **What an infinite `evaluationTimeout` does to a hung half-open probe** (#772). It keeps the probe slot until it returns,
+  so every other call is rejected and `getState` reports `STALE`. The ScalaDoc and `docs/extras.md` say so; the takeover
+  that frees a dead probe's slot needs a finite timeout.
 - **How the lifecycle model treats failures and crashes** (#716). `formal/lifecycle/README.md` lists the provider and
   SDK failures the model represents, the ones it leaves out with what checks them instead, and that it proves safety
   only. The design record says the model relies on its run-to-completion guarantees.
@@ -515,6 +542,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Tests
 
+- **The proofs download TLAPS from this repository's own prerelease.** Upstream re-publishes its `1.6.0-pre` asset on
+  pushes to its main branch, which broke the SHA pin twice in one day. As with the TLC jar, moving to a newer build is
+  now a deliberate step.
+- **Trace validation has room for its long traces** (#728). Modelling the SDK's late shutdown left a long fixture at the
+  300-second limit on CI's runners, where it failed the self-test, and one recorded run undecided. The limit is 900
+  seconds for both.
 - **The lifecycle model's pull request check uses smaller bounds** (#728). Modelling the SDK's late shutdown as its own step
   tripled the state space, past the job's time limit, so pull requests check `LifecyclePR.cfg` (one provider event) and
   main and manual runs keep the full `Lifecycle.cfg`.

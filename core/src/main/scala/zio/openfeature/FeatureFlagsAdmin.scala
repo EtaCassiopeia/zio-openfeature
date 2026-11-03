@@ -8,9 +8,8 @@ import dev.openfeature.sdk.{FeatureProvider => OFFeatureProvider}
   * the status stay on [[FeatureFlags]].
   *
   * A program states what it needs: `ZIO[FeatureFlags, ...]` reads flags and cannot swap the provider or shut the
-  * instance down. The factories' layers provide [[FeatureFlags]]; add the administration of that instance with
-  * [[FeatureFlagsAdmin.layer]]: `FeatureFlags.fromProvider(p) >+> FeatureFlagsAdmin.layer`. A client from
-  * [[FeatureFlagRegistry]] is administered through the registry instead.
+  * instance down. The factories' layers provide both, for the same instance. A client from [[FeatureFlagRegistry]] is
+  * administered through the registry instead.
   */
 trait FeatureFlagsAdmin {
 
@@ -120,42 +119,18 @@ trait FeatureFlagsAdmin {
 
 object FeatureFlagsAdmin {
 
-  /** The administration of the [[FeatureFlags]] in the environment, the same instance:
-    * `FeatureFlags.fromProvider(p) >+> FeatureFlagsAdmin.layer` provides both. Building it does nothing to the
-    * instance.
+  /** The administration of the [[FeatureFlags]] in the environment, the same instance. Every instance this library's
+    * factories build already provides it, so a program does not need this; it is for a [[FeatureFlags]] obtained
+    * another way, such as a client from [[FeatureFlagRegistry]]. Dies when the instance is not one: a hand-written
+    * [[FeatureFlags]] has no administration to give.
     */
-  val layer: URLayer[FeatureFlags, FeatureFlagsAdmin] = ZLayer.fromZIO(ZIO.serviceWith[FeatureFlags](of))
-
-  /** The instance itself when it is one (every instance this library builds is), or an adapter over the members
-    * [[FeatureFlags]] still carries for 1.x, for another implementor.
-    */
-  private[openfeature] def of(ff: FeatureFlags): FeatureFlagsAdmin = ff match {
-    case admin: FeatureFlagsAdmin => admin
-    case other                    => new Delegating(other)
-  }
-
-  // Calls the members that moved here, which `FeatureFlags` keeps, deprecated, for 1.x.
-  @scala.annotation.nowarn("cat=deprecation")
-  final private class Delegating(ff: FeatureFlags) extends FeatureFlagsAdmin {
-    def onProviderReady(handler: ProviderMetadata => UIO[Unit]): UIO[UIO[Unit]] = ff.onProviderReady(handler)
-    def onProviderError(handler: (Throwable, ProviderMetadata) => UIO[Unit]): UIO[UIO[Unit]] =
-      ff.onProviderError(handler)
-    def onProviderStale(handler: (String, ProviderMetadata) => UIO[Unit]): UIO[UIO[Unit]] = ff.onProviderStale(handler)
-    def onConfigurationChanged(handler: (Set[String], ProviderMetadata) => UIO[Unit]): UIO[UIO[Unit]] =
-      ff.onConfigurationChanged(handler)
-    def on(eventType: ProviderEventType, handler: ProviderEvent => UIO[Unit]): UIO[UIO[Unit]] =
-      ff.on(eventType, handler)
-    def addZioApiHook(hook: FeatureHook): UIO[Unit]                          = ff.addZioApiHook(hook)
-    def addZioApiHooks(hooks: List[FeatureHook]): UIO[Unit]                  = ff.addZioApiHooks(hooks)
-    def clearZioApiHooks: UIO[Unit]                                          = ff.clearZioApiHooks
-    def zioApiHooks: UIO[List[FeatureHook]]                                  = ff.zioApiHooks
-    def addApiHook(hook: dev.openfeature.sdk.Hook[_]): UIO[Unit]             = ff.addApiHook(hook)
-    def clearApiHooks: UIO[Unit]                                             = ff.clearApiHooks
-    def setProvider(provider: OFFeatureProvider): IO[FeatureFlagError, Unit] = ff.setProvider(provider)
-    def shutdown: UIO[Unit]                                                  = ff.shutdown
-  }
-
-  // Service accessors
+  val layer: URLayer[FeatureFlags, FeatureFlagsAdmin] = ZLayer.fromZIO[FeatureFlags, Nothing, FeatureFlagsAdmin](
+    ZIO.serviceWithZIO[FeatureFlags] {
+      case admin: FeatureFlagsAdmin => ZIO.succeed(admin)
+      case other                    =>
+        ZIO.die(new IllegalArgumentException(s"${other.getClass.getName} does not implement FeatureFlagsAdmin"))
+    }
+  )
 
   def onProviderReady(handler: ProviderMetadata => UIO[Unit]): URIO[FeatureFlagsAdmin, UIO[Unit]] =
     ZIO.serviceWithZIO(_.onProviderReady(handler))

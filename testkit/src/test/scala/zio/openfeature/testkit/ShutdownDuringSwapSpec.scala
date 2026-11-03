@@ -20,7 +20,7 @@ object ShutdownDuringSwapSpec extends ZIOSpecDefault {
     provider: FeatureProvider,
     owned: Boolean,
     initTimeout: Duration
-  ): ZIO[Scope, Throwable, FeatureFlags] =
+  ): ZIO[Scope, Throwable, FeatureFlagsLive] =
     FeatureFlags.build(
       provider,
       domain = Some(s"shutdown-during-swap-${java.util.UUID.randomUUID()}"),

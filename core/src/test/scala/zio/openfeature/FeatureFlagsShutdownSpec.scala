@@ -78,7 +78,7 @@ object FeatureFlagsShutdownSpec extends ZIOSpecDefault {
   private def buildOwning(
     provider: dev.openfeature.sdk.FeatureProvider,
     probe: zio.openfeature.internal.LifecycleProbe = zio.openfeature.internal.LifecycleProbe.none
-  ): ZIO[Scope, Throwable, (FeatureFlags, dev.openfeature.sdk.OpenFeatureAPI, String)] = {
+  ): ZIO[Scope, Throwable, (FeatureFlagsLive, dev.openfeature.sdk.OpenFeatureAPI, String)] = {
     val api    = dev.openfeature.sdk.OpenFeatureAPI.createIsolated()
     val domain = uniqueDomain("revive")
     zio.openfeature.internal.FeatureFlagsFactories

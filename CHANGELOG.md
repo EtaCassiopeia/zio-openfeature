@@ -192,6 +192,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   is core's, shared with the API and provider shutdowns. `CircuitBreakerProvider`'s evaluation timeout also ends its
   timer with the call, instead of leaving it sleeping when the call is interrupted.
 
+- **A caller that joined a failed lookup could still receive another caller's failure from its retry; the retry now
+  evaluates the delegate itself** (#722). The retry went back through `CachingProvider`'s shared cache, where another
+  caller's failing lookup could answer it. A retried success is not kept, so the next caller misses.
+
 - **An instance that shares its API no longer gets a re-installed provider shut down by the SDK** (#693). After a
   timed-out swap, such an instance, which records no orphans, let the replaced provider be installed again while the
   swap's provider still initialized. When that `initialize()` returned, the SDK shut the replaced provider down through
@@ -512,6 +516,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `AllowDeath` constant, lets a provider stop working without emitting anything. `witness.py` checks on every pull
   request that every invariant still holds, and that the instance can then report `Ready` with a dead provider
   installed. The check fails if that becomes unreachable, so the README's account of the gap stays true.
+- **A TLA+ model of `CachingProvider`** (#722). `formal/caching` checks invalidation epochs, failed lookups and joiners
+  over every order of lookup start, write-back, invalidation and retry, with witnesses for the documented limits and a
+  mutant for each bug the design excludes. CI runs all of it, and the model found the retry bug under Fixed.
+
 - **The lifecycle model checks recovery** (#718). `FairSpec` states the fairness the library and the SDK provide (a
   swap's next step and its timeout, a started shutdown, event delivery, acting on a resolved orphan watch), with none
   for providers. `Liveness.cfg` checks five properties under it on every pull request: every swap ends, a started

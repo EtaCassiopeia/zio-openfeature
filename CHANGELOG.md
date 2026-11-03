@@ -608,6 +608,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Tests
 
+- **A TLA+ model of the registry and shared APIs** (#724). `formal/registry/Registry.tla` checks one API shared by
+  several instances on several domains: one owner tears the API down, a non-owner's close touches nothing shared,
+  every registered provider is shut down exactly once, concurrent `getClient` calls on one domain yield one client,
+  and the library never shuts down a provider another domain holds. Five mutants, the bugs these rules exclude, are
+  caught; the `tlc` job runs both on every pull request. The per-instance protocol stays `formal/lifecycle`'s, and
+  the two READMEs say how the models compose.
 - **The proofs download TLAPS from this repository's own prerelease.** Upstream re-publishes its `1.6.0-pre` asset on
   pushes to its main branch, which broke the SHA pin twice in one day. As with the TLC jar, moving to a newer build is
   now a deliberate step.

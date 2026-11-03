@@ -348,7 +348,11 @@ outcome).
 - **Time.** A timeout is an action enabled while `initialize()` runs; how long anything takes is not modelled. `SdkInitOk`
   returns from `initialize()` and writes the slot in one step: for the library, "returned but not yet written" is the same
   observation as "still running", with the same timeout and the same recovery by the late `READY`.
-- **The registry, shared APIs and `fromAcquireAsync`.** The model is one instance that owns its API.
+- **Several instances on one API.** The model is one instance, owning its API or sharing it (`owns`). The registry
+  and the shared-API topology, with their ownership rules, are `formal/registry` (`Registry.tla`), a coarser model
+  composed with this one by assumption: this one checks each instance's swap protocol, that one who tears the API
+  down, which provider is shut down by whom and how often, and one client per domain. `fromAcquireAsync` on a
+  shared API is an instance like any other there; its switch is not an SDK registration.
 - **The async build's init watchdog.** The async start is in (`InitAsync`); its watchdog is not, and
   `LifecycleInterleavingSpec` covers it.
 

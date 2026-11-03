@@ -1,6 +1,6 @@
 package zio.openfeature
 
-import zio.openfeature.internal.{ManagedProvider, ProviderEvaluations}
+import zio.openfeature.internal.{LifecycleProbe, ManagedProvider, ProviderEvaluations}
 
 import dev.openfeature.sdk.{
   EvaluationContext => OFEvaluationContext,
@@ -111,6 +111,31 @@ object ManagedProviderSpec extends ZIOSpecDefault {
         fresh = wrapper.shutDownInCycle
         _ <- ZIO.attemptBlocking(wrapper.shutdown())
       } yield assertTrue(once == ((1, true)), !fresh, delegate.shutdowns.get() == 2)
+    },
+    test("a shutdown() that throws is recorded as returned without success, after the call, and the throw propagates") {
+      val points = new CopyOnWriteArrayList[LifecycleProbe.Point]()
+      val probe  = new LifecycleProbe {
+        def at(point: LifecycleProbe.Point): UIO[Unit] = ZIO.succeed(points.add(point)).unit
+      }
+      val delegate = new Delegate {
+        override def shutdown(): Unit = { shutdowns.incrementAndGet(); throw new RuntimeException("shutdown fails") }
+      }
+      val wrapper = ManagedProvider(delegate, probe)
+      for {
+        _      <- initOn(wrapper, None).flatMap(_.join)
+        thrown <- ZIO.attemptBlocking(wrapper.shutdown()).either
+        again  <- ZIO.attemptBlocking(wrapper.shutdown()).either
+        recorded = points.toArray.toList.collect {
+          case LifecycleProbe.Point.ProviderShutDown(_)     => "called"
+          case LifecycleProbe.Point.ShutdownReturned(_, ok) => s"returned $ok"
+        }
+      } yield assertTrue(
+        thrown.left.exists(_.getMessage == "shutdown fails"),
+        again.isRight,
+        delegate.shutdowns.get() == 1,
+        wrapper.shutDownInCycle,
+        recorded == List("called", "returned false")
+      )
     },
     test("the provider's events are forwarded again in the cycle after a shutdown") {
       val delegate = new Delegate

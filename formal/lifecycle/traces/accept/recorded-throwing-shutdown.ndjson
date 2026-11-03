@@ -1,0 +1,38 @@
+{"seq":0,"point":"InitEntered","arg":""}
+{"seq":1,"point":"InitReturned","arg":""}
+{"seq":2,"point":"DeliverEvent","arg":"PROVIDER_READY"}
+{"seq":3,"point":"ApplySignal","arg":"EventReady"}
+{"seq":4,"point":"Begin","arg":""}
+{"seq":5,"point":"SwapStart","arg":""}
+{"seq":6,"point":"ApplySignal","arg":"SwapStarted"}
+{"seq":7,"point":"InitEntered","arg":""}
+{"seq":8,"point":"InitReturned","arg":""}
+{"seq":9,"point":"SdkBind","arg":""}
+{"seq":10,"point":"DeliverEvent","arg":"PROVIDER_READY"}
+{"seq":11,"point":"ApplySignal","arg":"EventReady"}
+{"seq":12,"point":"ProviderShutDown","arg":"1"}
+{"seq":13,"point":"ShutdownReturned","arg":"1 true"}
+{"seq":14,"point":"ApplySignal","arg":"SwapSucceeded(Ready)"}
+{"seq":15,"point":"SwapReconcile","arg":""}
+{"seq":16,"point":"ApplySignal","arg":"EventReady"}
+{"seq":17,"point":"SwapDone","arg":""}
+{"seq":18,"point":"SwapStart","arg":""}
+{"seq":19,"point":"ApplySignal","arg":"SwapStarted"}
+{"seq":20,"point":"SdkBind","arg":""}
+{"seq":21,"point":"InitEntered","arg":""}
+{"seq":22,"point":"InitReturned","arg":""}
+{"seq":23,"point":"ProviderShutDown","arg":"2"}
+{"seq":24,"point":"DeliverEvent","arg":"PROVIDER_READY"}
+{"seq":25,"point":"ApplySignal","arg":"EventReady"}
+{"seq":26,"point":"ApplySignal","arg":"SwapSucceeded(Ready)"}
+{"seq":27,"point":"SwapReconcile","arg":""}
+{"seq":28,"point":"ShutdownReturned","arg":"2 false"}
+{"seq":29,"point":"ApplySignal","arg":"EventReady"}
+{"seq":30,"point":"SwapDone","arg":""}
+{"seq":31,"point":"ShutdownStart","arg":""}
+{"seq":32,"point":"ApplySignal","arg":"ShutdownStarted"}
+{"seq":33,"point":"ProviderShutDown","arg":"3"}
+{"seq":34,"point":"ShutdownReturned","arg":"3 false"}
+{"seq":35,"point":"ShutdownDone","arg":""}
+{"seq":36,"point":"ApplySignal","arg":"ShutdownCompleted"}
+{"seq":37,"point":"ScopeClose","arg":""}

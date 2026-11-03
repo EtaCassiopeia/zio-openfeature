@@ -27,12 +27,13 @@ LEMMA FreezeType ==
 
 LEMMA InitType == Init => TypeInv
   BY ConstantsOK, FS_EmptySet DEF Init, InitWith, InitAsync, TypeInv, SwapRec, OrphanRec, EventRec, EvalRec, EvalIdle,
-                                 All, Statuses, SdkStates, Signals
+                                 All, Statuses, SdkStates, Signals, ShutOutcomes
 
 LEMMA NextType == TypeInv /\ [Next]_vars => TypeInv'
 <1> SUFFICES ASSUME TypeInv, [Next]_vars PROVE TypeInv'
   OBVIOUS
-<1> USE ConstantsOK DEF TypeInv, SwapRec, OrphanRec, EventRec, EvalRec, All, Signals, SdkStates, Statuses
+<1> USE ConstantsOK DEF TypeInv, SwapRec, OrphanRec, EventRec, EvalRec, All, Signals, SdkStates, Statuses, ShutOutcomes,
+                        CallShutdown, CallShutdowns, ShutOutcomeOf
 <1> SUFFICES ASSUME LifecycleNext, UNCHANGED evals PROVE TypeInv'
   <2>1. CASE EvalNext /\ UNCHANGED << status, installed, lock, gate, swap, pending, orphans, bridgeOn, shutDown, closed,
                                       owns, swaps, sdkVars >>
@@ -82,9 +83,9 @@ LEMMA NextType == TypeInv /\ [Next]_vars => TypeInv'
 <1>17. CASE ShutdownStart
   BY <1>17 DEF ShutdownStart, sdkVars
 <1>18. CASE ShutdownDone
-  BY <1>18, FS_EmptySet, FS_Subset, FS_CardinalityType DEF ShutdownDone, TearDown
+  BY <1>18, FS_EmptySet DEF ShutdownDone, TearDown, TearDownShuts
 <1>19. CASE ScopeClose
-  BY <1>19, FS_EmptySet, FS_Subset, FS_CardinalityType DEF ScopeClose, TearDown
+  BY <1>19, FS_EmptySet DEF ScopeClose, TearDown, TearDownShuts
 <1>20. CASE \E p \in All : SdkShutDownOld(p)
   BY <1>20 DEF SdkShutDownOld
 <1> QED
@@ -141,7 +142,7 @@ LEMMA NextInd == IndInv /\ [Next]_vars => IndInv'
   BY <1>8, <1>t, ConstantsOK DEF SwapFailNoRollback, Outcome,
        OneLockHolder, GateDownWhenIdle, SwapRec, All, Statuses, SdkStates
 <1>9. CASE \E ok, early \in BOOLEAN, r \in {"READY", "STALE", "ERROR", "FATAL"} : SwapRollback(ok, r, early)
-  BY <1>9, <1>t, ConstantsOK DEF SwapRollback, Outcome,
+  BY <1>9, <1>t, ConstantsOK DEF SwapRollback, Outcome, CallShutdown, CallShutdowns,
        OneLockHolder, GateDownWhenIdle, SwapRec, All, Statuses, SdkStates
 <1>10. CASE SwapReconcile
   BY <1>10, <1>t, ConstantsOK DEF SwapReconcile, OneLockHolder, GateDownWhenIdle, SwapRec, All, Statuses, SdkStates
@@ -159,17 +160,17 @@ LEMMA NextInd == IndInv /\ [Next]_vars => IndInv'
   BY <1>15, <1>t, ConstantsOK DEF Deliver, DeliverToBridge, Discard,
        OneLockHolder, GateDownWhenIdle, SwapRec, All, Statuses, SdkStates
 <1>16. CASE \E o \in orphans : OrphanResolved(o)
-  BY <1>16, <1>t, ConstantsOK DEF OrphanResolved, OneLockHolder, GateDownWhenIdle, SwapRec, All, Statuses, SdkStates
+  BY <1>16, <1>t, ConstantsOK DEF OrphanResolved, CallShutdown, CallShutdowns, OneLockHolder, GateDownWhenIdle, SwapRec, All, Statuses, SdkStates
 <1>17. CASE ShutdownStart
   BY <1>17, <1>t, ConstantsOK DEF ShutdownStart, OneLockHolder, GateDownWhenIdle, SwapRec, All, Statuses, SdkStates
 <1>18. CASE ShutdownDone
-  BY <1>18, <1>t, ConstantsOK DEF ShutdownDone, TearDown,
+  BY <1>18, <1>t, ConstantsOK DEF ShutdownDone, TearDown, TearDownShuts, CallShutdowns,
        OneLockHolder, GateDownWhenIdle, SwapRec, All, Statuses, SdkStates
 <1>19. CASE ScopeClose
-  BY <1>19, <1>t, ConstantsOK DEF ScopeClose, TearDown,
+  BY <1>19, <1>t, ConstantsOK DEF ScopeClose, TearDown, TearDownShuts, CallShutdowns,
        OneLockHolder, GateDownWhenIdle, SwapRec, All, Statuses, SdkStates
 <1>20. CASE \E p \in All : SdkShutDownOld(p)
-  BY <1>20, <1>t, ConstantsOK DEF SdkShutDownOld, OneLockHolder, GateDownWhenIdle, SwapRec, All, Statuses, SdkStates
+  BY <1>20, <1>t, ConstantsOK DEF SdkShutDownOld, CallShutdown, CallShutdowns, OneLockHolder, GateDownWhenIdle, SwapRec, All, Statuses, SdkStates
 <1> QED
   BY <1>1, <1>2, <1>3, <1>4, <1>5, <1>6, <1>7, <1>8, <1>9, <1>10, <1>11, <1>12, <1>13, <1>14, <1>15, <1>16, <1>17,
      <1>18, <1>19, <1>20 DEF LifecycleNext

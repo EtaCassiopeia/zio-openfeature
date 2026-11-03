@@ -133,6 +133,33 @@ liveness = {
     ]),
 }
 
+# A progress bug that needs a provider whose shutdown() hangs: checked on ShutdownsLiveness.cfg, whose providers may.
+shutdown_liveness = {
+    # The teardown waits for a hung shutdown() without a bound: a provider that never returns from it holds the
+    # shutdown forever.
+    'the teardown waits for a hung shutdown without a bound': ('ShutdownEnds', [
+        ('TearDown ==\n    /\\ ~Settling\n',
+         'TearDown ==\n    /\\ ~Settling /\\ \\A p \\in TearDownShuts : shutBehaviour[p] # "hangs"\n'),
+    ]),
+}
+
+# Shutdown bugs: each must make TLC report the named invariant violated on Shutdowns.cfg, whose providers may throw or
+# hang.  NoRetryAfterFailure is implied by ShutDownAtMostOnce while a failed call counts like any other, so TLC reports
+# whichever its workers reach first.
+shutdowns = {
+    # A shutdown that threw or timed out is called again at the scope close.
+    'a failed shutdown is retried at scope close': (('ShutDownAtMostOnce', 'NoRetryAfterFailure'), [
+        ('    /\\ IF shutDown \\/ ~owns\n         THEN UNCHANGED << shuts, shutOutcome, oldPending, inits, orphans >>\n',
+         '    /\\ IF shutDown \\/ ~owns\n         THEN CallShutdowns({p \\in All : shutOutcome[p] \\in {"threw", "timedOut"}})'
+         ' /\\ UNCHANGED << oldPending, inits, orphans >>\n'),
+    ]),
+    # A shutdown() that throws stops the teardown: the providers after it are never shut down.
+    'a throwing shutdown stops the teardown': ('ClosedCleanly', [
+        ('    /\\ CallShutdowns(TearDownShuts)\n',
+         '    /\\ CallShutdowns({p \\in TearDownShuts : shutBehaviour[p] # "throws"})\n'),
+    ]),
+}
+
 # Evaluation bugs: each must make TLC report the named invariant violated on Evaluation.cfg.  Moving the generation's
 # write (to the SDK registration, or to the gate's drop) is not one: the gate covers every moment a new provider can be
 # bound before its outcome, so the generation only has to move while the gate is up (README.md, "Evaluation").
@@ -156,6 +183,8 @@ jar = os.path.abspath(sys.argv[1]) if len(sys.argv) > 1 else os.path.join(here, 
 cfg = open(os.path.join(here, 'Lifecycle.cfg')).read()
 live_cfg = open(os.path.join(here, 'Liveness.cfg')).read()
 eval_cfg = open(os.path.join(here, 'Evaluation.cfg')).read()
+shut_cfg = open(os.path.join(here, 'Shutdowns.cfg')).read()
+shut_live_cfg = open(os.path.join(here, 'ShutdownsLiveness.cfg')).read()
 missed = []
 
 
@@ -186,6 +215,16 @@ for name, edits in mutants.items():
         print(f'{name}: NOT CAUGHT\n{out[-600:]}')
         missed.append(name)
 
+for name, (invs, edits) in shutdowns.items():
+    invs = invs if isinstance(invs, tuple) else (invs,)
+    out = tlc(mutate(name, edits), shut_cfg, deadlock=True)
+    m = re.search(r'Invariant (\w+) is violated', out)
+    if m and m.group(1) in invs:
+        print(f'{name}: caught by {m.group(1)}')
+    else:
+        print(f'{name}: NOT CAUGHT by {" or ".join(invs)}: {m.group(1) if m else "no violation"}\n{out[-600:]}')
+        missed.append(name)
+
 for name, (invs, edits) in evaluation.items():
     invs = invs if isinstance(invs, tuple) else (invs,)
     out = tlc(mutate(name, edits), eval_cfg, deadlock=True)
@@ -196,8 +235,9 @@ for name, (invs, edits) in evaluation.items():
         print(f'{name}: NOT CAUGHT by {" or ".join(invs)}: {m.group(1) if m else "no violation"}\n{out[-600:]}')
         missed.append(name)
 
-for name, (prop, edits) in liveness.items():
-    config = re.sub(r'PROPERTIES\n(    \w+\n)+', f'PROPERTIES\n    {prop}\n', live_cfg)
+for name, (prop, edits) in list(liveness.items()) + list(shutdown_liveness.items()):
+    base = shut_live_cfg if name in shutdown_liveness else live_cfg
+    config = re.sub(r'PROPERTIES\n(    \w+\n)+', f'PROPERTIES\n    {prop}\n', base)
     out = tlc(mutate(name, edits), config, deadlock=True)
     # TLC 1.7.4 prints "Temporal properties were violated."; later versions name the property.  The configuration checks
     # only `prop`, so either wording is its violation.

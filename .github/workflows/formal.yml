@@ -118,10 +118,11 @@ jobs:
         run: java -XX:+UseParallelGC -cp ../../tla2tools.jar tlc2.TLC -workers auto -deadlock -config "$TLC_CONFIG" Lifecycle.tla
 
   # The checks on small bounds, a few minutes each, apart from the long run above so neither holds up the other.
+  # Together they take about twenty-five minutes.
   model-checks:
     if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
       - name: Set up JDK 21
@@ -138,6 +139,13 @@ jobs:
       - name: Check the lifecycle model's recovery properties
         working-directory: formal/lifecycle
         run: java -XX:+UseParallelGC -cp ../../tla2tools.jar tlc2.TLC -workers auto -config Liveness.cfg Lifecycle.tla
+      # Providers whose shutdown() throws or hangs (Shutdowns.cfg): every invariant, on the liveness bounds; and the
+      # teardown still ends against a hung shutdown (ShutdownsLiveness.cfg).
+      - name: Check the lifecycle model with providers whose shutdown throws or hangs
+        working-directory: formal/lifecycle
+        run: |
+          java -XX:+UseParallelGC -cp ../../tla2tools.jar tlc2.TLC -workers auto -deadlock -config Shutdowns.cfg Lifecycle.tla
+          java -XX:+UseParallelGC -cp ../../tla2tools.jar tlc2.TLC -workers auto -config ShutdownsLiveness.cfg Lifecycle.tla
       # Evaluation: Evaluator.gated's re-check against swaps, with one evaluation on small bounds (Evaluation.cfg).
       - name: Check the lifecycle model with an evaluation
         working-directory: formal/lifecycle

@@ -28,6 +28,7 @@ CONSTANTS = """CONSTANTS
     MaxEvents = 1
     MaxEvals = 0
     AllowDeath = FALSE
+    Behaviours = {"ok", "throws", "hangs"}
     None = None
     OutDir = "{out}"
     Depth = {depth}

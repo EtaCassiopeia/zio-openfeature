@@ -176,9 +176,14 @@ final private[openfeature] class ManagedProvider private (
       }
     }
     ended.foreach { case (target, cycleLane, signal, cycle) =>
-      at(LifecycleProbe.Point.ProviderShutDown)
-      try target.shutdown()
-      finally {
+      val call = ManagedProvider.shutdownCalls.incrementAndGet()
+      at(LifecycleProbe.Point.ProviderShutDown(call))
+      try {
+        val failure = try { target.shutdown(); None }
+        catch { case e: Throwable => Some(e) }
+        try at(LifecycleProbe.Point.ShutdownReturned(call, ok = failure.isEmpty))
+        finally failure.foreach(throw _)
+      } finally {
         cycleLane.close()
         cycleLock.synchronized {
           if (generation == cycle && attached.compareAndSet(true, false)) EventProviderAccess.detach(target)
@@ -316,6 +321,9 @@ final private[openfeature] class ManagedProvider private (
 }
 
 private[openfeature] object ManagedProvider {
+
+  // Numbers every shutdown() call the wrappers make, for the probe points that bracket one.
+  private val shutdownCalls = new java.util.concurrent.atomic.AtomicLong(0L)
 
   /** One `initialize()` of the wrapper and the registrations waiting on it. */
   final private[internal] class Attempt {

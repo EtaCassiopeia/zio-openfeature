@@ -75,12 +75,6 @@ object FeatureFlagsAdminSpec extends ZIOSpecDefault {
 
   // A FeatureFlags that is not an administrable instance; no member is reached.
   final private class Stub extends FeatureFlags {
-    override def booleanDetails(k: String, d: Boolean, ctx: EvaluationContext, o: EvaluationOptions)      = ???
-    override def stringDetails(k: String, d: String, ctx: EvaluationContext, o: EvaluationOptions)        = ???
-    override def intDetails(k: String, d: Int, ctx: EvaluationContext, o: EvaluationOptions)              = ???
-    override def longDetails(k: String, d: Long, ctx: EvaluationContext, o: EvaluationOptions)            = ???
-    override def doubleDetails(k: String, d: Double, ctx: EvaluationContext, o: EvaluationOptions)        = ???
-    override def objDetails(k: String, d: Map[String, Any], ctx: EvaluationContext, o: EvaluationOptions) = ???
     override def valueDetails[A: FlagType](k: String, d: A, ctx: EvaluationContext, o: EvaluationOptions) = ???
     override def setGlobalContext(ctx: EvaluationContext): UIO[Unit]                                      = ???
     override def globalContext: UIO[EvaluationContext]                                                    = ???

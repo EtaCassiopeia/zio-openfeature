@@ -7,20 +7,14 @@ import zio.stream.ZStream
 /** The total (never-fails) methods are concrete on the `FeatureFlags` trait, so they must behave correctly for ANY
   * `*Details` implementation — including ones that die or get interrupted. The real provider pipeline funnels every
   * failure through `ZIO.attemptBlocking` into the typed channel, so it can never produce a defect; these branches are
-  * reachable only via a custom implementation. `BoomFlags` is a minimal such implementation whose `*Details` fail via a
-  * configurable `boom` effect (a defect or an interruption).
+  * reachable only via a custom implementation. `BoomFlags` is a minimal such implementation whose `valueDetails` fails
+  * via a configurable `boom` effect (a defect or an interruption).
   */
 object TotalEvaluationDefectSpec extends ZIOSpecDefault {
 
   abstract private class BoomFlags extends FeatureFlags {
     protected def boom[A]: IO[FeatureFlagError, FlagResolution[A]]
 
-    override def booleanDetails(k: String, d: Boolean, ctx: EvaluationContext, o: EvaluationOptions)      = boom
-    override def stringDetails(k: String, d: String, ctx: EvaluationContext, o: EvaluationOptions)        = ???
-    override def intDetails(k: String, d: Int, ctx: EvaluationContext, o: EvaluationOptions)              = ???
-    override def longDetails(k: String, d: Long, ctx: EvaluationContext, o: EvaluationOptions)            = ???
-    override def doubleDetails(k: String, d: Double, ctx: EvaluationContext, o: EvaluationOptions)        = ???
-    override def objDetails(k: String, d: Map[String, Any], ctx: EvaluationContext, o: EvaluationOptions) = ???
     override def valueDetails[A: FlagType](k: String, d: A, ctx: EvaluationContext, o: EvaluationOptions) = boom
 
     override def setGlobalContext(ctx: EvaluationContext): UIO[Unit]                           = ???

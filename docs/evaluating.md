@@ -108,7 +108,8 @@ cause, with no stack trace: `ff.boolean("dark-mode", false).mapError(FeatureFlag
 ## Options for one call
 
 `EvaluationOptions` adds hooks, hints or a timeout to a single evaluation. Pass it after the context to any evaluation
-method, `FlagDef` forms included:
+method, `FlagDef` forms included. On the key-based methods the context and the options both default to empty, so name
+the one you need: `boolean("k", false, options = opts)`.
 
 ```scala
 --8<-- "Evaluating.scala:options"

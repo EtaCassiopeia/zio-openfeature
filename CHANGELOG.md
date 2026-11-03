@@ -115,6 +115,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `CircuitBreakerProvider` and a seeded Optimizely provider. With the fix for invalid HOCON path keys reverted, the
   HOCON run fails on `flag@v2`.
 
+### Removed
+
+- **`FeatureFlags.fromAcquireAsync` no longer takes its settings as named arguments** (#654). Use
+  `fromAcquireAsync(acquire, fallback, config, acquireConfig)`: `evaluationTimeout`, `initTimeout`, `contextSource`,
+  `fallbackLogging` and `maxAbandonedCalls` are `FeatureFlagsConfig` fields, and `compose`, `constructionRetry`,
+  `constructionTimeout`, `onConstructionError`, `verify` and `onSwapped` are `AcquireConfig` settings. The
+  `private[openfeature]` overload kept for callers compiled against 1.1.2 is gone too.
+
 ### Changed
 
 - **`main` is the 2.0 line: no release comes before 2.0.0.** Breaking changes land directly on it, so it has no MiMa or

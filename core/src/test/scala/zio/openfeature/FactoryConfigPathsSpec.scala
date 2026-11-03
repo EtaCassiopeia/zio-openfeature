@@ -87,7 +87,7 @@ object FactoryConfigPathsSpec extends ZIOSpecDefault {
       }
     ),
     suite("fromAcquireAsync(acquire, fallback, config, acquireConfig)")(
-      test("the config's domain and hooks reach the instance, which the old form could not set") {
+      test("the config's domain and hooks reach the instance") {
         val calls = new AtomicInteger(0)
         ZIO.scoped {
           for {
@@ -130,18 +130,26 @@ object FactoryConfigPathsSpec extends ZIOSpecDefault {
           )
         }
       },
-      test("the deprecated form still forwards its evaluation timeout") {
+      test("the config's evaluation timeout bounds the fallback's evaluations") {
         ZIO.scoped {
           for {
-            ff   <- deprecatedForm(new Provider("slow fallback", evalDelay = 2.seconds)).build.map(_.get[FeatureFlags])
+            ff <- FeatureFlags
+              .fromAcquireAsync(
+                ZIO.never,
+                ZIO.succeed(new Provider("slow fallback", evalDelay = 2.seconds)),
+                FeatureFlagsConfig().withEvaluationTimeout(50.millis)
+              )
+              .build
+              .map(_.get[FeatureFlags])
             read <- ff.boolean("f", default = false).either
           } yield assertTrue(read.left.toOption.exists(isTimeout))
         }
+      },
+      test("the knobs are no longer named arguments of the factory") {
+        assertZIO(typeCheck("""FeatureFlags.fromAcquireAsync(ZIO.never, ZIO.never, evaluationTimeout = 50.millis)"""))(
+          Assertion.isLeft
+        )
       }
     )
   ) @@ withLiveClock @@ TestAspect.sequential
-
-  @scala.annotation.nowarn("cat=deprecation")
-  private def deprecatedForm(fallback: Provider) =
-    FeatureFlags.fromAcquireAsync(ZIO.never, ZIO.succeed(fallback), evaluationTimeout = 50.millis)
 }

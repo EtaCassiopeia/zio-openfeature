@@ -90,4 +90,4 @@ already holds elsewhere: log annotations, an MDC, a tracing baggage item.
 - It runs on every evaluation, so keep it cheap: read a `FiberRef` or thread local, never call a remote service.
 - `a ++ b` combines sources and `b` wins on a shared key; `ContextSource.empty` adds nothing.
 
-`FeatureFlags.fromAcquireAsync` bypasses `FeatureFlagsConfig`, so it takes `contextSource` as its own parameter.
+`FeatureFlags.fromAcquireAsync` takes it from its `FeatureFlagsConfig` too.

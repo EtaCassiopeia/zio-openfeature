@@ -188,9 +188,6 @@ The layer's error type is `Nothing`: a real provider that never comes up is retr
 | `withOnSwapped(effect)` | nothing | Runs once the real provider serves. |
 | `withOnConstructionError(f)` | nothing | Runs when all attempts or the swap failed. |
 
-The earlier form, which took `evaluationTimeout`, `initTimeout`, `contextSource`, `fallbackLogging` and
-`maxAbandonedCalls` as named arguments next to the `AcquireConfig` settings, is deprecated since 1.3.0.
-
 ### Verify the candidate
 
 A provider with a wrong key can still answer, with wrong values. `Verify.flagExists[A](key, context)` asks the

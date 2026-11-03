@@ -4,6 +4,7 @@ import com.google.common.collect.{ImmutableList, ImmutableMap}
 import dev.openfeature.contrib.providers.ofrep.{OfrepProvider, OfrepProviderOptions}
 import zio._
 import zio.openfeature.FeatureFlagError
+import zio.openfeature.internal.Timeouts
 
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.{Executors, ExecutorService, ThreadFactory}
@@ -152,9 +153,16 @@ object OFREPProvider {
     */
   private val ShutdownTimeout: zio.Duration = 5.seconds
 
-  private def releaseOfrep(provider: OFREPFeatureProvider): UIO[Unit] =
-    // `.disconnect` because finalizers run uninterruptibly and the timeout must still fire.
-    ZIO.attemptBlocking(provider.shutdown()).disconnect.timeout(ShutdownTimeout).ignore
+  // The provider is out of service either way, so a failure or timeout is logged, never raised.
+  private[ofrep] def releaseOfrep(provider: dev.openfeature.sdk.FeatureProvider): UIO[Unit] =
+    Timeouts
+      .boundedFinalizer(
+        ZIO
+          .attemptBlocking(provider.shutdown())
+          .tapErrorCause(c => ZIO.logWarningCause("OFREP provider shutdown failed", c)),
+        ShutdownTimeout
+      )(ZIO.logWarning(s"OFREP provider shutdown did not finish within ${ShutdownTimeout.toMillis}ms"))
+      .unit
 
   /** [[make(String)]] with scope-managed shutdown: when the surrounding `Scope` closes, the provider is shut down
     * (bounded), terminating its executor and closing the HttpClient — even if it was never registered with a

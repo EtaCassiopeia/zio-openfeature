@@ -16,7 +16,7 @@ libraryDependencies ++= Seq(
 )
 ```
 
-Only `core` is required. It is published for Scala 3.3.8+ and 2.13.18+, and needs ZIO 2.1.27+ and Java 11+. The
+Only `core` is required. It is published for Scala 3.3.9+ and 2.13.18+, and needs ZIO 2.1.27+ and Java 11+. The
 examples on this site use Scala 3 syntax.
 
 ??? note "Trying unreleased changes"

@@ -31,6 +31,22 @@ All == {P0} \cup Providers
 
 Statuses == {"NotReady", "Ready", "Stale", "Error", "Fatal", "ShuttingDown"}
 SdkStates == {"NONE", "NOT_READY", "READY", "STALE", "ERROR", "FATAL"}
+Signals == {"READY", "STALE", "ERROR", "FATAL"}
+
+\* The values of the record-valued variables, for TypeInv.
+SwapRec == [new : All, prev : All, phase : {"bind", "wait", "unbound", "reconcile"}, before : Statuses,
+            settled : SdkStates]
+OrphanRec == [prev : All, watch : All, frozen : {"LIVE"} \cup SdkStates, ran : BOOLEAN]
+EventRec == [p : All, e : Signals]
+EvalRec == [phase : {"idle", "read", "checked", "called", "returned", "refused"}, gen0 : Nat,
+            by : All \cup {None}, instRet : All \cup {None}, swapRet : BOOLEAN]
+
+\* What the proofs (LifecycleProofs.tla) need of the constants; TLC checks it too.  None is a model value: no provider
+\* and no swap.
+ASSUME ConstantsOK ==
+    /\ P0 \notin Providers /\ None \notin All /\ None \notin SwapRec
+    /\ IsFiniteSet(Providers)
+    /\ MaxSwaps \in Nat /\ MaxEvents \in Nat /\ MaxEvals \in Nat /\ AllowDeath \in BOOLEAN
 
 VARIABLES
     \* The library
@@ -67,22 +83,28 @@ sdkVars == << bound, sdk, inits, ran, prevOf, events, emitted, shuts, twoInits, 
 
 Used == {p \in All : sdk[p] # "NONE"}
 
-TypeOK ==
+\* Every variable's type: the proofs' first invariant (LifecycleProofs.tla).
+TypeInv ==
     /\ status \in Statuses
     /\ installed \in All
     /\ lock \in {"free", "swap", "shutdown"}
-    /\ gate \in BOOLEAN /\ bridgeOn \in BOOLEAN /\ shutDown \in BOOLEAN /\ closed \in BOOLEAN /\ owns \in BOOLEAN
+    /\ gate \in BOOLEAN
+    /\ swap \in {None} \cup SwapRec
     /\ pending \in All \cup {None}
+    /\ orphans \subseteq OrphanRec /\ IsFiniteSet(orphans)
+    /\ bridgeOn \in BOOLEAN /\ shutDown \in BOOLEAN /\ closed \in BOOLEAN /\ owns \in BOOLEAN
     /\ bound \in All
     /\ sdk \in [All -> SdkStates]
     /\ inits \in [All -> Nat]
     /\ ran \in [All -> BOOLEAN]
+    /\ prevOf \in [All -> All \cup {None}]
+    /\ events \subseteq EventRec
+    /\ emitted \in Nat
     /\ shuts \in [All -> Nat]
     /\ twoInits \in BOOLEAN
     /\ dead \in [All -> BOOLEAN]
-    /\ evals \in [1..MaxEvals -> [phase : {"idle", "read", "checked", "called", "returned", "refused"}, gen0 : Nat,
-                                  by : All \cup {None}, instRet : All \cup {None}, swapRet : BOOLEAN]]
     /\ swaps \in Nat
+    /\ evals \in [1..MaxEvals -> EvalRec]
 
 -----------------------------------------------------------------------------
 (* The status machine (ProviderStatusMachine) for the signals the bridge  *)

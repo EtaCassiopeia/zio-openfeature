@@ -121,6 +121,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   report would, and counts as ready for the init watchdog. It is refused, as a defect naming the reason, once the
   instance is shut down or closed, and while a provider swap is in flight. A provider with no instance attached still
   sets its status directly.
+- **Built with Scala 3.3.9 and sbt 1.13.1** (from 3.3.8 and 1.13.0). CI's build matrix and the release's test step now
+  run on 3.3.9 as well.
 - **An OFREP answer that is not OFREP JSON is a `GENERAL` error, so it trips the circuit breaker** (#642). The contrib
   provider parses the body before it reads the status, so a 502/503/504 with an HTML or empty body, a 401/403 page
   from an auth proxy and a 429 without JSON all surfaced as `PARSE_ERROR`, which `CircuitBreakerProvider` counts as a
@@ -167,8 +169,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **An object flag answered with no value, or a value that is not an object, is a `TypeMismatch`** (#730). It used to
+  resolve to an empty map. The total tier now serves the default with `TYPE_MISMATCH`. This changes `obj` against
+  `EnvVarProvider`, and against a scalar or list key in `HoconProvider`.
 - **A failed swap's cleanup leaves a provider the shared API registered outside the instance to the SDK** (#728). It
   shuts down only a provider the instance wrapped; no current path reaches it with another.
+- **A provider with no name is called `unknown` everywhere** (#732). Every read of a provider's name now goes through
+  one helper, so the warning about a slot's existing provider says `unknown` instead of `unnamed`, as
+  `providerMetadata` does. Swaps and switches to a provider whose metadata or name is `null` are now pinned by tests.
 - **An interrupted `setProvider` still applies a state the SDK reached during the swap** (#717). An interrupt of the
   caller waits for the swap to finish, but it then skipped the swap's last read of the slot, so a `READY` that arrived
   while the gate was up, after a timeout for instance, never reached the status. That read is now part of the swap's
@@ -177,6 +185,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`setProvider` with the provider already installed is a no-op** (#711). It used to run a full swap that changed
   nothing in the SDK: the status went `NotReady` and back, and evaluations failed with `ProviderNotReady` while it
   waited. It now returns at once.
+- **A provider whose `shutdown()` hangs no longer hangs the scope close of `CachingProvider`,
+  `CircuitBreakerProvider`, `OFREPProvider` or `OptimizelyProvider`** (#744). The release's `timeout` ran inside the
+  uninterruptible finalizer, so once the bound passed it waited on a call it could not interrupt. The shutdown is now
+  abandoned after the module's bound, and a failure or timeout is logged, OFREP's and Optimizely's included. The bound
+  is core's, shared with the API and provider shutdowns. `CircuitBreakerProvider`'s evaluation timeout also ends its
+  timer with the call, instead of leaving it sleeping when the call is interrupted.
 
 - **A caller that joined a failed lookup could still receive another caller's failure from its retry; the retry now
   evaluates the delegate itself** (#722). The retry went back through `CachingProvider`'s shared cache, where another
@@ -480,6 +494,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Tests
 
+- **The lifecycle model's structural invariants are proved for all sizes** (#727). `LifecycleProofs.tla` proves with TLAPS
+  that every variable keeps its type, that a swap and a shutdown never hold the lock together, and that the gate is
+  down whenever no swap holds the lock, for any number of providers, swaps, events and evaluations. CI runs the prover
+  on every pull request that changes the model. Mutants that break an invariant make the proof fail.
 - **A TLA+ model of the ordered event lane** (#725). `formal/lane` models `OrderedEmitter` with the SDK's emitter
   pools and its API lock, in PlusCal. On every pull request TLC checks that the slot follows the order the wrapper
   received the events, that nothing deadlocks, and that no accepted emission is cut off by the lane's close.
@@ -490,6 +508,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   while a swap is in flight. Mutants that drop the re-check, or either half of it, are caught. A new hot-swap test
   pins the generation's own job: an evaluation whose provider call outlasts a whole swap is refused, not answered by
   the replaced provider.
+- **A TLA+ model of the circuit breaker** (#723). `formal/circuitbreaker` models `CircuitBreaker`'s CAS state machine
+  in PlusCal, with each operation split at its `compareAndSet`. On pull requests touching it, TLC checks that at most
+  one probe holds the half-open slot, that a stale permit's outcome changes nothing, that each recovery respects why
+  the circuit opened, the `stale` flag's rules, and that a dead probe cannot pin the breaker. Eleven mutants are caught.
 - **The lifecycle model states that a provider's silent death goes unreported** (#720). `Die`, behind the
   `AllowDeath` constant, lets a provider stop working without emitting anything. `witness.py` checks on every pull
   request that every invariant still holds, and that the instance can then report `Ready` with a dead provider

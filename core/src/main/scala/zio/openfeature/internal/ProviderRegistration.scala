@@ -275,25 +275,22 @@ private[openfeature] object ProviderRegistration {
       new GeneralError(Option(other.getMessage).getOrElse(other.getClass.getSimpleName)).initCause(other)
   }
 
-  /** The API-shutdown scope finalizer, bounded by `timeout`. Scope finalizers run uninterruptibly, so `.interruptible`
-    * is what lets the timeout abandon a hung shutdown at all; `.disconnect` lets the blocking call keep running in the
-    * background, and its eventual outcome is still logged. The whole thing runs on a daemon fiber: a finalizer running
-    * because its fiber was interrupted (the normal application-shutdown path) carries that pending interrupt, which
-    * would otherwise fire on entering the interruptible region and skip `api.shutdown()` altogether.
+  /** The API-shutdown scope finalizer, bounded by `timeout` through [[Timeouts.boundedFinalizer]]. Scope finalizers run
+    * uninterruptibly, so `.interruptible` is what lets the timeout abandon a hung shutdown at all; `.disconnect` lets
+    * the blocking call keep running in the background, and its eventual outcome is still logged. The whole thing runs
+    * on a daemon fiber: a finalizer running because its fiber was interrupted (the normal application-shutdown path)
+    * carries that pending interrupt, which would otherwise fire on entering the interruptible region and skip
+    * `api.shutdown()` altogether.
     */
   def boundedApiShutdown(api: OpenFeatureAPI, timeout: Duration = DefaultShutdownTimeout): UIO[Unit] =
-    ZIO
-      .attemptBlocking(api.shutdown())
-      .tapErrorCause(c => ZIO.logWarningCause("OpenFeature API shutdown failed", c))
-      .disconnect
-      .timeout(timeout)
-      .interruptible
-      .someOrElseZIO(
-        ZIO.logWarning(s"OpenFeature API shutdown exceeded $timeout; closing the scope without waiting for it")
-      )
-      .forkDaemon
-      .flatMap(_.join)
-      .catchAllCause(_ => ZIO.unit) // a failure is already logged by tapErrorCause above
+    Timeouts
+      .boundedFinalizer(
+        ZIO
+          .attemptBlocking(api.shutdown())
+          .tapErrorCause(c => ZIO.logWarningCause("OpenFeature API shutdown failed", c)),
+        timeout
+      )(ZIO.logWarning(s"OpenFeature API shutdown exceeded $timeout; closing the scope without waiting for it"))
+      .unit
 
   /** A single provider's `shutdown()`, bounded and best-effort, with the same daemon-fiber shape as
     * [[boundedApiShutdown]] so it also runs from a finalizer carrying a pending interrupt. A failure or timeout is
@@ -307,16 +304,14 @@ private[openfeature] object ProviderRegistration {
     label: String,
     timeout: Duration = DefaultShutdownTimeout
   ): UIO[Unit] =
-    ZIO
-      .attemptBlocking(provider.shutdown())
-      .tapErrorCause(c => ZIO.logWarningCause(s"$label: provider shutdown failed", c))
-      .disconnect
-      .timeout(timeout)
-      .interruptible
-      .someOrElseZIO(ZIO.logWarning(s"$label: provider shutdown exceeded $timeout; not waiting for it"))
-      .forkDaemon
-      .flatMap(_.join)
-      .catchAllCause(_ => ZIO.unit) // a failure is already logged by tapErrorCause above
+    Timeouts
+      .boundedFinalizer(
+        ZIO
+          .attemptBlocking(provider.shutdown())
+          .tapErrorCause(c => ZIO.logWarningCause(s"$label: provider shutdown failed", c)),
+        timeout
+      )(ZIO.logWarning(s"$label: provider shutdown exceeded $timeout; not waiting for it"))
+      .unit
 
   /** Run `provider`'s initialization again when its registration in `domain`'s slot (the default slot for `None`) is
     * `ERROR` because its last `initialize()` failed: the SDK would otherwise reuse that registration and never call

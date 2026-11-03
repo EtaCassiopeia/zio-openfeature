@@ -105,12 +105,6 @@ object ConversionBoundarySpec extends ZIOSpecDefault {
       }
     ),
     suite("ValueBridge")(
-      test("valueToMap is empty for null and for a value that is not a structure") {
-        assertTrue(
-          ValueBridge.valueToMap(null) == Map.empty[String, Any],
-          ValueBridge.valueToMap(new Value("x")).isEmpty
-        )
-      },
       test("valueToAny keeps a list as a list and a structure as a map, and is None for null") {
         val s = new MutableStructure()
         s.add("k", new Value("v"))

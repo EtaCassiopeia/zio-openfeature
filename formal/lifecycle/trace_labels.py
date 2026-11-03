@@ -16,6 +16,8 @@ The mapping (formal/lifecycle/README.md, "Trace validation"):
                                         recorded no SdkBind (its registration was refused)
   OrphanRecorded, no timeout or
     rollback in the same swap        -> SwapFailNoRollback
+  OrphanRecorded after a rollback    -> the run is not covered: a rollback that timed out, whose wait the model folds
+                                        into SwapRollback
   DeliverEvent, outside a swap and
     before any shutdown              -> Deliver
   OrphanResolved, outside a shutdown
@@ -26,6 +28,7 @@ Everything else is part of one of those steps, or no action at all: the other st
 setProvider of the bound provider, which changes nothing), the SwapDone point that closes
 every swap, deliveries while a swap's gate is up (the model drops those), and deliveries once a shutdown has started
 (the bridge is deregistered then; a handler already running records one anyway). Watchdog is not modelled.
+AwaitSdkShutDown is the wait SwapStart's guard stands for, before the swap starts.
 InitEntered, InitReturned and ProviderShutDown, which the registered wrapper records, are SDK steps (an `initialize()`
 running and returning, `shutDownOld`), which the check leaves free.
 """
@@ -95,6 +98,8 @@ def labels(records):
             elif point == "SwapRollback" and swap_outcome is None:
                 swap_outcome = "SwapRollback"
                 rollback = act("SwapRollback" if bound_new else "SwapRollbackUnbound")
+            elif point == "OrphanRecorded" and swap_outcome == "SwapRollback":
+                return None
             elif point == "OrphanRecorded" and swap_outcome is None:
                 swap_outcome = "SwapFailNoRollback"
                 act("SwapFailNoRollback")

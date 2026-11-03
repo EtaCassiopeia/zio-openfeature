@@ -61,6 +61,10 @@ TraceNext ==
     \/ Lib("ShutdownDone", ShutdownDone)
     \/ Lib("ScopeClose", ScopeClose)
     \/ NeedsInit /\ \E p \in All : Env(SdkInitOk(p) \/ SdkInitFail(p) \/ EmitStaleWhileStarting(p))
+    \* No probe point records the SDK's executor running a shutdown it queued, so that step is free, but only before the
+    \* two steps that read whether it has run; a teardown runs any still queued itself.  Free everywhere, it multiplies
+    \* the search on a long trace past the time limit.
+    \/ Next1 \in {"SwapStart", "OrphanResolved"} /\ \E p \in All : Env(SdkShutDownOld(p))
     \/ /\ Next1 = "Deliver" /\ ~\E ev \in events : ev.p = bound /\ Recorded(ev.e)
        /\ \E e \in {"READY", "STALE", "ERROR", "FATAL"} : Recorded(e) /\ Env(Emit(bound, e))
 

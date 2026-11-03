@@ -64,8 +64,8 @@ mutants = {
     # The rollback's wait reads an ERROR the restored provider reports right after initializing as a failed
     # rollback, whose cleanup shuts the failed provider down after the SDK already did.
     'a rollback reads an error after initialize() returned as a failed rollback': (
-        "       /\\ shuts' = [shuts EXCEPT ![failed] = @ + 1]",
-        "       /\\ shuts' = [shuts EXCEPT ![failed] = @ + (IF ok /\\ r \\in {\"ERROR\", \"FATAL\"} THEN 2 ELSE 1)]"),
+        "       /\\ shuts' = IF ok THEN shuts ELSE [shuts EXCEPT ![failed] = @ + 1]",
+        "       /\\ shuts' = IF ok /\\ r \\notin {\"ERROR\", \"FATAL\"} THEN shuts ELSE [shuts EXCEPT ![failed] = @ + 1]"),
     # The watcher of a timed-out swap's provider reads an ERROR it reports right after initializing as a failed one.
     'the orphan watcher reads an error after initialize() returned as a failed one': (
         'Released(o) == View(o) \\in {"READY", "STALE"} \\/ RanView(o)',
@@ -102,6 +102,11 @@ mutants = {
     # removed): an instance that shares its API, which records no orphans, gets it shut down by the SDK.
     'a provider a registration still initializing replaced is installed again': (
         '    /\\ ~\\E q \\in All : prevOf[q] = p /\\ inits[q] > 0\n',
+        ''),
+    # A provider the SDK's executor has yet to shut down is installed again (the bounded wait Admit asks for removed): the
+    # shutdown queued for its old registration reaches the new one.
+    'a provider whose queued shutdown has not run is installed again': (
+        '    /\\ ~oldPending[p]\n',
         ''),
     # The gate never goes up.
     'no swap gate': (

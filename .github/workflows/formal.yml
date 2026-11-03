@@ -114,10 +114,11 @@ jobs:
         run: java -XX:+UseParallelGC -cp ../../tla2tools.jar tlc2.TLC -workers auto -deadlock -config "$TLC_CONFIG" Lifecycle.tla
 
   # The checks on small bounds, a few minutes each, apart from the long run above so neither holds up the other.
+  # Together they take about twenty-five minutes.
   model-checks:
     if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
       - name: Set up JDK 21

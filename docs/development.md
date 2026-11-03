@@ -169,6 +169,9 @@ cd formal/lifecycle
 curl -sSLo tla2tools.jar https://github.com/tlaplus/tlaplus/releases/download/v1.7.4/tla2tools.jar
 java -cp tla2tools.jar tlc2.TLC -workers auto -deadlock -config Lifecycle.cfg Lifecycle.tla
 python3 mutants.py tla2tools.jar
+cd ../registry
+java -cp ../lifecycle/tla2tools.jar tlc2.TLC -workers auto -deadlock -config Registry.cfg Registry.tla
+python3 mutants.py ../lifecycle/tla2tools.jar
 ```
 
 **Linearizability checks.** `CircuitBreakerLincheckSpec` runs the circuit breaker's operations from several threads

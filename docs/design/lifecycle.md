@@ -110,6 +110,11 @@ provider's own emissions.
   swap, and what calling `setProviderAndWait` would do (a cut-off emission, or a deadlock).
 - A hanging `initialize()` is still not interruptible; the timeout semantics are unchanged.
 - Two equal but distinct provider instances on one API are two registrations.
+- Two models check the lifecycle: `formal/lifecycle` is one instance's swap protocol, event bridge, orphans and
+  teardown; `formal/registry` is one API with several instances on several domains, where the ownership rules
+  live (one owner tears the API down, a non-owner's close touches nothing shared, every registered provider is
+  shut down once, one client per domain, a `Bound.Foreign` provider is never shut down by the library). They
+  compose by assumption, not by TLC: neither re-checks the other's claims.
 
 ## Status
 

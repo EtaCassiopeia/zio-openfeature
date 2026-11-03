@@ -7,6 +7,8 @@ name: Formal model
 # run: each fixed lifecycle bug, each evaluation bug and each progress bug is put back into the model and must be
 # caught.
 # TLAPS proves the lifecycle model's structural invariants for all sizes (LifecycleProofs.tla).
+# The registry model (formal/registry) checks the ownership rules of one API shared by several instances, with its
+# mutants.
 # The event lane model (formal/lane) checks OrderedEmitter against the SDK's API lock, with its witnesses and mutants.
 # Trace validation checks that runs of the library are behaviours of the model: on pull requests the checker's own
 # fixtures, on main, nightly and on demand also the runs the lifecycle test suites record. The replay checks the other
@@ -19,6 +21,9 @@ on:
       - 'formal/**'
       - '.github/workflows/formal.yml'
       - 'core/src/main/scala/zio/openfeature/FeatureFlagsLive.scala'
+      - 'core/src/main/scala/zio/openfeature/FeatureFlagRegistry.scala'
+      - 'core/src/main/scala/zio/openfeature/internal/ApiInstances.scala'
+      - 'core/src/main/scala/zio/openfeature/internal/Bound.scala'
       - 'core/src/main/scala/zio/openfeature/internal/EventBridge.scala'
       - 'core/src/main/scala/zio/openfeature/internal/Evaluator.scala'
       - 'core/src/main/scala/zio/openfeature/internal/ProviderRegistration.scala'
@@ -43,6 +48,9 @@ on:
       - 'formal/**'
       - '.github/workflows/formal.yml'
       - 'core/src/main/scala/zio/openfeature/FeatureFlagsLive.scala'
+      - 'core/src/main/scala/zio/openfeature/FeatureFlagRegistry.scala'
+      - 'core/src/main/scala/zio/openfeature/internal/ApiInstances.scala'
+      - 'core/src/main/scala/zio/openfeature/internal/Bound.scala'
       - 'core/src/main/scala/zio/openfeature/internal/EventBridge.scala'
       - 'core/src/main/scala/zio/openfeature/internal/Evaluator.scala'
       - 'core/src/main/scala/zio/openfeature/internal/ProviderRegistration.scala'
@@ -116,6 +124,13 @@ jobs:
         env:
           TLC_CONFIG: ${{ github.event_name == 'pull_request' && 'LifecyclePR.cfg' || 'Lifecycle.cfg' }}
         run: java -XX:+UseParallelGC -cp ../../tla2tools.jar tlc2.TLC -workers auto -deadlock -config "$TLC_CONFIG" Lifecycle.tla
+      # The registry and shared-API model (formal/registry): the ownership rules of one API with several instances,
+      # and the bugs they exclude as mutants. Under a second, so on every pull request.
+      - name: Check the registry model
+        working-directory: formal/registry
+        run: |
+          java -XX:+UseParallelGC -cp ../../tla2tools.jar tlc2.TLC -workers auto -deadlock -config Registry.cfg Registry.tla
+          python3 mutants.py ../../tla2tools.jar
 
   # The checks on small bounds, a few minutes each, apart from the long run above so neither holds up the other.
   # Together they take about twenty-five minutes.

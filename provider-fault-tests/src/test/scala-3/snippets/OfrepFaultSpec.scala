@@ -17,7 +17,9 @@ object OfrepFaultSpec extends ZIOSpecDefault:
   private val host    = "flags.example.com"
   private val healthy = """{"key":"my-flag","value":true,"variant":"on","reason":"STATIC"}"""
 
-  private val config = OFREPProviderConfig(s"https://$host").withRequestTimeout(java.time.Duration.ofSeconds(10)).withConnectTimeout(java.time.Duration.ofSeconds(2))
+  private val config = OFREPProviderConfig(s"https://$host")
+    .withRequestTimeout(java.time.Duration.ofSeconds(10))
+    .withConnectTimeout(java.time.Duration.ofSeconds(2))
 
   // Bounds, in the live clock. The evaluation timeout is what ends a stalled call.
   private val evaluationTimeout = 2.seconds

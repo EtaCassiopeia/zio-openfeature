@@ -123,6 +123,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   sets its status directly.
 - **Built with Scala 3.3.9 and sbt 1.13.1** (from 3.3.8 and 1.13.0). CI's build matrix and the release's test step now
   run on 3.3.9 as well.
+- **CI and the release test on the Scala versions the build declares** (#771). They name a line, `++2.13.x` and `++3.x`,
+  which sbt resolves against `crossScalaVersions`, so a Scala bump can no longer leave them testing another version. The
+  floor stated in `docs/getting-started.md` is checked against the build.
 - **An OFREP answer that is not OFREP JSON is a `GENERAL` error, so it trips the circuit breaker** (#642). The contrib
   provider parses the body before it reads the status, so a 502/503/504 with an HTML or empty body, a 401/403 page
   from an auth proxy and a 429 without JSON all surfaced as `PARSE_ERROR`, which `CircuitBreakerProvider` counts as a

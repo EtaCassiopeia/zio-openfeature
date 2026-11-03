@@ -36,6 +36,17 @@ jobs:
       # Same reason for the provider TCK's pin: its scheduled drift job passes `main` too.
       - name: Check the provider TCK pin parses from the README
         run: .github/scripts/check-provider-tck-drift.sh print-pin
+      # The workflows name a Scala line and let the build pick the version, but this sentence cannot. A Scala bump goes
+      # red here until it updates the sentence too.
+      - name: Check the documented Scala floor against the build
+        run: |
+          s3=$(sed -n 's/^val scala3Version *= *"\([^"]*\)".*/\1/p' build.sbt)
+          s213=$(sed -n 's/^val scala213Version *= *"\([^"]*\)".*/\1/p' build.sbt)
+          if [ -z "$s3" ] || [ -z "$s213" ]; then
+            echo "could not read the Scala versions from build.sbt"; exit 1
+          fi
+          grep -qF "Scala ${s3}+ and ${s213}+" docs/getting-started.md || {
+            echo "docs/getting-started.md does not state the build's Scala versions (${s3}, ${s213})"; exit 1; }
       - name: Set up JDK 21
         uses: actions/setup-java@v6
         with:
@@ -57,8 +68,9 @@ jobs:
 
   # Build + test on every supported (JDK, Scala) pair. The library advertises Java 11+ via the OpenFeature Java SDK
   # but we don't currently support running CI on JDK 11 because Optimizely's core-httpclient-impl requires JDK 17+.
-  # JDK 17, 21 and 25 are the LTS releases that cover the realistic deployment window. Scala 2.13 + 3.3 matches the
-  # crossScalaVersions declared in build.sbt.
+  # JDK 17, 21 and 25 are the LTS releases that cover the realistic deployment window. The Scala entries name a line:
+  # `++` resolves each against crossScalaVersions in build.sbt, so a Scala bump needs no edit here, and a line the build
+  # no longer publishes fails the switch. The exact version is in the step log.
   build-matrix:
     runs-on: ubuntu-latest
     # A test deadlock (e.g. a provider whose background poller is never reaped) would otherwise run to GitHub's
@@ -69,7 +81,7 @@ jobs:
       fail-fast: false
       matrix:
         java-version: ['17', '21', '25']
-        scala-version: ['2.13.18', '3.3.9']
+        scala-version: ['2.13.x', '3.x']
     steps:
       - uses: actions/checkout@v7
       - name: Set up JDK ${{ matrix.java-version }}
@@ -220,7 +232,7 @@ jobs:
         run: sbt "fuzz/Test/compile"
 
   # Conformance runs the vendored OpenFeature gherkin suite via Cucumber. It is Scala 3 only and not aggregated by
-  # root (so `++2.13.18 test` doesn't try to compile it), hence its own job on the primary JDK / default Scala.
+  # root (so `++2.13.x test` doesn't try to compile it), hence its own job on the primary JDK / default Scala.
   conformance:
     runs-on: ubuntu-latest
     timeout-minutes: 15

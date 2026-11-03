@@ -104,7 +104,8 @@ final private[extras] class CacheKey(
   * caller's own default value, which the cache key does not capture, so caching it would serve one call site's default
   * to another. A caller that joined another caller's in-flight evaluation is not handed its failure either (one a
   * timeout's thread interrupt caused, say): unless its own thread is interrupted, it evaluates the delegate once more
-  * itself, on the calling thread. A failure of that second evaluation is its answer.
+  * itself, on the calling thread and past the cache, so the result is not kept. A failure of that second evaluation is
+  * its answer.
   *
   * Caveat: because concurrent lookups deduplicate by cache key (which excludes the default value), N simultaneous
   * callers evaluating the same absent flag with DIFFERENT defaults all await the single in-flight evaluation and so
@@ -271,17 +272,20 @@ final class CachingProvider private (
         // keeping it would serve one call site's default to another (under a CACHED label) for the whole TTL. Both
         // are still returned to this caller, but re-evaluated next time.
         .tap(r => ZIO.when(r.getErrorCode != null || r.getReason == DefaultReason)(cache.invalidate(ck)))
-    def run(effect: Task[ProviderEvaluation[Any]]): Exit[Throwable, ProviderEvaluation[Any]] =
+    def run[B](effect: Task[B]): Exit[Throwable, B] =
       Unsafe.unsafe(implicit u => runtime.unsafe.run(effect))
     // zio-cache hands every caller that joined an in-flight lookup that lookup's outcome, failures included — among
     // them an `InterruptedException` from a thread a timeout interrupted (a circuit breaker's), which was never this
     // caller's. A failure this caller did not produce (`ran` still false) is retried once with its own evaluation,
     // unless this thread is itself interrupted; a failure of its own lookup, or of the retry, is its answer. The retry
-    // is a second run rather than a recovery inside the first: a joiner resumes on a ZIO executor once the lookup it
-    // waited on completes, and the delegate must be evaluated on the calling thread.
+    // calls the delegate directly, on this thread: a joiner resumes on a ZIO executor once the lookup it waited on
+    // completes, and through the cache it could be answered by another caller's lookup, whose failure is no more its
+    // own. Its result is not kept, so the next caller misses.
     val outcome = run(lookup) match {
-      case Exit.Failure(_) if !ran.get() && !Thread.currentThread().isInterrupted => run(cache.invalidate(ck) *> lookup)
-      case first                                                                  => first
+      case Exit.Failure(_) if !ran.get() && !Thread.currentThread().isInterrupted =>
+        val _ = run(cache.invalidate(ck))
+        Exit.attempt(ck.evaluate())
+      case first => first
     }
     outcome match {
       case Exit.Success(value) =>

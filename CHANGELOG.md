@@ -190,6 +190,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`setProvider` with the provider already installed is a no-op** (#711). It used to run a full swap that changed
   nothing in the SDK: the status went `NotReady` and back, and evaluations failed with `ProviderNotReady` while it
   waited. It now returns at once.
+- **A provider whose `shutdown()` hangs no longer hangs the scope close of `CachingProvider`,
+  `CircuitBreakerProvider`, `OFREPProvider` or `OptimizelyProvider`** (#744). The release's `timeout` ran inside the
+  uninterruptible finalizer, so once the bound passed it waited on a call it could not interrupt. The shutdown is now
+  abandoned after the module's bound, and a failure or timeout is logged, OFREP's and Optimizely's included. The bound
+  is core's, shared with the API and provider shutdowns. `CircuitBreakerProvider`'s evaluation timeout also ends its
+  timer with the call, instead of leaving it sleeping when the call is interrupted.
+
+- **A caller that joined a failed lookup could still receive another caller's failure from its retry; the retry now
+  evaluates the delegate itself** (#722). The retry went back through `CachingProvider`'s shared cache, where another
+  caller's failing lookup could answer it. A retried success is not kept, so the next caller misses.
 
 - **An instance that shares its API no longer gets a re-installed provider shut down by the SDK** (#693). After a
   timed-out swap, such an instance, which records no orphans, let the replaced provider be installed again while the
@@ -503,10 +513,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   while a swap is in flight. Mutants that drop the re-check, or either half of it, are caught. A new hot-swap test
   pins the generation's own job: an evaluation whose provider call outlasts a whole swap is refused, not answered by
   the replaced provider.
+- **A TLA+ model of the circuit breaker** (#723). `formal/circuitbreaker` models `CircuitBreaker`'s CAS state machine
+  in PlusCal, with each operation split at its `compareAndSet`. On pull requests touching it, TLC checks that at most
+  one probe holds the half-open slot, that a stale permit's outcome changes nothing, that each recovery respects why
+  the circuit opened, the `stale` flag's rules, and that a dead probe cannot pin the breaker. Eleven mutants are caught.
 - **The lifecycle model states that a provider's silent death goes unreported** (#720). `Die`, behind the
   `AllowDeath` constant, lets a provider stop working without emitting anything. `witness.py` checks on every pull
   request that every invariant still holds, and that the instance can then report `Ready` with a dead provider
   installed. The check fails if that becomes unreachable, so the README's account of the gap stays true.
+- **A TLA+ model of `CachingProvider`** (#722). `formal/caching` checks invalidation epochs, failed lookups and joiners
+  over every order of lookup start, write-back, invalidation and retry, with witnesses for the documented limits and a
+  mutant for each bug the design excludes. CI runs all of it, and the model found the retry bug under Fixed.
+
 - **The lifecycle model checks recovery** (#718). `FairSpec` states the fairness the library and the SDK provide (a
   swap's next step and its timeout, a started shutdown, event delivery, acting on a resolved orphan watch), with none
   for providers. `Liveness.cfg` checks five properties under it on every pull request: every swap ends, a started

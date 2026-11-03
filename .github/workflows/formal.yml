@@ -27,9 +27,12 @@ on:
       - 'core/src/main/scala/zio/openfeature/internal/LifecycleProbe.scala'
       - 'core/src/main/scala/zio/openfeature/internal/OrderedEmitter.scala'
       - 'core/src/main/scala/zio/openfeature/internal/ManagedProvider.scala'
+      - 'extras/src/main/scala/zio/openfeature/extras/CircuitBreaker.scala'
+      - 'extras/src/main/scala/zio/openfeature/extras/CircuitBreakerProvider.scala'
       - 'testkit/src/test/scala/zio/openfeature/testkit/TraceProbe.scala'
       - 'testkit/src/test/scala/zio/openfeature/testkit/LifecycleModelSpec.scala'
       - 'testkit/src/test/scala/zio/openfeature/testkit/LifecycleInterleavingSpec.scala'
+      - 'extras/src/main/scala/zio/openfeature/extras/CachingProvider.scala'
   push:
     branches: [main]
     paths:
@@ -46,9 +49,12 @@ on:
       - 'core/src/main/scala/zio/openfeature/internal/LifecycleProbe.scala'
       - 'core/src/main/scala/zio/openfeature/internal/OrderedEmitter.scala'
       - 'core/src/main/scala/zio/openfeature/internal/ManagedProvider.scala'
+      - 'extras/src/main/scala/zio/openfeature/extras/CircuitBreaker.scala'
+      - 'extras/src/main/scala/zio/openfeature/extras/CircuitBreakerProvider.scala'
       - 'testkit/src/test/scala/zio/openfeature/testkit/TraceProbe.scala'
       - 'testkit/src/test/scala/zio/openfeature/testkit/LifecycleModelSpec.scala'
       - 'testkit/src/test/scala/zio/openfeature/testkit/LifecycleInterleavingSpec.scala'
+      - 'extras/src/main/scala/zio/openfeature/extras/CachingProvider.scala'
   schedule:
     - cron: '17 3 * * *'
   workflow_dispatch:
@@ -220,6 +226,36 @@ jobs:
           path: traces/
           retention-days: 14
 
+  # The circuit breaker (formal/circuitbreaker): the checked-in translation must match the PlusCal, then the safety
+  # properties, with two signals racing as well, the slot-freeing property under fairness, the races the properties rest
+  # on (witness.py) and the bugs the breaker's design excludes (mutants.py).
+  breaker:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - name: Set up JDK 21
+        uses: actions/setup-java@v6
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+      - name: Download the TLA+ tools
+        run: |
+          curl -sSLo tla2tools.jar "https://github.com/tlaplus/tlaplus/releases/download/${TLA_TOOLS_VERSION}/tla2tools.jar"
+          echo "${TLA_TOOLS_SHA256}  tla2tools.jar" | sha256sum -c -
+      - name: Check the circuit breaker model
+        working-directory: formal/circuitbreaker
+        run: |
+          java -cp ../../tla2tools.jar pcal.trans -nocfg CircuitBreaker.tla
+          rm -f CircuitBreaker.old
+          git diff --exit-code -- CircuitBreaker.tla
+          java -XX:+UseParallelGC -cp ../../tla2tools.jar tlc2.TLC -workers auto -deadlock -config CircuitBreaker.cfg CircuitBreaker.tla
+          java -XX:+UseParallelGC -cp ../../tla2tools.jar tlc2.TLC -workers auto -deadlock -config Signals.cfg CircuitBreaker.tla
+          java -XX:+UseParallelGC -cp ../../tla2tools.jar tlc2.TLC -workers auto -deadlock -config Liveness.cfg CircuitBreaker.tla
+          python3 witness.py ../../tla2tools.jar
+          python3 mutants.py ../../tla2tools.jar
+
   # A lifecycle change without a model change is fine when it does not affect the protocol, but the author says so.
   model-or-reason:
     if: github.event_name == 'pull_request'
@@ -250,3 +286,31 @@ jobs:
           printf '%s\n' "$lifecycle"
           echo "::error::Update the model, or add a line to the description: 'formal: unaffected because <reason>'."
           exit 1
+
+  # The cache model (formal/caching): the checked-in translation must match the PlusCal, then the epoch, failed-lookup and
+  # joiner properties (Caching.cfg), the documented limits (witness.py) and the bugs the cache's design excludes
+  # (mutants.py). A few minutes at most, so on every pull request.
+  cache:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - name: Set up JDK 21
+        uses: actions/setup-java@v6
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+      - name: Download the TLA+ tools
+        run: |
+          curl -sSLo tla2tools.jar "https://github.com/tlaplus/tlaplus/releases/download/${TLA_TOOLS_VERSION}/tla2tools.jar"
+          echo "${TLA_TOOLS_SHA256}  tla2tools.jar" | sha256sum -c -
+      - name: Check the cache model
+        working-directory: formal/caching
+        run: |
+          java -cp ../../tla2tools.jar pcal.trans -nocfg Caching.tla
+          rm -f Caching.old
+          git diff --exit-code -- Caching.tla
+          java -XX:+UseParallelGC -cp ../../tla2tools.jar tlc2.TLC -workers auto -config Caching.cfg Caching.tla
+          python3 witness.py ../../tla2tools.jar
+          python3 mutants.py ../../tla2tools.jar

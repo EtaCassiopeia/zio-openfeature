@@ -1,6 +1,8 @@
 package zio.openfeature.extras
 
-import dev.openfeature.sdk.ImmutableContext
+import dev.openfeature.sdk.{EvaluationContext, FeatureProvider, ImmutableContext, Metadata, ProviderEvaluation, Value}
+import java.util.concurrent.{ConcurrentHashMap, CountDownLatch}
+import java.util.concurrent.atomic.AtomicInteger
 import zio.openfeature.testkit.{Fault, FaultyProvider, Op}
 import zio._
 import zio.test._
@@ -68,6 +70,77 @@ object CachingJoinedLookupSpec extends ZIOSpecDefault {
         )
         calls <- delegate.calls(Op.EvaluateBoolean).map(_.size)
       } yield assertTrue(results.forall(identity), calls == 1)
+    },
+    test("a caller that throws has called the delegate itself, however its retry interleaves with other callers") {
+      ZIO.attemptBlocking {
+        val rounds  = 5000
+        val threads = 6
+        val thrown  = new AtomicInteger(0)
+        val handed  = new AtomicInteger(0)
+        (1 to rounds).foreach { _ =>
+          val delegate = new AlwaysThrows
+          val cache    = CachingProvider(delegate)
+          val start    = new CountDownLatch(1)
+          val callers  = (1 to threads).map { _ =>
+            new Thread(() => {
+              start.await()
+              try {
+                val _ = cache.getBooleanEvaluation("x", false, ctx)
+              } catch {
+                case _: Exception =>
+                  thrown.incrementAndGet()
+                  if (!delegate.callers.contains(Thread.currentThread())) handed.incrementAndGet()
+              }
+            })
+          }
+          callers.foreach(_.start())
+          start.countDown()
+          callers.foreach(_.join())
+        }
+        assertTrue(thrown.get == rounds * threads, handed.get == 0)
+      }
     }
   ) @@ TestAspect.withLiveClock @@ TestAspect.sequential @@ TestAspect.timeout(1.minute)
+
+  // A delegate that always throws, and remembers which threads called it.
+  final private class AlwaysThrows extends FeatureProvider {
+    val callers: java.util.Set[Thread] = ConcurrentHashMap.newKeySet[Thread]()
+
+    private def fail[A]: ProviderEvaluation[A] = {
+      callers.add(Thread.currentThread())
+      throw new RuntimeException("delegate failed")
+    }
+
+    override def getMetadata: Metadata = new Metadata { override def getName: String = "always-throws" }
+
+    override def getBooleanEvaluation(
+      key: String,
+      default: java.lang.Boolean,
+      context: EvaluationContext
+    ): ProviderEvaluation[java.lang.Boolean] = fail
+
+    override def getStringEvaluation(
+      key: String,
+      default: String,
+      context: EvaluationContext
+    ): ProviderEvaluation[String] = fail
+
+    override def getIntegerEvaluation(
+      key: String,
+      default: java.lang.Integer,
+      context: EvaluationContext
+    ): ProviderEvaluation[java.lang.Integer] = fail
+
+    override def getDoubleEvaluation(
+      key: String,
+      default: java.lang.Double,
+      context: EvaluationContext
+    ): ProviderEvaluation[java.lang.Double] = fail
+
+    override def getObjectEvaluation(
+      key: String,
+      default: Value,
+      context: EvaluationContext
+    ): ProviderEvaluation[Value] = fail
+  }
 }

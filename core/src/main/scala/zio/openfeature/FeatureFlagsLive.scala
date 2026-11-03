@@ -193,55 +193,7 @@ final private[openfeature] class FeatureFlagsLive(
       .attempt(bridgeDeregister.get()())
       .catchAllCause(c => ZIO.logWarningCause("event bridge: removing handlers after a failed build failed", c))
 
-  // Detailed evaluation methods (one per type, with default parameters from trait)
-
-  override def booleanDetails(
-    key: String,
-    default: Boolean,
-    ctx: EvaluationContext,
-    options: EvaluationOptions
-  ): IO[FeatureFlagError, FlagResolution[Boolean]] =
-    evaluator.evaluateWithDetails(key, default, ctx, options)
-
-  override def stringDetails(
-    key: String,
-    default: String,
-    ctx: EvaluationContext,
-    options: EvaluationOptions
-  ): IO[FeatureFlagError, FlagResolution[String]] =
-    evaluator.evaluateWithDetails(key, default, ctx, options)
-
-  override def intDetails(
-    key: String,
-    default: Int,
-    ctx: EvaluationContext,
-    options: EvaluationOptions
-  ): IO[FeatureFlagError, FlagResolution[Int]] =
-    evaluator.evaluateWithDetails(key, default, ctx, options)
-
-  override def longDetails(
-    key: String,
-    default: Long,
-    ctx: EvaluationContext,
-    options: EvaluationOptions
-  ): IO[FeatureFlagError, FlagResolution[Long]] =
-    evaluator.evaluateWithDetails(key, default, ctx, options)
-
-  override def doubleDetails(
-    key: String,
-    default: Double,
-    ctx: EvaluationContext,
-    options: EvaluationOptions
-  ): IO[FeatureFlagError, FlagResolution[Double]] =
-    evaluator.evaluateWithDetails(key, default, ctx, options)
-
-  override def objDetails(
-    key: String,
-    default: Map[String, Any],
-    ctx: EvaluationContext,
-    options: EvaluationOptions
-  ): IO[FeatureFlagError, FlagResolution[Map[String, Any]]] =
-    evaluator.evaluateWithDetails(key, default, ctx, options)
+  // The one evaluation entry point: every per-type method on the trait is defined through it.
 
   override def valueDetails[A: FlagType](
     key: String,

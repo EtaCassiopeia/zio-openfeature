@@ -50,12 +50,6 @@ object FallbackLoggingSpec extends ZIOSpecDefault {
   /** Minimal external implementor: the trait's default hook must keep today's behaviour for it. */
   abstract private class StubFlags extends FeatureFlags {
     protected def boom[A]: IO[FeatureFlagError, FlagResolution[A]]
-    override def booleanDetails(k: String, d: Boolean, ctx: EvaluationContext, o: EvaluationOptions)      = boom
-    override def stringDetails(k: String, d: String, ctx: EvaluationContext, o: EvaluationOptions)        = ???
-    override def intDetails(k: String, d: Int, ctx: EvaluationContext, o: EvaluationOptions)              = ???
-    override def longDetails(k: String, d: Long, ctx: EvaluationContext, o: EvaluationOptions)            = ???
-    override def doubleDetails(k: String, d: Double, ctx: EvaluationContext, o: EvaluationOptions)        = ???
-    override def objDetails(k: String, d: Map[String, Any], ctx: EvaluationContext, o: EvaluationOptions) = ???
     override def valueDetails[A: FlagType](k: String, d: A, ctx: EvaluationContext, o: EvaluationOptions) = boom
     override def setGlobalContext(ctx: EvaluationContext): UIO[Unit]                                      = ???
     override def globalContext: UIO[EvaluationContext]                                                    = ???

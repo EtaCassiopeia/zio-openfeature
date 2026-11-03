@@ -129,6 +129,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the intersection. `FeatureFlagsAdmin.layer` stays, for a client from a `FeatureFlagRegistry`, and dies for a
   hand-written `FeatureFlags` that is not an admin.
 
+- **Implementors of `FeatureFlags` write `valueDetails` only** (#650). It is the one abstract evaluation method.
+  `booleanDetails`, `stringDetails`, `intDetails`, `longDetails`, `doubleDetails` and `objDetails` are final aliases of
+  `valueDetails[T]`, and `boolean` ... `obj`, `value`, `booleanOrDefault` ... `objOrDefault`, `valueOrDefault` and
+  `resolveOrDefault` are defined through it; the per-type ones cannot be overridden. The arity overloads of the per-type
+  getters, `*OrDefault` and `value` are one method each with defaulted `ctx` and `options`: a caller's source is
+  unchanged, a method reference to a particular arity or an override is not. The `FlagDef` forms keep their arities.
+
 ### Changed
 
 - **`main` is the 2.0 line: no release comes before 2.0.0.** Breaking changes land directly on it, so it has no MiMa or

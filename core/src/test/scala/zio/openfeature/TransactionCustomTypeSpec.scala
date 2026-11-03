@@ -142,8 +142,8 @@ object TransactionCustomTypeSpec extends ZIOSpecDefault {
       evaluationTimeout = Some(5.seconds)
     )
 
-  private def overrideError(r: Either[Any, Any]): Option[FeatureFlagError.OverrideTypeMismatch] =
-    r.left.toOption.collect { case e: FeatureFlagError.OverrideTypeMismatch => e }
+  private def overrideError(r: Either[Either[Any, Any], Any]): Option[FeatureFlagError.OverrideTypeMismatch] =
+    r.left.toOption.flatMap(_.left.toOption).collect { case e: FeatureFlagError.OverrideTypeMismatch => e }
 
   private def withProvider[A](f: (FeatureFlags, CountingProvider) => ZIO[Any, Any, A]): ZIO[Any, Any, A] =
     ZIO.scoped {
@@ -155,7 +155,7 @@ object TransactionCustomTypeSpec extends ZIOSpecDefault {
     // --- caching ---
     test("mapped scalar-backed type hits the transaction cache on a same-key re-read") {
       withProvider { (ff, p) =>
-        ff.transaction() {
+        ff.transactionEither() {
           ff.value[Phase]("phase.flag", Phase.Off).zip(ff.value[Phase]("phase.flag", Phase.Off))
         }.map { tx =>
           assertTrue(
@@ -169,7 +169,7 @@ object TransactionCustomTypeSpec extends ZIOSpecDefault {
     },
     test("object-backed FlagType.from type hits the transaction cache on a same-key re-read") {
       withProvider { (ff, p) =>
-        ff.transaction() {
+        ff.transactionEither() {
           ff.value[Region]("region.flag", Region.Eu).zip(ff.value[Region]("region.flag", Region.Eu))
         }.map { tx =>
           assertTrue(
@@ -181,14 +181,14 @@ object TransactionCustomTypeSpec extends ZIOSpecDefault {
     },
     test("cacheEvaluations = false still re-evaluates a custom type each read") {
       withProvider { (ff, p) =>
-        ff.transaction(cacheEvaluations = false) {
+        ff.transactionEither(cacheEvaluations = false) {
           ff.value[Phase]("phase.flag", Phase.Off) *> ff.value[Phase]("phase.flag", Phase.Off)
         }.map(tx => assertTrue(p.stringCalls.get() == 2, tx.result == Phase.DualWrite))
       }
     },
     test("a same-key cross-type read that decodes from the cached wire value stays a cache hit") {
       withProvider { (ff, p) =>
-        ff.transaction() {
+        ff.transactionEither() {
           ff.int("num.flag", 0).zip(ff.long("num.flag", 0L))
         }.map { tx =>
           assertTrue(
@@ -201,7 +201,7 @@ object TransactionCustomTypeSpec extends ZIOSpecDefault {
     },
     test("a same-key cross-type read that does not decode falls through to the provider without failing") {
       withProvider { (ff, p) =>
-        ff.transaction() {
+        ff.transactionEither() {
           ff.boolean("mixed.flag", false).zip(ff.string("mixed.flag", "x"))
         }.map { tx =>
           assertTrue(
@@ -215,7 +215,7 @@ object TransactionCustomTypeSpec extends ZIOSpecDefault {
     // --- overrides ---
     test("an override given as the domain value is accepted") {
       withProvider { (ff, p) =>
-        ff.transaction(overrides = Map("phase.flag" -> Phase.DualWrite)) {
+        ff.transactionEither(overrides = Map("phase.flag" -> Phase.DualWrite)) {
           ff.value[Phase]("phase.flag", Phase.Off)
         }.map { tx =>
           assertTrue(
@@ -229,28 +229,28 @@ object TransactionCustomTypeSpec extends ZIOSpecDefault {
     },
     test("an override given as the wire value is accepted") {
       withProvider { (ff, p) =>
-        ff.transaction(overrides = Map("phase.flag" -> "dual_write")) {
+        ff.transactionEither(overrides = Map("phase.flag" -> "dual_write")) {
           ff.value[Phase]("phase.flag", Phase.Off)
         }.map(tx => assertTrue(tx.result == Phase.DualWrite, tx.wasOverridden("phase.flag"), p.stringCalls.get() == 0))
       }
     },
     test("a domain override for a hand-rolled strict decoder round-trips through encode") {
       withProvider { (ff, p) =>
-        ff.transaction(overrides = Map("tier.flag" -> Tier.Paid)) {
+        ff.transactionEither(overrides = Map("tier.flag" -> Tier.Paid)) {
           ff.value[Tier]("tier.flag", Tier.Free)
         }.map(tx => assertTrue(tx.result == Tier.Paid, p.stringCalls.get() == 0))
       }
     },
     test("a domain override for an object-backed FlagType.from type is accepted") {
       withProvider { (ff, p) =>
-        ff.transaction(overrides = Map("region.flag" -> Region.Eu)) {
+        ff.transactionEither(overrides = Map("region.flag" -> Region.Eu)) {
           ff.value[Region]("region.flag", Region.Us)
         }.map(tx => assertTrue(tx.result == Region.Eu, p.objectCalls.get() == 0))
       }
     },
     test("a value that is neither wire nor domain fails OverrideTypeMismatch with the decode reason") {
       withProvider { (ff, _) =>
-        ff.transaction(overrides = Map("phase.flag" -> 42)) {
+        ff.transactionEither(overrides = Map("phase.flag" -> 42)) {
           ff.value[Phase]("phase.flag", Phase.Off)
         }.either
           .map { r =>
@@ -258,8 +258,8 @@ object TransactionCustomTypeSpec extends ZIOSpecDefault {
             assertTrue(
               err.exists(_.key == "phase.flag"),
               err.exists(_.expected == "Phase"),
-              err.exists(_.actual.contains("Integer")),
-              err.exists(_.actual.contains("Cannot convert Integer to String"))
+              err.exists(_.detail.contains("Integer")),
+              err.exists(_.detail.contains("Cannot convert Integer to String"))
             )
           }
       }
@@ -267,12 +267,12 @@ object TransactionCustomTypeSpec extends ZIOSpecDefault {
     test("a null override fails OverrideTypeMismatch rather than a defect") {
       withProvider { (ff, _) =>
         // `.either` does not catch defects, so an NPE on `null.getClass` would fail this test outright.
-        ff.transaction(overrides = Map[String, Any]("phase.flag" -> null)) {
+        ff.transactionEither(overrides = Map[String, Any]("phase.flag" -> null)) {
           ff.value[Phase]("phase.flag", Phase.Off)
         }.either
           .map { r =>
             val err = overrideError(r)
-            assertTrue(err.exists(_.actual.contains("null")))
+            assertTrue(err.exists(_.detail.contains("null")))
           }
       }
     },
@@ -280,37 +280,37 @@ object TransactionCustomTypeSpec extends ZIOSpecDefault {
       // The Int/Long/Double/Float/Object/List decoders used to NPE on null (`value.getClass`), so this was a defect
       // even before the override path looked at the value.
       withProvider { (ff, _) =>
-        ff.transaction(overrides = Map[String, Any]("num.flag" -> null)) {
+        ff.transactionEither(overrides = Map[String, Any]("num.flag" -> null)) {
           ff.int("num.flag", 0)
         }.either
           .map { r =>
             val err = overrideError(r)
-            assertTrue(err.exists(_.actual == "null (Cannot convert null to Int)"))
+            assertTrue(err.exists(_.detail == "null (Cannot convert null to Int)"))
           }
       }
     },
     test("a null override for an Option flag is None") {
       withProvider { (ff, _) =>
-        ff.transaction(overrides = Map[String, Any]("opt.flag" -> null)) {
+        ff.transactionEither(overrides = Map[String, Any]("opt.flag" -> null)) {
           ff.value[Option[String]]("opt.flag", Some("default"))
         }.map(tx => assertTrue(tx.result.isEmpty, tx.wasOverridden("opt.flag")))
       }
     },
     test("a garbage override for an object-backed type reports that type's decode reason") {
       withProvider { (ff, _) =>
-        ff.transaction(overrides = Map("region.flag" -> "mars")) {
+        ff.transactionEither(overrides = Map("region.flag" -> "mars")) {
           ff.value[Region]("region.flag", Region.Us)
         }.either
           .map { r =>
             val err = overrideError(r)
-            assertTrue(err.exists(_.expected == "Region"), err.exists(_.actual.contains("Unknown region: mars")))
+            assertTrue(err.exists(_.expected == "Region"), err.exists(_.detail.contains("Unknown region: mars")))
           }
       }
     },
     // --- Option / List of a custom type ---
     test("Option of a custom type hits the transaction cache on a same-key re-read") {
       withProvider { (ff, p) =>
-        ff.transaction() {
+        ff.transactionEither() {
           ff.value[Option[Phase]]("opt.phase", None).zip(ff.value[Option[Phase]]("opt.phase", None))
         }.map { tx =>
           // Option takes Phase's string wire, so the string resolver answers "dual_write".
@@ -320,7 +320,7 @@ object TransactionCustomTypeSpec extends ZIOSpecDefault {
     },
     test("Option and List of a custom type accept a domain override") {
       withProvider { (ff, p) =>
-        ff.transaction(overrides =
+        ff.transactionEither(overrides =
           Map("opt.phase" -> Some(Phase.DualWrite), "list.phase" -> List(Phase.DualWrite, Phase.Off))
         ) {
           ff.value[Option[Phase]]("opt.phase", None).zip(ff.value[List[Phase]]("list.phase", Nil))
@@ -337,7 +337,7 @@ object TransactionCustomTypeSpec extends ZIOSpecDefault {
       withProvider { (ff, _) =>
         ff.value[Region]("region.bad", Region.Us).either.map { r =>
           val err = r.left.toOption.collect { case e: FeatureFlagError.TypeMismatch => e }
-          assertTrue(err.exists(_.expected == "Region"), err.exists(_.actual == "Unknown region: mars"))
+          assertTrue(err.exists(_.expected == "Region"), err.exists(_.detail == "Unknown region: mars"))
         }
       }
     }

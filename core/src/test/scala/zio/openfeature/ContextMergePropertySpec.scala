@@ -142,7 +142,7 @@ object ContextMergePropertySpec extends ZIOSpecDefault {
             _ <- ff.setGlobalContext(global)
             _ <- ff.setClientContext(client)
             _ <- ff.withContext(scoped)(
-              ff.transaction(context = transaction)(ff.stringOrDefault("flag", "dflt", invocation))
+              ff.transactionEither(context = transaction)(ff.stringOrDefault("flag", "dflt", invocation))
             )
           } yield assertTrue(received.get.map(read) == Some(expected(shapes)))
         }

@@ -114,7 +114,7 @@ object FeatureFlagsSpec extends ZIOSpecDefault {
     suite("Transaction")(
       test("transaction returns result and evaluations") {
         for {
-          txResult <- FeatureFlags.transaction() {
+          txResult <- FeatureFlags.transactionEither() {
             for {
               a <- FeatureFlags.boolean("flag-a", default = false)
               b <- FeatureFlags.int("flag-b", default = 0)
@@ -126,7 +126,7 @@ object FeatureFlagsSpec extends ZIOSpecDefault {
       }.provide(testLayer(Map("flag-a" -> true, "flag-b" -> 42))),
       test("transaction with overrides returns override values") {
         for {
-          txResult <- FeatureFlags.transaction(
+          txResult <- FeatureFlags.transactionEither(
             overrides = Map("flag-a" -> false, "flag-b" -> 100)
           ) {
             for {
@@ -142,14 +142,14 @@ object FeatureFlagsSpec extends ZIOSpecDefault {
       test("transaction with context applies context") {
         val txCtx = EvaluationContext("tx-user")
         for {
-          txResult <- FeatureFlags.transaction(context = txCtx) {
+          txResult <- FeatureFlags.transactionEither(context = txCtx) {
             FeatureFlags.boolean("flag", default = false)
           }
         } yield assertTrue(txResult.result == true)
       }.provide(testLayer(Map("flag" -> true))),
       test("nested transaction fails") {
-        val effect = FeatureFlags.transaction() {
-          FeatureFlags.transaction() {
+        val effect = FeatureFlags.transactionEither() {
+          FeatureFlags.transactionEither() {
             ZIO.unit
           }
         }
@@ -160,7 +160,7 @@ object FeatureFlagsSpec extends ZIOSpecDefault {
       test("inTransaction returns true inside transaction") {
         for {
           outside <- FeatureFlags.inTransaction
-          inside  <- FeatureFlags.transaction() {
+          inside  <- FeatureFlags.transactionEither() {
             FeatureFlags.inTransaction
           }
         } yield assertTrue(!outside) &&
@@ -169,7 +169,7 @@ object FeatureFlagsSpec extends ZIOSpecDefault {
       test("currentEvaluatedFlags returns flags inside transaction") {
         for {
           outsideFlags <- FeatureFlags.currentEvaluatedFlags
-          insideResult <- FeatureFlags.transaction() {
+          insideResult <- FeatureFlags.transactionEither() {
             for {
               _     <- FeatureFlags.boolean("flag-x", default = false)
               flags <- FeatureFlags.currentEvaluatedFlags
@@ -180,7 +180,7 @@ object FeatureFlagsSpec extends ZIOSpecDefault {
       }.provide(testLayer(Map("flag-x" -> true))),
       test("transaction caches evaluated flags for subsequent calls") {
         for {
-          txResult <- FeatureFlags.transaction() {
+          txResult <- FeatureFlags.transactionEither() {
             for {
               first  <- FeatureFlags.boolean("cached-flag", default = false)
               second <- FeatureFlags.boolean("cached-flag", default = false)
@@ -197,7 +197,7 @@ object FeatureFlagsSpec extends ZIOSpecDefault {
       }.provide(testLayer(Map("cached-flag" -> true))),
       test("transaction caching returns cached reason for subsequent evaluations") {
         for {
-          txResult <- FeatureFlags.transaction() {
+          txResult <- FeatureFlags.transactionEither() {
             for {
               first  <- FeatureFlags.booleanDetails("detail-flag", default = false)
               second <- FeatureFlags.booleanDetails("detail-flag", default = false)
@@ -215,7 +215,7 @@ object FeatureFlagsSpec extends ZIOSpecDefault {
       }.provide(testLayer(Map("detail-flag" -> true))),
       test("transaction with cacheEvaluations=false does not cache") {
         for {
-          txResult <- FeatureFlags.transaction(cacheEvaluations = false) {
+          txResult <- FeatureFlags.transactionEither(cacheEvaluations = false) {
             for {
               first  <- FeatureFlags.booleanDetails("no-cache-flag", default = false)
               second <- FeatureFlags.booleanDetails("no-cache-flag", default = false)
@@ -905,7 +905,7 @@ object FeatureFlagsSpec extends ZIOSpecDefault {
           _ <- FeatureFlags.setGlobalContext(globalCtx)
           _ <- FeatureFlags.setClientContext(clientCtx)
           _ <- FeatureFlags.addHook(ctxCapture)
-          _ <- FeatureFlags.transaction(context = txCtx) {
+          _ <- FeatureFlags.transactionEither(context = txCtx) {
             FeatureFlags.boolean("flag", default = false)
           }
           ctx <- capturedCtx.get
@@ -922,7 +922,7 @@ object FeatureFlagsSpec extends ZIOSpecDefault {
     ),
     suite("Transaction Edge Cases")(
       test("transaction override type mismatch produces error") {
-        val result = FeatureFlags.transaction(Map("flag" -> "not-a-boolean")) {
+        val result = FeatureFlags.transactionEither(Map("flag" -> "not-a-boolean")) {
           FeatureFlags.boolean("flag", default = false)
         }
         for {
@@ -931,7 +931,7 @@ object FeatureFlagsSpec extends ZIOSpecDefault {
       }.provide(testLayer(Map("flag" -> true))),
       test("transaction with mixed overrides and provider evaluations") {
         for {
-          txResult <- FeatureFlags.transaction(Map("override-flag" -> true)) {
+          txResult <- FeatureFlags.transactionEither(Map("override-flag" -> true)) {
             for {
               a <- FeatureFlags.boolean("override-flag", default = false)
               b <- FeatureFlags.boolean("provider-flag", default = false)
@@ -949,7 +949,7 @@ object FeatureFlagsSpec extends ZIOSpecDefault {
       }.provide(testLayer()),
       test("TransactionResult.map transforms the result value") {
         for {
-          txResult <- FeatureFlags.transaction() {
+          txResult <- FeatureFlags.transactionEither() {
             FeatureFlags.int("count", default = 0)
           }
         } yield {
@@ -960,7 +960,7 @@ object FeatureFlagsSpec extends ZIOSpecDefault {
       }.provide(testLayer(Map("count" -> 42))),
       test("TransactionResult.toValueMap returns simple values") {
         for {
-          txResult <- FeatureFlags.transaction() {
+          txResult <- FeatureFlags.transactionEither() {
             for {
               _ <- FeatureFlags.boolean("a", default = false)
               _ <- FeatureFlags.string("b", default = "")

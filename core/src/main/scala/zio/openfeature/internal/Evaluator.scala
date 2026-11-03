@@ -2,6 +2,7 @@ package zio.openfeature.internal
 
 import zio._
 import zio.openfeature._
+import zio.openfeature.FeatureFlagError.EvaluationError
 import dev.openfeature.sdk.{Client => OFClient, FlagEvaluationDetails, Value}
 
 import scala.jdk.CollectionConverters._
@@ -75,7 +76,7 @@ final private[openfeature] class Evaluator(
       .merge(fiberLocal)
       .merge(invocation)
 
-  private def checkProviderStatus: IO[FeatureFlagError, Unit] =
+  private def checkProviderStatus: IO[EvaluationError, Unit] =
     providerStatus.flatMap {
       case ProviderStatus.Fatal        => ZIO.fail(FeatureFlagError.ProviderFatal)
       case ProviderStatus.NotReady     => ZIO.fail(FeatureFlagError.ProviderNotReady(ProviderStatus.NotReady))
@@ -95,7 +96,7 @@ final private[openfeature] class Evaluator(
     * bound), the outcome is not trusted and the evaluation fails as one made during the swap does, with
     * `ProviderNotReady(NotReady)`. A defect or an interruption is kept as it is.
     */
-  private def gated[B](call: IO[FeatureFlagError, B]): IO[FeatureFlagError, B] =
+  private def gated[B](call: IO[EvaluationError, B]): IO[EvaluationError, B] =
     ZIO.suspendSucceed {
       val generation = swapGeneration.get()
       probe.at(Point.StatusGate) *> checkProviderStatus *> call.exit.flatMap { exit =>
@@ -117,7 +118,7 @@ final private[openfeature] class Evaluator(
     default: A,
     context: EvaluationContext,
     timeout: Option[Duration]
-  ): IO[FeatureFlagError, FlagResolution[A]] =
+  ): IO[EvaluationError, FlagResolution[A]] =
     // The provider-readiness gate (`gated`) applies only where the value must actually come from the
     // provider. A transaction override or a cached evaluation resolves purely locally and MUST still succeed while the
     // provider is NotReady / Fatal / shutting down — that fallback role is the whole point of overrides (spec:
@@ -135,7 +136,7 @@ final private[openfeature] class Evaluator(
     context: EvaluationContext,
     txState: TransactionState,
     timeout: Option[Duration]
-  ): IO[FeatureFlagError, FlagResolution[A]] = {
+  ): IO[EvaluationError, FlagResolution[A]] = {
     val flagType = FlagType[A]
     // First check for explicit overrides
     txState.getOverride(key) match {
@@ -218,7 +219,7 @@ final private[openfeature] class Evaluator(
     context: EvaluationContext,
     txState: TransactionState,
     timeout: Option[Duration]
-  ): IO[FeatureFlagError, FlagResolution[A]] =
+  ): IO[EvaluationError, FlagResolution[A]] =
     for {
       resolution <- gated(evaluateFromClient(key, default, context, timeout))
       eval       <- zio.openfeature.FlagEvaluation.evaluated(key, resolution)
@@ -230,7 +231,7 @@ final private[openfeature] class Evaluator(
     default: A,
     context: EvaluationContext,
     timeout: Option[Duration]
-  ): IO[FeatureFlagError, FlagResolution[A]] = {
+  ): IO[EvaluationError, FlagResolution[A]] = {
     val flagType  = FlagType[A]
     val ofContext = toJavaContext(context)
 
@@ -302,7 +303,7 @@ final private[openfeature] class Evaluator(
       fallbackLogLimiter.logRejection(error.getMessage) *> ZIO.fail(error)
     }
 
-    val evaluation: IO[FeatureFlagError, FlagResolution[A]] =
+    val evaluation: IO[EvaluationError, FlagResolution[A]] =
       ClientEvaluator.evaluateStandard[A](flagType, client, key, default, ofContext) match {
         // The instance declares a scalar wire type its `encode` does not produce — a contract violation, surfaced as
         // a typed error rather than an opaque ClassCastException from inside the SDK bridge.
@@ -444,7 +445,7 @@ final private[openfeature] class Evaluator(
     default: A,
     ctx: EvaluationContext,
     options: EvaluationOptions
-  ): IO[FeatureFlagError, FlagResolution[A]] =
+  ): IO[EvaluationError, FlagResolution[A]] =
     evaluateResolution(key, default, ctx, options).flatMap { resolution =>
       // The typed tier fails on a provider-reported error CODE, not only on a thrown one. Most providers report
       // FLAG_NOT_FOUND / TYPE_MISMATCH / ... as a code on the resolution and never throw, so without this the tier a
@@ -468,7 +469,7 @@ final private[openfeature] class Evaluator(
     default: A,
     ctx: EvaluationContext,
     options: EvaluationOptions
-  ): IO[FeatureFlagError, FlagResolution[A]] = {
+  ): IO[EvaluationError, FlagResolution[A]] = {
     // Resolve the per-call selection against the instance's global timeout. `After` and `Disabled` override the global;
     // `Default` defers to it. The result is `Option[Duration]` (None => skip the timeout scaffolding entirely).
     val timeout = options.timeout match {
@@ -499,7 +500,7 @@ private[openfeature] object Evaluator {
     * so a provider that returns something other than a `Value` fails with a typed `TypeMismatch` rather than a
     * `ClassCastException` defect, as the scalar paths do. `null`, a valueless answer, passes through.
     */
-  def objectValue(key: String, expected: String, details: FlagEvaluationDetails[_]): IO[FeatureFlagError, Value] =
+  def objectValue(key: String, expected: String, details: FlagEvaluationDetails[_]): IO[EvaluationError, Value] =
     (details.getValue: Any) match {
       case v: Value => ZIO.succeed(v)
       case null     => ZIO.succeed(null)
@@ -558,7 +559,7 @@ private[openfeature] object Evaluator {
     code: ErrorCode,
     message: Option[String],
     expected: String
-  ): FeatureFlagError =
+  ): EvaluationError =
     code match {
       case ErrorCode.FlagNotFound => FeatureFlagError.FlagNotFound(key)
       case ErrorCode.TypeMismatch => FeatureFlagError.TypeMismatch(key, expected, message.getOrElse("unknown"))
@@ -573,7 +574,7 @@ private[openfeature] object Evaluator {
       case ErrorCode.General =>
         message match {
           case Some(m) if FeatureFlagError.looksLikeAuthFailure(m) =>
-            FeatureFlagError.unauthorized(m, new ProviderReportedError(m))
+            FeatureFlagError.Unauthorized(m, Some(new ProviderReportedError(m)))
           case _ =>
             FeatureFlagError.ProviderError(new ProviderReportedError(message.getOrElse("general error")))
         }

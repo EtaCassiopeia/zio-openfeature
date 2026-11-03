@@ -457,7 +457,7 @@ object ConformanceSpec extends ZIOSteps[Any, World] {
       _  <- ZIO.foreachDiscard(w.beforeHookCtx)(c => ff.addHook(ctxHook(c)))
       eval = ff.booleanDetails("merge-flag", false, w.invocationCtx)
       run = w.txCtx match {
-        case Some(tx) => ff.transaction(context = tx)(eval).unit.orDieWith(e => new RuntimeException(String.valueOf(e)))
+        case Some(tx) => ff.transactionEither(context = tx)(eval).unit.orDieWith(e => new RuntimeException(String.valueOf(e)))
         case None     => eval.unit.orDieWith(e => new RuntimeException(String.valueOf(e)))
       }
       _      <- run

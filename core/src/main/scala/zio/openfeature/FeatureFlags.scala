@@ -2,7 +2,8 @@ package zio.openfeature
 
 import zio._
 import zio.stream._
-import zio.openfeature.internal.{Compat, Evaluator, FallbackLogLimiter, FeatureFlagsFactories, LongAwareMultiProvider}
+import zio.openfeature.FeatureFlagError.{EvaluationError, TransactionError}
+import zio.openfeature.internal.{Evaluator, FallbackLogLimiter, FeatureFlagsFactories, LongAwareMultiProvider}
 import dev.openfeature.sdk.{FeatureProvider => OFFeatureProvider, OpenFeatureAPI}
 import dev.openfeature.sdk.multiprovider.{Strategy, FirstMatchStrategy, FirstSuccessfulStrategy}
 
@@ -10,12 +11,12 @@ import dev.openfeature.sdk.multiprovider.{Strategy, FirstMatchStrategy, FirstSuc
   * what a missing or broken flag should do to the caller:
   *
   *   - '''Typed tier''' — `boolean`/`string`/`int`/`long`/`double`/`obj`/`value`, every `*Details`, and the `FlagDef`
-  *     overloads. Return `IO[FeatureFlagError, _]` and '''fail''' whenever the evaluation cannot produce a real value:
-  *     a provider that throws, a decode that rejects the payload, and a provider that answers with an '''error code'''
-  *     on the resolution (`FLAG_NOT_FOUND`, `TYPE_MISMATCH`, `PARSE_ERROR`, …), which is how most providers report
-  *     problems. The code is mapped to the matching [[FeatureFlagError]] (`FlagNotFound(key)`, `TypeMismatch(key,
-  *     expected, actual)`, …). Reach for this tier when a default would be ''wrong'' — a fail-closed gate written with
-  *     `value` actually fails closed.
+  *     overloads. Return `IO[FeatureFlagError.EvaluationError, _]` and '''fail''' whenever the evaluation cannot
+  *     produce a real value: a provider that throws, a decode that rejects the payload, and a provider that answers
+  *     with an '''error code''' on the resolution (`FLAG_NOT_FOUND`, `TYPE_MISMATCH`, `PARSE_ERROR`, …), which is how
+  *     most providers report problems. The code is mapped to the matching [[FeatureFlagError]] (`FlagNotFound(key)`,
+  *     `TypeMismatch(key, expected, detail)`, …). Reach for this tier when a default would be ''wrong'' — a fail-closed
+  *     gate written with `value` actually fails closed.
   *   - '''Total tier''' — `*OrDefault` and `resolveOrDefault`. Return `UIO[_]` and '''never fail''': the caller's
   *     default is served and, on `resolveOrDefault`, the returned [[FlagResolution]] says why (`reason = Error`,
   *     `errorCode`, `errorMessage`). This is the OpenFeature spec's §1.4.10 "always return the default" contract, and
@@ -24,10 +25,10 @@ import dev.openfeature.sdk.multiprovider.{Strategy, FirstMatchStrategy, FirstSuc
   * Hooks observe an error-coded resolution as the `error` stage on both tiers; the two tiers differ only in what the
   * ''caller'' sees. Everything else — context merging, transactions, caching, timeouts — is shared.
   */
-trait FeatureFlags {
+trait FeatureFlags extends FeatureFlagsTransactions {
 
   // Typed tier. `valueDetails` is the one abstract evaluation method; everything else on this tier is defined through
-  // it, so an implementor writes it once. Each fails with a typed `FeatureFlagError` when the evaluation cannot
+  // it, so an implementor writes it once. Each fails with a typed `EvaluationError` when the evaluation cannot
   // produce a real value — see the trait scaladoc for the contract. `default` is what the provider and hooks receive
   // for this evaluation; it is not served on failure: use the `*OrDefault` form for that.
 
@@ -36,14 +37,14 @@ trait FeatureFlags {
     default: A,
     ctx: EvaluationContext = EvaluationContext.empty,
     options: EvaluationOptions = EvaluationOptions.empty
-  ): IO[FeatureFlagError, FlagResolution[A]]
+  ): IO[EvaluationError, FlagResolution[A]]
 
   final def booleanDetails(
     key: String,
     default: Boolean,
     ctx: EvaluationContext = EvaluationContext.empty,
     options: EvaluationOptions = EvaluationOptions.empty
-  ): IO[FeatureFlagError, FlagResolution[Boolean]] =
+  ): IO[EvaluationError, FlagResolution[Boolean]] =
     valueDetails[Boolean](key, default, ctx, options)
 
   final def stringDetails(
@@ -51,7 +52,7 @@ trait FeatureFlags {
     default: String,
     ctx: EvaluationContext = EvaluationContext.empty,
     options: EvaluationOptions = EvaluationOptions.empty
-  ): IO[FeatureFlagError, FlagResolution[String]] =
+  ): IO[EvaluationError, FlagResolution[String]] =
     valueDetails[String](key, default, ctx, options)
 
   final def intDetails(
@@ -59,7 +60,7 @@ trait FeatureFlags {
     default: Int,
     ctx: EvaluationContext = EvaluationContext.empty,
     options: EvaluationOptions = EvaluationOptions.empty
-  ): IO[FeatureFlagError, FlagResolution[Int]] =
+  ): IO[EvaluationError, FlagResolution[Int]] =
     valueDetails[Int](key, default, ctx, options)
 
   final def longDetails(
@@ -67,7 +68,7 @@ trait FeatureFlags {
     default: Long,
     ctx: EvaluationContext = EvaluationContext.empty,
     options: EvaluationOptions = EvaluationOptions.empty
-  ): IO[FeatureFlagError, FlagResolution[Long]] =
+  ): IO[EvaluationError, FlagResolution[Long]] =
     valueDetails[Long](key, default, ctx, options)
 
   final def doubleDetails(
@@ -75,7 +76,7 @@ trait FeatureFlags {
     default: Double,
     ctx: EvaluationContext = EvaluationContext.empty,
     options: EvaluationOptions = EvaluationOptions.empty
-  ): IO[FeatureFlagError, FlagResolution[Double]] =
+  ): IO[EvaluationError, FlagResolution[Double]] =
     valueDetails[Double](key, default, ctx, options)
 
   final def objDetails(
@@ -83,7 +84,7 @@ trait FeatureFlags {
     default: Map[String, Any],
     ctx: EvaluationContext = EvaluationContext.empty,
     options: EvaluationOptions = EvaluationOptions.empty
-  ): IO[FeatureFlagError, FlagResolution[Map[String, Any]]] =
+  ): IO[EvaluationError, FlagResolution[Map[String, Any]]] =
     valueDetails[Map[String, Any]](key, default, ctx, options)
 
   /** The value alone. `options` carries per-call [[EvaluationOptions]] (invocation hooks, hints, a timeout). */
@@ -92,7 +93,7 @@ trait FeatureFlags {
     default: A,
     ctx: EvaluationContext = EvaluationContext.empty,
     options: EvaluationOptions = EvaluationOptions.empty
-  ): IO[FeatureFlagError, A] =
+  ): IO[EvaluationError, A] =
     valueDetails[A](key, default, ctx, options).map(_.value)
 
   final def boolean(
@@ -100,7 +101,7 @@ trait FeatureFlags {
     default: Boolean,
     ctx: EvaluationContext = EvaluationContext.empty,
     options: EvaluationOptions = EvaluationOptions.empty
-  ): IO[FeatureFlagError, Boolean] =
+  ): IO[EvaluationError, Boolean] =
     value[Boolean](key, default, ctx, options)
 
   final def string(
@@ -108,7 +109,7 @@ trait FeatureFlags {
     default: String,
     ctx: EvaluationContext = EvaluationContext.empty,
     options: EvaluationOptions = EvaluationOptions.empty
-  ): IO[FeatureFlagError, String] =
+  ): IO[EvaluationError, String] =
     value[String](key, default, ctx, options)
 
   final def int(
@@ -116,7 +117,7 @@ trait FeatureFlags {
     default: Int,
     ctx: EvaluationContext = EvaluationContext.empty,
     options: EvaluationOptions = EvaluationOptions.empty
-  ): IO[FeatureFlagError, Int] =
+  ): IO[EvaluationError, Int] =
     value[Int](key, default, ctx, options)
 
   final def long(
@@ -124,7 +125,7 @@ trait FeatureFlags {
     default: Long,
     ctx: EvaluationContext = EvaluationContext.empty,
     options: EvaluationOptions = EvaluationOptions.empty
-  ): IO[FeatureFlagError, Long] =
+  ): IO[EvaluationError, Long] =
     value[Long](key, default, ctx, options)
 
   final def double(
@@ -132,7 +133,7 @@ trait FeatureFlags {
     default: Double,
     ctx: EvaluationContext = EvaluationContext.empty,
     options: EvaluationOptions = EvaluationOptions.empty
-  ): IO[FeatureFlagError, Double] =
+  ): IO[EvaluationError, Double] =
     value[Double](key, default, ctx, options)
 
   final def obj(
@@ -140,7 +141,7 @@ trait FeatureFlags {
     default: Map[String, Any],
     ctx: EvaluationContext = EvaluationContext.empty,
     options: EvaluationOptions = EvaluationOptions.empty
-  ): IO[FeatureFlagError, Map[String, Any]] =
+  ): IO[EvaluationError, Map[String, Any]] =
     value[Map[String, Any]](key, default, ctx, options)
 
   // Total (never-fails) evaluation variants (spec §1.4.10 / §1.1.7: evaluation "MUST NOT throw ... always return the
@@ -241,12 +242,12 @@ trait FeatureFlags {
   // and 3, and passing a context-bound instance explicitly would need `(using flag.flagType)` on 3 but
   // `(flag.flagType)` on 2.13 — which cannot be written once. An `implicit val` in scope satisfies both.
 
-  def value[A](flag: FlagDef[A]): IO[FeatureFlagError, A] = {
+  def value[A](flag: FlagDef[A]): IO[EvaluationError, A] = {
     implicit val ft: FlagType[A] = flag.flagType
     value(flag.key, flag.default)
   }
 
-  def value[A](flag: FlagDef[A], ctx: EvaluationContext): IO[FeatureFlagError, A] = {
+  def value[A](flag: FlagDef[A], ctx: EvaluationContext): IO[EvaluationError, A] = {
     implicit val ft: FlagType[A] = flag.flagType
     value(flag.key, flag.default, ctx)
   }
@@ -261,7 +262,7 @@ trait FeatureFlags {
     valueOrDefault(flag.key, flag.default, ctx)
   }
 
-  def value[A](flag: FlagDef[A], ctx: EvaluationContext, options: EvaluationOptions): IO[FeatureFlagError, A] = {
+  def value[A](flag: FlagDef[A], ctx: EvaluationContext, options: EvaluationOptions): IO[EvaluationError, A] = {
     implicit val ft: FlagType[A] = flag.flagType
     value(flag.key, flag.default, ctx, options)
   }
@@ -290,12 +291,12 @@ trait FeatureFlags {
     resolveOrDefault(flag.key, flag.default, ctx, options)
   }
 
-  def valueDetails[A](flag: FlagDef[A]): IO[FeatureFlagError, FlagResolution[A]] = {
+  def valueDetails[A](flag: FlagDef[A]): IO[EvaluationError, FlagResolution[A]] = {
     implicit val ft: FlagType[A] = flag.flagType
     valueDetails(flag.key, flag.default)
   }
 
-  def valueDetails[A](flag: FlagDef[A], ctx: EvaluationContext): IO[FeatureFlagError, FlagResolution[A]] = {
+  def valueDetails[A](flag: FlagDef[A], ctx: EvaluationContext): IO[EvaluationError, FlagResolution[A]] = {
     implicit val ft: FlagType[A] = flag.flagType
     valueDetails(flag.key, flag.default, ctx)
   }
@@ -304,13 +305,13 @@ trait FeatureFlags {
     flag: FlagDef[A],
     ctx: EvaluationContext,
     options: EvaluationOptions
-  ): IO[FeatureFlagError, FlagResolution[A]] = {
+  ): IO[EvaluationError, FlagResolution[A]] = {
     implicit val ft: FlagType[A] = flag.flagType
     valueDetails(flag.key, flag.default, ctx, options)
   }
 
   private def totalResolution[A: FlagType](
-    details: IO[FeatureFlagError, FlagResolution[A]],
+    details: IO[EvaluationError, FlagResolution[A]],
     key: String,
     default: A
   ): UIO[FlagResolution[A]] =
@@ -368,7 +369,7 @@ trait FeatureFlags {
     default: A,
     ctx: EvaluationContext,
     options: EvaluationOptions
-  )(typed: => IO[FeatureFlagError, FlagResolution[A]]): IO[FeatureFlagError, FlagResolution[A]] = typed
+  )(typed: => IO[EvaluationError, FlagResolution[A]]): IO[EvaluationError, FlagResolution[A]] = typed
 
   /** The total tier's breadcrumb for a served-default fallback: called by `totalResolution` with the resolution about
     * to be served and, for an absorbed defect, its cause. Logging only — it never affects the resolution. The default
@@ -396,38 +397,22 @@ trait FeatureFlags {
 
   /** Run `zio` inside a flag transaction with optional overrides and per-call evaluation caching.
     *
-    * Error channel: on Scala 3, `Compat.OrError[E, FeatureFlagError]` is the union `E | FeatureFlagError`. Scala 2.13
-    * has no union types, so there it erases to `Any`, which disables typed recovery. For a typed error channel on both
-    * versions, use [[transactionEither]], whose `Either[E, FeatureFlagError]` this method is built on.
+    * The error channel is tagged by source: `Left(e)` carries the caller's own error from `zio`, `Right(err)` a
+    * [[FeatureFlagError.TransactionError]] raised by the transaction itself (`NestedTransactionNotAllowed`). An
+    * evaluation failing inside `zio` is part of `E`, not a transaction error. On Scala 3, `transaction` is the same
+    * with the tag dropped, `E | TransactionError`; Scala 2.13 has no union types, so this is its only form there.
     *
     * `nested` decides what happens when this call is already inside a transaction — see [[NestedPolicy]]. The default,
-    * `Fail`, raises `NestedTransactionNotAllowed`; `Reuse` runs `zio` inside the enclosing transaction and '''ignores
-    * `overrides`, `context` and `cacheEvaluations`''' (the enclosing transaction is the one running).
-    */
-  def transaction[R, E, A](
-    overrides: Map[String, Any] = Map.empty,
-    context: EvaluationContext = EvaluationContext.empty,
-    cacheEvaluations: Boolean = true,
-    nested: NestedPolicy = NestedPolicy.Fail
-  )(zio: ZIO[R, E, A]): ZIO[R, Compat.OrError[E, FeatureFlagError], TransactionResult[A]]
-
-  /** Like [[transaction]], but with a uniform, cross-version typed error channel: `Either[E, FeatureFlagError]` on both
-    * Scala 2.13 and 3. `Left(e)` carries the caller's own error from `zio`; `Right(ffe)` carries a
-    * transaction-machinery error (e.g. `NestedTransactionNotAllowed`). Prefer this on Scala 2.13, where
-    * [[transaction]]'s error channel erases to `Any` (no union types) and disables typed recovery. On both versions
-    * this is the source-tagged form `transaction` is built on, so the two never disagree about which side an error came
-    * from.
-    *
-    * `nested` decides what happens when this call is already inside a transaction — see [[NestedPolicy]]. Under `Reuse`
-    * the body runs inside the enclosing transaction, `overrides`/`context`/`cacheEvaluations` are '''ignored''', and
-    * the returned `TransactionResult` reflects the enclosing transaction as of the body's completion.
+    * `Fail`, raises `NestedTransactionNotAllowed`. Under `Reuse` the body runs inside the enclosing transaction,
+    * `overrides`/`context`/`cacheEvaluations` are '''ignored''', and the returned `TransactionResult` reflects the
+    * enclosing transaction as of the body's completion.
     */
   def transactionEither[R, E, A](
     overrides: Map[String, Any] = Map.empty,
     context: EvaluationContext = EvaluationContext.empty,
     cacheEvaluations: Boolean = true,
     nested: NestedPolicy = NestedPolicy.Fail
-  )(zio: ZIO[R, E, A]): ZIO[R, Either[E, FeatureFlagError], TransactionResult[A]]
+  )(zio: ZIO[R, E, A]): ZIO[R, Either[E, TransactionError], TransactionResult[A]]
 
   def inTransaction: UIO[Boolean]
 
@@ -478,10 +463,10 @@ trait FeatureFlags {
   def hooks: UIO[List[FeatureHook]]
 
   // Tracking API
-  def track(eventName: String): IO[FeatureFlagError, Unit]
-  def track(eventName: String, context: EvaluationContext): IO[FeatureFlagError, Unit]
-  def track(eventName: String, details: TrackingEventDetails): IO[FeatureFlagError, Unit]
-  def track(eventName: String, context: EvaluationContext, details: TrackingEventDetails): IO[FeatureFlagError, Unit]
+  def track(eventName: String): IO[EvaluationError, Unit]
+  def track(eventName: String, context: EvaluationContext): IO[EvaluationError, Unit]
+  def track(eventName: String, details: TrackingEventDetails): IO[EvaluationError, Unit]
+  def track(eventName: String, context: EvaluationContext, details: TrackingEventDetails): IO[EvaluationError, Unit]
 
   /** The most recent tracking events recorded by this instance, oldest first — only for instances built by the testkit.
     * Production instances retain nothing (the merged contexts would routinely hold PII), so this is empty for them.
@@ -491,7 +476,7 @@ trait FeatureFlags {
   def trackedEvents: UIO[List[(String, EvaluationContext, Option[TrackingEventDetails])]] = ZIO.succeed(Nil)
 }
 
-object FeatureFlags {
+object FeatureFlags extends FeatureFlagsTransactionAccessors {
 
   // Service Accessors - typed tier. `default` is what the provider and hooks receive for this evaluation; it is not
   // served on failure: use the `*OrDefault` form for that.
@@ -501,7 +486,7 @@ object FeatureFlags {
     default: A,
     ctx: EvaluationContext = EvaluationContext.empty,
     options: EvaluationOptions = EvaluationOptions.empty
-  ): ZIO[FeatureFlags, FeatureFlagError, FlagResolution[A]] =
+  ): ZIO[FeatureFlags, EvaluationError, FlagResolution[A]] =
     ZIO.serviceWithZIO(_.valueDetails(key, default, ctx, options))
 
   def booleanDetails(
@@ -509,7 +494,7 @@ object FeatureFlags {
     default: Boolean,
     ctx: EvaluationContext = EvaluationContext.empty,
     options: EvaluationOptions = EvaluationOptions.empty
-  ): ZIO[FeatureFlags, FeatureFlagError, FlagResolution[Boolean]] =
+  ): ZIO[FeatureFlags, EvaluationError, FlagResolution[Boolean]] =
     ZIO.serviceWithZIO(_.booleanDetails(key, default, ctx, options))
 
   def stringDetails(
@@ -517,7 +502,7 @@ object FeatureFlags {
     default: String,
     ctx: EvaluationContext = EvaluationContext.empty,
     options: EvaluationOptions = EvaluationOptions.empty
-  ): ZIO[FeatureFlags, FeatureFlagError, FlagResolution[String]] =
+  ): ZIO[FeatureFlags, EvaluationError, FlagResolution[String]] =
     ZIO.serviceWithZIO(_.stringDetails(key, default, ctx, options))
 
   def intDetails(
@@ -525,7 +510,7 @@ object FeatureFlags {
     default: Int,
     ctx: EvaluationContext = EvaluationContext.empty,
     options: EvaluationOptions = EvaluationOptions.empty
-  ): ZIO[FeatureFlags, FeatureFlagError, FlagResolution[Int]] =
+  ): ZIO[FeatureFlags, EvaluationError, FlagResolution[Int]] =
     ZIO.serviceWithZIO(_.intDetails(key, default, ctx, options))
 
   def longDetails(
@@ -533,7 +518,7 @@ object FeatureFlags {
     default: Long,
     ctx: EvaluationContext = EvaluationContext.empty,
     options: EvaluationOptions = EvaluationOptions.empty
-  ): ZIO[FeatureFlags, FeatureFlagError, FlagResolution[Long]] =
+  ): ZIO[FeatureFlags, EvaluationError, FlagResolution[Long]] =
     ZIO.serviceWithZIO(_.longDetails(key, default, ctx, options))
 
   def doubleDetails(
@@ -541,7 +526,7 @@ object FeatureFlags {
     default: Double,
     ctx: EvaluationContext = EvaluationContext.empty,
     options: EvaluationOptions = EvaluationOptions.empty
-  ): ZIO[FeatureFlags, FeatureFlagError, FlagResolution[Double]] =
+  ): ZIO[FeatureFlags, EvaluationError, FlagResolution[Double]] =
     ZIO.serviceWithZIO(_.doubleDetails(key, default, ctx, options))
 
   def objDetails(
@@ -549,7 +534,7 @@ object FeatureFlags {
     default: Map[String, Any],
     ctx: EvaluationContext = EvaluationContext.empty,
     options: EvaluationOptions = EvaluationOptions.empty
-  ): ZIO[FeatureFlags, FeatureFlagError, FlagResolution[Map[String, Any]]] =
+  ): ZIO[FeatureFlags, EvaluationError, FlagResolution[Map[String, Any]]] =
     ZIO.serviceWithZIO(_.objDetails(key, default, ctx, options))
 
   def value[A: FlagType](
@@ -557,7 +542,7 @@ object FeatureFlags {
     default: A,
     ctx: EvaluationContext = EvaluationContext.empty,
     options: EvaluationOptions = EvaluationOptions.empty
-  ): ZIO[FeatureFlags, FeatureFlagError, A] =
+  ): ZIO[FeatureFlags, EvaluationError, A] =
     ZIO.serviceWithZIO(_.value(key, default, ctx, options))
 
   def boolean(
@@ -565,7 +550,7 @@ object FeatureFlags {
     default: Boolean,
     ctx: EvaluationContext = EvaluationContext.empty,
     options: EvaluationOptions = EvaluationOptions.empty
-  ): ZIO[FeatureFlags, FeatureFlagError, Boolean] =
+  ): ZIO[FeatureFlags, EvaluationError, Boolean] =
     ZIO.serviceWithZIO(_.boolean(key, default, ctx, options))
 
   def string(
@@ -573,7 +558,7 @@ object FeatureFlags {
     default: String,
     ctx: EvaluationContext = EvaluationContext.empty,
     options: EvaluationOptions = EvaluationOptions.empty
-  ): ZIO[FeatureFlags, FeatureFlagError, String] =
+  ): ZIO[FeatureFlags, EvaluationError, String] =
     ZIO.serviceWithZIO(_.string(key, default, ctx, options))
 
   def int(
@@ -581,7 +566,7 @@ object FeatureFlags {
     default: Int,
     ctx: EvaluationContext = EvaluationContext.empty,
     options: EvaluationOptions = EvaluationOptions.empty
-  ): ZIO[FeatureFlags, FeatureFlagError, Int] =
+  ): ZIO[FeatureFlags, EvaluationError, Int] =
     ZIO.serviceWithZIO(_.int(key, default, ctx, options))
 
   def long(
@@ -589,7 +574,7 @@ object FeatureFlags {
     default: Long,
     ctx: EvaluationContext = EvaluationContext.empty,
     options: EvaluationOptions = EvaluationOptions.empty
-  ): ZIO[FeatureFlags, FeatureFlagError, Long] =
+  ): ZIO[FeatureFlags, EvaluationError, Long] =
     ZIO.serviceWithZIO(_.long(key, default, ctx, options))
 
   def double(
@@ -597,7 +582,7 @@ object FeatureFlags {
     default: Double,
     ctx: EvaluationContext = EvaluationContext.empty,
     options: EvaluationOptions = EvaluationOptions.empty
-  ): ZIO[FeatureFlags, FeatureFlagError, Double] =
+  ): ZIO[FeatureFlags, EvaluationError, Double] =
     ZIO.serviceWithZIO(_.double(key, default, ctx, options))
 
   def obj(
@@ -605,7 +590,7 @@ object FeatureFlags {
     default: Map[String, Any],
     ctx: EvaluationContext = EvaluationContext.empty,
     options: EvaluationOptions = EvaluationOptions.empty
-  ): ZIO[FeatureFlags, FeatureFlagError, Map[String, Any]] =
+  ): ZIO[FeatureFlags, EvaluationError, Map[String, Any]] =
     ZIO.serviceWithZIO(_.obj(key, default, ctx, options))
 
   // Service Accessors - total (never-fails) evaluation (spec §1.4.10)
@@ -679,10 +664,10 @@ object FeatureFlags {
   // No `implicit val` is needed here (unlike the trait methods): the `FlagDef` carries its own `FlagType`, and the
   // trait overload it delegates to takes no context bound.
 
-  def value[A](flag: FlagDef[A]): ZIO[FeatureFlags, FeatureFlagError, A] =
+  def value[A](flag: FlagDef[A]): ZIO[FeatureFlags, EvaluationError, A] =
     ZIO.serviceWithZIO(_.value(flag))
 
-  def value[A](flag: FlagDef[A], ctx: EvaluationContext): ZIO[FeatureFlags, FeatureFlagError, A] =
+  def value[A](flag: FlagDef[A], ctx: EvaluationContext): ZIO[FeatureFlags, EvaluationError, A] =
     ZIO.serviceWithZIO(_.value(flag, ctx))
 
   def valueOrDefault[A](flag: FlagDef[A]): ZIO[FeatureFlags, Nothing, A] =
@@ -695,7 +680,7 @@ object FeatureFlags {
     flag: FlagDef[A],
     ctx: EvaluationContext,
     options: EvaluationOptions
-  ): ZIO[FeatureFlags, FeatureFlagError, A] =
+  ): ZIO[FeatureFlags, EvaluationError, A] =
     ZIO.serviceWithZIO(_.value(flag, ctx, options))
 
   def valueOrDefault[A](
@@ -721,20 +706,20 @@ object FeatureFlags {
   ): ZIO[FeatureFlags, Nothing, FlagResolution[A]] =
     ZIO.serviceWithZIO(_.resolveOrDefault(flag, ctx, options))
 
-  def valueDetails[A](flag: FlagDef[A]): ZIO[FeatureFlags, FeatureFlagError, FlagResolution[A]] =
+  def valueDetails[A](flag: FlagDef[A]): ZIO[FeatureFlags, EvaluationError, FlagResolution[A]] =
     ZIO.serviceWithZIO(_.valueDetails(flag))
 
   def valueDetails[A](
     flag: FlagDef[A],
     ctx: EvaluationContext
-  ): ZIO[FeatureFlags, FeatureFlagError, FlagResolution[A]] =
+  ): ZIO[FeatureFlags, EvaluationError, FlagResolution[A]] =
     ZIO.serviceWithZIO(_.valueDetails(flag, ctx))
 
   def valueDetails[A](
     flag: FlagDef[A],
     ctx: EvaluationContext,
     options: EvaluationOptions
-  ): ZIO[FeatureFlags, FeatureFlagError, FlagResolution[A]] =
+  ): ZIO[FeatureFlags, EvaluationError, FlagResolution[A]] =
     ZIO.serviceWithZIO(_.valueDetails(flag, ctx, options))
 
   def setGlobalContext(ctx: EvaluationContext): ZIO[FeatureFlags, Nothing, Unit] =
@@ -752,20 +737,12 @@ object FeatureFlags {
   def withContext[R, E, A](ctx: EvaluationContext)(zio: ZIO[R, E, A]): ZIO[R with FeatureFlags, E, A] =
     ZIO.serviceWithZIO[FeatureFlags](_.withContext(ctx)(zio))
 
-  def transaction[R, E, A](
-    overrides: Map[String, Any] = Map.empty,
-    context: EvaluationContext = EvaluationContext.empty,
-    cacheEvaluations: Boolean = true,
-    nested: NestedPolicy = NestedPolicy.Fail
-  )(zio: ZIO[R, E, A]): ZIO[R with FeatureFlags, Compat.OrError[E, FeatureFlagError], TransactionResult[A]] =
-    ZIO.serviceWithZIO[FeatureFlags](_.transaction(overrides, context, cacheEvaluations, nested)(zio))
-
   def transactionEither[R, E, A](
     overrides: Map[String, Any] = Map.empty,
     context: EvaluationContext = EvaluationContext.empty,
     cacheEvaluations: Boolean = true,
     nested: NestedPolicy = NestedPolicy.Fail
-  )(zio: ZIO[R, E, A]): ZIO[R with FeatureFlags, Either[E, FeatureFlagError], TransactionResult[A]] =
+  )(zio: ZIO[R, E, A]): ZIO[R with FeatureFlags, Either[E, TransactionError], TransactionResult[A]] =
     ZIO.serviceWithZIO[FeatureFlags](_.transactionEither(overrides, context, cacheEvaluations, nested)(zio))
 
   def inTransaction: ZIO[FeatureFlags, Nothing, Boolean] =
@@ -810,20 +787,20 @@ object FeatureFlags {
 
   // Tracking API
 
-  def track(eventName: String): ZIO[FeatureFlags, FeatureFlagError, Unit] =
+  def track(eventName: String): ZIO[FeatureFlags, EvaluationError, Unit] =
     ZIO.serviceWithZIO(_.track(eventName))
 
-  def track(eventName: String, context: EvaluationContext): ZIO[FeatureFlags, FeatureFlagError, Unit] =
+  def track(eventName: String, context: EvaluationContext): ZIO[FeatureFlags, EvaluationError, Unit] =
     ZIO.serviceWithZIO(_.track(eventName, context))
 
-  def track(eventName: String, details: TrackingEventDetails): ZIO[FeatureFlags, FeatureFlagError, Unit] =
+  def track(eventName: String, details: TrackingEventDetails): ZIO[FeatureFlags, EvaluationError, Unit] =
     ZIO.serviceWithZIO(_.track(eventName, details))
 
   def track(
     eventName: String,
     context: EvaluationContext,
     details: TrackingEventDetails
-  ): ZIO[FeatureFlags, FeatureFlagError, Unit] =
+  ): ZIO[FeatureFlags, EvaluationError, Unit] =
     ZIO.serviceWithZIO(_.track(eventName, context, details))
 
   @deprecated("Use TestFeatureProvider.trackedEvents, which records what the provider received", "1.2.0")

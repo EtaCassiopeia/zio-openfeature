@@ -81,9 +81,9 @@ those: counts, membership checks, `toValueMap`, `map`. A `FlagEvaluation` holds 
 
 ## Errors
 
-On Scala 3, `transaction` fails with your block's error or a `FeatureFlagError` (a union type). `transactionEither`
-keeps them apart, with your error as `Left` and the transaction's as `Right`. Use it on Scala 2.13, where
-`transaction`'s error type is `Any`.
+On Scala 3, `transaction` fails with your block's error or a `TransactionError` (a union type). `transactionEither`
+keeps them apart, with your error as `Left` and the transaction's as `Right`. On Scala 2.13, which has no union
+types, `transaction` does not exist: use `transactionEither`.
 
 ```scala
 --8<-- "Transactions.scala:either"

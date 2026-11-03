@@ -1,6 +1,7 @@
 package zio.openfeature
 
 import zio._
+import zio.openfeature.FeatureFlagError.LifecycleError
 import dev.openfeature.sdk.{FeatureProvider => OFFeatureProvider}
 
 /** Administering a [[FeatureFlags]] instance: what can change what a sibling instance or a later reader observes — the
@@ -91,7 +92,7 @@ trait FeatureFlagsAdmin {
     * `setProvider(p).timeout(d)` with `d` shorter than the init timeout returns only when the swap has settled (at most
     * about twice the init timeout). Waiting for an earlier swap to finish can still be interrupted.
     */
-  def setProvider(provider: OFFeatureProvider): IO[FeatureFlagError, Unit]
+  def setProvider(provider: OFFeatureProvider): IO[LifecycleError, Unit]
 
   /** Shut down this instance (spec 1.6.1, 1.6.2).
     *
@@ -167,7 +168,7 @@ object FeatureFlagsAdmin {
   def clearApiHooks: URIO[FeatureFlagsAdmin, Unit] =
     ZIO.serviceWithZIO(_.clearApiHooks)
 
-  def setProvider(provider: OFFeatureProvider): ZIO[FeatureFlagsAdmin, FeatureFlagError, Unit] =
+  def setProvider(provider: OFFeatureProvider): ZIO[FeatureFlagsAdmin, LifecycleError, Unit] =
     ZIO.serviceWithZIO(_.setProvider(provider))
 
   def shutdown: URIO[FeatureFlagsAdmin, Unit] =

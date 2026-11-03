@@ -2,8 +2,8 @@ package zio.openfeature
 
 import zio._
 import zio.stream._
+import zio.openfeature.FeatureFlagError.{EvaluationError, LifecycleError, TransactionError}
 import zio.openfeature.internal.{
-  Compat,
   ApiInstances,
   EventBridge,
   Evaluator,
@@ -200,7 +200,7 @@ final private[openfeature] class FeatureFlagsLive(
     default: A,
     ctx: EvaluationContext,
     options: EvaluationOptions
-  ): IO[FeatureFlagError, FlagResolution[A]] =
+  ): IO[EvaluationError, FlagResolution[A]] =
     evaluator.evaluateWithDetails(key, default, ctx, options)
 
   // The total tier serves a provider's error-coded answer itself, with its variant, flag metadata and message, rather
@@ -210,7 +210,7 @@ final private[openfeature] class FeatureFlagsLive(
     default: A,
     ctx: EvaluationContext,
     options: EvaluationOptions
-  )(typed: => IO[FeatureFlagError, FlagResolution[A]]): IO[FeatureFlagError, FlagResolution[A]] =
+  )(typed: => IO[EvaluationError, FlagResolution[A]]): IO[EvaluationError, FlagResolution[A]] =
     evaluator.evaluateResolution(key, default, ctx, options)
 
   override def setGlobalContext(ctx: EvaluationContext): UIO[Unit] =
@@ -230,41 +230,31 @@ final private[openfeature] class FeatureFlagsLive(
       state.fiberContextRef.locally(current.merge(ctx))(zio)
     }
 
-  override def transaction[R, E, A](
-    overrides: Map[String, Any],
-    context: EvaluationContext,
-    cacheEvaluations: Boolean,
-    nested: NestedPolicy
-  )(zio: ZIO[R, E, A]): ZIO[R, Compat.OrError[E, FeatureFlagError], TransactionResult[A]] =
-    // Built on the source-tagged form so the two never disagree; `Compat.merge` drops the tag back into `OrError`
-    // (the raw `E | FeatureFlagError` union on Scala 3, `Any` on 2.13) — preserving the legacy error channel exactly.
-    transactionEither(overrides, context, cacheEvaluations, nested)(zio).mapError(Compat.merge)
-
   override def transactionEither[R, E, A](
     overrides: Map[String, Any],
     context: EvaluationContext,
     cacheEvaluations: Boolean,
     nested: NestedPolicy
-  )(zio: ZIO[R, E, A]): ZIO[R, Either[E, FeatureFlagError], TransactionResult[A]] =
+  )(zio: ZIO[R, E, A]): ZIO[R, Either[E, TransactionError], TransactionResult[A]] =
     // Errors are tagged at their source: `Left` is the caller's own `E` from `zio`, `Right` is a transaction-machinery
     // error. This is the only place the two can be told apart — once merged into a single channel (as `transaction`
-    // does) an `E` that happens to equal `FeatureFlagError` is indistinguishable from a machinery error.
+    // does on Scala 3) an `E` that happens to equal a `TransactionError` is indistinguishable from a machinery error.
     state.transactionRef.get.flatMap {
       case Some(enclosing) =>
         nested match {
           case NestedPolicy.Fail =>
-            ZIO.fail(Right(FeatureFlagError.NestedTransactionNotAllowed): Either[E, FeatureFlagError])
+            ZIO.fail(Right(FeatureFlagError.NestedTransactionNotAllowed): Either[E, TransactionError])
           case NestedPolicy.Reuse =>
             // No new state and no `locally`: the body runs under the enclosing state as-is, which is what makes the
             // inner `overrides`/`context`/`cacheEvaluations` genuinely ignored rather than half-applied. The result
             // is the enclosing transaction as of the body's completion — the inner call opened nothing of its own.
-            zio.mapError(Left(_): Either[E, FeatureFlagError]).flatMap(enclosing.toResult)
+            zio.mapError(Left(_): Either[E, TransactionError]).flatMap(enclosing.toResult)
         }
       case None =>
         // Not nested: `nested` is irrelevant and this is exactly the plain, non-nested path.
         for {
           txState  <- TransactionState.make(overrides, context, cacheEvaluations)
-          result   <- state.transactionRef.locally(Some(txState))(zio).mapError(Left(_): Either[E, FeatureFlagError])
+          result   <- state.transactionRef.locally(Some(txState))(zio).mapError(Left(_): Either[E, TransactionError])
           txResult <- txState.toResult(result)
         } yield txResult
     }
@@ -586,7 +576,7 @@ final private[openfeature] class FeatureFlagsLive(
   // Note: we reuse the existing `client` object because the Java SDK's Client
   // delegates to the provider registered with the API at evaluation time,
   // not the provider that was active when the client was created.
-  override def setProvider(newProvider: OFFeatureProvider): IO[FeatureFlagError, Unit] =
+  override def setProvider(newProvider: OFFeatureProvider): IO[LifecycleError, Unit] =
     swapLock.withPermit(
       refuseSwap(newProvider) *> wrap(newProvider).flatMap { incoming =>
         ZIO.ifZIO(slotHolds(incoming))(skipSwap(newProvider), runSwap(incoming, newProvider))
@@ -605,7 +595,7 @@ final private[openfeature] class FeatureFlagsLive(
     probe.at(Point.SwapSkipped) *>
       ZIO.logDebug(s"setProvider: '${ProviderNames.of(newProvider)}' is already the bound provider; nothing to change")
 
-  private def runSwap(incoming: Bound, newProvider: OFFeatureProvider): IO[FeatureFlagError, Unit] = {
+  private def runSwap(incoming: Bound, newProvider: OFFeatureProvider): IO[LifecycleError, Unit] = {
     val swap = for {
       _ <- probe.at(Point.SwapStart)
       incomingName = ProviderNames.beforeInit(newProvider)
@@ -719,7 +709,7 @@ final private[openfeature] class FeatureFlagsLive(
   /** The wrapper this library registers for `provider`. One that cannot be made — an `EventProvider` attached to
     * something else, which the SDK's own registration would refuse too — refuses the swap before it starts.
     */
-  private def wrap(provider: OFFeatureProvider): IO[FeatureFlagError, Bound] =
+  private def wrap(provider: OFFeatureProvider): IO[LifecycleError, Bound] =
     ZIO.attempt(Bound.of(api, domain, provider, probe)).mapError(e => FeatureFlagError.ProviderInitializationFailed(e))
 
   /** Admits a swap through the lifecycle step, before any SDK change or probe point: refused on a shut-down instance,
@@ -731,7 +721,7 @@ final private[openfeature] class FeatureFlagsLive(
     * rollback replaced is held by that pending initialization, which shuts it down if it succeeds; a settle of that
     * entry already under way is waited for, after which the entry is gone from the record.
     */
-  private def refuseSwap(newProvider: OFFeatureProvider): IO[FeatureFlagError, Unit] = {
+  private def refuseSwap(newProvider: OFFeatureProvider): IO[LifecycleError, Unit] = {
     val managed = ManagedProvider.existing(newProvider)
     for {
       _       <- ZIO.foreachDiscard(managed)(orphans.awaitSettling)
@@ -752,7 +742,7 @@ final private[openfeature] class FeatureFlagsLive(
     } yield ()
   }
 
-  private def refused(refusal: Refusal): FeatureFlagError = {
+  private def refused(refusal: Refusal): LifecycleError = {
     def failed(message: String) = FeatureFlagError.ProviderInitializationFailed(new IllegalStateException(message))
     refusal match {
       case Refusal.Closed                      => FeatureFlagError.ProviderNotReady(ProviderStatus.NotReady)
@@ -930,27 +920,27 @@ final private[openfeature] class FeatureFlagsLive(
 
   // Tracking API
 
-  override def track(eventName: String): IO[FeatureFlagError, Unit] =
+  override def track(eventName: String): IO[EvaluationError, Unit] =
     trackImpl(eventName, EvaluationContext.empty, None)
 
-  override def track(eventName: String, context: EvaluationContext): IO[FeatureFlagError, Unit] =
+  override def track(eventName: String, context: EvaluationContext): IO[EvaluationError, Unit] =
     trackImpl(eventName, context, None)
 
-  override def track(eventName: String, details: TrackingEventDetails): IO[FeatureFlagError, Unit] =
+  override def track(eventName: String, details: TrackingEventDetails): IO[EvaluationError, Unit] =
     trackImpl(eventName, EvaluationContext.empty, Some(details))
 
   override def track(
     eventName: String,
     context: EvaluationContext,
     details: TrackingEventDetails
-  ): IO[FeatureFlagError, Unit] =
+  ): IO[EvaluationError, Unit] =
     trackImpl(eventName, context, Some(details))
 
   private def trackImpl(
     eventName: String,
     context: EvaluationContext,
     details: Option[TrackingEventDetails]
-  ): IO[FeatureFlagError, Unit] =
+  ): IO[EvaluationError, Unit] =
     // Convert before anything is recorded or sent: an attribute the SDK cannot represent is a caller mistake, so it
     // fails here as InvalidContext rather than inside the SDK call, where `classify` would blame the provider.
     ZIO

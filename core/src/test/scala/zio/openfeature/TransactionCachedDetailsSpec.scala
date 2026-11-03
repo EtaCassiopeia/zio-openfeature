@@ -58,7 +58,7 @@ object TransactionCachedDetailsSpec extends ZIOSpecDefault {
         val p = new ExperimentProvider
         for {
           ff   <- build(p)
-          both <- ff.transaction()(ff.stringDetails("exp", "A").zip(ff.stringDetails("exp", "A")))
+          both <- ff.transactionEither()(ff.stringDetails("exp", "A").zip(ff.stringDetails("exp", "A")))
           (first, second) = both.result
           calls           = p.calls.get()
         } yield assertTrue(
@@ -82,7 +82,7 @@ object TransactionCachedDetailsSpec extends ZIOSpecDefault {
             override def after[A](ctx: HookContext, details: FlagResolution[A], hints: HookHints): UIO[Unit] =
               seen.update(_ :+ details.variant)
           })
-          _        <- ff.transaction()(ff.stringDetails("exp", "A") *> ff.stringDetails("exp", "A"))
+          _        <- ff.transactionEither()(ff.stringDetails("exp", "A") *> ff.stringDetails("exp", "A"))
           variants <- seen.get
         } yield assertTrue(variants == List(Some("B"), Some("B")))
       }

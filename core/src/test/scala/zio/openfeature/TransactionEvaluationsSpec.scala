@@ -62,29 +62,27 @@ object TransactionEvaluationsSpec extends ZIOSpecDefault {
     override def setClientContext(ctx: EvaluationContext): UIO[Unit]                                      = ???
     override def clientContext: UIO[EvaluationContext]                                                    = ???
     override def withContext[R, E, A](ctx: EvaluationContext)(zio: ZIO[R, E, A]): ZIO[R, E, A]            = ???
-    override def transaction[R, E, A](o: Map[String, Any], c: EvaluationContext, ce: Boolean, n: NestedPolicy)(
-      zio: ZIO[R, E, A]
-    ): ZIO[R, _root_.zio.openfeature.internal.Compat.OrError[E, FeatureFlagError], TransactionResult[A]] = ???
     override def transactionEither[R, E, A](o: Map[String, Any], c: EvaluationContext, ce: Boolean, n: NestedPolicy)(
       zio: ZIO[R, E, A]
-    ): ZIO[R, Either[E, FeatureFlagError], TransactionResult[A]]                                     = ???
-    override def events: ZStream[Any, Nothing, ProviderEvent]                                        = ???
-    override def providerStatus: UIO[ProviderStatus]                                                 = ???
-    override def awaitReady(within: Duration): UIO[ProviderStatus]                                   = ???
-    override def providerMetadata: UIO[ProviderMetadata]                                             = ???
-    override def clientMetadata: UIO[ClientMetadata]                                                 = ???
-    override def addHook(hook: FeatureHook): UIO[Unit]                                               = ???
-    override def addHooks(hooks: List[FeatureHook]): UIO[Unit]                                       = ???
-    override def clearHooks: UIO[Unit]                                                               = ???
-    override def hooks: UIO[List[FeatureHook]]                                                       = ???
-    override def track(eventName: String): IO[FeatureFlagError, Unit]                                = ???
-    override def track(eventName: String, context: EvaluationContext): IO[FeatureFlagError, Unit]    = ???
-    override def track(eventName: String, details: TrackingEventDetails): IO[FeatureFlagError, Unit] = ???
+    ): ZIO[R, Either[E, FeatureFlagError.TransactionError], TransactionResult[A]]                                 = ???
+    override def events: ZStream[Any, Nothing, ProviderEvent]                                                     = ???
+    override def providerStatus: UIO[ProviderStatus]                                                              = ???
+    override def awaitReady(within: Duration): UIO[ProviderStatus]                                                = ???
+    override def providerMetadata: UIO[ProviderMetadata]                                                          = ???
+    override def clientMetadata: UIO[ClientMetadata]                                                              = ???
+    override def addHook(hook: FeatureHook): UIO[Unit]                                                            = ???
+    override def addHooks(hooks: List[FeatureHook]): UIO[Unit]                                                    = ???
+    override def clearHooks: UIO[Unit]                                                                            = ???
+    override def hooks: UIO[List[FeatureHook]]                                                                    = ???
+    override def track(eventName: String): IO[FeatureFlagError.EvaluationError, Unit]                             = ???
+    override def track(eventName: String, context: EvaluationContext): IO[FeatureFlagError.EvaluationError, Unit] = ???
+    override def track(eventName: String, details: TrackingEventDetails): IO[FeatureFlagError.EvaluationError, Unit] =
+      ???
     override def track(
       eventName: String,
       context: EvaluationContext,
       details: TrackingEventDetails
-    ): IO[FeatureFlagError, Unit] = ???
+    ): IO[FeatureFlagError.EvaluationError, Unit] = ???
   }
 
   def spec = suite("TransactionEvaluationsSpec")(

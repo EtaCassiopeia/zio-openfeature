@@ -26,6 +26,7 @@ CONSTANTS
     MaxEvents,   \* how many events providers may emit in one behaviour
     MaxEvals,    \* how many evaluations may run in one behaviour; 0 leaves evaluation out
     AllowDeath,  \* whether a provider may stop working without reporting it (Die); TRUE only in Witness.cfg
+    Behaviours,  \* what a provider's shutdown() may do: a subset of {"ok", "throws", "hangs"} holding "ok"
     None
 
 All == {P0} \cup Providers
@@ -33,6 +34,7 @@ All == {P0} \cup Providers
 Statuses == {"NotReady", "Ready", "Stale", "Error", "Fatal", "ShuttingDown"}
 SdkStates == {"NONE", "NOT_READY", "READY", "STALE", "ERROR", "FATAL"}
 Signals == {"READY", "STALE", "ERROR", "FATAL"}
+ShutOutcomes == {"none", "ok", "threw", "timedOut"}
 
 \* The values of the record-valued variables, for TypeInv.
 SwapRec == [new : All, prev : All, phase : {"bind", "wait", "unbound", "reconcile"}, before : Statuses,
@@ -48,6 +50,7 @@ ASSUME ConstantsOK ==
     /\ P0 \notin Providers /\ None \notin All /\ None \notin SwapRec
     /\ IsFiniteSet(Providers)
     /\ MaxSwaps \in Nat /\ MaxEvents \in Nat /\ MaxEvals \in Nat /\ AllowDeath \in BOOLEAN
+    /\ Behaviours \subseteq {"ok", "throws", "hangs"} /\ "ok" \in Behaviours
 
 VARIABLES
     \* The library
@@ -72,6 +75,9 @@ ran,         \* whether the provider's current registration's initialize() retur
     emitted,     \* events emitted so far (bounded by MaxEvents)
     shuts,       \* how many times each provider's current registration was shut down
     oldPending,  \* the SDK has queued this provider's shutdown (shutDownOld) on its executor, and it has not run yet
+    shutBehaviour, \* ghost: what the provider's current registration's shutdown() does, fixed when it is registered
+    shutOutcome, \* ghost: how the last shutdown() call on the provider's current registration ended ("none": no call).
+                 \* Nothing in the library reads either: a throw is logged and a hang is left behind at the bound.
     twoInits,    \* a provider's initialize() was entered while an earlier call ran
     dead,        \* ghost: the provider's current registration stopped working without reporting it.  Nothing in the
                  \* library reads it: the library learns a provider's health only from the SDK's state and events.
@@ -80,8 +86,10 @@ ran,         \* whether the provider's current registration's initialize() retur
     evals        \* each evaluation slot's progress through Evaluator.gated
 
 vars == << status, installed, lock, gate, swap, pending, orphans, bridgeOn, shutDown, closed, owns,
-           bound, sdk, inits, ran, prevOf, events, emitted, shuts, oldPending, twoInits, dead, swaps, evals >>
-sdkVars == << bound, sdk, inits, ran, prevOf, events, emitted, shuts, oldPending, twoInits, dead >>
+           bound, sdk, inits, ran, prevOf, events, emitted, shuts, oldPending, shutBehaviour, shutOutcome, twoInits,
+           dead, swaps, evals >>
+sdkVars == << bound, sdk, inits, ran, prevOf, events, emitted, shuts, oldPending, shutBehaviour, shutOutcome, twoInits,
+              dead >>
 
 Used == {p \in All : sdk[p] # "NONE"}
 
@@ -104,6 +112,8 @@ TypeInv ==
     /\ emitted \in Nat
     /\ shuts \in [All -> Nat]
     /\ oldPending \in [All -> BOOLEAN]
+    /\ shutBehaviour \in [All -> Behaviours]
+    /\ shutOutcome \in [All -> ShutOutcomes]
     /\ twoInits \in BOOLEAN
     /\ dead \in [All -> BOOLEAN]
     /\ swaps \in Nat
@@ -185,6 +195,8 @@ InitWith(events0) ==
     /\ emitted = 0
     /\ shuts = [p \in All |-> 0]
     /\ oldPending = [p \in All |-> FALSE]
+    /\ shutBehaviour \in [All -> Behaviours]
+    /\ shutOutcome = [p \in All |-> "none"]
     /\ twoInits = FALSE
     /\ dead = [p \in All |-> FALSE]
     /\ swaps = 0
@@ -213,6 +225,8 @@ InitAsync ==
     /\ emitted = 0
     /\ shuts = [p \in All |-> 0]
     /\ oldPending = [p \in All |-> FALSE]
+    /\ shutBehaviour \in [All -> Behaviours]
+    /\ shutOutcome = [p \in All |-> "none"]
     /\ twoInits = FALSE
     /\ dead = [p \in All |-> FALSE]
     /\ swaps = 0
@@ -238,6 +252,20 @@ Freeze(os, p) ==
 
 \* A provider that reported STALE while starting finishes starting before anything else happens (see EmitStaleWhileStarting).
 Settling == \E p \in All : inits[p] > 0 /\ sdk[p] = "STALE"
+
+\* How a shutdown() call ends, as the library or the SDK sees it: a return, a throw, or the bound elapsing while it
+\* hangs (the call is left behind; time is not modelled, so the bound elapses in the same step).
+ShutOutcomeOf(b) == CASE b = "ok" -> "ok" [] b = "throws" -> "threw" [] OTHER -> "timedOut"
+
+\* shutdown() is called once on each provider in S, by the library (boundedProviderShutdown) or by the SDK: the call
+\* is counted and its outcome recorded.  Every shutdown site goes through this.  Nothing reads the outcome: a throw is
+\* logged, a hang is abandoned at the bound, and no call is retried, so the teardown completes whatever the providers
+\* do (NoRetryAfterFailure, ShutdownEnds).
+CallShutdowns(S) ==
+    /\ shuts' = [p \in All |-> shuts[p] + (IF p \in S THEN 1 ELSE 0)]
+    /\ shutOutcome' = [p \in All |-> IF p \in S THEN ShutOutcomeOf(shutBehaviour[p]) ELSE shutOutcome[p]]
+
+CallShutdown(p) == CallShutdowns({p})
 
 -----------------------------------------------------------------------------
 (* setProvider *)
@@ -282,6 +310,8 @@ SdkBind ==
     /\ twoInits' = (twoInits \/ inits[swap.new] > 0)
     /\ ran' = [ran EXCEPT ![swap.new] = FALSE]
     /\ shuts' = [shuts EXCEPT ![swap.new] = 0]
+    /\ \E b \in Behaviours : shutBehaviour' = [shutBehaviour EXCEPT ![swap.new] = b]
+    /\ shutOutcome' = [shutOutcome EXCEPT ![swap.new] = "none"]
     /\ dead' = [dead EXCEPT ![swap.new] = FALSE]
     /\ prevOf' = [prevOf EXCEPT ![swap.new] = bound]
     /\ orphans' = Freeze(orphans, swap.new)
@@ -308,16 +338,16 @@ SdkInitOk(p) ==
     /\ events' = events \cup {[p |-> p, e |-> "READY"]}
     /\ oldPending' = IF prevOf[p] # None THEN [oldPending EXCEPT ![prevOf[p]] = TRUE] ELSE oldPending
     /\ UNCHANGED << status, installed, lock, gate, swap, pending, orphans, bridgeOn, shutDown, closed,
-                    bound, prevOf, emitted, shuts, twoInits, dead, swaps, owns >>
+                    bound, prevOf, emitted, shuts, shutBehaviour, shutOutcome, twoInits, dead, swaps, owns >>
 
 \* SdkShutDownOld: the SDK's executor runs the shutdown it queued, with no ordering against anything the library does
 \* after the initialize() return it observes.  No probe point records it.
 SdkShutDownOld(p) ==
     /\ oldPending[p]
     /\ oldPending' = [oldPending EXCEPT ![p] = FALSE]
-    /\ shuts' = [shuts EXCEPT ![p] = @ + 1]
+    /\ CallShutdown(p)
     /\ UNCHANGED << status, installed, lock, gate, swap, pending, orphans, bridgeOn, shutDown, closed, owns, swaps,
-                    bound, sdk, inits, ran, prevOf, events, emitted, twoInits, dead >>
+                    bound, sdk, inits, ran, prevOf, events, emitted, shutBehaviour, twoInits, dead >>
 
 \* SdkInitFail: a running initialize() throws.  The SDK reports ERROR; nothing is shut down.  (A provider that reported
 \* STALE while starting and then fails is the documented "taken at its word" limit, outside this model.)
@@ -328,7 +358,8 @@ SdkInitFail(p) ==
     /\ sdk' = [sdk EXCEPT ![p] = "ERROR"]
     /\ events' = events \cup {[p |-> p, e |-> "ERROR"]}
     /\ UNCHANGED << status, installed, lock, gate, swap, pending, orphans, bridgeOn, shutDown, closed,
-                    bound, ran, prevOf, emitted, shuts, oldPending, twoInits, dead, swaps, owns >>
+                    bound, ran, prevOf, emitted, shuts, oldPending, shutBehaviour, shutOutcome, twoInits, dead, swaps,
+                    owns >>
 
 \* SwapDone: the new provider initialized (or reports STALE from inside initialize(), taken at its word).  The swap
 \* ends in the state the SDK reports for it, an ERROR or FATAL it reported since included; SwapReconcile then reads the
@@ -392,10 +423,10 @@ SwapRollback(ok, r, early) ==
        /\ events' = IF early THEN events ELSE events \cup sent
        \* The previous provider's own count needs no reset: a failed swap never shut it down.
        /\ oldPending' = IF ok THEN [oldPending EXCEPT ![failed] = TRUE] ELSE oldPending
-       /\ shuts' = IF ok THEN shuts ELSE [shuts EXCEPT ![failed] = @ + 1]
+       /\ IF ok THEN UNCHANGED << shuts, shutOutcome >> ELSE CallShutdown(failed)
     /\ orphans' = Freeze(orphans, swap.prev)
     /\ swap' = Outcome("NONE") /\ pending' = None
-    /\ UNCHANGED << lock, gate, bridgeOn, shutDown, closed, inits, emitted, swaps, owns >>
+    /\ UNCHANGED << lock, gate, bridgeOn, shutDown, closed, inits, emitted, shutBehaviour, swaps, owns >>
 
 \* SwapRollbackUnbound: a swap whose registration was refused before binding.  Nothing is registered again: the previous
 \* provider is still bound, in the state its registration has.  The status goes back to the one before the swap, and
@@ -440,7 +471,7 @@ Emit(p, e) ==
     /\ events' = events \cup {[p |-> p, e |-> e]}
     /\ emitted' = emitted + 1
     /\ UNCHANGED << status, installed, lock, gate, swap, pending, orphans, bridgeOn, shutDown, closed,
-                    bound, inits, ran, prevOf, shuts, oldPending, twoInits, dead, swaps, owns >>
+                    bound, inits, ran, prevOf, shuts, oldPending, shutBehaviour, shutOutcome, twoInits, dead, swaps, owns >>
 
 \* A provider reports STALE from inside initialize(), and then starts.  The SDK's state is STALE until initialize()
 \* returns; a swap waiting on the provider sees it as initialized.  The model holds such a provider to finishing its
@@ -459,7 +490,7 @@ EmitStaleWhileStarting(p) ==
     /\ events' = events \cup {[p |-> p, e |-> "STALE"]}
     /\ emitted' = emitted + 1
     /\ UNCHANGED << status, installed, lock, gate, swap, pending, orphans, bridgeOn, shutDown, closed,
-                    bound, inits, ran, prevOf, shuts, oldPending, twoInits, dead, swaps, owns >>
+                    bound, inits, ran, prevOf, shuts, oldPending, shutBehaviour, shutOutcome, twoInits, dead, swaps, owns >>
 
 \* Die: a provider that initialized stops working without reporting it: its evaluations fail or hang, and it emits
 \* nothing.  Its SDK state stays as it was, so nothing the library reads changes.  A new registration of the provider
@@ -469,7 +500,8 @@ Die(p) ==
     /\ ran[p] /\ shuts[p] = 0 /\ ~dead[p]
     /\ dead' = [dead EXCEPT ![p] = TRUE]
     /\ UNCHANGED << status, installed, lock, gate, swap, pending, orphans, bridgeOn, shutDown, closed, owns, swaps,
-                    bound, sdk, inits, ran, prevOf, events, emitted, shuts, oldPending, twoInits >>
+                    bound, sdk, inits, ran, prevOf, events, emitted, shuts, oldPending, shutBehaviour, shutOutcome,
+                    twoInits >>
 
 \* DeliverEvent + ApplySignal: the SDK delivers a pending event, in any order, to the handlers of the domains its
 \* provider is bound to; the bridge's handler runs only for the provider bound to the slot and while it is registered.
@@ -485,7 +517,8 @@ DeliverToBridge(ev) ==
          ELSE IF sdk[bound] = "NOT_READY" THEN status
          ELSE Apply(status, sdk[bound])
     /\ UNCHANGED << installed, lock, gate, swap, pending, orphans, bridgeOn, shutDown, closed,
-                    bound, sdk, inits, ran, prevOf, emitted, shuts, oldPending, twoInits, dead, swaps, owns >>
+                    bound, sdk, inits, ran, prevOf, emitted, shuts, oldPending, shutBehaviour, shutOutcome, twoInits, dead,
+                    swaps, owns >>
 
 \* An event no handler of this instance receives: from a provider no longer bound, or after the bridge is gone.
 Discard(ev) ==
@@ -493,7 +526,8 @@ Discard(ev) ==
     /\ ~(bridgeOn /\ ev.p = bound)
     /\ events' = events \ {ev}
     /\ UNCHANGED << status, installed, lock, gate, swap, pending, orphans, bridgeOn, shutDown, closed,
-                    bound, sdk, inits, ran, prevOf, emitted, shuts, oldPending, twoInits, dead, swaps, owns >>
+                    bound, sdk, inits, ran, prevOf, emitted, shuts, oldPending, shutBehaviour, shutOutcome, twoInits, dead,
+                    swaps, owns >>
 
 Deliver(ev) == DeliverToBridge(ev) \/ Discard(ev)
 
@@ -508,20 +542,22 @@ OrphanResolved(o) ==
     /\ View(o) \in {"READY", "STALE", "ERROR", "FATAL"}
     /\ Released(o) => ~oldPending[o.prev]
     /\ orphans' = orphans \ {o}
-    /\ shuts' = IF Released(o) THEN shuts ELSE [shuts EXCEPT ![o.prev] = @ + 1]
+    /\ IF Released(o) THEN UNCHANGED << shuts, shutOutcome >> ELSE CallShutdown(o.prev)
     /\ UNCHANGED << status, installed, lock, gate, swap, pending, bridgeOn, shutDown, closed,
-                    bound, sdk, inits, ran, prevOf, events, emitted, oldPending, twoInits, dead, swaps, owns >>
+                    bound, sdk, inits, ran, prevOf, events, emitted, oldPending, shutBehaviour, twoInits, dead, swaps,
+                    owns >>
 
 \* The API's shutdown, then the forced resolve of every pending entry: the shutdowns the SDK's executor has queued run
 \* (it lets queued tasks finish), the API shuts the provider bound to the slot down and interrupts every initialize()
 \* still running; an entry whose watched provider is not READY or STALE gets its previous provider shut down.
+\* The providers the teardown shuts down: at most one call each, since a bound provider is never one a queued shutdown
+\* or an unreleased entry still holds (SwapStart's guards), and no provider has two entries (one swap leaves it behind).
+TearDownShuts ==
+    {bound} \cup {p \in All : oldPending[p]} \cup {o.prev : o \in {x \in orphans : ~Released(x)}}
+
 TearDown ==
     /\ ~Settling
-    /\ shuts' = [p \in All |->
-                   shuts[p]
-                   + (IF p = bound THEN 1 ELSE 0)
-                   + (IF oldPending[p] THEN 1 ELSE 0)
-                   + Cardinality({o \in orphans : o.prev = p /\ ~Released(o)})]
+    /\ CallShutdowns(TearDownShuts)
     /\ oldPending' = [p \in All |-> FALSE]
     /\ inits' = [p \in All |-> 0]
     /\ orphans' = {}
@@ -544,12 +580,12 @@ ShutdownStart ==
 \* down again.
 ShutdownDone ==
     /\ lock = "shutdown"
-    /\ IF shutDown \/ closed \/ ~owns THEN UNCHANGED << shuts, oldPending, inits, orphans >> ELSE TearDown
+    /\ IF shutDown \/ closed \/ ~owns THEN UNCHANGED << shuts, shutOutcome, oldPending, inits, orphans >> ELSE TearDown
     /\ status' = "NotReady"
     /\ shutDown' = TRUE
     /\ lock' = "free"
     /\ UNCHANGED << installed, gate, swap, pending, bridgeOn, closed,
-                    bound, sdk, ran, prevOf, events, emitted, twoInits, dead, swaps, owns >>
+                    bound, sdk, ran, prevOf, events, emitted, shutBehaviour, twoInits, dead, swaps, owns >>
 
 \* ScopeClose: the API's scope finalizer.  After a shutdown there is nothing left to tear down.
 ScopeClose ==
@@ -557,10 +593,10 @@ ScopeClose ==
     /\ closed' = TRUE
     /\ bridgeOn' = FALSE
     /\ IF shutDown \/ ~owns
-         THEN UNCHANGED << shuts, oldPending, inits, orphans >>
+         THEN UNCHANGED << shuts, shutOutcome, oldPending, inits, orphans >>
          ELSE TearDown
     /\ UNCHANGED << status, installed, lock, gate, swap, pending, shutDown,
-                    bound, sdk, ran, prevOf, events, emitted, twoInits, dead, swaps, owns >>
+                    bound, sdk, ran, prevOf, events, emitted, shutBehaviour, twoInits, dead, swaps, owns >>
 
 -----------------------------------------------------------------------------
 LifecycleNext ==
@@ -695,6 +731,17 @@ NoConcurrentInit == ~twoInits /\ \A p \in All : inits[p] <= 1
 
 \* No registration of a provider is shut down twice.
 ShutDownAtMostOnce == \A p \in All : shuts[p] <= 1
+
+\* A shutdown that threw or outlived its bound is not called again: the library logs and moves on.  A deliberate retry
+\* would change this property.  Today a failed call counts like any other, so ShutDownAtMostOnce implies it; it names
+\* the policy for the failed case.
+NoRetryAfterFailure == \A p \in All : shutOutcome[p] \in {"threw", "timedOut"} => shuts[p] = 1
+
+\* No provider is shut down twice by one teardown: the bound provider, the providers whose shutdown the SDK queued and
+\* the unreleased orphans' predecessors are disjoint (SwapStart's guards), which is what lets TearDown shut down a set.
+TearDownOnce ==
+    \A p \in All : (IF p = bound THEN 1 ELSE 0) + (IF oldPending[p] THEN 1 ELSE 0)
+                  + Cardinality({o \in orphans : o.prev = p /\ ~Released(o)}) <= 1
 
 \* Outside a swap or a shutdown, with every event of the installed provider delivered, the status is the one the SDK's
 \* state for it implies (or Fatal, which no event leaves), and the slot binds the installed provider.

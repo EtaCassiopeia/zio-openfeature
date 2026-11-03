@@ -177,7 +177,7 @@ object LifecycleInterleavingSpec extends ZIOSpecDefault {
         "LateReady",
         "SwapDone"
       ),
-    Primary.Shutdown   -> Set("ShutdownStart", "ApplySignal", "ProviderShutDown", "ShutdownDone"),
+    Primary.Shutdown   -> Set("ShutdownStart", "ApplySignal", "ProviderShutDown", "ShutdownReturned", "ShutdownDone"),
     Primary.EventError -> Set("DeliverEvent", "ApplySignal")
   )
 
@@ -187,8 +187,8 @@ object LifecycleInterleavingSpec extends ZIOSpecDefault {
     */
   val mayReach: Map[Primary, Set[String]] =
     Map(
-      Primary.SwapGood    -> Set("ProviderShutDown"),
-      Primary.SwapFailing -> Set("ProviderShutDown"),
+      Primary.SwapGood    -> Set("ProviderShutDown", "ShutdownReturned"),
+      Primary.SwapFailing -> Set("ProviderShutDown", "ShutdownReturned"),
       Primary.SwapHanging -> Set("DeliverEvent"),
       Primary.Shutdown    -> Set("DeliverEvent")
     ).withDefaultValue(Set.empty)

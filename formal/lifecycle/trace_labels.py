@@ -29,8 +29,16 @@ setProvider of the bound provider, which changes nothing), the SwapDone point th
 every swap, deliveries while a swap's gate is up (the model drops those), and deliveries once a shutdown has started
 (the bridge is deregistered then; a handler already running records one anyway). Watchdog is not modelled.
 AwaitSdkShutDown is the wait SwapStart's guard stands for, before the swap starts.
-InitEntered, InitReturned and ProviderShutDown, which the registered wrapper records, are SDK steps (an `initialize()`
-running and returning, `shutDownOld`), which the check leaves free.
+InitEntered and InitReturned, which the registered wrapper records, are SDK steps (an `initialize()` running and
+returning), which the check leaves free. ProviderShutDown and ShutdownReturned(ok) are counted on the teardown they
+fall in: a ShutdownDone or ScopeClose label carries `shuts`, how many providers' shutdown() the teardown called,
+`threw`, how many of those calls threw, and `returned`, how many returned at all (the rest outlived the bound); the
+model's TearDown may shut down no more providers, and no more of each behaviour, than the run counted (the SDK's
+executor can run a queued shutdown inside the teardown that the model placed before it, so the run may count more).
+Every label carries `owner`: an OrphanRecorded point marks the instance as owning its API, the topology whose teardown
+the counts constrain. Shutdown points outside a teardown (the SDK's shutDownOld, an orphan's settle, a rollback's
+cleanup) stay free. A run recorded before the wrapper had these
+points carries `shuts = -1`, and the check does not constrain its teardowns.
 """
 import json
 import re
@@ -43,6 +51,11 @@ def labels(records):
     if begin is None:
         raise ValueError("the run has no Begin marker")
     out = []
+    recorded = any(r["point"] == "ProviderShutDown" for r in records)
+    # Only an instance that owns its API records an orphan, so one marks the run's instance as the owner; the model
+    # then takes the owning topology, whose teardown the counts constrain.
+    owner = any(r["point"] == "OrphanRecorded" for r in records)
+    teardown = None
     in_swap = False
     swap_outcome = None
     rollback = None
@@ -52,28 +65,55 @@ def labels(records):
     closed = False
 
     def act(label, **fields):
-        entry = {"action": label, "event": "", "state": "", "ok": False}
+        entry = {"action": label, "event": "", "state": "", "ok": False, "shuts": -1, "threw": 0, "returned": 0,
+                 "owner": owner}
         entry.update(fields)
         out.append(entry)
         return entry
+
+    calls = set()  # the shutdown() calls the current teardown made, by number, until they return
+
+    def count(entry, point, arg):
+        if entry is None or not recorded:
+            return
+        if point == "ProviderShutDown":
+            entry["shuts"] = max(entry["shuts"], 0) + 1
+            calls.add(arg)
+        # A return counts for the teardown that made the call; one whose call came before the teardown (a late return
+        # of the SDK's queued shutdown) does not.  A run recorded before the points numbered their call pairs returns
+        # with calls by count.
+        elif point == "ShutdownReturned":
+            parts = arg.split()
+            call, ok = (parts[0], parts[1]) if len(parts) == 2 else ("", parts[0])
+            if (call in calls) if call else entry["returned"] < entry["shuts"]:
+                calls.discard(call)
+                entry["returned"] += 1
+                entry["threw"] += ok == "false"
 
     for r in records[begin + 1:]:
         point, arg = r["point"], r.get("arg", "")
         if point == "Watchdog":
             return None
         if closed:
+            count(teardown, point, arg)
             continue
         if point == "ScopeClose":
-            act("ScopeClose")
+            teardown = act("ScopeClose", shuts=0 if recorded else -1)
+            calls.clear()
             closed = True
             continue
         if in_shutdown:
             if point == "ShutdownDone":
-                act("ShutdownDone")
+                teardown["action"] = "ShutdownDone"
                 in_shutdown = False
+            else:
+                count(teardown, point, arg)
             continue
         if point == "ShutdownStart":
             act("ShutdownStart")
+            # The teardown's points come between ShutdownStart and ShutdownDone; the entry is labelled at ShutdownDone.
+            teardown = act("ShutdownDone", shuts=0 if recorded else -1)
+            calls.clear()
             in_shutdown = shut_down = True
             continue
         if point == "SwapStart":
@@ -112,6 +152,9 @@ def labels(records):
             act("Deliver", event=arg.replace("PROVIDER_", ""))
         elif point == "OrphanResolved":
             act("OrphanResolved")
+    # A run cut off inside a shutdown never reached ShutdownDone: the entry made for it is not a step it took.
+    if in_shutdown:
+        del out[-1]
     return out
 
 

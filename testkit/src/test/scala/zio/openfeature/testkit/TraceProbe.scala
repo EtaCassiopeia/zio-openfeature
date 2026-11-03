@@ -63,9 +63,11 @@ object TraceProbe {
   }
 
   private def argument(point: Point): String = point match {
-    case Point.ApplySignal(signal) => signal.toString
-    case Point.DeliverEvent(event) => event
-    case _                         => ""
+    case Point.ApplySignal(signal)        => signal.toString
+    case Point.DeliverEvent(event)        => event
+    case Point.ProviderShutDown(call)     => call.toString
+    case Point.ShutdownReturned(call, ok) => s"$call $ok"
+    case _                                => ""
   }
 
   private def escape(s: String): String = s.flatMap {

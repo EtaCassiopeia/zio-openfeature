@@ -559,6 +559,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   named rows check that the caller ends interrupted, `finallyAfter` runs once if the hook stage was entered, the
   provider is entered once if the call started, no abandoned call stays counted, the transaction gains the evaluation
   only if it completed, and nothing leaks.
+- **The lifecycle model represents a provider whose `shutdown()` throws or hangs** (#719). What a provider's
+  `shutdown()` does is fixed at its registration (`Behaviours`: returns, throws, or hangs past the bound), and every
+  shutdown site (the SDK's queued shutdown, a failed rollback's cleanup, an orphan's settle, the teardown) goes through
+  one helper that counts the call and records how it ended. Every invariant holds whatever the providers do, the new
+  `NoRetryAfterFailure` says a shutdown that threw or timed out is never called again, and the teardown still ends
+  (`ShutdownEnds`). `Shutdowns.cfg` and `ShutdownsLiveness.cfg` check it on every pull request; three mutants (a
+  teardown without a bound on a hung shutdown; a retry at the scope close; a throw that stops the teardown) are caught.
+  The registered wrapper records `ShutdownReturned`, and trace validation checks that the model's teardown shuts down
+  no more providers, and no more throwing or hanging, than the run counted, on a fixture recorded with a throwing
+  shutdown.
 - **Behaviours of the lifecycle model are replayed against the code** (#726). `generate.py` has TLC write random
   behaviours of `Lifecycle.tla`, labelled with the action that produced each state, and `LifecycleReplaySpec` folds
   each one through `LifecycleStep.step`, comparing the record's library variables with the model's after every library

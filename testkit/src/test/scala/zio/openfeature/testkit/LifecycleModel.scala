@@ -33,6 +33,9 @@ object LifecycleModel {
 
     /** Starts at once; `shutdown()` takes a few hundred milliseconds. */
     case object SlowShutdown extends Kind
+
+    /** Starts at once; `shutdown()` throws. */
+    case object ThrowingShutdown extends Kind
   }
 
   sealed trait Action extends Product with Serializable
@@ -188,7 +191,7 @@ object LifecycleModel {
         kind match {
           // On success the status is the state the SDK reports for the new provider, Ready or Stale; no kind here
           // reports STALE while it starts, so Ready.
-          case Kind.Good | Kind.SlowInit | Kind.SlowShutdown =>
+          case Kind.Good | Kind.SlowInit | Kind.SlowShutdown | Kind.ThrowingShutdown =>
             m.copy(status = Ready, installed = Some(incoming), swapCompleted = true)
           // "If the new provider's initialize() throws ... the previous provider is registered again, and the status
           // returns to Ready", unless "that fails too", and then "the status stays Error"; and not at all when the

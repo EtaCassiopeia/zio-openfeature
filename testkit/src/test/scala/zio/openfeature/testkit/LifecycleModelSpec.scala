@@ -75,12 +75,13 @@ object LifecycleModelSpec extends ZIOSpecDefault {
   )
 
   private def label(kind: Kind): String = kind match {
-    case Kind.Good         => "good"
-    case Kind.FailingInit  => "failing"
-    case Kind.HangingInit  => "hanging"
-    case Kind.SlowInit     => "slow"
-    case Kind.HangThenFail => "hang-then-fail"
-    case Kind.SlowShutdown => "slow-shutdown"
+    case Kind.Good             => "good"
+    case Kind.FailingInit      => "failing"
+    case Kind.HangingInit      => "hanging"
+    case Kind.SlowInit         => "slow"
+    case Kind.HangThenFail     => "hang-then-fail"
+    case Kind.SlowShutdown     => "slow-shutdown"
+    case Kind.ThrowingShutdown => "throwing-shutdown"
   }
 
   private def newProvider(who: Installed, kind: Kind): URIO[Scope, Provider] = {
@@ -100,9 +101,11 @@ object LifecycleModelSpec extends ZIOSpecDefault {
             case Kind.Good | Kind.HangThenFail => ZIO.unit
             case Kind.FailingInit              =>
               p.script(Op.Initialize, Fault.Throw(new RuntimeException(s"${who.id}: initialize fails")))
-            case Kind.HangingInit  => p.script(Op.Initialize, Fault.HangUntilReleased, Fault.Succeed)
-            case Kind.SlowInit     => p.script(Op.Initialize, Fault.Delay(SlowInitDelay))
-            case Kind.SlowShutdown => p.script(Op.Shutdown, Fault.Delay(SlowShutdownDelay))
+            case Kind.HangingInit      => p.script(Op.Initialize, Fault.HangUntilReleased, Fault.Succeed)
+            case Kind.SlowInit         => p.script(Op.Initialize, Fault.Delay(SlowInitDelay))
+            case Kind.SlowShutdown     => p.script(Op.Shutdown, Fault.Delay(SlowShutdownDelay))
+            case Kind.ThrowingShutdown =>
+              p.script(Op.Shutdown, Fault.Throw(new RuntimeException(s"${who.id}: shutdown fails")))
           }
         }
     }
@@ -598,17 +601,18 @@ object LifecycleModelSpec extends ZIOSpecDefault {
 
   private val genKind: Gen[Any, Kind] =
     Gen.weighted(
-      Gen.const(Kind.Good)         -> 10.0,
-      Gen.const(Kind.SlowInit)     -> 4.0,
-      Gen.const(Kind.SlowShutdown) -> 3.0,
-      Gen.const(Kind.FailingInit)  -> 6.0,
-      Gen.const(Kind.HangingInit)  -> 5.0,
-      Gen.const(Kind.HangThenFail) -> 3.0
+      Gen.const(Kind.Good)             -> 10.0,
+      Gen.const(Kind.SlowInit)         -> 4.0,
+      Gen.const(Kind.SlowShutdown)     -> 3.0,
+      Gen.const(Kind.ThrowingShutdown) -> 2.0,
+      Gen.const(Kind.FailingInit)      -> 6.0,
+      Gen.const(Kind.HangingInit)      -> 5.0,
+      Gen.const(Kind.HangThenFail)     -> 3.0
     )
 
   // A swap that settles on its own, so a pair of actions never leaves one parked.
   private val genSettlingKind: Gen[Any, Kind] =
-    Gen.elements(Kind.Good, Kind.SlowInit, Kind.FailingInit, Kind.SlowShutdown)
+    Gen.elements(Kind.Good, Kind.SlowInit, Kind.FailingInit, Kind.SlowShutdown, Kind.ThrowingShutdown)
 
   private val genSetProvider: Gen[Any, Action] =
     (genKind <*> Gen.weighted(Gen.const(true) -> 1.0, Gen.const(false) -> 2.0)).map { case (k, r) =>
@@ -792,6 +796,10 @@ object LifecycleModelSpec extends ZIOSpecDefault {
       regression(
         "a provider that shuts down slowly is still shut down once, inside the close bound",
         List(SetProvider(Kind.SlowShutdown), SetProvider(Kind.SlowShutdown), Shutdown)
+      ),
+      regression(
+        "a provider whose shutdown throws is shut down once, and the teardown completes",
+        List(SetProvider(Kind.ThrowingShutdown), SetProvider(Kind.ThrowingShutdown), Shutdown)
       )
     ),
     suite("harness")(

@@ -324,6 +324,9 @@ lazy val core = (project in file("core"))
         // fromAcquireAsync's switch takes the switchable ManagedProvider.
         // non-public: private[openfeature]
         ProblemMatcher.make("zio.openfeature.FeatureFlagsLive.switchProvider"),
+        // The name is written through the lifecycle's step, as what the instance knows of it rather than a string.
+        // non-public: private[openfeature]
+        ProblemMatcher.make("zio.openfeature.FeatureFlagsLive.refreshUnknownProviderName"),
         // A top-level `private` class, visible only inside `zio.openfeature`; it now carries the registry's config and
         // holds its clients as the instance.
         // non-public: private[openfeature]

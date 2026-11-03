@@ -8,7 +8,7 @@ import zio.openfeature._
   */
 final private[openfeature] class HookPipeline(
   state: FeatureFlagsState,
-  providerNameRef: java.util.concurrent.atomic.AtomicReference[String],
+  providerNameRef: java.util.concurrent.atomic.AtomicReference[ProviderName],
   domain: Option[String],
   version: Option[String],
   probe: EvaluationProbe = EvaluationProbe.none
@@ -25,7 +25,7 @@ final private[openfeature] class HookPipeline(
     for {
       apiHooks     <- state.zioApiHooksRef.get
       currentHooks <- state.hooksRef.get
-      pName        <- ZIO.succeed(providerNameRef.get())
+      pName        <- ZIO.succeed(providerNameRef.get().render)
       flagType = FlagValueType.fromFlagType[A]
       // Order per spec §4.4.1: API -> Client -> Invocation. Provider hooks run inside the Java SDK call.
       // Pre-filtering by flag type (spec 4.4.2.1) lets evaluations with no applicable hooks skip the

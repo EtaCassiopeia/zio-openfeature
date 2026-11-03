@@ -3,12 +3,7 @@ package zio.openfeature.internal
 import zio._
 import zio.stream.SubscriptionRef
 import zio.openfeature._
-import zio.openfeature.FeatureFlags.{
-  DefaultEvaluationTimeout,
-  DefaultInitTimeout,
-  DefaultMaxAbandonedCalls,
-  UnknownProviderName
-}
+import zio.openfeature.FeatureFlags.{DefaultEvaluationTimeout, DefaultInitTimeout, DefaultMaxAbandonedCalls}
 import dev.openfeature.sdk.{FeatureProvider => OFFeatureProvider, NoOpProvider, OpenFeatureAPI, ProviderState}
 import dev.openfeature.sdk.exceptions.{FatalError, GeneralError}
 import java.util.concurrent.TimeoutException
@@ -134,8 +129,8 @@ private[openfeature] object FeatureFlagsFactories {
       // initialized, and a wrapper around one throws reading it. `ZIO.attempt` makes a throw a typed failure, never a
       // defect that would strand the registry's build fiber with its promise unsettled. The sync build tolerates it
       // (`unreadableNameIsUnknown`) and reads the name again, strictly, once the provider has initialized.
-      read = ZIO.attempt(ProviderNames.of(provider))
-      providerName <- if (unreadableNameIsUnknown) read.orElseSucceed(UnknownProviderName) else read
+      read = ZIO.attempt(ProviderNames.beforeInit(provider))
+      providerName <- if (unreadableNameIsUnknown) read.orElseSucceed(ProviderName.Pending) else read
       baseState    <- FeatureFlagsState.make
       state = statusRef.fold(baseState)(ref => baseState.copy(statusRef = ref))
       _                  <- state.hooksRef.set(initialHooks)
@@ -193,14 +188,11 @@ private[openfeature] object FeatureFlagsFactories {
       serving == provider || state == ProviderState.NOT_READY
     }
 
-  /** Record the name of a provider whose metadata name only materializes in `initialize()`, after a sync init. Only a
-    * still-"unknown" name is replaced, so a name the bridge already took from the READY event is kept.
+  /** Record the name of a provider after a sync init: it may only exist once `initialize()` has run, and a provider
+    * that has none by now has none. Only a `Pending` name is replaced.
     */
   private def refreshProviderName(provider: OFFeatureProvider, ff: FeatureFlagsLive): Task[Unit] =
-    ZIO.attempt(ProviderNames.optional(provider)).map {
-      case Some(name) => ff.refreshUnknownProviderName(name)
-      case None       => ()
-    }
+    ZIO.attempt(ProviderNames.afterInit(provider)).flatMap(ff.recordProviderName(provider, _))
 
   /** Shared initialization logic for all factory methods. */
   def build(
@@ -317,8 +309,8 @@ private[openfeature] object FeatureFlagsFactories {
         .tapError(failedBuild)
       // A provider reused from another domain of this API is serving there: the build fails without shutting it down.
       verified <- ((verifyInitState(settled) <* verifyProviderState(managed)) <*
-        // A provider whose metadata name only exists once it has initialized (the SDK's MultiProvider) was stamped
-        // with the "unknown" fallback; now that it has, record its real name.
+        // A provider whose metadata name only exists once it has initialized (the SDK's MultiProvider) is still
+        // `Pending`; now that it has, its name is final.
         refreshProviderName(managed, ff))
         .tapError(e => if (isReused(settled)) ff.stopEventBridge else failedBuild(e))
       // Only seed status when the caller didn't hand us a shared ref (testkit shares one). Routed through

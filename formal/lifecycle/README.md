@@ -346,7 +346,11 @@ outcome).
 - **The watcher's two-tick wait.** The orphan watcher acts on an `ERROR` only when it persists across two ticks, which
   gives the SDK's `PROVIDER_READY` time to arrive; the model reads whether `initialize()` returned directly.
 - **Time.** A timeout is an action enabled while `initialize()` runs; how long anything takes is not modelled.
-- **The registry, shared APIs and `fromAcquireAsync`.** The model is one instance that owns its API.
+- **Several instances on one API.** The model is one instance, owning its API or sharing it (`owns`). The registry
+  and the shared-API topology, with their ownership rules, are `formal/registry` (`Registry.tla`), a coarser model
+  composed with this one by assumption: this one checks each instance's swap protocol, that one who tears the API
+  down, which provider is shut down by whom and how often, and one client per domain. `fromAcquireAsync` on a
+  shared API is an instance like any other there; its switch is not an SDK registration.
 - **The async build's init watchdog.** The async start is in (`InitAsync`); its watchdog is not, and
   `LifecycleInterleavingSpec` covers it.
 

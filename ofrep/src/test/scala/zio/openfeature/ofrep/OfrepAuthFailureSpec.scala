@@ -51,7 +51,7 @@ object OfrepAuthFailureSpec extends ZIOSpecDefault {
         override def error(ctx: HookContext, err: FeatureFlagError, hints: HookHints): UIO[Unit] =
           seen.update(_ :+ err)
       }
-      env <- FeatureFlags.fromProvider(provider, FeatureFlagsConfig().withHooks(List(hook))).build
+      env <- FeatureFlags.fromProvider(provider, FeatureFlagsConfig.default.withHooks(List(hook))).build
     } yield (env.get[FeatureFlags], seen)
 
   private def authFailureTest(status: Int) =

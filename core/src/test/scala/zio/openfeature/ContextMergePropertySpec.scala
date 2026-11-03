@@ -128,7 +128,7 @@ object ContextMergePropertySpec extends ZIOSpecDefault {
           val scoped      = ctxs(4)
           val invocation  = ctxs(5)
           val received    = new AtomicReference[Option[OFEvaluationContext]](None)
-          val config      = FeatureFlagsConfig().withContextSource(ContextSource(ZIO.succeed(source)))
+          val config      = FeatureFlagsConfig.default.withContextSource(ContextSource(ZIO.succeed(source)))
           for {
             ff <- FeatureFlags
               .fromProvider(

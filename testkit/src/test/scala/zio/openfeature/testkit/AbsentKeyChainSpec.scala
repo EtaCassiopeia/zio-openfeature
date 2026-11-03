@@ -38,7 +38,7 @@ object AbsentKeyChainSpec extends ZIOSpecDefault {
     FeatureFlags
       .fromProvider(
         FeatureFlags.multiProvider(List(first, second)),
-        FeatureFlagsConfig(),
+        FeatureFlagsConfig.default,
         statusRef = None,
         apiOverride = Some(OpenFeatureAPI.createIsolated())
       )
@@ -188,7 +188,7 @@ object AbsentKeyChainSpec extends ZIOSpecDefault {
             override def error(ctx: HookContext, err: FeatureFlagError, hints: HookHints): UIO[Unit] =
               stages.update(_ :+ s"error:${ctx.flagKey}:${err.getClass.getSimpleName}")
           }
-          config = FeatureFlagsConfig().withHooks(List(hook))
+          config = FeatureFlagsConfig.default.withHooks(List(hook))
           result <- ZIO.scoped {
             FeatureFlags
               .fromProvider(provider, config, statusRef = None, apiOverride = Some(OpenFeatureAPI.createIsolated()))

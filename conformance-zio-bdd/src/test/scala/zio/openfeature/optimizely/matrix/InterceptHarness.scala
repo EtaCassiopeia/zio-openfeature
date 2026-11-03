@@ -95,17 +95,14 @@ object InterceptHarness {
                ZIO.attempt(apache.close()).disconnect.timeout(5.seconds).ignore
              )
         optClient <- ZIO.succeed(com.optimizely.ab.OptimizelyHttpClients.fromApache(apache))
-        config = OptimizelyProviderConfig(
-                   sdkKey = "intercept-matrix-key",
-                   datafileUrl = None, // real default CDN URL — MITM'd by Rift
-                   initWait = java.time.Duration.ofSeconds(10),
-                   pollingInterval = Some(java.time.Duration.ofSeconds(3600)),
-                   blockingTimeout = Some(java.time.Duration.ofSeconds(5)),
-                   events = OptimizelyEvents.Disabled // datafile behaviour only; keep events off the network
-                 )
+        config = OptimizelyProviderConfig("intercept-matrix-key") // real default CDN URL — MITM'd by Rift
+                   .withInitWait(java.time.Duration.ofSeconds(10))
+                   .withPollingInterval(java.time.Duration.ofSeconds(3600))
+                   .withBlockingTimeout(java.time.Duration.ofSeconds(5))
+                   .withEvents(OptimizelyEvents.Disabled) // datafile behaviour only; keep events off the network
         provider <- OptimizelyProvider.scoped(config, Some(optClient)).mapError(e => new RuntimeException(e.message))
         domain    = s"intercept-matrix-${java.util.UUID.randomUUID()}"
-        env      <- FeatureFlags.fromProvider(provider, FeatureFlagsConfig().withDomain(domain)).build
+        env      <- FeatureFlags.fromProvider(provider, FeatureFlagsConfig.default.withDomain(domain)).build
       } yield env.get[FeatureFlags]
     }
 }

@@ -23,14 +23,12 @@ object OptimizelyInitTimeoutSpec extends ZIOSpecDefault {
           .acquireRelease(ZIO.succeed { server.start(); server })(s => ZIO.succeed(s.stop()))
           .flatMap { server =>
             server.stubFor(get(urlMatching("/datafiles/.*")).willReturn(aResponse().withStatus(403)))
-            val config = OptimizelyProviderConfig(
-              sdkKey = "rejected-key",
-              datafileUrl = Some(s"http://localhost:${server.port()}/datafiles/rejected-key.json"),
+            val config = OptimizelyProviderConfig("rejected-key")
+              .withDatafileUrl(s"http://localhost:${server.port()}/datafiles/rejected-key.json")
               // These durations are the subject: init must fail with the provider's own error within initWait,
               // before blockingTimeout and the 4s FeatureFlags init timeout. Do not widen them.
-              initWait = java.time.Duration.ofSeconds(2),
-              blockingTimeout = Some(java.time.Duration.ofSeconds(3))
-            )
+              .withInitWait(java.time.Duration.ofSeconds(2))
+              .withBlockingTimeout(java.time.Duration.ofSeconds(3))
             for {
               provider <- OptimizelyProvider.scoped(config, Some(TestHttpClient.failFast()))
               start    <- Clock.nanoTime
@@ -39,7 +37,7 @@ object OptimizelyInitTimeoutSpec extends ZIOSpecDefault {
                   FeatureFlags
                     .fromProvider(
                       provider,
-                      FeatureFlagsConfig().withInitTimeout(4.seconds),
+                      FeatureFlagsConfig.default.withInitTimeout(4.seconds),
                       statusRef = None,
                       apiOverride = Some(dev.openfeature.sdk.OpenFeatureAPI.createIsolated())
                     )

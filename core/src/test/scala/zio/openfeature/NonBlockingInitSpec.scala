@@ -108,7 +108,7 @@ object NonBlockingInitSpec extends ZIOSpecDefault {
             .fromAcquireAsync(
               acquire,
               fallback,
-              FeatureFlagsConfig(),
+              FeatureFlagsConfig.default,
               AcquireConfig.default
                 .withConstructionRetry(Schedule.recurs(2)) // no delay, fail fast after 3 attempts
                 .withOnConstructionError(e => errP.succeed(e).unit)
@@ -141,7 +141,7 @@ object NonBlockingInitSpec extends ZIOSpecDefault {
             .fromAcquireAsync(
               acquire,
               fallback,
-              FeatureFlagsConfig(),
+              FeatureFlagsConfig.default,
               AcquireConfig.default
                 .withCompose(badCompose)
                 .withOnConstructionError(e => errP.succeed(e).unit)
@@ -187,7 +187,7 @@ object NonBlockingInitSpec extends ZIOSpecDefault {
             .fromAcquireAsync(
               acquire,
               fallback,
-              FeatureFlagsConfig(),
+              FeatureFlagsConfig.default,
               AcquireConfig.default
                 .withCompose((_, _) => composed)
             )
@@ -292,7 +292,7 @@ object NonBlockingInitSpec extends ZIOSpecDefault {
               .fromAcquireAsync(
                 acquire,
                 fallback,
-                FeatureFlagsConfig(),
+                FeatureFlagsConfig.default,
                 AcquireConfig.default
                   .withVerify(verify)
               )
@@ -336,7 +336,7 @@ object NonBlockingInitSpec extends ZIOSpecDefault {
             .fromAcquireAsync(
               acquire,
               fallback,
-              FeatureFlagsConfig(),
+              FeatureFlagsConfig.default,
               AcquireConfig.default
                 .withConstructionRetry(Schedule.recurs(2)) // 3 attempts, no delay
                 .withOnConstructionError(e => errP.succeed(e).unit)
@@ -384,7 +384,7 @@ object NonBlockingInitSpec extends ZIOSpecDefault {
             .fromAcquireAsync(
               acquire,
               fallback,
-              FeatureFlagsConfig(),
+              FeatureFlagsConfig.default,
               AcquireConfig.default
                 .withConstructionRetry(Schedule.recurs(5))
                 .withVerify(verify)
@@ -425,7 +425,7 @@ object NonBlockingInitSpec extends ZIOSpecDefault {
             .fromAcquireAsync(
               ZIO.succeed(new LazyProvider(known): FeatureProvider),
               fallback,
-              FeatureFlagsConfig(),
+              FeatureFlagsConfig.default,
               AcquireConfig.default
                 .withConstructionRetry(Schedule.recurs(1))
                 .withOnConstructionError(e => errP.succeed(e).unit)
@@ -441,7 +441,7 @@ object NonBlockingInitSpec extends ZIOSpecDefault {
             .fromAcquireAsync(
               ZIO.succeed(new LazyProvider(known): FeatureProvider),
               fallback,
-              FeatureFlagsConfig(),
+              FeatureFlagsConfig.default,
               AcquireConfig.default
                 .withVerify(Verify.flagExists[Boolean]("kill-switch"))
             )
@@ -472,7 +472,7 @@ object NonBlockingInitSpec extends ZIOSpecDefault {
             .fromAcquireAsync(
               acquire,
               fallback,
-              FeatureFlagsConfig(),
+              FeatureFlagsConfig.default,
               AcquireConfig.default
                 .withVerify(verify)
             )
@@ -507,7 +507,7 @@ object NonBlockingInitSpec extends ZIOSpecDefault {
             .fromAcquireAsync(
               acquire,
               fallback,
-              FeatureFlagsConfig(),
+              FeatureFlagsConfig.default,
               AcquireConfig.default
                 .withCompose(badCompose)
                 .withOnConstructionError(e => errP.succeed(e).unit)
@@ -536,7 +536,7 @@ object NonBlockingInitSpec extends ZIOSpecDefault {
               .fromAcquireAsync(
                 acquire,
                 fallback,
-                FeatureFlagsConfig(),
+                FeatureFlagsConfig.default,
                 AcquireConfig.default
                   .withConstructionRetry(Schedule.recurs(1)) // 2 attempts
                   .withConstructionTimeout(200.millis)
@@ -575,7 +575,7 @@ object NonBlockingInitSpec extends ZIOSpecDefault {
               .fromAcquireAsync(
                 acquire,
                 fallback,
-                FeatureFlagsConfig(),
+                FeatureFlagsConfig.default,
                 AcquireConfig.default
                   .withOnSwapped(statusP.await.flatMap(_.get).flatMap(seenInSwapped.succeed(_)).unit)
               )
@@ -621,7 +621,7 @@ object NonBlockingInitSpec extends ZIOSpecDefault {
               .fromAcquireAsync(
                 acquire,
                 fallback,
-                FeatureFlagsConfig(),
+                FeatureFlagsConfig.default,
                 AcquireConfig.default
                   .withConstructionRetry(Schedule.recurs(5))
                   .withVerify(verify)
@@ -655,7 +655,7 @@ object NonBlockingInitSpec extends ZIOSpecDefault {
               .fromAcquireAsync(
                 acquire,
                 fallback,
-                FeatureFlagsConfig(),
+                FeatureFlagsConfig.default,
                 AcquireConfig.default
                   .withConstructionRetry(Schedule.recurs(2))
                   .withOnConstructionError(e => statusP.await.flatMap(_.get).flatMap(s => inCb.succeed((e, s))).unit)
@@ -695,7 +695,7 @@ object NonBlockingInitSpec extends ZIOSpecDefault {
               .fromAcquireAsync(
                 acquire,
                 fallback,
-                FeatureFlagsConfig(),
+                FeatureFlagsConfig.default,
                 AcquireConfig.default
                   .withCompose(badCompose)
                   .withOnConstructionError(e => errP.succeed(e).unit)
@@ -723,7 +723,7 @@ object NonBlockingInitSpec extends ZIOSpecDefault {
             .fromAcquireAsync(
               acquire,
               fallback,
-              FeatureFlagsConfig(),
+              FeatureFlagsConfig.default,
               AcquireConfig.default
                 .withConstructionRetry(Schedule.recurs(2))
                 .withOnConstructionError(e => errP.succeed(e).unit)
@@ -753,7 +753,7 @@ object NonBlockingInitSpec extends ZIOSpecDefault {
             .fromAcquireAsync(
               acquire,
               fallback,
-              FeatureFlagsConfig(),
+              FeatureFlagsConfig.default,
               AcquireConfig.default
                 .withOnConstructionError(e => errP.succeed(e).unit)
             )

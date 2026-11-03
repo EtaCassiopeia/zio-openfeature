@@ -27,13 +27,11 @@ object OptimizelyFaultSpec extends ZIOSpecDefault:
       |"audiences":[],"typedAudiences":[],"groups":[],"attributes":[],"variables":[],"events":[]}""".stripMargin
       .replace("\n", "")
 
-  private val config = OptimizelyProviderConfig(
-    sdkKey = "fault-test-key",
-    datafileUrl = Some(s"https://$host/datafiles/fault-test-key.json"),
-    initWait = java.time.Duration.ofSeconds(2),
-    blockingTimeout = Some(java.time.Duration.ofSeconds(2)),
-    events = OptimizelyEvents.Disabled // datafile behaviour only; keep events off the network
-  )
+  private val config = OptimizelyProviderConfig("fault-test-key")
+    .withDatafileUrl(s"https://$host/datafiles/fault-test-key.json")
+    .withInitWait(java.time.Duration.ofSeconds(2))
+    .withBlockingTimeout(java.time.Duration.ofSeconds(2))
+    .withEvents(OptimizelyEvents.Disabled) // datafile behaviour only; keep events off the network
 
   // Bounds, in the live clock: the provider's own init wait is 2 s.
   private val initTimeout   = 6.seconds
@@ -61,7 +59,7 @@ object OptimizelyFaultSpec extends ZIOSpecDefault:
           built    <- FeatureFlags
             .fromProvider(
               provider,
-              FeatureFlagsConfig().withDomain(s"optimizely-sync-$fault").withInitTimeout(initTimeout)
+              FeatureFlagsConfig.default.withDomain(s"optimizely-sync-$fault").withInitTimeout(initTimeout)
             )
             .build
             .either
@@ -87,7 +85,7 @@ object OptimizelyFaultSpec extends ZIOSpecDefault:
             .fromAcquireAsync(
               acquire = acquired(OptimizelyProvider.scoped(config)),
               fallback = fallback,
-              config = FeatureFlagsConfig().withInitTimeout(initTimeout).withEvaluationTimeout(2.seconds),
+              config = FeatureFlagsConfig.default.withInitTimeout(initTimeout).withEvaluationTimeout(2.seconds),
               acquireConfig =
                 AcquireConfig.default.withConstructionRetry(Schedule.stop).withConstructionTimeout(initTimeout)
             )

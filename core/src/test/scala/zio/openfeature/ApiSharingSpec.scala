@@ -75,7 +75,10 @@ object ApiSharingSpec extends ZIOSpecDefault {
       val provider = new Named("isolated")
       ZIO.scoped {
         for {
-          ff <- FeatureFlags.fromProvider(provider, FeatureFlagsConfig().withIsolatedApi).build.map(_.get[FeatureFlags])
+          ff <- FeatureFlags
+            .fromProvider(provider, FeatureFlagsConfig.default.withIsolatedApi)
+            .build
+            .map(_.get[FeatureFlags])
           read     <- ff.boolean("f", default = false)
           onGlobal <- ZIO.succeed(
             zio.openfeature.internal.ManagedProvider.unwrap(OpenFeatureAPI.getInstance().getProvider()) eq provider

@@ -112,7 +112,7 @@ object LifecycleFaultSpec extends ZIOSpecDefault {
                   FeatureFlags
                     .fromProvider(
                       stuck,
-                      FeatureFlagsConfig().withInitTimeout(initTimeout),
+                      FeatureFlagsConfig.default.withInitTimeout(initTimeout),
                       statusRef = None,
                       apiOverride = Some(OpenFeatureAPI.createIsolated())
                     )
@@ -363,7 +363,7 @@ object LifecycleFaultSpec extends ZIOSpecDefault {
     FeatureFlags
       .fromProvider(
         provider,
-        FeatureFlagsConfig()
+        FeatureFlagsConfig.default
           .withInitTimeout(initTimeout)
           .withDomain(isolatedDomain)
           .withApiOwnership(ApiOwnership.Shared),

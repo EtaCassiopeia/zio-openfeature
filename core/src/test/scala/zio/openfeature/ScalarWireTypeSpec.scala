@@ -1,7 +1,5 @@
 package zio.openfeature
 
-import scala.annotation.nowarn
-
 import zio._
 import zio.test._
 import zio.test.TestAspect.{sequential, withLiveClock}
@@ -74,7 +72,7 @@ object ScalarWireTypeSpec extends ZIOSpecDefault {
   // could break, since Int/Long/Float/Double go through boxing that String does not.
   final case class Level(n: Int)
 
-  // An OBJECT-backed custom type built with `FlagType.from` — its wireType stays the domain name, so it
+  // An OBJECT-backed custom type built with `FlagType.from` — its wire stays Object, so it
   // must keep taking the object decode path rather than any scalar resolver.
   sealed trait Region extends Product with Serializable
   object Region {
@@ -102,25 +100,25 @@ object ScalarWireTypeSpec extends ZIOSpecDefault {
   implicit val regionFlagType: FlagType[Region] =
     FlagType.from[Region]("Region", Region.Us, Region.parse, Region.render)
 
-  /** An instance that declares a scalar `wireType` its `encode` does not actually produce. This is the mistake the
-    * `wireType` scaladoc warns about, and it is reachable at a documented extension point, so it must surface as a
-    * diagnostic typed error rather than an opaque `ClassCastException` from inside the SDK bridge.
+  /** An instance that declares a scalar `wire` its `encode` does not actually produce. This is the mistake the `wire`
+    * scaladoc warns about, and it is reachable at a documented extension point, so it must surface as a diagnostic
+    * typed error rather than an opaque `ClassCastException` from inside the SDK bridge.
     */
   final case class Broken(v: String)
   implicit val brokenFlagType: FlagType[Broken] = new FlagType[Broken] {
     def typeName: String                           = "Broken"
-    override def wireType: String                  = "Int"   // declares Int…
+    override def wire: WireType                    = WireType.Int // declares Int…
     def defaultValue: Broken                       = Broken("x")
     def decode(value: Any): Either[String, Broken] = Right(Broken(value.toString))
-    override def encode(value: Broken): Any        = value.v // …but encodes to String
+    override def encode(value: Broken): Any        = value.v      // …but encodes to String
   }
 
   // Hand-rolled rather than via `FlagType.from`, because `from` builds object-backed instances. Overriding
-  // `wireType` on the trait is the supported way to declare a scalar-backed type with a FALLIBLE decoder —
+  // `wire` on the trait is the supported way to declare a scalar-backed type with a FALLIBLE decoder —
   // `mapped` cannot express rejection, since its `B => A` is total.
   implicit val tierFlagType: FlagType[Tier] = new FlagType[Tier] {
     def typeName: String                         = "Tier"
-    override def wireType: String                = "String"
+    override def wire: WireType                  = WireType.String
     def defaultValue: Tier                       = Tier.Free
     def decode(value: Any): Either[String, Tier] = Tier.parseStrict(value)
     override def encode(value: Tier): Any        = Tier.render(value)
@@ -221,15 +219,15 @@ object ScalarWireTypeSpec extends ZIOSpecDefault {
         FlagType[Map[String, Any]].wire == WireType.Object
       )
     },
-    test("the deprecated wireType still defaults to typeName for every built-in instance") {
-      @nowarn("cat=deprecation") val names = List(
-        FlagType[Boolean].wireType,
-        FlagType[String].wireType,
-        FlagType[Int].wireType,
-        FlagType[Long].wireType,
-        FlagType[Float].wireType,
-        FlagType[Double].wireType,
-        FlagType[Map[String, Any]].wireType
+    test("every built-in instance's typeName is the name of its wire type") {
+      val names = List(
+        FlagType[Boolean].typeName,
+        FlagType[String].typeName,
+        FlagType[Int].typeName,
+        FlagType[Long].typeName,
+        FlagType[Float].typeName,
+        FlagType[Double].typeName,
+        FlagType[Map[String, Any]].typeName
       )
       assertTrue(names == List("Boolean", "String", "Int", "Long", "Float", "Double", "Object"))
     },
@@ -243,10 +241,9 @@ object ScalarWireTypeSpec extends ZIOSpecDefault {
       )
     },
     test("mapped sets wire from the underlying instance while keeping its own typeName") {
-      @nowarn("cat=deprecation") val legacyName = phaseFlagType.wireType
-      assertTrue(phaseFlagType.typeName == "Phase", phaseFlagType.wire == WireType.String, legacyName == "String")
+      assertTrue(phaseFlagType.typeName == "Phase", phaseFlagType.wire == WireType.String)
     },
-    test("a legacy wireType override still selects the wire, keeping the domain typeName") {
+    test("an instance that overrides wire selects it, keeping the domain typeName") {
       assertTrue(tierFlagType.typeName == "Tier", tierFlagType.wire == WireType.String)
     },
     test("FlagType.from stays object-backed: its wire is read from the domain name") {
@@ -410,10 +407,10 @@ object ScalarWireTypeSpec extends ZIOSpecDefault {
         }
       }
     },
-    test("a FlagType whose encode contradicts its declared wireType fails with a diagnostic TypeMismatch") {
+    test("a FlagType whose encode contradicts its declared wire fails with a diagnostic TypeMismatch") {
       ZIO.scoped {
         // Without the guard this is a bare ClassCastException from the evaluator's bridge method (unboxing a
-        // String to Int) — a defect with no flag key and no hint about the wireType/encode mismatch. `.either`
+        // String to Int) — a defect with no flag key and no hint about the wire/encode mismatch. `.either`
         // does not catch defects, so this test fails outright if the guard is missing rather than passing vacuously.
         build(new WireProvider(identity, "DEFAULT"), "broken").flatMap { ff =>
           ff.value[Broken]("broken.flag", Broken("x")).either.map { r =>

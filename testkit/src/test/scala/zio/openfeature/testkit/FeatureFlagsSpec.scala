@@ -360,7 +360,8 @@ object FeatureFlagsSpec extends ZIOSpecDefault {
             receivedHints.set(hints.get[String]("test-hint")).as(None)
         }
 
-        val options = EvaluationOptions(List(hintCheckHook), HookHints("test-hint" -> "hint-value"))
+        val options =
+          EvaluationOptions.empty.withHook(hintCheckHook).withHookHints(HookHints("test-hint" -> "hint-value"))
         for {
           _    <- FeatureFlags.booleanDetails("hint-test", default = false, EvaluationContext.empty, options)
           hint <- receivedHints.get
@@ -583,7 +584,7 @@ object FeatureFlagsSpec extends ZIOSpecDefault {
             EvaluationContext("user-2"),
             TrackingEventDetails(value = Some(2.0))
           )
-          events <- FeatureFlags.trackedEvents
+          events <- ZIO.serviceWithZIO[TestFeatureProvider](_.trackedEvents)
         } yield
           // All merged contexts should contain both global and client attributes
           assertTrue(events.size == 4) &&
@@ -600,11 +601,11 @@ object FeatureFlagsSpec extends ZIOSpecDefault {
             assertTrue(events(3)._3.exists(_.value.contains(2.0)))
       }.provide(testLayer()),
       test("trackedEvents recorder is bounded and drops oldest events") {
-        val max   = zio.openfeature.internal.FeatureFlagsState.MaxTrackedEvents
+        val max   = TestFeatureProvider.MaxTrackedEvents
         val total = max + 10
         for {
           _      <- ZIO.foreachDiscard(1 to total)(i => FeatureFlags.track(s"event-$i"))
-          events <- FeatureFlags.trackedEvents
+          events <- ZIO.serviceWithZIO[TestFeatureProvider](_.trackedEvents)
         } yield assertTrue(
           events.size == max,
           // The 10 oldest events were dropped; the window starts at event-11.
@@ -1039,15 +1040,6 @@ object FeatureFlagsSpec extends ZIOSpecDefault {
           after  <- FeatureFlags.providerStatus
         } yield assertTrue(before == ProviderStatus.Ready) &&
           assertTrue(after == ProviderStatus.NotReady)
-      }.provide(testLayer()),
-      test("shutdown clears tracked events") {
-        for {
-          _      <- FeatureFlags.track("event-1")
-          before <- FeatureFlags.trackedEvents
-          _      <- FeatureFlagsAdmin.shutdown
-          after  <- FeatureFlags.trackedEvents
-        } yield assertTrue(before.nonEmpty) &&
-          assertTrue(after.isEmpty)
       }.provide(testLayer()),
       test("evaluation fails after shutdown") {
         for {

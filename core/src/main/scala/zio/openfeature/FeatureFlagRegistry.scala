@@ -48,7 +48,7 @@ object FeatureFlagRegistry {
     ZIO.serviceWithZIO(_.addZioApiHook(hook))
 
   def fromProvider(defaultProvider: OFFeatureProvider): ZLayer[Any, Throwable, FeatureFlagRegistry] =
-    fromProvider(defaultProvider, FeatureFlagsConfig())
+    fromProvider(defaultProvider, FeatureFlagsConfig.default)
 
   /** A registry whose every client takes `config`: version, initial hooks, evaluation and init timeouts, context
     * source, fallback logging, the abandoned-call cap, and init mode (`Async` returns a client before its provider is
@@ -234,7 +234,7 @@ final private class FeatureFlagRegistryLive(
       child  <- scope.fork
       client <- child
         .extend[Any](
-          FeatureFlags.buildAsyncWithTracking(
+          FeatureFlags.buildAsync(
             provider,
             domain = domain,
             version = config.version,

@@ -15,17 +15,10 @@ final case class FeatureFlagsState(
   // SubscriptionRef (not plain Ref) so status transitions are observable as a stream: every writer (event bridge,
   // setProvider, watchdog, shutdown) already goes through this ref, so `.changes` sees all of them with no extra
   // wiring. `awaitReady` consumes `.changes`; the ref still behaves as a Ref for all existing set/get/modify callers.
-  statusRef: SubscriptionRef[ProviderStatus],
-  trackRecorder: Ref[Chunk[(String, EvaluationContext, Option[TrackingEventDetails])]]
+  statusRef: SubscriptionRef[ProviderStatus]
 )
 
 object FeatureFlagsState {
-
-  /** Maximum number of tracking events retained for `trackedEvents`. The recorder exists for test/debug introspection;
-    * bounding it keeps long-running production apps that call `track` per request from accumulating events (and their
-    * merged contexts) without limit. When full, the oldest events are dropped.
-    */
-  val MaxTrackedEvents: Int = 1000
 
   /** Capacity of the provider-event hub. Sliding: a consumer that falls this far behind loses the oldest events rather
     * than blocking the provider's event thread.
@@ -47,7 +40,6 @@ object FeatureFlagsState {
         _.shutdown
       ) // ends `events` consumers on scope close
       statusRef <- SubscriptionRef.make[ProviderStatus](ProviderStatus.NotReady)
-      trackRec  <- Ref.make(Chunk.empty[(String, EvaluationContext, Option[TrackingEventDetails])])
     } yield FeatureFlagsState(
       globalCtxRef,
       clientCtxRef,
@@ -56,7 +48,6 @@ object FeatureFlagsState {
       zioApiHooksRef,
       hooksRef,
       eventHub,
-      statusRef,
-      trackRec
+      statusRef
     )
 }

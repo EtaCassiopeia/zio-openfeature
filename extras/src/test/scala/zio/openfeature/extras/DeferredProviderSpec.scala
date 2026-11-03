@@ -2,7 +2,7 @@ package zio.openfeature.extras
 
 import zio._
 import zio.test._
-import zio.openfeature.{FeatureFlags, FeatureFlagsConfig, InitMode, ProviderStatus}
+import zio.openfeature.{FeatureFlags, FeatureFlagsConfig, ProviderStatus}
 import zio.openfeature.internal.ProviderEvaluations
 import dev.openfeature.sdk.{
   EvaluationContext => OFEvaluationContext,
@@ -78,7 +78,7 @@ object DeferredProviderSpec extends ZIOSpecDefault {
       val dp = DeferredProvider("d")(() => new RecordingProvider(true))
       dp.initialize(ctx)
       dp.shutdown()
-      ZIO.scoped(FeatureFlags.fromProvider(dp, FeatureFlagsConfig()).build).either.map(r => assertTrue(r.isLeft))
+      ZIO.scoped(FeatureFlags.fromProvider(dp, FeatureFlagsConfig.default).build).either.map(r => assertTrue(r.isLeft))
     },
     // AC5: no NPE pre-construction; typed PROVIDER_NOT_READY
     test("pre-construction evaluation returns a typed PROVIDER_NOT_READY, not an NPE") {
@@ -158,7 +158,7 @@ object DeferredProviderSpec extends ZIOSpecDefault {
       val other    = new RecordingProvider(false)
       ZIO.scoped {
         FeatureFlags
-          .fromProvider(FeatureFlags.multiProvider(List(dp, other)), FeatureFlagsConfig(initMode = InitMode.Async))
+          .fromProvider(FeatureFlags.multiProvider(List(dp, other)), FeatureFlagsConfig.default.withAsyncInit)
           .build
           .map(_.get[FeatureFlags])
           .flatMap { ff =>

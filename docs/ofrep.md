@@ -99,5 +99,3 @@ every integer flag on a long read.
     - HTTP calls run on a pool of daemon threads, so the provider never keeps your JVM from exiting. If you build
       `OfrepProviderOptions` yourself, start from `OFREPProvider.daemonOptionsBuilder()`: the contrib default is a pool
       of non-daemon threads.
-    - `OFREPProvider()`, `OFREPProvider(baseUrl)` and `OFREPProvider.fromOptions(options)` are deprecated. They skip
-      the URL checks and return the bare contrib provider, without `Long` support.

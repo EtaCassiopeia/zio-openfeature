@@ -94,7 +94,7 @@ object EvaluationInterruptionSpec extends ZIOSpecDefault {
       probe   = new HoldingProbe(point, held, release)
       timeout = if (competitor == Competitor.Timeout) ShortTimeout else LongTimeout
       ff <- FeatureFlagsFactories
-        .buildWithTracking(
+        .build(
           provider,
           domain = Some(s"interruption-${java.util.UUID.randomUUID()}"),
           version = None,

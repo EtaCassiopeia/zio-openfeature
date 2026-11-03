@@ -70,7 +70,7 @@ object NullProviderValueSpec extends ZIOSpecDefault {
   }
 
   private def build: ZIO[Scope, Throwable, FeatureFlags] =
-    FeatureFlags.buildWithTracking(
+    FeatureFlags.build(
       new ValuelessProvider,
       domain = Some(s"valueless-${java.util.UUID.randomUUID()}"),
       version = None,

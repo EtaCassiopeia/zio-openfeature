@@ -29,7 +29,7 @@ object FactoryMethodsSpec extends ZIOSpecDefault {
 
         for {
           provider <- TestFeatureProvider.make(Map("flag" -> true))
-          layer = FeatureFlags.fromProvider(provider, FeatureFlagsConfig().withHooks(List(hook)))
+          layer = FeatureFlags.fromProvider(provider, FeatureFlagsConfig.default.withHooks(List(hook)))
           _     <- FeatureFlags.boolean("flag", default = false).provide(Scope.default >>> layer)
           calls <- callsRef.get
         } yield assertTrue(calls == 1)
@@ -42,7 +42,7 @@ object FactoryMethodsSpec extends ZIOSpecDefault {
           domain = s"test-versioned-${java.util.UUID.randomUUID()}"
           result <- ZIO.scoped {
             FeatureFlags
-              .fromProvider(provider, FeatureFlagsConfig().withDomain(domain).withVersion("2.0.0"))
+              .fromProvider(provider, FeatureFlagsConfig.default.withDomain(domain).withVersion("2.0.0"))
               .build
               .flatMap { env =>
                 val ff = env.get[FeatureFlags]
@@ -62,7 +62,7 @@ object FactoryMethodsSpec extends ZIOSpecDefault {
           provider <- TestFeatureProvider.make(Map("flag" -> true))
           result   <- ZIO.scoped {
             FeatureFlags
-              .fromProvider(provider, FeatureFlagsConfig().withVersion("2.0.0"))
+              .fromProvider(provider, FeatureFlagsConfig.default.withVersion("2.0.0"))
               .build
               .flatMap { env =>
                 val ff = env.get[FeatureFlags]
@@ -79,7 +79,7 @@ object FactoryMethodsSpec extends ZIOSpecDefault {
           provider <- TestFeatureProvider.make(Map("flag" -> true))
           result   <- ZIO.scoped {
             FeatureFlags
-              .fromProvider(provider, FeatureFlagsConfig(initMode = InitMode.Async).withVersion("2.0.0"))
+              .fromProvider(provider, FeatureFlagsConfig.default.withAsyncInit.withVersion("2.0.0"))
               .build
               .flatMap { env =>
                 val ff = env.get[FeatureFlags]
@@ -99,7 +99,7 @@ object FactoryMethodsSpec extends ZIOSpecDefault {
           for {
             provider <- TestFeatureProvider.make(Map("flag" -> true))
             ff       <- FeatureFlags
-              .fromProvider(FeatureFlags.multiProvider(List(provider)), FeatureFlagsConfig())
+              .fromProvider(FeatureFlags.multiProvider(List(provider)), FeatureFlagsConfig.default)
               .build
               .map(_.get[FeatureFlags])
             result <- ff.boolean("flag", default = false)
@@ -107,14 +107,13 @@ object FactoryMethodsSpec extends ZIOSpecDefault {
         }
       },
       test("multiProvider with a custom strategy creates a usable layer") {
-        import dev.openfeature.sdk.multiprovider.FirstSuccessfulStrategy
         ZIO.scoped {
           for {
             provider <- TestFeatureProvider.make(Map("flag" -> "hello"))
             ff       <- FeatureFlags
               .fromProvider(
-                FeatureFlags.multiProvider(List(provider), new FirstSuccessfulStrategy()),
-                FeatureFlagsConfig()
+                FeatureFlags.multiProvider(List(provider), MultiProviderStrategy.FirstSuccessful),
+                FeatureFlagsConfig.default
               )
               .build
               .map(_.get[FeatureFlags])
@@ -146,7 +145,7 @@ object FactoryMethodsSpec extends ZIOSpecDefault {
           tp     <- TestFeatureProvider.make(Map("flag" -> true))
           result <- ZIO.scoped {
             FeatureFlags
-              .fromProvider(tp, FeatureFlagsConfig(initMode = InitMode.Async).withHooks(List(hook)))
+              .fromProvider(tp, FeatureFlagsConfig.default.withAsyncInit.withHooks(List(hook)))
               .build
               .flatMap { env =>
                 val ff = env.get[FeatureFlags]
@@ -163,7 +162,7 @@ object FactoryMethodsSpec extends ZIOSpecDefault {
           domain = s"test-async-factory-${java.util.UUID.randomUUID()}"
           result <- ZIO.scoped {
             FeatureFlags
-              .fromProvider(tp, FeatureFlagsConfig(initMode = InitMode.Async).withDomain(domain))
+              .fromProvider(tp, FeatureFlagsConfig.default.withAsyncInit.withDomain(domain))
               .build
               .flatMap { env =>
                 val ff = env.get[FeatureFlags]
@@ -181,7 +180,7 @@ object FactoryMethodsSpec extends ZIOSpecDefault {
             FeatureFlags
               .fromProvider(
                 tp,
-                FeatureFlagsConfig(initMode = InitMode.Async).withDomain(domain).withVersion("1.2.3")
+                FeatureFlagsConfig.default.withAsyncInit.withDomain(domain).withVersion("1.2.3")
               )
               .build
               .flatMap { env =>
@@ -197,7 +196,7 @@ object FactoryMethodsSpec extends ZIOSpecDefault {
           tp     <- TestFeatureProvider.make(Map("flag" -> true))
           result <- ZIO.scoped {
             FeatureFlags
-              .fromProvider(FeatureFlags.multiProvider(List(tp)), FeatureFlagsConfig(initMode = InitMode.Async))
+              .fromProvider(FeatureFlags.multiProvider(List(tp)), FeatureFlagsConfig.default.withAsyncInit)
               .build
               .flatMap { env =>
                 val ff = env.get[FeatureFlags]
@@ -212,7 +211,7 @@ object FactoryMethodsSpec extends ZIOSpecDefault {
       test("fromProvider(provider, config)") {
         for {
           tp <- TestFeatureProvider.make
-          r  <- sameInstance(FeatureFlags.fromProvider(tp, FeatureFlagsConfig().withIsolatedApi))
+          r  <- sameInstance(FeatureFlags.fromProvider(tp, FeatureFlagsConfig.default.withIsolatedApi))
         } yield r
       },
       test("fromProvider(provider)") {

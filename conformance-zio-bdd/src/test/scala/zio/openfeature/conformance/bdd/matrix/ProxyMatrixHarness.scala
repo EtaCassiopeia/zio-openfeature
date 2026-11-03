@@ -70,17 +70,15 @@ object ProxyMatrixHarness {
     ZLayer.scoped {
       for {
         dataUrl <- ZIO.attemptBlocking(sharedDataUrl)
-        config = OptimizelyProviderConfig(
-                   sdkKey = SdkKey,
-                   datafileUrl = Some(dataUrl),
-                   initWait = java.time.Duration.ofSeconds(10),
-                   pollingInterval = Some(java.time.Duration.ofSeconds(3600)), // no polling in tests
-                   blockingTimeout = Some(java.time.Duration.ofSeconds(5)),
-                   events = OptimizelyEvents.Disabled // datafile behaviour only; keep events off the network
-                 )
+        config = OptimizelyProviderConfig(SdkKey)
+                   .withDatafileUrl(dataUrl)
+                   .withInitWait(java.time.Duration.ofSeconds(10))
+                   .withPollingInterval(java.time.Duration.ofSeconds(3600)) // no polling in tests
+                   .withBlockingTimeout(java.time.Duration.ofSeconds(5))
+                   .withEvents(OptimizelyEvents.Disabled) // datafile behaviour only; keep events off the network
         provider <- OptimizelyProvider.scoped(config).mapError(e => new RuntimeException(e.message))
         domain = s"proxy-flag-matrix-${java.util.UUID.randomUUID()}"
-        env <- FeatureFlags.fromProvider(provider, FeatureFlagsConfig().withDomain(domain)).build
+        env <- FeatureFlags.fromProvider(provider, FeatureFlagsConfig.default.withDomain(domain)).build
         ff = env.get[FeatureFlags]
         ctx = contextAttributes.foldLeft(EvaluationContext.empty) { case (acc, (k, v)) =>
                 acc.withAttribute(k, AttributeValue.StringValue(v))

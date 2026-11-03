@@ -17,11 +17,9 @@ object OfrepFaultSpec extends ZIOSpecDefault:
   private val host    = "flags.example.com"
   private val healthy = """{"key":"my-flag","value":true,"variant":"on","reason":"STATIC"}"""
 
-  private val config = OFREPProviderConfig(
-    baseUrl = s"https://$host",
-    requestTimeout = Some(java.time.Duration.ofSeconds(10)),
-    connectTimeout = Some(java.time.Duration.ofSeconds(2))
-  )
+  private val config = OFREPProviderConfig(s"https://$host")
+    .withRequestTimeout(java.time.Duration.ofSeconds(10))
+    .withConnectTimeout(java.time.Duration.ofSeconds(2))
 
   // Bounds, in the live clock. The evaluation timeout is what ends a stalled call.
   private val evaluationTimeout = 2.seconds
@@ -63,7 +61,7 @@ object OfrepFaultSpec extends ZIOSpecDefault:
           env      <- FeatureFlags
             .fromProvider(
               provider,
-              FeatureFlagsConfig().withDomain(s"ofrep-direct-$fault").withEvaluationTimeout(evaluationTimeout)
+              FeatureFlagsConfig.default.withDomain(s"ofrep-direct-$fault").withEvaluationTimeout(evaluationTimeout)
             )
             .build
         yield env.get[FeatureFlags]).provideEnvironment(ZEnvironment(scope))
@@ -89,7 +87,7 @@ object OfrepFaultSpec extends ZIOSpecDefault:
             .fromAcquireAsync(
               acquire = acquired(OFREPProvider.scoped(config)),
               fallback = fallback,
-              config = FeatureFlagsConfig().withEvaluationTimeout(evaluationTimeout),
+              config = FeatureFlagsConfig.default.withEvaluationTimeout(evaluationTimeout),
               acquireConfig = AcquireConfig.default.withConstructionRetry(Schedule.stop)
             )
             .build

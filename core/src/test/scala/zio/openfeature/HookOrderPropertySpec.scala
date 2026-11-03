@@ -137,7 +137,7 @@ object HookOrderPropertySpec extends ZIOSpecDefault {
             _  <- ZIO.foreachDiscard(tiers.api)(ff.addZioApiHook)
             key = if (plan.found) "present" else "missing"
             result <- ff
-              .stringDetails(key, "dflt", EvaluationContext.empty, EvaluationOptions(hooks = tiers.invocation))
+              .stringDetails(key, "dflt", EvaluationContext.empty, EvaluationOptions.empty.withHooks(tiers.invocation))
               .sandbox
               .either
             seen <- log.get
@@ -175,7 +175,7 @@ object HookOrderPropertySpec extends ZIOSpecDefault {
               "present",
               "dflt",
               EvaluationContext.empty,
-              EvaluationOptions(hooks = tiers.invocation)
+              EvaluationOptions.empty.withHooks(tiers.invocation)
             )
           } yield assertTrue(
             served.value == "dflt",

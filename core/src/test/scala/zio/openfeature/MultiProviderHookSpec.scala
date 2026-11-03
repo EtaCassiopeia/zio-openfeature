@@ -71,7 +71,7 @@ object MultiProviderHookSpec extends ZIOSpecDefault {
     FeatureFlags
       .fromProvider(
         FeatureFlags.multiProvider(List(child)),
-        FeatureFlagsConfig(domain = Some(domain)),
+        FeatureFlagsConfig.default.withDomain(domain),
         statusRef = None,
         apiOverride = Some(OpenFeatureAPI.createIsolated())
       )

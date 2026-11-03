@@ -33,7 +33,7 @@ object Hooks:
     )
 
   // At construction, before the first evaluation
-  val config: FeatureFlagsConfig = FeatureFlagsConfig().withHook(audit)
+  val config: FeatureFlagsConfig = FeatureFlagsConfig.default.withHook(audit)
   // --8<-- [end:register]
 
   // --8<-- [start:builtins]

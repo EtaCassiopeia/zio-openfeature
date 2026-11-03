@@ -50,7 +50,7 @@ object AbandonedCallCapSpec extends ZIOSpecDefault {
     ZIO.acquireRelease(ZIO.succeed(new GatedProvider))(p => ZIO.succeed(p.gate.countDown()))
 
   private def build(p: FeatureProvider, timeout: Option[Duration], cap: Int): ZIO[Scope, Throwable, FeatureFlagsLive] =
-    FeatureFlags.buildWithTracking(
+    FeatureFlags.build(
       p,
       domain = Some(s"cap-${java.util.UUID.randomUUID()}"),
       version = None,
@@ -288,8 +288,8 @@ object AbandonedCallCapSpec extends ZIOSpecDefault {
           } yield (timedOut(first), rejection(second).isDefined)
         }
       for {
-        sync  <- viaConfig(FeatureFlagsConfig())
-        async <- viaConfig(FeatureFlagsConfig().withAsyncInit)
+        sync  <- viaConfig(FeatureFlagsConfig.default)
+        async <- viaConfig(FeatureFlagsConfig.default.withAsyncInit)
       } yield assertTrue(sync == ((true, true)), async == ((true, true)))
     },
     test("fromAcquireAsync's maxAbandonedCalls reaches the instance") {
@@ -300,10 +300,7 @@ object AbandonedCallCapSpec extends ZIOSpecDefault {
             .fromAcquireAsync(
               acquire = ZIO.never,
               fallback = ZIO.succeed(p),
-              FeatureFlagsConfig(
-                evaluationTimeout = EvaluationTimeout.After(50.millis),
-                maxAbandonedCalls = 1
-              ),
+              FeatureFlagsConfig.default.withEvaluationTimeout(50.millis).withMaxAbandonedCalls(1),
               AcquireConfig.default
             )
             .build
@@ -315,17 +312,17 @@ object AbandonedCallCapSpec extends ZIOSpecDefault {
     },
     test("a cap below 1 is rejected at construction; the default is 256") {
       val fallback: URIO[Scope, FeatureProvider] = ZIO.succeed(new GatedProvider)
-      val config                                 = scala.util.Try(FeatureFlagsConfig(maxAbandonedCalls = 0))
-      val setter                                 = scala.util.Try(FeatureFlagsConfig().withMaxAbandonedCalls(-1))
+      val config                                 = scala.util.Try(FeatureFlagsConfig.default.withMaxAbandonedCalls(0))
+      val setter                                 = scala.util.Try(FeatureFlagsConfig.default.withMaxAbandonedCalls(-1))
       val acquire                                = scala.util.Try(
         FeatureFlags.fromAcquireAsync(
           ZIO.never,
           fallback,
-          FeatureFlagsConfig(maxAbandonedCalls = 0),
+          FeatureFlagsConfig.default.withMaxAbandonedCalls(0),
           AcquireConfig.default
         )
       )
-      val default = FeatureFlagsConfig().maxAbandonedCalls
+      val default = FeatureFlagsConfig.default.maxAbandonedCalls
       assertTrue(
         config.failed.toOption.exists(_.isInstanceOf[IllegalArgumentException]),
         setter.failed.toOption.exists(_.isInstanceOf[IllegalArgumentException]),

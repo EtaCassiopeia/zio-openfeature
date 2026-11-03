@@ -24,19 +24,14 @@ object Ofrep:
   // --8<-- [start:config]
   val configured: IO[FeatureFlagError.InvalidConfiguration, OFREPFeatureProvider] =
     OFREPProvider.make(
-      OFREPProviderConfig(
-        baseUrl = "https://flags.example.com",
-        requestTimeout = Some(java.time.Duration.ofSeconds(2)),
-        connectTimeout = Some(java.time.Duration.ofSeconds(1)),
-        headers = Map("Authorization" -> List("Bearer my-token"))
-      )
+      OFREPProviderConfig("https://flags.example.com").withRequestTimeout(java.time.Duration.ofSeconds(2)).withConnectTimeout(java.time.Duration.ofSeconds(1)).withHeaders(Map("Authorization" -> List("Bearer my-token")))
     )
   // --8<-- [end:config]
 
   // --8<-- [start:lifecycle]
   // `make` leaves shutdown to the FeatureFlags layer you register the provider with; `scoped` and `layer` own it
   val inScope: ZIO[Scope, FeatureFlagError.InvalidConfiguration, OFREPFeatureProvider] =
-    OFREPProvider.scoped(OFREPProviderConfig(baseUrl = "https://flags.example.com"))
+    OFREPProvider.scoped(OFREPProviderConfig("https://flags.example.com"))
 
   val asLayer: ZLayer[Any, FeatureFlagError.InvalidConfiguration, OFREPFeatureProvider] =
     OFREPProvider.layer("https://flags.example.com")
@@ -47,7 +42,7 @@ object Ofrep:
     ZLayer.scoped {
       for
         ofrep   <- OFREPProvider.make("https://flags.example.com")
-        breaker <- CircuitBreakerProvider.make(ofrep, CircuitBreakerProviderConfig(failureThreshold = 5))
+        breaker <- CircuitBreakerProvider.make(ofrep, CircuitBreakerProviderConfig.default.withFailureThreshold(5))
         env     <- FeatureFlags.fromProviderAsync(breaker).build
       yield env.get[FeatureFlags]
     }

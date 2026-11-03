@@ -146,7 +146,7 @@ object ProviderInitTimeoutSpec extends ZIOSpecDefault {
                 FeatureFlags
                   .fromProvider(
                     stuck,
-                    FeatureFlagsConfig().withInitTimeout(initTimeout),
+                    FeatureFlagsConfig.default.withInitTimeout(initTimeout),
                     statusRef = None,
                     apiOverride = Some(OpenFeatureAPI.createIsolated())
                   )
@@ -251,9 +251,7 @@ object ProviderInitTimeoutSpec extends ZIOSpecDefault {
             .fromAcquireAsync(
               acquire,
               fallback,
-              FeatureFlagsConfig(
-                initTimeout = initTimeout
-              ),
+              FeatureFlagsConfig.default.withInitTimeout(initTimeout),
               AcquireConfig.default
                 .withCompose((_, _) => stuck)
                 .withOnConstructionError(e => errP.succeed(e).unit)

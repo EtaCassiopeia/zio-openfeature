@@ -141,7 +141,7 @@ object OptimizelyVariableTypeSpec extends ZIOSpecDefault {
               program.provide(
                 zio.openfeature.FeatureFlags.fromProvider(
                   p,
-                  zio.openfeature.FeatureFlagsConfig(),
+                  zio.openfeature.FeatureFlagsConfig.default,
                   statusRef = None,
                   apiOverride = Some(dev.openfeature.sdk.OpenFeatureAPI.createIsolated())
                 )

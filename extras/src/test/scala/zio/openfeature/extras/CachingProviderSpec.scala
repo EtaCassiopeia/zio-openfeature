@@ -303,7 +303,7 @@ object CachingProviderSpec extends ZIOSpecDefault {
         val underlying = new CountingProvider(Map("flag" -> true))
         val cached     = CachingProvider(
           underlying,
-          CachingConfig(contextKeys = Some(Set("plan")))
+          CachingConfig.default.withContextKeys(Set("plan"))
         )
         // Two contexts with same "plan" but different targeting key (e.g., per-request UUID)
         val attrs1 = new java.util.HashMap[String, Value]()
@@ -337,8 +337,8 @@ object CachingProviderSpec extends ZIOSpecDefault {
           val _          = cached.getStringEvaluation("f", "", ctx("color"))
           (cached.getStringEvaluation("f", "", ctx("label")), underlying.evaluationCount.get())
         }
-        val (keyed, keyedCount) = readBoth(CachingConfig(contextKeys = Some(Set("plan"))))
-        val (full, fullCount)   = readBoth(CachingConfig())
+        val (keyed, keyedCount) = readBoth(CachingConfig.default.withContextKeys(Set("plan")))
+        val (full, fullCount)   = readBoth(CachingConfig.default)
         assertTrue(
           keyed.getValue == "label",
           keyed.getReason != "CACHED",
@@ -351,7 +351,7 @@ object CachingProviderSpec extends ZIOSpecDefault {
         val underlying = new CountingProvider(Map("flag" -> true))
         val cached     = CachingProvider(
           underlying,
-          CachingConfig(contextKeys = Some(Set("plan")))
+          CachingConfig.default.withContextKeys(Set("plan"))
         )
         val premium = new java.util.HashMap[String, Value]()
         premium.put("plan", new Value("premium"))
@@ -367,7 +367,7 @@ object CachingProviderSpec extends ZIOSpecDefault {
         val underlying = new CountingProvider(Map("flag" -> true))
         val cached     = CachingProvider(
           underlying,
-          CachingConfig(contextKeys = Some(Set.empty))
+          CachingConfig.default.withContextKeys(Set.empty)
         )
         val ctx1 = new ImmutableContext("user-1")
         val ctx2 = new ImmutableContext("user-2")
@@ -422,7 +422,7 @@ object CachingProviderSpec extends ZIOSpecDefault {
     suite("TTL expiration")(
       test("expired entries are re-evaluated") {
         val underlying = new CountingProvider(Map("flag" -> true))
-        val cached     = CachingProvider(underlying, CachingConfig(ttl = 1.millisecond))
+        val cached     = CachingProvider(underlying, CachingConfig.default.withTtl(1.millisecond))
         cached.getBooleanEvaluation("flag", false, ctx)
         Thread.sleep(10) // let TTL expire
         cached.getBooleanEvaluation("flag", false, ctx)
@@ -430,7 +430,7 @@ object CachingProviderSpec extends ZIOSpecDefault {
       },
       test("non-expired entries are served from cache") {
         val underlying = new CountingProvider(Map("flag" -> true))
-        val cached     = CachingProvider(underlying, CachingConfig(ttl = 10.seconds))
+        val cached     = CachingProvider(underlying, CachingConfig.default.withTtl(10.seconds))
         cached.getBooleanEvaluation("flag", false, ctx)
         cached.getBooleanEvaluation("flag", false, ctx)
         assertTrue(underlying.evaluationCount.get() == 1)
@@ -440,7 +440,7 @@ object CachingProviderSpec extends ZIOSpecDefault {
       test("working set larger than maxEntries causes re-evaluations") {
         val flags      = (1 to 5).map(i => s"flag-$i" -> true).toMap
         val underlying = new CountingProvider(flags)
-        val cached     = CachingProvider(underlying, CachingConfig(maxEntries = 3))
+        val cached     = CachingProvider(underlying, CachingConfig.default.withMaxEntries(3))
         // Evaluate 5 unique keys with capacity 3 — some must be evicted
         (1 to 5).foreach(i => cached.getBooleanEvaluation(s"flag-$i", false, ctx))
         val afterFirst = underlying.evaluationCount.get()
@@ -454,7 +454,7 @@ object CachingProviderSpec extends ZIOSpecDefault {
       },
       test("entries within capacity are not evicted") {
         val underlying = new CountingProvider(Map("a" -> true, "b" -> false))
-        val cached     = CachingProvider(underlying, CachingConfig(maxEntries = 10))
+        val cached     = CachingProvider(underlying, CachingConfig.default.withMaxEntries(10))
         cached.getBooleanEvaluation("a", false, ctx)
         cached.getBooleanEvaluation("b", true, ctx)
         // Re-evaluate — both should be cached (2 keys < 10 capacity)
@@ -521,7 +521,7 @@ object CachingProviderSpec extends ZIOSpecDefault {
         }
         for {
           underlying <- ZIO.succeed(new EmittingProvider)
-          cached     <- CachingProvider.make(underlying, CachingConfig(ttl = 10.minutes))
+          cached     <- CachingProvider.make(underlying, CachingConfig.default.withTtl(10.minutes))
           _          <- ZIO.attemptBlocking(cached.initialize(ctx))
           _          <- ZIO.attemptBlocking(cached.getBooleanEvaluation("flag", false, ctx))
           r2         <- ZIO.attemptBlocking(cached.getBooleanEvaluation("flag", false, ctx))
@@ -574,7 +574,7 @@ object CachingProviderSpec extends ZIOSpecDefault {
           }
         }
         for {
-          cached <- CachingProvider.make(underlying, CachingConfig(ttl = 1.minute))
+          cached <- CachingProvider.make(underlying, CachingConfig.default.withTtl(1.minute))
           first  <- ZIO.attemptBlocking(cached.getBooleanEvaluation("flag", false, ctx)).exit
           second <- ZIO.attemptBlocking(cached.getBooleanEvaluation("flag", false, ctx))
         } yield assertTrue(
@@ -602,7 +602,7 @@ object CachingProviderSpec extends ZIOSpecDefault {
             } else super.getBooleanEvaluation(key, defaultValue, c)
         }
         for {
-          cached <- CachingProvider.make(underlying, CachingConfig(ttl = 1.minute))
+          cached <- CachingProvider.make(underlying, CachingConfig.default.withTtl(1.minute))
           first  <- ZIO.attemptBlocking(cached.getBooleanEvaluation("flag", false, ctx))
           second <- ZIO.attemptBlocking(cached.getBooleanEvaluation("flag", false, ctx))
           third  <- ZIO.attemptBlocking(cached.getBooleanEvaluation("flag", false, ctx))
@@ -619,7 +619,7 @@ object CachingProviderSpec extends ZIOSpecDefault {
         // caller's cleanup could remove another caller's thunk, surfacing IllegalStateException and caching it.
         for {
           underlying <- ZIO.succeed(new CountingProvider(Map("flag" -> true), delay = Some(5.millis)))
-          cached     <- CachingProvider.make(underlying, CachingConfig(ttl = 50.millis))
+          cached     <- CachingProvider.make(underlying, CachingConfig.default.withTtl(50.millis))
           // Many waves of concurrent calls across TTL expirations to repeatedly exercise the miss path
           results <- ZIO.foreach(1 to 5) { _ =>
             ZIO.collectAllPar(
@@ -660,13 +660,13 @@ object CachingProviderSpec extends ZIOSpecDefault {
       test("make accepts a plain FeatureProvider") {
         val underlying = new PlainCountingProvider(Map("flag" -> true))
         for {
-          cached <- CachingProvider.make(underlying, CachingConfig(ttl = 1.minute))
+          cached <- CachingProvider.make(underlying, CachingConfig.default.withTtl(1.minute))
           result <- ZIO.attempt(cached.getBooleanEvaluation("flag", false, ctx))
         } yield assertTrue(result.getValue == true, underlying.evaluationCount.get() == 1)
       },
       test("caches a plain delegate's evaluations") {
         val underlying = new PlainCountingProvider(Map("flag" -> true))
-        val cached     = CachingProvider(underlying, CachingConfig(ttl = 10.seconds))
+        val cached     = CachingProvider(underlying, CachingConfig.default.withTtl(10.seconds))
         cached.getBooleanEvaluation("flag", false, ctx)
         cached.getBooleanEvaluation("flag", false, ctx)
         cached.getBooleanEvaluation("flag", false, ctx)
@@ -675,7 +675,7 @@ object CachingProviderSpec extends ZIOSpecDefault {
       },
       test("expired entries are re-evaluated for a plain delegate") {
         val underlying = new PlainCountingProvider(Map("flag" -> true))
-        val cached     = CachingProvider(underlying, CachingConfig(ttl = 1.millisecond))
+        val cached     = CachingProvider(underlying, CachingConfig.default.withTtl(1.millisecond))
         cached.getBooleanEvaluation("flag", false, ctx)
         Thread.sleep(10)
         cached.getBooleanEvaluation("flag", false, ctx)
@@ -734,7 +734,7 @@ object CachingProviderSpec extends ZIOSpecDefault {
       },
       test("shutdown invalidates the cache for a plain delegate") {
         val underlying = new PlainCountingProvider(Map("flag" -> true))
-        val cached     = CachingProvider(underlying, CachingConfig(ttl = 10.seconds))
+        val cached     = CachingProvider(underlying, CachingConfig.default.withTtl(10.seconds))
         cached.getBooleanEvaluation("flag", false, ctx)
         cached.shutdown()
         cached.getBooleanEvaluation("flag", false, ctx)
@@ -750,7 +750,7 @@ object CachingProviderSpec extends ZIOSpecDefault {
       },
       test("initialize does not disturb a plain delegate's cache") {
         val underlying = new PlainCountingProvider(Map("flag" -> true))
-        val cached     = CachingProvider(underlying, CachingConfig(ttl = 10.seconds))
+        val cached     = CachingProvider(underlying, CachingConfig.default.withTtl(10.seconds))
         cached.getBooleanEvaluation("flag", false, ctx)
         // `initialize` is the only path that would reach event wiring at all; for a plain delegate it
         // must be inert with respect to the cache. Guards against a future edit invalidating
@@ -768,7 +768,7 @@ object CachingProviderSpec extends ZIOSpecDefault {
       },
       test("concurrent evaluations of a plain delegate deduplicate onto one call") {
         val underlying = new PlainCountingProvider(Map("flag" -> true), delay = Some(100.millis))
-        val cached     = CachingProvider(underlying, CachingConfig(ttl = 10.seconds))
+        val cached     = CachingProvider(underlying, CachingConfig.default.withTtl(10.seconds))
         for {
           results <- ZIO.foreachPar(1 to 8)(_ => ZIO.attempt(cached.getBooleanEvaluation("flag", false, ctx)))
           // zio-cache dedups by logical key, so the delegate runs once even for a plain provider.
@@ -786,7 +786,7 @@ object CachingProviderSpec extends ZIOSpecDefault {
       test("make creates a working CachingProvider via ZIO") {
         for {
           underlying <- ZIO.succeed(new CountingProvider(Map("flag" -> true)))
-          cached     <- CachingProvider.make(underlying, CachingConfig(ttl = 1.minute))
+          cached     <- CachingProvider.make(underlying, CachingConfig.default.withTtl(1.minute))
           _          <- ZIO.succeed {
             cached.getBooleanEvaluation("flag", false, ctx)
             cached.getBooleanEvaluation("flag", false, ctx)
@@ -810,7 +810,7 @@ object CachingProviderSpec extends ZIOSpecDefault {
       },
       test("after TTL expiry a re-evaluation is a fresh miss, not mislabeled CACHED") {
         val underlying = new CountingProvider(Map("flag" -> true))
-        val cached     = CachingProvider(underlying, CachingConfig(ttl = 100.millis))
+        val cached     = CachingProvider(underlying, CachingConfig.default.withTtl(100.millis))
         for {
           r1 <- ZIO.succeed(cached.getBooleanEvaluation("flag", false, ctx)) // miss
           _  <- ZIO.sleep(250.millis)                                        // let the TTL lapse (live clock)

@@ -254,7 +254,7 @@ object CircuitBreakerProviderSpec extends ZIOSpecDefault {
       },
       test("resets consecutive failures on success") {
         val underlying = new FailableProvider(Map("flag" -> true))
-        val config     = CircuitBreakerProviderConfig(failureThreshold = 3)
+        val config     = CircuitBreakerProviderConfig.default.withFailureThreshold(3)
         val cb         = CircuitBreakerProvider(underlying, config)
         // Cause 2 failures (below threshold)
         underlying.setFailing(true)
@@ -273,14 +273,14 @@ object CircuitBreakerProviderSpec extends ZIOSpecDefault {
     suite("Timeout handling")(
       test("slow delegate call triggers timeout and counts as failure") {
         val underlying = new FailableProvider(Map("flag" -> true), delay = Some(500.millis))
-        val config     = CircuitBreakerProviderConfig(evaluationTimeout = 50.millis, failureThreshold = 100)
+        val config     = CircuitBreakerProviderConfig.default.withFailureThreshold(100).withEvaluationTimeout(50.millis)
         val cb         = CircuitBreakerProvider(underlying, config)
         val result     = scala.util.Try(cb.getBooleanEvaluation("flag", false, ctx))
         assertTrue(result.isFailure)
       } @@ TestAspect.withLiveClock,
       test("successful call within timeout works normally") {
         val underlying = new FailableProvider(Map("flag" -> true), delay = Some(5.millis))
-        val config     = CircuitBreakerProviderConfig(evaluationTimeout = 1.second)
+        val config     = CircuitBreakerProviderConfig.default.withEvaluationTimeout(1.second)
         val cb         = CircuitBreakerProvider(underlying, config)
         val result     = cb.getBooleanEvaluation("flag", false, ctx)
         assertTrue(result.getValue == true)
@@ -297,7 +297,10 @@ object CircuitBreakerProviderSpec extends ZIOSpecDefault {
             super.getBooleanEvaluation(key, defaultValue, c)
           }
         }
-        val cb = CircuitBreakerProvider(underlying, CircuitBreakerProviderConfig(evaluationTimeout = Duration.Infinity))
+        val cb = CircuitBreakerProvider(
+          underlying,
+          CircuitBreakerProviderConfig.default.withEvaluationTimeout(Duration.Infinity)
+        )
         for {
           caller <- ZIO.attemptBlocking { cb.getBooleanEvaluation("flag", false, ctx); Thread.currentThread() }
         } yield assertTrue(seen.get() == caller)
@@ -314,7 +317,8 @@ object CircuitBreakerProviderSpec extends ZIOSpecDefault {
             super.getBooleanEvaluation(key, defaultValue, c)
           }
         }
-        val cb = CircuitBreakerProvider(underlying, CircuitBreakerProviderConfig(evaluationTimeout = 1.second))
+        val cb =
+          CircuitBreakerProvider(underlying, CircuitBreakerProviderConfig.default.withEvaluationTimeout(1.second))
         for {
           caller <- ZIO.attemptBlocking { cb.getBooleanEvaluation("flag", false, ctx); Thread.currentThread() }
         } yield assertTrue(seen.get() != null, seen.get() != caller)
@@ -322,7 +326,8 @@ object CircuitBreakerProviderSpec extends ZIOSpecDefault {
       test("with an infinite timeout, delegate failures still count and open the circuit") {
         val underlying = new FailableProvider(Map("flag" -> true))
         underlying.setFailing(true)
-        val config = CircuitBreakerProviderConfig(evaluationTimeout = Duration.Infinity, failureThreshold = 2)
+        val config =
+          CircuitBreakerProviderConfig.default.withFailureThreshold(2).withEvaluationTimeout(Duration.Infinity)
         val cb     = CircuitBreakerProvider(underlying, config)
         val first  = scala.util.Try(cb.getBooleanEvaluation("flag", false, ctx))
         val second = scala.util.Try(cb.getBooleanEvaluation("flag", false, ctx))
@@ -339,11 +344,10 @@ object CircuitBreakerProviderSpec extends ZIOSpecDefault {
         val underlying = new FailableProvider(Map("flag" -> true))
         val clock      = new TestClock()
         val config     =
-          CircuitBreakerProviderConfig(
-            evaluationTimeout = Duration.Infinity,
-            failureThreshold = 2,
-            resetTimeout = 1.second
-          )
+          CircuitBreakerProviderConfig.default
+            .withFailureThreshold(2)
+            .withResetTimeout(1.second)
+            .withEvaluationTimeout(Duration.Infinity)
         val cb = CircuitBreakerProvider(underlying, config, clock)
         underlying.setFailing(true)
         (1 to 2).foreach(_ => scala.util.Try(cb.getBooleanEvaluation("flag", false, ctx)))
@@ -356,11 +360,10 @@ object CircuitBreakerProviderSpec extends ZIOSpecDefault {
       test("with an infinite timeout, an in-flight probe is never stolen") {
         val clock  = new TestClock()
         val config =
-          CircuitBreakerProviderConfig(
-            evaluationTimeout = Duration.Infinity,
-            failureThreshold = 1,
-            resetTimeout = 1.second
-          )
+          CircuitBreakerProviderConfig.default
+            .withFailureThreshold(1)
+            .withResetTimeout(1.second)
+            .withEvaluationTimeout(Duration.Infinity)
         val breaker = CircuitBreaker(config.toCircuitBreakerConfig, clock)
         breaker.recordFailure()
         clock.advance(2.seconds)
@@ -390,11 +393,10 @@ object CircuitBreakerProviderSpec extends ZIOSpecDefault {
         }
         val clock  = new TestClock()
         val config =
-          CircuitBreakerProviderConfig(
-            evaluationTimeout = Duration.Infinity,
-            failureThreshold = 1,
-            resetTimeout = 1.second
-          )
+          CircuitBreakerProviderConfig.default
+            .withFailureThreshold(1)
+            .withResetTimeout(1.second)
+            .withEvaluationTimeout(Duration.Infinity)
         val cb = CircuitBreakerProvider(delegate, config, clock)
         delegate.setFailing(true)
         val tripped = scala.util.Try(cb.getBooleanEvaluation("flag", false, ctx)).isFailure
@@ -435,7 +437,7 @@ object CircuitBreakerProviderSpec extends ZIOSpecDefault {
       test("opens after failureThreshold consecutive failures") {
         val underlying = new FailableProvider(Map("flag" -> true))
         val clock      = new TestClock()
-        val config     = CircuitBreakerProviderConfig(failureThreshold = 3, resetTimeout = 1.minute)
+        val config     = CircuitBreakerProviderConfig.default.withFailureThreshold(3).withResetTimeout(1.minute)
         val cb         = CircuitBreakerProvider(underlying, config, clock)
         underlying.setFailing(true)
         (1 to 3).foreach(_ => scala.util.Try(cb.getBooleanEvaluation("flag", false, ctx)))
@@ -447,7 +449,7 @@ object CircuitBreakerProviderSpec extends ZIOSpecDefault {
       },
       test("does not open on fewer failures than threshold") {
         val underlying = new FailableProvider(Map("flag" -> true))
-        val config     = CircuitBreakerProviderConfig(failureThreshold = 5)
+        val config     = CircuitBreakerProviderConfig.default.withFailureThreshold(5)
         val cb         = CircuitBreakerProvider(underlying, config)
         underlying.setFailing(true)
         (1 to 4).foreach(_ => scala.util.Try(cb.getBooleanEvaluation("flag", false, ctx)))
@@ -460,7 +462,7 @@ object CircuitBreakerProviderSpec extends ZIOSpecDefault {
       test("throws immediately without calling delegate") {
         val underlying = new FailableProvider(Map("flag" -> true))
         val clock      = new TestClock()
-        val config     = CircuitBreakerProviderConfig(failureThreshold = 2, resetTimeout = 1.minute)
+        val config     = CircuitBreakerProviderConfig.default.withFailureThreshold(2).withResetTimeout(1.minute)
         val cb         = CircuitBreakerProvider(underlying, config, clock)
         // Trip the circuit
         underlying.setFailing(true)
@@ -474,7 +476,7 @@ object CircuitBreakerProviderSpec extends ZIOSpecDefault {
       test("transitions to half-open after resetTimeout") {
         val underlying = new FailableProvider(Map("flag" -> true))
         val clock      = new TestClock()
-        val config     = CircuitBreakerProviderConfig(failureThreshold = 2, resetTimeout = 30.seconds)
+        val config     = CircuitBreakerProviderConfig.default.withFailureThreshold(2).withResetTimeout(30.seconds)
         val cb         = CircuitBreakerProvider(underlying, config, clock)
         // Trip the circuit
         underlying.setFailing(true)
@@ -491,8 +493,11 @@ object CircuitBreakerProviderSpec extends ZIOSpecDefault {
       test("closes on successful probe") {
         val underlying = new FailableProvider(Map("flag" -> true))
         val clock      = new TestClock()
-        val config = CircuitBreakerProviderConfig(failureThreshold = 2, resetTimeout = 1.second, halfOpenMaxCalls = 1)
-        val cb     = CircuitBreakerProvider(underlying, config, clock)
+        val config     = CircuitBreakerProviderConfig.default
+          .withFailureThreshold(2)
+          .withResetTimeout(1.second)
+          .withHalfOpenMaxCalls(1)
+        val cb = CircuitBreakerProvider(underlying, config, clock)
         // Trip
         underlying.setFailing(true)
         (1 to 2).foreach(_ => scala.util.Try(cb.getBooleanEvaluation("flag", false, ctx)))
@@ -506,7 +511,7 @@ object CircuitBreakerProviderSpec extends ZIOSpecDefault {
       test("re-opens on failed probe") {
         val underlying = new FailableProvider(Map("flag" -> true))
         val clock      = new TestClock()
-        val config     = CircuitBreakerProviderConfig(failureThreshold = 2, resetTimeout = 1.second)
+        val config     = CircuitBreakerProviderConfig.default.withFailureThreshold(2).withResetTimeout(1.second)
         val cb         = CircuitBreakerProvider(underlying, config, clock)
         // Trip
         underlying.setFailing(true)
@@ -521,8 +526,11 @@ object CircuitBreakerProviderSpec extends ZIOSpecDefault {
       test("requires halfOpenMaxCalls successes to close") {
         val underlying = new FailableProvider(Map("flag" -> true))
         val clock      = new TestClock()
-        val config = CircuitBreakerProviderConfig(failureThreshold = 2, resetTimeout = 1.second, halfOpenMaxCalls = 3)
-        val cb     = CircuitBreakerProvider(underlying, config, clock)
+        val config     = CircuitBreakerProviderConfig.default
+          .withFailureThreshold(2)
+          .withResetTimeout(1.second)
+          .withHalfOpenMaxCalls(3)
+        val cb = CircuitBreakerProvider(underlying, config, clock)
         // Trip
         underlying.setFailing(true)
         (1 to 2).foreach(_ => scala.util.Try(cb.getBooleanEvaluation("flag", false, ctx)))
@@ -564,11 +572,10 @@ object CircuitBreakerProviderSpec extends ZIOSpecDefault {
         val clock      = new TestClock()
         // stateCheckInterval = Zero: this test needs the delegate state observed on every call
         val config =
-          CircuitBreakerProviderConfig(
-            failureThreshold = 2,
-            resetTimeout = 1.minute,
-            stateCheckInterval = Duration.Zero
-          )
+          CircuitBreakerProviderConfig.default
+            .withFailureThreshold(2)
+            .withResetTimeout(1.minute)
+            .withStateCheckInterval(Duration.Zero)
         val cb = CircuitBreakerProvider(underlying, config, clock)
         // Trip via state
         underlying.setState(ProviderState.ERROR)
@@ -584,7 +591,7 @@ object CircuitBreakerProviderSpec extends ZIOSpecDefault {
       },
       test("stalePolicy Open trips the circuit on STALE state, which it reports as STALE") {
         val underlying = new FailableProvider(Map("flag" -> true))
-        val config     = CircuitBreakerProviderConfig(stalePolicy = StalePolicy.Open)
+        val config     = CircuitBreakerProviderConfig.default.withStalePolicy(StalePolicy.Open)
         val cb         = CircuitBreakerProvider(underlying, config)
         underlying.setState(ProviderState.STALE)
         val result = scala.util.Try(cb.getBooleanEvaluation("flag", false, ctx))
@@ -593,7 +600,7 @@ object CircuitBreakerProviderSpec extends ZIOSpecDefault {
       },
       test("stalePolicy Ignore keeps circuit closed on STALE state") {
         val underlying = new FailableProvider(Map("flag" -> true))
-        val config     = CircuitBreakerProviderConfig(stalePolicy = StalePolicy.Ignore)
+        val config     = CircuitBreakerProviderConfig.default.withStalePolicy(StalePolicy.Ignore)
         val cb         = CircuitBreakerProvider(underlying, config)
         underlying.setState(ProviderState.STALE)
         val result = cb.getBooleanEvaluation("flag", false, ctx)
@@ -601,7 +608,7 @@ object CircuitBreakerProviderSpec extends ZIOSpecDefault {
       },
       test("stalePolicy HalfOpen transitions to half-open on STALE state") {
         val underlying = new FailableProvider(Map("flag" -> true))
-        val config     = CircuitBreakerProviderConfig(stalePolicy = StalePolicy.HalfOpen)
+        val config     = CircuitBreakerProviderConfig.default.withStalePolicy(StalePolicy.HalfOpen)
         val cb         = CircuitBreakerProvider(underlying, config)
         underlying.setState(ProviderState.STALE)
         // A closed circuit already admits every call: the policy changes nothing there.
@@ -611,12 +618,11 @@ object CircuitBreakerProviderSpec extends ZIOSpecDefault {
       test("stalePolicy HalfOpen does not shortcut resetTimeout for a circuit failures opened") {
         val underlying = new FailableProvider(Map("flag" -> true))
         val clock      = new TestClock()
-        val config     = CircuitBreakerProviderConfig(
-          stalePolicy = StalePolicy.HalfOpen,
-          failureThreshold = 1,
-          resetTimeout = 30.seconds,
-          stateCheckInterval = 1.second
-        )
+        val config     = CircuitBreakerProviderConfig.default
+          .withFailureThreshold(1)
+          .withResetTimeout(30.seconds)
+          .withStalePolicy(StalePolicy.HalfOpen)
+          .withStateCheckInterval(1.second)
         val cb = CircuitBreakerProvider(underlying, config, clock)
         underlying.setFailing(true)
         val _ = scala.util.Try(cb.getBooleanEvaluation("flag", false, ctx)) // opens the circuit
@@ -640,7 +646,7 @@ object CircuitBreakerProviderSpec extends ZIOSpecDefault {
           }
         }
         val clock  = new TestClock()
-        val config = CircuitBreakerProviderConfig(stateCheckInterval = 1.second)
+        val config = CircuitBreakerProviderConfig.default.withStateCheckInterval(1.second)
         val cb     = CircuitBreakerProvider(underlying, config, clock)
         // 10 evaluations inside one interval: only the first polls the delegate state
         (1 to 10).foreach(_ => cb.getBooleanEvaluation("flag", false, ctx))
@@ -661,7 +667,7 @@ object CircuitBreakerProviderSpec extends ZIOSpecDefault {
             super.getState
           }
         }
-        val config = CircuitBreakerProviderConfig(stateCheckInterval = Duration.Zero)
+        val config = CircuitBreakerProviderConfig.default.withStateCheckInterval(Duration.Zero)
         val cb     = CircuitBreakerProvider(underlying, config)
         (1 to 5).foreach(_ => cb.getBooleanEvaluation("flag", false, ctx))
         assertTrue(stateChecks.get() == 5)
@@ -724,7 +730,7 @@ object CircuitBreakerProviderSpec extends ZIOSpecDefault {
         val clock      = new TestClock()
         val cb         = CircuitBreakerProvider(
           underlying,
-          CircuitBreakerProviderConfig(failureThreshold = 1, resetTimeout = 30.seconds),
+          CircuitBreakerProviderConfig.default.withFailureThreshold(1).withResetTimeout(30.seconds),
           clock
         )
         val seen = new java.util.concurrent.ConcurrentLinkedQueue[dev.openfeature.sdk.ProviderEvent]()
@@ -847,7 +853,7 @@ object CircuitBreakerProviderSpec extends ZIOSpecDefault {
       test("only one probe runs at a time in half-open state") {
         val underlying = new FailableProvider(Map("flag" -> true), delay = Some(50.millis))
         val clock      = new TestClock()
-        val config     = CircuitBreakerProviderConfig(failureThreshold = 2, resetTimeout = 1.second)
+        val config     = CircuitBreakerProviderConfig.default.withFailureThreshold(2).withResetTimeout(1.second)
         val cb         = CircuitBreakerProvider(underlying, config, clock)
         // Trip
         underlying.setFailing(true)
@@ -876,7 +882,7 @@ object CircuitBreakerProviderSpec extends ZIOSpecDefault {
         val primary     = new FailableProvider(Map("flag" -> true))
         val fallbackEnv = Map("FF_FLAG" -> "false")
         val fallback    = EnvVarProvider.withLookup(fallbackEnv.get)
-        val cb          = CircuitBreakerProvider(primary, CircuitBreakerProviderConfig(failureThreshold = 2))
+        val cb          = CircuitBreakerProvider(primary, CircuitBreakerProviderConfig.default.withFailureThreshold(2))
 
         val multi = new MultiProvider(
           List(cb, fallback).map(_.asInstanceOf[dev.openfeature.sdk.FeatureProvider]).asJava,
@@ -907,7 +913,7 @@ object CircuitBreakerProviderSpec extends ZIOSpecDefault {
             throw new dev.openfeature.sdk.exceptions.FlagNotFoundError(s"Flag '$key' not found")
           }
         }
-        val config = CircuitBreakerProviderConfig(failureThreshold = 2)
+        val config = CircuitBreakerProviderConfig.default.withFailureThreshold(2)
         val cb     = CircuitBreakerProvider(underlying, config)
         // Trigger many FlagNotFound errors — should NOT trip the circuit
         (1 to 10).foreach(_ => scala.util.Try(cb.getBooleanEvaluation("missing", false, ctx)))
@@ -926,7 +932,7 @@ object CircuitBreakerProviderSpec extends ZIOSpecDefault {
             throw new dev.openfeature.sdk.exceptions.TypeMismatchError("Expected string, got boolean")
           }
         }
-        val config = CircuitBreakerProviderConfig(failureThreshold = 2)
+        val config = CircuitBreakerProviderConfig.default.withFailureThreshold(2)
         val cb     = CircuitBreakerProvider(underlying, config)
         (1 to 10).foreach(_ => scala.util.Try(cb.getStringEvaluation("flag", "", ctx)))
         assertTrue(cb.getState == ProviderState.READY) &&
@@ -934,7 +940,7 @@ object CircuitBreakerProviderSpec extends ZIOSpecDefault {
       },
       test("application errors reset consecutive failure counter") {
         val underlying = new FailableProvider(Map("flag" -> true))
-        val config     = CircuitBreakerProviderConfig(failureThreshold = 3)
+        val config     = CircuitBreakerProviderConfig.default.withFailureThreshold(3)
         val cb         = CircuitBreakerProvider(underlying, config)
         // 2 infra failures (count=2)
         underlying.setFailing(true)
@@ -970,7 +976,7 @@ object CircuitBreakerProviderSpec extends ZIOSpecDefault {
           }
         }
         val clock  = new TestClock()
-        val config = CircuitBreakerProviderConfig(failureThreshold = 3, resetTimeout = 1.minute)
+        val config = CircuitBreakerProviderConfig.default.withFailureThreshold(3).withResetTimeout(1.minute)
         val cb     = CircuitBreakerProvider(underlying, config, clock)
         (1 to 3).foreach(_ => scala.util.Try(cb.getBooleanEvaluation("flag", false, ctx)))
         val countAfterTrip = underlying.evaluationCount.get()
@@ -997,7 +1003,10 @@ object CircuitBreakerProviderSpec extends ZIOSpecDefault {
         }
         val clock  = new TestClock()
         val config =
-          CircuitBreakerProviderConfig(failureThreshold = 2, resetTimeout = 1.second, halfOpenMaxCalls = 3)
+          CircuitBreakerProviderConfig.default
+            .withFailureThreshold(2)
+            .withResetTimeout(1.second)
+            .withHalfOpenMaxCalls(3)
         val cb = CircuitBreakerProvider(underlying, config, clock)
         // Trip the circuit with infrastructure failures (count toward threshold).
         (1 to 2).foreach(_ => scala.util.Try(cb.getBooleanEvaluation("flag", false, ctx)))
@@ -1029,7 +1038,7 @@ object CircuitBreakerProviderSpec extends ZIOSpecDefault {
               throw new RuntimeException("Connection refused")
           }
         }
-        val config = CircuitBreakerProviderConfig(failureThreshold = 3)
+        val config = CircuitBreakerProviderConfig.default.withFailureThreshold(3)
         val cb     = CircuitBreakerProvider(underlying, config)
         // FlagNotFound resets counter (provider is reachable), RuntimeException increments.
         // With resets: FlagNotFound(reset=0), Runtime(count=1), FlagNotFound(reset=0),
@@ -1041,7 +1050,7 @@ object CircuitBreakerProviderSpec extends ZIOSpecDefault {
     ),
     suite("Edge cases")(
       test("default config values are sensible") {
-        val config = CircuitBreakerProviderConfig()
+        val config = CircuitBreakerProviderConfig.default
         assertTrue(config.failureThreshold == 5) &&
         assertTrue(config.resetTimeout == 30.seconds) &&
         assertTrue(config.evaluationTimeout == 500.millis) &&
@@ -1060,7 +1069,7 @@ object CircuitBreakerProviderSpec extends ZIOSpecDefault {
       },
       test("timeout does not block longer than configured duration") {
         val underlying = new FailableProvider(Map("flag" -> true), delay = Some(5.seconds))
-        val config     = CircuitBreakerProviderConfig(evaluationTimeout = 50.millis, failureThreshold = 100)
+        val config     = CircuitBreakerProviderConfig.default.withFailureThreshold(100).withEvaluationTimeout(50.millis)
         val cb         = CircuitBreakerProvider(underlying, config)
         val start      = java.lang.System.currentTimeMillis()
         scala.util.Try(cb.getBooleanEvaluation("flag", false, ctx))
@@ -1152,7 +1161,7 @@ object CircuitBreakerProviderSpec extends ZIOSpecDefault {
         // clear accumulated failures, or a plain provider could never trip on failure count alone.
         val delegate = new PlainProvider(Map("flag" -> true))
         val clock    = new TestClock()
-        val config   = CircuitBreakerProviderConfig(failureThreshold = 3, resetTimeout = 1.minute)
+        val config   = CircuitBreakerProviderConfig.default.withFailureThreshold(3).withResetTimeout(1.minute)
         val cb       = CircuitBreakerProvider(delegate, config, clock)
         delegate.setFailing(true)
         (1 to 3).foreach(_ => scala.util.Try(cb.getBooleanEvaluation("flag", false, ctx)))
@@ -1163,7 +1172,7 @@ object CircuitBreakerProviderSpec extends ZIOSpecDefault {
       test("recovers through a half-open probe after resetTimeout with a plain delegate") {
         val delegate = new PlainProvider(Map("flag" -> true))
         val clock    = new TestClock()
-        val config   = CircuitBreakerProviderConfig(failureThreshold = 2, resetTimeout = 30.seconds)
+        val config   = CircuitBreakerProviderConfig.default.withFailureThreshold(2).withResetTimeout(30.seconds)
         val cb       = CircuitBreakerProvider(delegate, config, clock)
         delegate.setFailing(true)
         (1 to 2).foreach(_ => scala.util.Try(cb.getBooleanEvaluation("flag", false, ctx)))
@@ -1180,7 +1189,8 @@ object CircuitBreakerProviderSpec extends ZIOSpecDefault {
       test("opens immediately when a plain delegate reports ERROR state") {
         val delegate = new StatefulPlainProvider
         val clock    = new TestClock()
-        val cb       = CircuitBreakerProvider(delegate, CircuitBreakerProviderConfig(resetTimeout = 1.minute), clock)
+        val cb       =
+          CircuitBreakerProvider(delegate, CircuitBreakerProviderConfig.default.withResetTimeout(1.minute), clock)
         delegate.setState(ProviderState.ERROR)
         val result        = scala.util.Try(cb.getBooleanEvaluation("flag", false, ctx))
         val countAtReject = delegate.evaluationCount.get()
@@ -1189,7 +1199,8 @@ object CircuitBreakerProviderSpec extends ZIOSpecDefault {
       test("opens immediately when a plain delegate reports FATAL state") {
         val delegate = new StatefulPlainProvider
         val clock    = new TestClock()
-        val cb       = CircuitBreakerProvider(delegate, CircuitBreakerProviderConfig(resetTimeout = 1.minute), clock)
+        val cb       =
+          CircuitBreakerProvider(delegate, CircuitBreakerProviderConfig.default.withResetTimeout(1.minute), clock)
         delegate.setState(ProviderState.FATAL)
         val result        = scala.util.Try(cb.getBooleanEvaluation("flag", false, ctx))
         val countAtReject = delegate.evaluationCount.get()

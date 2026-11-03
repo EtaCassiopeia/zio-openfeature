@@ -22,7 +22,7 @@ import dev.openfeature.sdk.{
   *   - `Option[A]` over a scalar `A` resolves through `A`'s resolver. A `None` default is sent as `A`'s zero and read
   *     back as `None` when the provider fell back to it (an error code, or reason `DEFAULT`/`DISABLED`/`ERROR` with the
   *     zero itself);
-  *   - a legacy `wireType` override is matched case-insensitively;
+  *   - a `typeName` spelled in lower case is matched to its scalar case-insensitively;
   *   - only the built-in `Map[String, Any]` instance takes the raw-map shortcut on the object path, so a custom
   *     instance named `"Object"` has its `decode` run.
   *
@@ -43,11 +43,10 @@ object OptionScalarWireSpec extends ZIOSpecDefault {
       p => if (p == Phase.DualWrite) "dual_write" else "off"
     )
 
-  // A legacy instance that spells its wire type in lower case. Previously that silently meant "object".
+  // An instance whose type name is a scalar's, spelled in lower case. Previously that silently meant "object".
   final case class Code(s: String)
   implicit val codeFlagType: FlagType[Code] = new FlagType[Code] {
-    def typeName: String                         = "Code"
-    override def wireType: String                = "string"
+    def typeName: String                         = "string"
     def defaultValue: Code                       = Code("")
     def decode(value: Any): Either[String, Code] = FlagType[String].decode(value).map(Code(_))
     override def encode(value: Code): Any        = value.s
@@ -308,7 +307,7 @@ object OptionScalarWireSpec extends ZIOSpecDefault {
           }
         }
       },
-      test("a legacy wireType override spelled \"string\" reaches the string resolver") {
+      test("a typeName spelled \"string\" reaches the string resolver") {
         withFlags("legacy") { (p, ff) =>
           ff.value[Code]("c.hit", Code("d")).map { v =>
             val call = p.lastCall.get

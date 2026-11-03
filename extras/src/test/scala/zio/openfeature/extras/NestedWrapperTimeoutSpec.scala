@@ -22,7 +22,7 @@ object NestedWrapperTimeoutSpec extends ZIOSpecDefault {
         _        <- delegate.script(Op.EvaluateBoolean, Fault.Delay(2.seconds), Fault.Succeed) // slow once, then fast
         breaker = CircuitBreakerProvider(
           CachingProvider(delegate),
-          CircuitBreakerProviderConfig(evaluationTimeout = 200.millis, failureThreshold = 5)
+          CircuitBreakerProviderConfig.default.withFailureThreshold(5).withEvaluationTimeout(200.millis)
         )
         first <- ZIO.attemptBlocking(breaker.getBooleanEvaluation("flag", false, ctx)).either.timeout(10.seconds)
         next  <- ZIO.attemptBlocking(breaker.getBooleanEvaluation("flag", false, ctx)).timeout(10.seconds)

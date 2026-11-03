@@ -19,8 +19,8 @@ import java.util.concurrent.atomic.AtomicReference
   *
   * Some providers do all their network work in the Java constructor (blocking the call site). Wrapping such a provider
   * in `DeferredProvider` defers construction to `initialize(ctx)`, which the OpenFeature SDK runs on its own init
-  * executor — so `fromProviderAsync` (or any `FeatureFlagsConfig(initMode = InitMode.Async)`) already keeps that work
-  * off the caller's thread. Use this when you want plain async semantics (typed `PROVIDER_NOT_READY` until ready); use
+  * executor — so `fromProviderAsync` (or any `FeatureFlagsConfig.default.withAsyncInit`) already keeps that work off
+  * the caller's thread. Use this when you want plain async semantics (typed `PROVIDER_NOT_READY` until ready); use
   * [[zio.openfeature.FeatureFlags.fromAcquireAsync]] instead when a fallback must answer during the init window (inside
   * a `MultiProvider`, `DeferredProvider` still gates overall readiness, since the SDK awaits all children).
   *

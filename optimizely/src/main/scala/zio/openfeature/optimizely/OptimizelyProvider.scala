@@ -32,9 +32,9 @@ import java.util.concurrent.{ExecutorService, Executors, ThreadFactory, TimeUnit
   *     inner   <- OptimizelyProvider.make(sys.env("OPTIMIZELY_SDK_KEY"))
   *     wrapped <- CircuitBreakerProvider.make(
   *                  inner,
-  *                  CircuitBreakerProviderConfig(failureThreshold = 5, resetTimeout = 30.seconds)
+  *                  CircuitBreakerProviderConfig.default.withFailureThreshold(5).withResetTimeout(30.seconds)
   *                )
-  *     env     <- FeatureFlags.fromProvider(wrapped, FeatureFlagsConfig(initMode = InitMode.Async).withEvaluationTimeout(500.millis)).build
+  *     env     <- FeatureFlags.fromProvider(wrapped, FeatureFlagsConfig.default.withAsyncInit.withEvaluationTimeout(500.millis)).build
   *     ff       = env.get[FeatureFlags]
   *     enabled <- ff.boolean("flag", default = false)
   *   } yield enabled
@@ -44,9 +44,9 @@ import java.util.concurrent.{ExecutorService, Executors, ThreadFactory, TimeUnit
   * '''Failure semantics on bad credentials / unreachable CDN:'''
   *   - If the Optimizely datafile fetch fails (auth, network, 5xx), the underlying client stays `!isValid` and
   *     [[OptimizelyFeatureProvider.initialize]] throws after its `initWait` elapses. The outer
-  *     `FeatureFlagsConfig().withInitTimeout(…)` translates that into either a layer build failure (sync mode) or a
-  *     `ProviderStatus.Fatal` transition (async mode), so an evaluation never silently returns the default value under
-  *     a misconfigured provider.
+  *     `FeatureFlagsConfig.default.withInitTimeout(…)` translates that into either a layer build failure (sync mode) or
+  *     a `ProviderStatus.Fatal` transition (async mode), so an evaluation never silently returns the default value
+  *     under a misconfigured provider.
   *   - Construction (this object's `make`) does not block on the network, but the first datafile fetch starts then: the
   *     Optimizely SDK offers no way to build its polling config manager paused. `initialize()` waits for it.
   *
@@ -78,15 +78,56 @@ import java.util.concurrent.{ExecutorService, Executors, ThreadFactory, TimeUnit
   *   sends them to Optimizely in batches, as the SDK's own default factory does: without them, experiments show no
   *   visitors and `track` conversions are lost. [[OptimizelyEvents.Disabled]] drops them.
   */
-final case class OptimizelyProviderConfig(
-  sdkKey: String,
-  datafileUrl: Option[String] = None,
-  initWait: java.time.Duration = OptimizelyProvider.DefaultInitWait,
-  pollingInterval: Option[java.time.Duration] = None,
-  blockingTimeout: Option[java.time.Duration] = None,
-  staleAfter: Option[java.time.Duration] = None,
-  events: OptimizelyEvents = OptimizelyEvents.Batched()
-)
+final class OptimizelyProviderConfig private (
+  val sdkKey: String,
+  val datafileUrl: Option[String],
+  val initWait: java.time.Duration,
+  val pollingInterval: Option[java.time.Duration],
+  val blockingTimeout: Option[java.time.Duration],
+  val staleAfter: Option[java.time.Duration],
+  val events: OptimizelyEvents
+) {
+  private def copy(
+    sdkKey: String = sdkKey,
+    datafileUrl: Option[String] = datafileUrl,
+    initWait: java.time.Duration = initWait,
+    pollingInterval: Option[java.time.Duration] = pollingInterval,
+    blockingTimeout: Option[java.time.Duration] = blockingTimeout,
+    staleAfter: Option[java.time.Duration] = staleAfter,
+    events: OptimizelyEvents = events
+  ): OptimizelyProviderConfig =
+    new OptimizelyProviderConfig(sdkKey, datafileUrl, initWait, pollingInterval, blockingTimeout, staleAfter, events)
+
+  def withSdkKey(key: String): OptimizelyProviderConfig                    = copy(sdkKey = key)
+  def withDatafileUrl(url: String): OptimizelyProviderConfig               = copy(datafileUrl = Some(url))
+  def withInitWait(d: java.time.Duration): OptimizelyProviderConfig        = copy(initWait = d)
+  def withPollingInterval(d: java.time.Duration): OptimizelyProviderConfig = copy(pollingInterval = Some(d))
+  def withBlockingTimeout(d: java.time.Duration): OptimizelyProviderConfig = copy(blockingTimeout = Some(d))
+  def withStaleAfter(d: java.time.Duration): OptimizelyProviderConfig      = copy(staleAfter = Some(d))
+  def withEvents(e: OptimizelyEvents): OptimizelyProviderConfig            = copy(events = e)
+
+  // The SDK key is a credential, so it is not printed.
+  override def toString: String =
+    s"OptimizelyProviderConfig(sdkKey=<redacted>, datafileUrl=$datafileUrl, initWait=$initWait, " +
+      s"pollingInterval=$pollingInterval, blockingTimeout=$blockingTimeout, staleAfter=$staleAfter, events=$events)"
+}
+
+object OptimizelyProviderConfig {
+
+  /** A config for `sdkKey` that fetches from the public CDN, waits [[OptimizelyProvider.DefaultInitWait]] for the first
+    * datafile, uses the SDK's polling and blocking defaults, has no staleness override and batches events.
+    */
+  def apply(sdkKey: String): OptimizelyProviderConfig =
+    new OptimizelyProviderConfig(
+      sdkKey,
+      None,
+      OptimizelyProvider.DefaultInitWait,
+      None,
+      None,
+      None,
+      OptimizelyEvents.Batched()
+    )
+}
 
 /** What a factory-built provider does with the events the Optimizely SDK produces: an impression for each decision
   * (when the datafile's `sendFlagDecisions` is on, rollout decisions included) and a conversion for each `track`.
@@ -162,8 +203,10 @@ object OptimizelyProvider {
     sdkKey: String,
     datafileUrl: Option[String],
     initWait: java.time.Duration
-  ): IO[FeatureFlagError.InvalidConfiguration, OptimizelyFeatureProvider] =
-    make(OptimizelyProviderConfig(sdkKey, datafileUrl, initWait))
+  ): IO[FeatureFlagError.InvalidConfiguration, OptimizelyFeatureProvider] = {
+    val base = OptimizelyProviderConfig(sdkKey).withInitWait(initWait)
+    make(datafileUrl.fold(base)(base.withDatafileUrl))
+  }
 
   /** Validate the configuration and construct a provider.
     *
@@ -353,7 +396,7 @@ object OptimizelyProvider {
     sdkKey: String,
     datafileUrl: String
   ): ZLayer[Any, FeatureFlagError.InvalidConfiguration, OptimizelyFeatureProvider] =
-    layer(OptimizelyProviderConfig(sdkKey, datafileUrl = Some(datafileUrl)))
+    layer(OptimizelyProviderConfig(sdkKey).withDatafileUrl(datafileUrl))
 
   /** ZLayer from a full [[OptimizelyProviderConfig]]. Owns the provider lifecycle — see [[layer(String)]]. */
   def layer(

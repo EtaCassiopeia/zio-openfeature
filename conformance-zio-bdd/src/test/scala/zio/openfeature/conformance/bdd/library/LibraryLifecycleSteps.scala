@@ -128,7 +128,7 @@ trait LibraryLifecycleSteps { self: ZIOSteps[Any, LibraryWorld] =>
           .fromAcquireAsync(
             acquire = acquire,
             fallback = ZIO.succeed(fallbackP),
-            config = FeatureFlagsConfig(),
+            config = FeatureFlagsConfig.default,
             acquireConfig = AcquireConfig.default
               // No retry: a scenario asserting the terminal outcome must not wait out an exponential schedule.
               .withConstructionRetry(Schedule.stop)

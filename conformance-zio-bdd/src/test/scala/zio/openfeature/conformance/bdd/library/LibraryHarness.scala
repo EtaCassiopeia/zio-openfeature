@@ -17,7 +17,7 @@ object LibraryHarness {
 
   def build(
     provider: OFFeatureProvider,
-    config: FeatureFlagsConfig = FeatureFlagsConfig()
+    config: FeatureFlagsConfig = FeatureFlagsConfig.default
   ): ZIO[Scope, Throwable, FeatureFlags] =
     FeatureFlags
       .fromProvider(provider, isolated(config), statusRef = None, apiOverride = Some(OpenFeatureAPI.createIsolated()))

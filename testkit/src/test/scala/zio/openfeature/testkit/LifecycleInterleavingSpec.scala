@@ -320,7 +320,7 @@ object LifecycleInterleavingSpec extends ZIOSpecDefault {
         _       <- ZIO.addFinalizer(probe.release.succeed(()))
         initial <- provider("p0")
         ff      <- FeatureFlagsFactories
-          .buildWithTracking(
+          .build(
             initial,
             domain = Some(s"interleaving-${java.util.UUID.randomUUID()}"),
             version = None,
@@ -465,7 +465,7 @@ object LifecycleInterleavingSpec extends ZIOSpecDefault {
       _       <- ZIO.addFinalizer(probe.release.succeed(()))
       initial <- provider("p0")
       ff      <- FeatureFlagsFactories
-        .buildWithTracking(
+        .build(
           initial,
           domain = Some(s"interleaving-${java.util.UUID.randomUUID()}"),
           version = None,
@@ -512,7 +512,7 @@ object LifecycleInterleavingSpec extends ZIOSpecDefault {
       _     <- ZIO.addFinalizer(probe.release.succeed(()))
       p     <- provider("p0", Fault.HangUntilReleased, Fault.Succeed)
       ff    <- FeatureFlagsFactories
-        .buildAsyncWithTracking(
+        .buildAsync(
           p,
           domain = Some(s"interleaving-${java.util.UUID.randomUUID()}"),
           version = None,

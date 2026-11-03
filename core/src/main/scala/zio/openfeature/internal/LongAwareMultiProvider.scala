@@ -22,7 +22,8 @@ import dev.openfeature.sdk.{
   ProviderState,
   TrackingEventDetails => OFTrackingEventDetails
 }
-import dev.openfeature.sdk.multiprovider.{MultiProvider, Strategy}
+import dev.openfeature.sdk.multiprovider.{MultiProvider, Strategy => SdkStrategy}
+import zio.openfeature.MultiProviderStrategy
 
 import scala.jdk.CollectionConverters._
 import scala.util.Try
@@ -49,8 +50,8 @@ import scala.util.Try
   */
 final private[openfeature] class LongAwareMultiProvider(
   providers: java.util.List[OFFeatureProvider],
-  strategy: Strategy
-) extends MultiProvider(providers, strategy) {
+  strategy: MultiProviderStrategy.Strategy
+) extends MultiProvider(providers, MultiProviderStrategy.toSdk(strategy)) {
 
   import LongAwareMultiProvider._
 
@@ -58,7 +59,7 @@ final private[openfeature] class LongAwareMultiProvider(
   private val children: java.util.List[OFFeatureProvider] =
     Collections.unmodifiableList(new ArrayList[OFFeatureProvider](providers))
 
-  private val chainStrategy: Strategy = strategy
+  private val chainStrategy: SdkStrategy = MultiProviderStrategy.toSdk(strategy)
 
   private val hookExecutor = new MultiProviderHookExecutor()
 

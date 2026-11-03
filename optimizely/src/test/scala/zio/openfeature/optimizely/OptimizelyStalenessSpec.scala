@@ -75,15 +75,13 @@ object OptimizelyStalenessSpec extends ZIOSpecDefault {
     test("failing datafile fetches drive READY -> STALE (still evaluable) -> READY on recovery") {
       withMockServer { server =>
         serveDatafile(server)
-        val config = OptimizelyProviderConfig(
-          sdkKey = "staleness-key",
-          datafileUrl = Some(datafileUrl(server)),
-          initWait = OptimizelyTestSupport.InitWait,
-          pollingInterval = Some(java.time.Duration.ofMillis(500)),
-          blockingTimeout = Some(java.time.Duration.ofSeconds(2)),
-          staleAfter = Some(java.time.Duration.ofSeconds(2)),
-          events = OptimizelyEvents.Disabled // nothing here is about events; keep them off the network
-        )
+        val config = OptimizelyProviderConfig("staleness-key")
+          .withDatafileUrl(datafileUrl(server))
+          .withInitWait(OptimizelyTestSupport.InitWait)
+          .withPollingInterval(java.time.Duration.ofMillis(500))
+          .withBlockingTimeout(java.time.Duration.ofSeconds(2))
+          .withStaleAfter(java.time.Duration.ofSeconds(2))
+          .withEvents(OptimizelyEvents.Disabled) // nothing here is about events; keep them off the network
         val provider = makeProvider(config)
         val api      = OpenFeatureAPI.getInstance()
         val domain   = s"optimizely-stale-${UUID.randomUUID()}"
@@ -135,14 +133,11 @@ object OptimizelyStalenessSpec extends ZIOSpecDefault {
         serveDatafile(server)
         // No pollingInterval => no fetches to observe => no watchdog. staleAfter is irrelevant here (and would be a
         // no-op even if set), but we set it to prove it does not force the watchdog on.
-        val config = OptimizelyProviderConfig(
-          sdkKey = "no-poll-key",
-          datafileUrl = Some(datafileUrl(server)),
-          initWait = OptimizelyTestSupport.InitWait,
-          pollingInterval = None,
-          blockingTimeout = Some(java.time.Duration.ofSeconds(2)),
-          staleAfter = Some(java.time.Duration.ofMillis(500))
-        )
+        val config = OptimizelyProviderConfig("no-poll-key")
+          .withDatafileUrl(datafileUrl(server))
+          .withInitWait(OptimizelyTestSupport.InitWait)
+          .withBlockingTimeout(java.time.Duration.ofSeconds(2))
+          .withStaleAfter(java.time.Duration.ofMillis(500))
         val provider   = makeProvider(config)
         val api        = OpenFeatureAPI.getInstance()
         val domain     = s"optimizely-nopoll-${UUID.randomUUID()}"

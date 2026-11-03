@@ -55,12 +55,11 @@ object CircuitBreakerReturnedErrorSpec extends ZIOSpecDefault {
   private val ctx = new ImmutableContext()
 
   // A long state-check interval keeps the delegate's (default READY) getState() poll out of these tests.
-  private val config = CircuitBreakerProviderConfig(
-    failureThreshold = 3,
-    resetTimeout = 1.second,
-    halfOpenMaxCalls = 1,
-    stateCheckInterval = 1.hour
-  )
+  private val config = CircuitBreakerProviderConfig.default
+    .withFailureThreshold(3)
+    .withResetTimeout(1.second)
+    .withHalfOpenMaxCalls(1)
+    .withStateCheckInterval(1.hour)
 
   private def tripWith(code: ErrorCode): (CodedProvider, CircuitBreakerProvider, ManualTicker) = {
     val delegate = new CodedProvider

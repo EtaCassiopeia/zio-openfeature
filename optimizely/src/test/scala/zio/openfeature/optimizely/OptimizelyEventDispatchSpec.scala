@@ -51,13 +51,11 @@ object OptimizelyEventDispatchSpec extends ZIOSpecDefault {
     })(s => ZIO.attemptBlocking(s.stop()).ignore)
 
   private def config(server: WireMockServer, events: OptimizelyEvents): OptimizelyProviderConfig =
-    OptimizelyProviderConfig(
-      sdkKey = "events-key",
-      datafileUrl = Some(s"http://localhost:${server.port()}$DatafilePath"),
-      initWait = OptimizelyTestSupport.InitWait,
-      blockingTimeout = Some(java.time.Duration.ofSeconds(2)),
-      events = events
-    )
+    OptimizelyProviderConfig("events-key")
+      .withDatafileUrl(s"http://localhost:${server.port()}$DatafilePath")
+      .withInitWait(OptimizelyTestSupport.InitWait)
+      .withBlockingTimeout(java.time.Duration.ofSeconds(2))
+      .withEvents(events)
 
   // A generous socket timeout: the client never retries, so one slow WireMock answer under load would otherwise fail
   // initialize() for good.
@@ -79,7 +77,7 @@ object OptimizelyEventDispatchSpec extends ZIOSpecDefault {
     p.getBooleanEvaluation("lifecycle_flag", java.lang.Boolean.FALSE, user).getValue.booleanValue
 
   private def rejected(events: OptimizelyEvents): UIO[Option[String]] =
-    OptimizelyProvider.make(OptimizelyProviderConfig("events-key", events = events)).flip.option.map(_.map(_.message))
+    OptimizelyProvider.make(OptimizelyProviderConfig("events-key").withEvents(events)).flip.option.map(_.map(_.message))
 
   def spec: Spec[TestEnvironment & Scope, Any] = suite("OptimizelyEventDispatchSpec")(
     test("a decision is sent as an impression for the user, flushed when the provider closes") {

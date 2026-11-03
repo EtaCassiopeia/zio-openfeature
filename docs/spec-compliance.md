@@ -37,9 +37,9 @@ and runs them on every build, twice: the `conformance` module runs them with Cuc
 | No logging by the client (§1.4.11, SHOULD NOT) | **Deviates by default**: when the total tier serves a default, it logs one warning per flag key per minute (`FallbackLogging.Default`). Set `FallbackLogging.Off` to conform. A default served because of a defect is still logged, since it means a bug. |
 | **Providers (§1.6, §1.7, §2)** | |
 | Set a provider and wait for it (blocking init) | `FeatureFlags.fromProvider` |
-| Set a provider without waiting (async init) | `fromProviderAsync`, or `FeatureFlagsConfig().withAsyncInit` |
+| Set a provider without waiting (async init) | `fromProviderAsync`, or `FeatureFlagsConfig.default.withAsyncInit` |
 | Shut down (§1.6.1) | when the layer's `Scope` closes, or `FeatureFlagsAdmin.shutdown` |
-| Domains | `FeatureFlagsConfig().withDomain(d)` (and `.withVersion(v)` for the client version); `FeatureFlagRegistry` for many domains |
+| Domains | `FeatureFlagsConfig.default.withDomain(d)` (and `.withVersion(v)` for the client version); `FeatureFlagRegistry` for many domains |
 | Provider and client metadata | `providerMetadata`, `clientMetadata` |
 | Provider status (§1.7) | `providerStatus`: `NotReady`, `Ready`, `Stale`, `Error`, `Fatal`, plus `ShuttingDown`; a `STALE` event moves any status but `Fatal` and `ShuttingDown` to `Stale`, as §5.3.5 maps it |
 | Several providers | `FeatureFlags.multiProvider` (the SDK's `MultiProvider`) |
@@ -52,7 +52,7 @@ and runs them on every build, twice: the `conformance` module runs them with Cuc
 | Stages: before, after, error, finally | `FeatureHook`: `before`, `after`, `error`, `finallyAfter` |
 | Hook context and hints | `HookContext` (flag key, flag type, default value, evaluation context, client and provider metadata); `HookHints`, passed through `EvaluationOptions` |
 | Hook data (§4.6) | `HookData`, per hook and per evaluation, shared across its stages |
-| API, client, invocation and provider hooks | `addZioApiHook`; `addHook`; `EvaluationOptions(hooks = ...)`; the provider's own `getProviderHooks`. Java SDK hooks can be added with `addApiHook`. |
+| API, client, invocation and provider hooks | `addZioApiHook`; `addHook`; `EvaluationOptions.empty.withHooks(...)`; the provider's own `getProviderHooks`. Java SDK hooks can be added with `addApiHook`. |
 | Order | before: API, client, invocation, then, inside the SDK call, Java SDK API hooks, provider hooks; after, error and finally run in reverse |
 | A failing `before` or `after` runs `error` (§4.4.5-4.4.6) | yes; the rest of that stage is skipped |
 | A failing `after` yields the default (§4.4.8) | the total tier returns the default with reason `Error` and code `General`, and `finallyAfter` sees that; the typed tier fails |

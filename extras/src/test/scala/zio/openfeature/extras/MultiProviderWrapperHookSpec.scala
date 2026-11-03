@@ -76,7 +76,7 @@ object MultiProviderWrapperHookSpec extends ZIOSpecDefault {
       ff <- FeatureFlags
         .fromProvider(
           wrap(chain),
-          FeatureFlagsConfig(domain = Some("checkout")),
+          FeatureFlagsConfig.default.withDomain("checkout"),
           statusRef = None,
           apiOverride = Some(OpenFeatureAPI.createIsolated())
         )
@@ -107,7 +107,7 @@ object MultiProviderWrapperHookSpec extends ZIOSpecDefault {
     },
     test("through CircuitBreakerProvider with infinite timeout, chain members' hooks see the caller's domain") {
       ZIO.scoped {
-        val config = CircuitBreakerProviderConfig(evaluationTimeout = Duration.Infinity)
+        val config = CircuitBreakerProviderConfig.default.withEvaluationTimeout(Duration.Infinity)
         evaluateThrough(chain => CircuitBreakerProvider(chain, config)).map { case (vs, stages, domains) =>
           assertTrue(
             vs == List(true, true),

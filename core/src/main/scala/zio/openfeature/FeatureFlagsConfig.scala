@@ -2,28 +2,54 @@ package zio.openfeature
 
 import zio._
 
-/** Everything the `FeatureFlags.fromProvider(provider, config)` factory can configure, in one place. All fields have
-  * defaults; `FeatureFlagsConfig()` reproduces `FeatureFlags.fromProvider(provider)` exactly.
+/** Everything the `FeatureFlags.fromProvider(provider, config)` factory can configure, in one place. Built from
+  * [[FeatureFlagsConfig.default]] with the `with*` methods, each returning a copy; `FeatureFlagsConfig.default`
+  * reproduces `FeatureFlags.fromProvider(provider)` exactly. It holds functions through its hooks and context source,
+  * so it has no structural equality.
   *
   * `maxAbandonedCalls` caps the provider calls an instance has abandoned to its `evaluationTimeout` that are still
   * running, each holding a blocking-pool thread; at the cap, timed evaluations fail fast with `ProviderError` wrapping
   * a `RejectedExecutionException` instead of parking another thread. Default [[FeatureFlags.DefaultMaxAbandonedCalls]]
-  * (256); `Int.MaxValue` disables it. It must be at least 1: constructing a config with a smaller value throws
-  * `IllegalArgumentException`.
+  * (256); `Int.MaxValue` disables it. It must be at least 1: setting a smaller value throws `IllegalArgumentException`.
   */
-final case class FeatureFlagsConfig(
-  domain: Option[String] = None,
-  version: Option[String] = None,
-  initialHooks: List[FeatureHook] = Nil,
-  evaluationTimeout: EvaluationTimeout = EvaluationTimeout.Default,
-  initTimeout: Duration = FeatureFlags.DefaultInitTimeout,
-  initMode: InitMode = InitMode.Sync,
-  apiOwnership: ApiOwnership = ApiOwnership.Auto,
-  contextSource: ContextSource = ContextSource.empty,
-  fallbackLogging: FallbackLogging = FallbackLogging.Default,
-  maxAbandonedCalls: Int = FeatureFlags.DefaultMaxAbandonedCalls
+final class FeatureFlagsConfig private (
+  val domain: Option[String],
+  val version: Option[String],
+  val initialHooks: List[FeatureHook],
+  val evaluationTimeout: EvaluationTimeout,
+  val initTimeout: Duration,
+  val initMode: InitMode,
+  val apiOwnership: ApiOwnership,
+  val contextSource: ContextSource,
+  val fallbackLogging: FallbackLogging,
+  val maxAbandonedCalls: Int
 ) {
   require(maxAbandonedCalls >= 1, s"maxAbandonedCalls must be at least 1, got $maxAbandonedCalls")
+
+  private def copy(
+    domain: Option[String] = domain,
+    version: Option[String] = version,
+    initialHooks: List[FeatureHook] = initialHooks,
+    evaluationTimeout: EvaluationTimeout = evaluationTimeout,
+    initTimeout: Duration = initTimeout,
+    initMode: InitMode = initMode,
+    apiOwnership: ApiOwnership = apiOwnership,
+    contextSource: ContextSource = contextSource,
+    fallbackLogging: FallbackLogging = fallbackLogging,
+    maxAbandonedCalls: Int = maxAbandonedCalls
+  ): FeatureFlagsConfig =
+    new FeatureFlagsConfig(
+      domain,
+      version,
+      initialHooks,
+      evaluationTimeout,
+      initTimeout,
+      initMode,
+      apiOwnership,
+      contextSource,
+      fallbackLogging,
+      maxAbandonedCalls
+    )
 
   def withDomain(d: String): FeatureFlagsConfig               = copy(domain = Some(d))
   def withVersion(v: String): FeatureFlagsConfig              = copy(version = Some(v))
@@ -50,6 +76,32 @@ final case class FeatureFlagsConfig(
 
   /** Cap abandoned provider calls at `n` — see [[FeatureFlags.DefaultMaxAbandonedCalls]]. Must be at least 1. */
   def withMaxAbandonedCalls(n: Int): FeatureFlagsConfig = copy(maxAbandonedCalls = n)
+
+  override def toString: String =
+    s"FeatureFlagsConfig(domain=$domain, version=$version, initialHooks=$initialHooks, " +
+      s"evaluationTimeout=$evaluationTimeout, initTimeout=$initTimeout, initMode=$initMode, " +
+      s"apiOwnership=$apiOwnership, contextSource=$contextSource, fallbackLogging=$fallbackLogging, " +
+      s"maxAbandonedCalls=$maxAbandonedCalls)"
+}
+
+object FeatureFlagsConfig {
+
+  /** No domain or version, no hooks, the default evaluation timeout, a synchronous initialization bounded by
+    * [[FeatureFlags.DefaultInitTimeout]], [[ApiOwnership.Auto]], an empty context source, the default fallback logging
+    * and [[FeatureFlags.DefaultMaxAbandonedCalls]].
+    */
+  val default: FeatureFlagsConfig = new FeatureFlagsConfig(
+    None,
+    None,
+    Nil,
+    EvaluationTimeout.Default,
+    FeatureFlags.DefaultInitTimeout,
+    InitMode.Sync,
+    ApiOwnership.Auto,
+    ContextSource.empty,
+    FallbackLogging.Default,
+    FeatureFlags.DefaultMaxAbandonedCalls
+  )
 }
 
 /** How the provider is initialized.

@@ -121,6 +121,6 @@ terminate.
 - **The provider wrapper.** `CircuitBreakerProvider`'s event plumbing, its evaluation timeout and its error
   classification are not modelled. Signals arrive in any order, at any time. An outcome is any of the three, or a death.
 - **The permit-less API.** `recordSuccess()`, `recordReachable()` and `recordFailure()` without a permit apply to whatever
-  the current state is, by contract. Only the deprecated standalone use reaches them, so the model records with permits.
+  the current state is, by contract. Only direct use of the engine reaches them, so the model records with permits.
 - **The returned booleans.** `didClose` and `didOpen` drive the wrapper's emissions, and are not modelled.
 - **Long overflow.** Epochs and failure counts are unbounded in the model's types, and only reach the budgets.

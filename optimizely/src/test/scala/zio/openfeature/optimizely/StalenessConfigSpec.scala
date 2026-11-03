@@ -6,9 +6,10 @@ import zio.test._
 object StalenessConfigSpec extends ZIOSpecDefault {
 
   private def derive(poll: java.time.Duration, staleAfter: Option[java.time.Duration] = None) =
-    OptimizelyProvider.stalenessConfig(
-      OptimizelyProviderConfig(sdkKey = "staleness-key", pollingInterval = Some(poll), staleAfter = staleAfter)
-    )
+    OptimizelyProvider.stalenessConfig {
+      val withPoll = OptimizelyProviderConfig("staleness-key").withPollingInterval(poll)
+      staleAfter.fold(withPoll)(withPoll.withStaleAfter)
+    }
 
   def spec = suite("StalenessConfigSpec")(
     test("without staleAfter: stale after 3 polling intervals, checked every polling interval") {
@@ -27,7 +28,7 @@ object StalenessConfigSpec extends ZIOSpecDefault {
       assertTrue(c.map(_.checkInterval).contains(java.time.Duration.ofMillis(1)))
     },
     test("polling off: no watchdog") {
-      assertTrue(OptimizelyProvider.stalenessConfig(OptimizelyProviderConfig(sdkKey = "staleness-key")).isEmpty)
+      assertTrue(OptimizelyProvider.stalenessConfig(OptimizelyProviderConfig("staleness-key")).isEmpty)
     }
   )
 }

@@ -35,7 +35,7 @@ does; the wire type the provider was asked for is `ctx.flagType`.
 | Level | Register with | Applies to |
 |---|---|---|
 | ZIO API | `addZioApiHook`, `addZioApiHooks` | every evaluation of this instance, ahead of client hooks; a [`FeatureFlagRegistry`](providers.md) adds them to all its clients |
-| Client | `addHook`, `addHooks`, `FeatureFlagsConfig().withHook(...)` / `withHooks(...)` | every evaluation of this instance |
+| Client | `addHook`, `addHooks`, `FeatureFlagsConfig.default.withHook(...)` / `withHooks(...)` | every evaluation of this instance |
 | Invocation | `EvaluationOptions(hooks*)`, `.withHook`, `.withHooks` | one call, through any method that takes `EvaluationOptions` |
 | Java API | `addApiHook(javaHook)` | a `dev.openfeature.sdk.Hook`, run by the Java SDK |
 | Provider | the provider itself | run by the Java SDK |

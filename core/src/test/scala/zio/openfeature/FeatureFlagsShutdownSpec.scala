@@ -82,7 +82,7 @@ object FeatureFlagsShutdownSpec extends ZIOSpecDefault {
     val api    = dev.openfeature.sdk.OpenFeatureAPI.createIsolated()
     val domain = uniqueDomain("revive")
     zio.openfeature.internal.FeatureFlagsFactories
-      .buildWithTracking(
+      .build(
         provider,
         domain = Some(domain),
         version = None,

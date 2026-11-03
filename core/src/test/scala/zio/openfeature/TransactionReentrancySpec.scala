@@ -7,7 +7,7 @@ import dev.openfeature.sdk.{EvaluationContext => OFEvaluationContext, EventProvi
 import dev.openfeature.sdk.OpenFeatureAPI
 import java.util.concurrent.CopyOnWriteArrayList
 
-/** An inner `transaction`/`transactionEither` can opt into running inside the enclosing transaction
+/** An inner `transactionEither` (and `transaction`, on Scala 3) can opt into running inside the enclosing transaction
   * (`NestedPolicy.Reuse`) instead of failing with `NestedTransactionNotAllowed` (`NestedPolicy.Fail`, still the
   * default). The natural composition — a per-request transaction as middleware, a handler wrapping a sub-operation in
   * its own — must not fail the request, and must not require every wrapper to hand-roll an `inTransaction` guard.
@@ -181,24 +181,6 @@ object TransactionReentrancySpec extends ZIOSpecDefault {
         )
       }
     },
-    test("Reuse composes across the two forms: transaction outer, transactionEither inner") {
-      withFF { (ff, _) =>
-        for {
-          out <- ff.transaction(overrides = Map("k" -> true)) {
-            ff.transactionEither(nested = NestedPolicy.Reuse)(ff.boolean("k", false))
-          }
-        } yield assertTrue(out.result.result == true)
-      }
-    },
-    test("Reuse composes across the two forms: transactionEither outer, transaction inner") {
-      withFF { (ff, _) =>
-        for {
-          out <- ff.transactionEither(overrides = Map("k" -> true)) {
-            ff.transaction(nested = NestedPolicy.Reuse)(ff.boolean("k", false))
-          }
-        } yield assertTrue(out.result.result == true)
-      }
-    },
     test("Reuse in a forked child fiber runs inside the parent's transaction (FiberRef inheritance)") {
       withFF { (ff, _) =>
         for {
@@ -247,11 +229,11 @@ object TransactionReentrancySpec extends ZIOSpecDefault {
     },
     // --- the companion accessors thread `nested` through -------------------------------------------------------
     test(
-      "companion accessors: FeatureFlags.transactionEither(nested = Reuse) inside FeatureFlags.transaction reuses it"
+      "companion accessors: FeatureFlags.transactionEither(nested = Reuse) inside FeatureFlags.transactionEither reuses it"
     ) {
       withFF { (ff, _) =>
         val program =
-          FeatureFlags.transaction(overrides = Map("k" -> true)) {
+          FeatureFlags.transactionEither(overrides = Map("k" -> true)) {
             FeatureFlags.transactionEither(nested = NestedPolicy.Reuse)(FeatureFlags.boolean("k", false))
           }
         program
@@ -259,15 +241,17 @@ object TransactionReentrancySpec extends ZIOSpecDefault {
           .map(out => assertTrue(out.result.result == true, out.wasOverridden("k")))
       }
     },
-    test("companion accessors: the default is still Fail — FeatureFlags.transaction nested without a policy fails") {
+    test(
+      "companion accessors: the default is still Fail — FeatureFlags.transactionEither nested without a policy fails"
+    ) {
       withFF { (ff, _) =>
         val program =
           FeatureFlags.transactionEither() {
-            FeatureFlags.transaction()(ZIO.unit).either
+            FeatureFlags.transactionEither()(ZIO.unit).either
           }
         program
           .provideEnvironment(ZEnvironment(ff))
-          .map(out => assertTrue(out.result.left.exists(_ == FeatureFlagError.NestedTransactionNotAllowed)))
+          .map(out => assertTrue(out.result == Left(Right(FeatureFlagError.NestedTransactionNotAllowed))))
       }
     }
   )

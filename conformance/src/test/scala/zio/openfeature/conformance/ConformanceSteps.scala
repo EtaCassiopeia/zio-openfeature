@@ -409,7 +409,7 @@ class ConformanceSteps extends ScalaDsl with EN {
     val eval = flags.booleanDetails("merge-flag", false, invocationCtx)
     val full = txCtx match {
       case Some(tx) =>
-        flags.transaction(context = tx)(eval).unit.orDieWith(e => new RuntimeException(String.valueOf(e)))
+        flags.transactionEither(context = tx)(eval).unit.orDieWith(e => new RuntimeException(String.valueOf(e)))
       case None => eval.unit.orDieWith(e => new RuntimeException(String.valueOf(e)))
     }
     run(full)

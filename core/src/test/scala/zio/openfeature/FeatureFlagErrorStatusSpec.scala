@@ -15,11 +15,7 @@ import dev.openfeature.sdk.{
 
 // Classify by the HTTP status an exception carries, not by its class name; keep the original throwable on
 // Unauthorized; name the flag-scoped predicate for what it is.
-@scala.annotation.nowarn("cat=deprecation")
 object FeatureFlagErrorStatusSpec extends ZIOSpecDefault {
-
-  // Built outside the assertTrue macros, which report deprecations at their own position (past @nowarn).
-  private val emptyFlagVariables: FeatureFlagError = FeatureFlagError.EmptyFlagVariables("f")
 
   /** Shaped like Apache httpclient5's HttpResponseException: any status, exposed through getStatusCode. */
   final class FakeHttpResponseException(status: Int)
@@ -72,10 +68,15 @@ object FeatureFlagErrorStatusSpec extends ZIOSpecDefault {
         } yield assertTrue(result.left.toOption.exists(_.isInstanceOf[FeatureFlagError.ProviderError]))
       }
     },
-    test("the cause does not take part in equality, and copy does not carry it") {
-      val withCause = FeatureFlagError.unauthorized("x", new RuntimeException("boom"))
+    test("the cause takes part in equality, and copy carries it") {
+      val boom      = new RuntimeException("boom")
+      val withCause = FeatureFlagError.Unauthorized("x", Some(boom))
       val plain     = FeatureFlagError.Unauthorized("x")
-      assertTrue(withCause == plain, withCause.hashCode == plain.hashCode, withCause.copy().cause.isEmpty)
+      assertTrue(
+        withCause != plain,
+        withCause.copy().cause == Some(boom),
+        withCause.copy(reason = "y").cause == Some(boom)
+      )
     },
     test("an HttpResponseException carrying 503 is a provider error, not Unauthorized") {
       val classified = FeatureFlagError.classify(new FakeHttpResponseException(503))
@@ -100,14 +101,14 @@ object FeatureFlagErrorStatusSpec extends ZIOSpecDefault {
     test("Unauthorized from classify keeps the original throwable as its cause") {
       val t = new FakeHttpResponseException(401)
       FeatureFlagError.classify(t) match {
-        case u @ FeatureFlagError.Unauthorized(_) => assertTrue(u.cause.exists(_ eq t))
-        case other                                => assertTrue(other.isInstanceOf[FeatureFlagError.Unauthorized])
+        case u @ FeatureFlagError.Unauthorized(_, _) => assertTrue(u.cause.exists(_ eq t))
+        case other                                   => assertTrue(other.isInstanceOf[FeatureFlagError.Unauthorized])
       }
     },
     test("Unauthorized built from a reason alone has no cause, and still matches by reason") {
       val u       = FeatureFlagError.Unauthorized("bad key")
       val matched = u match {
-        case FeatureFlagError.Unauthorized(r) => r == "bad key"
+        case FeatureFlagError.Unauthorized(r, _) => r == "bad key"
       }
       assertTrue(u.cause.isEmpty, matched)
     },
@@ -122,7 +123,6 @@ object FeatureFlagErrorStatusSpec extends ZIOSpecDefault {
         isFlagError(FlagNotFound("f")),
         isFlagError(TypeMismatch("f", "a", "b")),
         isFlagError(ParseError("f", boom)),
-        isFlagError(emptyFlagVariables),
         isFlagError(TargetingKeyMissing("f")),
         isFlagError(InvalidContext("c")),
         !isFlagError(NestedTransactionNotAllowed),
@@ -131,12 +131,6 @@ object FeatureFlagErrorStatusSpec extends ZIOSpecDefault {
         !isFlagError(Unauthorized("x")),
         !isFlagError(ProviderNotReady(ProviderStatus.NotReady))
       )
-    },
-    test("the deprecated isRecoverable still answers the same") {
-      import FeatureFlagError._
-      @scala.annotation.nowarn("cat=deprecation")
-      def legacy(e: FeatureFlagError): Boolean = isRecoverable(e)
-      assertTrue(legacy(FlagNotFound("f")), !legacy(ProviderFatal))
     }
   )
 }

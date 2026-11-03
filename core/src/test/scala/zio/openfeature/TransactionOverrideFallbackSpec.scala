@@ -60,7 +60,7 @@ object TransactionOverrideFallbackSpec extends ZIOSpecDefault {
         buildNotReadyFF.flatMap { ff =>
           for {
             status <- ff.providerStatus
-            tx     <- ff.transaction(overrides = Map("flag" -> true))(ff.boolean("flag", default = false))
+            tx     <- ff.transactionEither(overrides = Map("flag" -> true))(ff.boolean("flag", default = false))
           } yield assertTrue(status == ProviderStatus.NotReady, tx.result)
         }
       }
@@ -69,9 +69,9 @@ object TransactionOverrideFallbackSpec extends ZIOSpecDefault {
       ZIO.scoped {
         buildNotReadyFF.flatMap { ff =>
           for {
-            r <- ff.transaction(overrides = Map("flag" -> true))(ff.boolean("other-flag", default = false)).either
+            r <- ff.transactionEither(overrides = Map("flag" -> true))(ff.boolean("other-flag", default = false)).either
           } yield assertTrue( // "other-flag" has no override, so it must reach the NotReady provider
-            r.left.toOption.exists(_.isInstanceOf[FeatureFlagError.ProviderNotReady])
+            r.left.toOption.flatMap(_.left.toOption).exists(_.isInstanceOf[FeatureFlagError.ProviderNotReady])
           )
         }
       }
@@ -81,8 +81,12 @@ object TransactionOverrideFallbackSpec extends ZIOSpecDefault {
         buildNotReadyFF.flatMap { ff =>
           for {
             // The override resolves locally, so the failure is the local decode error — the readiness gate never runs.
-            r <- ff.transaction(overrides = Map("flag" -> "not-a-bool"))(ff.boolean("flag", default = false)).either
-          } yield assertTrue(r.left.toOption.exists(_.isInstanceOf[FeatureFlagError.OverrideTypeMismatch]))
+            r <- ff
+              .transactionEither(overrides = Map("flag" -> "not-a-bool"))(ff.boolean("flag", default = false))
+              .either
+          } yield assertTrue(
+            r.left.toOption.flatMap(_.left.toOption).exists(_.isInstanceOf[FeatureFlagError.OverrideTypeMismatch])
+          )
         }
       }
     }

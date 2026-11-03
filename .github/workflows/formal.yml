@@ -82,9 +82,9 @@ env:
   TRACE_TLA_TOOLS_RELEASE: tooling/tla2tools-1.8.0-20261102.144740-119
   TRACE_TLA_TOOLS_SHA256: 8f719a6126a0922cf5a243f6c0ce73193b5c2e0a4e4cd29288ecc57a547f629d
   # TLAPS for the proofs (LifecycleProofs.tla). 1.6.0-pre is a prerelease upstream can re-publish; when the check below
-  # fails, run the proofs with the new tarball and re-pin. Pinned to the asset uploaded 2026-11-01T14:28Z (tlapm 9ed0376).
+  # fails, run the proofs with the new tarball and re-pin. Pinned to the asset uploaded 2026-11-03T12:52Z.
   TLAPM_VERSION: 1.6.0-pre
-  TLAPM_SHA256: 39620b869ed939d991f5e2c4d604d84d16c05c5dd95787a1e5f47da296746b7b
+  TLAPM_SHA256: 8e165137c5a4e37728a3568656b7258b40c0c33aa5d23e0d79c3f42ed485e400
   COMMUNITY_MODULES_VERSION: '202610262215'
   COMMUNITY_MODULES_SHA256: 1c77d512e73ae9fde27103bee9115898fc9d62bea3a99313aeb5eb14c6284af6
 

@@ -542,6 +542,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Tests
 
+- **The proofs download TLAPS from this repository's own prerelease.** Upstream re-publishes its `1.6.0-pre` asset on
+  pushes to its main branch, which broke the SHA pin twice in one day. As with the TLC jar, moving to a newer build is
+  now a deliberate step.
 - **Trace validation has room for its long traces** (#728). Modelling the SDK's late shutdown left a long fixture at the
   300-second limit on CI's runners, where it failed the self-test, and one recorded run undecided. The limit is 900
   seconds for both.

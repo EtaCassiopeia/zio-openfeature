@@ -542,6 +542,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Tests
 
+- **Trace validation has room for its long traces** (#728). Modelling the SDK's late shutdown left a long fixture at the
+  300-second limit on CI's runners, where it failed the self-test, and one recorded run undecided. The limit is 900
+  seconds for both.
 - **The lifecycle model's pull request check uses smaller bounds** (#728). Modelling the SDK's late shutdown as its own step
   tripled the state space, past the job's time limit, so pull requests check `LifecyclePR.cfg` (one provider event) and
   main and manual runs keep the full `Lifecycle.cfg`.

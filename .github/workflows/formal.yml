@@ -214,6 +214,10 @@ jobs:
           echo "${COMMUNITY_MODULES_SHA256}  CommunityModules-deps.jar" | sha256sum -c -
       - name: Check that the checker accepts and rejects its fixtures
         working-directory: formal/lifecycle
+        # A long trace can take several minutes on a 2-core runner. A fixture left undecided fails this step, and a recorded
+        # run left undecided goes unchecked.
+        env:
+          TRACE_TIMEOUT_SECS: '900'
         run: python3 validate.py ../../tla2tools.jar ../../CommunityModules-deps.jar --selftest traces
       - name: Check that each library precondition is exercised by a fixture
         working-directory: formal/lifecycle
@@ -249,6 +253,8 @@ jobs:
       - name: Check every recorded run is a behaviour of the model
         if: github.event_name != 'pull_request'
         working-directory: formal/lifecycle
+        env:
+          TRACE_TIMEOUT_SECS: '900'
         run: python3 validate.py ../../tla2tools.jar ../../CommunityModules-deps.jar "${GITHUB_WORKSPACE}/traces"
       - name: Keep the recorded runs
         if: failure() && github.event_name != 'pull_request'

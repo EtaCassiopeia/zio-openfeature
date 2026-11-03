@@ -194,7 +194,7 @@ object ProviderHotSwapSpec extends ZIOSpecDefault {
     val waits             = new java.util.concurrent.atomic.AtomicInteger(0)
 
     def at(p: zio.openfeature.internal.LifecycleProbe.Point): UIO[Unit] = p match {
-      case zio.openfeature.internal.LifecycleProbe.Point.ProviderShutDown =>
+      case _: zio.openfeature.internal.LifecycleProbe.Point.ProviderShutDown =>
         ZIO.succeed(shutDowns.incrementAndGet()).flatMap { k =>
           ZIO
             .when(k == 1)(ZIO.succeed(reached.countDown()) *> ZIO.succeedBlocking(release.await()))

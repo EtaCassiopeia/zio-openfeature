@@ -368,6 +368,67 @@ object CircuitBreakerProviderSpec extends ZIOSpecDefault {
         clock.advance(3650.days)
         val second = breaker.tryAcquire
         assertTrue(probe == GateResult.Allowed, second == GateResult.Rejected)
+      },
+      test(
+        "with an infinite timeout, a hung probe rejects every other call until it returns, then the circuit closes"
+      ) {
+        val entered  = new java.util.concurrent.CountDownLatch(1)
+        val release  = new java.util.concurrent.CountDownLatch(1)
+        val hanging  = new AtomicReference[Boolean](false)
+        val delegate = new FailableProvider(Map("flag" -> true)) {
+          override def getBooleanEvaluation(
+            key: String,
+            defaultValue: java.lang.Boolean,
+            ctx: dev.openfeature.sdk.EvaluationContext
+          ): dev.openfeature.sdk.ProviderEvaluation[java.lang.Boolean] = {
+            if (hanging.get()) {
+              entered.countDown()
+              release.await(30, java.util.concurrent.TimeUnit.SECONDS)
+            }
+            super.getBooleanEvaluation(key, defaultValue, ctx)
+          }
+        }
+        val clock  = new TestClock()
+        val config =
+          CircuitBreakerProviderConfig(
+            evaluationTimeout = Duration.Infinity,
+            failureThreshold = 1,
+            resetTimeout = 1.second
+          )
+        val cb = CircuitBreakerProvider(delegate, config, clock)
+        delegate.setFailing(true)
+        val tripped = scala.util.Try(cb.getBooleanEvaluation("flag", false, ctx)).isFailure
+        delegate.setFailing(false)
+        clock.advance(2.seconds)
+        hanging.set(true)
+        val answer = new AtomicReference[Option[Boolean]](None)
+        val probe  = new Thread(() => answer.set(Some(cb.getBooleanEvaluation("flag", false, ctx).getValue)))
+        probe.setDaemon(true)
+        probe.start()
+        val inDelegate = entered.await(10, java.util.concurrent.TimeUnit.SECONDS)
+        hanging.set(false)
+        def rejection = scala.util.Try(cb.getBooleanEvaluation("flag", false, ctx)).failed.toOption.map(_.getMessage)
+        val rejectedAtOnce = rejection
+        val staleAtOnce    = cb.getState
+        clock.advance(3650.days)
+        val rejectedLater = rejection
+        val staleLater    = cb.getState
+        val probeRunning  = probe.isAlive
+        release.countDown()
+        probe.join(10000L)
+        val after = cb.getBooleanEvaluation("flag", false, ctx).getValue
+        assertTrue(
+          tripped,
+          inDelegate,
+          rejectedAtOnce.exists(_.contains("half-open, probe in progress")),
+          staleAtOnce == ProviderState.STALE,
+          rejectedLater.exists(_.contains("half-open, probe in progress")),
+          staleLater == ProviderState.STALE,
+          probeRunning,
+          answer.get().contains(true),
+          cb.getState == ProviderState.READY,
+          after == true
+        )
       }
     ),
     suite("Failure counting and opening")(

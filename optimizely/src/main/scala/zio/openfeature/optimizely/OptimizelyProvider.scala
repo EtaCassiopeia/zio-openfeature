@@ -6,6 +6,7 @@ import com.optimizely.ab.config.parser.{ConfigParser, DefaultConfigParser}
 import com.optimizely.ab.event.{AsyncEventHandler, BatchEventProcessor, EventHandler}
 import zio._
 import zio.openfeature.FeatureFlagError
+import zio.openfeature.internal.Timeouts
 import java.util.concurrent.{ExecutorService, Executors, ThreadFactory, TimeUnit}
 
 /** Scala-friendly factories for an Optimizely-backed OpenFeature provider.
@@ -322,9 +323,16 @@ object OptimizelyProvider {
     */
   private val ShutdownTimeout: zio.Duration = 10.seconds
 
-  private def releaseProvider(provider: OptimizelyFeatureProvider): UIO[Unit] =
-    // `.disconnect` because finalizers run uninterruptibly and the timeout must still fire.
-    ZIO.attemptBlocking(provider.shutdown()).disconnect.timeout(ShutdownTimeout).ignore
+  // The provider is out of service either way, so a failure or timeout is logged, never raised.
+  private[optimizely] def releaseProvider(provider: dev.openfeature.sdk.FeatureProvider): UIO[Unit] =
+    Timeouts
+      .boundedFinalizer(
+        ZIO
+          .attemptBlocking(provider.shutdown())
+          .tapErrorCause(c => ZIO.logWarningCause("Optimizely provider shutdown failed", c)),
+        ShutdownTimeout
+      )(ZIO.logWarning(s"Optimizely provider shutdown did not finish within ${ShutdownTimeout.toMillis}ms"))
+      .unit
 
   /** Escape hatch for callers who already manage an `Optimizely` client lifecycle (e.g. they want a user profile
     * service, an ODP manager, or an event processor tuned beyond what [[OptimizelyEvents]] offers). The returned

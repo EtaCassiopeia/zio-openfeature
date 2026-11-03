@@ -4,6 +4,7 @@ import zio._
 import zio.test._
 import dev.openfeature.sdk.ImmutableContext
 import dev.openfeature.sdk.exceptions.ParseError
+import zio.openfeature.{FeatureFlagError, FeatureFlags}
 
 object EnvVarProviderSpec extends ZIOSpecDefault {
 
@@ -106,7 +107,22 @@ object EnvVarProviderSpec extends ZIOSpecDefault {
     suite("metadata")(
       test("provider name is EnvVarProvider") {
         assertTrue(provider.getMetadata.getName == "EnvVarProvider")
+      },
+      test("an object read of a scalar key is a TypeMismatch, and the total tier serves the default") {
+        val default = Map[String, Any]("a" -> 1)
+        FeatureFlags.fromProvider(EnvVarProvider.withLookup(testEnv.get)).build.map(_.get[FeatureFlags]).flatMap { ff =>
+          for {
+            typed <- ff.obj("welcome-msg", Map.empty[String, Any]).either
+            total <- ff.objOrDefault("welcome-msg", default)
+          } yield assertTrue(
+            typed match {
+              case Left(FeatureFlagError.TypeMismatch(_, "Object", _)) => true
+              case _                                                   => false
+            },
+            total == default
+          )
+        }
       }
     )
-  )
+  ) @@ TestAspect.withLiveClock
 }

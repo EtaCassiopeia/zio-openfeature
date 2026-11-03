@@ -37,9 +37,14 @@ object NullProviderValueSpec extends ZIOSpecDefault {
     }
     // `wrongbox` answers a String where the object getter promises a Value; the cast is erased, as in boxed.
     override def getObjectEvaluation(k: String, d: Value, c: OFEvaluationContext) =
-      if (k == "wrongbox")
-        ProviderEvaluations.of[AnyRef]("not a Value", "STATIC").asInstanceOf[ProviderEvaluation[Value]]
-      else ProviderEvaluations.of(d, "DEFAULT")
+      k match {
+        case "wrongbox" =>
+          ProviderEvaluations.of[AnyRef]("not a Value", "STATIC").asInstanceOf[ProviderEvaluation[Value]]
+        case "null"   => valueless
+        case "scalar" => ProviderEvaluations.of(new Value("x"), "STATIC")
+        case "list"   => ProviderEvaluations.of(new Value(java.util.List.of(new Value("x"))), "STATIC")
+        case _        => ProviderEvaluations.of(d, "DEFAULT")
+      }
   }
 
   final case class Rollout(pct: Int)
@@ -172,6 +177,42 @@ object NullProviderValueSpec extends ZIOSpecDefault {
           _     <- ff.obj("wrongbox", Map.empty[String, Any]).exit
           calls <- ref.get
         } yield assertTrue(calls == Chunk("error:TypeMismatch", "finally:TypeMismatch"))
+      }
+    },
+    test("an object read of no value, a scalar or a list fails with TypeMismatch, and never reads as an empty object") {
+      ZIO.scoped {
+        for {
+          ff     <- build
+          none   <- ff.obj("null", Map.empty[String, Any]).exit
+          scalar <- ff.obj("scalar", Map.empty[String, Any]).exit
+          list   <- ff.obj("list", Map.empty[String, Any]).exit
+          viaFt  <- ff.value[Map[String, Any]]("scalar", Map.empty[String, Any]).exit
+        } yield assertTrue(
+          mismatch(none, "Object", "null"),
+          mismatch(scalar, "Object", "String"),
+          mismatch(list, "Object", "to Object"),
+          mismatch(viaFt, "Object", "String")
+        )
+      }
+    },
+    test("the total tier serves the object default for no value, a scalar and a list") {
+      ZIO.scoped {
+        val default = Map[String, Any]("a" -> 1)
+        for {
+          ff     <- build
+          reads  <- ZIO.foreach(List("null", "scalar", "list"))(ff.resolveOrDefault[Map[String, Any]](_, default))
+          direct <- ff.objOrDefault("scalar", default)
+        } yield assertTrue(
+          reads.forall(r => r.value == default && r.errorCode == Some(ErrorCode.TypeMismatch)),
+          direct == default
+        )
+      }
+    },
+    test("an Option of an object reads no value as None") {
+      ZIO.scoped {
+        build
+          .flatMap(_.value[Option[Map[String, Any]]]("null", None).exit)
+          .map(e => assertTrue(e == Exit.succeed(None)))
       }
     },
     test("the total tier serves the object default with error code TypeMismatch") {

@@ -109,6 +109,30 @@ private[openfeature] object ProviderRegistration {
             .withClock(Clock.ClockLive)
       }
 
+    /** How this registration's own `initialize()` ended: `Some(true)` when it returned normally, `Some(false)` when it
+      * threw, `None` until then. A reused registration runs none, and the SDK goes straight on to `shutDownOld`, as it
+      * does after a normal return. Not the wrapper's current attempt, which a later registration may have armed. `None`
+      * for a foreign provider, whose outcome no wrapper reports.
+      */
+    def initReturnedNormally: Option[Boolean] =
+      if (reused.isDefined) Some(true)
+      else
+        armed.map(_.attempt.outcome).collect {
+          case outcome if outcome.isDone => !outcome.isCompletedExceptionally
+        }
+
+    /** Whether this registration's own `initialize()` has yet to end: read from its outcome alone, so that the moment
+      * this turns false [[initReturnedNormally]] says how it ended. False for a foreign provider, whose outcome no
+      * wrapper reports.
+      */
+    def initializing: Boolean = reused.isEmpty && armed.exists(!_.attempt.outcome.isDone)
+
+    /** Whether this registration has nothing left to do to `previous`: its `initialize()` threw, in which case the SDK
+      * skips `shutDownOld`, or that shutdown has finished.
+      */
+    def released(previous: ManagedProvider): Boolean =
+      initReturnedNormally.exists(returned => !returned || previous.shutDownFinished)
+
     /** Wait, bounded by `timeout`, for how the registration settled. Fails with the provider's initialization failure,
       * a `TimeoutException`, or [[RegistrationSuperseded]] when the slot was rebound meanwhile.
       *

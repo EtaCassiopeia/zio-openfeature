@@ -133,6 +133,132 @@ object ProviderHotSwapSpec extends ZIOSpecDefault {
     override def shutdown(): Unit = { shutdowns.incrementAndGet(); () }
   }
 
+  /** Counts its starts and shutdowns, and records whether its second start found it shut down already. `onStart` gets
+    * the number of the start and may block or throw.
+    */
+  private class Restarting(name: String, onStart: Int => Unit = _ => ())
+      extends SimpleProvider(name, Map("flag" -> true)) {
+    val inits                                               = new java.util.concurrent.atomic.AtomicInteger(0)
+    val shutdowns                                           = new java.util.concurrent.atomic.AtomicInteger(0)
+    @volatile var shutDownBeforeRestart                     = false
+    override def initialize(ctx: OFEvaluationContext): Unit = {
+      val n = inits.incrementAndGet()
+      if (n == 2) shutDownBeforeRestart = shutdowns.get() >= 1
+      onStart(n)
+    }
+    override def shutdown(): Unit = { shutdowns.incrementAndGet(); () }
+  }
+
+  private def blocksFrom(start: Int, until: java.util.concurrent.CountDownLatch): Int => Unit =
+    n => if (n >= start) { until.await(30, java.util.concurrent.TimeUnit.SECONDS); () }
+
+  /** Holds the `n`th `initialize()` return the instance's wrappers report: the delegate has returned, and the SDK has
+    * neither reported READY nor queued the replaced provider's shutdown. Also records a swap reaching the wait for that
+    * shutdown.
+    */
+  final private class HoldInitReturn(n: Int) extends zio.openfeature.internal.LifecycleProbe {
+    private val returns = new java.util.concurrent.atomic.AtomicInteger(0)
+    val reached         = new java.util.concurrent.CountDownLatch(1)
+    val release         = new java.util.concurrent.CountDownLatch(1)
+    val waiting         = new java.util.concurrent.CountDownLatch(1)
+    val waits           = new java.util.concurrent.atomic.AtomicInteger(0)
+
+    def at(p: zio.openfeature.internal.LifecycleProbe.Point): UIO[Unit] = p match {
+      case zio.openfeature.internal.LifecycleProbe.Point.InitReturned =>
+        ZIO.succeed(returns.incrementAndGet()).flatMap { k =>
+          ZIO
+            .when(k == n)(ZIO.succeed(reached.countDown()) *> ZIO.succeedBlocking(release.await()))
+            .unit
+        }
+      case zio.openfeature.internal.LifecycleProbe.Point.AwaitSdkShutDown =>
+        ZIO.succeed { waits.incrementAndGet(); waiting.countDown() }
+      case _ => ZIO.unit
+    }
+  }
+
+  /** A swap that reached the wait is still there after a while: the signal it waits for cannot come until the test
+    * releases the held return, so it is the wait holding it, not timing.
+    */
+  private def stillBlocked[A](install: Fiber[Nothing, A]): UIO[Boolean] =
+    ZIO.sleep(200.millis) *> install.poll.map(_.isEmpty)
+
+  private def await(latch: java.util.concurrent.CountDownLatch): UIO[Boolean] =
+    ZIO.succeedBlocking(latch.await(10, java.util.concurrent.TimeUnit.SECONDS))
+
+  /** A build whose `initTimeout` is short and whose probe is `probe`; on an API it owns, or one it shares. */
+  private def buildHeld(
+    provider: SimpleProvider,
+    probe: zio.openfeature.internal.LifecycleProbe,
+    owns: Boolean,
+    api: OpenFeatureAPI = OpenFeatureAPI.createIsolated(),
+    domain: String = s"held-${java.util.UUID.randomUUID()}"
+  ): ZIO[Scope, Throwable, FeatureFlags] =
+    ZIO.unless(owns)(ZIO.addFinalizer(ZIO.attemptBlocking(api.shutdown()).ignore)) *>
+      zio.openfeature.internal.FeatureFlagsFactories.buildWithTracking(
+        provider,
+        domain = Some(domain),
+        version = None,
+        initialHooks = Nil,
+        statusRef = None,
+        addShutdownFinalizer = owns,
+        apiOverride = Some(api),
+        initTimeout = 500.millis,
+        probe = probe
+      )
+
+  private def heldByHolder(result: Either[FeatureFlagError, Unit], holder: String): Boolean = result match {
+    case Left(FeatureFlagError.ProviderInitializationFailed(e: IllegalStateException)) =>
+      e.getMessage.contains(s"cannot be installed again until '$holder', which replaced it")
+    case _ => false
+  }
+
+  /** A rollback that times out, then its restored provider returns and is held there while the failed provider is
+    * installed again: that swap waits for the SDK's shutdown of the failed provider, which comes before its restart.
+    * The hold stays well under the wait's bound.
+    */
+  private def rollbackTimeoutThenReinstall(owns: Boolean) =
+    ZIO.scoped {
+      val reinit = new java.util.concurrent.CountDownLatch(1)
+      val a      = new Restarting("A", blocksFrom(2, reinit))
+      // F fails its first start, so the swap rolls back onto A, and starts on later ones.
+      val f = new Restarting("F", n => if (n == 1) throw new RuntimeException("first start fails"))
+      // A's first start, F's, then the rollback's start of A.
+      val probe = new HoldInitReturn(3)
+      for {
+        ff      <- buildHeld(a, probe, owns)
+        _       <- ZIO.addFinalizer(ZIO.succeed { reinit.countDown(); probe.release.countDown() })
+        failed  <- ff.setProvider(f).either
+        refused <- ff.setProvider(f).either
+        // The call that holds it has not returned, so nothing has shut it down.
+        shutWhileHeld = f.shutdowns.get()
+        _       <- ZIO.succeed(reinit.countDown())
+        reached <- await(probe.reached)
+        install <- installOnceReturned(ff, f).fork
+        // An owner's orphan watcher makes this same wait, and the swap waits on the watcher; a non-owner has no watcher.
+        waiting <- if (owns) ZIO.succeed(true) else await(probe.waiting)
+        blocked <- stillBlocked(install)
+        during = (f.inits.get(), f.shutdowns.get())
+        _      <- ZIO.succeed(probe.release.countDown())
+        again  <- install.join
+        _      <- ZIO.sleep(200.millis)
+        served <- ff.boolean("flag", default = false).either
+        shut = f.shutdowns.get()
+      } yield assertTrue(
+        failed.isLeft,
+        heldByHolder(refused, "A"),
+        shutWhileHeld == 0,
+        reached,
+        waiting,
+        blocked,
+        during == ((1, 0)),
+        again.isRight,
+        shut == 1,
+        f.shutDownBeforeRestart,
+        f.inits.get() == 2,
+        served == Right(true)
+      )
+    }
+
   /** [[Counting]] whose `initialize()` throws. */
   private class FailingCounting(name: String) extends Counting(name, blocking = false) {
     override def initialize(ctx: OFEvaluationContext): Unit = {
@@ -930,84 +1056,313 @@ object ProviderHotSwapSpec extends ZIOSpecDefault {
       "an instance that shares its API refuses the provider a timed-out swap replaced until that swap's provider returns"
     ) {
       ZIO.scoped {
-        val api = OpenFeatureAPI.createIsolated()
-        val a   = new Counting("A", blocking = false)
+        val finish = new java.util.concurrent.CountDownLatch(1)
+        val a      = new Restarting("A")
+        val b      = new Restarting("B", blocksFrom(1, finish))
+        // A's first start, then B's.
+        val probe = new HoldInitReturn(2)
         for {
-          _ <- ZIO.addFinalizer(ZIO.attemptBlocking(api.shutdown()).ignore)
-          b <- ZIO.acquireRelease(ZIO.succeed(new Counting("B", blocking = true)))(p =>
-            ZIO.succeed(p.release.countDown())
-          )
-          ff <- FeatureFlags.build(
-            a,
-            domain = Some(s"shared-${java.util.UUID.randomUUID()}"),
-            version = None,
-            initialHooks = Nil,
-            statusRef = None,
-            addShutdownFinalizer = false,
-            apiOverride = Some(api),
-            initTimeout = 500.millis
-          )
+          ff       <- buildHeld(a, probe, owns = false)
+          _        <- ZIO.addFinalizer(ZIO.succeed { finish.countDown(); probe.release.countDown() })
           timedOut <- ff.setProvider(b).either
           refused  <- ff.setProvider(a).either
           during = (a.inits.get(), a.shutdowns.get())
-          _     <- ZIO.succeed(b.release.countDown())
-          again <- installOnceReturned(ff, a)
-          bDown <- awaitTrue(b.shutdowns.get() >= 1)
-          // The SDK shuts A's old registration down on its executor once B returns: wait for it as for B's.
-          aDown <- awaitTrue(a.shutdowns.get() >= 1)
-          _     <- ZIO.sleep(200.millis)
+          _       <- ZIO.succeed(finish.countDown())
+          reached <- await(probe.reached)
+          install <- installOnceReturned(ff, a).fork
+          waiting <- await(probe.waiting)
+          blocked <- stillBlocked(install)
+          beforeRelease = (a.inits.get(), a.shutdowns.get())
+          _      <- ZIO.succeed(probe.release.countDown())
+          again  <- install.join
+          bDown  <- awaitTrue(b.shutdowns.get() >= 1)
+          _      <- ZIO.sleep(200.millis)
+          served <- ff.boolean("flag", default = false).either
           shut = (a.shutdowns.get(), b.shutdowns.get())
         } yield assertTrue(
           timedOut.isLeft,
-          refused match {
-            case Left(FeatureFlagError.ProviderInitializationFailed(e: IllegalStateException)) =>
-              e.getMessage.contains("cannot be installed again until 'B', which replaced it")
-            case _ => false
-          },
+          heldByHolder(refused, "B"),
           during == ((1, 0)),
+          reached,
+          waiting,
+          blocked,
+          beforeRelease == ((1, 0)),
           again.isRight,
           a.inits.get() == 2,
+          a.shutDownBeforeRestart,
           bDown,
-          aDown,
-          shut == ((1, 1)) // A once, by the SDK when B returned; B once, replaced by A again
+          shut == ((1, 1)), // A once, by the SDK when B returned; B once, replaced by A again
+          served == Right(true)
+        )
+      }
+    } @@ TestAspect.withLiveClock,
+    test("a provider a successful swap replaced waits for the SDK's shutdown of it before starting again") {
+      ZIO.scoped {
+        val a = new Restarting("A")
+        val b = new Restarting("B")
+        // A's first start, then B's.
+        val probe = new HoldInitReturn(2)
+        for {
+          ff      <- buildHeld(a, probe, owns = true)
+          _       <- ZIO.addFinalizer(ZIO.succeed(probe.release.countDown()))
+          swapped <- ff.setProvider(b).either
+          reached <- await(probe.reached)
+          install <- ff.setProvider(a).either.fork
+          waiting <- await(probe.waiting)
+          blocked <- stillBlocked(install)
+          during = (a.inits.get(), a.shutdowns.get())
+          _      <- ZIO.succeed(probe.release.countDown())
+          again  <- install.join
+          _      <- ZIO.sleep(200.millis)
+          served <- ff.boolean("flag", default = false).either
+          shut = a.shutdowns.get()
+        } yield assertTrue(
+          swapped.isRight,
+          reached,
+          waiting,
+          blocked,
+          during == ((1, 0)),
+          again.isRight,
+          shut == 1,
+          a.shutDownBeforeRestart,
+          served == Right(true)
+        )
+      }
+    } @@ TestAspect.withLiveClock,
+    test("a failed provider a successful rollback replaced waits for the SDK's shutdown of it before starting again") {
+      ZIO.scoped {
+        val a = new Restarting("A")
+        val f = new Restarting("F", n => if (n == 1) throw new RuntimeException("first start fails"))
+        // A's first start, F's, then the rollback's start of A.
+        val probe = new HoldInitReturn(3)
+        for {
+          ff      <- buildHeld(a, probe, owns = true)
+          _       <- ZIO.addFinalizer(ZIO.succeed(probe.release.countDown()))
+          failed  <- ff.setProvider(f).either
+          reached <- await(probe.reached)
+          install <- ff.setProvider(f).either.fork
+          waiting <- await(probe.waiting)
+          blocked <- stillBlocked(install)
+          during = (f.inits.get(), f.shutdowns.get())
+          _      <- ZIO.succeed(probe.release.countDown())
+          again  <- install.join
+          _      <- ZIO.sleep(200.millis)
+          served <- ff.boolean("flag", default = false).either
+          shut = f.shutdowns.get()
+        } yield assertTrue(
+          failed.isLeft,
+          reached,
+          waiting,
+          blocked,
+          during == ((1, 0)),
+          again.isRight,
+          shut == 1,
+          f.shutDownBeforeRestart,
+          served == Right(true)
+        )
+      }
+    } @@ TestAspect.withLiveClock,
+    test("a swap interrupted during the wait for the SDK's shutdown leaves the next swap to wait in its place") {
+      ZIO.scoped {
+        val a = new Restarting("A")
+        val b = new Restarting("B")
+        // A's first start, then B's.
+        val probe = new HoldInitReturn(2)
+        for {
+          ff      <- buildHeld(a, probe, owns = true)
+          _       <- ZIO.addFinalizer(ZIO.succeed(probe.release.countDown()))
+          swapped <- ff.setProvider(b).either
+          reached <- await(probe.reached)
+          first   <- ff.setProvider(a).either.fork
+          waiting <- await(probe.waiting)
+          _       <- first.interrupt
+          second  <- ff.setProvider(a).either.fork
+          again   <- awaitTrue(probe.waits.get() == 2)
+          blocked <- stillBlocked(second)
+          during = (a.inits.get(), a.shutdowns.get())
+          _      <- ZIO.succeed(probe.release.countDown())
+          result <- second.join
+          _      <- ZIO.sleep(200.millis)
+          served <- ff.boolean("flag", default = false).either
+          shut = a.shutdowns.get()
+        } yield assertTrue(
+          swapped.isRight,
+          reached,
+          waiting,
+          again,
+          blocked,
+          during == ((1, 0)),
+          result.isRight,
+          shut == 1,
+          a.shutDownBeforeRestart,
+          served == Right(true)
+        )
+      }
+    } @@ TestAspect.withLiveClock,
+    test("a rollback that lost the slot to a sibling swap leaves the failed provider to the call that holds it") {
+      ZIO.scoped {
+        val api    = OpenFeatureAPI.createIsolated()
+        val domain = s"shared-${java.util.UUID.randomUUID()}"
+        val rebind = new java.util.concurrent.CountDownLatch(1)
+        val a      = new Restarting("A", blocksFrom(2, rebind))
+        val f      = new Restarting("F", n => if (n == 1) throw new RuntimeException("first start fails"))
+        val x      = new Restarting("X")
+        // A's first start, F's, then the rollback's start of A.
+        val probe = new HoldInitReturn(3)
+        for {
+          ff <- buildHeld(a, probe, owns = false, api = api, domain = domain)
+          _  <- ZIO.addFinalizer(ZIO.succeed { rebind.countDown(); probe.release.countDown() })
+          // Within the rollback's initTimeout: the sibling takes the slot while A's second start runs.
+          swap    <- ff.setProvider(f).either.fork
+          started <- awaitTrue(a.inits.get() == 2)
+          _       <- buildOn(api, domain, x)
+          _       <- ZIO.succeed(rebind.countDown())
+          reached <- await(probe.reached)
+          failed  <- swap.join
+          shutWhileHeld = f.shutdowns.get()
+          install <- ff.setProvider(f).either.fork
+          waiting <- await(probe.waiting)
+          blocked <- stillBlocked(install)
+          _       <- ZIO.succeed(probe.release.countDown())
+          again   <- install.join
+          _       <- ZIO.sleep(200.millis)
+          shut = f.shutdowns.get()
+        } yield assertTrue(
+          started,
+          reached,
+          failed.isLeft,
+          shutWhileHeld == 0,
+          waiting,
+          blocked,
+          again.isRight,
+          shut == 1,
+          f.shutDownBeforeRestart,
+          f.inits.get() == 2
+        )
+      }
+    } @@ TestAspect.withLiveClock,
+    test(
+      "on a shared API, a restored provider that throws after its rollback timed out leaves the failed provider up, not installable again"
+    ) {
+      ZIO.scoped {
+        val reinit = new java.util.concurrent.CountDownLatch(1)
+        val a      = new Restarting(
+          "A",
+          n =>
+            if (n == 2) {
+              reinit.await(30, java.util.concurrent.TimeUnit.SECONDS)
+              throw new RuntimeException("second start fails")
+            }
+        )
+        val f = new Restarting("F", n => if (n == 1) throw new RuntimeException("first start fails"))
+        for {
+          ff     <- buildHeld(a, zio.openfeature.internal.LifecycleProbe.none, owns = false)
+          _      <- ZIO.addFinalizer(ZIO.succeed(reinit.countDown()))
+          failed <- ff.setProvider(f).either
+          _      <- ZIO.succeed(reinit.countDown())
+          ended  <- awaitTrue(!zio.openfeature.internal.ManagedProvider.existing(a).exists(_.initsInFlightAnywhere > 0))
+          _      <- ZIO.sleep(200.millis)
+          shut = f.shutdowns.get()
+          again <- ff.setProvider(f).either
+        } yield assertTrue(failed.isLeft, ended, shut == 0, again.isLeft, f.inits.get() == 1)
+      }
+    } @@ TestAspect.withLiveClock,
+    test("a rollback still hanging when the scope closes gets the failed provider shut down, with no watcher left") {
+      val reinit = new java.util.concurrent.CountDownLatch(1)
+      // Does not end when the API's shutdown interrupts its thread, so only the scope close can end the wait for it.
+      val a = new Restarting(
+        "A",
+        n =>
+          if (n == 2) {
+            var released = false
+            while (!released)
+              try { reinit.await(); released = true }
+              catch { case _: InterruptedException => () }
+          }
+      )
+      val f = new Restarting("F", n => if (n == 1) throw new RuntimeException("first start fails"))
+      for {
+        baseline <- zio.openfeature.testsupport.LeakCheck.snapshot
+        failed   <- ZIO.scoped {
+          buildExposed(a, initTimeout = 500.millis).flatMap { case (ff, _, _) => ff.setProvider(f).either }
+        }
+        shut = f.shutdowns.get()
+        _     <- ZIO.succeed(reinit.countDown())
+        leaks <- zio.openfeature.testsupport.LeakCheck.awaitNoLeaks(baseline, 5.seconds)
+      } yield assertTrue(failed.isLeft, shut == 1, leaks.isEmpty)
+    } @@ TestAspect.withLiveClock @@ TestAspect.timeout(45.seconds),
+    test("the wait for the SDK's shutdown is bounded: a provider still in another slot is installed again regardless") {
+      ZIO.scoped {
+        val api   = OpenFeatureAPI.createIsolated()
+        val a     = new Restarting("A")
+        val b     = new Restarting("B")
+        val probe = new HoldInitReturn(Int.MaxValue)
+        for {
+          ff <- buildHeld(a, probe, owns = false, api = api)
+          // A second slot keeps A's registration, so the SDK never shuts it down.
+          _       <- buildOn(api, s"other-${java.util.UUID.randomUUID()}", a)
+          swapped <- ff.setProvider(b).either
+          started <- ZIO.succeed(java.lang.System.nanoTime())
+          again   <- ff.setProvider(a).either
+          elapsed <- ZIO.succeed((java.lang.System.nanoTime() - started) / 1000000L)
+          served  <- ff.boolean("flag", default = false).either
+          status  <- ff.providerStatus
+          shut = (a.inits.get(), a.shutdowns.get())
+        } yield assertTrue(
+          swapped.isRight,
+          again.isRight,
+          probe.waiting.getCount == 0L,
+          elapsed >= 2500L,
+          elapsed < 10000L,
+          shut == ((1, 0)),
+          status == ProviderStatus.Ready,
+          served == Right(true)
         )
       }
     } @@ TestAspect.withLiveClock,
     test("after a rollback that timed out, the failed provider is refused until the restored provider returns") {
+      rollbackTimeoutThenReinstall(owns = true)
+    } @@ TestAspect.withLiveClock,
+    test(
+      "on a shared API, after a rollback that timed out, the failed provider is left to the SDK and refused as well"
+    ) {
+      rollbackTimeoutThenReinstall(owns = false)
+    } @@ TestAspect.withLiveClock,
+    test("after a rollback that timed out, a restored provider that then throws gets the failed provider shut down") {
       ZIO.scoped {
         val reinit = new java.util.concurrent.CountDownLatch(1)
-        val aInits = new java.util.concurrent.atomic.AtomicInteger(0)
-        // A starts at once when built, and blocks when the rollback registers it again.
-        val a = new SimpleProvider("A", Map("flag" -> true)) {
-          override def initialize(ctx: OFEvaluationContext): Unit =
-            if (aInits.incrementAndGet() >= 2) { reinit.await(10, java.util.concurrent.TimeUnit.SECONDS); () }
-            else ()
-        }
-        val fInits     = new java.util.concurrent.atomic.AtomicInteger(0)
-        val fShutdowns = new java.util.concurrent.atomic.AtomicInteger(0)
-        // F fails its first start, so the swap rolls back onto A, and starts on later ones.
-        val f = new SimpleProvider("F", Map("flag" -> true)) {
-          override def initialize(ctx: OFEvaluationContext): Unit =
-            if (fInits.incrementAndGet() == 1) throw new RuntimeException("first start fails") else ()
-          override def shutdown(): Unit = { fShutdowns.incrementAndGet(); () }
-        }
+        val a      = new Restarting(
+          "A",
+          n =>
+            if (n == 2) {
+              reinit.await(30, java.util.concurrent.TimeUnit.SECONDS)
+              throw new RuntimeException("second start fails")
+            }
+        )
+        val f = new Restarting("F", n => if (n == 1) throw new RuntimeException("first start fails"))
         for {
-          _     <- ZIO.addFinalizer(ZIO.succeed(reinit.countDown()))
           built <- buildExposed(a, initTimeout = 500.millis)
           (ff, _, _) = built
-          failed  <- ff.setProvider(f).either
-          refused <- ff.setProvider(f).either
-          _       <- ZIO.succeed(reinit.countDown())
-          again   <- installOnceReturned(ff, f)
+          _      <- ZIO.addFinalizer(ZIO.succeed(reinit.countDown()))
+          failed <- ff.setProvider(f).either
+          shutWhileHeld = f.shutdowns.get()
+          _      <- ZIO.succeed(reinit.countDown())
+          fDown  <- awaitTrue(f.shutdowns.get() >= 1)
+          again  <- installOnceReturned(ff, f)
+          _      <- ZIO.sleep(200.millis)
+          status <- ff.providerStatus
+          served <- ff.boolean("flag", default = false).either
+          shut = f.shutdowns.get()
         } yield assertTrue(
           failed.isLeft,
-          refused match {
-            case Left(FeatureFlagError.ProviderInitializationFailed(e: IllegalStateException)) =>
-              e.getMessage.contains("cannot be installed again until 'A', which replaced it")
-            case _ => false
-          },
+          shutWhileHeld == 0,
+          fDown,
           again.isRight,
-          fInits.get() == 2
+          shut == 1,
+          f.shutDownBeforeRestart,
+          f.inits.get() == 2,
+          status == ProviderStatus.Ready,
+          served == Right(true)
         )
       }
     } @@ TestAspect.withLiveClock,

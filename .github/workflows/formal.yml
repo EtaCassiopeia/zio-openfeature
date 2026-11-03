@@ -83,10 +83,13 @@ env:
   COMMUNITY_MODULES_SHA256: 1c77d512e73ae9fde27103bee9115898fc9d62bea3a99313aeb5eb14c6284af6
 
 jobs:
+  # Pull requests check smaller bounds (LifecyclePR.cfg, one provider event): the full ones outgrew a pull request's wait.
+  # Main and a manual run check the full bounds, so a break only they can find shows up there: read main's run after a
+  # merge that touches the model.
   tlc:
     if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: ${{ github.event_name == 'pull_request' && 30 || 150 }}
     steps:
       - uses: actions/checkout@v7
       - name: Set up JDK 21
@@ -100,7 +103,9 @@ jobs:
           echo "${TLA_TOOLS_SHA256}  tla2tools.jar" | sha256sum -c -
       - name: Check the lifecycle model
         working-directory: formal/lifecycle
-        run: java -XX:+UseParallelGC -cp ../../tla2tools.jar tlc2.TLC -workers auto -deadlock -config Lifecycle.cfg Lifecycle.tla
+        env:
+          TLC_CONFIG: ${{ github.event_name == 'pull_request' && 'LifecyclePR.cfg' || 'Lifecycle.cfg' }}
+        run: java -XX:+UseParallelGC -cp ../../tla2tools.jar tlc2.TLC -workers auto -deadlock -config "$TLC_CONFIG" Lifecycle.tla
 
   # The checks on small bounds, a few minutes each, apart from the long run above so neither holds up the other.
   model-checks:

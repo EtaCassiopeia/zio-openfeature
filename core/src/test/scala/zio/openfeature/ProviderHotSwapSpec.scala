@@ -182,6 +182,30 @@ object ProviderHotSwapSpec extends ZIOSpecDefault {
   private def stillBlocked[A](install: Fiber[Nothing, A]): UIO[Boolean] =
     ZIO.sleep(200.millis) *> install.poll.map(_.isEmpty)
 
+  /** Holds the SDK's executor at the first provider shutdown it runs: the slot is written and the swap has returned,
+    * and the replaced provider's shutdown has started and not finished. Also records a swap reaching the wait for that
+    * shutdown.
+    */
+  final private class HoldFirstShutDown extends zio.openfeature.internal.LifecycleProbe {
+    private val shutDowns = new java.util.concurrent.atomic.AtomicInteger(0)
+    val reached           = new java.util.concurrent.CountDownLatch(1)
+    val release           = new java.util.concurrent.CountDownLatch(1)
+    val waiting           = new java.util.concurrent.CountDownLatch(1)
+    val waits             = new java.util.concurrent.atomic.AtomicInteger(0)
+
+    def at(p: zio.openfeature.internal.LifecycleProbe.Point): UIO[Unit] = p match {
+      case _: zio.openfeature.internal.LifecycleProbe.Point.ProviderShutDown =>
+        ZIO.succeed(shutDowns.incrementAndGet()).flatMap { k =>
+          ZIO
+            .when(k == 1)(ZIO.succeed(reached.countDown()) *> ZIO.succeedBlocking(release.await()))
+            .unit
+        }
+      case zio.openfeature.internal.LifecycleProbe.Point.AwaitSdkShutDown =>
+        ZIO.succeed { waits.incrementAndGet(); waiting.countDown() }
+      case _ => ZIO.unit
+    }
+  }
+
   private def await(latch: java.util.concurrent.CountDownLatch): UIO[Boolean] =
     ZIO.succeedBlocking(latch.await(10, java.util.concurrent.TimeUnit.SECONDS))
 
@@ -1098,10 +1122,9 @@ object ProviderHotSwapSpec extends ZIOSpecDefault {
     } @@ TestAspect.withLiveClock,
     test("a provider a successful swap replaced waits for the SDK's shutdown of it before starting again") {
       ZIO.scoped {
-        val a = new Restarting("A")
-        val b = new Restarting("B")
-        // A's first start, then B's.
-        val probe = new HoldInitReturn(2)
+        val a     = new Restarting("A")
+        val b     = new Restarting("B")
+        val probe = new HoldFirstShutDown
         for {
           ff      <- buildHeld(a, probe, owns = true)
           _       <- ZIO.addFinalizer(ZIO.succeed(probe.release.countDown()))
@@ -1131,10 +1154,9 @@ object ProviderHotSwapSpec extends ZIOSpecDefault {
     } @@ TestAspect.withLiveClock,
     test("a failed provider a successful rollback replaced waits for the SDK's shutdown of it before starting again") {
       ZIO.scoped {
-        val a = new Restarting("A")
-        val f = new Restarting("F", n => if (n == 1) throw new RuntimeException("first start fails"))
-        // A's first start, F's, then the rollback's start of A.
-        val probe = new HoldInitReturn(3)
+        val a     = new Restarting("A")
+        val f     = new Restarting("F", n => if (n == 1) throw new RuntimeException("first start fails"))
+        val probe = new HoldFirstShutDown
         for {
           ff      <- buildHeld(a, probe, owns = true)
           _       <- ZIO.addFinalizer(ZIO.succeed(probe.release.countDown()))
@@ -1164,10 +1186,9 @@ object ProviderHotSwapSpec extends ZIOSpecDefault {
     } @@ TestAspect.withLiveClock,
     test("a swap interrupted during the wait for the SDK's shutdown leaves the next swap to wait in its place") {
       ZIO.scoped {
-        val a = new Restarting("A")
-        val b = new Restarting("B")
-        // A's first start, then B's.
-        val probe = new HoldInitReturn(2)
+        val a     = new Restarting("A")
+        val b     = new Restarting("B")
+        val probe = new HoldFirstShutDown
         for {
           ff      <- buildHeld(a, probe, owns = true)
           _       <- ZIO.addFinalizer(ZIO.succeed(probe.release.countDown()))

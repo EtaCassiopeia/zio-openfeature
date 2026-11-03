@@ -144,15 +144,17 @@ object ProviderHotSwapStressSpec extends ZIOSpecDefault {
       } yield (evaluators, swaps)
       check(schedules) { case (evaluators, swaps) =>
         ZIO.scoped {
+          val api    = OpenFeatureAPI.createIsolated()
+          val domain = s"stress-gen-${java.util.UUID.randomUUID()}"
           for {
             ff <- FeatureFlags.build(
               new ConstantProvider("init", true),
-              domain = Some(s"stress-gen-${java.util.UUID.randomUUID()}"),
+              domain = Some(domain),
               version = None,
               initialHooks = Nil,
               statusRef = None,
               addShutdownFinalizer = false,
-              apiOverride = Some(OpenFeatureAPI.createIsolated()),
+              apiOverride = Some(api),
               evaluationTimeout = Some(5.seconds)
             )
             evalFibers <- ZIO.foreach(1 to evaluators)(_ => ZIO.foreach(1 to EvalsPerFiber)(_ => runOne(ff)).fork)
@@ -160,15 +162,18 @@ object ProviderHotSwapStressSpec extends ZIOSpecDefault {
               case Some(v) => ff.setProvider(new ConstantProvider(s"good-$v", v)).either.ignore
               case None    => ff.setProvider(new FailingInitProvider).either.ignore
             }
-            flat <- ZIO.foreach(evalFibers)(_.join).map(_.toList.flatten)
-            last <- ff.boolean("flag", default = !swaps.lastOption.flatten.getOrElse(true))
+            flat   <- ZIO.foreach(evalFibers)(_.join).map(_.toList.flatten)
+            last   <- ff.boolean("flag", default = !swaps.lastOption.flatten.getOrElse(true)).either
+            status <- ff.providerStatus
+            slot = api.getClient(domain).getProviderState
           } yield {
             val expectedLast = swaps.lastOption.flatten
             assertTrue(
               flat.count(_ == Outcome.DefectSeen) == 0,
               flat.size == evaluators * EvalsPerFiber,
-              expectedLast.forall(_ == last)
-            )
+              last.isRight,
+              expectedLast.forall(v => last == Right(v))
+            ).label(s"schedule=$swaps status=$status slot=$slot last=$last")
           }
         }
       }

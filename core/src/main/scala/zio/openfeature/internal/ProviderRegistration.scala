@@ -154,7 +154,8 @@ private[openfeature] object ProviderRegistration {
       provider: ManagedProvider,
       armed: ManagedProvider.Armed,
       timeout: Duration
-    ): Task[Settled] =
+    ): Task[Settled] = {
+      val startedAt = java.lang.System.nanoTime()
       ZIO
         .suspend {
           val outcome = new CompletableFuture[Unit]()
@@ -173,7 +174,11 @@ private[openfeature] object ProviderRegistration {
           case _: TimeoutException => new TimeoutException(s"Provider initialization exceeded $timeout")
           case other               => initFailure(other)
         }
-        .zipRight(ZIO.attemptBlocking { checkBound(); fromSlot(awaitWritten(), provider.lastErrorMessage) })
+        .zipRight(ZIO.attemptBlocking {
+          checkBound()
+          fromSlot(awaitWritten(startedAt, timeout), provider.lastErrorMessage)
+        })
+    }
 
     // Only for a provider registered with the API outside the library and not yet initialized there: no wrapper reports
     // its outcome, so the SDK's state for it is read until it leaves NOT_READY, within the deadline. Every provider the
@@ -198,13 +203,24 @@ private[openfeature] object ProviderRegistration {
     /** The SDK's state for this registration's slot. */
     def slotState: ProviderState = domain.fold(api.getClient())(d => api.getClient(d)).getProviderState
 
-    // The SDK writes READY right after `initialize()` returns, on the thread that called it: a slot read in between is
-    // still NOT_READY. Wait the few microseconds for that write, so the instance reports Ready only once the SDK does.
-    private def awaitWritten(): ProviderState = {
-      val deadline = java.lang.System.nanoTime() + WriteWaitNanos
-      var state    = slotState
-      while (state == ProviderState.NOT_READY && java.lang.System.nanoTime() < deadline) {
-        java.util.concurrent.locks.LockSupport.parkNanos(20000L)
+    // The SDK writes READY after `initialize()` returns, on the thread that called it, so a slot read in between is still
+    // NOT_READY, and a starved host can stretch those few microseconds past any fixed bound. Until the write, this
+    // registration is not published: an evaluation would get PROVIDER_NOT_READY. So the wait shares `timeout` with the one
+    // for `initialize()`, and failing it is a timeout like a hung `initialize()`, which the SDK's late READY recovers from.
+    private def awaitWritten(startedAt: Long, timeout: Duration): ProviderState = {
+      val limit = if (timeout == Duration.Infinity) Long.MaxValue else timeout.toNanos
+      var state = slotState
+      while (state == ProviderState.NOT_READY) {
+        val elapsed = java.lang.System.nanoTime() - startedAt
+        if (elapsed >= limit)
+          throw new TimeoutException(
+            s"Provider initialization exceeded $timeout: initialize() returned but the SDK has not published the " +
+              "registration"
+          )
+        // The usual wait is microseconds, so it starts short; a long one should not spin.
+        java.util.concurrent.locks.LockSupport.parkNanos(Math.min(MaxWritePollNanos, Math.max(20000L, elapsed / 10)))
+        // A rebind or the API's shutdown ends the wait: this slot's state is no longer this registration's.
+        checkBound()
         state = slotState
       }
       state
@@ -271,8 +287,8 @@ private[openfeature] object ProviderRegistration {
       )
   }
 
-  // Bounds the wait for the SDK's write after `initialize()`; a slot still NOT_READY after it counts as about to be READY.
-  private val WriteWaitNanos = 1000000000L
+  // The longest pause between reads of the slot while waiting for the SDK's write after `initialize()`.
+  private val MaxWritePollNanos = 10000000L
 
   // How often a foreign provider's state is read while the SDK initializes it: by a settle, and by an orphan's watcher.
   private val ForeignPoll      = 10.millis
@@ -282,7 +298,9 @@ private[openfeature] object ProviderRegistration {
     case ProviderState.STALE => Settled.Stale
     case ProviderState.ERROR => Settled.Error(message.getOrElse("Provider reported ERROR once initialize() returned"))
     case ProviderState.FATAL => Settled.Fatal(message.getOrElse("Provider reported FATAL once initialize() returned"))
-    case _                   => Settled.Ready
+    case ProviderState.READY => Settled.Ready
+    // Both callers wait for the slot to leave NOT_READY first.
+    case ProviderState.NOT_READY => throw new IllegalStateException("A slot still NOT_READY has not settled")
   }
 
   private def unwrap(error: Throwable): Throwable = error match {

@@ -19,7 +19,7 @@ import scala.jdk.CollectionConverters._
 final private[openfeature] class EventBridge(
   client: OFClient,
   initialProvider: dev.openfeature.sdk.FeatureProvider,
-  providerNameRef: java.util.concurrent.atomic.AtomicReference[String],
+  providerNameRef: java.util.concurrent.atomic.AtomicReference[ProviderName],
   state: FeatureFlagsState,
   onReady: Option[java.util.concurrent.CountDownLatch],
   probe: LifecycleProbe = LifecycleProbe.none
@@ -103,32 +103,52 @@ final private[openfeature] class EventBridge(
   }
 
   // The SDK stamps every dispatched event with the emitting provider's metadata name — or NULL when the provider has
-  // no metadata/name (verified sdk-1.21.0, OpenFeatureAPI.runHandlersForProvider). An event whose name differs from
-  // the CURRENT provider's is a stale event from a replaced/failed provider still queued on the SDK's emitter
-  // executor: it must not drive the status machine. We drop ONLY when both identities are known and differ. A null
-  // event name (unnamed provider) OR an indeterminate current name fails open — we cannot attribute the event to a
-  // *different* provider, so it must be allowed to drive status. The current name is indeterminate when it is the
-  // "unknown" fallback the factories stamp for metadata-less providers, or for a provider like the SDK's MultiProvider
-  // whose metadata name only materializes inside initialize() (so the async build captured "unknown", while the
-  // provider's own later events carry the real name). Same-named swaps are indistinguishable (a known limitation of
-  // the identity guard).
+  // no metadata/name (verified sdk-1.21.0, OpenFeatureAPI.runHandlersForProvider). An event that does not match the
+  // CURRENT provider is a stale event from a replaced/failed provider still queued on the SDK's emitter executor: it
+  // must not drive the status machine. An event with no name cannot be attributed to a *different* provider, so it
+  // fails open; two providers with no name are indistinguishable, as same-named swaps are (a known limitation of the
+  // identity guard). A `Pending` current name fails open too: a provider like the SDK's MultiProvider only gets its name
+  // inside initialize(), while its own events carry it, and the fail-open ends once it has initialized.
   //
   // Phase 2 watch-point: re-verify this identity-guard behaviour once the OpenFeature Java SDK ships the
   // spec-v0.9.0 provider-event marker — it may offer a more direct way to attribute an event to its emitting provider.
-  private def fromCurrentProvider(details: EventDetails): Boolean = {
-    val eventName   = details.getProviderName
-    val currentName = providerNameRef.get()
-    eventName == null ||
-    currentName == null ||
-    currentName == FeatureFlags.UnknownProviderName ||
-    eventName == currentName
-  }
+  private def fromCurrentProvider(details: EventDetails): Boolean =
+    (Option(details.getProviderName), providerNameRef.get()) match {
+      case (None, _)                        => true
+      case (_, ProviderName.Pending)        => true
+      case (Some(_), ProviderName.Nameless) => false
+      case (Some(n), ProviderName.Named(c)) => n == c
+    }
+
+  /** Settle a `Pending` name once the status is `Ready`: the SDK's state for the slot was READY, which a provider's own
+    * emission can also make it while its `initialize()` runs, so a wrapper still initializing keeps `Pending`, and the
+    * READY the SDK sends when that call returns settles it. The installed provider's own metadata decides, so an event
+    * cannot write another provider's name whatever it is stamped with.
+    */
+  private[openfeature] def settlePendingName: UIO[Unit] =
+    ZIO.suspendSucceed {
+      val record = lifecycle.snapshot
+      val settle = record.status == ProviderStatus.Ready && record.name == ProviderName.Pending &&
+        !Bound.ofRegistered(record.installed).initializing
+      ZIO.when(settle)(readName(record.installed)).unit
+    }
+
+  /** Record `provider`'s name now that it has initialized. A throw from the provider leaves the name `Pending`: it says
+    * nothing about the name, and the swap or event that asked has its own outcome.
+    */
+  private[openfeature] def readName(provider: dev.openfeature.sdk.FeatureProvider): UIO[Unit] =
+    ZIO
+      .attempt(ProviderNames.afterInit(provider))
+      .foldZIO(
+        e => ZIO.logDebug(s"event bridge: could not read the provider's name: ${e.getMessage}"),
+        name => lifecycle.run(LifecycleInput.NameRead(provider, name)).unit
+      )
 
   // Truthful payloads: publish under the name the SDK stamped on the event (the actual emitter), falling back to the
   // current provider only when the event carries none.
   private def eventProviderMetadata(details: EventDetails): ProviderMetadata = {
     val name = details.getProviderName
-    ProviderMetadata(if (name == null) providerNameRef.get() else name)
+    ProviderMetadata(if (name == null) providerNameRef.get().render else name)
   }
 
   // Event metadata is optional, so a payload that cannot be read must not drop the event: it is published with empty
@@ -163,24 +183,13 @@ final private[openfeature] class EventBridge(
 
   private[openfeature] def onReadyEvent(details: EventDetails, fromSdk: Boolean = false): UIO[Unit] =
     extractEventMetadata(details).flatMap { em =>
-      val current = fromCurrentProvider(details)
-      // Refresh a still-"unknown" provider name from the event's stamped name when the READY is from the current
-      // provider. A lazy-metadata provider (notably the SDK's MultiProvider) only builds its metadata name inside
-      // initialize(), so the async build captured the "unknown" fallback; the provider's own READY carries the real
-      // name. Refreshing restores accurate providerMetadata and re-enables the event-identity guard for such providers.
-      // `compareAndSet` from the fallback only: it never clobbers a real name set by a concurrent swap.
-      val refreshName = ZIO.succeed {
-        val eventName = details.getProviderName
-        if (current && eventName != null)
-          providerNameRef.compareAndSet(FeatureFlags.UnknownProviderName, eventName): Unit
-        ()
-      }
-      refreshName *>
-        applyFor(current, fromSdk, Signal.EventReady).flatMap { applied =>
+      applyFor(fromCurrentProvider(details), fromSdk, Signal.EventReady).flatMap { applied =>
+        // Before the event and the latch, so whoever waits for this READY reads the name.
+        settlePendingName *>
           state.eventHub.publish(ProviderEvent.Ready(eventProviderMetadata(details), em)) *>
-            // The latch counts READY deliveries from the current provider.
-            ZIO.succeed(onReady.foreach(_.countDown())).when(applied.nonEmpty)
-        }.unit
+          // The latch counts READY deliveries from the current provider.
+          ZIO.succeed(onReady.foreach(_.countDown())).when(applied.nonEmpty)
+      }.unit
     }
 
   /** A provider event as the SDK delivers it, with the status signal taken from the SDK's state for the slot.
@@ -377,7 +386,7 @@ final private[openfeature] class EventBridge(
   }
 
   def onProviderReady(handler: ProviderMetadata => UIO[Unit]): UIO[UIO[Unit]] =
-    ZIO.succeed(providerNameRef.get()).flatMap { pName =>
+    ZIO.succeed(providerNameRef.get().render).flatMap { pName =>
       val metadata = ProviderMetadata(pName)
       subscribeToEvent(
         _ == ProviderStatus.Ready,
@@ -388,7 +397,7 @@ final private[openfeature] class EventBridge(
     }
 
   def onProviderError(handler: (Throwable, ProviderMetadata) => UIO[Unit]): UIO[UIO[Unit]] =
-    ZIO.succeed(providerNameRef.get()).flatMap { pName =>
+    ZIO.succeed(providerNameRef.get().render).flatMap { pName =>
       val metadata = ProviderMetadata(pName)
       subscribeToEvent(
         s => s == ProviderStatus.Error || s == ProviderStatus.Fatal,
@@ -399,7 +408,7 @@ final private[openfeature] class EventBridge(
     }
 
   def onProviderStale(handler: (String, ProviderMetadata) => UIO[Unit]): UIO[UIO[Unit]] =
-    ZIO.succeed(providerNameRef.get()).flatMap { pName =>
+    ZIO.succeed(providerNameRef.get().render).flatMap { pName =>
       val metadata = ProviderMetadata(pName)
       subscribeToEvent(
         _ == ProviderStatus.Stale,
@@ -422,7 +431,7 @@ final private[openfeature] class EventBridge(
   // Suspended so the provider name is read when the registration runs, not when the effect is built.
   def on(eventType: ProviderEventType, handler: ProviderEvent => UIO[Unit]): UIO[UIO[Unit]] =
     ZIO.suspendSucceed {
-      val metadata = ProviderMetadata(providerNameRef.get())
+      val metadata = ProviderMetadata(providerNameRef.get().render)
       eventType match {
         case ProviderEventType.Ready =>
           subscribeToEvent[ProviderEvent](

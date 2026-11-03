@@ -14,7 +14,7 @@ import dev.openfeature.sdk.{
   ProviderState,
   Value
 }
-import java.util.concurrent.CountDownLatch
+import java.util.concurrent.{CountDownLatch, TimeUnit}
 
 /** Bridge-level tests: provider-identity gating, PROVIDER_FATAL mapping, terminal-state stickiness, and truthful event
   * payloads. Handlers are driven directly via the extracted `onReadyEvent`/`onErrorEvent`/ `onStaleEvent` methods with
@@ -46,13 +46,98 @@ object ProviderStatusBridgeSpec extends ZIOSpecDefault {
       ProviderEvaluations.of(d, "DEFAULT")
   }
 
-  /** Mimics the SDK's MultiProvider: no metadata name at registration time (the async build captures "unknown"), while
-    * the provider's own later events carry a real name.
-    */
-  private class LateMetadataProvider extends InertProvider("late") {
+  /** Mimics the SDK's MultiProvider: no metadata until `initialize()` has run, which waits for `finishInitializing`. */
+  private class LateMetadataProvider extends InertProvider("unused") {
+    private val proceed                      = new CountDownLatch(1)
+    @volatile private var metadata: Metadata = null
+
+    def finishInitializing(): Unit = proceed.countDown()
+
     @scala.annotation.nowarn("msg=deprecated")
-    override def getMetadata: Metadata = null
+    override def getMetadata: Metadata                      = metadata
+    override def initialize(ctx: OFEvaluationContext): Unit = {
+      proceed.await()
+      metadata = new Metadata { override def getName: String = "multiprovider" }
+    }
+    override def shutdown(): Unit = {
+      proceed.countDown()
+      super.shutdown()
+    }
   }
+
+  private def awaitNamed(ff: FeatureFlagsLive): UIO[String] =
+    Live
+      .live(ff.providerMetadata.map(_.name).repeatUntil(_ != FeatureFlags.UnknownProviderName).timeout(5.seconds))
+      .map(_.getOrElse(FeatureFlags.UnknownProviderName))
+
+  /** Initializes at once. */
+  private class QuickProvider(nm: String) extends InertProvider(nm) {
+    @scala.annotation.nowarn("msg=deprecated")
+    override def getState: ProviderState                    = ProviderState.READY
+    override def initialize(ctx: OFEvaluationContext): Unit = ()
+  }
+
+  /** Initializes at once, and has no name: `getMetadata` always answers `metadata`. */
+  private class NamelessProvider(metadata: Metadata) extends QuickProvider("unused") {
+    @scala.annotation.nowarn("msg=deprecated")
+    override def getMetadata: Metadata = metadata
+  }
+
+  private val namelessShapes: List[(String, Metadata)] = List(
+    "getMetadata answers null" -> null,
+    "getName answers null"     -> new Metadata { override def getName: String = null }
+  )
+
+  /** An instance on `first`, whose READY has been handled, swapped to a provider with no name. */
+  private def swappedToNameless(metadata: Metadata): ZIO[Scope, Throwable, FeatureFlagsLive] = {
+    val ready = new CountDownLatch(1)
+    for {
+      ff <- FeatureFlags.build(
+        new QuickProvider("first"),
+        domain = Some(uniqueDomain("nameless")),
+        version = None,
+        initialHooks = Nil,
+        statusRef = None,
+        addShutdownFinalizer = true,
+        apiOverride = Some(OpenFeatureAPI.createIsolated()),
+        onReady = Some(ready)
+      )
+      _ <- ZIO.attemptBlocking(ready.await(10, TimeUnit.SECONDS))
+      _ <- ff.setProvider(new NamelessProvider(metadata)).mapError(e => new RuntimeException(e.toString))
+    } yield ff
+  }
+
+  private def lateEventsFromTheReplacedProvider(shape: String, metadata: Metadata) =
+    suite(s"a late event from the replaced provider, after a swap to a provider with no name ($shape)")(
+      test("a READY does not rename the instance") {
+        ZIO.scoped {
+          for {
+            ff     <- swappedToNameless(metadata)
+            _      <- ff.onReadyEvent(details("first"))
+            name   <- ff.providerMetadata.map(_.name)
+            status <- ff.providerStatus
+          } yield assertTrue(name == FeatureFlags.UnknownProviderName, status == ProviderStatus.Ready)
+        }
+      },
+      test("an ERROR does not move the status") {
+        ZIO.scoped {
+          for {
+            ff     <- swappedToNameless(metadata)
+            _      <- ff.onErrorEvent(details("first", message = "stale"))
+            status <- ff.providerStatus
+          } yield assertTrue(status == ProviderStatus.Ready)
+        }
+      },
+      test("a STALE does not move the status") {
+        ZIO.scoped {
+          for {
+            ff     <- swappedToNameless(metadata)
+            _      <- ff.onStaleEvent(details("first", message = "stale"))
+            status <- ff.providerStatus
+          } yield assertTrue(status == ProviderStatus.Ready)
+        }
+      }
+    )
 
   private def buildProvider(
     ref: SubscriptionRef[ProviderStatus],
@@ -90,6 +175,9 @@ object ProviderStatusBridgeSpec extends ZIOSpecDefault {
   }
 
   def spec = suite("ProviderStatusBridgeSpec")(
+    suite("a provider with no name")(namelessShapes.map { case (shape, metadata) =>
+      lateEventsFromTheReplacedProvider(shape, metadata)
+    }: _*),
     test("mismatched provider name: status unchanged, event still published under the stamped name") {
       for {
         ref <- SubscriptionRef.make[ProviderStatus](ProviderStatus.Ready)
@@ -110,9 +198,9 @@ object ProviderStatusBridgeSpec extends ZIOSpecDefault {
         }
       } yield out
     },
-    test("indeterminate current name (unknown) fails open: a named event from our own provider drives status") {
-      // The SDK's MultiProvider builds its metadata name inside initialize(), so the async build captured "unknown";
-      // its own later READY carries the real name. The guard must not reject the provider's own event.
+    test("a name not known yet fails open: a named event from our own provider drives status") {
+      // The SDK's MultiProvider builds its metadata name inside initialize(), so the async build has no name to compare
+      // with; its own later READY carries the real name. The guard must not reject the provider's own event.
       for {
         ref <- SubscriptionRef.make[ProviderStatus](ProviderStatus.NotReady)
         out <- ZIO.scoped {
@@ -124,20 +212,44 @@ object ProviderStatusBridgeSpec extends ZIOSpecDefault {
         }
       } yield out
     },
-    test("lazy-metadata provider: a READY event refreshes providerNameRef from unknown to the real name") {
-      // buildAsync captured "unknown" for a LateMetadataProvider (metadata name only materializes after init). When
-      // the provider's own READY arrives stamped with the real name, providerNameRef must be refreshed so
-      // providerMetadata reports the real name AND the identity guard regains discrimination.
+    test("lazy-metadata provider: its READY settles the name from the provider, and the guard discriminates again") {
+      val provider = new LateMetadataProvider
       for {
         ref <- SubscriptionRef.make[ProviderStatus](ProviderStatus.NotReady)
         out <- ZIO.scoped {
-          buildProvider(ref, new LateMetadataProvider).flatMap { ff =>
+          buildProvider(ref, provider).flatMap { ff =>
             for {
               beforeName <- ff.providerMetadata.map(_.name)
-              _          <- ff.onReadyEvent(details("multiprovider"))
-              afterName  <- ff.providerMetadata.map(_.name)
+              _          <- ZIO.succeed(provider.finishInitializing())
+              afterName  <- awaitNamed(ff)
+              _          <- ff.onErrorEvent(details("another", message = "stale"))
+              status     <- ff.providerStatus
             } yield assertTrue(
               beforeName == FeatureFlags.UnknownProviderName,
+              afterName == "multiprovider",
+              status == ProviderStatus.Ready
+            )
+          }
+        }
+      } yield out
+    },
+    test("lazy-metadata provider: a READY stamped with another name does not name it, even while it initializes") {
+      // Status Ready alone does not mean initialize() returned: a provider's own READY emission moves the SDK's state too.
+      val provider = new LateMetadataProvider
+      for {
+        ref <- SubscriptionRef.make[ProviderStatus](ProviderStatus.NotReady)
+        out <- ZIO.scoped {
+          buildProvider(ref, provider).flatMap { ff =>
+            for {
+              _         <- ff.onReadyEvent(details("other"))
+              during    <- ff.providerMetadata.map(_.name)
+              status    <- ff.providerStatus
+              _         <- ZIO.succeed(provider.finishInitializing())
+              _         <- ff.onReadyEvent(details("other"))
+              afterName <- awaitNamed(ff)
+            } yield assertTrue(
+              during == FeatureFlags.UnknownProviderName,
+              status == ProviderStatus.Ready,
               afterName == "multiprovider"
             )
           }

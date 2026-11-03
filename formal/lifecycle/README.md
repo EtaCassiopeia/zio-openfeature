@@ -201,6 +201,7 @@ names; the rows below say where one is held elsewhere. Every library action is o
 | `owns` | `ownsApi`, fixed at construction |
 | `bridgeOn` | the bridge's registered handlers (`EventBridge`), not lifecycle state |
 | `swaps` (as `Gen`) | `generation`, mirrored to `swapGeneration` for the evaluator once the step has published the status |
+| not a model variable | `name`, what the instance knows of the installed provider's name, mirrored to `providerNameRef` inside the step for the event bridge and the hook pipeline |
 | `evals` | not library state: each evaluation's progress through `Evaluator.gated` |
 
 ## Preconditions

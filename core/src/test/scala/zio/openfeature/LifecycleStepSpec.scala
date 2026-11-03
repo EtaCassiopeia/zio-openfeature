@@ -12,6 +12,7 @@ import zio.openfeature.internal.{
   LifecycleStep,
   Lock,
   ManagedProvider,
+  ProviderName,
   Refusal,
   SwapInFlight
 }
@@ -38,7 +39,12 @@ object LifecycleStepSpec extends ZIOSpecDefault {
   private val m1: ManagedProvider   = ManagedProvider(new NoOpProvider())
   private val m2: ManagedProvider   = ManagedProvider(new NoOpProvider())
 
-  private val ready: LifecycleState = LifecycleState.initial(p0).copy(status = ProviderStatus.Ready, everReady = true)
+  private val p0Name: ProviderName   = ProviderName.Named("p0")
+  private val incoming: ProviderName = ProviderName.Named("incoming")
+  private val stack: ProviderName    = ProviderName.Named("stack")
+
+  private val ready: LifecycleState =
+    LifecycleState.initial(p0, p0Name).copy(status = ProviderStatus.Ready, everReady = true)
 
   /** The record after each input in turn, and every effect on the way. */
   private def run(state: LifecycleState, inputs: LifecycleInput*): (LifecycleState, Chunk[LifecycleEffect]) =
@@ -53,7 +59,7 @@ object LifecycleStepSpec extends ZIOSpecDefault {
   private def admit(m: ManagedProvider, initializing: ManagedProvider => Boolean = _ => false) =
     LifecycleInput.Admit(m, Some(m), initializing)
 
-  private def swapStart(p: OFFeatureProvider) = LifecycleInput.SwapStart(p, "incoming")
+  private def swapStart(p: OFFeatureProvider) = LifecycleInput.SwapStart(p, incoming)
 
   private def event(signal: Signal) = LifecycleInput.Status(signal)
 
@@ -79,7 +85,7 @@ object LifecycleStepSpec extends ZIOSpecDefault {
         assertTrue(moves.forall(identity))
       },
       test("counts as ready when it sets Ready or Stale, and not otherwise") {
-        val fresh                         = LifecycleState.initial(p0)
+        val fresh                         = LifecycleState.initial(p0, p0Name)
         def everReady(to: ProviderStatus) = LifecycleStep.step(fresh, LifecycleInput.Override(to)).state.everReady
         assertTrue(
           !fresh.everReady,
@@ -91,7 +97,7 @@ object LifecycleStepSpec extends ZIOSpecDefault {
         )
       },
       test("an instance made Ready by an override is not escalated to Fatal when the init watchdog fires later") {
-        val async       = LifecycleState.initial(p0)
+        val async       = LifecycleState.initial(p0, p0Name)
         val (after, fx) = run(
           async,
           LifecycleInput.Override(ProviderStatus.Ready),
@@ -127,7 +133,7 @@ object LifecycleStepSpec extends ZIOSpecDefault {
           s.generation == ready.generation + 1,
           s.lock == Lock.Swap,
           s.swap == Some(SwapInFlight(m1, p0, ProviderStatus.Ready)),
-          outcome.rename == Some("incoming")
+          s.name == incoming
         )
       },
       test("SwapDone: the swap ends in the state the SDK reports, and the gate and lock are released") {
@@ -166,11 +172,11 @@ object LifecycleStepSpec extends ZIOSpecDefault {
           ready,
           swapStart(m1),
           event(Signal.SwapFailed),
-          LifecycleInput.Reinstall(p0, "p0"),
+          LifecycleInput.Reinstall(p0, p0Name),
           event(Signal.RollbackSucceeded(Settled.Error("down", reused = false))),
           LifecycleInput.GateDown
         )
-        assertTrue(s.installed eq p0, s.status == ProviderStatus.Error, s.everReady, !s.gate)
+        assertTrue(s.installed eq p0, s.name == p0Name, s.status == ProviderStatus.Error, s.everReady, !s.gate)
       },
       test("SwapRollbackUnbound: nothing was bound, so the status goes back to the one before the swap") {
         val before = ready.copy(status = ProviderStatus.Error)
@@ -178,14 +184,14 @@ object LifecycleStepSpec extends ZIOSpecDefault {
           before,
           swapStart(m1),
           event(Signal.SwapFailed),
-          LifecycleInput.Reinstall(p0, "p0"),
+          LifecycleInput.Reinstall(p0, p0Name),
           event(Signal.RollbackUnbound(ProviderStatus.Error)),
           LifecycleInput.GateDown
         )
         assertTrue(s.installed eq p0, s.status == ProviderStatus.Error)
       },
       test("Deliver: an event moves the status, except while a swap's gate is up") {
-        val delivered = LifecycleStep.step(LifecycleState.initial(p0), event(Signal.EventReady)).state.status
+        val delivered = LifecycleStep.step(LifecycleState.initial(p0, p0Name), event(Signal.EventReady)).state.status
         val gated     = run(ready, swapStart(m1), event(Signal.EventReady))._1.status
         assertTrue(delivered == ProviderStatus.Ready, gated == ProviderStatus.NotReady)
       },
@@ -208,26 +214,52 @@ object LifecycleStepSpec extends ZIOSpecDefault {
         val (s, _) = run(ready, LifecycleInput.ScopeClose)
         assertTrue(s.closed, refusal(s, admit(m1)) == Some(Refusal.Closed))
       },
+      test("NameRead: writes the name only from Pending") {
+        val pending  = ready.copy(name = ProviderName.Pending)
+        val nameless = LifecycleInput.NameRead(p0, ProviderName.Nameless)
+        val named    = LifecycleInput.NameRead(p0, stack)
+        assertTrue(
+          LifecycleStep.step(pending, named).state == pending.copy(name = stack),
+          LifecycleStep.step(pending, nameless).state == pending.copy(name = ProviderName.Nameless),
+          LifecycleStep.step(ready, named).state == ready,
+          LifecycleStep.step(pending.copy(name = ProviderName.Nameless), named).state.name == ProviderName.Nameless,
+          LifecycleStep.step(pending, named).transitioned.isEmpty,
+          LifecycleStep.step(pending, named).effects.isEmpty
+        )
+      },
+      test("NameRead: a read of a provider a swap has since replaced does not name the one it installed") {
+        val swapped = LifecycleStep.step(ready, LifecycleInput.SwapStart(m1, ProviderName.Pending)).state
+        val outcome = LifecycleStep.step(swapped, LifecycleInput.NameRead(p0, p0Name))
+        assertTrue(swapped.name == ProviderName.Pending, outcome.state == swapped)
+      },
+      test("Reinstall: a failed swap restores the name it captured, Pending included") {
+        val pending = ready.copy(name = ProviderName.Pending)
+        val (s, _)  = run(
+          pending,
+          swapStart(m1),
+          event(Signal.SwapFailed),
+          LifecycleInput.Reinstall(p0, ProviderName.Pending)
+        )
+        assertTrue(s.name == ProviderName.Pending, s.installed eq p0)
+      },
       test("Switch: the installed switchable provider is renamed, and nothing else moves") {
         val installed = LifecycleStep.step(ready, swapStart(m1)).state.copy(status = ProviderStatus.Ready, gate = false)
-        val outcome   = LifecycleStep.step(installed, LifecycleInput.Switch(m1, "stack"))
+        val outcome   = LifecycleStep.step(installed, LifecycleInput.Switch(m1, stack))
         assertTrue(
-          outcome.state == installed,
+          outcome.state == installed.copy(name = stack),
           outcome.transitioned.isEmpty,
-          outcome.effects.isEmpty,
-          outcome.rename.contains("stack")
+          outcome.effects.isEmpty
         )
       },
       test("Switch: refused once a swap installed another provider, and on a shut-down or closed instance") {
         val (shut, _)   = run(ready, event(Signal.ShutdownStarted), event(Signal.ShutdownCompleted))
         val (closed, _) = run(ready, LifecycleInput.ScopeClose)
-        val replaced    = LifecycleStep.step(ready, LifecycleInput.Switch(m1, "stack"))
+        val replaced    = LifecycleStep.step(ready, LifecycleInput.Switch(m1, stack))
         assertTrue(
-          refusal(ready, LifecycleInput.Switch(m1, "stack")) == Some(Refusal.NotInstalled(m1)),
-          replaced.rename.isEmpty,
+          refusal(ready, LifecycleInput.Switch(m1, stack)) == Some(Refusal.NotInstalled(m1)),
           replaced.state == ready,
-          refusal(shut, LifecycleInput.Switch(p0, "stack")) == Some(Refusal.Closed),
-          refusal(closed, LifecycleInput.Switch(p0, "stack")) == Some(Refusal.Closed)
+          refusal(shut, LifecycleInput.Switch(p0, stack)) == Some(Refusal.Closed),
+          refusal(closed, LifecycleInput.Switch(p0, stack)) == Some(Refusal.Closed)
         )
       }
     ),
@@ -270,7 +302,7 @@ object LifecycleStepSpec extends ZIOSpecDefault {
       },
       test("an error reported once initialize() returned is the provider's status, and it counts as usable") {
         val (s, effects) = run(
-          LifecycleState.initial(p0),
+          LifecycleState.initial(p0, p0Name),
           swapStart(m1),
           event(Signal.SwapSucceeded(Settled.Error("down", reused = false))),
           LifecycleInput.GateDown,
@@ -288,7 +320,7 @@ object LifecycleStepSpec extends ZIOSpecDefault {
         assertTrue(s.status == ProviderStatus.Error, s.everReady)
       },
       test("a failed swap that never bound goes back to the status before it, not Ready") {
-        val before = LifecycleState.initial(m2)
+        val before = LifecycleState.initial(m2, p0Name)
         val (s, _) =
           run(before, swapStart(m1), event(Signal.SwapFailed), event(Signal.RollbackUnbound(ProviderStatus.NotReady)))
         assertTrue(s.status == ProviderStatus.NotReady, !s.everReady)
@@ -296,7 +328,7 @@ object LifecycleStepSpec extends ZIOSpecDefault {
       test("the swap gate keeps bridge events and the watchdog from moving the status mid-swap") {
         val (s, effects) =
           run(
-            LifecycleState.initial(p0),
+            LifecycleState.initial(p0, p0Name),
             swapStart(m1),
             event(Signal.EventError(true)),
             LifecycleInput.WatchdogFired(p0, 1.second)
@@ -307,10 +339,10 @@ object LifecycleStepSpec extends ZIOSpecDefault {
     suite("the init watchdog and the seed")(
       test("a deadline a swap deferred is replayed once the swap ends on that provider still unready") {
         val (s, effects) = run(
-          LifecycleState.initial(p0),
+          LifecycleState.initial(p0, p0Name),
           swapStart(m1),
           event(Signal.SwapFailed),
-          LifecycleInput.Reinstall(p0, "p0"),
+          LifecycleInput.Reinstall(p0, p0Name),
           LifecycleInput.WatchdogFired(p0, 1.second),
           event(Signal.RollbackUnbound(ProviderStatus.NotReady)),
           LifecycleInput.GateDown,
@@ -324,7 +356,7 @@ object LifecycleStepSpec extends ZIOSpecDefault {
       },
       test("a deferred deadline for a provider the swap replaced is dropped, not escalated") {
         val (s, effects) = run(
-          LifecycleState.initial(p0),
+          LifecycleState.initial(p0, p0Name),
           swapStart(m1),
           LifecycleInput.WatchdogFired(p0, 1.second),
           event(Signal.SwapSucceeded(Settled.Ready)),
@@ -334,8 +366,9 @@ object LifecycleStepSpec extends ZIOSpecDefault {
         assertTrue(s.status == ProviderStatus.Ready, s.deferredInitTimeout.isEmpty, effects.isEmpty)
       },
       test("the seed applies only while the status is the initial NotReady, and records a usable one") {
-        val seeded = LifecycleStep.step(LifecycleState.initial(p0), LifecycleInput.Seed(ProviderStatus.Stale)).state
-        val moved  =
+        val seeded =
+          LifecycleStep.step(LifecycleState.initial(p0, p0Name), LifecycleInput.Seed(ProviderStatus.Stale)).state
+        val moved =
           LifecycleStep.step(ready.copy(status = ProviderStatus.Error), LifecycleInput.Seed(ProviderStatus.Ready))
         assertTrue(
           seeded.status == ProviderStatus.Stale,
@@ -370,7 +403,7 @@ object LifecycleStepSpec extends ZIOSpecDefault {
       test("ever-readiness never goes back, and the watchdog shuts a provider down at most once a swap") {
         check(Gen.listOfBounded(0, 40)(genInput)) { inputs =>
           val (_, readyLost, twice) =
-            inputs.foldLeft((LifecycleState.initial(p0), false, false)) { case ((s, lost, dup), input) =>
+            inputs.foldLeft((LifecycleState.initial(p0, p0Name), false, false)) { case ((s, lost, dup), input) =>
               val next      = LifecycleStep.step(s, input)
               val escalated = next.effects.collect { case LifecycleEffect.EscalateInitTimeout(p, _) => p }
               // A second escalation needs a status out of Fatal, which only a swap gives.
@@ -415,7 +448,7 @@ object LifecycleStepSpec extends ZIOSpecDefault {
   private val genInput: Gen[Any, LifecycleInput] = Gen.oneOf(
     genEventOrWatchdog,
     genAdmit,
-    Gen.elements(providers: _*).map(p => LifecycleInput.Switch(p, "stack")),
+    Gen.elements(providers: _*).map(p => LifecycleInput.Switch(p, stack)),
     genSettled.map(s => event(Signal.SwapSucceeded(s))),
     genSettled.map(s => event(Signal.RollbackSucceeded(s))),
     genStatus.map(s => event(Signal.RollbackUnbound(s))),
@@ -430,7 +463,8 @@ object LifecycleStepSpec extends ZIOSpecDefault {
       LifecycleInput.Idle
     ),
     Gen.elements(providers: _*).map(swapStart),
-    Gen.elements(providers: _*).map(p => LifecycleInput.Reinstall(p, "again")),
+    Gen.elements(providers: _*).map(p => LifecycleInput.Reinstall(p, p0Name)),
+    Gen.elements(providers: _*).map(p => LifecycleInput.NameRead(p, stack)),
     Gen.elements(providers: _*).map(p => LifecycleInput.OrphanRecorded(p, "holder")),
     Gen.elements(providers: _*).map(p => LifecycleInput.OrphanSettled(p)),
     Gen.elements(managed: _*).zip(Gen.elements(managed: _*)).map { case (h, r) =>
@@ -439,5 +473,5 @@ object LifecycleStepSpec extends ZIOSpecDefault {
   )
 
   private val genState: Gen[Any, LifecycleState] =
-    Gen.listOfBounded(0, 20)(genInput).map(inputs => run(LifecycleState.initial(p0), inputs: _*)._1)
+    Gen.listOfBounded(0, 20)(genInput).map(inputs => run(LifecycleState.initial(p0, p0Name), inputs: _*)._1)
 }

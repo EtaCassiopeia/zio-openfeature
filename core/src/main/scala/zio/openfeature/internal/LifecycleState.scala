@@ -15,6 +15,9 @@ import zio.openfeature.internal.ProviderStatusMachine.Signal
   *   the provider status (model: `status`)
   * @param installed
   *   the provider the instance reports and evaluates through, as the SDK binds it (model: `installed`)
+  * @param name
+  *   what the instance knows of the installed provider's name, mirrored for the bridge and the hook pipeline, which
+  *   read it synchronously; not a variable of the model
   * @param generation
   *   moves when a swap makes the status NotReady, before it touches the SDK: an evaluation that saw it move across its
   *   provider call does not trust the answer
@@ -44,6 +47,7 @@ import zio.openfeature.internal.ProviderStatusMachine.Signal
 final private[openfeature] case class LifecycleState(
   status: ProviderStatus,
   installed: OFFeatureProvider,
+  name: ProviderName,
   generation: Long,
   lock: Lock,
   gate: Boolean,
@@ -63,10 +67,11 @@ final private[openfeature] case class LifecycleState(
 private[openfeature] object LifecycleState {
 
   /** A built instance before its provider has settled. */
-  def initial(installed: OFFeatureProvider): LifecycleState =
+  def initial(installed: OFFeatureProvider, name: ProviderName): LifecycleState =
     LifecycleState(
       status = ProviderStatus.NotReady,
       installed = installed,
+      name = name,
       generation = 0L,
       lock = Lock.Free,
       gate = false,
@@ -115,16 +120,21 @@ private[openfeature] object LifecycleInput {
   /** A swap starts (model: `SwapStart`, once admitted): the gate goes up before the status becomes NotReady, the
     * generation moves, and `incoming` is installed under `name`.
     */
-  final case class SwapStart(incoming: OFFeatureProvider, name: String) extends LifecycleInput
+  final case class SwapStart(incoming: OFFeatureProvider, name: ProviderName) extends LifecycleInput
 
   /** `fromAcquireAsync` asks to point `switch`, its switchable wrapper, at a provider named `name`: refused on a
     * shut-down or closed instance, and once a swap has installed another provider. Not an SDK registration, so the
     * status, the generation and the installed provider stay as they are; only the name changes.
     */
-  final case class Switch(switch: OFFeatureProvider, name: String) extends LifecycleInput
+  final case class Switch(switch: OFFeatureProvider, name: ProviderName) extends LifecycleInput
 
   /** A failed swap installs `provider`, the one it replaced, under `name` again; a failed switch restores its name. */
-  final case class Reinstall(provider: OFFeatureProvider, name: String) extends LifecycleInput
+  final case class Reinstall(provider: OFFeatureProvider, name: ProviderName) extends LifecycleInput
+
+  /** `provider`, having initialized, reads as `name`: written only while `provider` is still installed and the name is
+    * `Pending`. The read happens outside the step, so a swap may have installed another provider since.
+    */
+  final case class NameRead(provider: OFFeatureProvider, name: ProviderName) extends LifecycleInput
 
   /** A swap asks to install `incoming` (`managed`, its wrapper, when it has one): refused on a shut-down or closed
     * instance, and for a provider whose earlier registration is unsettled (model: the guards of `SwapStart`).
@@ -208,14 +218,13 @@ private[openfeature] object Refusal {
   */
 private[openfeature] object LifecycleStep {
 
-  /** The outcome of one step: the next record, the status it moved to, if it moved, the effects to run after the step,
-    * and the provider name the step installs, which the interpreter mirrors inside the step.
+  /** The outcome of one step: the next record, the status it moved to, if it moved, and the effects to run after the
+    * step.
     */
   final case class Outcome(
     state: LifecycleState,
     transitioned: Option[ProviderStatus],
-    effects: Chunk[LifecycleEffect],
-    rename: Option[String] = None
+    effects: Chunk[LifecycleEffect]
   )
 
   def step(state: LifecycleState, input: LifecycleInput): Outcome =
@@ -239,15 +248,20 @@ private[openfeature] object LifecycleStep {
         notReady.copy(
           state = notReady.state.copy(
             installed = incoming,
+            name = name,
             generation = state.generation + 1,
             lock = Lock.Swap,
             swap = Some(SwapInFlight(incoming, state.installed, state.status))
-          ),
-          rename = Some(name)
+          )
         )
 
       case LifecycleInput.Reinstall(provider, name) =>
-        Outcome(state.copy(installed = provider), None, Chunk.empty, Some(name))
+        Outcome(state.copy(installed = provider, name = name), None, Chunk.empty)
+
+      case LifecycleInput.NameRead(provider, name) =>
+        if (state.name == ProviderName.Pending && (state.installed eq provider))
+          Outcome(state.copy(name = name), None, Chunk.empty)
+        else unchanged(state)
 
       case admit: LifecycleInput.Admit => this.admit(state, admit)
 
@@ -258,7 +272,7 @@ private[openfeature] object LifecycleStep {
           else None
         refusal match {
           case Some(r) => Outcome(state, None, Chunk(LifecycleEffect.Refuse(r)))
-          case None    => Outcome(state, None, Chunk.empty, Some(name))
+          case None    => Outcome(state.copy(name = name), None, Chunk.empty)
         }
 
       case LifecycleInput.Replaced(holder, previous) =>
@@ -368,10 +382,11 @@ final private[openfeature] class Lifecycle(
   installed: OFFeatureProvider,
   gateMirror: AtomicBoolean,
   generationMirror: AtomicLong,
-  nameMirror: AtomicReference[String]
+  nameMirror: AtomicReference[ProviderName]
 ) {
-  private val rest = Unsafe.unsafe(implicit u => Ref.unsafe.make(LifecycleState.initial(installed)))
-  private val view = new AtomicReference[LifecycleState](LifecycleState.initial(installed))
+  private val initial = LifecycleState.initial(installed, nameMirror.get())
+  private val rest    = Unsafe.unsafe(implicit u => Ref.unsafe.make(initial))
+  private val view    = new AtomicReference[LifecycleState](initial)
 
   /** Run `input` through `step` and write the record. */
   def run(input: LifecycleInput): UIO[LifecycleStep.Outcome] =
@@ -389,7 +404,7 @@ final private[openfeature] class Lifecycle(
           rest.set(after) *> ZIO
             .succeed {
               gateMirror.set(after.gate)
-              outcome.rename.foreach(nameMirror.set)
+              nameMirror.set(after.name)
               view.set(after)
             }
             .as(((side, outcome), after.status))

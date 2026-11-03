@@ -175,6 +175,21 @@ object ProviderHotSwapSpec extends ZIOSpecDefault {
         if (p == point) held.succeed(()) *> release.await else ZIO.unit
     }
 
+  /** No metadata until its `initialize()`, which waits for `finishInitializing`, has run. */
+  private class LateName(name: String) extends SimpleProvider("unused", Map("flag" -> true)) {
+    private val proceed                      = new java.util.concurrent.CountDownLatch(1)
+    @volatile private var metadata: Metadata = null
+
+    def finishInitializing(): Unit = proceed.countDown()
+
+    override def getMetadata: Metadata                      = metadata
+    override def initialize(ctx: OFEvaluationContext): Unit = {
+      proceed.await()
+      metadata = new Metadata { override def getName: String = name }
+    }
+    override def shutdown(): Unit = proceed.countDown()
+  }
+
   /** A build on an isolated API whose lifecycle probe is `probe`, handing back the API and domain. */
   private def buildProbed(
     provider: SimpleProvider,
@@ -569,6 +584,39 @@ object ProviderHotSwapSpec extends ZIOSpecDefault {
           ready == ProviderState.READY,
           status == ProviderStatus.Ready
         )
+      }
+    } @@ TestAspect.withLiveClock,
+    test("a late READY dropped under a timed-out swap's gate still settles the name of a lazy provider") {
+      ZIO.scoped {
+        val late   = new LateName("late")
+        val api    = OpenFeatureAPI.createIsolated()
+        val domain = s"test-swap-${java.util.UUID.randomUUID()}"
+        for {
+          held    <- Promise.make[Nothing, Unit]
+          release <- Promise.make[Nothing, Unit]
+          _       <- ZIO.addFinalizer(release.succeed(()))
+          ff      <- zio.openfeature.internal.FeatureFlagsFactories.buildWithTracking(
+            new SimpleProvider("A", Map("flag" -> true)),
+            domain = Some(domain),
+            version = None,
+            initialHooks = Nil,
+            statusRef = None,
+            addShutdownFinalizer = true,
+            apiOverride = Some(api),
+            initTimeout = 300.millis,
+            probe = holdAt(zio.openfeature.internal.LifecycleProbe.Point.SwapTimeout, held, release)
+          )
+          swap <- ff.setProvider(late).either.fork
+          // The gate is up at the hold: the READY of the initialization finishing here moves no status, and no other comes.
+          _      <- held.await.timeout(5.seconds)
+          _      <- ZIO.succeed(late.finishInitializing())
+          ready  <- awaitTrue(api.getClient(domain).getProviderState == ProviderState.READY)
+          _      <- ZIO.sleep(300.millis)
+          _      <- release.succeed(())
+          result <- swap.join
+          status <- ff.providerStatus
+          m      <- ff.providerMetadata
+        } yield assertTrue(ready, result.isLeft, status == ProviderStatus.Ready, m.name == "late")
       }
     } @@ TestAspect.withLiveClock,
     test("an ERROR the new provider reports right after initializing is its status, not a failed swap") {

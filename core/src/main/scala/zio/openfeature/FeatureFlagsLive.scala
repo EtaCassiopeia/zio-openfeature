@@ -21,6 +21,7 @@ import zio.openfeature.internal.{
   Bound,
   ManagedProvider,
   OrphanedProviders,
+  ProviderName,
   ProviderNames,
   ProviderRegistration,
   TrackingConverter
@@ -43,7 +44,7 @@ final private[openfeature] class FeatureFlagsLive(
   initialProvider: OFFeatureProvider,
   // AtomicReference (not Ref): the event bridge reads the name synchronously from Java SDK threads on
   // every event; a Ref would force a runtime.unsafe.run round-trip per event.
-  providerNameRef: java.util.concurrent.atomic.AtomicReference[String],
+  providerNameRef: java.util.concurrent.atomic.AtomicReference[ProviderName],
   domain: Option[String],
   version: Option[String],
   state: FeatureFlagsState,
@@ -111,7 +112,7 @@ final private[openfeature] class FeatureFlagsLive(
     */
   private[openfeature] def endState: Quiescence.Observed =
     new Quiescence.Observed {
-      def label: String = s"FeatureFlags(${domain.getOrElse("default")}, '${providerNameRef.get()}')"
+      def label: String = s"FeatureFlags(${domain.getOrElse("default")}, '${providerNameRef.get().render}')"
 
       def violations: UIO[Chunk[String]] =
         providerStatus.map { status =>
@@ -178,11 +179,9 @@ final private[openfeature] class FeatureFlagsLive(
 
   private[openfeature] def startEventBridge: ZIO[Scope, Nothing, Unit] = eventBridge.startEventBridge
 
-  /** Replace the "unknown" fallback name with `name`; a real name is never overwritten. */
-  private[openfeature] def refreshUnknownProviderName(name: String): Unit = {
-    providerNameRef.compareAndSet(FeatureFlags.UnknownProviderName, name)
-    ()
-  }
+  /** Record what `provider` reads as, having initialized; only a `Pending` name of the installed provider changes. */
+  private[openfeature] def recordProviderName(provider: OFFeatureProvider, name: ProviderName): UIO[Unit] =
+    lifecycle.run(LifecycleInput.NameRead(provider, name)).unit
 
   /** Remove the bridge's SDK handlers now, rather than at scope close: a failed build must leave none behind. The
     * registry builds into its own long-lived scope, so its finalizer alone would keep a failed client's handlers.
@@ -348,7 +347,7 @@ final private[openfeature] class FeatureFlagsLive(
     */
   private def failedBeforeBinding(
     oldProvider: OFFeatureProvider,
-    oldName: String,
+    oldName: ProviderName,
     before: ProviderStatus
   ): UIO[Boolean] =
     ZIO.attemptBlocking(domain.fold(api.getProvider())(d => api.getProvider(d))).orDie.flatMap { bound =>
@@ -457,7 +456,7 @@ final private[openfeature] class FeatureFlagsLive(
           .publish(
             ProviderEvent.Error(
               new java.util.concurrent.TimeoutException(msg),
-              ProviderMetadata(providerNameRef.get()),
+              ProviderMetadata(providerNameRef.get().render),
               Some(ErrorCode.ProviderFatal),
               Some(msg)
             )
@@ -515,7 +514,7 @@ final private[openfeature] class FeatureFlagsLive(
       }
 
   override def providerMetadata: UIO[ProviderMetadata] =
-    ZIO.succeed(ProviderMetadata(providerNameRef.get()))
+    ZIO.succeed(ProviderMetadata(providerNameRef.get().render))
 
   override def clientMetadata: UIO[ClientMetadata] =
     ZIO.succeed(ClientMetadata(domain, version))
@@ -598,7 +597,8 @@ final private[openfeature] class FeatureFlagsLive(
   private def runSwap(incoming: Bound, newProvider: OFFeatureProvider): IO[FeatureFlagError, Unit] = {
     val swap = for {
       _ <- probe.at(Point.SwapStart)
-      newName = ProviderNames.of(newProvider)
+      incomingName = ProviderNames.beforeInit(newProvider)
+      newName      = incomingName.render
       _ <- probe.at(Point.ApplySignal(Signal.SwapStarted))
       // One step, before the SDK changes: the gate goes up before the NotReady transition, so no bridge event (a
       // queued READY from the OLD provider) drives the status mid-swap; the generation moves, so an evaluation that
@@ -606,9 +606,10 @@ final private[openfeature] class FeatureFlagsLive(
       // installed under its name, which the bridge's identity guard and the PROVIDER_READY of its initialization
       // read. The previous provider and status are kept for the rollback.
       started <- lifecycle.runWith(st =>
-        (LifecycleInput.SwapStart(incoming.sdk, newName), (st.installed, providerNameRef.get(), st.status))
+        (LifecycleInput.SwapStart(incoming.sdk, incomingName), (st.installed, st.name, st.status))
       )
-      ((previous, oldName, before), _) = started
+      ((previous, previousName, before), _) = started
+      oldName                               = previousName.render
       // The instance holds the wrapper of each provider it registered.
       oldProvider = Bound.ofRegistered(previous)
       // 3. Register the new provider's wrapper with the Java SDK (which shuts the old one down once the new one has
@@ -637,7 +638,7 @@ final private[openfeature] class FeatureFlagsLive(
               lifecycle.run(LifecycleInput.Replaced(incoming, oldProvider)) *>
               recordOrphan(oldProvider, oldName, newName, registration.toOption)
           case _ =>
-            failedBeforeBinding(oldProvider.sdk, oldName, before).flatMap { handled =>
+            failedBeforeBinding(oldProvider.sdk, previousName, before).flatMap { handled =>
               if (handled) ZIO.unit
               else if (oldProvider.initializing)
                 // The previous provider was installed by a timed-out swap and its initialize() is still running.
@@ -658,7 +659,7 @@ final private[openfeature] class FeatureFlagsLive(
                 // provider while our refs point back at the old one. Re-registering the old provider restores
                 // routing; on success we restore Ready (the previous provider is serving again), on failure we log
                 // loudly and leave status Error.
-                lifecycle.run(LifecycleInput.Reinstall(oldProvider.sdk, oldName)) *>
+                lifecycle.run(LifecycleInput.Reinstall(oldProvider.sdk, previousName)) *>
                   applySignal(Signal.SwapFailed) *>
                   probe.at(Point.SwapRollback) *>
                   restoreSdkRegistration(oldProvider, incoming).foldZIO(
@@ -691,6 +692,8 @@ final private[openfeature] class FeatureFlagsLive(
               }
             }
         }
+      // It has initialized, so its name is final; before the outcome, which makes it evaluable.
+      _ <- eventBridge.readName(incoming.sdk)
       // 4. Apply the outcome via the machine: the state the SDK reports for the new provider once it initialized,
       //    Error or Fatal too when it reported one before the wait read the outcome. The bridge's own events for it
       //    were dropped while the gate was up; the re-read below picks up any later state.
@@ -821,11 +824,11 @@ final private[openfeature] class FeatureFlagsLive(
   private[openfeature] def switchProvider(switch: ManagedProvider, next: OFFeatureProvider): Task[Boolean] =
     swapLock
       .withPermit {
-        val name = ProviderNames.of(next)
+        val name = ProviderNames.afterInit(next)
         // The step renames before the flip: the SDK stamps the switch's (now `next`'s) name on every event, and the
         // identity guard compares that against the name. Renaming first drops a straggler event from the old delegate
         // rather than one from `next`.
-        lifecycle.runWith(_ => (LifecycleInput.Switch(switch, name), providerNameRef.get())).flatMap {
+        lifecycle.runWith(st => (LifecycleInput.Switch(switch, name), st.name)).flatMap {
           case (_, outcome) if outcome.effects.nonEmpty => ZIO.none
           case (oldName, _)                             =>
             ZIO
@@ -859,7 +862,9 @@ final private[openfeature] class FeatureFlagsLive(
         else None
       }
       .flatMap(signal => ZIO.foreachDiscard(signal)(applySignal))
-      .catchAllCause(c => ZIO.logWarningCause("setProvider: could not re-check a timed-out provider's state", c))
+      .catchAllCause(c => ZIO.logWarningCause("setProvider: could not re-check a timed-out provider's state", c)) *>
+      // The READY this stands in for was dropped under the gate, and no other comes.
+      eventBridge.settlePendingName
 
   /** Take the SDK's state for this instance's slot once `provider` is registered there. A registration that reuses an
     * existing one — the same provider already initialized, or failed, for another domain — sends no lifecycle event, so
@@ -891,7 +896,9 @@ final private[openfeature] class FeatureFlagsLive(
         case _ => ZIO.unit
       }
       .unit
-      .catchAllCause(c => ZIO.logWarningCause("could not read the SDK state of a new registration", c))
+      .catchAllCause(c => ZIO.logWarningCause("could not read the SDK state of a new registration", c)) *>
+      // A state taken here may be the READY no event brings: a reused registration's, or one dropped under a swap's gate.
+      eventBridge.settlePendingName
 
   // Shutdown API (spec 1.6.1, 1.6.2)
 

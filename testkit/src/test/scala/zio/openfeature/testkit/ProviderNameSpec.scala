@@ -3,8 +3,7 @@ package zio.openfeature.testkit
 import zio._
 import zio.test._
 import zio.openfeature._
-import dev.openfeature.sdk.{FeatureProvider, OpenFeatureAPI}
-import java.util.concurrent.{CountDownLatch, TimeUnit}
+import dev.openfeature.sdk.{EventDetails, FeatureProvider, OpenFeatureAPI}
 
 /** The name an instance reports for a provider that has none: `FeatureFlags.UnknownProviderName`, never `null`, on
   * every path a name reaches a user. For each [[MetadataShape]], a provider's `getMetadata` answers `null` or a
@@ -24,9 +23,8 @@ object ProviderNameSpec extends ZIOSpecDefault {
     provider: FeatureProvider,
     api: OpenFeatureAPI = OpenFeatureAPI.createIsolated(),
     domain: String = "provider-name",
-    initTimeout: Duration = FeatureFlags.DefaultInitTimeout,
-    onReady: Option[CountDownLatch] = None
-  ): ZIO[Scope, Throwable, FeatureFlags] =
+    initTimeout: Duration = FeatureFlags.DefaultInitTimeout
+  ): ZIO[Scope, Throwable, FeatureFlagsLive] =
     FeatureFlags.build(
       provider,
       domain = Some(domain),
@@ -35,18 +33,8 @@ object ProviderNameSpec extends ZIOSpecDefault {
       statusRef = None,
       addShutdownFinalizer = true,
       apiOverride = Some(api),
-      initTimeout = initTimeout,
-      onReady = onReady
+      initTimeout = initTimeout
     )
-
-  /** [[build]], returning once the bridge has handled the provider's READY, so that event cannot reach it after a swap.
-    * While the current name is the unknown one the bridge cannot tell whose READY it has, and takes the name it
-    * carries.
-    */
-  private def buildSettled(provider: FeatureProvider): ZIO[Scope, Throwable, FeatureFlags] = {
-    val ready = new CountDownLatch(1)
-    build(provider, onReady = Some(ready)) <* ZIO.attemptBlocking(ready.await(10, TimeUnit.SECONDS))
-  }
 
   private def forShape(shape: MetadataShape) =
     suite(shape.toString)(
@@ -55,7 +43,7 @@ object ProviderNameSpec extends ZIOSpecDefault {
           for {
             first  <- named("first")
             next   <- nameless(shape)
-            ff     <- buildSettled(first)
+            ff     <- build(first)
             before <- ff.providerMetadata
             _      <- ff.setProvider(next)
             after  <- ff.providerMetadata
@@ -70,8 +58,7 @@ object ProviderNameSpec extends ZIOSpecDefault {
             fallback <- named("fallback")
             env      <- FeatureFlags
               .fromAcquireAsync(
-                // After the fallback's READY: see buildSettled. This factory has no hook to wait for it on.
-                ZIO.sleep(500.millis).as(real),
+                ZIO.succeed(real),
                 ZIO.succeed(fallback),
                 FeatureFlagsConfig().withIsolatedApi,
                 AcquireConfig.default.withCompose((r, _) => r)
@@ -88,6 +75,17 @@ object ProviderNameSpec extends ZIOSpecDefault {
           } yield assertTrue(live.contains(AcquireState.Live), after.name == Unknown, served)
         }
       } @@ TestAspect.withLiveClock,
+      test("a sync build of the provider has no name: an event carrying one is another provider's") {
+        ZIO.scoped {
+          for {
+            provider <- nameless(shape)
+            ff       <- build(provider)
+            _        <- ff.onErrorEvent(EventDetails.builder().providerName("another").build())
+            status   <- ff.providerStatus
+            name     <- ff.providerMetadata.map(_.name)
+          } yield assertTrue(status == ProviderStatus.Ready, name == Unknown)
+        }
+      },
       test("a swap refused while another provider holds it names it with the unknown name") {
         ZIO.scoped {
           for {

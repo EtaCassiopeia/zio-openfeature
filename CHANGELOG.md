@@ -182,6 +182,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   while the gate was up, after a timeout for instance, never reached the status. That read is now part of the swap's
   uninterruptible region. The lifecycle model gains the read as `SwapReconcile` and the interrupt as `CallerInterrupt`,
   enabled in no phase of the swap; mutants that make the swap body or the read interruptible are caught.
+- **A provider with no name keeps it after a swap or switch** (#766). `providerMetadata` could report the replaced
+  provider's name after a swap or switch to a provider without one, when the replaced provider's READY arrived late, and
+  that provider's late events could move the new provider's status. An instance now tells a provider with no name yet
+  from one that has none: a name is only ever read from the installed provider, and an event carrying a name is dropped
+  once the installed provider is known to have none.
 - **`setProvider` with the provider already installed is a no-op** (#711). It used to run a full swap that changed
   nothing in the SDK: the status went `NotReady` and back, and evaluations failed with `ProviderNotReady` while it
   waited. It now returns at once.

@@ -217,7 +217,9 @@ each `booleanOrDefault` within a bound, pass a provider-reported error through t
 report `Ready` once the faults stop, and close its scope
 without leaking a fiber or a non-daemon thread (`LeakCheck` in `zio.openfeature.testsupport`). It is a property test,
 so the nightly run multiplies its budget. `OFREPFailureModeSpec` covers the HTTP side in CI with WireMock: dribbled
-bodies, random bytes, malformed chunks, empty responses, truncated JSON and an HTML page served with status 200.
+bodies, random bytes, malformed chunks, empty responses, truncated JSON and an HTML page served with status 200. WireMock
+specs take their server from `LoopbackWireMock`: on macOS a wildcard bind can be given a port another application already
+listens on at `127.0.0.1`, and the requests then reach that application.
 
 **End-state checks.** The lifecycle, swap, shutdown and abandoned-call specs, the interleaving grid and the extras
 wrapper specs run under `Quiescence.aspect` (`zio.openfeature.testsupport`). After each test it fails the test if:

@@ -1,11 +1,11 @@
 package zio.openfeature.ofrep
 
 import com.github.tomakehurst.wiremock.WireMockServer
-import com.github.tomakehurst.wiremock.core.WireMockConfiguration
 import dev.openfeature.sdk.{ImmutableContext, ProviderState}
 import zio._
 import zio.openfeature._
 import zio.openfeature.extras.{CircuitBreakerProvider, CircuitBreakerProviderConfig}
+import zio.openfeature.testsupport.LoopbackWireMock
 import zio.test._
 
 /** OFREP error responses over every combination of status, body and headers.
@@ -44,7 +44,7 @@ object OfrepFaultShapeSpec extends ZIOSpecDefault {
 
   private def server: URIO[Scope, WireMockServer] =
     ZIO.acquireRelease(ZIO.succeed {
-      val s = new WireMockServer(WireMockConfiguration.options().dynamicPort())
+      val s = LoopbackWireMock.server()
       s.start()
       s
     })(s => ZIO.succeed(s.stop()))
@@ -63,7 +63,7 @@ object OfrepFaultShapeSpec extends ZIOSpecDefault {
         s        <- server
         _        <- ZIO.succeed(FaultShape.install(s, shape))
         provider <- OFREPProvider
-          .scoped(s"http://localhost:${s.port()}")
+          .scoped(LoopbackWireMock.baseUrl(s))
           .orDieWith(e => new IllegalArgumentException(e.toString))
         // Past the default 1 s: a request held up by a loaded machine would otherwise time out, which also reads as
         // ProviderError, and hide the error the response gives.
@@ -84,7 +84,7 @@ object OfrepFaultShapeSpec extends ZIOSpecDefault {
         s        <- server
         _        <- ZIO.succeed(FaultShape.install(s, shape))
         provider <- OFREPProvider
-          .scoped(s"http://localhost:${s.port()}")
+          .scoped(LoopbackWireMock.baseUrl(s))
           .orDieWith(e => new IllegalArgumentException(e.toString))
         // No state polling: only the evaluations' outcomes move the circuit.
         breaker = CircuitBreakerProvider(
@@ -100,7 +100,16 @@ object OfrepFaultShapeSpec extends ZIOSpecDefault {
         _ <- ZIO.attemptBlocking(breaker.initialize(new ImmutableContext()))
         // One request straight to the delegate, past the breaker, so the counted evaluations are not the cold ones and
         // the warm-up is not one of the failures the breaker counts.
-        _ <- ZIO.attemptBlocking(provider.getBooleanEvaluation(shape.key, false, new ImmutableContext())).either
+        // Interruptible and bounded: the call has no bound of its own, and a listener that never ends a response body
+        // would hold it for as long as the spec's timeout.
+        _ <- ZIO
+          .attemptBlockingInterrupt(provider.getBooleanEvaluation(shape.key, false, new ImmutableContext()))
+          .either
+          .timeoutFail(
+            new IllegalStateException(
+              s"$shape: no answer from ${LoopbackWireMock.baseUrl(s)} to the warm-up request within 30 s"
+            )
+          )(30.seconds)
         _ <- ZIO.foreachDiscard(1 to Threshold)(_ =>
           ZIO.attemptBlocking(breaker.getBooleanEvaluation(shape.key, false, new ImmutableContext())).either
         )
@@ -123,5 +132,5 @@ object OfrepFaultShapeSpec extends ZIOSpecDefault {
         breakerOpen(shape).map(open => assertTrue(open == expectedOpen(shape)))
       }
     }
-  ) @@ TestAspect.withLiveClock @@ TestAspect.sequential @@ TestAspect.timeout(10.minutes)
+  ) @@ TestAspect.withLiveClock @@ TestAspect.sequential @@ TestAspect.timeout(2.minutes)
 }

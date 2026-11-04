@@ -1,10 +1,9 @@
 package zio.openfeature.optimizely
 
-import com.github.tomakehurst.wiremock.WireMockServer
-import com.github.tomakehurst.wiremock.core.WireMockConfiguration
 import dev.openfeature.sdk.{FeatureProvider, ImmutableContext}
 import zio._
 import zio.openfeature.testkit.DifferentialLaws
+import zio.openfeature.testsupport.LoopbackWireMock
 import zio.test._
 
 // A ready Optimizely provider answers FLAG_NOT_FOUND for every adversarial key its datafile does not hold.
@@ -18,7 +17,7 @@ object OptimizelyAbsentKeysSpec extends ZIOSpecDefault {
   private val ready: URIO[Scope, FeatureProvider] =
     for {
       server <- ZIO.acquireRelease(ZIO.succeed {
-        val s = new WireMockServer(WireMockConfiguration.options().dynamicPort())
+        val s = LoopbackWireMock.server()
         s.start()
         s
       })(s => ZIO.succeed(s.stop()))

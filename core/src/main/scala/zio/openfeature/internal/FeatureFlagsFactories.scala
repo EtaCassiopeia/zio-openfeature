@@ -32,7 +32,7 @@ private[openfeature] object FeatureFlagsFactories {
 
   /** The build serves only a provider that settled `READY` or `STALE`. One that initialized and then reported an error
     * fails the build with that error's message, as one whose `initialize()` threw does: the build has nothing to fall
-    * back to, and the provider is shut down on that path.
+    * back to, and that path shuts down a registration of the library's own.
     */
   private def verifyInitState(settled: ProviderRegistration.Settled): IO[Throwable, ProviderStatus] = settled match {
     case ProviderRegistration.Settled.Ready              => ZIO.succeed(ProviderStatus.Ready)
@@ -247,7 +247,7 @@ private[openfeature] object FeatureFlagsFactories {
       )
       // Known to the instance that later tears this API down, which then retires this one; and the slot checked
       // before it is bound.
-      _ <- ZIO.succeed { self.set(ff); ApiInstances.register(api, ff) }
+      _ <- ZIO.succeed { self.set(ff); ApiInstances.register(api, ff, domain) }
       _ <- warnIfSlotBound(api, domain, managed)
       // The bridge is attached before the provider initializes, so exactly one PROVIDER_READY reaches it. See
       // `attachesBeforeRegistration`.
@@ -255,15 +255,16 @@ private[openfeature] object FeatureFlagsFactories {
       _     <- ZIO.when(early)(ff.startEventBridge)
       // Non-blocking registration plus a bounded wait: `setProviderAndWait` would hold the SDK's API write
       // lock across `initialize()`, so after a timeout the finalizer's `api.shutdown()` would block on that lock for
-      // as long as `initialize()` hangs. On any init failure the provider itself is shut down (best-effort, bounded,
-      // since a provider stuck in `initialize()` often cannot shut down either) so it doesn't keep threads/connections
-      // alive — this also covers the domain/registry paths where no API finalizer is registered — and the bridge's
+      // as long as `initialize()` hangs. On any init failure a registration of the library's own is shut down
+      // (best-effort, bounded, since a provider stuck in `initialize()` often cannot shut down either) so it doesn't
+      // keep threads/connections alive — this also covers the domain/registry paths where no API finalizer is
+      // registered, and `shutDownFailedRegistration` decides what to leave alone — and the bridge's
       // handlers are removed so a failed build leaves none behind. The status records the failure first: the wait ends
       // when `initialize()` throws, before the provider's own ERROR, or the SDK's, reaches the bridge.
       failedBuild = (failure: Throwable) =>
         ff.markInitFailed(fatal = failure.isInstanceOf[FatalError]) *> ff.stopEventBridge *>
-          ProviderRegistration.boundedProviderShutdown(
-            managed,
+          ff.shutDownFailedRegistration(
+            bound,
             "build (failed initialization)",
             ProviderRegistration.failedProviderShutdownTimeout(initTimeout)
           )
@@ -438,7 +439,7 @@ private[openfeature] object FeatureFlagsFactories {
       )
       // Known to the instance that later tears this API down, which then retires this one; and the slot checked
       // before it is bound.
-      _ <- ZIO.succeed { self.set(ff); ApiInstances.register(api, ff) }
+      _ <- ZIO.succeed { self.set(ff); ApiInstances.register(api, ff, domain) }
       _ <- warnIfSlotBound(api, domain, managed)
       // As in the sync build: attach the bridge before the provider initializes, so exactly one PROVIDER_READY
       // reaches it — the post-init emission, or the SDK's replay for a provider that is already ready.
@@ -452,10 +453,7 @@ private[openfeature] object FeatureFlagsFactories {
       // SDK's background executor and returns after cheap bookkeeping, so there is no blocking I/O to move off the
       // compute pool. (The sync `build` path uses `attemptBlocking` because `ProviderRegistration` blocks a thread
       // polling for the init outcome.)
-      _ <- (domain match {
-        case Some(d) => ZIO.attempt(api.setProvider(d, managed))
-        case None    => ZIO.attempt(api.setProvider(managed))
-      }).tapError(_ => ff.stopEventBridge)
+      _ <- ZIO.attempt(ProviderRegistration.bind(api, domain, bound)).tapError(_ => ff.stopEventBridge)
       _ <- ZIO.unless(early)(ff.startEventBridge)
       _ <- ff.reconcileRegistration(managed)
       // Init watchdog: after initTimeout, escalate to Fatal ONLY if the provider never became usable

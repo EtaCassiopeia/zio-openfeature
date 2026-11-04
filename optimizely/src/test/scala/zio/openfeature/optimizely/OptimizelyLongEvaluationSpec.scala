@@ -1,12 +1,12 @@
 package zio.openfeature.optimizely
 
 import com.github.tomakehurst.wiremock.WireMockServer
-import com.github.tomakehurst.wiremock.core.WireMockConfiguration
 import dev.openfeature.sdk.{ErrorCode, ImmutableContext, Value}
 import zio._
 import zio.test._
 
 import scala.jdk.CollectionConverters._
+import zio.openfeature.testsupport.LoopbackWireMock
 
 /** Long evaluation for `OptimizelyFeatureProvider` (SDK 1.22.0 native `getLongEvaluation`).
   *
@@ -37,7 +37,7 @@ object OptimizelyLongEvaluationSpec extends ZIOSpecDefault {
     scala.io.Source.fromInputStream(getClass.getResourceAsStream(path)).mkString
 
   private def withMockServer[A](body: WireMockServer => A): A = {
-    val server = new WireMockServer(WireMockConfiguration.options().dynamicPort())
+    val server = LoopbackWireMock.server()
     server.start()
     try body(server)
     finally server.stop()

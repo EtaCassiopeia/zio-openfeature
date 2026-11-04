@@ -7,6 +7,7 @@ import com.optimizely.ab.config.HttpProjectConfigManager
 import com.optimizely.ab.notification.NotificationCenter
 
 import java.util.concurrent.TimeUnit
+import zio.openfeature.testsupport.LoopbackWireMock
 
 /** Shared setup for the WireMock-backed Optimizely specs. */
 object OptimizelyTestSupport {
@@ -110,7 +111,7 @@ object OptimizelyTestSupport {
   ): (Optimizely, HttpProjectConfigManager) = {
     server.stubFor(get(urlEqualTo(path)).willReturn(okJson(json)))
     wiredClientWithManager(
-      s"http://localhost:${server.port()}$path",
+      s"${LoopbackWireMock.baseUrl(server)}$path",
       sdkKey,
       customize = customize,
       datafile = Some(json)

@@ -2,7 +2,7 @@ package zio.openfeature.internal
 
 import zio._
 import zio.openfeature.FeatureFlagsLive
-import dev.openfeature.sdk.OpenFeatureAPI
+import dev.openfeature.sdk.{FeatureProvider, OpenFeatureAPI, ProviderStateAccess}
 import scala.jdk.CollectionConverters._
 
 /** Every instance built on each `OpenFeatureAPI`, so the one that tears an API down can retire the others: their
@@ -15,10 +15,15 @@ import scala.jdk.CollectionConverters._
   */
 private[openfeature] object ApiInstances {
 
+  // The slots of every instance built on each API, kept past the instance: a closed instance's slot keeps its registration
+  // however long ago the instance was collected. Weak in the API; the domains hold nothing.
+  private val slots = new java.util.WeakHashMap[OpenFeatureAPI, Set[Option[String]]]()
+
   private val instances =
     new java.util.WeakHashMap[OpenFeatureAPI, java.util.WeakHashMap[FeatureFlagsLive, java.lang.Boolean]]()
 
-  def register(api: OpenFeatureAPI, ff: FeatureFlagsLive): Unit = synchronized {
+  def register(api: OpenFeatureAPI, ff: FeatureFlagsLive, domain: Option[String]): Unit = synchronized {
+    slots.put(api, Option(slots.get(api)).getOrElse(Set.empty) + domain)
     val onApi = Option(instances.get(api)).getOrElse {
       val fresh = new java.util.WeakHashMap[FeatureFlagsLive, java.lang.Boolean]()
       instances.put(api, fresh)
@@ -29,6 +34,31 @@ private[openfeature] object ApiInstances {
 
   private def on(api: OpenFeatureAPI): List[FeatureFlagsLive] = synchronized {
     Option(instances.get(api)).fold(List.empty[FeatureFlagsLive])(_.keySet.asScala.toList)
+  }
+
+  /** Whether a live instance on `api` other than `self` is bound to `provider`'s registration: the SDK shares one state
+    * manager between slots, so shutting it down would take it from that instance too. Asked of the instances because
+    * the SDK does not list an API's slots. One that closed, that failed on this provider, or that was collected no
+    * longer counts: its slot keeps the registration, which the API's shutdown reaches.
+    */
+  def heldByAnother(api: OpenFeatureAPI, self: FeatureFlagsLive, provider: FeatureProvider): Boolean =
+    on(api).exists(instance => (instance ne self) && instance.serves(provider))
+
+  /** Whether another instance's slot on `api` holds `provider`, live or not. The SDK leaves a provider any slot holds.
+    */
+  def boundElsewhere(api: OpenFeatureAPI, self: FeatureFlagsLive, provider: FeatureProvider): Boolean =
+    on(api).exists(instance => (instance ne self) && instance.slotHolds(provider))
+
+  /** Whether an instance was ever built on `domain` of `api`. */
+  def knowsSlot(api: OpenFeatureAPI, domain: String): Boolean =
+    synchronized(Option(slots.get(api)).exists(_.contains(Some(domain))))
+
+  /** Whether the slot of any instance ever built on `api` holds `provider`. The SDK does not list an API's slots, so
+    * these and the default slot are the ones the library can see.
+    */
+  def boundInAnySlot(api: OpenFeatureAPI, provider: FeatureProvider): Boolean = {
+    val known = synchronized(Option(slots.get(api)).getOrElse(Set.empty[Option[String]]))
+    known.exists(domain => ProviderStateAccess.boundIn(api, domain.orNull, provider))
   }
 
   /** Retire every instance on `api` but `except` (the one tearing it down, or `null` before it exists). */

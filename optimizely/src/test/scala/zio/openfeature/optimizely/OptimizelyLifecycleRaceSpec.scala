@@ -2,7 +2,6 @@ package zio.openfeature.optimizely
 
 import com.github.tomakehurst.wiremock.WireMockServer
 import com.github.tomakehurst.wiremock.client.WireMock._
-import com.github.tomakehurst.wiremock.core.WireMockConfiguration
 import com.optimizely.ab.Optimizely
 import dev.openfeature.sdk.{ImmutableContext, OpenFeatureAPI, ProviderState}
 import zio._
@@ -11,6 +10,7 @@ import zio.test._
 import java.util.UUID
 import java.util.concurrent.{CountDownLatch, TimeUnit}
 import java.util.concurrent.atomic.{AtomicInteger, AtomicReference}
+import zio.openfeature.testsupport.LoopbackWireMock
 
 /** Race and retry tests for `OptimizelyFeatureProvider` covering the three lifecycle defects:
   *   1. A failed `initialize()` leaves the provider retryable (`Failed -> Initialized`) instead of a silent no-op.
@@ -38,14 +38,14 @@ object OptimizelyLifecycleRaceSpec extends ZIOSpecDefault {
     scala.io.Source.fromInputStream(getClass.getResourceAsStream(path)).mkString
 
   private def withMockServer[A](body: WireMockServer => A): A = {
-    val server = new WireMockServer(WireMockConfiguration.options().dynamicPort())
+    val server = LoopbackWireMock.server()
     server.start()
     try body(server)
     finally server.stop()
   }
 
   private def datafileUrl(server: WireMockServer): String =
-    s"http://localhost:${server.port()}$DatafilePath"
+    s"${LoopbackWireMock.baseUrl(server)}$DatafilePath"
 
   @scala.annotation.nowarn("msg=deprecated")
   private def stateOf(p: OptimizelyFeatureProvider): ProviderState = p.getState

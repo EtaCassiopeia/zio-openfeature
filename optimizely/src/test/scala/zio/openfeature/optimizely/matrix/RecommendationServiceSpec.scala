@@ -1,8 +1,6 @@
 package zio.openfeature.optimizely.matrix
 
-import com.github.tomakehurst.wiremock.WireMockServer
 import com.github.tomakehurst.wiremock.client.WireMock._
-import com.github.tomakehurst.wiremock.core.WireMockConfiguration
 import zio._
 import zio.openfeature._
 import zio.openfeature.optimizely.{
@@ -11,6 +9,7 @@ import zio.openfeature.optimizely.{
   OptimizelyProviderConfig,
   OptimizelyTestSupport
 }
+import zio.openfeature.testsupport.LoopbackWireMock
 import zio.test._
 
 /** Standalone ZIO test that exercises the RecommendationService against each datafile fixture without going through the
@@ -34,12 +33,12 @@ object RecommendationServiceSpec extends ZIOSpecDefault {
     ZIO.scoped {
       for {
         server <- ZIO.acquireRelease(ZIO.succeed {
-          val s = new WireMockServer(WireMockConfiguration.options().dynamicPort())
+          val s = LoopbackWireMock.server()
           s.start()
           s.stubFor(get(urlEqualTo(DatafilePath)).willReturn(okJson(loadDatafile(datafileName))))
           s
         })(s => ZIO.succeed(s.stop()))
-        dataUrl = s"http://localhost:${server.port()}$DatafilePath"
+        dataUrl = s"${LoopbackWireMock.baseUrl(server)}$DatafilePath"
         config  = OptimizelyProviderConfig(SdkKey)
           .withDatafileUrl(dataUrl)
           .withInitWait(OptimizelyTestSupport.InitWait)

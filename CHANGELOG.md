@@ -224,6 +224,41 @@ unchanged. The entries under Removed and Changed below are the full record.
 
 ### Fixed
 
+- **A swap to a provider another instance is initializing is refused, and leaves the current provider alone** (#806). A
+  swap admitted just before a sibling started that provider's `initialize()` went on to bind it. The SDK took the
+  sibling's call for this binding's and shut the swap's previous provider down at once. If the call then threw, the
+  rollback brought back a provider that had been shut down. The swap now fails with the same "still initializing" error
+  as one refused at its start. A sibling's SDK task that has not started when the swap binds is out of the library's
+  sight, so that narrower race remains.
+
+- **A provider you registered under a domain an instance was built on is reused under any other** (#801). The library
+  only recognised a provider you registered in the build's own slot or the default slot. Under another domain it wrapped
+  it and ran `initialize()` a second time, and a failure then shut it down while that domain still served it. It now
+  also looks at the slot of every instance built on the API, closed ones included. A domain no instance was built on
+  stays out of sight, because the SDK does not list an API's slots, so that case behaves as before.
+
+- **A swap that fails on a provider another instance is initializing no longer strands it** (#800). When a sibling's
+  build failed at the same moment, it could defer to the swap's instance, and the swap's rollback left the provider to
+  an SDK call that skips any provider another slot holds, so nothing shut it down until the API did. A failed swap now
+  counts as failed for its siblings, and its rollback shuts the provider down when another slot still holds it and no
+  live instance is using it. A failed rollback's cleanup follows the same rule, so it no longer takes a provider from a
+  live sibling.
+
+- **A build on a provider its slot already holds no longer binds it again** (#804). The extra binding queued a task on
+  the SDK's executor. If a swap rebound the slot first, that task shut the provider down, and a swap that then failed
+  shut it down a second time. It also fired a `PROVIDER_READY` at the API's handlers for a provider still initializing.
+  A build under a domain on a provider only the default slot holds still binds it, as that is how the domain gets it.
+
+- **A failure no longer shuts down a provider the library does not own alone** (#796). A build that failed or timed out,
+  and an async build's init deadline, shut down whatever the instance held. That included a provider you registered
+  with the API yourself and the library reused, which the SDK then shut down a second time, and a wrapper a live sibling
+  domain was still initializing, which took it from that sibling. A swap that timed out and then failed also shut down
+  the provider it replaced while the default slot still held it. The failure itself is unchanged: the build fails, or
+  the status goes `Fatal` with the error event. The library now shuts down only its own wrapper, once no other live
+  instance is using it. A provider it reused stays in its slot until the slot lets go of it or the API shuts down, with
+  a warning in the log. A provider you registered under a domain other than the build's and the default is still wrapped
+  and initialized again, as documented, and a failure still shuts it down.
+
 - **A provider-event handler interrupted by the SDK's own shutdown is logged at DEBUG, not ERROR** (#789). When the SDK
   stops its event executor, the interrupt reaches the handler running on that thread, and the bridge logged it as a
   failure. An interruption-only cause now logs at DEBUG and the thread's interrupt flag is set again for the executor's

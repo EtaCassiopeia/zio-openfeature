@@ -2,11 +2,11 @@ package zio.openfeature.ofrep
 
 import com.github.tomakehurst.wiremock.WireMockServer
 import com.github.tomakehurst.wiremock.client.WireMock._
-import com.github.tomakehurst.wiremock.core.WireMockConfiguration
 import dev.openfeature.sdk.{ErrorCode, ImmutableContext}
 import zio._
 import zio.openfeature._
 import zio.openfeature.internal.ProviderReportedError
+import zio.openfeature.testsupport.LoopbackWireMock
 import zio.test._
 import zio.test.TestAspect.{sequential, timeout, withLiveClock}
 
@@ -22,7 +22,7 @@ object OfrepAuthFailureSpec extends ZIOSpecDefault {
 
   private val server: ZIO[Scope, Nothing, WireMockServer] =
     ZIO.acquireRelease(ZIO.succeed {
-      val s = new WireMockServer(WireMockConfiguration.options().dynamicPort())
+      val s = LoopbackWireMock.server()
       s.start()
       s
     })(s => ZIO.succeed(s.stop()))
@@ -46,7 +46,7 @@ object OfrepAuthFailureSpec extends ZIOSpecDefault {
       s        <- server
       _        <- stubStatus(s, status)
       seen     <- Ref.make(List.empty[FeatureFlagError])
-      provider <- OFREPProvider.scoped(s"http://localhost:${s.port()}")
+      provider <- OFREPProvider.scoped(LoopbackWireMock.baseUrl(s))
       hook = new FeatureHook {
         override def error(ctx: HookContext, err: FeatureFlagError, hints: HookHints): UIO[Unit] =
           seen.update(_ :+ err)
@@ -98,7 +98,7 @@ object OfrepAuthFailureSpec extends ZIOSpecDefault {
         for {
           s        <- server
           _        <- stubStatus(s, 401)
-          provider <- OFREPProvider.scoped(s"http://localhost:${s.port()}")
+          provider <- OFREPProvider.scoped(LoopbackWireMock.baseUrl(s))
           result   <- ZIO.attemptBlocking(
             provider.getBooleanEvaluation(flagKey, java.lang.Boolean.FALSE, new ImmutableContext())
           )

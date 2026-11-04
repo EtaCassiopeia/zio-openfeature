@@ -319,8 +319,8 @@ SdkBind ==
     /\ UNCHANGED << status, installed, lock, gate, pending, bridgeOn, shutDown, closed,
                     events, emitted, oldPending, swaps, owns >>
 
-\* SdkBindFail: the SDK refuses the registration before it binds the new provider (the provider is attached to, or
-\* registered with, another API).  Nothing changes in the SDK.
+\* SdkBindFail: the registration is refused before the SDK binds the new provider (the provider is attached to, or
+\* registered with, another API, or a sibling's initialize() of it has started).  Nothing changes in the SDK.
 SdkBindFail ==
     /\ swap # None /\ swap.phase = "bind"
     /\ swap' = [swap EXCEPT !.phase = "unbound"]

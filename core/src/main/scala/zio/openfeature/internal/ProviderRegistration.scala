@@ -6,6 +6,7 @@ import dev.openfeature.sdk.{
   ErrorCode,
   EvaluationContext => OFEvaluationContext,
   FeatureProvider => OFFeatureProvider,
+  NoOpProvider,
   OpenFeatureAPI,
   ProviderState,
   ProviderStateAccess
@@ -40,6 +41,16 @@ private[openfeature] object ProviderRegistration {
     */
   final class RegistrationSuperseded
       extends RuntimeException("Provider registration was superseded by a concurrent registration")
+
+  /** A swap reached its binding with another registration's `initialize()` of this provider already running. Binding
+    * would have the SDK treat that call as this one's and shut the swap's previous provider down at once. Not an
+    * `IllegalStateException`: the swap rollback treats that one as the SDK's "already attached" signal.
+    */
+  final class StillInitializing(provider: OFFeatureProvider)
+      extends RuntimeException(
+        s"'${ProviderNames.of(provider)}' is still initializing from another registration and cannot be installed " +
+          "until that initialize() returns"
+      )
 
   /** How a registration settled: the provider's `initialize()` returned, and the SDK reports it in this state. Never
     * `NOT_READY`.
@@ -110,9 +121,9 @@ private[openfeature] object ProviderRegistration {
       }
 
     /** How this registration's own `initialize()` ended: `Some(true)` when it returned normally, `Some(false)` when it
-      * threw, `None` until then. A reused registration runs none, and the SDK goes straight on to `shutDownOld`, as it
-      * does after a normal return. Not the wrapper's current attempt, which a later registration may have armed. `None`
-      * for a foreign provider, whose outcome no wrapper reports.
+      * threw, `None` until then. A reused registration runs none, and a task the SDK queued goes straight on to
+      * `shutDownOld`, as it does after a normal return. Not the wrapper's current attempt, which a later registration
+      * may have armed. `None` for a foreign provider, whose outcome no wrapper reports.
       */
     def initReturnedNormally: Option[Boolean] =
       if (reused.isDefined) Some(true)
@@ -231,14 +242,25 @@ private[openfeature] object ProviderRegistration {
     private def checkBound(): Unit = if (!isBound) throw new RegistrationSuperseded
   }
 
-  /** Bind `provider` to `domain`'s slot and classify the registration. Not interruptible: it mutates SDK state. */
-  def register(api: OpenFeatureAPI, domain: Option[String], bound: Bound): Task[Registration] =
+  /** Bind `provider` to `domain`'s slot, unless it holds it already, and classify the registration. Not interruptible:
+    * it mutates SDK state.
+    *
+    * With `shareInFlight` false, a registration whose provider another binding's `initialize()` has already entered
+    * fails with [[StillInitializing]] and binds nothing. A swap needs that: its previous provider is shut down once the
+    * SDK sees the new one initialized, and the SDK takes a call in flight elsewhere for that.
+    */
+  def register(
+    api: OpenFeatureAPI,
+    domain: Option[String],
+    bound: Bound,
+    shareInFlight: Boolean = true
+  ): Task[Registration] =
     ZIO.attemptBlocking {
       val armed = bound.managed.map(_.arm())
-      domain match {
-        case Some(d) => api.setProvider(d, bound.sdk)
-        case None    => api.setProvider(bound.sdk)
-      }
+      // A slot that already holds it binds nothing, so nothing is shut down: another instance on this slot installed it.
+      if (!shareInFlight && armed.exists(_.attempt.entered) && !holdsAlready(api, domain, bound))
+        throw new StillInitializing(bound.sdk)
+      bind(api, domain, bound)
       val state  = domain.fold(api.getClient())(d => api.getClient(d)).getProviderState
       val reader = ProviderStateAccess.stateReader(api, domain.orNull, bound.sdk)
       // The SDK's state for the registration, read through its manager; without one the slot was rebound already.
@@ -251,6 +273,29 @@ private[openfeature] object ProviderRegistration {
       }
       new Registration(api, bound, domain, reused, armed, foreignState)
     }
+
+  /** Bind `bound` to `domain`'s slot, unless it holds that registration already. Throws what the SDK's binding throws.
+    */
+  def bind(api: OpenFeatureAPI, domain: Option[String], bound: Bound): Unit =
+    if (!holdsAlready(api, domain, bound))
+      domain match {
+        case Some(d) => api.setProvider(d, bound.sdk)
+        case None    => api.setProvider(bound.sdk)
+      }
+
+  /** Whether `domain`'s slot already holds this registration, so binding it again adds nothing. It would add a task on
+    * the SDK's executor, with the registration as both new and old: run after a swap rebinds the slot, that task shuts
+    * the provider down, and for one still initializing it fires a `PROVIDER_READY` early.
+    *
+    * The SDK answers an unbound domain with the default slot's provider, so a provider the default slot holds may not
+    * be in the domain's slot at all: that one is bound, and while the default slot holds it no task can shut it down.
+    * The API's own no-op provider needs the binding too: its manager has never initialized it.
+    */
+  private def holdsAlready(api: OpenFeatureAPI, domain: Option[String], bound: Bound): Boolean = {
+    val default = api.getProvider()
+    val slot    = domain.fold(default)(d => api.getProvider(d))
+    (domain.isEmpty || (slot ne default)) && !slot.isInstanceOf[NoOpProvider] && Bound.alreadyBound(slot, bound)
+  }
 
   /** Register `provider` and wait for its outcome, succeeding with how it settled; see [[Registration.settle]]. */
   def registerAndAwait(
@@ -337,9 +382,11 @@ private[openfeature] object ProviderRegistration {
   /** A single provider's `shutdown()`, bounded and best-effort, with the same daemon-fiber shape as
     * [[boundedApiShutdown]] so it also runs from a finalizer carrying a pending interrupt. A failure or timeout is
     * logged under `label`, never raised: the provider is out of service either way. An abandoned call keeps running, so
-    * a later `api.shutdown()` may call the same provider's `shutdown()` while it is still in progress. A provider shut
-    * down here while it is still bound to its slot (the async init watchdog's) is shut down again by the SDK, at
-    * `api.shutdown()` or when a later registration replaces it: the SDK has no way to unbind a provider without that.
+    * a later `api.shutdown()` may call the same provider's `shutdown()` while it is still in progress. A wrapper shut
+    * down here while it is still bound to its slot (a failed build's, the async init watchdog's) is shut down again by
+    * the SDK, at `api.shutdown()` or when a later registration replaces it, and absorbs that second call: the SDK has
+    * no way to unbind a provider without that. A provider the user registered has no wrapper to absorb that call, so it
+    * comes here only once no slot holds it.
     */
   def boundedProviderShutdown(
     provider: OFFeatureProvider,

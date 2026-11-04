@@ -2,10 +2,10 @@ package zio.openfeature.ofrep
 
 import com.github.tomakehurst.wiremock.WireMockServer
 import com.github.tomakehurst.wiremock.client.WireMock._
-import com.github.tomakehurst.wiremock.core.WireMockConfiguration
 import dev.openfeature.sdk.{ErrorCode, ImmutableContext, MutableContext, Value}
 import zio._
 import zio.test._
+import zio.openfeature.testsupport.LoopbackWireMock
 
 /** End-to-end tests against a WireMock-backed OFREP server. Verifies that the OFREP contrib provider's wire calls match
   * the OFREP protocol and that responses round-trip correctly through `OFREPProvider`'s factories.
@@ -19,17 +19,17 @@ object OFREPProviderIntegrationSpec extends ZIOSpecDefault {
   private val emptyContext = new ImmutableContext()
 
   private def withMockServer[A](body: WireMockServer => A): A = {
-    val server = new WireMockServer(WireMockConfiguration.options().dynamicPort())
+    val server = LoopbackWireMock.server()
     server.start()
     try body(server)
     finally server.stop()
   }
 
   private def baseUrl(server: WireMockServer): String =
-    s"http://localhost:${server.port()}"
+    LoopbackWireMock.baseUrl(server)
 
   /** Unsafe-run `OFREPProvider.make` so the existing test bodies can stay synchronous. The URLs are always
-    * `http://localhost:<dynamic port>`, so validation never actually fails — but exercising the validated factory keeps
+    * `http://127.0.0.1:<dynamic port>`, so validation never actually fails — but exercising the validated factory keeps
     * the spec aligned with the recommended API.
     */
   private def makeProvider(url: String): OFREPFeatureProvider =

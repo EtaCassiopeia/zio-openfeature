@@ -16,30 +16,35 @@ mutants = {
     'a non-owner tears the API down': (
         ('ClosedNonOwnerKeepsSlot', 'SiblingsUnaffected'), [
         ("    /\\ phase' = [phase EXCEPT ![i] = \"closed\"]\n"
-         "    /\\ UNCHANGED << domainOf, owner, apiOpen, lock, swapping, swaps, bound, registered, shuts, by, everBound >>",
+         "    /\\ UNCHANGED << domainOf, owner, apiOpen, lock, swapping, swaps, bound, registered, userOwned, shuts, by, everBound,\n"
+         "                    failedOn, deciding, prior, swappedOff >>",
          "    /\\ phase' = [phase EXCEPT ![i] = \"closed\"]\n"
          "    /\\ bound' = [d \\in Domains |-> None]\n"
          "    /\\ registered' = {}\n"
+         "    /\\ userOwned' = {}\n"
          "    /\\ shuts' = [p \\in Providers |-> shuts[p] + (IF p \\in registered THEN 1 ELSE 0)]\n"
          "    /\\ by' = [p \\in Providers |-> IF p \\in registered THEN \"sdk\" ELSE by[p]]\n"
-         "    /\\ UNCHANGED << domainOf, owner, apiOpen, lock, swapping, swaps, everBound >>")]),
+         "    /\\ UNCHANGED << domainOf, owner, apiOpen, lock, swapping, swaps, everBound, failedOn, deciding, prior, swappedOff >>")]),
     # A domain client shuts its own provider down when it closes: a sibling sharing it loses it, and the owner shuts
     # it down again.
     'a domain client shuts its provider down directly': (
         ('RegisteredNotShutDown', 'ForeignNeverShutByLibrary', 'SharedShutDownOnce'), [
         ("    /\\ phase' = [phase EXCEPT ![i] = \"closed\"]\n"
-         "    /\\ UNCHANGED << domainOf, owner, apiOpen, lock, swapping, swaps, bound, registered, shuts, by, everBound >>",
+         "    /\\ UNCHANGED << domainOf, owner, apiOpen, lock, swapping, swaps, bound, registered, userOwned, shuts, by, everBound,\n"
+         "                    failedOn, deciding, prior, swappedOff >>",
          "    /\\ phase' = [phase EXCEPT ![i] = \"closed\"]\n"
          "    /\\ shuts' = [shuts EXCEPT ![bound[domainOf[i]]] = @ + 1]\n"
          "    /\\ by' = [by EXCEPT ![bound[domainOf[i]]] = \"library\"]\n"
-         "    /\\ UNCHANGED << domainOf, owner, apiOpen, lock, swapping, swaps, bound, registered, everBound >>")]),
+         "    /\\ UNCHANGED << domainOf, owner, apiOpen, lock, swapping, swaps, bound, registered, userOwned, everBound, failedOn, deciding, prior, swappedOff >>")]),
     # A non-owner's close retires its siblings, as only the owner's may.
     'a non-owner retires its siblings': (
         ('SiblingsUnaffected',), [
         ("    /\\ phase' = [phase EXCEPT ![i] = \"closed\"]\n"
-         "    /\\ UNCHANGED << domainOf, owner, apiOpen, lock, swapping, swaps, bound, registered, shuts, by, everBound >>",
+         "    /\\ UNCHANGED << domainOf, owner, apiOpen, lock, swapping, swaps, bound, registered, userOwned, shuts, by, everBound,\n"
+         "                    failedOn, deciding, prior, swappedOff >>",
          "    /\\ phase' = [j \\in Instances |-> IF phase[j] = \"open\" THEN \"closed\" ELSE phase[j]]\n"
-         "    /\\ UNCHANGED << domainOf, owner, apiOpen, lock, swapping, swaps, bound, registered, shuts, by, everBound >>")]),
+         "    /\\ UNCHANGED << domainOf, owner, apiOpen, lock, swapping, swaps, bound, registered, userOwned, shuts, by, everBound,\n"
+         "                    failedOn, deciding, prior, swappedOff >>")]),
     # getClient looks the domain up and inserts its promise without the semaphore: two callers build two clients.
     'getClient without the semaphore': (
         ('OneInstancePerDomain',), [
@@ -50,11 +55,29 @@ mutants = {
          "    /\\ lock' = lock\n"),
         ("    /\\ phase[i] = \"checking\"\n    /\\ lock = i\n    /\\ own => owner = None\n    /\\ lock' = None\n",
          "    /\\ phase[i] = \"checking\"\n    /\\ own => owner = None\n    /\\ lock' = lock\n")]),
-    # The rollback of a failed swap shuts the failed provider down although another slot holds it.
-    'the library shuts a Foreign provider on rollback': (
-        ('RegisteredNotShutDown', 'ForeignNeverShutByLibrary'), [
-        ("    /\\ IF p \\in registered\n       THEN UNCHANGED << shuts, by >>\n       ELSE /\\ shuts' = [shuts EXCEPT ![p] = 1]",
-         "    /\\ IF FALSE\n       THEN UNCHANGED << shuts, by >>\n       ELSE /\\ shuts' = [shuts EXCEPT ![p] = @ + 1]")]),
+    # The rollback of a failed swap shuts the failed provider down although a live sibling is bound to it.
+    'the library shuts a provider a sibling holds on rollback': (
+        ('LiveSiblingKeepsProvider',), [
+        ("                ELSE p \\in registered /\\ LibraryShuts(i, p)\n",
+         "                ELSE p \\in registered\n")]),
+    # The rollback of a failed swap leaves the provider to the SDK, which skips one another slot holds: a sibling that
+    # failed on it and deferred to this instance is left with nobody to shut it down.
+    'a rollback leaves a failed sibling\'s wrapper to the SDK': (
+        ('FailedWrapperNotAbandoned',), [
+        ("                ELSE p \\in registered /\\ LibraryShuts(i, p)\n",
+         "                ELSE FALSE\n")]),
+    # A failed build or an init deadline shuts down whatever the instance holds, a provider the user registered included.
+    'a failure shuts down a provider the user registered': (
+        ('UserProviderNeverShutByLibrary',), [
+        ("    /\\ p \\notin userOwned\n    /\\ \\A j", "    /\\ \\A j")]),
+    # The same for the library's own wrapper while a sibling on another domain is bound to it.
+    'a failure shuts down a wrapper a live sibling is bound to': (
+        ('LiveSiblingKeepsProvider',), [
+        ("    /\\ \\A j \\in Instances \\ {i} : ~(Live(j) /\\ bound[domainOf[j]] = p /\\ failedOn[j] # p)\n", "")]),
+    # A failure defers to a sibling that has failed on the provider too: with no owner, nothing ever shuts it down.
+    'failures defer to each other': (
+        ('FailedWrapperNotAbandoned',), [
+        (" = p /\\ failedOn[j] # p)\n", " = p)\n")]),
 }
 
 

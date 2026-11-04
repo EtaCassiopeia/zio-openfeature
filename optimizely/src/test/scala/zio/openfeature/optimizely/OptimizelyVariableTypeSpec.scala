@@ -1,12 +1,11 @@
 package zio.openfeature.optimizely
 
-import com.github.tomakehurst.wiremock.WireMockServer
-import com.github.tomakehurst.wiremock.core.WireMockConfiguration
 import dev.openfeature.sdk.{ErrorCode, ImmutableContext, ProviderEvaluation, Reason, Value}
 import zio._
 import zio.test._
 
 import scala.jdk.CollectionConverters._
+import zio.openfeature.testsupport.LoopbackWireMock
 
 // A variable that exists with another type is a TYPE_MISMATCH, not the caller's default with reason DEFAULT; an
 // absent variable stays DEFAULT. Conversions are strict and lossless (no "42" -> 42, no 1.5 -> 1).
@@ -19,7 +18,7 @@ object OptimizelyVariableTypeSpec extends ZIOSpecDefault {
     scala.io.Source.fromInputStream(getClass.getResourceAsStream(path)).mkString
 
   private def withProvider[A](body: OptimizelyFeatureProvider => A): A = {
-    val server = new WireMockServer(WireMockConfiguration.options().dynamicPort())
+    val server = LoopbackWireMock.server()
     server.start()
     try {
       val provider = new OptimizelyFeatureProvider(

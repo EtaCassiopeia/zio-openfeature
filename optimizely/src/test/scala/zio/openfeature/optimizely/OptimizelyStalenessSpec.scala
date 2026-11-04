@@ -2,7 +2,6 @@ package zio.openfeature.optimizely
 
 import com.github.tomakehurst.wiremock.WireMockServer
 import com.github.tomakehurst.wiremock.client.WireMock._
-import com.github.tomakehurst.wiremock.core.WireMockConfiguration
 import dev.openfeature.sdk.{ImmutableContext, OpenFeatureAPI, ProviderState}
 import zio._
 import zio.test._
@@ -10,6 +9,7 @@ import zio.test._
 import java.util.UUID
 import java.util.concurrent.atomic.{AtomicInteger, AtomicReference}
 import java.util.concurrent.{CountDownLatch, TimeUnit}
+import zio.openfeature.testsupport.LoopbackWireMock
 
 /** Staleness watchdog tests for `OptimizelyFeatureProvider`.
   *
@@ -36,14 +36,14 @@ object OptimizelyStalenessSpec extends ZIOSpecDefault {
     scala.io.Source.fromInputStream(getClass.getResourceAsStream(path)).mkString
 
   private def withMockServer[A](body: WireMockServer => A): A = {
-    val server = new WireMockServer(WireMockConfiguration.options().dynamicPort())
+    val server = LoopbackWireMock.server()
     server.start()
     try body(server)
     finally server.stop()
   }
 
   private def datafileUrl(server: WireMockServer): String =
-    s"http://localhost:${server.port()}$DatafilePath"
+    s"${LoopbackWireMock.baseUrl(server)}$DatafilePath"
 
   private def serveDatafile(server: WireMockServer): Unit = {
     server.resetAll()

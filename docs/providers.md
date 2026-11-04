@@ -63,12 +63,13 @@ the field name: `withoutEvaluationTimeout`, `withAsyncInit` and `withSyncInit`, 
 | Slower than `initTimeout` | fails with a `TimeoutException` | status `Fatal`, `Error` event with `ProviderFatal` |
 | `initialize()` fails | fails with a `GeneralError` (`FatalError` for a fatal outcome) carrying the provider's message | status `Error`, then `Fatal` once `initTimeout` passes, unless the provider became ready first |
 
-Either way the provider is shut down once it has failed. A provider stuck in `initialize()` often can't shut down
+Either way the provider is shut down once it has failed, unless the library is reusing a provider you registered, or
+another live instance that has not failed on it is bound to it. A provider stuck in `initialize()` often can't shut down
 either, so that `shutdown()` is abandoned rather than awaited: the sync build waits for it at most `initTimeout`
 (capped at 15 seconds), and the async `Error` event is published before it starts. A provider the async watchdog shut
 down stays registered with the Java SDK, but the library's wrapper does not call its `shutdown()` a second time. A
-provider you registered with the API yourself has no wrapper, and the SDK calls its `shutdown()` again when the
-instance shuts down or the provider is replaced.
+provider you registered with the API yourself and the library reused is not shut down here: the SDK calls its
+`shutdown()` once, when the API shuts down or the provider is replaced.
 
 Use sync when serving a default is worse than not starting: a wrong SDK key then stops the app. Use async to start
 fast and gate traffic on [readiness](lifecycle.md#wait-until-the-provider-is-ready), or use a
@@ -112,12 +113,18 @@ One API has one default slot and one slot per domain, so instances on it are not
   on the shared Java API.
 
 - **A provider you registered with the API yourself** is reused as it is: in its own slot, or under any domain when
-  it is in the default slot, the instance binds that registration and the SDK runs no second `initialize()`. The SDK
-  keeps owning it, so its events reach the status through the SDK's own delivery, in no fixed order unless the
-  provider awaits each emission (see [events](lifecycle.md)), and `api.getProvider()` returns it. Every other provider
-  is registered through the library's wrapper, which `api.getProvider()` returns instead. A provider registered
-  directly under a different domain is not reused: an `EventProvider` fails the build with the SDK's "already
-  attached" error, and any other provider is initialized again. Bind it through the library instead.
+  it is in the default slot or under a domain an instance was built on. The instance binds that registration and the
+  SDK runs no second `initialize()`. The SDK keeps owning it, so its events reach the status through the SDK's own
+  delivery, in no fixed order unless the provider awaits each emission (see [events](lifecycle.md)), and
+  `api.getProvider()` returns it. Every other provider is registered through the library's wrapper, which
+  `api.getProvider()` returns instead. A provider registered directly under a domain no instance was built on is not
+  reused, since the library cannot see that slot: an `EventProvider` fails the build with the SDK's "already attached"
+  error, and any other provider is initialized again, and a failure, or a swap off that wrapper, shuts it down too. Bind it
+  through the library instead. A domain-scoped provider a slot the library can see holds cannot be bound to a second
+  domain at all: the build fails with the SDK's error. For a provider reused as it is, a build that fails on it, or an
+  init deadline that passes, leaves it running in its slot, for the API's shutdown or its next successful replacement.
+  The one case the library does shut it down: an instance that owns the API swapped it out, the swap timed out and the
+  new provider then failed, and no slot the library can see held it, so nothing else would have.
 
 To keep instances apart, give each one `FeatureFlagsConfig.default.withIsolatedApi`, a domain of its own, or build them all
 from one [`FeatureFlagRegistry`](#one-client-per-domain-featureflagregistry).
@@ -312,8 +319,9 @@ evaluations keep going. To initialize a provider again, install a new instance.
   waits the same way after a swap or rollback that did not time out. Three seconds is also how long installing again a
   provider another slot of a shared API still serves takes: the SDK does not shut that one down, and the swap then
   proceeds. A provider whose earlier `initialize()` has
-  not returned (the one an async start was built with, or one a timed-out swap or rollback installed) is refused the
-  same way, however many swaps have happened since, until that call returns. If `setProvider` is called while the
+  not returned (the one an async start was built with, one a timed-out swap or rollback installed, or one another
+  instance is initializing under a different slot) is refused the same way, however many swaps have happened since,
+  until that call returns, and the provider this slot holds stays in place. If `setProvider` is called while the
   timed-out provider, or the provider an async start was built with, is still initializing and the new provider's
   `initialize()` throws, there is nothing to roll back to: that provider never served and is not initialized a second
   time. The new provider stays registered with status `Error`, that provider is shut down (by an instance that owns

@@ -2,7 +2,6 @@ package zio.openfeature.optimizely
 
 import com.github.tomakehurst.wiremock.WireMockServer
 import com.github.tomakehurst.wiremock.client.WireMock._
-import com.github.tomakehurst.wiremock.core.WireMockConfiguration
 import com.optimizely.ab.RedirectingHttpClient
 import com.optimizely.ab.event.{AsyncEventHandler, EventHandler, LogEvent}
 import dev.openfeature.sdk.{ImmutableContext, Value}
@@ -12,6 +11,7 @@ import zio.test._
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.{CopyOnWriteArrayList, CountDownLatch, Executors, TimeUnit}
 import scala.jdk.CollectionConverters._
+import zio.openfeature.testsupport.LoopbackWireMock
 
 // Factory-built providers send impressions and conversions to Optimizely, batched, unless events are disabled.
 object OptimizelyEventDispatchSpec extends ZIOSpecDefault {
@@ -43,7 +43,7 @@ object OptimizelyEventDispatchSpec extends ZIOSpecDefault {
 
   private val server: ZIO[Scope, Throwable, WireMockServer] =
     ZIO.acquireRelease(ZIO.attemptBlocking {
-      val s = new WireMockServer(WireMockConfiguration.options().dynamicPort())
+      val s = LoopbackWireMock.server()
       s.start()
       s.stubFor(get(urlEqualTo(DatafilePath)).willReturn(okJson(readResource("/datafiles/track.json"))))
       s.stubFor(post(urlEqualTo(EventsPath)).willReturn(aResponse().withStatus(204)))
@@ -52,7 +52,7 @@ object OptimizelyEventDispatchSpec extends ZIOSpecDefault {
 
   private def config(server: WireMockServer, events: OptimizelyEvents): OptimizelyProviderConfig =
     OptimizelyProviderConfig("events-key")
-      .withDatafileUrl(s"http://localhost:${server.port()}$DatafilePath")
+      .withDatafileUrl(s"${LoopbackWireMock.baseUrl(server)}$DatafilePath")
       .withInitWait(OptimizelyTestSupport.InitWait)
       .withBlockingTimeout(java.time.Duration.ofSeconds(2))
       .withEvents(events)

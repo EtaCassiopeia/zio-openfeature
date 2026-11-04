@@ -1,7 +1,5 @@
 package zio.openfeature.optimizely
 
-import com.github.tomakehurst.wiremock.WireMockServer
-import com.github.tomakehurst.wiremock.core.WireMockConfiguration
 import com.optimizely.ab.OptimizelyUserContext
 import com.optimizely.ab.cmab.service.{CmabDecision, CmabService}
 import com.optimizely.ab.config.ProjectConfig
@@ -10,6 +8,7 @@ import com.optimizely.ab.event.internal.payload.EventBatch
 import com.optimizely.ab.optimizelydecision.OptimizelyDecideOption
 import dev.openfeature.sdk.{ErrorCode, ImmutableContext, Reason}
 import zio.test._
+import zio.openfeature.testsupport.LoopbackWireMock
 
 // Optimizely SDK 4.6.0 — CMAB experiments decide through a CmabService, a CMAB fetch failure is an evaluation
 // ERROR (not a silent DEFAULT), and event payloads serialize with this build's Jackson.
@@ -21,7 +20,7 @@ object OptimizelyCmabSpec extends ZIOSpecDefault {
     scala.io.Source.fromInputStream(getClass.getResourceAsStream(path)).mkString
 
   private def withProvider[A](cmab: CmabService)(body: OptimizelyFeatureProvider => A): A = {
-    val server = new WireMockServer(WireMockConfiguration.options().dynamicPort())
+    val server = LoopbackWireMock.server()
     server.start()
     try {
       val client = OptimizelyTestSupport.readyClient(

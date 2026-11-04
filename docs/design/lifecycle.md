@@ -36,6 +36,7 @@ design are not listed.
 | Refusals after shutdown and after the scope close, checked under the swap lock | #631, #665, #671 | A refusal checked outside the lock, or set by only one of the owners, is a revival. |
 | Evaluations carry a swap generation and distrust an answer made across a swap | #658 | The SDK resolves the slot's provider per call, so an evaluation can be answered by a provider the swap has already rejected. |
 | An API has one owner, which retires every instance on it | #652 | Layers sharing the global API clobbered each other's slot. |
+| A failure shuts a provider down only when it is the library's own wrapper and no other live instance that has not failed on it is bound to it | #796 | The guard asked how the wait ended, not who registered the provider. The SDK shares one state manager between slots, so "the library's wrapper" is not enough either; it does not list an API's slots, so the instances are what is asked. An instance marks its own failure before it asks, or two failing together each defer to the other and nothing shuts the provider down. A failed swap marks itself too, and its rollback decides as well, since the SDK skips a provider another slot holds (#800). |
 | **Managed registrations and one lifecycle state** (#696) | #696, #697, #698, #699 | See below. |
 
 The pattern in the second half of the table: each fix added one more fact and one more check at the point where the
@@ -116,9 +117,8 @@ provider's own emissions.
 - Two models check the lifecycle: `formal/lifecycle` is one instance's swap protocol, event bridge, orphans and
   teardown; `formal/registry` is one API with several instances on several domains, where the ownership rules
   live (one owner tears the API down, a non-owner's close touches nothing shared, every registered provider is
-  shut down once, one client per domain, a `Bound.Foreign` provider is never shut down by the library; the code does
-  shut one down when a build fails while it is still initializing and when the async init watchdog fires on one that
-  was never ready). They
+  shut down once, one client per domain, a `Bound.Foreign` provider or a wrapper a live sibling is bound to is never
+  shut down by a failure under another instance). They
   compose by assumption, not by TLC: neither re-checks the other's claims.
 
 ## Status

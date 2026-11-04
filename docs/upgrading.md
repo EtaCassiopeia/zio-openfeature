@@ -1,7 +1,6 @@
 # Upgrading to 2.0
 
-This guide takes an application from 1.2.1 to 2.0. **2.0 is not released yet: the latest published version is 1.2.1.**
-It describes the code on `main`, which is [published as a snapshot](getting-started.md#install) until then.
+This guide takes an application from 1.2.1 to 2.0.
 
 Read it top to bottom and fix compile errors as you go; the most common come first.
 [Behaviour changes that still compile](#behaviour-changes-that-still-compile) need a separate look, since the compiler

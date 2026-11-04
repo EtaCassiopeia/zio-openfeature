@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.0] — 2026-11-04
+
 **Upgrading from 1.x:** `docs/upgrading.md` lists what to change in your code and the behaviour changes that compile
 unchanged. The entries under Removed and Changed below are the full record.
 
@@ -144,9 +146,6 @@ unchanged. The entries under Removed and Changed below are the full record.
   (it was `cause0`), and its `cause` is still `Some(underlying)`. The second `String` of `TypeMismatch` and
   `OverrideTypeMismatch` is `detail` (it was `actual`): it holds a provider's message or a decode reason, not a type.
   The `message` text is unchanged.
-- **`main` is the 2.0 line: no release comes before 2.0.0.** Breaking changes land directly on it, so it has no MiMa or
-  TASTy-MiMa baseline for now, and the filters that excused 1.x breaks are gone. After 2.0.0 the baseline moves to it and
-  the binary compatibility policy applies to 2.x. Snapshots from `main` can break between builds until then.
 - **`TestFeatureProvider.setStatus` goes through the instance's lifecycle** (#738). It moves the status as a provider
   report would, and counts as ready for the init watchdog. It is refused, as a defect naming the reason, once the
   instance is shut down or closed, and while a provider swap is in flight. A provider with no instance attached still
@@ -2440,7 +2439,8 @@ promotes `[Unreleased]` to the new version section when a release tag is cut.
 
 Internal refactors that don't change behaviour or surface area don't need a CHANGELOG entry. When in doubt: write one.
 
-[Unreleased]: https://github.com/EtaCassiopeia/zio-openfeature/compare/v1.2.1...HEAD
+[Unreleased]: https://github.com/EtaCassiopeia/zio-openfeature/compare/v2.0.0...HEAD
+[2.0.0]: https://github.com/EtaCassiopeia/zio-openfeature/compare/v1.2.1...v2.0.0
 [1.2.1]: https://github.com/EtaCassiopeia/zio-openfeature/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/EtaCassiopeia/zio-openfeature/compare/v1.1.2...v1.2.0
 [1.1.2]: https://github.com/EtaCassiopeia/zio-openfeature/compare/v1.1.1...v1.1.2

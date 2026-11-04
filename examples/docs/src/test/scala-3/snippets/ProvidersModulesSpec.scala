@@ -36,7 +36,7 @@ object ProvidersModulesSpec extends ZIOSpecDefault:
         )
         closeTimeout <- rejected(
           OptimizelyProvider.make(
-            OptimizelyProviderConfig("abcd1234efgh5678").withEvents(OptimizelyEvents.Batched(closeTimeout = java.time.Duration.ofSeconds(5)))
+            OptimizelyProviderConfig("abcd1234efgh5678").withEvents(OptimizelyEvents.Batched.default.withCloseTimeout(java.time.Duration.ofSeconds(5)))
           )
         )
       yield assertTrue(placeholder, short, spaces, url, polling, closeTimeout)
@@ -44,7 +44,8 @@ object ProvidersModulesSpec extends ZIOSpecDefault:
     test("Optimizely events are batched by default, with a 3 s shutdown wait") {
       val events = OptimizelyProviderConfig("abcd1234efgh5678").events
       assertTrue(
-        events == OptimizelyEvents.Batched(10, java.time.Duration.ofSeconds(30), java.time.Duration.ofSeconds(3))
+        events == OptimizelyEvents.Batched.default,
+        OptimizelyEvents.Batched.default.closeTimeout == java.time.Duration.ofSeconds(3)
       )
     },
     test("OptimizelyProvider.scoped accepts a well-formed key and shuts the provider down with the scope") {

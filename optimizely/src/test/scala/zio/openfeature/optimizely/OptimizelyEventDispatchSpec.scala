@@ -86,7 +86,7 @@ object OptimizelyEventDispatchSpec extends ZIOSpecDefault {
           s <- server
           recorder = new Recording
           enabled  = new AtomicBoolean(false)
-          _ <- withProvider(s, OptimizelyEvents.Batched(), recorder)(p => enabled.set(evaluate(p)))
+          _ <- withProvider(s, OptimizelyEvents.Batched.default, recorder)(p => enabled.set(evaluate(p)))
           value  = enabled.get
           bodies = recorder.bodies
           body   = bodies.mkString
@@ -104,7 +104,7 @@ object OptimizelyEventDispatchSpec extends ZIOSpecDefault {
         for {
           s <- server
           recorder = new Recording
-          _ <- withProvider(s, OptimizelyEvents.Batched(), recorder)(_.track("purchase", user, null))
+          _ <- withProvider(s, OptimizelyEvents.Batched.default, recorder)(_.track("purchase", user, null))
           bodies = recorder.bodies
           body   = bodies.mkString
         } yield assertTrue(
@@ -131,11 +131,10 @@ object OptimizelyEventDispatchSpec extends ZIOSpecDefault {
     test("events are batched by default") {
       val events = OptimizelyProviderConfig("events-key").events
       assertTrue(
-        events == OptimizelyEvents.Batched(
-          batchSize = 10,
-          flushInterval = java.time.Duration.ofSeconds(30),
-          closeTimeout = java.time.Duration.ofSeconds(3)
-        )
+        events == OptimizelyEvents.Batched.default,
+        OptimizelyEvents.Batched.default.batchSize == 10,
+        OptimizelyEvents.Batched.default.flushInterval == java.time.Duration.ofSeconds(30),
+        OptimizelyEvents.Batched.default.closeTimeout == java.time.Duration.ofSeconds(3)
       )
     },
     test("the SDK's async handler posts the batch, and no event thread outlives the provider's scope") {
@@ -165,7 +164,7 @@ object OptimizelyEventDispatchSpec extends ZIOSpecDefault {
             .build()
           _ <- ZIO.scoped {
             OptimizelyProvider
-              .scoped(config(s, OptimizelyEvents.Batched()), datafileClient, Some(handler))
+              .scoped(config(s, OptimizelyEvents.Batched.default), datafileClient, Some(handler))
               .onExecutor(Executor.fromJavaExecutor(builder))
               .flatMap(p => ZIO.attemptBlocking { p.initialize(new ImmutableContext()); evaluate(p) })
           }
@@ -190,7 +189,7 @@ object OptimizelyEventDispatchSpec extends ZIOSpecDefault {
           s <- server
           handler = new Blocking
           provider <- ZIO.acquireRelease(
-            OptimizelyProvider.make(config(s, OptimizelyEvents.Batched()), datafileClient, Some(handler))
+            OptimizelyProvider.make(config(s, OptimizelyEvents.Batched.default), datafileClient, Some(handler))
           )(p => ZIO.attemptBlocking(p.shutdown()).ignore)
           _       <- ZIO.attemptBlocking { provider.initialize(new ImmutableContext()); evaluate(provider) }
           elapsed <- ZIO.attemptBlocking(provider.shutdown()).timed.map(_._1)
@@ -205,19 +204,45 @@ object OptimizelyEventDispatchSpec extends ZIOSpecDefault {
         )
       }
     },
+    test("each withX on Batched changes its own setting and leaves the rest, without changing the original") {
+      val base    = OptimizelyEvents.Batched.default
+      val size    = base.withBatchSize(50)
+      val flush   = base.withFlushInterval(java.time.Duration.ofSeconds(5))
+      val closing = base.withCloseTimeout(java.time.Duration.ofSeconds(1))
+      assertTrue(
+        size.batchSize == 50,
+        size.flushInterval == java.time.Duration.ofSeconds(30),
+        size.closeTimeout == java.time.Duration.ofSeconds(3),
+        flush.batchSize == 10,
+        flush.flushInterval == java.time.Duration.ofSeconds(5),
+        flush.closeTimeout == java.time.Duration.ofSeconds(3),
+        closing.batchSize == 10,
+        closing.flushInterval == java.time.Duration.ofSeconds(30),
+        closing.closeTimeout == java.time.Duration.ofSeconds(1),
+        base.batchSize == 10
+      )
+    },
+    test("Batched prints its settings") {
+      assertTrue(
+        OptimizelyEvents.Batched.default.toString == "Batched(batchSize=10, flushInterval=PT30S, closeTimeout=PT3S)"
+      )
+    },
     test("each Batched bound is validated") {
       val second = java.time.Duration.ofSeconds(1)
       for {
-        batchSize     <- rejected(OptimizelyEvents.Batched(batchSize = 0))
-        flushZero     <- rejected(OptimizelyEvents.Batched(flushInterval = java.time.Duration.ZERO))
-        flushNegative <- rejected(OptimizelyEvents.Batched(flushInterval = second.negated()))
-        closeZero     <- rejected(OptimizelyEvents.Batched(closeTimeout = java.time.Duration.ZERO))
-        closeTooLong  <- rejected(OptimizelyEvents.Batched(closeTimeout = java.time.Duration.ofSeconds(5)))
-        closeJustOver <- rejected(OptimizelyEvents.Batched(closeTimeout = java.time.Duration.ofMillis(4001)))
-        flushNull     <- rejected(OptimizelyEvents.Batched(flushInterval = null))
+        batchSize     <- rejected(OptimizelyEvents.Batched.default.withBatchSize(0))
+        flushZero     <- rejected(OptimizelyEvents.Batched.default.withFlushInterval(java.time.Duration.ZERO))
+        flushNegative <- rejected(OptimizelyEvents.Batched.default.withFlushInterval(second.negated()))
+        closeZero     <- rejected(OptimizelyEvents.Batched.default.withCloseTimeout(java.time.Duration.ZERO))
+        closeTooLong  <- rejected(OptimizelyEvents.Batched.default.withCloseTimeout(java.time.Duration.ofSeconds(5)))
+        closeJustOver <- rejected(OptimizelyEvents.Batched.default.withCloseTimeout(java.time.Duration.ofMillis(4001)))
+        flushNull     <- rejected(OptimizelyEvents.Batched.default.withFlushInterval(null))
         atBounds      <- OptimizelyProvider
           .validateEvents(
-            OptimizelyEvents.Batched(1, java.time.Duration.ofMillis(1), java.time.Duration.ofSeconds(4))
+            OptimizelyEvents.Batched.default
+              .withBatchSize(1)
+              .withFlushInterval(java.time.Duration.ofMillis(1))
+              .withCloseTimeout(java.time.Duration.ofSeconds(4))
           )
           .either
         disabled <- OptimizelyProvider.validateEvents(OptimizelyEvents.Disabled).either

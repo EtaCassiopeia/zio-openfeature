@@ -40,7 +40,7 @@ object Optimizely:
   // --8<-- [start:events-tuned]
   val batched: IO[FeatureFlagError.InvalidConfiguration, OptimizelyFeatureProvider] =
     OptimizelyProvider.make(
-      OptimizelyProviderConfig("abcd1234efgh5678").withEvents(OptimizelyEvents.Batched(batchSize = 50, flushInterval = java.time.Duration.ofSeconds(10)))
+      OptimizelyProviderConfig("abcd1234efgh5678").withEvents(OptimizelyEvents.Batched.default.withBatchSize(50).withFlushInterval(java.time.Duration.ofSeconds(10)))
     )
   // --8<-- [end:events-tuned]
 

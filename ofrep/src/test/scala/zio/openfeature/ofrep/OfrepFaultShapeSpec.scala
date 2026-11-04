@@ -57,7 +57,7 @@ object OfrepFaultShapeSpec extends ZIOSpecDefault {
   @scala.annotation.nowarn("msg=deprecated")
   private def stateOf(p: CircuitBreakerProvider): ProviderState = p.getState
 
-  private def typedError(shape: FaultShape): Task[String] =
+  private def typedError(shape: FaultShape): Task[Either[FeatureFlagError, FlagResolution[Boolean]]] =
     ZIO.scoped {
       for {
         s        <- server
@@ -65,13 +65,17 @@ object OfrepFaultShapeSpec extends ZIOSpecDefault {
         provider <- OFREPProvider
           .scoped(s"http://localhost:${s.port()}")
           .orDieWith(e => new IllegalArgumentException(e.toString))
-        env <- FeatureFlags.fromProviderAsync(provider).build
+        // Past the default 1 s: a request held up by a loaded machine would otherwise time out, which also reads as
+        // ProviderError, and hide the error the response gives.
+        env <- FeatureFlags
+          .fromProvider(provider, FeatureFlagsConfig.default.withAsyncInit.withEvaluationTimeout(30.seconds))
+          .build
         ff = env.get[FeatureFlags]
         _ <- ff.providerStatus
           .repeat(Schedule.recurUntil[ProviderStatus](_ == ProviderStatus.Ready) && Schedule.spaced(20.millis))
           .timeoutFail(new IllegalStateException("not ready"))(10.seconds)
         r <- ff.booleanDetails(shape.key, default = false).either
-      } yield errorName(r)
+      } yield r
     }
 
   private def breakerOpen(shape: FaultShape): Task[Boolean] =
@@ -111,7 +115,7 @@ object OfrepFaultShapeSpec extends ZIOSpecDefault {
   def spec = suite("OfrepFaultShapeSpec")(
     test("every fault shape fails with the typed error its status and body give, whatever the headers") {
       checkAll(shapes) { shape =>
-        typedError(shape).map(actual => assertTrue(actual == expectedError(shape)))
+        typedError(shape).map(r => assertTrue(errorName(r) == expectedError(shape)).label(s"$shape: $r"))
       }
     },
     test("the circuit breaker opens for every server error and every non-JSON 4xx, and only for those") {

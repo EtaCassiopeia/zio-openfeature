@@ -71,16 +71,16 @@ second instance.
 
 ## Mutants
 
-`mutants.py` puts each ownership bug into the model and requires TLC to report one of the invariants named for it;
-the first one TLC reports is the first in `Registry.cfg`'s order.
+`mutants.py` puts each ownership bug into the model and requires each property named for it to catch it, checking
+them one at a time: a mutant usually breaks several, and in one run TLC reports whichever its workers reach first.
 
 | Mutant | Caught by |
 |:--|:--|
-| A non-owner tears the API down (#652: layers sharing the global API clobbered each other's slot) | `ClosedNonOwnerKeepsSlot`, then `SiblingsUnaffected` and `SharedShutDownOnce` |
-| A domain client shuts its provider down directly (the double shutdown `FeatureFlagsLive.teardown`'s comment warns about) | `RegisteredNotShutDown`, then `ForeignNeverShutByLibrary` and `SharedShutDownOnce` |
+| A non-owner tears the API down (#652: layers sharing the global API clobbered each other's slot) | `ClosedNonOwnerKeepsSlot`, `SiblingsUnaffected` |
+| A domain client shuts its provider down directly (the double shutdown `FeatureFlagsLive.teardown`'s comment warns about) | `RegisteredNotShutDown`, `ForeignNeverShutByLibrary`, `SharedShutDownOnce` |
 | A non-owner's close retires its siblings | `SiblingsUnaffected` |
 | `getClient` looks the domain up and inserts its promise without the semaphore | `OneInstancePerDomain` |
-| The library shuts a `Bound.Foreign` provider down on a rollback (#728) | `RegisteredNotShutDown`, then `ForeignNeverShutByLibrary` |
+| The library shuts a `Bound.Foreign` provider down on a rollback (#728) | `RegisteredNotShutDown`, `ForeignNeverShutByLibrary` |
 
 ## What is outside the model
 

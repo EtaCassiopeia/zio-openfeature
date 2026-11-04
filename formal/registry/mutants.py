@@ -1,6 +1,6 @@
-"""Put each ownership bug back into the registry model and check that TLC reports the invariant that catches it.
+"""Put each ownership bug back into the registry model and check that each property named for it catches it.
 
-Usage: python3 mutants.py <path to tla2tools.jar>.  Exits non-zero when a mutant goes uncaught.
+Usage: python3 mutants.py <path to tla2tools.jar>.  Exits non-zero when a named property does not catch its mutant.
 """
 import os, re, subprocess, sys, tempfile
 
@@ -8,12 +8,13 @@ here = os.path.dirname(os.path.abspath(__file__))
 spec = open(os.path.join(here, 'Registry.tla')).read()
 cfg = open(os.path.join(here, 'Registry.cfg')).read()
 
-# Each mutant names the invariants that may catch it: TLC reports the first violated in the configuration's order.
+# Each mutant names the properties it exists to exercise, and each is checked alone: a mutant usually breaks several,
+# and with several in one run TLC reports whichever its workers reach first.  A property not named may break as well.
 mutants = {
     # A non-owner's close tears the API down: siblings lose their provider (the slot of a closed sibling is empty before
     # the owner closes), and the owner shuts it down again.
     'a non-owner tears the API down': (
-        ('ClosedNonOwnerKeepsSlot', 'SiblingsUnaffected', 'RegisteredNotShutDown', 'SharedShutDownOnce'), [
+        ('ClosedNonOwnerKeepsSlot', 'SiblingsUnaffected'), [
         ("    /\\ phase' = [phase EXCEPT ![i] = \"closed\"]\n"
          "    /\\ UNCHANGED << domainOf, owner, apiOpen, lock, swapping, swaps, bound, registered, shuts, by, everBound >>",
          "    /\\ phase' = [phase EXCEPT ![i] = \"closed\"]\n"
@@ -66,10 +67,16 @@ def mutate(name, edits):
     return mutated
 
 
-def tlc(mutated):
+def only(prop):
+    """The configuration with `prop` as its one invariant or property."""
+    section = 'PROPERTIES' if prop in cfg.split('PROPERTIES')[1] else 'INVARIANTS'
+    return f"{cfg.split('INVARIANTS')[0]}{section}\n    {prop}\n"
+
+
+def tlc(mutated, config):
     with tempfile.TemporaryDirectory() as d:
         open(os.path.join(d, 'Registry.tla'), 'w').write(mutated)
-        open(os.path.join(d, 'Registry.cfg'), 'w').write(cfg)
+        open(os.path.join(d, 'Registry.cfg'), 'w').write(config)
         args = ['java', '-XX:+UseParallelGC', '-cp', jar, 'tlc2.TLC', '-workers', 'auto', '-deadlock',
                 '-config', 'Registry.cfg', 'Registry.tla']
         return subprocess.run(args, cwd=d, capture_output=True, text=True).stdout
@@ -79,12 +86,13 @@ if len(sys.argv) != 2:
     sys.exit(__doc__)
 jar = os.path.abspath(sys.argv[1])
 missed = []
-for name, (invs, edits) in mutants.items():
-    out = tlc(mutate(name, edits))
-    m = re.search(r'(?:Invariant|Action property|Temporal property) (\w+) (?:is|was) violated', out)
-    if m and m.group(1) in invs:
-        print(f'{name}: caught by {m.group(1)}')
-    else:
-        print(f'{name}: NOT CAUGHT by {" or ".join(invs)}: {m.group(1) if m else "no violation"}\n{out[-600:]}')
-        missed.append(name)
+for name, (props, edits) in mutants.items():
+    mutated = mutate(name, edits)
+    for prop in props:
+        out = tlc(mutated, only(prop))
+        if re.search(r'(?:Invariant|Action property|Temporal propert\w+)\b.* (?:is|was|were) violated', out):
+            print(f'{name}: caught by {prop}')
+        else:
+            print(f'{name}: NOT CAUGHT by {prop}\n{out[-600:]}')
+            missed.append(name)
 sys.exit(1 if missed else 0)

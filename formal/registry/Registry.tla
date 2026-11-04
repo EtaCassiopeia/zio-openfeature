@@ -192,8 +192,9 @@ ShutFailed(i, p) ==
     ELSE UNCHANGED << shuts, by, registered >>
 
 \* A swap at the registry grain.  The SDK binds the new provider before its initialize() runs, so a sibling may reuse its
-\* registration from then on, and a swap admitted before the sibling registered shares the sibling's attempt.  Here the
-\* provider it replaces stays registered until the swap's outcome; the SDK may shut it down sooner in that shared case.
+\* registration from then on.  A swap is refused when a sibling's initialize() of p has started by the time it binds; one
+\* whose SDK task the sibling's task overtakes still shares that call, and then the SDK may shut the provider it replaces
+\* down sooner than here, where it stays registered until the swap's outcome.
 SwapStart(i, p) ==
     LET d == domainOf[i] IN
     /\ apiOpen

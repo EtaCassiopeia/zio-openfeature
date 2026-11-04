@@ -42,6 +42,16 @@ private[openfeature] object ProviderRegistration {
   final class RegistrationSuperseded
       extends RuntimeException("Provider registration was superseded by a concurrent registration")
 
+  /** A swap reached its binding with another registration's `initialize()` of this provider already running. Binding
+    * would have the SDK treat that call as this one's and shut the swap's previous provider down at once. Not an
+    * `IllegalStateException`: the swap rollback treats that one as the SDK's "already attached" signal.
+    */
+  final class StillInitializing(provider: OFFeatureProvider)
+      extends RuntimeException(
+        s"'${ProviderNames.of(provider)}' is still initializing from another registration and cannot be installed " +
+          "until that initialize() returns"
+      )
+
   /** How a registration settled: the provider's `initialize()` returned, and the SDK reports it in this state. Never
     * `NOT_READY`.
     */
@@ -234,10 +244,22 @@ private[openfeature] object ProviderRegistration {
 
   /** Bind `provider` to `domain`'s slot, unless it holds it already, and classify the registration. Not interruptible:
     * it mutates SDK state.
+    *
+    * With `shareInFlight` false, a registration whose provider another binding's `initialize()` has already entered
+    * fails with [[StillInitializing]] and binds nothing. A swap needs that: its previous provider is shut down once the
+    * SDK sees the new one initialized, and the SDK takes a call in flight elsewhere for that.
     */
-  def register(api: OpenFeatureAPI, domain: Option[String], bound: Bound): Task[Registration] =
+  def register(
+    api: OpenFeatureAPI,
+    domain: Option[String],
+    bound: Bound,
+    shareInFlight: Boolean = true
+  ): Task[Registration] =
     ZIO.attemptBlocking {
       val armed = bound.managed.map(_.arm())
+      // A slot that already holds it binds nothing, so nothing is shut down: another instance on this slot installed it.
+      if (!shareInFlight && armed.exists(_.attempt.entered) && !holdsAlready(api, domain, bound))
+        throw new StillInitializing(bound.sdk)
       bind(api, domain, bound)
       val state  = domain.fold(api.getClient())(d => api.getClient(d)).getProviderState
       val reader = ProviderStateAccess.stateReader(api, domain.orNull, bound.sdk)

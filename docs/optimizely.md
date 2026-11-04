@@ -117,9 +117,9 @@ such event.
 
 Providers from `make`, `scoped` and `layer` send an impression per decision (rollouts too, if the project's "send flag
 decisions" setting is on) and a conversion per `track` to `logx.optimizely.com`, batched from a background thread.
-`OptimizelyEvents.Batched` tunes it:
+`OptimizelyEvents.Batched.default` tunes it, with `withBatchSize`, `withFlushInterval` and `withCloseTimeout`:
 
-| `Batched` parameter | Default | Meaning |
+| `Batched` setting | Default | Meaning |
 |---|---|---|
 | `batchSize` | 10 | events per request; at least 1 |
 | `flushInterval` | 30 s | longest an event waits before its batch is sent; positive |
@@ -189,7 +189,7 @@ The fallback hides outages, so alert on `Fatal` soon after start (wrong key or u
 | `pollingInterval` | the SDK's, 5 min | datafile fetch interval; setting it turns on the watchdog; positive |
 | `blockingTimeout` | the SDK's, 10 s | longest the SDK blocks for a config; positive |
 | `staleAfter` | 3 × `pollingInterval` | time without a successful fetch before `STALE` (watchdog on); positive |
-| `events` | `OptimizelyEvents.Batched()` | see [Tracking and events](#tracking-and-events) |
+| `events` | `OptimizelyEvents.Batched.default` | see [Tracking and events](#tracking-and-events) |
 
 A non-positive `pollingInterval`, `blockingTimeout` or `staleAfter`, or an out-of-range `Batched` value, fails with
 `InvalidConfiguration`.

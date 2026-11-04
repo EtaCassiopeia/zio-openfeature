@@ -19,7 +19,7 @@ object OptimizelyConfigShapeSpec extends ZIOSpecDefault {
         c.pollingInterval.isEmpty,
         c.blockingTimeout.isEmpty,
         c.staleAfter.isEmpty,
-        c.events == OptimizelyEvents.Batched()
+        c.events == OptimizelyEvents.Batched.default
       )
     },
     test("each with* returns a copy and leaves the receiver as it was") {
@@ -42,7 +42,7 @@ object OptimizelyConfigShapeSpec extends ZIOSpecDefault {
         changed.events == OptimizelyEvents.Disabled,
         base.sdkKey == key,
         base.datafileUrl.isEmpty,
-        base.events == OptimizelyEvents.Batched()
+        base.events == OptimizelyEvents.Batched.default
       )
     },
     test("a value set through a with* is validated when the provider is built, as it was in the constructor") {

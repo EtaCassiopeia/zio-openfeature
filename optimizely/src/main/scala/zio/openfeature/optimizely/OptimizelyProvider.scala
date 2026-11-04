@@ -125,7 +125,7 @@ object OptimizelyProviderConfig {
       None,
       None,
       None,
-      OptimizelyEvents.Batched()
+      OptimizelyEvents.Batched.default
     )
 }
 
@@ -135,7 +135,7 @@ object OptimizelyProviderConfig {
   * Events carry the user id (the context's targeting key), the audience attributes derived from the evaluation context,
   * and the decision or conversion, and are sent to `logx.optimizely.com`.
   */
-sealed trait OptimizelyEvents extends Product with Serializable
+sealed trait OptimizelyEvents extends Serializable
 
 object OptimizelyEvents {
 
@@ -153,11 +153,24 @@ object OptimizelyEvents {
     *   finish; positive and at most 4 seconds. The two waits and the datafile poller's close must fit the provider's
     *   10-second shutdown bound, so `2 × 4 s` is the most it allows. Events still queued when it runs out are dropped.
     */
-  final case class Batched(
-    batchSize: Int = 10,
-    flushInterval: java.time.Duration = java.time.Duration.ofSeconds(30),
-    closeTimeout: java.time.Duration = java.time.Duration.ofSeconds(3)
-  ) extends OptimizelyEvents
+  final class Batched private (
+    val batchSize: Int,
+    val flushInterval: java.time.Duration,
+    val closeTimeout: java.time.Duration
+  ) extends OptimizelyEvents {
+    def withBatchSize(n: Int): Batched                    = new Batched(n, flushInterval, closeTimeout)
+    def withFlushInterval(d: java.time.Duration): Batched = new Batched(batchSize, d, closeTimeout)
+    def withCloseTimeout(d: java.time.Duration): Batched  = new Batched(batchSize, flushInterval, d)
+
+    override def toString: String =
+      s"Batched(batchSize=$batchSize, flushInterval=$flushInterval, closeTimeout=$closeTimeout)"
+  }
+
+  object Batched {
+
+    /** Batches of 10, sent at least every 30 seconds, with 3 seconds to flush on shutdown. */
+    val default: Batched = new Batched(10, java.time.Duration.ofSeconds(30), java.time.Duration.ofSeconds(3))
+  }
 
   /** Upper bound on [[Batched.closeTimeout]]; see there. */
   private[optimizely] val MaxCloseTimeout: java.time.Duration = java.time.Duration.ofSeconds(4)
@@ -602,9 +615,12 @@ object OptimizelyProvider {
   private[optimizely] def validateEvents(events: OptimizelyEvents): IO[FeatureFlagError.InvalidConfiguration, Unit] = {
     def fail(reason: String) = ZIO.fail(FeatureFlagError.InvalidConfiguration(reason))
     events match {
-      case null                                                             => fail("Optimizely events is null")
-      case OptimizelyEvents.Disabled                                        => ZIO.unit
-      case OptimizelyEvents.Batched(batchSize, flushInterval, closeTimeout) =>
+      case null                              => fail("Optimizely events is null")
+      case OptimizelyEvents.Disabled         => ZIO.unit
+      case batched: OptimizelyEvents.Batched =>
+        val batchSize     = batched.batchSize
+        val flushInterval = batched.flushInterval
+        val closeTimeout  = batched.closeTimeout
         if (batchSize < 1) fail(s"Optimizely events.batchSize must be at least 1: $batchSize")
         else if (flushInterval == null) fail("Optimizely events.flushInterval is null")
         else if (closeTimeout == null) fail("Optimizely events.closeTimeout is null")

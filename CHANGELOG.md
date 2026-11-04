@@ -164,6 +164,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`OptimizelyEvents.Batched` is a final class like the configs** (#648). Build it with
+  `OptimizelyEvents.Batched.default.withBatchSize(n)`, `withFlushInterval` and `withCloseTimeout`. It has no `apply`, `copy`,
+  `unapply` or structural equality, so a match on it reads the fields, and `OptimizelyEvents` no longer extends `Product`.
 - **`FeatureFlagError` is a `Throwable`, without a stack trace** (#653). `ff.boolean(k, d).orDie` dies with the error
   itself. `getMessage` is `message` and `getCause` is `cause`, or null for none; equality, matching and `toString` are
   those of the case class.

@@ -6,6 +6,7 @@ import dev.openfeature.sdk.{
   ErrorCode,
   EvaluationContext => OFEvaluationContext,
   FeatureProvider => OFFeatureProvider,
+  NoOpProvider,
   OpenFeatureAPI,
   ProviderState,
   ProviderStateAccess
@@ -110,9 +111,9 @@ private[openfeature] object ProviderRegistration {
       }
 
     /** How this registration's own `initialize()` ended: `Some(true)` when it returned normally, `Some(false)` when it
-      * threw, `None` until then. A reused registration runs none, and the SDK goes straight on to `shutDownOld`, as it
-      * does after a normal return. Not the wrapper's current attempt, which a later registration may have armed. `None`
-      * for a foreign provider, whose outcome no wrapper reports.
+      * threw, `None` until then. A reused registration runs none, and a task the SDK queued goes straight on to
+      * `shutDownOld`, as it does after a normal return. Not the wrapper's current attempt, which a later registration
+      * may have armed. `None` for a foreign provider, whose outcome no wrapper reports.
       */
     def initReturnedNormally: Option[Boolean] =
       if (reused.isDefined) Some(true)
@@ -231,14 +232,13 @@ private[openfeature] object ProviderRegistration {
     private def checkBound(): Unit = if (!isBound) throw new RegistrationSuperseded
   }
 
-  /** Bind `provider` to `domain`'s slot and classify the registration. Not interruptible: it mutates SDK state. */
+  /** Bind `provider` to `domain`'s slot, unless it holds it already, and classify the registration. Not interruptible:
+    * it mutates SDK state.
+    */
   def register(api: OpenFeatureAPI, domain: Option[String], bound: Bound): Task[Registration] =
     ZIO.attemptBlocking {
       val armed = bound.managed.map(_.arm())
-      domain match {
-        case Some(d) => api.setProvider(d, bound.sdk)
-        case None    => api.setProvider(bound.sdk)
-      }
+      bind(api, domain, bound)
       val state  = domain.fold(api.getClient())(d => api.getClient(d)).getProviderState
       val reader = ProviderStateAccess.stateReader(api, domain.orNull, bound.sdk)
       // The SDK's state for the registration, read through its manager; without one the slot was rebound already.
@@ -251,6 +251,29 @@ private[openfeature] object ProviderRegistration {
       }
       new Registration(api, bound, domain, reused, armed, foreignState)
     }
+
+  /** Bind `bound` to `domain`'s slot, unless it holds that registration already. Throws what the SDK's binding throws.
+    */
+  def bind(api: OpenFeatureAPI, domain: Option[String], bound: Bound): Unit =
+    if (!holdsAlready(api, domain, bound))
+      domain match {
+        case Some(d) => api.setProvider(d, bound.sdk)
+        case None    => api.setProvider(bound.sdk)
+      }
+
+  /** Whether `domain`'s slot already holds this registration, so binding it again adds nothing. It would add a task on
+    * the SDK's executor, with the registration as both new and old: run after a swap rebinds the slot, that task shuts
+    * the provider down, and for one still initializing it fires a `PROVIDER_READY` early.
+    *
+    * The SDK answers an unbound domain with the default slot's provider, so a provider the default slot holds may not
+    * be in the domain's slot at all: that one is bound, and while the default slot holds it no task can shut it down.
+    * The API's own no-op provider needs the binding too: its manager has never initialized it.
+    */
+  private def holdsAlready(api: OpenFeatureAPI, domain: Option[String], bound: Bound): Boolean = {
+    val default = api.getProvider()
+    val slot    = domain.fold(default)(d => api.getProvider(d))
+    (domain.isEmpty || (slot ne default)) && !slot.isInstanceOf[NoOpProvider] && Bound.alreadyBound(slot, bound)
+  }
 
   /** Register `provider` and wait for its outcome, succeeding with how it settled; see [[Registration.settle]]. */
   def registerAndAwait(

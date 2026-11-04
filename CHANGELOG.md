@@ -225,6 +225,11 @@ unchanged. The entries under Removed and Changed below are the full record.
 
 ### Fixed
 
+- **A build on a provider its slot already holds no longer binds it again** (#804). The extra binding queued a task on
+  the SDK's executor. If a swap rebound the slot first, that task shut the provider down, and a swap that then failed
+  shut it down a second time. It also fired a `PROVIDER_READY` at the API's handlers for a provider still initializing.
+  A build under a domain on a provider only the default slot holds still binds it, as that is how the domain gets it.
+
 - **A failure no longer shuts down a provider the library does not own alone** (#796). A build that failed or timed out,
   and an async build's init deadline, shut down whatever the instance held. That included a provider you registered
   with the API yourself and the library reused, which the SDK then shut down a second time, and a wrapper a live sibling

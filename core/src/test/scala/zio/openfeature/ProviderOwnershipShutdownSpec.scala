@@ -191,6 +191,33 @@ object ProviderOwnershipShutdownSpec extends ZIOSpecDefault {
         _ <- ZIO.succeed(provider.gate.countDown())
       } yield out
     },
+    test("an async build on one still initializing in its own slot fires no READY until initialize() returns") {
+      val api      = OpenFeatureAPI.createIsolated()
+      val provider = new Gated()
+      val latch    = new CountDownLatch(1)
+      val readies  = new AtomicInteger(0)
+      for {
+        _   <- ZIO.succeed(api.onProviderReady { _ => readies.incrementAndGet(); () })
+        _   <- ZIO.succeed(api.setProvider("d", provider))
+        out <- ZIO.scoped {
+          asyncBuild(api, provider, "d", 1.hour, Some(latch)).flatMap { ff =>
+            for {
+              _     <- Live.live(ZIO.sleep(300.millis))
+              early <- ff.providerStatus
+              fired = readies.get()
+              held  = latch.getCount
+              _      <- ZIO.succeed(provider.gate.countDown())
+              status <- Live.live(ff.providerStatus.repeatUntil(_ == ProviderStatus.Ready).timeout(5.seconds))
+            } yield assertTrue(
+              fired == 0,
+              early == ProviderStatus.NotReady,
+              held == 1L,
+              status.contains(ProviderStatus.Ready)
+            )
+          }
+        }
+      } yield out
+    },
     test("after a failed build the SDK shuts it down exactly once, with the API") {
       val api      = OpenFeatureAPI.createIsolated()
       val provider = new Gated()
@@ -217,7 +244,7 @@ object ProviderOwnershipShutdownSpec extends ZIOSpecDefault {
         } yield assertTrue(swap.isFailure, pending, settled, count == 0)
       }
     },
-    test("the same when no slot holds it any more still shuts it down: nothing else would") {
+    test("the same when no slot holds it any more shuts it down once: nothing else would") {
       val api      = OpenFeatureAPI.createIsolated()
       val provider = new Gated(open = true)
       val incoming = new Gated(failure = Some("boom"))
@@ -230,9 +257,7 @@ object ProviderOwnershipShutdownSpec extends ZIOSpecDefault {
           _       <- ZIO.succeed(incoming.gate.countDown())
           settled <- orphansSettled(ff)
           count   <- ZIO.succeed(provider.shutdowns.get())
-          // At least once, not exactly: the SDK's task for the build's own binding may run after the swap rebinds the slot,
-          // and then shuts it down too, which a provider with no wrapper cannot absorb.
-        } yield assertTrue(swap.isFailure, pending, settled, count >= 1)
+        } yield assertTrue(swap.isFailure, pending, settled, count == 1)
       }
     }
   )

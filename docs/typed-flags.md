@@ -43,7 +43,9 @@ used by evaluation. Two definitions are equal only if key, default and descripti
 
 A `FlagDef[A]` needs a `FlagType[A]`, the codec between `A` and what the provider stores. Instances exist for
 `Boolean`, `String`, `Int`, `Long`, `Float`, `Double`, `Map[String, Any]` (an object flag), and `Option` and `List` of
-any type that has one. `Option[A]` is fetched with `A`'s resolver and reads `None` when the provider answered with an error or a default.
+any type that has one. `Option[A]` is fetched with `A`'s resolver and reads `None` when the provider served the default
+it was handed (reason `DEFAULT`, `DISABLED` or `ERROR` with `A`'s zero value), or, on the total tier, when it answered
+with an error code.
 
 ### Derive it (Scala 3)
 
@@ -73,6 +75,11 @@ libraryDependencies ++= Seq(
   "dev.zio"                 %% "zio-schema-derivation"  % "1.8.7"
 )
 ```
+
+!!! note "zio-schema version"
+    The module is built against zio-schema 1.8.x. zio-schema 1.9.x is compiled with Scala 3.9, whose TASTy a Scala 3.3
+    compiler cannot read, so on Scala 3.3 stay on 1.8.x. `zio-schema-derivation` is yours to add: the module itself
+    depends on `zio-schema` only.
 
 ```scala
 --8<-- "SchemaFlags.scala:schema"
@@ -116,6 +123,9 @@ core builds it from the instance.
 
     Derived enums use `String`; derived case classes, `List` and `from` use `Object`; `mapped` and `Option` inherit
     the underlying type's.
+
+    On the `Float` wire a value beyond `Float` range is `TYPE_MISMATCH`, not `Infinity`; a custom `FlagType` on that
+    wire receives the `Double` for such a value, and a `Float` for every other.
 
     `FlagType.from` takes a decoder and an encoder, and the flag is stored as an **object**. Values inside an object
     flag pass through the SDK, so numbers arrive as `Double` and `null` fields are dropped: decode numbers through

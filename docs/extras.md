@@ -31,6 +31,9 @@ before any wrapper sees them.
   seconds). Registering it with `FeatureFlags` too is safe.
 - `apply` throws `IllegalArgumentException`.
 
+Their configs, `CachingConfig` and `CircuitBreakerProviderConfig`, start from `default` and change one field per
+`with<Field>` setter, as in the tables below. They have no `copy` or `apply`.
+
 ## HOCON provider
 
 Reads flags from a Typesafe Config block, `feature-flags` by default:
@@ -59,6 +62,9 @@ feature-flags {
 - An absent key is `FLAG_NOT_FOUND`, so a [provider chain](providers.md#ask-several-providers-in-order) moves on. So is a
   key with a character HOCON reserves in a path (`:`, `@`, `#`, `$`, `,`, `=`, brackets, quotes) or an empty element
   (`a..b`): it cannot be present.
+- An object read of a key that holds a scalar or a list is a `TypeMismatch`.
+- `fromConfig` resolves the config it is given, as `apply` does for the one it loads, so substitutions work. A required
+  substitution that cannot be resolved throws `ConfigException.UnresolvedSubstitution` when you build the provider.
 
 !!! warning "A missing path is silent"
     If the `path` you pass to `HoconProvider(path)` does not exist, the provider starts empty: every flag is
@@ -81,8 +87,9 @@ Reads each flag from one variable: a prefix (default `FF_`) plus the upper-cased
 ```
 
 `withLookup` takes any `String => Option[String]`, handy in tests. Booleans accept `true`/`false`, `yes`/`no`,
-`on`/`off` and `1`/`0` in any case; numbers whatever `toInt`, `toLong` or `toDouble` parses; strings and objects the raw
-value. A set but unparsable variable is a `ParseError`, so a typo is visible; an unset one is `FLAG_NOT_FOUND`.
+`on`/`off` and `1`/`0` in any case; numbers whatever `toInt`, `toLong` or `toDouble` parses; strings the raw value.
+A set but unparsable variable is a `ParseError`, so a typo is visible; an unset one is `FLAG_NOT_FOUND`. A variable
+holds a string, so an object read of one is a `TypeMismatch`.
 
 ## Caching provider
 
@@ -97,11 +104,11 @@ Keeps a provider's answers for a while, using [zio-cache](https://github.com/zio
 - Errors and `DEFAULT`-reason answers are never cached, so a transient failure is retried. A caller that shared
   another caller's provider call is not handed that call's failure: it evaluates once more itself, on its own thread.
 
-| `CachingConfig` field | Default | Meaning |
-|---|---|---|
-| `maxEntries` | `1000` | entries kept before the least recently used is evicted; at least `1` |
-| `ttl` | `5.minutes` | how long an entry is served; greater than zero, `Duration.Infinity` never expires |
-| `contextKeys` | `None` | context attributes that make up the cache key; `None` uses the whole context |
+| `CachingConfig` field | Default | Setter | Meaning |
+|---|---|---|---|
+| `maxEntries` | `1000` | `withMaxEntries(n)` | entries kept before the least recently used is evicted; at least `1` |
+| `ttl` | `5.minutes` | `withTtl(d)` | how long an entry is served; greater than zero, `Duration.Infinity` never expires |
+| `contextKeys` | `None` | `withContextKeys(keys)` | context attributes that make up the cache key; `None` uses the whole context |
 
 A per-request attribute such as a request id makes every evaluation its own entry, so nothing is served from cache.
 Name the attributes that change the answer:
@@ -156,15 +163,15 @@ closed: while failures keep it open the event is held, and the probe that closes
 `resetTimeout` the next call is a probe.
 
 **What counts as a failure.** A call slower than `evaluationTimeout`, or one that throws or returns `GENERAL`,
-`PROVIDER_NOT_READY` or `PROVIDER_FATAL`. Other answers (`FLAG_NOT_FOUND`, type mismatch, invalid context) prove the
-provider is reachable and reset the count.
+`PROVIDER_NOT_READY` or `PROVIDER_FATAL`. Other answers (`FLAG_NOT_FOUND`, `TYPE_MISMATCH`, `PARSE_ERROR`,
+`TARGETING_KEY_MISSING`, `INVALID_CONTEXT`) prove the provider is reachable and reset the count.
 
 **Other ways it opens.** At most once per `stateCheckInterval` the breaker polls the provider's state: `ERROR` or
 `FATAL` opens, and a polled `READY` closes a circuit a poll opened. With an `EventProvider`, `PROVIDER_ERROR` opens and
 `PROVIDER_READY` closes a circuit an event or a poll opened. A failed `initialize` opens it too, and a `STALE` provider
-opens it under the default `stalePolicy`. `HalfOpen` lets the next call probe a circuit the provider's own `ERROR`,
-`FATAL` or failed `initialize` opened, instead of waiting `resetTimeout`; on a closed circuit, or one that failures
-opened, it changes nothing. `Ignore` does nothing. A circuit
+opens it under the default `stalePolicy`. With `HalfOpen`, a `STALE` report lets the next call probe a circuit the
+provider's own `ERROR`, `FATAL` or failed `initialize` opened, instead of waiting `resetTimeout`; on a closed circuit,
+or one that failures opened, it changes nothing. `Ignore` does nothing. A circuit
 opened by failures closes only through `resetTimeout` and a successful probe.
 
 **What an open circuit reports.** `ERROR`, except when the provider's `STALE` opened it: then it reports `STALE`,
@@ -179,14 +186,14 @@ failures, resets after 30000ms`. The reason is `consecutive failures`, `delegate
 `delegate reported STALE`, `delegate state poll reported unhealthy`, `delegate state poll reported STALE` or, during a
 half-open probe, `half-open, probe in progress`.
 
-| `CircuitBreakerProviderConfig` field | Default | Meaning |
-|---|---|---|
-| `failureThreshold` | `5` | consecutive failures that open it; at least `1` |
-| `resetTimeout` | `30.seconds` | how long the circuit stays open before a probe; greater than zero. `Duration.Infinity`: only a `READY` signal closes it, so a circuit opened by failures stays open |
-| `evaluationTimeout` | `500.millis` | longest wait for one call, above zero; `Duration.Infinity` disables it, and a hung probe then keeps the circuit half-open until it returns |
-| `halfOpenMaxCalls` | `1` | successful probes that close the circuit; at least `1` |
-| `stalePolicy` | `StalePolicy.Open` | what a `STALE` provider does: `Open`, `HalfOpen` or `Ignore` |
-| `stateCheckInterval` | `1.second` | state poll interval; `Duration.Zero` polls every call, `Duration.Infinity` once |
+| `CircuitBreakerProviderConfig` field | Default | Setter | Meaning |
+|---|---|---|---|
+| `failureThreshold` | `5` | `withFailureThreshold(n)` | consecutive failures that open it; at least `1` |
+| `resetTimeout` | `30.seconds` | `withResetTimeout(d)` | how long the circuit stays open before a probe; greater than zero. `Duration.Infinity`: only a `READY` signal closes it, so a circuit opened by failures stays open |
+| `evaluationTimeout` | `500.millis` | `withEvaluationTimeout(d)` | longest wait for one call, above zero; `Duration.Infinity` disables it, and a hung probe then keeps the circuit half-open until it returns |
+| `halfOpenMaxCalls` | `1` | `withHalfOpenMaxCalls(n)` | successful probes that close the circuit; at least `1` |
+| `stalePolicy` | `StalePolicy.Open` | `withStalePolicy(p)` | what a `STALE` provider does: `Open`, `HalfOpen` or `Ignore` |
+| `stateCheckInterval` | `1.second` | `withStateCheckInterval(d)` | state poll interval; `Duration.Zero` polls every call, `Duration.Infinity` once |
 
 ??? note "Timeouts and provider hooks"
     A finite `evaluationTimeout` runs the wrapped provider on another thread, so a wrapped `MultiProvider`'s members see

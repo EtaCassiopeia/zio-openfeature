@@ -16,13 +16,18 @@ libraryDependencies ++= Seq(
 )
 ```
 
-Only `core` is required. It is published for Scala 3.3.9+ and 2.13.18+, and needs ZIO 2.1.27+ and Java 11+. The
-examples on this site use Scala 3 syntax.
+Only `core` is required. It is published for Scala 3.3.9+ and 2.13.18+, and needs ZIO 2.1.27+ and Java 17+. CI tests it on Java 17, 21
+and 25. The examples on this site use Scala 3 syntax; see [Using Scala 2.13](#using-scala-213).
+
+Coming from 1.x? See [Upgrading to 2.0](upgrading.md).
 
 ??? note "Trying unreleased changes"
     Every commit on `main` publishes the next version with a `-SNAPSHOT` suffix (for example `1.2.2-SNAPSHOT` after
     `v1.2.1`). Add the snapshots resolver to use it. Snapshots change without notice; pin a release for anything you
     ship.
+
+    Until a 2.0 tag exists, snapshots from `main` carry the 2.0 API under a `1.2.x-SNAPSHOT` version. Despite the
+    number, they are not compatible with 1.2.1: see [Upgrading to 2.0](upgrading.md).
 
     ```scala
     resolvers += "Sonatype Central Snapshots" at "https://central.sonatype.com/repository/maven-snapshots/"
@@ -68,6 +73,17 @@ A `FlagDef` states a flag's key, type and default in one place, so call sites ca
 --8<-- "GettingStarted.scala:flag-def"
 ```
 
+## Using Scala 2.13
+
+The artifacts and the API are the same, and your build needs no special compiler flag. Examples on this site use Scala
+3 syntax, so write `import zio._`, `with` for `&`, `implicit` for `given`, and `Throwable` for
+`Throwable | FeatureFlagError`, since a `FeatureFlagError` is a `Throwable`. What differs:
+
+| On Scala 3 | On Scala 2.13 |
+|---|---|
+| `transaction` | does not exist: use [`transactionEither`](transactions.md#errors), which works on both |
+| `derives FlagType`, `FlagType.derived` | do not exist: use [`SchemaFlagType`](typed-flags.md#derive-it-with-zio-schema-scala-213-and-3) or [`FlagType.mapped` and `FlagType.from`](typed-flags.md#map-it-from-another-type) |
+
 ## Where next
 
 | To | Read |
@@ -79,3 +95,4 @@ A `FlagDef` states a flag's key, type and default in one place, so call sites ca
 | read flags from HOCON or env vars, or add caching and a circuit breaker | [Extras](extras.md) |
 | test code that reads flags | [Testkit](testkit.md) |
 | see how it works inside | [Under the hood](architecture.md) |
+| move an application from 1.x | [Upgrading to 2.0](upgrading.md) |

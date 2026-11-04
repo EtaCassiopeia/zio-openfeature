@@ -66,8 +66,7 @@ jobs:
       - name: Check formatting
         run: sbt scalafmtCheckAll scalafmtSbtCheck providerFaultTests/scalafmtCheckAll fuzz/scalafmtCheckAll
 
-  # Build + test on every supported (JDK, Scala) pair. The library advertises Java 11+ via the OpenFeature Java SDK
-  # but we don't currently support running CI on JDK 11 because Optimizely's core-httpclient-impl requires JDK 17+.
+  # Build + test on every supported (JDK, Scala) pair. The library requires Java 17+.
   # JDK 17, 21 and 25 are the LTS releases that cover the realistic deployment window. The Scala entries name a line:
   # `++` resolves each against crossScalaVersions in build.sbt, so a Scala bump needs no edit here, and a line the build
   # no longer publishes fails the switch. The exact version is in the step log.

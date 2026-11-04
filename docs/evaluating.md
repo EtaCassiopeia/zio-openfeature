@@ -85,7 +85,7 @@ the typed tier `errorCode` is always empty, since an error code fails the effect
 | `Unauthorized(reason, cause)` | the provider refused us, typically a wrong SDK key (401, 403) |
 | `Unreachable(underlying)` | DNS failure, connection refused, no route |
 | `ProviderError(underlying)` | anything else the provider threw, including a timeout |
-| `InvalidConfiguration(reason)` | bad settings building an [OFREP](ofrep.md) or [Optimizely](optimizely.md) provider |
+| `InvalidConfiguration(reason)` | bad settings building an [OFREP](ofrep.md) or [Optimizely](optimizely.md) provider, or a caching or circuit-breaker wrapper |
 | `OverrideTypeMismatch(key, expected, detail)` | a [transaction](transactions.md) override of the wrong type |
 | `NestedTransactionNotAllowed` | a transaction inside another, under the default nesting policy |
 
@@ -94,7 +94,7 @@ on `FeatureFlagError` group them by flag and by provider. By operation, each cas
 by an evaluation, and by `track`), a `LifecycleError` (building an instance, `setProvider`, a provider's constructor)
 or a `TransactionError` (`transaction` itself), some of them more than one. Evaluating and `track` fail with
 `EvaluationError`, and `setProvider` with `LifecycleError`, so a `match` over the former need not name
-`ProviderInitializationFailed`. The `FeatureFlags` and `FeatureFlagsAdmin` factories still fail with a `Throwable`,
+`ProviderInitializationFailed`. The `FeatureFlags` factories still fail with a `Throwable`,
 since they can also fail with an `IllegalStateException`.
 
 A `FeatureFlagError` is also a `Throwable`, without a stack trace, so `.orDie` takes it as it is:
@@ -121,6 +121,7 @@ the one you need: `boolean("k", false, options = opts)`.
 |---|---|
 | `withHook(hook)`, `withHooks(hooks)` | run these [hooks](hooks.md) for this call, as well as the instance's own |
 | `withHint(key, value)` | data the hooks read from their hints |
+| `withHookHints(hints)` | replace all the hints with a `HookHints`; `hookHints` reads them back |
 | `withTimeout(duration)` | bound this call |
 | `withoutTimeout` | no timeout, and no timer overhead |
 | (neither) | the instance's timeout, **1 second** unless configured |

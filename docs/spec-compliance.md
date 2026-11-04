@@ -6,6 +6,7 @@ context. The static-context paradigm (client side) and its context reconciliatio
 
 | ZIO OpenFeature | [OpenFeature specification](https://github.com/open-feature/spec) | [OpenFeature Java SDK](https://github.com/open-feature/java-sdk) |
 |:----------------|:-----------------------------------------------------------------|:-----------------------------------------------------------------|
+| 2.0.x (unreleased) | [v0.9.0](https://github.com/open-feature/spec/releases/tag/v0.9.0) | 1.23.0 |
 | 1.2.x (latest published: 1.2.1) | [v0.9.0](https://github.com/open-feature/spec/releases/tag/v0.9.0) | 1.23.0 |
 | 1.1.x | v0.9.0 | 1.22.1 |
 | 1.0.0 | [v0.8.0](https://github.com/open-feature/spec/releases/tag/v0.8.0) | 1.21.0 |
@@ -38,7 +39,7 @@ and runs them on every build, twice: the `conformance` module runs them with Cuc
 | **Providers (§1.6, §1.7, §2)** | |
 | Set a provider and wait for it (blocking init) | `FeatureFlags.fromProvider` |
 | Set a provider without waiting (async init) | `fromProviderAsync`, or `FeatureFlagsConfig.default.withAsyncInit` |
-| Shut down (§1.6.1) | when the layer's `Scope` closes, or `FeatureFlagsAdmin.shutdown` |
+| Shut down (§1.6.1) | when the layer's `Scope` closes, or `FeatureFlagsAdmin.shutdown`, for an instance that owns its API ([who owns it](providers.md#who-shuts-down-the-api)) |
 | Domains | `FeatureFlagsConfig.default.withDomain(d)` (and `.withVersion(v)` for the client version); `FeatureFlagRegistry` for many domains |
 | Provider and client metadata | `providerMetadata`, `clientMetadata` |
 | Provider status (§1.7) | `providerStatus`: `NotReady`, `Ready`, `Stale`, `Error`, `Fatal`, plus `ShuttingDown`; a `STALE` event moves any status but `Fatal` and `ShuttingDown` to `Stale`, as §5.3.5 maps it |
@@ -52,13 +53,13 @@ and runs them on every build, twice: the `conformance` module runs them with Cuc
 | Stages: before, after, error, finally | `FeatureHook`: `before`, `after`, `error`, `finallyAfter` |
 | Hook context and hints | `HookContext` (flag key, flag type, default value, evaluation context, client and provider metadata); `HookHints`, passed through `EvaluationOptions` |
 | Hook data (§4.6) | `HookData`, per hook and per evaluation, shared across its stages |
-| API, client, invocation and provider hooks | `addZioApiHook`; `addHook`; `EvaluationOptions.empty.withHooks(...)`; the provider's own `getProviderHooks`. Java SDK hooks can be added with `addApiHook`. |
+| API, client, invocation and provider hooks | `FeatureFlagsAdmin.addZioApiHook`; `addHook`; `EvaluationOptions.empty.withHooks(...)`; the provider's own `getProviderHooks`. Java SDK hooks can be added with `FeatureFlagsAdmin.addApiHook`. |
 | Order | before: API, client, invocation, then, inside the SDK call, Java SDK API hooks, provider hooks; after, error and finally run in reverse |
 | A failing `before` or `after` runs `error` (§4.4.5-4.4.6) | yes; the rest of that stage is skipped |
 | A failing `after` yields the default (§4.4.8) | the total tier returns the default with reason `Error` and code `General`, and `finallyAfter` sees that; the typed tier fails |
 | **Events (§5)** | |
 | Ready, error, stale, configuration-changed events | `ProviderEvent.Ready`, `Error`, `Stale`, `ConfigurationChanged`, each with the provider's event metadata |
-| Add and remove handlers | `onProviderReady`, `onProviderError`, `onProviderStale`, `onConfigurationChanged`, or `on(eventType, handler)`; each returns an effect that removes the handler |
+| Add and remove handlers | `FeatureFlagsAdmin.onProviderReady`, `onProviderError`, `onProviderStale`, `onConfigurationChanged`, or `on(eventType, handler)`; each returns an effect that removes the handler |
 | Run a handler at once if the provider is already in that state (§5.3.3) | yes |
 | All events as a stream | `FeatureFlags.events`, a `ZStream` |
 | Multi-Provider status and events (Appendix A) | `FeatureFlags.multiProvider`: the worst member status, `FATAL` > `NOT_READY` > `ERROR` > `STALE` > `READY`; a member's status event re-emitted only when it changes that, a configuration change always. See [Providers](providers.md#ask-several-providers-in-order). |
@@ -67,6 +68,10 @@ and runs them on every build, twice: the `conformance` module runs them with Cuc
 
 `ProviderEvent.Reconnecting` has no Java SDK equivalent (it belongs to the client-side paradigm), so `FeatureFlags`
 never emits it. `ContextSource` and the transaction level are additions: see [Evaluation context](context.md).
+
+**Not yet compliant:** spec v0.9.0 requires a provider to emit its own `PROVIDER_READY`, `PROVIDER_ERROR` and
+`PROVIDER_CONTEXT_CHANGED` (requirements 2.8.1 to 2.8.4). The bundled providers rely on the Java SDK synthesizing them,
+because emitting them as well would deliver duplicate events to handlers before the SDK ships its opt-in marker.
 
 ??? note "Fail-fast while the provider is not ready"
     While the provider is `NotReady` or `ShuttingDown`, evaluations fail with `ProviderNotReady`; while it is `Fatal`,

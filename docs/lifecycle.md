@@ -12,22 +12,24 @@ uses the status to decide whether an evaluation may run, and publishes the provi
 | `NotReady` | fails with `ProviderNotReady(NotReady)` | start, a `setProvider` swap in progress, a refused swap while the provider still starts, or shutdown complete |
 | `Ready` | runs | a `READY` event |
 | `Stale` | runs | a `STALE` event, or the SDK reporting `STALE` for the provider, from `NotReady`, `Ready` or `Error`; a `setProvider` whose new provider the SDK reports `STALE` |
-| `Error` | runs: the provider usually serves its last good values or answers with an error code | an `ERROR` event; a `setProvider` whose new provider reports `ERROR` right after it initialized |
-| `Fatal` | fails with `ProviderFatal` | an `ERROR` event with code `ProviderFatal`, or `initTimeout` passing before the provider was ever ready |
+| `Error` | runs: the provider usually serves its last good values or answers with an error code | an `ERROR` event; a `setProvider` whose new provider reports `ERROR` right after it initialized, or that timed out or failed without a rollback |
+| `Fatal` | fails with `ProviderFatal` | an `ERROR` event with code `ProviderFatal`, or `initTimeout` passing before the provider was ever ready; a `setProvider` whose new provider the SDK reports `FATAL` |
 | `ShuttingDown` | fails with `ProviderNotReady(ShuttingDown)` | `shutdown` in progress |
 
 - `Fatal` and `ShuttingDown` ignore both `READY` and `ERROR`. `Fatal` stays until
   [`setProvider`](providers.md#replace-the-provider-at-runtime) installs a new provider.
 - Events that arrive during a swap or after a shutdown do not change the status.
-- A `READY` event counts only once the Java SDK itself reports the provider ready; the SDK can send one while a
-  provider shared with another domain is still initializing. A client registered on a provider that is already
+- A `READY` event is dropped while the Java SDK still reports the provider `NOT_READY`; the SDK can send one while a
+  provider shared with another domain is still initializing. Otherwise the status becomes the state the SDK reports
+  (see below). A client registered on a provider that is already
   initialized, or that already failed, takes that state at once, since no event follows.
 - The Java SDK delivers a provider's events with no ordering between them, so an `ERROR` followed quickly by a
   `READY` can reach this library in either order. Each `READY`, `STALE` or `ERROR` therefore applies the state the
   SDK reports for the provider when the event is handled, not the event's own type, within the rules above (`Fatal`
   final). An `ERROR` with code `ProviderFatal` always makes the status `Fatal`. Any other event handled while the
   SDK still reports `NOT_READY` for the provider changes nothing: it comes from another registration, such as a replaced
-  provider with the same name. Either way the event itself reaches your handlers as sent.
+  provider with the same name. An `ERROR` or `STALE` still reaches your handlers as sent; a `READY` handled while the
+  SDK reports `NOT_READY` is dropped before it reaches them.
 - An event from a provider that is no longer installed does not change the status: the Java SDK delivers a provider's
   events only to the domains it is bound to, and the status follows the SDK's state for the installed provider.
 - `status.canEvaluate` is true for `Ready` and `Stale`; `status.isRecoverable` is false only for `Fatal`.
@@ -143,9 +145,10 @@ shutdown, or after the layer's scope has closed, whether or not the instance own
 given untouched: a shut-down instance is never revived, so build a new layer instead.
 
 A shutdown called while a [provider swap](providers.md#replace-the-provider-at-runtime) is in flight waits for that
-swap to finish first, and for any swap already queued behind it, each bounded by its own `initTimeout`, and then runs.
-The status ends `NotReady` whatever the swap's outcome. Interrupting a shutdown that is still waiting cancels it
-before it has changed anything. An instance that owns its API also shuts down a provider that a
+swap to finish first, and for any swap already queued behind it, each bounded by its `initTimeout` and, after a failed
+swap, a rollback's, and then runs. The status ends `NotReady` whatever the swap's outcome. Interrupting a shutdown that
+is still waiting for a swap cancels it before it has changed this instance; on an owner, other instances on the same
+API have already been retired. An instance that owns its API also shuts down a provider that a
 [timed-out swap](providers.md#replace-the-provider-at-runtime) replaced, if the swap's new provider has not become
 ready by then. Closing the layer's scope waits for a swap in flight, and any queued ahead of it, the same way before it
 tears the API down, so it can take as long as those swaps do, each bounded by its `initTimeout` and rollback.

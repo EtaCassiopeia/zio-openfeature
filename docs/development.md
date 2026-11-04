@@ -38,11 +38,11 @@ also covers the binary-compatibility baselines.
 
 | Job | Run it locally |
 |:----|:---------------|
-| format | `sbt scalafmtCheckAll scalafmtSbtCheck providerFaultTests/scalafmtCheckAll` (`providerFaultTests` is not aggregated, so format it explicitly) |
+| format | `sbt scalafmtCheckAll scalafmtSbtCheck providerFaultTests/scalafmtCheckAll fuzz/scalafmtCheckAll` (`providerFaultTests` and `fuzz` are not aggregated, so format them explicitly) |
 | build and test, JDK 17, 21 and 25, Scala 2.13 and 3 | `sbt +test` |
-| binary compatibility | `sbt +mimaReportBinaryIssues tastyMiMaReportIssues`, then `.github/scripts/check-mima-filters.sh` |
+| binary compatibility | `sbt +mimaReportBinaryIssues tastyMiMaReportIssues`, then `.github/scripts/check-mima-filters.sh`. While 2.0 is in development there is no baseline, so the first two compare nothing and the script rejects any filter |
 | published POMs | `sbt +checkPublishedPins +optimizely/checkOptimizelyJsonParser` |
-| examples | `sbt examplesOfrepInitTimeout/compile examplesTestkitApp/test examplesDocs/test` |
+| examples, and the fault-test and fuzz sources | `sbt examplesOfrepInitTimeout/compile examplesTestkitApp/test examplesDocs/test providerFaultTests/Test/compile fuzz/Test/compile` |
 | conformance | `sbt conformance/test conformanceZioBdd/test` |
 | gherkin copies in sync (every push); upstream drift (weekly) | `.github/scripts/check-gherkin-drift.sh mirror`; `.github/scripts/check-gherkin-drift.sh upstream main` |
 | provider TCK upstream drift (weekly) | `.github/scripts/check-provider-tck-drift.sh upstream main` |
@@ -152,22 +152,50 @@ model `LifecycleModelSpec` uses. A reach table lists the points each primary pas
 test rather than silently testing nothing. To hold a new point, add it to `LifecycleProbe.Point`, call `probe.at` there,
 and add it to the reach table.
 
-**Model checking.** `formal/lifecycle/Lifecycle.tla` is a TLA+ model of the provider lifecycle (swaps, rollbacks,
-the event bridge, the providers a timed-out swap leaves behind, shutdown), with the Java SDK as its environment. TLC
-checks every order its actions can take for a small configuration against invariants: the final `NotReady`, `NotReady`
-throughout a swap, no second `initialize()` while one runs, the status following the SDK's state for the installed
-provider, and every provider shut down exactly once when the scope closes. The `Formal model` workflow runs it on every
-pull request that touches the lifecycle code or the model; a pull request that changes the lifecycle code without
-changing the model says why, in a description line starting `formal: unaffected because`. On `main`, `mutants.py` puts
-each fixed lifecycle bug back into the model and checks that an invariant catches it. Trace validation keeps the
-model honest about the code: with `ZOF_TRACE=1` the lifecycle test suites record each run's probe points, and TLC checks
-the order of every run's library steps is one the model allows, on `main` and nightly in the same workflow. `formal/lifecycle/README.md` maps each action to
-the code, explains the trace check and lists what the model leaves out.
+**Model checking.** `formal/` holds TLA+ models of the library's concurrent protocols. The `Formal model` workflow
+checks them with TLC, on a pull request that touches `formal/`, the workflow, or the code a model maps (the paths are
+listed in the workflow), and on `main`. A pull request that changes the lifecycle code without changing the model says
+why, in a description line starting `formal: unaffected because`.
+
+| Model | What it checks | Configs and tools | README |
+|:------|:---------------|:------------------|:-------|
+| `formal/lifecycle` | The provider lifecycle: swaps, rollbacks, the event bridge, the providers a timed-out swap leaves behind, shutdown, with the Java SDK as its environment. The invariants include the final `NotReady`, `NotReady` throughout a swap, no second `initialize()` while one runs, and every provider shut down exactly once | `LifecyclePR.cfg` on a pull request, `Lifecycle.cfg` on `main` and by hand; on every run also `Liveness.cfg` (recovery under fairness), `Shutdowns.cfg` and `ShutdownsLiveness.cfg` (providers whose `shutdown()` throws or hangs), `Evaluation.cfg` (one evaluation against swaps) and the silent-death witness | `formal/lifecycle/README.md` |
+| `formal/lifecycle`, proofs | The structural invariants of the same model, proved with TLAPS for any number of providers, swaps, events and evaluations | `LifecycleProofs.tla` | `formal/lifecycle/README.md` |
+| `formal/lifecycle`, traces and replay | Trace validation: each run the lifecycle test suites record is a behaviour of the model. Replay: behaviours generated from the model are replayed against the lifecycle's pure step | `validate.py`, `generate.py`, `LifecycleReplaySpec` | `formal/lifecycle/README.md`, `formal/lifecycle/replay-map.md` |
+| `formal/registry` | One API shared by several instances: a single owner tears it down, each registered provider is shut down exactly once, one client per domain | `Registry.cfg` | `formal/registry/README.md` |
+| `formal/lane` | `OrderedEmitter`, the lane the wrappers re-emit events through: slot writes follow the order of receipt, no deadlock with the SDK's lock, no dropped emission | `Lane.cfg`, `Witness.cfg` | `formal/lane/README.md` |
+| `formal/caching` | `CachingProvider`: an invalidation holds against every order of lookup and write-back, a failed or `DEFAULT` result is not kept, a caller is not handed another lookup's failure | `Caching.cfg` | `formal/caching/README.md` |
+| `formal/circuitbreaker` | The circuit breaker's lock-free state machine: at most one half-open probe, stale outcomes ignored, a dead probe's slot freed | `CircuitBreaker.cfg`, `Signals.cfg`, `Liveness.cfg` | `formal/circuitbreaker/README.md` |
+
+The lifecycle, registry, lane, caching and breaker models also have a `mutants.py` that puts each fixed bug back into the
+model and checks that a property catches it. The registry, lane, caching and breaker mutants run on every pull request;
+the lifecycle mutants run on `main` and by hand.
+
+A pull request checks smaller bounds for the lifecycle model than `main` does. `LifecyclePR.cfg` allows one provider
+event and `Lifecycle.cfg` two, and the full bounds outgrew a pull request's wait: the pull request check takes about 14
+minutes in CI (limit 30 minutes), the full one roughly 65 to 80 minutes on `main` (limit 150 minutes). A break only the
+full bounds can find shows up in `main`'s run, so read it after a merge that touches the model. The other lifecycle
+configs and the registry, lane, caching and breaker models are small enough to run in full on every pull request; the
+workflow puts its group of small lifecycle and lane checks at about 25 minutes in all, and the registry model takes under
+a second.
+
+Trace validation and the replay need TLC 1.8, which reads the traces with the community modules' `Json`. CI takes it
+from a `tooling/tla2tools-*` prerelease of this repository, and TLAPS from a `tooling/tlapm-*` one; the workflow's
+`TRACE_TLA_TOOLS_RELEASE` and `TLAPM_RELEASE` name them. The other checks use TLC 1.7.4, so running `validate.py` or
+`generate.py` with that jar will not work. A `tooling/*` tag goes on a parentless anchor commit, never on a commit of
+`main`; see [RELEASING.md](https://github.com/EtaCassiopeia/zio-openfeature/blob/main/RELEASING.md#tags). On a pull
+request the traces job checks the checker's fixtures and replays 2000 generated behaviours from a fixed seed. On `main`,
+nightly and by hand it also validates the runs the lifecycle suites record, and nightly it replays 20000 behaviours from
+a rotating seed.
+
+To check a model change locally, run a pull request's bounds first. These are the commands for the lifecycle and
+registry models with TLC 1.7.4; the traces and the replay have their own in `formal/lifecycle/README.md`:
 
 ```sh
 cd formal/lifecycle
 curl -sSLo tla2tools.jar https://github.com/tlaplus/tlaplus/releases/download/v1.7.4/tla2tools.jar
-java -cp tla2tools.jar tlc2.TLC -workers auto -deadlock -config Lifecycle.cfg Lifecycle.tla
+java -cp tla2tools.jar tlc2.TLC -workers auto -deadlock -config LifecyclePR.cfg Lifecycle.tla   # a pull request's bounds
+java -cp tla2tools.jar tlc2.TLC -workers auto -deadlock -config Lifecycle.cfg Lifecycle.tla      # main's bounds, about an hour
 python3 mutants.py tla2tools.jar
 cd ../registry
 java -cp ../lifecycle/tla2tools.jar tlc2.TLC -workers auto -deadlock -config Registry.cfg Registry.tla

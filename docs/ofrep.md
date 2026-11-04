@@ -31,10 +31,12 @@ Every evaluation is one HTTP call. The provider has no start-up step, so it is r
 
 `OFREPProvider.make` checks the base URL before building anything: it must be non-empty, parse as a URI, use `http` or
 `https`, and name a host. Anything else fails with `FeatureFlagError.InvalidConfiguration`, so a typo stops your app at
-startup instead of at the first evaluation.
+startup instead of at the first evaluation. The contrib provider then runs its own URL check, which also rejects a host
+whose top-level domain it does not know, such as `.test`; that is an `InvalidConfiguration` too.
 
-`make` returns an `IO`; `scoped` and `layer` shut the provider down with their scope or layer, while a provider from
-`make` is shut down by the `FeatureFlags` layer you register it with. Each takes a base URL, an `OFREPProviderConfig`,
+`make` returns an `IO`; `scoped` and `layer` shut the provider down with their scope or layer, giving up on a shutdown
+that takes longer than 5 seconds and logging a warning, while a provider from `make` is shut down by the `FeatureFlags`
+layer you register it with. Each takes a base URL, an `OFREPProviderConfig`,
 or the contrib provider's own `OfrepProviderOptions`.
 
 ```scala
@@ -47,13 +49,15 @@ or the contrib provider's own `OfrepProviderOptions`.
 --8<-- "Ofrep.scala:config"
 ```
 
-| `OFREPProviderConfig` field | Default | Meaning |
-|---|---|---|
-| `baseUrl` | required | the OFREP server |
-| `requestTimeout` | the contrib provider's | longest wait for one HTTP request |
-| `connectTimeout` | the contrib provider's | longest wait to open a connection |
-| `headers` | none | headers sent with every request, such as an `Authorization` token |
-| `proxy` | the JVM's default | a `java.net.ProxySelector` for the HTTP traffic |
+A config starts from `OFREPProviderConfig(baseUrl)` and changes one field per `with<Field>` setter. It has no `copy`.
+
+| `OFREPProviderConfig` field | Default | Setter | Meaning |
+|---|---|---|---|
+| `baseUrl` | required | `withBaseUrl(url)` | the OFREP server |
+| `requestTimeout` | the contrib provider's | `withRequestTimeout(d)` | longest wait for one HTTP request |
+| `connectTimeout` | the contrib provider's | `withConnectTimeout(d)` | longest wait to open a connection |
+| `headers` | none | `withHeaders(h)` | headers sent with every request, such as an `Authorization` token |
+| `proxy` | the JVM's default | `withProxy(selector)` | a `java.net.ProxySelector` for the HTTP traffic |
 
 Keep `FeatureFlags`' `evaluationTimeout` (one second by default) at or below `requestTimeout`.
 
@@ -62,9 +66,10 @@ Keep `FeatureFlags`' `evaluationTimeout` (one second by default) at or below `re
 | What happens | Typed tier | Total tier |
 |---|---|---|
 | The server answers 401 or 403 | fails with `Unauthorized` | your default, error code `General` |
-| The server answers another 4xx or 5xx | fails with the error the response names (`ProviderError` for `GENERAL`) | your default, with that error code |
-| The server cannot be reached | fails with `Unreachable` (or `ProviderError`) | your default, error code `General` |
-| The response is not OFREP JSON (an HTML error page, an empty body, truncated JSON), whatever the status | fails with `ProviderError` | your default, error code `General` |
+| The server answers 429, 5xx or another status not listed here | fails with `ProviderError`, whatever the body says | your default, error code `General` |
+| The server answers 400, 404 or 406 with an OFREP JSON body | fails with `InvalidContext` (400, 406) or `FlagNotFound` (404) | your default, with that error code |
+| The server cannot be reached | fails with `ProviderError` | your default, error code `General` |
+| The response is not OFREP JSON (an HTML error page, an empty body, truncated JSON), whatever the status | fails with `ProviderError`; a plain-text body naming the failure (`Forbidden`, `Unauthorized`) reads as `Unauthorized`, since the parse error quotes it | your default, error code `General` |
 
 To alert on the total tier, check the resolution's error code:
 

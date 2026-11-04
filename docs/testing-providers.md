@@ -197,7 +197,7 @@ override def flagLayer(meta: ScenarioMetadata, flags: Map[String, String]): ZLay
 ```
 
 `@flags(greeting=new, plan=pro)` runs the scenario once with both keys; two `@flags(...)` tags on separate lines run it
-once per tag. Coarser hooks: `scenarioLayer`, `featureLayer`, `applicationLayer`. This block is not a compiled snippet:
+once per tag. Coarser hooks: `scenarioLayer(meta)`, `featureLayer` and `globalLayer`. This block is not a compiled snippet:
 zio-bdd is a dependency of the `conformance-zio-bdd` module only.
 
 ??? note "`CachingReasonProvider`"

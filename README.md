@@ -42,3 +42,5 @@ object MyApp extends ZIOAppDefault:
 **[Documentation](https://etacassiopeia.github.io/zio-openfeature/)**: modules, requirements, typed flags, providers,
 testing, and [spec compliance](https://etacassiopeia.github.io/zio-openfeature/spec-compliance/) with the supported
 OpenFeature spec and SDK versions. Apache 2.0.
+
+Upgrading from 1.x? See the [upgrade guide](https://etacassiopeia.github.io/zio-openfeature/upgrading/).

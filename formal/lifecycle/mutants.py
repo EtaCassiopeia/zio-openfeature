@@ -64,8 +64,8 @@ mutants = {
     # The rollback's wait reads an ERROR the restored provider reports right after initializing as a failed
     # rollback, whose cleanup shuts the failed provider down after the SDK already did.
     'a rollback reads an error after initialize() returned as a failed rollback': (
-        "       /\\ shuts' = IF ok THEN shuts ELSE [shuts EXCEPT ![failed] = @ + 1]",
-        "       /\\ shuts' = IF ok /\\ r \\notin {\"ERROR\", \"FATAL\"} THEN shuts ELSE [shuts EXCEPT ![failed] = @ + 1]"),
+        "       /\\ IF ok THEN UNCHANGED << shuts, shutOutcome >> ELSE CallShutdown(failed)",
+        "       /\\ IF ok /\\ r \\notin {\"ERROR\", \"FATAL\"} THEN UNCHANGED << shuts, shutOutcome >> ELSE CallShutdown(failed)"),
     # The watcher of a timed-out swap's provider reads an ERROR it reports right after initializing as a failed one.
     'the orphan watcher reads an error after initialize() returned as a failed one': (
         'Released(o) == View(o) \\in {"READY", "STALE"} \\/ RanView(o)',

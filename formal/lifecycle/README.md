@@ -157,6 +157,8 @@ provider call spans a whole swap is not served by the provider the swap replaced
 swap lock and before the registration. An evaluation that reads the new generation finds the gate already up. One
 that reads the old generation with the status already `NotReady` is refused at its check. So taking the three writes
 in one step loses no outcome.
+Only that step writes the generation's mirror: it is written outside the step's critical section, so a write from every
+step could land late and move it back, a reordering this one step cannot show.
 
 Trace validation records no evaluations (`MaxEvals = 0`): the recorded runs check the lifecycle only.
 

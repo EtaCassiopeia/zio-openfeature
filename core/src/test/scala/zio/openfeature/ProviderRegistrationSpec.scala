@@ -97,6 +97,62 @@ object ProviderRegistrationSpec extends ZIOSpecDefault {
         })
       }
     },
+    suite("a provider another registration is initializing")(
+      test("a registration that may not share it fails before binding anything") {
+        registered { (api, domain) =>
+          val inits   = new java.util.concurrent.atomic.AtomicInteger(0)
+          val gate    = new java.util.concurrent.CountDownLatch(1)
+          val wrapper = ManagedProvider(new Provider("busy", _ => { inits.incrementAndGet(); gate.await() }))
+          val other   = domain + "-b"
+          for {
+            first <- ProviderRegistration.registerAndAwait(api, Some(domain), Bound.Managed(wrapper), 10.seconds).fork
+            _     <- Live.live(ZIO.succeed(inits.get()).repeatUntil(_ == 1).timeout(5.seconds))
+            exit  <- ProviderRegistration.register(api, Some(other), Bound.Managed(wrapper), shareInFlight = false).exit
+            bound = api.getProvider(other) eq wrapper
+            count = inits.get()
+            _ <- ZIO.succeed(gate.countDown())
+            _ <- first.join
+          } yield assertTrue(
+            exit.causeOption.flatMap(_.failureOption).exists(_.isInstanceOf[ProviderRegistration.StillInitializing]),
+            !bound,
+            count == 1
+          )
+        }
+      },
+      test("one that may share it binds and settles on that call's outcome") {
+        registered { (api, domain) =>
+          val inits   = new java.util.concurrent.atomic.AtomicInteger(0)
+          val gate    = new java.util.concurrent.CountDownLatch(1)
+          val wrapper = ManagedProvider(new Provider("busy", _ => { inits.incrementAndGet(); gate.await() }))
+          val other   = domain + "-b"
+          for {
+            first  <- ProviderRegistration.registerAndAwait(api, Some(domain), Bound.Managed(wrapper), 10.seconds).fork
+            _      <- Live.live(ZIO.succeed(inits.get()).repeatUntil(_ == 1).timeout(5.seconds))
+            second <- ProviderRegistration.registerAndAwait(api, Some(other), Bound.Managed(wrapper), 10.seconds).fork
+            _      <- Live.live(ZIO.succeed(api.getProvider(other) eq wrapper).repeatUntil(identity).timeout(5.seconds))
+            _      <- ZIO.succeed(gate.countDown())
+            settled <- second.join
+            _       <- first.join
+            count = inits.get()
+          } yield assertTrue(settled == Settled.Ready, count == 1)
+        }
+      },
+      test("a registration that may not share a call that has returned binds as usual") {
+        registered { (api, domain) =>
+          val wrapper = ManagedProvider(new Provider("idle", _ => ()))
+          for {
+            _   <- ProviderRegistration.registerAndAwait(api, Some(domain), Bound.Managed(wrapper), 5.seconds)
+            reg <- ProviderRegistration.register(
+              api,
+              Some(domain + "-b"),
+              Bound.Managed(wrapper),
+              shareInFlight = false
+            )
+            settled <- reg.settle(5.seconds)
+          } yield assertTrue(settled == Settled.Ready)
+        }
+      }
+    ),
     suite("a provider the slot already holds")(
       test("one that is ready settles Ready with no second initialize()") {
         registered { (api, domain) =>

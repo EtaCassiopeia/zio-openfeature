@@ -319,8 +319,9 @@ evaluations keep going. To initialize a provider again, install a new instance.
   waits the same way after a swap or rollback that did not time out. Three seconds is also how long installing again a
   provider another slot of a shared API still serves takes: the SDK does not shut that one down, and the swap then
   proceeds. A provider whose earlier `initialize()` has
-  not returned (the one an async start was built with, or one a timed-out swap or rollback installed) is refused the
-  same way, however many swaps have happened since, until that call returns. If `setProvider` is called while the
+  not returned (the one an async start was built with, one a timed-out swap or rollback installed, or one another
+  instance is initializing under a different slot) is refused the same way, however many swaps have happened since,
+  until that call returns, and the provider this slot holds stays in place. If `setProvider` is called while the
   timed-out provider, or the provider an async start was built with, is still initializing and the new provider's
   `initialize()` throws, there is nothing to roll back to: that provider never served and is not initialized a second
   time. The new provider stays registered with status `Error`, that provider is shut down (by an instance that owns

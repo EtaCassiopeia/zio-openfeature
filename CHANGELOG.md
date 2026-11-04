@@ -225,6 +225,13 @@ unchanged. The entries under Removed and Changed below are the full record.
 
 ### Fixed
 
+- **A swap to a provider another instance is initializing is refused, and leaves the current provider alone** (#806). A
+  swap admitted just before a sibling started that provider's `initialize()` went on to bind it. The SDK took the
+  sibling's call for this binding's and shut the swap's previous provider down at once. If the call then threw, the
+  rollback brought back a provider that had been shut down. The swap now fails with the same "still initializing" error
+  as one refused at its start. A sibling's SDK task that has not started when the swap binds is out of the library's
+  sight, so that narrower race remains.
+
 - **A provider you registered under a domain an instance was built on is reused under any other** (#801). The library
   only recognised a provider you registered in the build's own slot or the default slot. Under another domain it wrapped
   it and ran `initialize()` a second time, and a failure then shut it down while that domain still served it. It now

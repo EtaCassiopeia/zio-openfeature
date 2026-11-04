@@ -135,7 +135,7 @@ Two invariants carry it:
 | `NoAnswerDuringSwap` | No answer is returned while a swap is in flight. | No swap in flight. |
 
 The contract's "installed at the generation read" is dropped on purpose. An evaluation can read the generation while a
-swap is in flight that the SDK then refuses before binding. `SwapRollbackUnbound` puts the status back to `Ready`, the
+swap is in flight that is then refused before binding. `SwapRollbackUnbound` puts the status back to `Ready`, the
 check passes, and the provider the rollback kept answers. That answer is correct, and the stricter wording would
 refuse it.
 
@@ -171,7 +171,7 @@ there is one.
 |:--|:--|
 | `SwapStart` | `FeatureFlagsLive.setProvider`: lock taken, `LifecycleInput.Admit` (the guards, a `Refuse` before any probe point), then `LifecycleInput.SwapStart` (gate up, `SwapStarted`, generation, `installed`) |
 | `SdkBind` | `ProviderRegistration.registerThenAwait`: the SDK binds the new provider and starts `initialize()` |
-| `SdkBindFail` | the SDK's registration throwing before it binds (`EventProvider.attach` or `registerGlobalProvider` refusing the provider) |
+| `SdkBindFail` | the SDK's registration throwing before it binds (`EventProvider.attach` or `registerGlobalProvider` refusing the provider), or `ProviderRegistration.register` refusing a swap because another registration's `initialize()` of the provider has started since the swap was admitted and the slot does not hold it yet (`StillInitializing`) |
 | `SdkInitOk`, `SdkInitFail` | the SDK's `FeatureProviderStateManager.initialize` returning or throwing; after a success, the SDK's `PROVIDER_READY` (`ran`) and `ProviderRepository.shutDownOld`, which queues the previous provider's shutdown |
 | `SdkShutDownOld` | that shutdown running on the SDK's executor (`ProviderRepository.shutdownProvider`), through `CallShutdown`: the wrapper reaches the provider's `shutdown()` once per cycle and records `ProviderShutDown`, then `ShutdownReturned(ok)` if it returns; a throw is logged by the SDK, a hang is the executor's |
 | `SwapDone` | `setProvider`: `Replaced`, `SwapSucceeded(settled)`; `Registration.settle` deciding by the wrapper's `initialize()` outcome |
@@ -367,7 +367,7 @@ outcome).
 | `initialize()` throws | `SdkInitFail(p)`: the SDK state becomes `ERROR` and an `ERROR` event is queued; the swap then takes `SwapRollback` or `SwapFailNoRollback` |
 | `initialize()` hangs | `inits[p]` stays above 0, and `SwapTimeout` is enabled for as long as it runs, so the timeout fires at every possible point; `TearDown` interrupts every `initialize()` still running |
 | `initialize()` hangs, then throws | `SwapTimeout`, then `SdkInitFail`; `OrphanResolved` reads `ERROR` from a provider whose `initialize()` never returned, and shuts the replaced provider down |
-| The SDK refuses the registration | `SdkBindFail`, then `SwapRollbackUnbound` |
+| The registration is refused before binding | `SdkBindFail`, then `SwapRollbackUnbound` |
 | The rollback's provider fails too | `SwapRollback(ok, r, early)` with `ok = FALSE` and `r` in `{"ERROR", "FATAL"}` |
 | A provider reports a failure at runtime | `Emit(p, "ERROR")` or `Emit(p, "FATAL")`; `Fatal` is sticky (`Apply`), and `StatusFollowsSdk` allows for it |
 | Events arrive late, in any order, or never | `events` is a set, and nothing forces `Deliver` |

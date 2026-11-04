@@ -279,11 +279,12 @@ final private[openfeature] class FeatureFlagsLive(
     state.statusRef.get
 
   /** A failed swap whose registration threw before the SDK bound the new provider (an `attach` or a global registration
-    * refused it) changed nothing in the SDK: nothing is re-registered, and the previous provider keeps the state the
-    * SDK has for it. The status goes back to `before`, its value before the swap, with no readiness recorded; the SDK's
-    * state for the slot is applied after the gate drops, as an event (`reconcileRegistration`). A provider still
-    * initializing therefore keeps NotReady (an async build) or Error (a timed-out swap's provider) with the init
-    * watchdog armed. True when that was the case and it is handled.
+    * refused it, or `register` did because another registration's `initialize()` of it has started) changed nothing in
+    * the SDK: nothing is re-registered, and the previous provider keeps the state the SDK has for it. The status goes
+    * back to `before`, its value before the swap, with no readiness recorded; the SDK's state for the slot is applied
+    * after the gate drops, as an event (`reconcileRegistration`). A provider still initializing therefore keeps
+    * NotReady (an async build) or Error (a timed-out swap's provider) with the init watchdog armed. True when that was
+    * the case and it is handled.
     */
   private def failedBeforeBinding(
     oldProvider: OFFeatureProvider,
@@ -664,8 +665,11 @@ final private[openfeature] class FeatureFlagsLive(
       //    bounded wait: `setProviderAndWait` would hold the SDK's API write lock across `initialize()`, so a
       //    hanging provider would wedge this swap, the rollback below and `api.shutdown()`.
       _            <- probe.at(Point.SwapBind)
-      registration <- ProviderRegistration.register(api, domain, incoming).tap(_ => probe.at(Point.SdkBind)).either
-      settled      <- ZIO
+      registration <- ProviderRegistration
+        .register(api, domain, incoming, shareInFlight = false)
+        .tap(_ => probe.at(Point.SdkBind))
+        .either
+      settled <- ZIO
         .fromEither(registration)
         .flatMap(_.settle(initTimeout))
         .mapError(e => FeatureFlagError.ProviderInitializationFailed(e))

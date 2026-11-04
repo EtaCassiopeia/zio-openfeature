@@ -35,7 +35,8 @@ import dev.openfeature.sdk.{
   EventProviderAccess,
   OpenFeatureAPI,
   ProviderEvent => JavaProviderEvent,
-  ProviderState => JavaProviderState
+  ProviderState => JavaProviderState,
+  ProviderStateAccess
 }
 
 final private[openfeature] class FeatureFlagsLive(
@@ -435,10 +436,53 @@ final private[openfeature] class FeatureFlagsLive(
       .tapErrorCause(c => ZIO.logWarningCause("cleanupUnboundFailedProvider: best-effort teardown failed", c))
       .ignore
 
+  // The registration that failed under this instance, until a swap installs another. Set before a failure looks at its
+  // siblings, so of two instances failing together at least one sees the other out and does the shutdown.
+  private val failedRegistration = new java.util.concurrent.atomic.AtomicReference[Option[OFFeatureProvider]](None)
+
+  /** Whether this instance is live, has not failed on `provider`, and its slot holds it. A domain not bound yet reads
+    * the default slot, as the SDK resolves it.
+    */
+  private[openfeature] def serves(provider: OFFeatureProvider): Boolean = {
+    val record = lifecycle.snapshot
+    !record.closed && !record.shutDown && !failedRegistration.get().exists(_ eq provider) &&
+    ProviderStateAccess.boundIn(api, domain.orNull, provider)
+  }
+
+  /** Shut down a registration that failed under this instance, when that is the library's to do: a wrapper it
+    * registered and no other live instance is bound to. A provider the user registered with the API is theirs and the
+    * SDK's, and a wrapper a sibling is bound to is the sibling's too; either stays in its slot until the slot lets go
+    * of it or the API shuts down.
+    */
+  private[openfeature] def shutDownFailedRegistration(
+    registration: Bound,
+    label: String,
+    timeout: Duration = ProviderRegistration.DefaultShutdownTimeout
+  ): UIO[Unit] =
+    ZIO.suspendSucceed {
+      failedRegistration.set(Some(registration.sdk))
+      // A provider's metadata may throw, and this runs on a path already reporting a failure.
+      def nameOf(provider: OFFeatureProvider): UIO[String] =
+        ZIO.attempt(ProviderNames.of(provider)).orElseSucceed(FeatureFlags.UnknownProviderName)
+      registration match {
+        case Bound.Foreign(provider) =>
+          nameOf(provider).flatMap(name =>
+            ZIO.logWarning(
+              s"$label: leaving provider '$name' running: it is registered with the API outside this instance, so " +
+                "its shutdown is the SDK's, when its slot lets go of it or the API shuts down"
+            )
+          )
+        case Bound.Managed(wrapper) if ApiInstances.heldByAnother(api, this, wrapper) =>
+          nameOf(wrapper).flatMap(name => ZIO.logDebug(s"$label: another instance is bound to '$name'; leaving it"))
+        case Bound.Managed(wrapper) => ProviderRegistration.boundedProviderShutdown(wrapper, label, timeout)
+      }
+    }
+
   /** Async-init watchdog escalation. Only when the machine actually transitions (the provider never became usable — the
     * `everReady` gate) does it publish a terminal Error event with code PROVIDER_FATAL, release the onReady latch, and
-    * shut the provider down, in that order: a provider stuck in `initialize()` often cannot shut down either, and the
-    * event and the latch must not wait on it. A provider that was ever Ready is left running.
+    * shut the provider down if that is the library's to do, in that order: a provider stuck in `initialize()` often
+    * cannot shut down either, and the event and the latch must not wait on it. A provider that was ever Ready is left
+    * running.
     */
   private[openfeature] def escalateInitTimeout(provider: OFFeatureProvider, initTimeout: Duration): UIO[Unit] =
     probe.at(Point.ApplySignal(Signal.InitTimeout)) *>
@@ -461,7 +505,8 @@ final private[openfeature] class FeatureFlagsLive(
           )
           .unit *>
           ZIO.succeed(onReady.foreach(_.countDown())) *>
-          ProviderRegistration.boundedProviderShutdown(provider, "init watchdog")
+          // The instance holds the wrapper of each provider it registered.
+          shutDownFailedRegistration(Bound.ofRegistered(provider), "init watchdog")
     }
 
   /** Seed the initial status once the sync build has verified the provider, recording ever-readiness for the machine.
@@ -603,6 +648,7 @@ final private[openfeature] class FeatureFlagsLive(
       // read the old one and then reaches the new provider does not trust its answer; and the new provider is
       // installed under its name, which the bridge's identity guard and the PROVIDER_READY of its initialization
       // read. The previous provider and status are kept for the rollback.
+      _       <- ZIO.succeed(failedRegistration.set(None))
       started <- lifecycle.runWith(st =>
         (LifecycleInput.SwapStart(incoming.sdk, incomingName), (st.installed, st.name, st.status))
       )

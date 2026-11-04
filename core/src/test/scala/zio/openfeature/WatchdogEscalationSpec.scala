@@ -3,7 +3,7 @@ package zio.openfeature
 import zio._
 import zio.test._
 import zio.stream.SubscriptionRef
-import zio.openfeature.internal.ProviderEvaluations
+import zio.openfeature.internal.{ManagedProvider, ProviderEvaluations}
 import dev.openfeature.sdk.{
   EvaluationContext => OFEvaluationContext,
   EventDetails,
@@ -98,12 +98,14 @@ object WatchdogEscalationSpec extends ZIOSpecDefault {
             for {
               collected <- Ref.make(List.empty[ProviderEvent])
               cancel    <- ff.on(ProviderEventType.Error, e => collected.update(_ :+ e))
-              _         <- ff.escalateInitTimeout(provider, 30.seconds)
-              status    <- ff.providerStatus
-              evs       <- Live.live(collected.get.repeatUntil(_.nonEmpty).timeout(5.seconds)).map(_.getOrElse(Nil))
-              count     <- ZIO.succeed(shutdowns.get())
-              latchN    <- ZIO.succeed(latch.getCount)
-              _         <- cancel
+              // What the build registered, and what its watchdog passes: the provider's wrapper.
+              wrapper <- ZIO.getOrFail(ManagedProvider.existing(provider))
+              _       <- ff.escalateInitTimeout(wrapper, 30.seconds)
+              status  <- ff.providerStatus
+              evs     <- Live.live(collected.get.repeatUntil(_.nonEmpty).timeout(5.seconds)).map(_.getOrElse(Nil))
+              count   <- ZIO.succeed(shutdowns.get())
+              latchN  <- ZIO.succeed(latch.getCount)
+              _       <- cancel
             } yield assertTrue(
               status == ProviderStatus.Fatal,
               count == 1,

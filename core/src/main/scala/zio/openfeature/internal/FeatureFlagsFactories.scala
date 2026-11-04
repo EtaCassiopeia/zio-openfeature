@@ -32,7 +32,7 @@ private[openfeature] object FeatureFlagsFactories {
 
   /** The build serves only a provider that settled `READY` or `STALE`. One that initialized and then reported an error
     * fails the build with that error's message, as one whose `initialize()` threw does: the build has nothing to fall
-    * back to, and the provider is shut down on that path.
+    * back to, and that path shuts down a registration of the library's own.
     */
   private def verifyInitState(settled: ProviderRegistration.Settled): IO[Throwable, ProviderStatus] = settled match {
     case ProviderRegistration.Settled.Ready              => ZIO.succeed(ProviderStatus.Ready)
@@ -255,15 +255,16 @@ private[openfeature] object FeatureFlagsFactories {
       _     <- ZIO.when(early)(ff.startEventBridge)
       // Non-blocking registration plus a bounded wait: `setProviderAndWait` would hold the SDK's API write
       // lock across `initialize()`, so after a timeout the finalizer's `api.shutdown()` would block on that lock for
-      // as long as `initialize()` hangs. On any init failure the provider itself is shut down (best-effort, bounded,
-      // since a provider stuck in `initialize()` often cannot shut down either) so it doesn't keep threads/connections
-      // alive — this also covers the domain/registry paths where no API finalizer is registered — and the bridge's
+      // as long as `initialize()` hangs. On any init failure a registration of the library's own is shut down
+      // (best-effort, bounded, since a provider stuck in `initialize()` often cannot shut down either) so it doesn't
+      // keep threads/connections alive — this also covers the domain/registry paths where no API finalizer is
+      // registered, and `shutDownFailedRegistration` decides what to leave alone — and the bridge's
       // handlers are removed so a failed build leaves none behind. The status records the failure first: the wait ends
       // when `initialize()` throws, before the provider's own ERROR, or the SDK's, reaches the bridge.
       failedBuild = (failure: Throwable) =>
         ff.markInitFailed(fatal = failure.isInstanceOf[FatalError]) *> ff.stopEventBridge *>
-          ProviderRegistration.boundedProviderShutdown(
-            managed,
+          ff.shutDownFailedRegistration(
+            bound,
             "build (failed initialization)",
             ProviderRegistration.failedProviderShutdownTimeout(initTimeout)
           )

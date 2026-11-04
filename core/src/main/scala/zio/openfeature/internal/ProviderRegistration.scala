@@ -337,9 +337,11 @@ private[openfeature] object ProviderRegistration {
   /** A single provider's `shutdown()`, bounded and best-effort, with the same daemon-fiber shape as
     * [[boundedApiShutdown]] so it also runs from a finalizer carrying a pending interrupt. A failure or timeout is
     * logged under `label`, never raised: the provider is out of service either way. An abandoned call keeps running, so
-    * a later `api.shutdown()` may call the same provider's `shutdown()` while it is still in progress. A provider shut
-    * down here while it is still bound to its slot (the async init watchdog's) is shut down again by the SDK, at
-    * `api.shutdown()` or when a later registration replaces it: the SDK has no way to unbind a provider without that.
+    * a later `api.shutdown()` may call the same provider's `shutdown()` while it is still in progress. A wrapper shut
+    * down here while it is still bound to its slot (a failed build's, the async init watchdog's) is shut down again by
+    * the SDK, at `api.shutdown()` or when a later registration replaces it, and absorbs that second call: the SDK has
+    * no way to unbind a provider without that. A provider the user registered has no wrapper to absorb that call, so it
+    * comes here only once no slot holds it.
     */
   def boundedProviderShutdown(
     provider: OFFeatureProvider,

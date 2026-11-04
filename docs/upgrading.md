@@ -11,6 +11,7 @@ says nothing about them.
 
 | | 1.2.1 | 2.0 |
 |---|---|---|
+| Java | 11+ | 17+ |
 | Scala 3 | 3.3.8+ | 3.3.9+ |
 | Scala 2.13 | 2.13.18+ | unchanged |
 | ZIO | 2.1.27+ | unchanged |
@@ -20,8 +21,6 @@ says nothing about them.
 2.0 is not binary compatible with 1.x. **Recompile everything built against 1.x**, including your own libraries, custom
 providers and wrappers. A library still built against 1.x cannot be used next to 2.0: it fails at link time, or sbt's
 eviction check reports the conflict first, since the version scheme marks 1.x and 2.x as incompatible.
-
-For Java, see [Install](getting-started.md#install).
 
 ## Configuration objects
 

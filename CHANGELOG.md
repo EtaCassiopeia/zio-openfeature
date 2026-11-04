@@ -125,6 +125,7 @@ unchanged. The entries under Removed and Changed below are the full record.
 
 ### Changed
 
+- **Java 17 is the minimum** (#795). 1.x stated Java 11+, which CI never tested; it runs on 17, 21 and 25.
 - **`OptimizelyEvents.Batched` is a final class like the configs** (#648). Build it with
   `OptimizelyEvents.Batched.default.withBatchSize(n)`, `withFlushInterval` and `withCloseTimeout`. It has no `apply`, `copy`,
   `unapply` or structural equality, so a match on it reads the fields, and `OptimizelyEvents` no longer extends `Product`.

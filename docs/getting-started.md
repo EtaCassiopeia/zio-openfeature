@@ -16,9 +16,8 @@ libraryDependencies ++= Seq(
 )
 ```
 
-Only `core` is required. It is published for Scala 3.3.9+ and 2.13.18+, and needs ZIO 2.1.27+. CI tests it on Java 17,
-21 and 25; the OpenFeature Java SDK it builds on targets Java 11, but nothing here runs on 11, so 17 is the lowest
-version tested. The examples on this site use Scala 3 syntax; see [Using Scala 2.13](#using-scala-213).
+Only `core` is required. It is published for Scala 3.3.9+ and 2.13.18+, and needs ZIO 2.1.27+ and Java 17+. CI tests it on Java 17, 21
+and 25. The examples on this site use Scala 3 syntax; see [Using Scala 2.13](#using-scala-213).
 
 Coming from 1.x? See [Upgrading to 2.0](upgrading.md).
 

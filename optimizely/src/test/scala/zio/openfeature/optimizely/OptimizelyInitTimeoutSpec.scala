@@ -1,10 +1,9 @@
 package zio.openfeature.optimizely
 
-import com.github.tomakehurst.wiremock.WireMockServer
 import com.github.tomakehurst.wiremock.client.WireMock._
-import com.github.tomakehurst.wiremock.core.WireMockConfiguration
 import zio._
 import zio.openfeature.{FeatureFlags, FeatureFlagsConfig}
+import zio.openfeature.testsupport.LoopbackWireMock
 import zio.test._
 
 // On an unreachable / rejecting CDN, the provider's own "datafile did not load" error is what the caller sees —
@@ -17,14 +16,14 @@ object OptimizelyInitTimeoutSpec extends ZIOSpecDefault {
 
   def spec = suite("OptimizelyInitTimeoutSpec")(
     test("a rejected datafile fetch fails the build with the provider's specific error, within its init wait") {
-      val server = new WireMockServer(WireMockConfiguration.options().dynamicPort())
+      val server = LoopbackWireMock.server()
       ZIO.scoped {
         ZIO
           .acquireRelease(ZIO.succeed { server.start(); server })(s => ZIO.succeed(s.stop()))
           .flatMap { server =>
             server.stubFor(get(urlMatching("/datafiles/.*")).willReturn(aResponse().withStatus(403)))
             val config = OptimizelyProviderConfig("rejected-key")
-              .withDatafileUrl(s"http://localhost:${server.port()}/datafiles/rejected-key.json")
+              .withDatafileUrl(s"${LoopbackWireMock.baseUrl(server)}/datafiles/rejected-key.json")
               // These durations are the subject: init must fail with the provider's own error within initWait,
               // before blockingTimeout and the 4s FeatureFlags init timeout. Do not widen them.
               .withInitWait(java.time.Duration.ofSeconds(2))

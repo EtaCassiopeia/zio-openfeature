@@ -2,10 +2,10 @@ package zio.openfeature.optimizely
 
 import com.github.tomakehurst.wiremock.WireMockServer
 import com.github.tomakehurst.wiremock.client.WireMock._
-import com.github.tomakehurst.wiremock.core.WireMockConfiguration
 import dev.openfeature.sdk.ImmutableContext
 import zio._
 import zio.test._
+import zio.openfeature.testsupport.LoopbackWireMock
 
 /** Pins the datafile-polling lifecycle: constructing a factory-built provider does not block and fetches at most once
   * before `initialize()` (the SDK starts its poller at construction); polling stops at `shutdown()`/scope close, so no
@@ -25,14 +25,14 @@ object OptimizelyPollingLifecycleSpec extends ZIOSpecDefault {
   private def withMockServer[R, A](body: WireMockServer => ZIO[R, Any, A]): ZIO[R, Any, A] =
     ZIO.acquireReleaseWith(
       ZIO.attemptBlocking {
-        val server = new WireMockServer(WireMockConfiguration.options().dynamicPort())
+        val server = LoopbackWireMock.server()
         server.start()
         server
       }
     )(server => ZIO.attemptBlocking(server.stop()).ignore)(body)
 
   private def datafileUrl(server: WireMockServer): String =
-    s"http://localhost:${server.port()}$DatafilePath"
+    s"${LoopbackWireMock.baseUrl(server)}$DatafilePath"
 
   private def requestCount(server: WireMockServer): Int =
     server.getAllServeEvents.size()

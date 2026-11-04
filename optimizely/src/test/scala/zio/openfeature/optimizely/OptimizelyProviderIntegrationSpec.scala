@@ -2,13 +2,13 @@ package zio.openfeature.optimizely
 
 import com.github.tomakehurst.wiremock.WireMockServer
 import com.github.tomakehurst.wiremock.client.WireMock._
-import com.github.tomakehurst.wiremock.core.WireMockConfiguration
 import com.github.tomakehurst.wiremock.http.Fault
 import com.github.tomakehurst.wiremock.stubbing.Scenario
 import com.optimizely.ab.Optimizely
 import dev.openfeature.sdk.{ImmutableContext, ProviderState}
 import zio._
 import zio.test._
+import zio.openfeature.testsupport.LoopbackWireMock
 
 /** Failure-mode integration suite for the Optimizely provider, driven by a WireMock server impersonating the Optimizely
   * CDN. Each test owns its own WireMock instance so the stubs are isolated.
@@ -41,14 +41,14 @@ object OptimizelyProviderIntegrationSpec extends ZIOSpecDefault {
     scala.io.Source.fromInputStream(getClass.getResourceAsStream(path)).mkString
 
   private def withMockServer[A](body: WireMockServer => A): A = {
-    val server = new WireMockServer(WireMockConfiguration.options().dynamicPort())
+    val server = LoopbackWireMock.server()
     server.start()
     try body(server)
     finally server.stop()
   }
 
   private def datafileUrl(server: WireMockServer): String =
-    s"http://localhost:${server.port()}$DatafilePath"
+    s"${LoopbackWireMock.baseUrl(server)}$DatafilePath"
 
   private def wiredClient(server: WireMockServer): Optimizely =
     OptimizelyTestSupport.wiredClient(datafileUrl(server), "test-sdk-key")

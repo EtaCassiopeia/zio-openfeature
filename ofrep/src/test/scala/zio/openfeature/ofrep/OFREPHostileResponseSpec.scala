@@ -4,10 +4,10 @@ import zio.openfeature.testsupport.PropertyBudget
 
 import com.github.tomakehurst.wiremock.WireMockServer
 import com.github.tomakehurst.wiremock.client.WireMock._
-import com.github.tomakehurst.wiremock.core.WireMockConfiguration
 import dev.openfeature.sdk.{ErrorCode => JErrorCode, ImmutableContext, ProviderEvaluation, Value}
 import zio._
 import zio.openfeature.{ErrorCode, FeatureFlagError, FeatureFlags}
+import zio.openfeature.testsupport.LoopbackWireMock
 import zio.test._
 
 import java.util.concurrent.atomic.AtomicInteger
@@ -33,13 +33,13 @@ object OFREPHostileResponseSpec extends ZIOSpecDefault {
 
   private val serverScoped: ZIO[Scope, Nothing, WireMockServer] =
     ZIO.acquireRelease(ZIO.succeed {
-      val server = new WireMockServer(WireMockConfiguration.options().dynamicPort())
+      val server = LoopbackWireMock.server()
       server.start()
       server
     })(server => ZIO.succeed(server.stop()))
 
   private def providerFor(server: WireMockServer): ZIO[Scope, Nothing, OFREPFeatureProvider] =
-    OFREPProvider.scoped(s"http://localhost:${server.port()}").mapError(e => new RuntimeException(e.toString)).orDie
+    OFREPProvider.scoped(LoopbackWireMock.baseUrl(server)).mapError(e => new RuntimeException(e.toString)).orDie
 
   /** Stub a fresh flag returning `valueJson` and return its key. */
   private def serve(server: WireMockServer, valueJson: String): String = {

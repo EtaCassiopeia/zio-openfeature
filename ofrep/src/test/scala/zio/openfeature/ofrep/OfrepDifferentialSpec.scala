@@ -2,12 +2,12 @@ package zio.openfeature.ofrep
 
 import com.github.tomakehurst.wiremock.WireMockServer
 import com.github.tomakehurst.wiremock.client.WireMock._
-import com.github.tomakehurst.wiremock.core.WireMockConfiguration
 import dev.openfeature.sdk.FeatureProvider
 import zio._
 import zio.openfeature.ErrorCode
 import zio.openfeature.testkit.DifferentialLaws
 import zio.openfeature.testkit.DifferentialLaws._
+import zio.openfeature.testsupport.LoopbackWireMock
 import zio.test._
 
 /** The OFREP provider against `TestFeatureProvider`: an in-process WireMock stub serves each generated flag set in the
@@ -24,7 +24,7 @@ object OfrepDifferentialSpec extends ZIOSpecDefault {
   private val oracle = "ofrep"
 
   private lazy val server: WireMockServer = {
-    val s = new WireMockServer(WireMockConfiguration.options().dynamicPort())
+    val s = LoopbackWireMock.server()
     s.start()
     s
   }
@@ -32,7 +32,7 @@ object OfrepDifferentialSpec extends ZIOSpecDefault {
   private def seed(flags: FlagSet): URIO[Scope, FeatureProvider] =
     ZIO.attempt(stub(flags)).orDie *>
       OFREPProvider
-        .scoped(s"http://localhost:${server.port()}")
+        .scoped(LoopbackWireMock.baseUrl(server))
         .orDieWith(e => new IllegalStateException(s"OFREP provider for the stub failed to build: $e"))
 
   def spec = suite("OfrepDifferentialSpec")(

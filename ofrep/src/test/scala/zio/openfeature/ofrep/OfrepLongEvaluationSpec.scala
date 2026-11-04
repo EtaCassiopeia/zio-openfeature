@@ -2,10 +2,10 @@ package zio.openfeature.ofrep
 
 import com.github.tomakehurst.wiremock.WireMockServer
 import com.github.tomakehurst.wiremock.client.WireMock._
-import com.github.tomakehurst.wiremock.core.WireMockConfiguration
 import dev.openfeature.sdk.{ImmutableContext, Value}
 import zio._
 import zio.openfeature._
+import zio.openfeature.testsupport.LoopbackWireMock
 import zio.test._
 import zio.test.TestAspect.{sequential, timeout, withLiveClock}
 
@@ -22,7 +22,7 @@ object OfrepLongEvaluationSpec extends ZIOSpecDefault {
 
   private val server: ZIO[Scope, Nothing, WireMockServer] =
     ZIO.acquireRelease(ZIO.succeed {
-      val s = new WireMockServer(WireMockConfiguration.options().dynamicPort())
+      val s = LoopbackWireMock.server()
       s.start()
       s
     })(s => ZIO.succeed(s.stop()))
@@ -52,7 +52,7 @@ object OfrepLongEvaluationSpec extends ZIOSpecDefault {
 
   private def flagsOver(s: WireMockServer): ZIO[Scope, Any, FeatureFlags] =
     for {
-      provider <- OFREPProvider.scoped(s"http://localhost:${s.port()}")
+      provider <- OFREPProvider.scoped(LoopbackWireMock.baseUrl(s))
       env <- FeatureFlags.fromProvider(provider, FeatureFlagsConfig.default.withEvaluationTimeout(30.seconds)).build
     } yield env.get[FeatureFlags]
 
@@ -115,7 +115,7 @@ object OfrepLongEvaluationSpec extends ZIOSpecDefault {
         for {
           s        <- server
           _        <- serve(s, "huge", "9223372036854775808")
-          provider <- OFREPProvider.scoped(s"http://localhost:${s.port()}")
+          provider <- OFREPProvider.scoped(LoopbackWireMock.baseUrl(s))
           result   <- ZIO.attemptBlocking(
             provider.getLongEvaluation("huge", java.lang.Long.valueOf(3L), new ImmutableContext())
           )
@@ -173,7 +173,7 @@ object OfrepLongEvaluationSpec extends ZIOSpecDefault {
             _        <- serve(s, "d", "2.5")
             _        <- serve(s, "o", """{"k":"v"}""")
             _        <- serve(s, "l", "9")
-            provider <- OFREPProvider.scoped(s"http://localhost:${s.port()}")
+            provider <- OFREPProvider.scoped(LoopbackWireMock.baseUrl(s))
             ctx = new ImmutableContext()
             results <- ZIO.attemptBlocking {
               (

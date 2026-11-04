@@ -1,10 +1,10 @@
 package zio.openfeature.optimizely
 
 import com.github.tomakehurst.wiremock.WireMockServer
-import com.github.tomakehurst.wiremock.core.WireMockConfiguration
 import dev.openfeature.sdk.{ErrorCode, ImmutableContext, MutableStructure, Reason, Value}
 import zio._
 import zio.test._
+import zio.openfeature.testsupport.LoopbackWireMock
 
 /** Object-evaluation tests for `OptimizelyFeatureProvider`, guarding against returning the whole variables map.
   *
@@ -26,7 +26,7 @@ object OptimizelyObjectEvaluationSpec extends ZIOSpecDefault {
     scala.io.Source.fromInputStream(getClass.getResourceAsStream(path)).mkString
 
   private def withMockServer[A](body: WireMockServer => A): A = {
-    val server = new WireMockServer(WireMockConfiguration.options().dynamicPort())
+    val server = LoopbackWireMock.server()
     server.start()
     try body(server)
     finally server.stop()

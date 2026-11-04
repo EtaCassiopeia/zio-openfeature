@@ -17,6 +17,13 @@ val riftJavaInterceptVersion = "0.3.7"
 // count — it drags in the jetty / httpclient5 / handlebars / commons-* stack that most test-scope alerts sit in.
 val wiremockVersion = "3.13.2"
 
+// The ofrep and optimizely specs take their WireMock servers from one helper, which binds the loopback address. It is
+// not in `test-support` because the other modules have no WireMock on their test classpath.
+lazy val wiremockTestSupport = Seq(
+  Test / unmanagedSourceDirectories +=
+    (LocalRootProject / baseDirectory).value / "test-support-wiremock" / "src" / "test" / "scala"
+)
+
 // Jackson reaches us only through the OFREP contrib provider; see `jacksonPins` above the `ofrep` module.
 // `jackson-annotations` is versioned WITHOUT a patch component from 2.20 onwards (jackson-bom 2.22.4 pins it
 // to `2.22`), so it cannot share `jacksonVersion` — `2.22.4` does not exist for that artifact.
@@ -359,6 +366,7 @@ lazy val ofrep = (project in file("ofrep"))
   .settings(
     name := "zio-openfeature-ofrep",
     commonSettings,
+    wiremockTestSupport,
     libraryDependencies ++= Seq(
       "dev.zio"                          %% "zio"      % zioVersion,
       "dev.openfeature.contrib.providers" % "ofrep"    % "0.0.2",
@@ -387,6 +395,7 @@ lazy val optimizely = (project in file("optimizely"))
   .settings(
     name := "zio-openfeature-optimizely",
     commonSettings,
+    wiremockTestSupport,
     libraryDependencies ++= Seq(
       "dev.zio" %% "zio" % zioVersion,
       // NOTE: on a core-api/core-httpclient upgrade, re-verify `com/optimizely/ab/ObservingOptimizelyHttpClient.java`

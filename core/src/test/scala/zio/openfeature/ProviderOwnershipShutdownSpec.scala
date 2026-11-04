@@ -2,7 +2,13 @@ package zio.openfeature
 
 import zio._
 import zio.test._
-import zio.openfeature.internal.{ManagedProvider, ProviderEvaluations}
+import zio.openfeature.internal.{
+  FeatureFlagsFactories,
+  LifecycleProbe,
+  ManagedProvider,
+  ProviderEvaluations,
+  ProviderRegistration
+}
 import dev.openfeature.sdk.{
   EvaluationContext => OFEvaluationContext,
   FeatureProvider,
@@ -294,6 +300,209 @@ object ProviderOwnershipShutdownSpec extends ZIOSpecDefault {
     }
   )
 
+  // Fails on its second initialize(): the rollback that registers it again fails too.
+  private class FailsWhenReinitialized extends Gated(open = true) {
+    private val inits                                       = new AtomicInteger(0)
+    override def initialize(ctx: OFEvaluationContext): Unit =
+      if (inits.incrementAndGet() > 1) throw new GeneralError("re-init boom")
+  }
+
+  private def probedBuild(
+    api: OpenFeatureAPI,
+    provider: FeatureProvider,
+    domain: String,
+    probe: LifecycleProbe
+  ): ZIO[Scope, Throwable, FeatureFlagsLive] =
+    FeatureFlagsFactories.build(
+      provider,
+      domain = Some(domain),
+      version = None,
+      initialHooks = Nil,
+      statusRef = None,
+      addShutdownFinalizer = false,
+      apiOverride = Some(api),
+      initTimeout = 10.seconds,
+      probe = probe
+    )
+
+  private def holdAt(point: LifecycleProbe.Point, reached: Promise[Nothing, Unit], release: Promise[Nothing, Unit]) =
+    new LifecycleProbe {
+      def at(p: LifecycleProbe.Point): UIO[Unit] =
+        if (p == point) reached.succeed(()) *> release.await else ZIO.unit
+    }
+
+  private def wrapperIn(api: OpenFeatureAPI, provider: Gated, domain: String): UIO[Unit] =
+    Live
+      .live(
+        ZIO
+          .succeed(ManagedProvider.existing(provider).exists(w => api.getProvider(domain) eq w))
+          .repeatUntil(identity)
+          .timeout(5.seconds)
+      )
+      .unit
+
+  // `a`, open on `old`, swaps to `failing` while a sibling's build on `b` initializes it: both share the attempt that
+  // throws. The swap is held after it is admitted, since the step refuses a wrapper already initializing.
+  private def swapAndBuildFailTogether(api: OpenFeatureAPI, old: Gated, failing: Gated) =
+    for {
+      reached <- Promise.make[Nothing, Unit]
+      release <- Promise.make[Nothing, Unit]
+      a       <- probedBuild(api, old, "a", holdAt(LifecycleProbe.Point.SwapBind, reached, release))
+      swap    <- a.setProvider(failing).exit.fork
+      _       <- reached.await
+      build   <- ZIO.scoped(syncBuild(api, failing, Some("b"), 10.seconds)).exit.fork
+      _       <- wrapperIn(api, failing, "b")
+      _       <- release.succeed(())
+      _       <- wrapperIn(api, failing, "a")
+      _       <- ZIO.succeed(failing.gate.countDown())
+      swapped <- swap.join
+      built   <- build.join
+    } yield (a, swapped, built)
+
+  private val failedSwap = suite("a swap that fails on a wrapper a sibling's build is initializing")(
+    test("shuts it down once between them when the rollback succeeds, and goes back to the previous provider") {
+      val api     = OpenFeatureAPI.createIsolated()
+      val old     = new Gated(open = true)
+      val failing = new Gated(failure = Some("boom"))
+      ZIO.scoped {
+        for {
+          out <- swapAndBuildFailTogether(api, old, failing)
+          (a, swapped, built) = out
+          count  <- shutdownsAfterSettling(failing)
+          status <- a.providerStatus
+          kept = ManagedProvider.existing(old).exists(w => api.getProvider("a") eq w)
+        } yield assertTrue(
+          swapped.isFailure,
+          failedWith[GeneralError](built),
+          count == 1,
+          kept,
+          status == ProviderStatus.Ready
+        )
+      }
+    },
+    test("shuts it down once between them when the rollback fails too") {
+      val api     = OpenFeatureAPI.createIsolated()
+      val old     = new FailsWhenReinitialized
+      val failing = new Gated(failure = Some("boom"))
+      ZIO.scoped {
+        for {
+          out <- swapAndBuildFailTogether(api, old, failing)
+          (a, swapped, built) = out
+          count  <- shutdownsAfterSettling(failing)
+          status <- a.providerStatus
+        } yield assertTrue(
+          swapped.isFailure,
+          failedWith[GeneralError](built),
+          count == 1,
+          status == ProviderStatus.Error
+        )
+      }
+    },
+    test("shuts it down when a sibling failed first and deferred to it, once it has moved off") {
+      val api     = OpenFeatureAPI.createIsolated()
+      val old     = new Gated(open = true)
+      val failing = new Gated(failure = Some("boom"))
+      ZIO.scoped {
+        for {
+          reached  <- Promise.make[Nothing, Unit]
+          release  <- Promise.make[Nothing, Unit]
+          a        <- probedBuild(api, old, "a", holdAt(LifecycleProbe.Point.SwapBind, reached, release))
+          swap     <- a.setProvider(failing).exit.fork
+          _        <- reached.await
+          sibling  <- asyncBuild(api, failing, "b", 1.hour)
+          _        <- wrapperIn(api, failing, "b")
+          _        <- release.succeed(())
+          _        <- wrapperIn(api, failing, "a")
+          wrapper  <- ZIO.getOrFail(ManagedProvider.existing(failing))
+          shutDown <- sibling.shutDownFailedRegistration(zio.openfeature.internal.Bound.Managed(wrapper), "sibling")
+          deferred <- ZIO.succeed(failing.shutdowns.get())
+          _        <- ZIO.succeed(failing.gate.countDown())
+          swapped  <- swap.join
+          count    <- shutdownsAfterSettling(failing)
+        } yield assertTrue(!shutDown, deferred == 0, swapped.isFailure, count == 1)
+      }
+    },
+    test("leaves it when the slot that kept it is retrying its initialization") {
+      val api      = OpenFeatureAPI.createIsolated()
+      val old      = new Gated(open = true)
+      val retrying = new CountDownLatch(1)
+      val inits    = new AtomicInteger(0)
+      val failing  = new Gated() {
+        // The first call throws once released; the retry waits for the test.
+        override def initialize(ctx: OFEvaluationContext): Unit =
+          if (inits.incrementAndGet() == 1) { gate.await(); throw new GeneralError("boom") }
+          else retrying.await()
+      }
+      ZIO.scoped {
+        for {
+          atBind      <- Promise.make[Nothing, Unit]
+          goBind      <- Promise.make[Nothing, Unit]
+          atReconcile <- Promise.make[Nothing, Unit]
+          goReconcile <- Promise.make[Nothing, Unit]
+          probe = new LifecycleProbe {
+            def at(p: LifecycleProbe.Point): UIO[Unit] = p match {
+              case LifecycleProbe.Point.SwapBind      => atBind.succeed(()) *> goBind.await
+              case LifecycleProbe.Point.SwapReconcile => atReconcile.succeed(()) *> goReconcile.await
+              case _                                  => ZIO.unit
+            }
+          }
+          a      <- probedBuild(api, old, "a", probe)
+          swap   <- a.setProvider(failing).exit.fork
+          _      <- atBind.await
+          build  <- ZIO.scoped(syncBuild(api, failing, Some("b"), 10.seconds)).exit.fork
+          _      <- wrapperIn(api, failing, "b")
+          _      <- goBind.succeed(())
+          _      <- wrapperIn(api, failing, "a")
+          _      <- ZIO.succeed(failing.gate.countDown())
+          _      <- atReconcile.await
+          _      <- build.join
+          before <- ZIO.succeed(failing.shutdowns.get())
+          retry  <- ProviderRegistration.retryFailedInitialization(api, Some("b"), failing, 10.seconds).exit.fork
+          _      <- Live.live(ZIO.succeed(inits.get()).repeatUntil(_ == 2).timeout(5.seconds))
+          _      <- goReconcile.succeed(())
+          _      <- swap.join
+          during <- ZIO.succeed(failing.shutdowns.get())
+          _      <- ZIO.succeed(retrying.countDown())
+          _      <- retry.join
+        } yield assertTrue(during == before)
+      }
+    },
+    test("alone, with the rollback failing too, shuts it down once and releases it from the API") {
+      val api     = OpenFeatureAPI.createIsolated()
+      val old     = new FailsWhenReinitialized
+      val failing = new Gated(failure = Some("boom"), open = true)
+      ZIO.scoped {
+        for {
+          a       <- syncBuild(api, old, Some("a"), 5.seconds)
+          swapped <- a.setProvider(failing).exit
+          count   <- shutdownsAfterSettling(failing)
+          wrapper = ManagedProvider.existing(failing)
+          // The SDK refuses a provider still registered with another API, naming it so.
+          bound <- ZIO.attempt(wrapper.foreach(w => OpenFeatureAPI.createIsolated().setProvider(w))).exit
+          refusal = bound.causeOption.flatMap(_.failureOption).map(_.getMessage).getOrElse("")
+        } yield assertTrue(swapped.isFailure, count == 1, wrapper.isDefined, !refusal.contains("another API"))
+      }
+    },
+    test("no longer counts as using it, from the moment it has failed") {
+      val api     = OpenFeatureAPI.createIsolated()
+      val old     = new Gated(open = true)
+      val failing = new Gated(failure = Some("boom"), open = true)
+      ZIO.scoped {
+        for {
+          reached <- Promise.make[Nothing, Unit]
+          release <- Promise.make[Nothing, Unit]
+          a       <- probedBuild(api, old, "a", holdAt(LifecycleProbe.Point.SwapRollback, reached, release))
+          swap    <- a.setProvider(failing).exit.fork
+          _       <- reached.await
+          serving = ManagedProvider.existing(failing).exists(a.serves(_))
+          bound   = ManagedProvider.existing(failing).exists(w => api.getProvider("a") eq w)
+          _ <- release.succeed(())
+          _ <- swap.join
+        } yield assertTrue(bound, !serving)
+      }
+    }
+  )
+
   private val ownRegistration = suite("the library's own registration, which nothing else serves from")(
     test("a build whose wait times out shuts it down once") {
       val api      = OpenFeatureAPI.createIsolated()
@@ -371,6 +580,6 @@ object ProviderOwnershipShutdownSpec extends ZIOSpecDefault {
     }
   )
 
-  def spec = suite("ProviderOwnershipShutdownSpec")(userRegistered, sharedWrapper, ownRegistration) @@
+  def spec = suite("ProviderOwnershipShutdownSpec")(userRegistered, sharedWrapper, failedSwap, ownRegistration) @@
     TestAspect.sequential @@ TestAspect.timeout(120.seconds)
 }

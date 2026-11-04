@@ -225,6 +225,13 @@ unchanged. The entries under Removed and Changed below are the full record.
 
 ### Fixed
 
+- **A swap that fails on a provider another instance is initializing no longer strands it** (#800). When a sibling's
+  build failed at the same moment, it could defer to the swap's instance, and the swap's rollback left the provider to
+  an SDK call that skips any provider another slot holds, so nothing shut it down until the API did. A failed swap now
+  counts as failed for its siblings, and its rollback shuts the provider down when another slot still holds it and no
+  live instance is using it. A failed rollback's cleanup follows the same rule, so it no longer takes a provider from a
+  live sibling.
+
 - **A build on a provider its slot already holds no longer binds it again** (#804). The extra binding queued a task on
   the SDK's executor. If a swap rebound the slot first, that task shut the provider down, and a swap that then failed
   shut it down a second time. It also fired a `PROVIDER_READY` at the API's handlers for a provider still initializing.

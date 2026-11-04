@@ -145,6 +145,7 @@ object LifecycleInterleavingSpec extends ZIOSpecDefault {
       Set(
         "SwapStart",
         "ApplySignal",
+        "SwapBind",
         "SdkBind",
         "InitEntered",
         "InitReturned",
@@ -156,6 +157,7 @@ object LifecycleInterleavingSpec extends ZIOSpecDefault {
       Set(
         "SwapStart",
         "ApplySignal",
+        "SwapBind",
         "SdkBind",
         "InitEntered",
         "InitReturned",
@@ -169,6 +171,7 @@ object LifecycleInterleavingSpec extends ZIOSpecDefault {
       Set(
         "SwapStart",
         "ApplySignal",
+        "SwapBind",
         "SdkBind",
         "InitEntered",
         "SwapTimeout",
@@ -297,11 +300,12 @@ object LifecycleInterleavingSpec extends ZIOSpecDefault {
   private def heldStatus(primary: Primary, point: String): Option[ProviderStatus] = (primary, point) match {
     // "The status becomes NotReady" while the SDK initializes the new provider, and events during a swap do not
     // change it.
-    case (Primary.SwapGood | Primary.SwapFailing | Primary.SwapHanging, "SdkBind") => Some(ProviderStatus.NotReady)
-    case (Primary.SwapHanging, "SwapTimeout")                                      => Some(ProviderStatus.NotReady)
-    case (Primary.SwapFailing, "SwapRollback" | "RollbackBind")                    => Some(ProviderStatus.Error)
-    case (Primary.Shutdown, "ShutdownDone")                                        => Some(ProviderStatus.ShuttingDown)
-    case _                                                                         => None
+    case (Primary.SwapGood | Primary.SwapFailing | Primary.SwapHanging, "SwapBind" | "SdkBind") =>
+      Some(ProviderStatus.NotReady)
+    case (Primary.SwapHanging, "SwapTimeout")                   => Some(ProviderStatus.NotReady)
+    case (Primary.SwapFailing, "SwapRollback" | "RollbackBind") => Some(ProviderStatus.Error)
+    case (Primary.Shutdown, "ShutdownDone")                     => Some(ProviderStatus.ShuttingDown)
+    case _                                                      => None
   }
 
   /** @param reached

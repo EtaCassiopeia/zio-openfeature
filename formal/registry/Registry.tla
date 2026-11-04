@@ -54,10 +54,12 @@ VARIABLES
     by,          \* who ran it last: "none", "sdk" or "library"
     everBound,   \* providers that were bound to some slot at some point
     failedOn,    \* each instance: the provider a failure under it marked (failedRegistration), or None
-    deciding     \* instances that marked a failure and have not yet decided about the shutdown
+    deciding,    \* instances that marked a failure and have not yet decided about the shutdown
+    prior,       \* each instance: the provider its swap in flight replaced, or None
+    swappedOff   \* ghost: providers a swap that succeeded moved off a slot
 
 vars == << phase, domainOf, owner, apiOpen, lock, swapping, swaps, bound, registered, userOwned, shuts, by, everBound,
-           failedOn, deciding >>
+           failedOn, deciding, prior, swappedOff >>
 libVars == << phase, domainOf, owner, apiOpen, lock, swapping, swaps >>
 
 TypeInv ==
@@ -73,6 +75,8 @@ TypeInv ==
     /\ userOwned \subseteq registered
     /\ failedOn \in [Instances -> Providers \cup {None}]
     /\ deciding \subseteq Instances
+    /\ prior \in [Instances -> Providers \cup {None}]
+    /\ swappedOff \subseteq Providers
     /\ shuts \in [Providers -> Nat]
     /\ by \in [Providers -> {"none", "sdk", "library"}]
     /\ everBound \subseteq Providers
@@ -93,6 +97,8 @@ Init ==
     /\ everBound = {}
     /\ failedOn = [i \in Instances |-> None]
     /\ deciding = {}
+    /\ prior = [i \in Instances |-> None]
+    /\ swappedOff = {}
 
 \* The slots that hold p.
 SlotsOf(p) == {d \in Domains : bound[d] = p}
@@ -130,7 +136,7 @@ Check(i, d) ==
     /\ lock' = i
     /\ phase' = [phase EXCEPT ![i] = "checking"]
     /\ domainOf' = [domainOf EXCEPT ![i] = d]
-    /\ UNCHANGED << owner, apiOpen, swapping, swaps, bound, registered, userOwned, shuts, by, everBound, failedOn, deciding >>
+    /\ UNCHANGED << owner, apiOpen, swapping, swaps, bound, registered, userOwned, shuts, by, everBound, failedOn, deciding, prior, swappedOff >>
 
 \* ... inserts its promise, releases the semaphore and runs the build.  The build registers the domain's provider in
 \* the slot: the SDK reuses the state manager of a provider that is registered already (the instance holds the same
@@ -152,7 +158,8 @@ Create(i, p, own) ==
     /\ registered' = registered \cup {p}
     /\ everBound' = everBound \cup {p}
     /\ Register(p)
-    /\ UNCHANGED << domainOf, apiOpen, swapping, swaps, userOwned, failedOn, deciding >>
+    /\ swappedOff' = swappedOff \ {p}
+    /\ UNCHANGED << domainOf, apiOpen, swapping, swaps, userOwned, failedOn, deciding, prior >>
 
 \* The build ends and the promise is completed under the semaphore (taken and released in this step); the instance is
 \* open.
@@ -162,72 +169,9 @@ Complete(i) ==
     /\ failedOn[i] = None
     /\ phase' = [phase EXCEPT ![i] = "open"]
     /\ UNCHANGED << domainOf, owner, apiOpen, lock, swapping, swaps, bound, registered, userOwned, shuts, by, everBound,
-                    failedOn, deciding >>
+                    failedOn, deciding, prior, swappedOff >>
 
 ---------------------------------------------------------------------------
-\* A swap at the registry grain: setProvider on an open instance rebinds its slot.  The old provider leaves
-\* `registered` and is shut down by the SDK only when no slot holds it any more (shutDownOld's guard); a provider
-\* another slot still holds keeps its state manager.  A swap to a provider that fails to initialize rolls back: the
-\* failed provider is shut down by the library only when it was a fresh registration, never when another slot holds it.
-
-SwapStart(i, p) ==
-    /\ apiOpen
-    /\ phase[i] = "open"
-    /\ swapping = None
-    /\ swaps < MaxSwaps
-    /\ p # bound[domainOf[i]]
-    /\ i \notin deciding
-    /\ p \in userOwned => bound[Default] = p
-    /\ swapping' = i
-    /\ swaps' = swaps + 1
-    /\ UNCHANGED << phase, domainOf, owner, apiOpen, lock, bound, registered, userOwned, shuts, by, everBound, failedOn, deciding >>
-
-SwapDone(i, p) ==
-    LET d == domainOf[i]
-        old == bound[d]
-    IN
-    /\ swapping = i
-    /\ p # old
-    /\ swapping' = None
-    /\ bound' = [bound EXCEPT ![d] = p]
-    /\ registered' = (registered \cup {p}) \ (IF SlotsOf(old) = {d} THEN {old} ELSE {})
-    /\ userOwned' = userOwned \ (IF SlotsOf(old) = {d} THEN {old} ELSE {})
-    \* A wrapper the library already shut down (a failed build's, a deadline's) absorbs this call: not in `registered`.
-    /\ shuts' = [q \in Providers |-> IF q = old /\ SlotsOf(old) = {d} /\ old \in registered THEN shuts[q] + 1
-                                     ELSE IF q = p /\ p \notin registered THEN 0 ELSE shuts[q]]
-    /\ by' = [q \in Providers |-> IF q = old /\ SlotsOf(old) = {d} /\ old \in registered THEN "sdk"
-                                  ELSE IF q = p /\ p \notin registered THEN "none" ELSE by[q]]
-    /\ everBound' = everBound \cup {p}
-    /\ failedOn' = [failedOn EXCEPT ![i] = None]
-    /\ UNCHANGED << phase, domainOf, owner, apiOpen, lock, swaps, deciding >>
-
-\* The new provider failed to initialize: the slot keeps the old provider (the rollback re-registers it).  The failed
-\* provider never reached the slot; the library shuts it down when it registered it fresh, and leaves it alone when
-\* another slot holds it, a wrapper or a provider the user registered: the SDK's, when that slot lets go of it.
-SwapFail(i, p) ==
-    /\ swapping = i
-    /\ p # bound[domainOf[i]]
-    /\ swapping' = None
-    /\ IF p \in registered
-       THEN UNCHANGED << shuts, by >>
-       ELSE /\ shuts' = [shuts EXCEPT ![p] = 1]  \* a fresh registration, shut down once
-            /\ by' = [by EXCEPT ![p] = "library"]
-    /\ UNCHANGED << phase, domainOf, owner, apiOpen, lock, swaps, bound, registered, userOwned, everBound, failedOn, deciding >>
-
----------------------------------------------------------------------------
-\* The user binds a provider of their own directly with the API, and the SDK holds it: an instance built on it later
-\* holds it as Bound.Foreign.
-UserBind(d, p) ==
-    /\ apiOpen
-    /\ bound[d] = None
-    /\ p \notin everBound
-    /\ bound' = [bound EXCEPT ![d] = p]
-    /\ registered' = registered \cup {p}
-    /\ userOwned' = userOwned \cup {p}
-    /\ everBound' = everBound \cup {p}
-    /\ Register(p)
-    /\ UNCHANGED << libVars, failedOn, deciding >>
-
 \* What a failure under instance i does to its provider p (FeatureFlagsLive.shutDownFailedRegistration): the library
 \* shuts p down only when p is its own wrapper and no other live instance that has not failed on it is bound to it.
 \* The wrapper stays in its slot and absorbs the SDK's later shutdown(), so `registered` here means a registration with
@@ -243,6 +187,94 @@ ShutFailed(i, p) ==
          /\ registered' = registered \ {p}
     ELSE UNCHANGED << shuts, by, registered >>
 
+\* A swap at the registry grain.  The SDK binds the new provider before its initialize() runs, so a sibling may reuse its
+\* registration from then on, and a swap admitted before the sibling registered shares the sibling's attempt.  Here the
+\* provider it replaces stays registered until the swap's outcome; the SDK may shut it down sooner in that shared case.
+SwapStart(i, p) ==
+    LET d == domainOf[i] IN
+    /\ apiOpen
+    /\ phase[i] = "open"
+    /\ swapping = None
+    /\ swaps < MaxSwaps
+    /\ p # bound[d]
+    /\ i \notin deciding
+    /\ p \in userOwned => bound[Default] = p
+    /\ swapping' = i
+    /\ swaps' = swaps + 1
+    /\ prior' = [prior EXCEPT ![i] = bound[d]]
+    /\ bound' = [bound EXCEPT ![d] = p]
+    /\ registered' = registered \cup {p}
+    /\ everBound' = everBound \cup {p}
+    /\ Register(p)
+    /\ failedOn' = [failedOn EXCEPT ![i] = None]
+    /\ swappedOff' = swappedOff \ {p}
+    /\ UNCHANGED << phase, domainOf, owner, apiOpen, lock, userOwned, deciding >>
+
+\* It initialized: the SDK shuts the old provider down only when no slot holds it any more (shutDownOld's guard); one
+\* another slot still holds keeps its state manager.
+SwapDone(i) ==
+    LET d == domainOf[i]
+        old == prior[i]
+    IN
+    /\ swapping = i
+    /\ failedOn[i] # bound[d]
+    /\ swapping' = None
+    /\ prior' = [prior EXCEPT ![i] = None]
+    /\ registered' = registered \ (IF SlotsOf(old) = {} THEN {old} ELSE {})
+    /\ userOwned' = userOwned \ (IF SlotsOf(old) = {} THEN {old} ELSE {})
+    \* A wrapper the library already shut down (a failed build's, a deadline's) absorbs this call: not in `registered`.
+    /\ shuts' = [q \in Providers |-> IF q = old /\ SlotsOf(old) = {} /\ old \in registered THEN shuts[q] + 1 ELSE shuts[q]]
+    /\ by' = [q \in Providers |-> IF q = old /\ SlotsOf(old) = {} /\ old \in registered THEN "sdk" ELSE by[q]]
+    /\ failedOn' = [failedOn EXCEPT ![i] = None]
+    /\ swappedOff' = swappedOff \cup {old}
+    /\ UNCHANGED << phase, domainOf, owner, apiOpen, lock, swaps, bound, everBound, deciding >>
+
+\* The new provider failed to initialize: the instance counts as failed on it for its siblings from here on.
+SwapFailMark(i) ==
+    /\ swapping = i
+    /\ failedOn[i] # bound[domainOf[i]]
+    /\ failedOn' = [failedOn EXCEPT ![i] = bound[domainOf[i]]]
+    /\ UNCHANGED << phase, domainOf, owner, apiOpen, lock, swapping, swaps, bound, registered, userOwned, shuts, by, everBound,
+                    deciding, prior, swappedOff >>
+
+\* The rollback registers the old provider again, which its slot held until the swap.  The SDK shuts the failed provider
+\* down when no slot holds it any more.  When another slot does the SDK leaves it, and the library decides.
+SwapFail(i) ==
+    LET d == domainOf[i]
+        p == bound[d]
+        old == prior[i]
+        others == SlotsOf(p) \ {d}
+        shut == IF others = {} THEN p \in registered
+                ELSE p \in registered /\ LibraryShuts(i, p)
+    IN
+    /\ swapping = i
+    /\ failedOn[i] = p
+    /\ swapping' = None
+    /\ prior' = [prior EXCEPT ![i] = None]
+    /\ bound' = [bound EXCEPT ![d] = old]
+    /\ registered' = (registered \ (IF shut THEN {p} ELSE {})) \cup {old}
+    /\ userOwned' = userOwned \ (IF others = {} THEN {p} ELSE {})
+    \* The old provider's registration is new when the library shut it down earlier, as Register has it.
+    /\ shuts' = [q \in Providers |-> IF q = p /\ shut THEN shuts[q] + 1
+                                     ELSE IF q = old /\ old \notin registered THEN 0 ELSE shuts[q]]
+    /\ by' = [q \in Providers |-> IF q = p /\ shut THEN (IF others = {} THEN "sdk" ELSE "library")
+                                  ELSE IF q = old /\ old \notin registered THEN "none" ELSE by[q]]
+    /\ UNCHANGED << phase, domainOf, owner, apiOpen, lock, swaps, everBound, failedOn, deciding, swappedOff >>
+
+---------------------------------------------------------------------------
+\* The user binds a provider of their own directly with the API, and the SDK holds it: an instance built on it later
+\* holds it as Bound.Foreign.
+UserBind(d, p) ==
+    /\ apiOpen
+    /\ bound[d] = None
+    /\ p \notin everBound
+    /\ bound' = [bound EXCEPT ![d] = p]
+    /\ registered' = registered \cup {p}
+    /\ userOwned' = userOwned \cup {p}
+    /\ everBound' = everBound \cup {p}
+    /\ Register(p)
+    /\ UNCHANGED << libVars, failedOn, deciding, prior, swappedOff >>
+
 \* A failure marks itself before it looks at its siblings, in its own step, so two failures may interleave here: a
 \* build's wait that timed out or a provider that failed, where the slot keeps p; or an async build's init deadline, once
 \* per registration, where the instance stays open, Fatal.  That the provider never became ready is the lifecycle
@@ -253,12 +285,12 @@ FailMark(i) ==
     /\ phase[i] \in {"building", "open"}
     /\ phase[i] = "building" => owner # i
     /\ swapping # i
-    /\ failedOn[i] = None
+    /\ failedOn[i] # bound[domainOf[i]]
     /\ bound[domainOf[i]] \in registered
     /\ failedOn' = [failedOn EXCEPT ![i] = bound[domainOf[i]]]
     /\ deciding' = deciding \cup {i}
     /\ UNCHANGED << phase, domainOf, owner, apiOpen, lock, swapping, swaps, bound, registered, userOwned, shuts, by,
-                    everBound >>
+                    everBound, prior, swappedOff >>
 
 \* The decision: a build's failure then closes its scope.
 FailDecide(i) ==
@@ -266,7 +298,7 @@ FailDecide(i) ==
     /\ deciding' = deciding \ {i}
     /\ phase' = IF phase[i] = "building" THEN [phase EXCEPT ![i] = "closed"] ELSE phase
     /\ ShutFailed(i, bound[domainOf[i]])
-    /\ UNCHANGED << domainOf, owner, apiOpen, lock, swapping, swaps, bound, userOwned, everBound, failedOn >>
+    /\ UNCHANGED << domainOf, owner, apiOpen, lock, swapping, swaps, bound, userOwned, everBound, failedOn, prior, swappedOff >>
 
 ---------------------------------------------------------------------------
 \* Closing.
@@ -280,7 +312,7 @@ CloseInstance(i) ==
     /\ i \notin deciding
     /\ phase' = [phase EXCEPT ![i] = "closed"]
     /\ UNCHANGED << domainOf, owner, apiOpen, lock, swapping, swaps, bound, registered, userOwned, shuts, by, everBound,
-                    failedOn, deciding >>
+                    failedOn, deciding, prior, swappedOff >>
 
 \* The owner's shutdown or scope close: every other instance on the API retires first (ApiInstances.retireSiblings),
 \* then the API shuts every registered provider down, once each (the SDK's shutdown), and the API is gone.
@@ -299,7 +331,7 @@ OwnerClose ==
     /\ userOwned' = {}
     /\ shuts' = [p \in Providers |-> shuts[p] + (IF p \in registered THEN 1 ELSE 0)]
     /\ by' = [p \in Providers |-> IF p \in registered THEN "sdk" ELSE by[p]]
-    /\ UNCHANGED << domainOf, lock, swapping, swaps, everBound, failedOn, deciding >>
+    /\ UNCHANGED << domainOf, lock, swapping, swaps, everBound, failedOn, deciding, prior, swappedOff >>
 
 Next ==
     \/ \E i \in Instances, d \in Domains : Lookup(i, d)
@@ -307,8 +339,9 @@ Next ==
     \/ \E i \in Instances, p \in Providers, own \in BOOLEAN : Create(i, p, own)
     \/ \E i \in Instances : Complete(i)
     \/ \E i \in Instances, p \in Providers : SwapStart(i, p)
-    \/ \E i \in Instances, p \in Providers : SwapDone(i, p)
-    \/ \E i \in Instances, p \in Providers : SwapFail(i, p)
+    \/ \E i \in Instances : SwapDone(i)
+    \/ \E i \in Instances : SwapFailMark(i)
+    \/ \E i \in Instances : SwapFail(i)
     \/ \E d \in Domains, p \in Providers : UserBind(d, p)
     \/ \E i \in Instances : FailMark(i)
     \/ \E i \in Instances : FailDecide(i)
@@ -347,15 +380,16 @@ UserProviderNeverShutByLibrary ==
 \* A failure under one instance never takes the provider from a live sibling bound to it.
 LiveSiblingKeepsProvider ==
     \A i \in Instances :
-        Live(i) /\ failedOn[i] = None /\ bound[domainOf[i]] # None => by[bound[domainOf[i]]] # "library"
+        Live(i) /\ bound[domainOf[i]] # None /\ failedOn[i] # bound[domainOf[i]] => by[bound[domainOf[i]]] # "library"
 
 \* Failures do not each defer to the other: a wrapper whose every holder has failed on it and decided has been shut down.
-\* Only while no swap has run: a sibling a failure deferred to may swap off the wrapper, and then its slot keeps it for
-\* the API's owner, as a closed non-owner's does.
+\* Except one a swap that succeeded moved off: a sibling a failure deferred to may swap away, and then the failed
+\* instance's slot keeps the wrapper for the API's owner, as a closed non-owner's does.
 FailedWrapperNotAbandoned ==
-    swaps = 0 => \A p \in registered \ userOwned :
+    \A p \in (registered \ userOwned) \ swappedOff :
         LET holders == {i \in Instances : phase[i] \in {"building", "open", "closed"} /\ bound[domainOf[i]] = p}
-        IN holders # {} => \E i \in holders : failedOn[i] # p \/ i \in deciding
+        IN (holders # {} /\ \A j \in Instances : prior[j] # p)
+           => \E i \in holders : failedOn[i] # p \/ i \in deciding \/ swapping = i
 
 \* Concurrent getClient calls on one domain yield one instance: at most one promise per domain, ever.
 OneInstancePerDomain ==

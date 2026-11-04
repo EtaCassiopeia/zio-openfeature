@@ -39,6 +39,11 @@ private[openfeature] object ApiInstances {
   def heldByAnother(api: OpenFeatureAPI, self: FeatureFlagsLive, provider: FeatureProvider): Boolean =
     on(api).exists(instance => (instance ne self) && instance.serves(provider))
 
+  /** Whether another instance's slot on `api` holds `provider`, live or not. The SDK leaves a provider any slot holds.
+    */
+  def boundElsewhere(api: OpenFeatureAPI, self: FeatureFlagsLive, provider: FeatureProvider): Boolean =
+    on(api).exists(instance => (instance ne self) && instance.slotHolds(provider))
+
   /** Retire every instance on `api` but `except` (the one tearing it down, or `null` before it exists). */
   def retireSiblings(api: OpenFeatureAPI, except: FeatureFlagsLive): UIO[Unit] =
     ZIO.succeed(on(api).filterNot(_ eq except)).flatMap(ZIO.foreachParDiscard(_)(_.retire))

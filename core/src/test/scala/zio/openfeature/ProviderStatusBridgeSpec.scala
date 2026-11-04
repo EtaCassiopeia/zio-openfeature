@@ -65,10 +65,19 @@ object ProviderStatusBridgeSpec extends ZIOSpecDefault {
     }
   }
 
-  private def awaitNamed(ff: FeatureFlagsLive): UIO[String] =
-    Live
-      .live(ff.providerMetadata.map(_.name).repeatUntil(_ != FeatureFlags.UnknownProviderName).timeout(5.seconds))
-      .map(_.getOrElse(FeatureFlags.UnknownProviderName))
+  /** Completes with the name of the first READY the bridge publishes under `name`. The bridge settles a pending name
+    * before it publishes the READY, so whoever awaits this reads the settled name; subscribe before the READY can
+    * arrive.
+    */
+  private def readyNamed(ff: FeatureFlagsLive, name: String): UIO[Promise[Nothing, String]] =
+    for {
+      promise <- Promise.make[Nothing, String]
+      _       <- ff.onProviderReady(meta => promise.succeed(meta.name).unit.when(meta.name == name).unit)
+    } yield promise
+
+  /** The guard only catches a hang, on the live clock; nothing is measured against it. */
+  private def awaitSignal[A](promise: Promise[Nothing, A]): Task[A] =
+    Live.live(promise.await.timeoutFail(new RuntimeException("the awaited signal never arrived"))(30.seconds))
 
   /** Initializes at once. */
   private class QuickProvider(nm: String) extends InertProvider(nm) {
@@ -184,15 +193,18 @@ object ProviderStatusBridgeSpec extends ZIOSpecDefault {
         out <- ZIO.scoped {
           build(ref, "current").flatMap { ff =>
             for {
-              collected <- Ref.make(List.empty[ProviderEvent])
-              cancel    <- ff.on(ProviderEventType.Error, e => collected.update(_ :+ e))
-              _         <- ff.onErrorEvent(details("stale-other", message = "boom"))
-              evs       <- Live.live(collected.get.repeatUntil(_.nonEmpty).timeout(5.seconds)).map(_.getOrElse(Nil))
-              status    <- ff.providerStatus
-              _         <- cancel
+              received <- Promise.make[Nothing, ProviderEvent]
+              cancel   <- ff.on(ProviderEventType.Error, e => received.succeed(e).unit)
+              _        <- ff.onErrorEvent(details("stale-other", message = "boom"))
+              event    <- awaitSignal(received)
+              status   <- ff.providerStatus
+              _        <- cancel
             } yield assertTrue(
               status == ProviderStatus.Ready, // mismatch => status untouched
-              evs.collectFirst { case e: ProviderEvent.Error => e.providerMetadata.name }.contains("stale-other")
+              event match {
+                case e: ProviderEvent.Error => e.providerMetadata.name == "stale-other"
+                case _                      => false
+              }
             )
           }
         }
@@ -219,9 +231,11 @@ object ProviderStatusBridgeSpec extends ZIOSpecDefault {
         out <- ZIO.scoped {
           buildProvider(ref, provider).flatMap { ff =>
             for {
+              named      <- readyNamed(ff, "multiprovider")
               beforeName <- ff.providerMetadata.map(_.name)
               _          <- ZIO.succeed(provider.finishInitializing())
-              afterName  <- awaitNamed(ff)
+              _          <- awaitSignal(named)
+              afterName  <- ff.providerMetadata.map(_.name)
               _          <- ff.onErrorEvent(details("another", message = "stale"))
               status     <- ff.providerStatus
             } yield assertTrue(
@@ -241,12 +255,14 @@ object ProviderStatusBridgeSpec extends ZIOSpecDefault {
         out <- ZIO.scoped {
           buildProvider(ref, provider).flatMap { ff =>
             for {
+              named     <- readyNamed(ff, "multiprovider")
               _         <- ff.onReadyEvent(details("other"))
               during    <- ff.providerMetadata.map(_.name)
               status    <- ff.providerStatus
               _         <- ZIO.succeed(provider.finishInitializing())
               _         <- ff.onReadyEvent(details("other"))
-              afterName <- awaitNamed(ff)
+              _         <- awaitSignal(named)
+              afterName <- ff.providerMetadata.map(_.name)
             } yield assertTrue(
               during == FeatureFlags.UnknownProviderName,
               status == ProviderStatus.Ready,

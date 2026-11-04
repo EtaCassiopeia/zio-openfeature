@@ -53,7 +53,7 @@ object OfrepLongEvaluationSpec extends ZIOSpecDefault {
   private def flagsOver(s: WireMockServer): ZIO[Scope, Any, FeatureFlags] =
     for {
       provider <- OFREPProvider.scoped(s"http://localhost:${s.port()}")
-      env      <- FeatureFlags.fromProvider(provider).build
+      env <- FeatureFlags.fromProvider(provider, FeatureFlagsConfig.default.withEvaluationTimeout(30.seconds)).build
     } yield env.get[FeatureFlags]
 
   /** Serve `valueJson` for one flag and read it with `FeatureFlags.long` on both tiers. */

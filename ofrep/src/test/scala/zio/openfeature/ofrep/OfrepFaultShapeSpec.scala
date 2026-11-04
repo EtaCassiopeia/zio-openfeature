@@ -87,11 +87,16 @@ object OfrepFaultShapeSpec extends ZIOSpecDefault {
           provider,
           CircuitBreakerProviderConfig.default
             .withFailureThreshold(Threshold)
+            // The property is about status shapes, not latency.
+            .withEvaluationTimeout(30.seconds)
             .withResetTimeout(1.hour)
             .withStateCheckInterval(Duration.Infinity)
         )
         _ <- ZIO.addFinalizer(ZIO.attemptBlocking(breaker.shutdown()).ignore)
         _ <- ZIO.attemptBlocking(breaker.initialize(new ImmutableContext()))
+        // One request straight to the delegate, past the breaker, so the counted evaluations are not the cold ones and
+        // the warm-up is not one of the failures the breaker counts.
+        _ <- ZIO.attemptBlocking(provider.getBooleanEvaluation(shape.key, false, new ImmutableContext())).either
         _ <- ZIO.foreachDiscard(1 to Threshold)(_ =>
           ZIO.attemptBlocking(breaker.getBooleanEvaluation(shape.key, false, new ImmutableContext())).either
         )

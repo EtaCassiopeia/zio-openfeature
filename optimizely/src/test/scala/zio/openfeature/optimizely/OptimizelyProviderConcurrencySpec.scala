@@ -2,7 +2,6 @@ package zio.openfeature.optimizely
 
 import com.github.tomakehurst.wiremock.WireMockServer
 import com.github.tomakehurst.wiremock.client.WireMock._
-import com.github.tomakehurst.wiremock.core.WireMockConfiguration
 import com.optimizely.ab.Optimizely
 import com.optimizely.ab.config.HttpProjectConfigManager
 import dev.openfeature.sdk.{ErrorCode, ImmutableContext, ProviderState, Value}
@@ -11,6 +10,7 @@ import zio.test._
 
 import java.util.concurrent.{CountDownLatch, Executors, TimeUnit}
 import java.util.concurrent.atomic.AtomicInteger
+import zio.openfeature.testsupport.LoopbackWireMock
 
 /** Stress tests for `OptimizelyFeatureProvider`. WireMock-backed so the suite runs on every PR. Verifies that:
   *   - Many parallel evaluations after init produce consistent results without exceptions.
@@ -28,14 +28,14 @@ object OptimizelyProviderConcurrencySpec extends ZIOSpecDefault {
     scala.io.Source.fromInputStream(getClass.getResourceAsStream(path)).mkString
 
   private def withMockServer[A](body: WireMockServer => A): A = {
-    val server = new WireMockServer(WireMockConfiguration.options().dynamicPort())
+    val server = LoopbackWireMock.server()
     server.start()
     try body(server)
     finally server.stop()
   }
 
   private def datafileUrl(server: WireMockServer): String =
-    s"http://localhost:${server.port()}$DatafilePath"
+    s"${LoopbackWireMock.baseUrl(server)}$DatafilePath"
 
   // Build the client like `OptimizelyProvider.buildClient`: `build(true)` skips the blocking initial fetch, and one
   // NotificationCenter is shared by the manager and the client, so the datafile-update notification reaches the

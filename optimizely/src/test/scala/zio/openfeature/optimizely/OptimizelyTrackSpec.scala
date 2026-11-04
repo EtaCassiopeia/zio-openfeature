@@ -1,12 +1,11 @@
 package zio.openfeature.optimizely
 
-import com.github.tomakehurst.wiremock.WireMockServer
-import com.github.tomakehurst.wiremock.core.WireMockConfiguration
 import com.optimizely.ab.event.{EventHandler, ForwardingEventProcessor, LogEvent}
 import dev.openfeature.sdk.{ImmutableContext, MutableTrackingEventDetails, Value}
 import dev.openfeature.sdk.exceptions.{GeneralError, ProviderNotReadyError, TargetingKeyMissingError}
 import zio._
 import zio.openfeature.{EvaluationContext, FeatureFlagError, FeatureFlags, FeatureFlagsConfig, TrackingEventDetails}
+import zio.openfeature.testsupport.LoopbackWireMock
 import zio.test._
 
 import java.util.concurrent.CopyOnWriteArrayList
@@ -27,7 +26,7 @@ object OptimizelyTrackSpec extends ZIOSpecDefault {
   }
 
   private def withProvider[A](initialize: Boolean = true)(body: (OptimizelyFeatureProvider, Recording) => A): A = {
-    val server = new WireMockServer(WireMockConfiguration.options().dynamicPort())
+    val server = LoopbackWireMock.server()
     server.start()
     try {
       val events = new Recording

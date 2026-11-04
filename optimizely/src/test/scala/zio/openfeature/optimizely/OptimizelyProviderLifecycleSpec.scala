@@ -2,13 +2,13 @@ package zio.openfeature.optimizely
 
 import com.github.tomakehurst.wiremock.WireMockServer
 import com.github.tomakehurst.wiremock.client.WireMock._
-import com.github.tomakehurst.wiremock.core.WireMockConfiguration
 import dev.openfeature.sdk.{ErrorCode, ImmutableContext, ProviderState, Reason}
 import zio._
 import zio.test._
 
 import java.util.concurrent.{CountDownLatch, TimeUnit}
 import java.util.concurrent.atomic.{AtomicInteger, AtomicReference}
+import zio.openfeature.testsupport.LoopbackWireMock
 
 /** State-machine and lifecycle tests for `OptimizelyFeatureProvider`. WireMock-backed so the suite runs on every PR
   * without needing Docker.
@@ -33,14 +33,14 @@ object OptimizelyProviderLifecycleSpec extends ZIOSpecDefault {
     scala.io.Source.fromInputStream(getClass.getResourceAsStream(path)).mkString
 
   private def withMockServer[A](body: WireMockServer => A): A = {
-    val server = new WireMockServer(WireMockConfiguration.options().dynamicPort())
+    val server = LoopbackWireMock.server()
     server.start()
     try body(server)
     finally server.stop()
   }
 
   private def datafileUrl(server: WireMockServer): String =
-    s"http://localhost:${server.port()}$DatafilePath"
+    s"${LoopbackWireMock.baseUrl(server)}$DatafilePath"
 
   @scala.annotation.nowarn("msg=deprecated")
   private def stateOf(p: OptimizelyFeatureProvider): ProviderState = p.getState

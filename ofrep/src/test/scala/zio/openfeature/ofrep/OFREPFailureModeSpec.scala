@@ -3,10 +3,10 @@ package zio.openfeature.ofrep
 import com.github.tomakehurst.wiremock.WireMockServer
 import com.github.tomakehurst.wiremock.client.ResponseDefinitionBuilder
 import com.github.tomakehurst.wiremock.client.WireMock._
-import com.github.tomakehurst.wiremock.core.WireMockConfiguration
 import com.github.tomakehurst.wiremock.http.Fault
 import zio._
 import zio.openfeature._
+import zio.openfeature.testsupport.LoopbackWireMock
 import zio.test._
 import zio.test.TestAspect.{sequential, timeout, withLiveClock}
 
@@ -31,7 +31,7 @@ import zio.test.TestAspect.{sequential, timeout, withLiveClock}
 object OFREPFailureModeSpec extends ZIOSpecDefault {
 
   private def withMockServer[A](body: WireMockServer => A): A = {
-    val server = new WireMockServer(WireMockConfiguration.options().dynamicPort())
+    val server = LoopbackWireMock.server()
     server.start()
     try body(server)
     finally server.stop()
@@ -44,7 +44,7 @@ object OFREPFailureModeSpec extends ZIOSpecDefault {
       .timeoutFail(new IllegalStateException("the OFREP provider did not become ready"))(10.seconds)
       .unit
 
-  private def baseUrl(server: WireMockServer): String = s"http://localhost:${server.port()}"
+  private def baseUrl(server: WireMockServer): String = LoopbackWireMock.baseUrl(server)
 
   /** Build a `FeatureFlags` service against the given OFREP base URL and run a synchronous body with it. Uses
     * `fromProviderAsync` because the contrib provider doesn't perform a blocking init — async is the recommended path

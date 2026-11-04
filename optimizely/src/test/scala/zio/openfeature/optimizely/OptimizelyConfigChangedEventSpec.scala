@@ -2,7 +2,6 @@ package zio.openfeature.optimizely
 
 import com.github.tomakehurst.wiremock.WireMockServer
 import com.github.tomakehurst.wiremock.client.WireMock._
-import com.github.tomakehurst.wiremock.core.WireMockConfiguration
 import com.github.tomakehurst.wiremock.stubbing.Scenario
 import com.optimizely.ab.Optimizely
 import dev.openfeature.sdk.OpenFeatureAPI
@@ -12,6 +11,7 @@ import zio.test._
 import java.util.UUID
 import java.util.concurrent.{CountDownLatch, TimeUnit}
 import java.util.concurrent.atomic.AtomicInteger
+import zio.openfeature.testsupport.LoopbackWireMock
 
 /** Regression test for the `NotificationCenter` sharing bug: the Optimizely Java SDK creates two separate
   * `NotificationCenter` instances by default — one inside the polling `HttpProjectConfigManager`, one inside the
@@ -35,7 +35,7 @@ object OptimizelyConfigChangedEventSpec extends ZIOSpecDefault {
     scala.io.Source.fromInputStream(getClass.getResourceAsStream(path)).mkString
 
   private def withMockServer[A](body: WireMockServer => A): A = {
-    val server = new WireMockServer(WireMockConfiguration.options().dynamicPort())
+    val server = LoopbackWireMock.server()
     server.start()
     try body(server)
     finally server.stop()
@@ -50,7 +50,7 @@ object OptimizelyConfigChangedEventSpec extends ZIOSpecDefault {
       // Catches the regression at construction time so it doesn't depend on polling timing or WireMock scenarios.
       withMockServer { server =>
         server.stubFor(get(urlEqualTo(DatafilePath)).willReturn(okJson(ValidDatafileV1)))
-        val datafileUrl = s"http://localhost:${server.port()}$DatafilePath"
+        val datafileUrl = s"${LoopbackWireMock.baseUrl(server)}$DatafilePath"
         val provider    = Unsafe.unsafe { implicit u =>
           Runtime.default.unsafe
             .run(OptimizelyProvider.make("struct-check-key", Some(datafileUrl), OptimizelyTestSupport.InitWait))
@@ -86,7 +86,7 @@ object OptimizelyConfigChangedEventSpec extends ZIOSpecDefault {
             .willReturn(okJson(ValidDatafileV2))
         )
 
-        val datafileUrl = s"http://localhost:${server.port()}$DatafilePath"
+        val datafileUrl = s"${LoopbackWireMock.baseUrl(server)}$DatafilePath"
         // Build the underlying client by hand with a 1-second polling interval so the second fetch happens within
         // our 15s test window. The public `OptimizelyProvider.make` factory doesn't expose `pollingInterval` (the
         // SDK default is 5 minutes), and this spec is regression-checking the production wiring, so `wiredClient`

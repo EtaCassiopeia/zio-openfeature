@@ -225,6 +225,12 @@ unchanged. The entries under Removed and Changed below are the full record.
 
 ### Fixed
 
+- **A provider you registered under a domain an instance was built on is reused under any other** (#801). The library
+  only recognised a provider you registered in the build's own slot or the default slot. Under another domain it wrapped
+  it and ran `initialize()` a second time, and a failure then shut it down while that domain still served it. It now
+  also looks at the slot of every instance built on the API, closed ones included. A domain no instance was built on
+  stays out of sight, because the SDK does not list an API's slots, so that case behaves as before.
+
 - **A swap that fails on a provider another instance is initializing no longer strands it** (#800). When a sibling's
   build failed at the same moment, it could defer to the swap's instance, and the swap's rollback left the provider to
   an SDK call that skips any provider another slot holds, so nothing shut it down until the API did. A failed swap now

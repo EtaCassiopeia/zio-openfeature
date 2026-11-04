@@ -160,6 +160,31 @@ object ProviderRegistrationSpec extends ZIOSpecDefault {
           } yield assertTrue(underDomain, inDefault)
         }
       },
+      test("an EventProvider an instance's slot holds is reused under another domain, and its events reach both") {
+        registered { (api, _) =>
+          val provider              = new Provider("shared", _ => ())
+          def build(domain: String) = FeatureFlags.build(
+            provider,
+            domain = Some(domain),
+            version = None,
+            initialHooks = Nil,
+            statusRef = None,
+            addShutdownFinalizer = false,
+            apiOverride = Some(api)
+          )
+          ZIO.scoped {
+            for {
+              _ <- ZIO.attemptBlocking(api.setProviderAndWait("x", provider))
+              x <- build("x")
+              y <- build("y")
+              held = api.getProvider("y") eq provider
+              _   <- ZIO.succeed(provider.reportError("down"))
+              onX <- Live.live(x.providerStatus.repeatUntil(_ == ProviderStatus.Error).timeout(5.seconds))
+              onY <- Live.live(y.providerStatus.repeatUntil(_ == ProviderStatus.Error).timeout(5.seconds))
+            } yield assertTrue(held, onX.isDefined, onY.isDefined)
+          }
+        }
+      },
       test("the API's own no-op provider, which nothing has initialized, still settles Ready") {
         registered { (api, _) =>
           ProviderRegistration

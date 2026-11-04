@@ -13,7 +13,8 @@ java -cp tla2tools.jar tlc2.TLC -workers auto -deadlock -config Registry.cfg Reg
 python3 mutants.py tla2tools.jar
 ```
 
-`Registry.cfg` has two instances, two domains (the default slot and one more), two providers and two swaps: 13548
+`Registry.cfg` has two instances, three domains (the default slot and two more, so a build can reuse a provider from a
+slot that is neither its own nor the default), two providers and two swaps: 59999
 distinct states, under a second. CI runs it, and the mutants, in the `tlc` job of `formal.yml` on every pull request
 that touches the model or the code it maps. `-deadlock` turns off TLC's deadlock check, as for the lifecycle model: a
 registry whose clients have all closed, or an API torn down, has no action enabled and is not an error.
@@ -105,11 +106,11 @@ them one at a time: a mutant usually breaks several, and in one run TLC reports 
 - **A retry of a failed build.** The registry evicts the promise and the caller retries; here a failed instance stays
   closed and its domain is not built again.
 - **A timed-out swap's orphans.** They are the lifecycle model's, for one instance owning its API. A foreign previous
-  provider the default slot still holds is left alone (`OrphanedProviders`); one no slot holds is shut down, as nothing
-  else would.
-- **A provider the user bound under a domain other than the build's and the default.** The library cannot see that slot,
-  so it wraps the provider and initializes it again (`Bound.of`, `docs/providers.md`), and a failure shuts it down.
-  `Create` and `SwapStart` exclude it.
+  provider a slot the library can see held when it was replaced is left alone (`OrphanedProviders`); one no such slot
+  held is shut down, as nothing else would.
+- **A provider the user bound under a domain no instance is on.** The library cannot see that slot, so it wraps the
+  provider and initializes it again (`Bound.of`, `docs/providers.md`), and a failure shuts it down. `Create` and
+  `SwapStart` exclude it. Upstream `OpenFeatureAPI` has no accessor for a provider's domains.
 - **The registry's provider map.** `setProvider(d, p)` on a domain without a client records `p` for the build to pick
   up; the model lets `Create` choose any provider, which covers the map and the default fallback alike.
 - **`fromAcquireAsync`.** Its switch is not an SDK registration (`docs/design/lifecycle.md`); on a shared API it is an

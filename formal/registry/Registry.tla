@@ -109,6 +109,9 @@ Register(p) ==
     IF p \in registered THEN UNCHANGED << shuts, by >>
     ELSE shuts' = [shuts EXCEPT ![p] = 0] /\ by' = [by EXCEPT ![p] = "none"]
 
+\* The slots the library can see besides the build's own and the default: those of the instances built on the API.
+Visible(p) == \E j \in Instances : domainOf[j] # None /\ bound[domainOf[j]] = p
+
 \* The provider the registry builds domain d's client with: the domain's own, or the default slot's (the registry's
 \* fallback to its default provider, which the default slot binds).
 Live(i) == phase[i] \in {"building", "open"}
@@ -150,8 +153,9 @@ Create(i, p, own) ==
     /\ own => owner = None
     /\ lock' = None
     /\ bound[d] \in {None, p}
-    \* A provider the user bound under another domain is wrapped and initialized again: outside the model (README).
-    /\ p \in userOwned => bound[d] = p \/ bound[Default] = p
+    \* A provider the user bound under a domain no instance is on is wrapped and initialized again: outside the model
+    \* (README).
+    /\ p \in userOwned => bound[d] = p \/ bound[Default] = p \/ Visible(p)
     /\ phase' = [phase EXCEPT ![i] = "building"]
     /\ owner' = IF own THEN i ELSE owner
     /\ bound' = [bound EXCEPT ![d] = p]
@@ -198,7 +202,7 @@ SwapStart(i, p) ==
     /\ swaps < MaxSwaps
     /\ p # bound[d]
     /\ i \notin deciding
-    /\ p \in userOwned => bound[Default] = p
+    /\ p \in userOwned => bound[Default] = p \/ Visible(p)
     /\ swapping' = i
     /\ swaps' = swaps + 1
     /\ prior' = [prior EXCEPT ![i] = bound[d]]

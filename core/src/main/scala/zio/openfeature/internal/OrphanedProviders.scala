@@ -23,8 +23,10 @@ import zio._
   *     `initialize()` that ignores the SDK's interrupt and succeeds after that gets it shut down by the SDK as well,
   *     which its wrapper turns into a no-op.
   *
-  * A foreign previous provider the default slot still holds is left alone in all of these: the user registered it
-  * there, and the API's shutdown reaches it.
+  * A foreign previous provider a slot the library can see held when the entry was recorded, the default one or an
+  * instance's, is left alone in all of these: the user registered it there, and its shutdown is the SDK's, with the API
+  * or when that slot lets go of it. If that slot's replacement then fails, nothing shuts it down, as for any provider
+  * the SDK replaces with one that fails.
   *
   * Only an instance that owns its API records entries: a provider of a shared API may serve sibling clients.
   */
@@ -49,7 +51,7 @@ final private[openfeature] class OrphanedProviders(api: OpenFeatureAPI, probe: L
   ): UIO[Unit] =
     for {
       done <- Promise.make[Nothing, Unit]
-      entry = new Entry(previous, previousName, incomingName, done, settled)
+      entry = new Entry(previous, previousName, incomingName, done, settled, heldByVisibleSlot(previous))
       _ <- ZIO.succeed(entries.updateAndGet(entry :: _))
       // A watcher that starts after a resolve has claimed the entry settles nothing.
       // Settling is uninterruptible, so a resolve that interrupts the watcher waits for a settle already under way. The
@@ -84,8 +86,10 @@ final private[openfeature] class OrphanedProviders(api: OpenFeatureAPI, probe: L
         ZIO.when(won)(
           probe.at(
             LifecycleProbe.Point.OrphanResolved
-          ) *> (if (heldByDefaultSlot(entry.previous))
-                  ZIO.logDebug(s"setProvider: leaving '${entry.previousName}': the API's default slot still holds it")
+          ) *> (if (entry.heldWhenRecorded || heldByVisibleSlot(entry.previous))
+                  ZIO.logDebug(
+                    s"setProvider: leaving '${entry.previousName}': a slot of the API holds it, or did when it was replaced"
+                  )
                 else
                   initialized match {
                     case Some(true) =>
@@ -120,10 +124,11 @@ final private[openfeature] class OrphanedProviders(api: OpenFeatureAPI, probe: L
       }
       .unit
 
-  private def heldByDefaultSlot(previous: Bound): Boolean =
+  private def heldByVisibleSlot(previous: Bound): Boolean =
     previous match {
-      case Bound.Foreign(provider) => ProviderStateAccess.boundIn(api, null, provider)
-      case Bound.Managed(_)        => false
+      case Bound.Foreign(provider) =>
+        ProviderStateAccess.boundIn(api, null, provider) || ApiInstances.boundInAnySlot(api, provider)
+      case Bound.Managed(_) => false
     }
 
   // What the SDK's own `shutDownOld` does: release it from the global registry, shut it down and detach its events,
@@ -160,7 +165,9 @@ private[openfeature] object OrphanedProviders {
     val previousName: String,
     val incomingName: String,
     val done: Promise[Nothing, Unit],
-    val settled: UIO[Unit]
+    val settled: UIO[Unit],
+    // Read when recorded: a slot that lets go of it later, or the API's shutdown, leaves its shutdown to the SDK.
+    val heldWhenRecorded: Boolean
   ) {
     val claimed = new AtomicBoolean(false)
     val watcher = new AtomicReference[Option[Fiber.Runtime[Nothing, Unit]]](None)

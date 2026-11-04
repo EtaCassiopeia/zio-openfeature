@@ -25,9 +25,9 @@ private[openfeature] object Bound {
     def managed: Option[ManagedProvider] = Some(provider)
   }
 
-  /** A provider registered with this API outside the library, in the target slot or the default one. The SDK owns its
-    * lifecycle and reuses its registration; none of the [[ManagedProvider]] guarantees (init outcome, once-per-cycle
-    * shutdown, ordered events) apply to it.
+  /** A provider registered with this API outside the library, in a slot the library can see: the target slot, the
+    * default one, or that of an instance built on this API. The SDK owns its lifecycle and reuses its registration;
+    * none of the [[ManagedProvider]] guarantees (init outcome, once-per-cycle shutdown, ordered events) apply to it.
     */
   final case class Foreign(provider: OFFeatureProvider) extends Bound {
     def sdk: OFFeatureProvider           = provider
@@ -46,9 +46,18 @@ private[openfeature] object Bound {
     provider match {
       case m: ManagedProvider => Managed(m)
       case _                  =>
-        // What the API holds wins over a wrapper cached from an earlier registration.
-        if (heldByApi(api, domain, provider)) Foreign(provider)
-        else Managed(ManagedProvider.existing(provider).getOrElse(ManagedProvider(provider, probe)))
+        val wrapper = ManagedProvider.existing(provider)
+        // The slot's own wrapper stays: binding the provider itself there would make the SDK shut the wrapper down, and
+        // the provider with it, under whichever slot serves it.
+        // A domain no instance was built on only reads the default slot's, which is not its own.
+        wrapper.filter(w =>
+          domain.forall(ApiInstances.knowsSlot(api, _)) && ProviderStateAccess.boundIn(api, domain.orNull, w)
+        ) match {
+          case Some(inSlot) => Managed(inSlot)
+          // What the API holds wins over a wrapper cached from an earlier registration.
+          case None if heldByApi(api, domain, provider) => Foreign(provider)
+          case None                                     => Managed(wrapper.getOrElse(ManagedProvider(provider, probe)))
+        }
     }
 
   /** The object the SDK binds for `provider` as an instance registered it: its wrapper, or itself. */
@@ -66,6 +75,6 @@ private[openfeature] object Bound {
     (slot eq incoming.sdk) || (slot != null && !incoming.sdk.isDomainScoped && incoming.sdk.equals(slot))
 
   private def heldByApi(api: OpenFeatureAPI, domain: Option[String], provider: OFFeatureProvider): Boolean =
-    domain
-      .exists(d => ProviderStateAccess.boundIn(api, d, provider)) || ProviderStateAccess.boundIn(api, null, provider)
+    domain.exists(d => ProviderStateAccess.boundIn(api, d, provider)) ||
+      ProviderStateAccess.boundIn(api, null, provider) || ApiInstances.boundInAnySlot(api, provider)
 }

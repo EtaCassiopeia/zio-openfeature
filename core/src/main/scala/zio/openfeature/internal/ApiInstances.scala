@@ -2,7 +2,7 @@ package zio.openfeature.internal
 
 import zio._
 import zio.openfeature.FeatureFlagsLive
-import dev.openfeature.sdk.{FeatureProvider, OpenFeatureAPI}
+import dev.openfeature.sdk.{FeatureProvider, OpenFeatureAPI, ProviderStateAccess}
 import scala.jdk.CollectionConverters._
 
 /** Every instance built on each `OpenFeatureAPI`, so the one that tears an API down can retire the others: their
@@ -15,10 +15,15 @@ import scala.jdk.CollectionConverters._
   */
 private[openfeature] object ApiInstances {
 
+  // The slots of every instance built on each API, kept past the instance: a closed instance's slot keeps its registration
+  // however long ago the instance was collected. Weak in the API; the domains hold nothing.
+  private val slots = new java.util.WeakHashMap[OpenFeatureAPI, Set[Option[String]]]()
+
   private val instances =
     new java.util.WeakHashMap[OpenFeatureAPI, java.util.WeakHashMap[FeatureFlagsLive, java.lang.Boolean]]()
 
-  def register(api: OpenFeatureAPI, ff: FeatureFlagsLive): Unit = synchronized {
+  def register(api: OpenFeatureAPI, ff: FeatureFlagsLive, domain: Option[String]): Unit = synchronized {
+    slots.put(api, Option(slots.get(api)).getOrElse(Set.empty) + domain)
     val onApi = Option(instances.get(api)).getOrElse {
       val fresh = new java.util.WeakHashMap[FeatureFlagsLive, java.lang.Boolean]()
       instances.put(api, fresh)
@@ -43,6 +48,18 @@ private[openfeature] object ApiInstances {
     */
   def boundElsewhere(api: OpenFeatureAPI, self: FeatureFlagsLive, provider: FeatureProvider): Boolean =
     on(api).exists(instance => (instance ne self) && instance.slotHolds(provider))
+
+  /** Whether an instance was ever built on `domain` of `api`. */
+  def knowsSlot(api: OpenFeatureAPI, domain: String): Boolean =
+    synchronized(Option(slots.get(api)).exists(_.contains(Some(domain))))
+
+  /** Whether the slot of any instance ever built on `api` holds `provider`. The SDK does not list an API's slots, so
+    * these and the default slot are the ones the library can see.
+    */
+  def boundInAnySlot(api: OpenFeatureAPI, provider: FeatureProvider): Boolean = {
+    val known = synchronized(Option(slots.get(api)).getOrElse(Set.empty[Option[String]]))
+    known.exists(domain => ProviderStateAccess.boundIn(api, domain.orNull, provider))
+  }
 
   /** Retire every instance on `api` but `except` (the one tearing it down, or `null` before it exists). */
   def retireSiblings(api: OpenFeatureAPI, except: FeatureFlagsLive): UIO[Unit] =

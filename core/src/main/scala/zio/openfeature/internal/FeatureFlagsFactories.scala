@@ -247,7 +247,7 @@ private[openfeature] object FeatureFlagsFactories {
       )
       // Known to the instance that later tears this API down, which then retires this one; and the slot checked
       // before it is bound.
-      _ <- ZIO.succeed { self.set(ff); ApiInstances.register(api, ff) }
+      _ <- ZIO.succeed { self.set(ff); ApiInstances.register(api, ff, domain) }
       _ <- warnIfSlotBound(api, domain, managed)
       // The bridge is attached before the provider initializes, so exactly one PROVIDER_READY reaches it. See
       // `attachesBeforeRegistration`.
@@ -439,7 +439,7 @@ private[openfeature] object FeatureFlagsFactories {
       )
       // Known to the instance that later tears this API down, which then retires this one; and the slot checked
       // before it is bound.
-      _ <- ZIO.succeed { self.set(ff); ApiInstances.register(api, ff) }
+      _ <- ZIO.succeed { self.set(ff); ApiInstances.register(api, ff, domain) }
       _ <- warnIfSlotBound(api, domain, managed)
       // As in the sync build: attach the bridge before the provider initializes, so exactly one PROVIDER_READY
       // reaches it — the post-init emission, or the SDK's replay for a provider that is already ready.

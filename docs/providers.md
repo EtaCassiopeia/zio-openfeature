@@ -113,16 +113,18 @@ One API has one default slot and one slot per domain, so instances on it are not
   on the shared Java API.
 
 - **A provider you registered with the API yourself** is reused as it is: in its own slot, or under any domain when
-  it is in the default slot, the instance binds that registration and the SDK runs no second `initialize()`. The SDK
-  keeps owning it, so its events reach the status through the SDK's own delivery, in no fixed order unless the
-  provider awaits each emission (see [events](lifecycle.md)), and `api.getProvider()` returns it. Every other provider
-  is registered through the library's wrapper, which `api.getProvider()` returns instead. A provider registered
-  directly under a different domain is not reused: an `EventProvider` fails the build with the SDK's "already
-  attached" error, and any other provider is initialized again, and a failure shuts it down too, since the library
-  cannot see that slot. Bind it through the library instead. For a provider reused as it is, a build that fails on it,
-  or an init deadline that passes, leaves it running in its slot, for the API's shutdown or its next replacement. The
-  one case the library does shut it down: an instance that owns the API swapped it out, the swap timed out and the new
-  provider then failed, and no slot holds it, so nothing else would.
+  it is in the default slot or under a domain an instance was built on. The instance binds that registration and the
+  SDK runs no second `initialize()`. The SDK keeps owning it, so its events reach the status through the SDK's own
+  delivery, in no fixed order unless the provider awaits each emission (see [events](lifecycle.md)), and
+  `api.getProvider()` returns it. Every other provider is registered through the library's wrapper, which
+  `api.getProvider()` returns instead. A provider registered directly under a domain no instance was built on is not
+  reused, since the library cannot see that slot: an `EventProvider` fails the build with the SDK's "already attached"
+  error, and any other provider is initialized again, and a failure, or a swap off that wrapper, shuts it down too. Bind it
+  through the library instead. A domain-scoped provider a slot the library can see holds cannot be bound to a second
+  domain at all: the build fails with the SDK's error. For a provider reused as it is, a build that fails on it, or an
+  init deadline that passes, leaves it running in its slot, for the API's shutdown or its next successful replacement.
+  The one case the library does shut it down: an instance that owns the API swapped it out, the swap timed out and the
+  new provider then failed, and no slot the library can see held it, so nothing else would have.
 
 To keep instances apart, give each one `FeatureFlagsConfig.default.withIsolatedApi`, a domain of its own, or build them all
 from one [`FeatureFlagRegistry`](#one-client-per-domain-featureflagregistry).

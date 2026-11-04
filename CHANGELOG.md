@@ -225,6 +225,16 @@ unchanged. The entries under Removed and Changed below are the full record.
 
 ### Fixed
 
+- **A failure no longer shuts down a provider the library does not own alone** (#796). A build that failed or timed out,
+  and an async build's init deadline, shut down whatever the instance held. That included a provider you registered
+  with the API yourself and the library reused, which the SDK then shut down a second time, and a wrapper a live sibling
+  domain was still initializing, which took it from that sibling. A swap that timed out and then failed also shut down
+  the provider it replaced while the default slot still held it. The failure itself is unchanged: the build fails, or
+  the status goes `Fatal` with the error event. The library now shuts down only its own wrapper, once no other live
+  instance is using it. A provider it reused stays in its slot until the slot lets go of it or the API shuts down, with
+  a warning in the log. A provider you registered under a domain other than the build's and the default is still wrapped
+  and initialized again, as documented, and a failure still shuts it down.
+
 - **A provider-event handler interrupted by the SDK's own shutdown is logged at DEBUG, not ERROR** (#789). When the SDK
   stops its event executor, the interrupt reaches the handler running on that thread, and the bridge logged it as a
   failure. An interruption-only cause now logs at DEBUG and the thread's interrupt flag is set again for the executor's

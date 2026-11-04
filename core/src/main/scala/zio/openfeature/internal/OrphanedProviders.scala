@@ -2,7 +2,7 @@ package zio.openfeature.internal
 
 import java.util.concurrent.atomic.{AtomicBoolean, AtomicReference}
 
-import dev.openfeature.sdk.{EventProviderAccess, OpenFeatureAPI}
+import dev.openfeature.sdk.{EventProviderAccess, OpenFeatureAPI, ProviderStateAccess}
 import zio._
 
 /** Providers that a timed-out swap or rollback left registered nowhere, until the registration that replaced them
@@ -22,6 +22,9 @@ import zio._
   *   - neither when the owner shuts down or its scope closes: the previous provider is shut down here. An
   *     `initialize()` that ignores the SDK's interrupt and succeeds after that gets it shut down by the SDK as well,
   *     which its wrapper turns into a no-op.
+  *
+  * A foreign previous provider the default slot still holds is left alone in all of these: the user registered it
+  * there, and the API's shutdown reaches it.
   *
   * Only an instance that owns its API records entries: a provider of a shared API may serve sibling clients.
   */
@@ -79,38 +82,49 @@ final private[openfeature] class OrphanedProviders(api: OpenFeatureAPI, probe: L
       .succeed(entry.claimed.compareAndSet(false, true))
       .flatMap { won =>
         ZIO.when(won)(
-          probe.at(LifecycleProbe.Point.OrphanResolved) *> (initialized match {
-            case Some(true) =>
-              entry.previous.managed match {
-                // A foreign previous provider's shutdown is the SDK's, trusted as before.
-                case None    => ZIO.unit
-                case Some(m) =>
-                  // The SDK shuts it down right after the incoming `initialize()` returns, on its executor.
-                  m.awaitShutDown(OrphanedProviders.SdkShutDownWait, closing) *>
-                    ZIO.unless(m.shutDownInCycle)(
+          probe.at(
+            LifecycleProbe.Point.OrphanResolved
+          ) *> (if (heldByDefaultSlot(entry.previous))
+                  ZIO.logDebug(s"setProvider: leaving '${entry.previousName}': the API's default slot still holds it")
+                else
+                  initialized match {
+                    case Some(true) =>
+                      entry.previous.managed match {
+                        // A foreign previous provider's shutdown is the SDK's, trusted as before.
+                        case None    => ZIO.unit
+                        case Some(m) =>
+                          // The SDK shuts it down right after the incoming `initialize()` returns, on its executor.
+                          m.awaitShutDown(OrphanedProviders.SdkShutDownWait, closing) *>
+                            ZIO.unless(m.shutDownInCycle)(
+                              ZIO.logWarning(
+                                s"shutting down the previous provider '${entry.previousName}': '${entry.incomingName}' " +
+                                  "initialized, but the OpenFeature SDK did not shut it down (the slot was bound again meanwhile)"
+                              ) *> shutDown(entry)
+                            )
+                      }
+                    case Some(false) =>
                       ZIO.logWarning(
-                        s"shutting down the previous provider '${entry.previousName}': '${entry.incomingName}' " +
-                          "initialized, but the OpenFeature SDK did not shut it down (the slot was bound again meanwhile)"
+                        s"setProvider: '${entry.incomingName}' failed to initialize; shutting down '${entry.previousName}', " +
+                          "the provider it replaced, which the OpenFeature SDK no longer holds. The status stays Error until " +
+                          "a later setProvider succeeds"
                       ) *> shutDown(entry)
-                    )
-              }
-            case Some(false) =>
-              ZIO.logWarning(
-                s"setProvider: '${entry.incomingName}' failed to initialize; shutting down '${entry.previousName}', " +
-                  "the provider it replaced, which the OpenFeature SDK no longer holds. The status stays Error until " +
-                  "a later setProvider succeeds"
-              ) *> shutDown(entry)
-            case None =>
-              ZIO.logWarning(
-                s"shutting down the previous provider '${entry.previousName}': '${entry.incomingName}' replaced it " +
-                  "in a swap or rollback that timed out and has not finished initializing"
-              ) *> shutDown(entry)
-          }).ensuring(
+                    case None =>
+                      ZIO.logWarning(
+                        s"shutting down the previous provider '${entry.previousName}': '${entry.incomingName}' replaced it " +
+                          "in a swap or rollback that timed out and has not finished initializing"
+                      ) *> shutDown(entry)
+                  }).ensuring(
             ZIO.succeed(entries.updateAndGet(_.filterNot(_ eq entry))) *> entry.settled *> entry.done.succeed(())
           )
         )
       }
       .unit
+
+  private def heldByDefaultSlot(previous: Bound): Boolean =
+    previous match {
+      case Bound.Foreign(provider) => ProviderStateAccess.boundIn(api, null, provider)
+      case Bound.Managed(_)        => false
+    }
 
   // What the SDK's own `shutDownOld` does: release it from the global registry, shut it down and detach its events,
   // which also lets it be registered again. The wrapper reaches the provider's `shutdown()` once per cycle.

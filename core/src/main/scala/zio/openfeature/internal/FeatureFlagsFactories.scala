@@ -453,10 +453,7 @@ private[openfeature] object FeatureFlagsFactories {
       // SDK's background executor and returns after cheap bookkeeping, so there is no blocking I/O to move off the
       // compute pool. (The sync `build` path uses `attemptBlocking` because `ProviderRegistration` blocks a thread
       // polling for the init outcome.)
-      _ <- (domain match {
-        case Some(d) => ZIO.attempt(api.setProvider(d, managed))
-        case None    => ZIO.attempt(api.setProvider(managed))
-      }).tapError(_ => ff.stopEventBridge)
+      _ <- ZIO.attempt(ProviderRegistration.bind(api, domain, bound)).tapError(_ => ff.stopEventBridge)
       _ <- ZIO.unless(early)(ff.startEventBridge)
       _ <- ff.reconcileRegistration(managed)
       // Init watchdog: after initTimeout, escalate to Fatal ONLY if the provider never became usable

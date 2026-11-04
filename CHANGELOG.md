@@ -233,6 +233,11 @@ unchanged. The entries under Removed and Changed below are the full record.
   On a starved host the instance reported `Ready` while evaluations failed `ProviderNotReady`, with nothing logged. The
   wait now shares `initTimeout` with `initialize()`, and running out of it is a timeout: status `Error`, recovered by the
   SDK's late `READY`, like any provider that initializes after its timeout.
+- **An evaluation no longer fails `ProviderNotReady(NotReady)` with the provider `Ready` and no swap running** (#777).
+  Every lifecycle step rewrote the generation that `Evaluator.gated` compares, after leaving the step's critical
+  section. A step descheduled there, a bridge event's for example, could write an older generation over a later swap's,
+  and an evaluation in flight read that as a swap starting. The reverse also held: the older write could hide a swap
+  that started and ended during an evaluation. Now only a swap's start writes the generation.
 - **An object flag answered with no value, or a value that is not an object, is a `TypeMismatch`** (#730). It used to
   resolve to an empty map. The total tier now serves the default with `TYPE_MISMATCH`. This changes `obj` against
   `EnvVarProvider`, and against a scalar or list key in `HoconProvider`.

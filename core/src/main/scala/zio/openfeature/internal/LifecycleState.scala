@@ -408,8 +408,10 @@ private[openfeature] object LifecycleStep {
   * `Ref` nothing else touches. The mirrors read synchronously from SDK threads and the evaluator are written so that
   * none leads the status: the gate and the provider name inside the step, where an early gate only makes the evaluator
   * stricter; the generation once the step has published the status, so an evaluation that reads a new generation also
-  * reads the swap's NotReady. Only a swap's start moves the generation, under the swap lock, so these writes cannot
-  * reorder. The effects a step returns run after it, never under the semaphore.
+  * reads the swap's NotReady. That write is outside the semaphore, so only the step that moved the generation makes it:
+  * a swap's start, under the swap lock, so these writes cannot reorder. A write from every step could land after a
+  * later swap's and move the mirror back, and `Evaluator.gated` would read that as a swap. The effects a step returns
+  * run after it, never under the semaphore.
   */
 final private[openfeature] class Lifecycle(
   statusRef: SubscriptionRef[ProviderStatus],
@@ -441,10 +443,12 @@ final private[openfeature] class Lifecycle(
               nameMirror.set(after.name)
               view.set(after)
             }
-            .as(((side, outcome), after.status))
+            .as(((side, outcome, after.generation != before.generation), after.status))
         }
       }
-      .tap { case (_, outcome) => ZIO.succeed(generationMirror.set(outcome.state.generation)) }
+      .flatMap { case (side, outcome, moved) =>
+        ZIO.succeed(generationMirror.set(outcome.state.generation)).when(moved).as((side, outcome))
+      }
 
   /** The record, read under the same semaphore as every step. */
   def read: UIO[LifecycleState] = runWith(state => (LifecycleInput.Idle, state)).map(_._1)

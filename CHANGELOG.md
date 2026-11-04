@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+**Upgrading from 1.x:** `docs/upgrading.md` lists what to change in your code and the behaviour changes that compile
+unchanged. The entries under Removed and Changed below are the full record.
+
 ### Added
 
 - **`zio-openfeature-schema`: a `FlagType` from a zio-schema `Schema`, on Scala 2.13 and 3** (#713). A new opt-in
@@ -27,7 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `AcquireConfig` (`withVerify`, `withCompose`, `withConstructionRetry`, `withConstructionTimeout`, `withOnSwapped`,
   `withOnConstructionError`). `fromAcquireAsync(acquire, fallback)` and `(acquire, fallback, config)` use the
   defaults. `FeatureFlagRegistry.fromProvider(defaultProvider, config)` applies the config to every client.
-  **Deprecated:** the 13-parameter `fromAcquireAsync`. Its `evaluationTimeout`, `initTimeout`, `contextSource`,
+  The 13-parameter `fromAcquireAsync` is gone (see Removed). Its `evaluationTimeout`, `initTimeout`, `contextSource`,
   `fallbackLogging` and `maxAbandonedCalls` are `FeatureFlagsConfig` fields; the rest are `AcquireConfig` settings.
 
 - **`FeatureFlagError` by operation** (#653). Each case also extends one or more of the sealed
@@ -40,46 +43,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`boolean`, `string`, `int`, `long`, `double` and `obj` take `EvaluationOptions` after the context** (#650), on
   `FeatureFlags` and through the companion's service accessors, as every other evaluation method already did. They are
   concrete methods, so an existing implementor of `FeatureFlags` keeps compiling and linking.
-- **The lifecycle model's preconditions, each enforced or named** (#655, test-only). `formal/lifecycle/README.md`
-  classifies every precondition of a library action as enforced by the code or assumed, with what checks each.
-  `preconditions.py` deletes each one a recorded run can show and checks that its reject fixture is then accepted, so
-  every such precondition has a fixture that exercises it; the `traces` job runs it. Two fixtures were added (a swap
-  inside a swap, a swap after shutdown), and the model now lets `shutdown` run after the
-  scope has closed, as the code does.
-- **A TLA+ model of the provider lifecycle, checked by TLC in CI** (#582, test-only). `formal/lifecycle/Lifecycle.tla`
-  models the swap, its rollback, the event bridge, the providers a timed-out swap leaves behind, shutdown and the scope
-  close, with the Java SDK as the environment, and TLC checks every interleaving for the initial provider, three swaps
-  and two provider events (about 11 million states) against eight invariants. Each of the lifecycle bugs fixed this
-  release, put back into the model, breaks one of them. The new `Formal model` workflow runs it when the lifecycle code
-  or the model changes, and asks a pull request that changes the code without the model to say why. Writing the model
-  found a defect it now records as a known limit: a provider that reports `ERROR` right after a successful
-  `initialize()`, before the swap has seen the outcome, makes the swap roll back onto a provider the SDK has already
-  shut down (#623).
-- **Trace validation of the lifecycle model** (#582, test-only). With `ZOF_TRACE=1`, `LifecycleModelSpec` and
-  `LifecycleInterleavingSpec` record the lifecycle probe points of every run, and `formal/lifecycle/validate.py` has
-  TLC check that each run's library steps follow an order the TLA+ model allows. The `Formal model` workflow does so on
-  `main` and nightly for both suites,
-  and on pull requests checks that the checker accepts recorded and hand-written runs and rejects runs the model
-  forbids, among them one recorded with shutdown's lock removed. The model now allows a second shutdown call, which the
-  recorded runs showed is harmless.
 - **Deterministic lifecycle interleavings** (#576, test-only). The lifecycle code now names fourteen points of the
   provider-lifecycle protocol through an internal probe, which production instances leave as a no-op and which the
   evaluation code never receives. The new `LifecycleInterleavingSpec` holds a swap, a shutdown or a provider event at
   each point it reaches and runs a competing action there (an event, a shutdown, evaluations, another swap, a released
   initialization), then checks the outcome against the lifecycle model. With the shutdown-during-swap fix (#565), the
   timed-out-swap orphan fix (#564) or the swap gate reverted, its named regressions fail every time.
-- **The lifecycle model test covers reused provider names, overlapping actions and orphaned providers** (#574,
-  test-only). `LifecycleModelSpec` now generates swaps whose provider reuses the replaced provider's name (an
-  evaluation's answering provider is told apart by id), events from an already-replaced provider, providers whose
-  `initialize()` hangs and then fails or whose `shutdown()` is slow, a reinstall of the provider a timed-out swap
-  replaced, and pairs of actions run at once, checked against every order they can take effect in. Every case also
-  checks that each provider it created was shut down exactly once. The model now lives in `LifecycleModel`.
-
-- **Wrapper-stack event-order flake pinned** (#666, test-only). `WrapperStackFaultSpec` now also runs the two cases
-  its generated property shrank to when an `ERROR` failed to reach the status in CI; the cause, wrappers re-emitting
-  through the SDK's unordered pool, is fixed by #700 and caught by `WrapperEmissionOrderSpec`. The comments in
-  `WrapperStackFaultSpec` and `EventBridge` now say where the SDK orders events (per event, slot write before handlers)
-  and where it does not (across one provider's emissions).
 
 - **The lifecycle model installs a provider again** (#693, test-only). `formal/lifecycle/Lifecycle.tla` no longer
   assumes each provider is installed once: any provider but the bound one, `P0` included, can be installed again under a
@@ -95,13 +64,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   evaluation entry points over them and pins each outcome; with the fix for null provider values reverted it fails.
   `Fault` gains two cases, so an exhaustive match on it needs them.
 
-- **OFREP fault shapes as three axes** (#705, test-only). `OfrepFaultShapeSpec` runs every combination of status
-  (400, 401, 403, 404, 429, 500, 502, 503), body (OFREP JSON, other JSON, HTML, empty, truncated) and headers
-  (`Retry-After`, `Content-Type` JSON or HTML) against a pure table: a 429 or 5xx is a `ProviderError` whatever it
-  carries, a 4xx with a JSON body is classified by its status, a 4xx whose body is not JSON is a `ProviderError`, and
-  headers change nothing. Through `CircuitBreakerProvider` the circuit opens for all of them but a 400 or 404 with a
-  JSON body. With the fix for non-JSON error bodies reverted, a 502 with an HTML body no longer opens the circuit.
-
 - **Testkit: an absent-key law** (#706). `DifferentialLaws.adversarialKeys` (and `adversarialKey`) is a corpus of
   keys a provider must not choke on: empty, every HOCON path character, dots, a path-like key, a character outside
   the BMP, control characters, a 10 kB key and the HOCON keywords. `absentKeysAreNotFound` checks that every getter
@@ -112,11 +74,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
-- **`toThrowable`, `asThrowable`, `FeatureFlagException`, `EmptyFlagVariables` and `FeatureFlagError.isRecoverable`
-  are gone** (#653). A `FeatureFlagError` is a `Throwable` itself, so `.orDie` takes it directly. `EmptyFlagVariables`
-  was never raised. `isRecoverable` was `isFlagError` under a name that read as "worth retrying"; use `isFlagError`.
-  `ProviderStatus.isRecoverable` stays. `FeatureFlagError.unauthorized(reason, cause)` is gone: build
-  `Unauthorized(reason, Some(cause))`.
+- **`EmptyFlagVariables` and `FeatureFlagError.isRecoverable` are gone** (#653). A `FeatureFlagError` is a `Throwable`
+  itself, so `.orDie` takes it directly. `EmptyFlagVariables` was never raised. `isRecoverable` was
+  `isFlagError` under a name that read as "worth retrying"; use `isFlagError`. `ProviderStatus.isRecoverable` stays.
+  `FeatureFlagError.unauthorized(reason, cause)` is gone: build `Unauthorized(reason, Some(cause))`.
 
 - **`transaction` does not exist on Scala 2.13** (#653). Its error channel there was `Any`, which is what a typed
   version would replace, so use `transactionEither`, whose `Either[E, TransactionError]` is the same information on
@@ -205,8 +166,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   changed the constructor, `apply` and `copy` of `FeatureFlagsConfig` by adding a field (1.2.0 also
   `OptimizelyProviderConfig`, and `fromAcquireAsync`'s 13-parameter descriptor), and 1.1.0 also the `build`,
   `buildAsync`, `make` and `transaction` overloads. The build now checks the Scala 3 artifacts' TASTy too (TASTy-MiMa),
-  baselines against 1.2.1, and fails CI on a compatibility filter for a public symbol before a major release.
-  `RELEASING.md` states the policy.
+  and fails CI on a compatibility filter for a public symbol before a major release. There is no baseline until 2.0.0
+  is published; from then on each module baselines against the previous release. `RELEASING.md` states the policy.
 
 - **The library registers a wrapper of each provider and awaits its `initialize()` directly** (#697). A swap, a build
   and a timed-out swap's previous provider settle on the outcome the wrapper reports when `initialize()` returns or
@@ -380,9 +341,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   caller was interrupted, or the timeout fired, before the forked call ran its first instruction, the abandoned-call
   counter went up and never came back down, though the provider was never called. Enough of these filled the cap, and
   every timed evaluation was then rejected while the provider was healthy. Such a call is now skipped and not counted.
-  the swap's
-  registration wait for the error message it reports when the provider initialized and then reported an error, which it
-  could settle without (`Error("")`) when the SDK's READY arrived first.
 - **`setProvider` after `shutdown` is refused instead of reviving the instance** (#631). The swap had no shutdown guard
   and cleared the shut-down flag, so it moved the status back to `Ready` and evaluations ran again, although the event
   bridge and hub were gone: the new provider's `ERROR`, `STALE` and `FATAL` never moved the status, `events` ended at
@@ -694,6 +652,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   every run and 20000 nightly, fails if any library action or named case is never generated, and checks that planted
   bugs fail the replay. Writing it found one fold in the model, now fixed (after a failed rollback the status stays
   `Error` until the reconcile, as in the code), and the timed-out swap's reconcile gap under Fixed.
+- **The lifecycle model's preconditions, each enforced or named** (#655, test-only). `formal/lifecycle/README.md`
+  classifies every precondition of a library action as enforced by the code or assumed, with what checks each.
+  `preconditions.py` deletes each one a recorded run can show and checks that its reject fixture is then accepted, so
+  every such precondition has a fixture that exercises it; the `traces` job runs it. Two fixtures were added (a swap
+  inside a swap, a swap after shutdown), and the model now lets `shutdown` run after the
+  scope has closed, as the code does.
+- **A TLA+ model of the provider lifecycle, checked by TLC in CI** (#582, test-only). `formal/lifecycle/Lifecycle.tla`
+  models the swap, its rollback, the event bridge, the providers a timed-out swap leaves behind, shutdown and the scope
+  close, with the Java SDK as the environment, and TLC checks every interleaving for the initial provider, three swaps
+  and two provider events (about 11 million states) against eight invariants. Each of the lifecycle bugs fixed this
+  release, put back into the model, breaks one of them. The new `Formal model` workflow runs it when the lifecycle code
+  or the model changes, and asks a pull request that changes the code without the model to say why. Writing the model
+  found a defect it now records as a known limit: a provider that reports `ERROR` right after a successful
+  `initialize()`, before the swap has seen the outcome, makes the swap roll back onto a provider the SDK has already
+  shut down (#623).
+- **Trace validation of the lifecycle model** (#582, test-only). With `ZOF_TRACE=1`, `LifecycleModelSpec` and
+  `LifecycleInterleavingSpec` record the lifecycle probe points of every run, and `formal/lifecycle/validate.py` has
+  TLC check that each run's library steps follow an order the TLA+ model allows. The `Formal model` workflow does so on
+  `main` and nightly for both suites,
+  and on pull requests checks that the checker accepts recorded and hand-written runs and rejects runs the model
+  forbids, among them one recorded with shutdown's lock removed. The model now allows a second shutdown call, which the
+  recorded runs showed is harmless.
+- **The lifecycle model test covers reused provider names, overlapping actions and orphaned providers** (#574,
+  test-only). `LifecycleModelSpec` now generates swaps whose provider reuses the replaced provider's name (an
+  evaluation's answering provider is told apart by id), events from an already-replaced provider, providers whose
+  `initialize()` hangs and then fails or whose `shutdown()` is slow, a reinstall of the provider a timed-out swap
+  replaced, and pairs of actions run at once, checked against every order they can take effect in. Every case also
+  checks that each provider it created was shut down exactly once. The model now lives in `LifecycleModel`.
+- **Wrapper-stack event-order flake pinned** (#666, test-only). `WrapperStackFaultSpec` now also runs the two cases
+  its generated property shrank to when an `ERROR` failed to reach the status in CI; the cause, wrappers re-emitting
+  through the SDK's unordered pool, is fixed by #700 and caught by `WrapperEmissionOrderSpec`. The comments in
+  `WrapperStackFaultSpec` and `EventBridge` now say where the SDK orders events (per event, slot write before handlers)
+  and where it does not (across one provider's emissions).
+- **OFREP fault shapes as three axes** (#705, test-only). `OfrepFaultShapeSpec` runs every combination of status
+  (400, 401, 403, 404, 429, 500, 502, 503), body (OFREP JSON, other JSON, HTML, empty, truncated) and headers
+  (`Retry-After`, `Content-Type` JSON or HTML) against a pure table: a 429 or 5xx is a `ProviderError` whatever it
+  carries, a 4xx with a JSON body is classified by its status, a 4xx whose body is not JSON is a `ProviderError`, and
+  headers change nothing. Through `CircuitBreakerProvider` the circuit opens for all of them but a 400 or 404 with a
+  JSON body. With the fix for non-JSON error bodies reverted, a 502 with an HTML body no longer opens the circuit.
 
 ### Security
 

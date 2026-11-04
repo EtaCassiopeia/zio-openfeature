@@ -89,7 +89,8 @@ object Optimizely:
 
   // --8<-- [start:fail-fast]
   def failFast(provider: OptimizelyFeatureProvider): ZLayer[Any, Throwable, FeatureFlags] =
-    FeatureFlags.fromProvider(provider, FeatureFlagsConfig.default.withInitTimeout(15.seconds)) // build fails if not ready
+    // The build fails if the datafile is not loaded in time. Keep initTimeout above the provider's 25 s initWait
+    FeatureFlags.fromProvider(provider, FeatureFlagsConfig.default.withInitTimeout(35.seconds))
   // --8<-- [end:fail-fast]
 
   // --8<-- [start:readiness]

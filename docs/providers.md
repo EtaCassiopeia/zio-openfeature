@@ -35,6 +35,13 @@ works, for example [flagd](https://flagd.dev/), [LaunchDarkly](https://launchdar
 --8<-- "Providers.scala:config"
 ```
 
+**Configuration objects.** Every config in the library (this one, `AcquireConfig`, and the ones the extras, OFREP and
+Optimizely modules take) is built from `default`, or from `OFREPProviderConfig(baseUrl)` and
+`OptimizelyProviderConfig(sdkKey)`, and changed with `with<Field>` methods that each return a copy. An `Option` field
+takes the bare value (`withDatafileUrl(url)`). There is no `copy` or `unapply`, and no `apply` beyond those two. A few setters do not follow
+the field name: `withoutEvaluationTimeout`, `withAsyncInit` and `withSyncInit`, `withHook` beside `withHooks`, and
+`withIsolatedApi`.
+
 | Field | Default | Setter | What it does |
 |:--|:--|:--|:--|
 | `domain` | none | `withDomain(d)` | Binds the client to a named [domain](#domains). |
@@ -43,7 +50,7 @@ works, for example [flagd](https://flagd.dev/), [LaunchDarkly](https://launchdar
 | `evaluationTimeout` | `Default`: 1 second | `withEvaluationTimeout(d)`, `withoutEvaluationTimeout` | Bounds each evaluation (`Default`, `After(d)` or `Disabled`); see [Evaluating flags](evaluating.md). |
 | `initTimeout` | 30 seconds | `withInitTimeout(d)` | Bounds initialization. |
 | `initMode` | `InitMode.Sync` | `withAsyncInit`, `withSyncInit` | [Sync or async start](#sync-or-async-start). |
-| `apiOwnership` | `ApiOwnership.Auto` | `withApiOwnership(o)` | [Whether shutdown stops the API](#who-shuts-down-the-api). |
+| `apiOwnership` | `ApiOwnership.Auto` | `withApiOwnership(o)`, `withIsolatedApi` | [Whether shutdown stops the API](#who-shuts-down-the-api). |
 | `contextSource` | empty | `withContextSource(s)` | Ambient [context](context.md) read on every evaluation. |
 | `fallbackLogging` | `FallbackLogging.Default` | `withFallbackLogging(p)` | Logging of a served `*OrDefault`: `Off`, `Always` or `Throttled(window)`. |
 | `maxAbandonedCalls` | 256 | `withMaxAbandonedCalls(n)` | Cap on timed-out provider calls still running; beyond it evaluations fail fast with `ProviderError`. At least 1. |
@@ -54,13 +61,14 @@ works, for example [flagd](https://flagd.dev/), [LaunchDarkly](https://launchdar
 |:--|:--|:--|
 | The layer is ready | once the provider is `Ready` or `Stale` | at once; evaluations fail with `ProviderNotReady` until then |
 | Slower than `initTimeout` | fails with a `TimeoutException` | status `Fatal`, `Error` event with `ProviderFatal` |
-| `initialize()` fails | fails with a `GeneralError` (`FatalError` for a fatal outcome) carrying the provider's message | status `Error` |
+| `initialize()` fails | fails with a `GeneralError` (`FatalError` for a fatal outcome) carrying the provider's message | status `Error`, then `Fatal` once `initTimeout` passes, unless the provider became ready first |
 
 Either way the provider is shut down once it has failed. A provider stuck in `initialize()` often can't shut down
 either, so that `shutdown()` is abandoned rather than awaited: the sync build waits for it at most `initTimeout`
 (capped at 15 seconds), and the async `Error` event is published before it starts. A provider the async watchdog shut
-down stays registered with the Java SDK, which calls its `shutdown()` again when the instance shuts down or the provider
-is replaced, so a provider's `shutdown()` should tolerate a second call.
+down stays registered with the Java SDK, but the library's wrapper does not call its `shutdown()` a second time. A
+provider you registered with the API yourself has no wrapper, and the SDK calls its `shutdown()` again when the
+instance shuts down or the provider is replaced.
 
 Use sync when serving a default is worse than not starting: a wrong SDK key then stops the app. Use async to start
 fast and gate traffic on [readiness](lifecycle.md#wait-until-the-provider-is-ready), or use a
@@ -152,8 +160,9 @@ The strategy decides when the chain moves on:
   one) keeps it, and counts in this chain as a member that sends no events.
 
 ??? note "Hand-built `MultiProvider`"
-    Unlike `FeatureFlags.multiProvider`, a `new MultiProvider(...)` fails integer values with `TYPE_MISMATCH` (wrap it
-    in [`IntegerWideningLongProvider`](extras.md#integer-widening-long-provider)) and drops `track` events.
+    Unlike `FeatureFlags.multiProvider`, a `new MultiProvider(...)` fails `long` reads of integer values with
+    `TYPE_MISMATCH` (wrap it in [`IntegerWideningLongProvider`](extras.md#integer-widening-long-provider)) and drops
+    `track` events.
 
 ## Start on a fallback: `fromAcquireAsync`
 
@@ -203,6 +212,9 @@ chains checks; any `FeatureProvider => Task[Unit]` is one.
 The check runs before `initialize()` and without global or ambient context, so initialize inside `acquire` a provider
 that only answers afterwards.
 
+The snippet's `compose` is passed with `AcquireConfig.withCompose`: it asks the real provider first and falls back only
+when it lacks the flag, where the default falls back on any error.
+
 ### Which provider is serving?
 
 The layer also provides `AcquireStatus`: `Constructing`, then `Live` or `Failed(cause)`.
@@ -238,10 +250,10 @@ A domain names a client, so different parts of an app can use different provider
   `defaultClient` is the client without a domain.
 - A domain without its own provider uses the default one. `setProvider(domain, provider)` registers one, and swaps it in
   if the client exists.
-- A provider that fails or is not ready within 30 seconds gives `ProviderInitializationFailed`, and the failed client
-  is released. The next `getClient` runs the provider's `initialize()` again (with its own 30 seconds) unless the
-  failure was `PROVIDER_FATAL`, which is final and fails at once. A retry that times out leaves that `initialize()`
-  running, and later attempts fail until it returns.
+- A provider that fails or is not ready within `initTimeout` (30 seconds by default) gives
+  `ProviderInitializationFailed`, and the failed client is released. The next `getClient` runs the provider's
+  `initialize()` again (with its own `initTimeout`) unless the failure was `PROVIDER_FATAL`, which is final and fails at
+  once. A retry that times out leaves that `initialize()` running, and later attempts fail until it returns.
 - `addZioApiHook(hook)` adds an [API-level hook](hooks.md) to every client, current and future.
 - `fromProvider(defaultProvider, config)` applies `version`, initial hooks, the evaluation and init timeouts, context
   source, fallback logging, `maxAbandonedCalls` and init mode to every client (with `withAsyncInit`, `getClient`
@@ -265,8 +277,9 @@ evaluations keep going. To initialize a provider again, install a new instance.
 
 - Evaluations that start during the swap fail with `ProviderNotReady`, and so does one that was already reaching the
   provider when the swap started: the Java SDK picks the slot's provider per call, so its answer may have come from the
-  new provider before that provider settled. Swaps are serialized, `setProvider` waits at most `initTimeout`, and a
-  started swap finishes even if the caller is interrupted.
+  new provider before that provider settled. Swaps are serialized, a started `setProvider` takes at most about twice
+  `initTimeout` (the new provider's initialization, then a rollback's), plus up to three seconds waiting for the SDK to
+  shut down a replaced provider, and a started swap finishes even if the caller is interrupted.
 - On success the status is the state the Java SDK reports for the new provider: `Ready`, or `Stale` for a provider
   that reports `STALE` while it starts. A restored old provider ends the same way.
 - An `ERROR` the new provider reports after its `initialize()` returned, even before `setProvider` has seen the
@@ -304,11 +317,9 @@ evaluations keep going. To initialize a provider again, install a new instance.
   timed-out provider, or the provider an async start was built with, is still initializing and the new provider's
   `initialize()` throws, there is nothing to roll back to: that provider never served and is not initialized a second
   time. The new provider stays registered with status `Error`, that provider is shut down (by an instance that owns
-  its API), and a later `setProvider` recovers. Whether `initialize()` returned is read from the Java SDK's own `PROVIDER_READY`, which it
-  sends only then, so a new provider that reports `READY` itself from inside its `initialize()` is taken at its word:
-  if that `initialize()` then fails, the old provider is not shut down. One that reports `ERROR` from inside an
-  `initialize()` that then fails reads as a failed swap. A provider whose metadata has no name is covered the same way, unless
-  it initializes and reports an error in the instant between its registration and the library starting to watch for its
-  `READY`.
+  its API), and a later `setProvider` recovers. Whether `initialize()` returned or threw is observed on the library's
+  wrapper, so a provider that reports `READY` or `ERROR` from inside its `initialize()` does not change how the swap
+  reads the outcome. A provider you registered with the API yourself has no wrapper; its outcome is read from the SDK's
+  state for it.
 - `setProvider` is the only way out of `Fatal`. With a wrapper such as `CircuitBreakerProvider`, swap in a new wrapper
   around the new provider.

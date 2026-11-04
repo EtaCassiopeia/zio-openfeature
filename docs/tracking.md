@@ -14,8 +14,9 @@
 | `track(name, context, details)` | all three |
 
 The provider receives the context merged exactly as for an evaluation (see
-[Evaluation context](context.md#context-levels)). `TrackingEventDetails` has an optional numeric `value` and `attributes`. A
-provider that does not support tracking ignores the call.
+[Evaluation context](context.md#context-levels)). `TrackingEventDetails` has an optional numeric `value` and
+`attributes`: `TrackingEventDetails(value)` or `.withValue(value)` sets the value, and `.withAttribute(key, value)`
+adds an attribute. A provider that does not support tracking ignores the call.
 
 ## Errors
 

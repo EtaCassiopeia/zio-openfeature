@@ -57,7 +57,7 @@ The provider owns a polling thread and an HTTP client; a `FeatureFlags` layer sh
 ```
 
 `make` and `layer` take the key, the key and a datafile URL, or an `OptimizelyProviderConfig`; `scoped` the key or a
-config.
+config. `scoped` and `layer` give up on a shutdown that takes longer than 10 seconds and log a warning.
 
 ## Reading flags
 
@@ -99,8 +99,9 @@ The reason is `TargetingMatch` when the user got a variation, else `Default`. Me
 ??? note "Things to know"
     - Context attributes become audience attributes: strings, booleans, numbers as they are, an `Instant` as ISO-8601;
       lists and structures are left out.
-    - CMAB experiments are supported. On a cache miss, a CMAB decision blocks on Optimizely's CMAB endpoint (up to about
-      10 seconds, one retry), so set an affordable `evaluationTimeout` or add a `CircuitBreakerProvider`.
+    - CMAB experiments are supported. On a cache miss, a CMAB decision blocks on Optimizely's CMAB endpoint (the SDK's
+      HTTP client waits up to 10 seconds to connect and again to read, and this provider does not retry), so set an
+      affordable `evaluationTimeout` or add a `CircuitBreakerProvider`.
 
 ## Tracking and events
 
@@ -154,7 +155,8 @@ succeeds, answering from the last datafile meanwhile.
 | Outage after startup | last datafile | last datafile | last datafile, or the fallback while the breaker is open |
 | Good for | experiments, UI changes | flags guarding money or safety | flags whose default would be wrong |
 
-**Fail fast.** Initialize synchronously; the build fails if the datafile misses `initTimeout`:
+**Fail fast.** Initialize synchronously; the build fails if the datafile misses `initTimeout`. Keep it above the
+provider's `initWait` (25 s by default):
 
 ```scala
 --8<-- "Optimizely.scala:fail-fast"
@@ -181,15 +183,18 @@ The fallback hides outages, so alert on `Fatal` soon after start (wrong key or u
 --8<-- "Optimizely.scala:config"
 ```
 
-| `OptimizelyProviderConfig` field | Default | Meaning |
-|---|---|---|
-| `sdkKey` | required | the environment's SDK key |
-| `datafileUrl` | the Optimizely CDN | where to fetch the datafile |
-| `initWait` | 25 s (`OptimizelyProvider.DefaultInitWait`) | first-datafile wait; keep below `initTimeout` |
-| `pollingInterval` | the SDK's, 5 min | datafile fetch interval; setting it turns on the watchdog; positive |
-| `blockingTimeout` | the SDK's, 10 s | longest the SDK blocks for a config; positive |
-| `staleAfter` | 3 × `pollingInterval` | time without a successful fetch before `STALE` (watchdog on); positive |
-| `events` | `OptimizelyEvents.Batched.default` | see [Tracking and events](#tracking-and-events) |
+A config starts from `OptimizelyProviderConfig(sdkKey)` and changes one field per `with<Field>` setter. An optional
+field takes the bare value, as in `withDatafileUrl(url)`. It has no `copy`.
+
+| `OptimizelyProviderConfig` field | Default | Setter | Meaning |
+|---|---|---|---|
+| `sdkKey` | required | `withSdkKey(key)` | the environment's SDK key |
+| `datafileUrl` | the Optimizely CDN | `withDatafileUrl(url)` | where to fetch the datafile |
+| `initWait` | 25 s (`OptimizelyProvider.DefaultInitWait`) | `withInitWait(d)` | first-datafile wait; keep below `initTimeout` |
+| `pollingInterval` | the SDK's, 5 min | `withPollingInterval(d)` | datafile fetch interval; setting it turns on the watchdog; positive |
+| `blockingTimeout` | the SDK's, 10 s | `withBlockingTimeout(d)` | longest the SDK blocks for a config; positive |
+| `staleAfter` | 3 × `pollingInterval` | `withStaleAfter(d)` | time without a successful fetch before `STALE` (watchdog on); positive |
+| `events` | `OptimizelyEvents.Batched.default` | `withEvents(e)` | see [Tracking and events](#tracking-and-events) |
 
 A non-positive `pollingInterval`, `blockingTimeout` or `staleAfter`, or an out-of-range `Batched` value, fails with
 `InvalidConfiguration`.

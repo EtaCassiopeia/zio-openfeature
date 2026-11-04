@@ -24,19 +24,19 @@ design are not listed.
 | Register without waiting, then wait with a bound; no rollback on a timeout | #433, #434 | `setProviderAndWait` holds the SDK's write lock across `initialize()`, so a hanging provider wedges every later swap and the API shutdown. A started swap runs to its outcome even if its caller is interrupted. |
 | The instance's resources have one owner: the hub closes with the scope, `awaitReady` ends on shutdown | #435 | Teardown is one uninterruptible path. |
 | `fromAcquireAsync` registers a wrapper that switches its delegate, never a second SDK registration | #512 | The library can register its own object. The SDK refuses evaluations while a slot is `NOT_READY`, so a swap that goes through the SDK always has a window. |
-| The event bridge attaches before the provider is registered | #531 | A `READY` dispatched during registration is otherwise missed or doubled. |
+| The event bridge attaches before the provider is registered, or right after the bind when the slot is served by another provider | #531 | A `READY` dispatched during registration is otherwise missed or doubled. |
 | Every SDK and provider call on a lifecycle path is bounded, enforced by a source guard | #561, #744 | A provider that cannot shut down must not hang the scope. The bound is `Timeouts.boundedFinalizer`, which every module's release uses: a plain `timeout` in a finalizer cannot abandon an uninterruptible call. |
 | The status follows the SDK's state for the slot, read when the event is handled, not the event's type | #563, #601, #613, #617, #634 | Events have no order; the slot does. Status is a function of the slot plus the two sticky terminals, `Fatal` and shutdown. |
 | Shutdown and the scope close take the swap lock | #565, #636 | A swap that settles after the final `NotReady` moves the status out of it. |
 | A timed-out swap's previous provider is tracked until the new one settles | #564 | The SDK shuts the replaced provider down only if `initialize()` returns; on a timeout nothing else will. |
-| A replaced provider is installed again only once the SDK's shutdown of it has run (bounded), not when the holder's `initialize()` returns; a timed-out rollback's failed provider is an orphan of the rollback's registration | #728 | The SDK shuts the replaced provider down on its executor, after the return that the library observes; a guard keyed on the return has a window the SDK's own `shutDownOld` fills. |
+| A replaced provider is installed again only once the SDK's shutdown of it has run (bounded), not when the holder's `initialize()` returns; a timed-out rollback's failed provider is an orphan of the rollback's registration on an instance that owns its API, and is left to the SDK on a shared one | #728 | The SDK shuts the replaced provider down on its executor, after the return that the library observes; a guard keyed on the return has a window the SDK's own `shutDownOld` fills. |
 | Probe points and the interleaving grid; the TLA+ model, its mutants and trace validation; enforced and assumed preconditions told apart | #576, #582, #655 | Random timing finds races slowly and cannot replay them. The model's "assumed" preconditions were exactly the entry paths not yet under the lock. |
 | A provider whose `initialize()` may still run is remembered, so no path initializes it again | #619, #635, #669 | The SDK runs `initialize()` on its executor and never says when it returns. Four structures ended up answering the same question. |
 | The wait listens for the SDK's own `READY` to tell "failed" from "initialized, then reported an error"; a second handler for nameless providers; a reuse heuristic | #623, #629, #630 | An `ERROR` state has two causes the slot cannot tell apart. Each heuristic stood in for one unavailable fact: whether `initialize()` returned. |
 | Refusals after shutdown and after the scope close, checked under the swap lock | #631, #665, #671 | A refusal checked outside the lock, or set by only one of the owners, is a revival. |
 | Evaluations carry a swap generation and distrust an answer made across a swap | #658 | The SDK resolves the slot's provider per call, so an evaluation can be answered by a provider the swap has already rejected. |
 | An API has one owner, which retires every instance on it | #652 | Layers sharing the global API clobbered each other's slot. |
-| **Managed registrations and one lifecycle state** (in progress, #696) | #696, #697, #698, #699 | See below. |
+| **Managed registrations and one lifecycle state** (#696) | #696, #697, #698, #699 | See below. |
 
 The pattern in the second half of the table: each fix added one more fact and one more check at the point where the
 previous fix stopped. By the end, "is this provider still initializing" had four answers, the registration wait had
@@ -59,12 +59,15 @@ object and observes all three.
 returns or throws, with the real exception; it delegates `shutdown()` once per initialization cycle, so a provider is
 shut down at most once by construction; and it forwards its delegate's events through one ordered lane, a thread that
 emits and awaits each event in turn, so the slot's state writes follow the order in which the wrapper received them. The SDK's own `READY` and `ERROR` for an initialization still go
-through its pool, but nothing depends on them.
+through its pool and are not ordered with the wrapper's emissions. The registration's outcome does not depend on those
+events, but `settle` waits, until the init deadline, for the SDK to write the slot's state after `initialize()` returns,
+and an async start becomes `Ready` only from the SDK's `READY` event, read against the slot.
 
 **`Registration`** binds and then awaits that promise, bounded by `initTimeout`. One read of the manager's state right
 after the bind tells a fresh initialization from one already running for the same binding and from a reused
-registration that ran none. The `READY` watch, the error observer, the slot poll and the grace windows are gone, and no
-blocking-pool thread is parked per swap. A timed-out swap's previous provider is settled by the same promise.
+registration that ran none. The `READY` watch, the error observer and the grace windows are gone. What is left of the
+slot poll is the short read for the SDK's write after `initialize()` returns, bounded by the init deadline, and the poll
+of a provider you registered yourself. A timed-out swap's previous provider is settled by the same promise.
 
 A provider the user already registered with the API, in the target slot or the default one, is the exception: wrapping
 it would run its `initialize()` again, or fail on an `EventProvider` the SDK holds. The library binds that registration
@@ -78,9 +81,9 @@ input to the next state, the status it moved to and the effects to run. Every re
 path can skip it. The swap lock stays as the serializer of the multi-step sequences.
 
 The status lives in the status ref, which the testkit may share and set directly; the rest of the record lives beside
-it, and every step runs under the status ref's `modifyZIO`, whose semaphore makes both writes one step. The mirrors read
-synchronously from SDK threads and the evaluator (the gate, the generation, the provider name) are written in the same
-step; the effects run after it, never under the semaphore.
+it, and every step runs under the status ref's `modifyZIO`, whose semaphore makes both writes one step. The gate and the provider name, which SDK threads and the evaluator
+read synchronously, are written in the same step; a swap's start writes the generation right after its step has
+published the status, so a reader that sees the new generation also sees the swap's `NotReady`; the effects run after it, never under the semaphore.
 
 What stays: the probe points, the interleaving grid, the model and trace validation, which now check observed `inits`,
 `ran` and `shuts` rather than assumed ones; the evaluation path and its generation check; the two-tier status rule.
@@ -113,7 +116,9 @@ provider's own emissions.
 - Two models check the lifecycle: `formal/lifecycle` is one instance's swap protocol, event bridge, orphans and
   teardown; `formal/registry` is one API with several instances on several domains, where the ownership rules
   live (one owner tears the API down, a non-owner's close touches nothing shared, every registered provider is
-  shut down once, one client per domain, a `Bound.Foreign` provider is never shut down by the library). They
+  shut down once, one client per domain, a `Bound.Foreign` provider is never shut down by the library; the code does
+  shut one down when a build fails while it is still initializing and when the async init watchdog fires on one that
+  was never ready). They
   compose by assumption, not by TLC: neither re-checks the other's claims.
 
 ## Status

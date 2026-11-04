@@ -3,6 +3,8 @@
 A transaction runs a block of code with a consistent view of your flags: it can **override** flags without touching the
 provider, **cache** each flag so every read sees the same value, and **record** every flag the block read.
 
+`transaction` exists on Scala 3 only; on Scala 2.13 use `transactionEither` (see [Errors](#errors)).
+
 ![A transaction block: an overridden flag is served without calling the provider; the first read of another flag calls the provider and is cached; the repeat read is served from the cache; every read is recorded and returned in the TransactionResult.](assets/transaction.svg)
 
 ## A first transaction

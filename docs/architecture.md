@@ -14,7 +14,7 @@ fiber-local context, ZIO hooks, transactions, a provider status you can rely on,
 |---|---|---|
 | `FeatureFlags` | The service your code calls | a `ZLayer`, built by one of the [factories](providers.md) |
 | `FeatureFlagsAdmin` | The same instance's administration: `setProvider`, `shutdown`, API hooks, event handlers | provided by the same layer as `FeatureFlags` |
-| `OpenFeatureAPI` | The SDK's registry of providers and API-level hooks | the global singleton, or an isolated instance per [`FeatureFlagRegistry`](providers.md) |
+| `OpenFeatureAPI` | The SDK's registry of providers and API-level hooks | the global singleton, or an isolated instance per [`FeatureFlagRegistry`](providers.md) or per `withIsolatedApi` instance |
 | `Client` | The SDK object that evaluates flags | one per `FeatureFlags`, internal |
 | `FeatureProvider` | Any OpenFeature Java provider | passed to the factory |
 | `ManagedProvider` | What the library registers in place of your provider: it observes its initialization, shutdown and events. One per provider, shared by every domain and instance that binds it; `fromAcquireAsync`'s switches from the fallback to the real provider | internal |

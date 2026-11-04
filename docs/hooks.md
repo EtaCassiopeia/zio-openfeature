@@ -40,8 +40,12 @@ does; the wire type the provider was asked for is `ctx.flagType`.
 | Java API | `addApiHook(javaHook)` | a `dev.openfeature.sdk.Hook`, run by the Java SDK |
 | Provider | the provider itself | run by the Java SDK |
 
-`FeatureFlags.hooks` and `zioApiHooks` list what is registered; `clearHooks`, `clearZioApiHooks` and `clearApiHooks`
-remove it.
+`FeatureFlags.hooks` lists the client hooks and `FeatureFlagsAdmin.zioApiHooks` the ZIO API hooks;
+`FeatureFlags.clearHooks`, `FeatureFlagsAdmin.clearZioApiHooks` and `FeatureFlagsAdmin.clearApiHooks` remove them.
+
+`addZioApiHook(s)`, `addApiHook`, `zioApiHooks`, `clearZioApiHooks` and `clearApiHooks` are on `FeatureFlagsAdmin`, which
+the factories' layers provide next to `FeatureFlags`; a program that needs only `FeatureFlags` cannot change API-level
+hooks.
 
 ```scala
 --8<-- "Hooks.scala:manage"
@@ -49,7 +53,8 @@ remove it.
 
 ??? note "Java SDK hooks"
     Hooks written for the Java SDK run inside the provider call. The Java API is shared by every instance on the same
-    `OpenFeatureAPI`: `clearApiHooks` also clears its siblings' API hooks, and logs a warning.
+    `OpenFeatureAPI`: `clearApiHooks` also clears its siblings' API hooks; from an instance that does not own the API it
+    logs a warning saying so.
 
     ```scala
     --8<-- "Hooks.scala:java-hook"

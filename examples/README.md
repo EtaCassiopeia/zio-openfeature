@@ -5,10 +5,12 @@ it against the current source, so the documented usage cannot rot.
 
 ## `docs/`
 
-Every code sample on the [documentation site](https://etacassiopeia.github.io/zio-openfeature/). The pages include
-the sections between `// --8<-- [start:name]` and `// --8<-- [end:name]` markers in
-`src/main/scala-3/snippets/`, and the specs in `src/test/scala-3/snippets/` run the samples that can run on their own
-and check what the pages say about them. To change a sample, change it here; the page picks it up.
+Nearly every code sample on the [documentation site](https://etacassiopeia.github.io/zio-openfeature/). The pages
+include the sections between `// --8<-- [start:name]` and `// --8<-- [end:name]` markers in
+`src/main/scala-3/snippets/` and `src/test/scala-3/snippets/` (and, for the rift code, in `provider-fault-tests`). The
+specs in `src/test/scala-3/snippets/` run the samples that can run on their own and check what the pages say about
+them. A few short fences, such as dependency lines, are written in the page. To change a sample, change it here; the
+page picks it up.
 
 ```sh
 sbt examplesDocs/test
@@ -19,9 +21,11 @@ sbt examplesDocs/test
 An OFREP-backed app wired for production:
 
 - `OFREPProvider.make(baseUrl)` validates the URL, so a bad one fails at start-up, not at the first evaluation;
-- `FeatureFlags.fromProviderAsync` with the default 30 s `initTimeout`, so a misconfigured endpoint cannot hang
-  start-up;
-- `CircuitBreakerProvider` from `zio-openfeature-extras`, so a degraded OFREP endpoint does not take the app down.
+- `FeatureFlags.fromProvider` with `withAsyncInit` and a 500 ms evaluation timeout, under the default 30 s
+  `initTimeout`, so a misconfigured endpoint cannot hang start-up or an evaluation.
+
+The example does not wrap the provider in a `CircuitBreakerProvider`. To keep a degraded endpoint from taking the app
+down, do that yourself (see the [Extras](../docs/extras.md#circuit-breaker-provider) page).
 
 ```sh
 OFREP_BASE_URL=https://flags.example.com sbt 'examplesOfrepInitTimeout/run'
@@ -33,7 +37,7 @@ A `UserService` gated by a flag, and the spec that tests it against `TestFeature
 
 - `TestFeatureProvider.layer` wires the test `FeatureFlags`;
 - `provider.setFlag("…", value)` drives evaluations;
-- `provider.setStatus(ProviderStatus.Error)` exercises the failure path.
+- `provider.setStatus(ProviderStatus.NotReady)` exercises the failure path: evaluations fail with `ProviderNotReady`.
 
 ```sh
 sbt 'examplesTestkitApp/test'

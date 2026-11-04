@@ -57,7 +57,7 @@ object Context:
   // --8<-- [start:levels]
   val levels: ZIO[FeatureFlags, FeatureFlagError, Boolean] =
     for
-      // Global: the whole application, every FeatureFlags client
+      // Global: every evaluation of this FeatureFlags instance
       _ <- FeatureFlags.setGlobalContext(EvaluationContext.empty.withAttribute("env", "production"))
       // Client: this FeatureFlags instance
       _ <- FeatureFlags.setClientContext(EvaluationContext.empty.withAttribute("service", "checkout"))

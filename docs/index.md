@@ -1,5 +1,10 @@
 # ZIO OpenFeature
 
+!!! note "These pages describe the upcoming 2.0"
+    The latest published version is 1.2.1, and its docs are in the
+    [`v1.2.1` tag](https://github.com/EtaCassiopeia/zio-openfeature/tree/v1.2.1/docs). Coming from 1.x? See
+    [Upgrading to 2.0](upgrading.md).
+
 ZIO OpenFeature gives Scala applications type-safe feature flags as ZIO effects. It is built on the
 [OpenFeature](https://openfeature.dev) Java SDK, so it works with any OpenFeature provider: LaunchDarkly, flagd,
 Flagsmith, Flipt, OFREP, Optimizely, or one of the providers that ship with it.

@@ -1,4 +1,4 @@
-"""FeatureFlags.setProvider: the status goes NotReady while the new provider initializes. If initialize() succeeds the
+"""FeatureFlagsAdmin.setProvider: the status goes NotReady while the new provider initializes. If initialize() succeeds the
 new provider serves; if it throws the old provider is restored; if it times out the new provider stays registered
 and the status is Error."""
 
@@ -23,7 +23,7 @@ def build() -> Scene:
     T = SLOT * len(LANES)
     sc = Scene(
         N3[0] + N3[1] + 28, 470, T,
-        "FeatureFlags.setProvider",
+        "FeatureFlagsAdmin.setProvider",
         "status leaves Ready while the new provider initializes · three ways it ends",
         "on a timeout the status turns Ready by itself if the new provider finishes later · setProvider again recovers",
         "setProvider: the status moves from Ready to NotReady while the new provider initializes, and evaluations fail "

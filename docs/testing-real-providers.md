@@ -12,7 +12,8 @@ zio-test fixtures that point the JVM at it. Your test decides, per host, what th
 
 These are integration tests: they start a native engine, change JVM-wide proxy and TLS settings, and need a recent JDK.
 Keep them in a separate module that you run locally, not in the default CI build. This repository's
-`provider-fault-tests` module does this to the real OFREP and Optimizely providers; the code on this page is its code.
+`provider-fault-tests` module does this to the real OFREP and Optimizely providers; the rift code on this page is its
+code, and the `FeatureFlags` side is compiled and run in CI against stand-ins for the network.
 
 ## Set up the test module
 
@@ -31,7 +32,9 @@ The embedded engine also needs rift's platform natives on the test classpath and
 | 22 or later | `"io.github.achird-labs" % "rift-java-embedded" % "0.3.7" % Test`, the matching `rift-java-natives` for your platform, and `--enable-native-access=ALL-UNNAMED` |
 | 21 | `rift-java-embedded-jdk21`, and `--enable-preview --enable-native-access=ALL-UNNAMED` (with sbt-rift: `riftTlsEnablePreview := true`) |
 
-Where the engine cannot load, `rift.zio.Rift.isEmbeddedAvailable` is `false`.
+Where the engine cannot load, `rift.zio.Rift.isEmbeddedAvailable` is `false`. On a JDK older than 22, leave
+`rift-java-embedded` off the classpath: its classes are Java 22 bytecode, and with them present `isEmbeddedAvailable`
+throws `UnsupportedClassVersionError` instead of answering.
 
 ## Point the provider at the proxy
 
@@ -52,7 +55,7 @@ lazy val providerFaultTests = (project in file("provider-fault-tests")).enablePl
 ```
 
 `intercept.caFromBuildProps()` then loads that CA (and fails if the plugin is not enabled). The plugin is opt-in and
-per project, so no other module's test JVM changes. Give the provider a host with a real-looking top-level domain such as `example.com`: the OFREP provider
+per project, so no other module's test JVM changes. Give the provider a host with a real-looking top-level domain such as `example.com`: the contrib OFREP provider
 validates its base URL and rejects `.test`.
 
 ## Build the `FeatureFlags` side

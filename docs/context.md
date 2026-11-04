@@ -19,12 +19,13 @@ are merged into the one context the provider sees.
 `withAttribute` accepts plain `Boolean`, `String`, `Int`, `Long`, `Double` and `java.time.Instant` values. Also
 available: `withTargetingKey`, `withAttributes(...)`, `withoutAttribute(key)`, `EvaluationContext.empty`, and
 `isEmpty` / `nonEmpty`. `forEntity(entityId, entityType = "user")` sets the key and the `entityId` and `entityType`
-attributes.
+attributes. `EvaluationContext.builder` is the alternative to chained `withAttribute` calls: `targetingKey(...)`,
+`attribute(...)` and `attributes(...)`, then `build`.
 
 `targetingKey` is a reserved attribute name: the SDK stores the key as that attribute, so an explicit targeting key
-wins over an attribute of that name, and a context read back in a hook never has such an attribute. Across merged
-layers the more specific layer's key wins whichever form it takes: a `targetingKey` string attribute on the
-invocation context beats an explicit key on the global one.
+wins over an attribute of that name, and a context read back from the SDK (as a Java hook or provider sees it) never
+has such an attribute. Across merged layers the more specific layer's key wins whichever form it takes: a
+`targetingKey` string attribute on the invocation context beats an explicit key on the global one.
 
 ### Attribute types
 
@@ -35,8 +36,9 @@ Richer values use `AttributeValue`: `bool`, `string`, `int`, `long`, `double`, `
 ```
 
 !!! note "Large longs"
-    The Java SDK carries a `Long` as a `Long`, so a `Long` attribute of any size reaches the provider exact. A provider
-    that stores numbers as doubles can still round one above 2^53: pass IDs that large as strings for such a provider.
+    A `Long` attribute reaches the provider exact: one in `Int` range is sent as an `Integer` (so integer targeting
+    rules match), a larger one as a `Long`. A provider that stores numbers as doubles can still round one above 2^53:
+    pass IDs that large as strings for such a provider.
 
 Read attributes back with `get`, `getString`, `getInt`, `getLong`, `getDouble` and `getBoolean`; each
 `AttributeValue` also has `asString`, `asInt`, `asList`, `asStruct` and so on.
@@ -52,7 +54,7 @@ From lowest to highest; each level wins over the ones above it in the table:
 | Level | Set with | Applies to |
 |---|---|---|
 | Global | `FeatureFlags.setGlobalContext(ctx)` | every evaluation of this `FeatureFlags` instance (not shared with other instances or registry clients) |
-| Transaction | `FeatureFlags.transaction(context = ctx)` | evaluations inside the [transaction](transactions.md) |
+| Transaction | `FeatureFlags.transaction(context = ctx)` (Scala 3 only; `transactionEither` on 2.13) | evaluations inside the [transaction](transactions.md) |
 | Client | `FeatureFlags.setClientContext(ctx)` | evaluations of this `FeatureFlags` instance |
 | Context source | `FeatureFlagsConfig.default.withContextSource(source)` | every evaluation, pulled when it runs |
 | Scoped | `FeatureFlags.withContext(ctx) { ... }` | the block, on this fiber and the fibers it forks |

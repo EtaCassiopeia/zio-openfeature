@@ -29,8 +29,9 @@ Each test gets its own provider and its own isolated OpenFeature API instance, s
 
 !!! warning
     `FeatureFlags.fromProvider` and the other public factories use the global OpenFeature API, so tests that call them
-    directly must not run in parallel: add `@@ TestAspect.sequential`. The testkit's own layers are isolated and need
-    nothing. With `provideShared`, tests share one provider, so flag aspects on tests that run at the same time race
+    directly must not run in parallel: add `@@ TestAspect.sequential`, or build the instance with
+    `FeatureFlagsConfig.default.withIsolatedApi`, which gives it a private API. The testkit's own layers are isolated and
+    need nothing. With `provideShared`, tests share one provider, so flag aspects on tests that run at the same time race
     each other; add `@@ TestAspect.sequential` there too.
 
 ## Choosing a layer
@@ -262,5 +263,13 @@ provider:
 ```scala
 --8<-- "TestkitSpec.scala:chain"
 ```
+
+## Writing your own `FeatureFlags`
+
+To stub or decorate `FeatureFlags` itself rather than a provider, implement `valueDetails`, the one abstract
+evaluation method: `value`, the per-type getters (`boolean`, `string`, `int`, `long`, `double`, `obj`), their `*Details`
+forms and the `*OrDefault` forms all derive from it. Also implement `track`, and the members for context, hooks,
+transactions (`transactionEither`), `events`, `providerStatus`, `awaitReady` and metadata. A stub written against the
+1.x per-type methods (`booleanDetails` and the rest) no longer compiles, since those are now final.
 
 To test network code rather than states, see [Testing real providers](testing-real-providers.md).

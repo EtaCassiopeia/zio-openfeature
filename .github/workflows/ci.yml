@@ -97,10 +97,8 @@ jobs:
         run: sbt "++${{ matrix.scala-version }} test"
 
   # Binary-compatibility check runs once on the primary JDK. mima checks bytecode, which is JDK-independent given a
-  # single target bytecode level. While 2.0 is in development there is no baseline (see `commonSettings` in build.sbt),
-  # so mima and TASTy-MiMa compare nothing and pass. The job stays so the build keeps loading them, and so setting the
-  # baseline after 2.0.0 turns the gate back on: `mimaPreviousArtifacts` then baselines each module against its own last
-  # release. The filter check enforces RELEASING.md's binary compatibility policy, and rejects any filter until then.
+  # single target bytecode level. `mimaPreviousArtifacts` baselines each module against its own last release (see
+  # `commonSettings` in build.sbt). The filter check enforces RELEASING.md's binary compatibility policy.
   #
   # One caveat when reading a green result: `ThisBuild / mimaFailOnNoPrevious := false` means a module with no
   # published baseline (a newly added one, before its first release) is skipped SILENTLY rather than failing. So

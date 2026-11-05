@@ -63,8 +63,14 @@ expect public-filter-after-a-patch-tag 1 v1.3.0 \
 expect one-bad-among-good 1 v1.2.1 \
   'ProblemFilters.exclude[Problem]("zio.openfeature.internal.Foo*"),' \
   'ProblemFilters.exclude[MissingClassProblem]("zio.openfeature.FlagType"),'
-expect no-filters-is-an-error 2 v1.2.1 \
+expect baseline-with-no-filters-passes 0 v1.2.1 \
   'name := "x"'
+expect filter-setting-with-nothing-read-is-an-error 2 v1.2.1 \
+  'mimaBinaryIssueFilters ++= sharedFilters,'
+expect tasty-filter-setting-with-nothing-read-is-an-error 2 v1.2.1 \
+  'tastyMiMaConfig ~= (_.withMoreProblemFilters(sharedFilters)),'
+expect commented-filter-setting-passes 0 v1.2.1 \
+  '// see mimaBinaryIssueFilters in the policy'
 expect marker-line-covers-its-group 0 v1.2.1 \
   '    // non-public: private[extras]' \
   '    ProblemFilters.exclude[DirectMissingMethodProblem]("zio.openfeature.extras.CircuitState#Open.copy"),' \
@@ -106,6 +112,10 @@ expect no-baseline-internal-filter-fails 1 v1.2.1 \
   'ProblemFilters.exclude[Problem]("zio.openfeature.internal.Foo*"),'
 expect no-baseline-unlock-tag-does-not-excuse-a-filter 1 v2.0.0-RC1 \
   'ProblemFilters.exclude[DirectMissingMethodProblem]("zio.openfeature.FeatureFlags.build"),'
+
+BASELINE='mimaPreviousArtifacts := Set(organization.value %% moduleName.value % "2.0"),'
+expect baseline-that-is-not-a-version-is-an-error 2 v1.2.1 \
+  'name := "x"'
 
 BASELINE='mimaPreviousArtifacts := Set.empty,'
 expect empty-baseline-without-the-marker-is-an-error 2 v1.2.1 \

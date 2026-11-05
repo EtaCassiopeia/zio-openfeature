@@ -40,7 +40,7 @@ also covers the binary-compatibility baselines.
 |:----|:---------------|
 | format | `sbt scalafmtCheckAll scalafmtSbtCheck providerFaultTests/scalafmtCheckAll fuzz/scalafmtCheckAll` (`providerFaultTests` and `fuzz` are not aggregated, so format them explicitly) |
 | build and test, JDK 17, 21 and 25, Scala 2.13 and 3 | `sbt +test` |
-| binary compatibility | `sbt +mimaReportBinaryIssues tastyMiMaReportIssues`, then `.github/scripts/check-mima-filters.sh`. While 2.0 is in development there is no baseline, so the first two compare nothing and the script rejects any filter |
+| binary compatibility | `sbt +mimaReportBinaryIssues tastyMiMaReportIssues`, then `.github/scripts/check-mima-filters.sh` |
 | published POMs | `sbt +checkPublishedPins +optimizely/checkOptimizelyJsonParser` |
 | examples, and the fault-test and fuzz sources | `sbt examplesOfrepInitTimeout/compile examplesTestkitApp/test examplesDocs/test providerFaultTests/Test/compile fuzz/Test/compile` |
 | conformance | `sbt conformance/test conformanceZioBdd/test` |

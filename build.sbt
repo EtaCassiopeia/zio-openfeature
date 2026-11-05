@@ -152,10 +152,9 @@ lazy val lintSettings = Seq(
 // `<FromJavaObject>` terms (scoverage 2.0.9, Scala 3.3.4) no longer reproduces.
 ThisBuild / coverageEnabled := false
 
-// Binary-compatibility check via sbt-mima, and TASTy compatibility of the Scala 3 artifacts via sbt-tasty-mima. Main is
-// on its way to 2.0 and no release comes before it, so there is no baseline for now (see `mimaPreviousArtifacts` in
-// `commonSettings`). After 2.0.0, each module baselines against its own most recent release. Which filters a minor
-// release may carry is RELEASING.md's "Binary compatibility policy", enforced by
+// Binary-compatibility check via sbt-mima, and TASTy compatibility of the Scala 3 artifacts via sbt-tasty-mima. Each
+// module baselines against its own most recent release (see `mimaPreviousArtifacts` in `commonSettings`). Which
+// filters a minor release may carry is RELEASING.md's "Binary compatibility policy", enforced by
 // `.github/scripts/check-mima-filters.sh`: `sbt mimaReportBinaryIssues` catches
 // accidental breaking changes on every PR, and an intentional break is whitelisted with a `mimaBinaryIssueFilters`
 // rule scoped to the specific symbol — see https://github.com/lightbend/mima for the filter API. Bump the baseline
@@ -208,8 +207,8 @@ lazy val commonSettings = Seq(
     "dev.zio" %% "zio-test"     % zioVersion % Test,
     "dev.zio" %% "zio-test-sbt" % zioVersion % Test
   ),
-  // Set to each module's last release after 2.0.0 is published, per `RELEASING.md`. check-mima-filters.sh reads the marker.
-  mimaPreviousArtifacts := Set.empty, // no baseline: 2.0 in development
+  // Each module's last release, per `RELEASING.md`. check-mima-filters.sh reads the version from this line.
+  mimaPreviousArtifacts := Set(organization.value %% moduleName.value % "2.0.0"),
   // TASTy only exists for the Scala 3 artifacts.
   tastyMiMaPreviousArtifacts := { if (scalaBinaryVersion.value == "3") mimaPreviousArtifacts.value else Set.empty },
   checkPublishedPins         := checkPublishedPinsTask.value,

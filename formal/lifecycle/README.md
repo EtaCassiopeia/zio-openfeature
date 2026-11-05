@@ -95,7 +95,7 @@ tlapm --cleanfp LifecycleProofs.tla
 `IndInv`, the conjunction of the three, is inductive: `NextInd` proves that every action preserves it. The `Formal
 model` workflow's `proofs` job runs the prover on every pull request that changes the model, in a few minutes, and
 fails on any unproved obligation. It runs with `--stretch 5`, since the largest steps outrun the default prover
-timeouts on a CI runner; a local failure on `Deliver`, `OrphanResolved` or the teardown steps may need the same. A change to `lock`, `gate` or `swap`, or a new action, must update the proofs.
+timeouts on a CI runner; a local failure on `Deliver`, `OrphanResolved` or the teardown steps may need the same. The `SwapRollback` case of `NextType` is bounded by Z3's `rlimit` instead (`SMTT("r100")`): Zenon and Isabelle can't prove it, so a Z3 that missed its wall-clock limit on a slow runner failed the job with no code change. Its outcome no longer depends on load, so a model change that outgrows the budget fails on every run; then raise `N`. `N` counts differently per Z3 build: this step needs `r2` on a native Z3 5.3.3 and `r25` on the build CI pins, so check a new value against that build (it runs under `docker run --platform linux/amd64`). A change to `lock`, `gate` or `swap`, or a new action, must update the proofs.
 
 `ConstantsOK` states what the proofs assume of the constants, and TLC checks it too. One clause is easy to miss:
 `None \notin SwapRec`. The prover does not know `None` is a model value, so without it a new swap might equal `None`.

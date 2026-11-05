@@ -185,10 +185,7 @@ private[openfeature] object ProviderRegistration {
           case _: TimeoutException => new TimeoutException(s"Provider initialization exceeded $timeout")
           case other               => initFailure(other)
         }
-        .zipRight(ZIO.attemptBlocking {
-          checkBound()
-          fromSlot(awaitWritten(startedAt, timeout), provider.lastErrorMessage)
-        })
+        .zipRight(ZIO.attemptBlocking(fromSlot(awaitWritten(startedAt, timeout), provider.lastErrorMessage)))
     }
 
     // Only for a provider registered with the API outside the library and not yet initialized there: no wrapper reports
@@ -220,7 +217,7 @@ private[openfeature] object ProviderRegistration {
     // for `initialize()`, and failing it is a timeout like a hung `initialize()`, which the SDK's late READY recovers from.
     private def awaitWritten(startedAt: Long, timeout: Duration): ProviderState = {
       val limit = if (timeout == Duration.Infinity) Long.MaxValue else timeout.toNanos
-      var state = slotState
+      var state = boundSlotState()
       while (state == ProviderState.NOT_READY) {
         val elapsed = java.lang.System.nanoTime() - startedAt
         if (elapsed >= limit)
@@ -230,10 +227,16 @@ private[openfeature] object ProviderRegistration {
           )
         // The usual wait is microseconds, so it starts short; a long one should not spin.
         java.util.concurrent.locks.LockSupport.parkNanos(Math.min(MaxWritePollNanos, Math.max(20000L, elapsed / 10)))
-        // A rebind or the API's shutdown ends the wait: this slot's state is no longer this registration's.
-        checkBound()
-        state = slotState
+        state = boundSlotState()
       }
+      state
+    }
+
+    // A rebind or the API's shutdown ends the wait: this slot's state is no longer this registration's. Read first and
+    // check after: checked first, a rebind between the two would pass off the new provider's state as this one's.
+    private def boundSlotState(): ProviderState = {
+      val state = slotState
+      checkBound()
       state
     }
 

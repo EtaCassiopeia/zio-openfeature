@@ -65,7 +65,8 @@ LEMMA NextType == TypeInv /\ [Next]_vars => TypeInv'
   <2>1. Freeze(orphans, swap.prev) \subseteq OrphanRec /\ IsFiniteSet(Freeze(orphans, swap.prev))
     BY <1>9, FreezeType DEF SwapRollback
   <2> QED
-    BY <1>9, <2>1 DEF SwapRollback, Outcome, StatusOf
+    \* Only Z3 proves this step, and on a slow CI runner it can miss a wall-clock limit: see the README.
+    BY <1>9, <2>1, SMTT("r100") DEF SwapRollback, Outcome, StatusOf
 <1>10. CASE SwapReconcile
   BY <1>10 DEF SwapReconcile, Apply, sdkVars
 <1>11. CASE CallerInterrupt

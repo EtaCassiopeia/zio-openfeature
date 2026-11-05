@@ -81,6 +81,9 @@ a cached re-read adds no second entry) and `overriddenFlags` (keys served from a
 those: counts, membership checks, `toValueMap`, `map`. A `FlagEvaluation` holds `key`, `value`, the full `resolution`,
 `wasOverridden` and a `timestamp`.
 
+A read that got an error code is recorded too, with your default as `value` and the error on `resolution`. So
+`toValueMap` can hold values no provider served: for an audit, check `resolution.errorCode`.
+
 ## Errors
 
 On Scala 3, `transaction` fails with your block's error or a `TransactionError` (a union type). `transactionEither`

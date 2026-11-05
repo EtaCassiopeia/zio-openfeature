@@ -61,7 +61,9 @@ validates its base URL and rejects `.test`.
 ## Build the `FeatureFlags` side
 
 Build the layer with [`fromAcquireAsync`](providers.md#start-on-a-fallback-fromacquireasync): it starts on a fallback at
-once and swaps the real provider in when it is ready, so a broken network cannot block start-up or fail an evaluation.
+once and swaps the real provider in when it is ready, so a broken network cannot block start-up. A failure while acquiring the
+provider leaves the fallback serving. A provider already swapped in can still stall a read, which then fails the typed
+tier at the evaluation timeout.
 
 ```scala
 --8<-- "RealProvidersSpec.scala:flags-layer"

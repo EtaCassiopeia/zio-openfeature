@@ -32,8 +32,9 @@ for each tier and for [the resolution](evaluating.md#the-resolution).
 --8<-- "TypedFlags.scala:evaluate"
 ```
 
-The `FlagDef`'s default is the one served when the flag is missing or broken; a `FlagType`'s `defaultValue` is never
-used by evaluation. Two definitions are equal only if key, default and description match; `sameKey` compares keys:
+`valueOrDefault` and `resolveOrDefault` serve the `FlagDef`'s default when the flag is missing or broken. `value` and
+`valueDetails` fail instead: see [What `default` does](evaluating.md#what-default-does). A `FlagType`'s `defaultValue` is
+never used by evaluation. Two definitions are equal only if key, default and description match; `sameKey` compares keys:
 
 ```scala
 --8<-- "TypedFlags.scala:same-key"
@@ -54,8 +55,8 @@ with an error code.
 ```
 
 - An **enum** with parameterless cases is stored as a **string** holding the case name. Reading ignores case, but an
-  exact match wins when two names differ only by case; an unknown name fails with `TypeMismatch` instead of serving the
-  default. A case with parameters does not compile.
+  exact match wins when two names differ only by case; an unknown name is a `TypeMismatch`: the typed tier fails with it, and the
+  total tier serves your default with that error code. A case with parameters does not compile.
 - A **case class** is stored as an **object**, each field through its own `FlagType`. Unknown keys are ignored. A
   missing key takes the default declared on the case class itself (never one an overload of `apply` declares), else
   `None` for an `Option`, else fails naming the field. Defaults are not read for a case class compiled by Scala 2.13

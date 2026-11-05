@@ -47,7 +47,7 @@ and runs them on every build, twice: the `conformance` module runs them with Cuc
 | Several providers | `FeatureFlags.multiProvider` (the SDK's `MultiProvider`) |
 | **Evaluation context (§3)** | |
 | Targeting key and attributes | `EvaluationContext(targetingKey)`, `.withAttribute(...)` |
-| Global (API), client and invocation context | `setGlobalContext` / `globalContext`; `setClientContext` / `clientContext`; the `ctx` argument of an evaluation |
+| Global (API), client and invocation context | `setGlobalContext` / `globalContext` (per `FeatureFlags` instance, not the Java SDK's API-wide context); `setClientContext` / `clientContext`; the `ctx` argument of an evaluation |
 | Transaction context propagation (§3.3) | `withContext(ctx)(effect)`, scoped to the fiber |
 | Merging, later wins | global, transaction, client, `ContextSource`, `withContext`, invocation |
 | **Hooks (§4)** | |

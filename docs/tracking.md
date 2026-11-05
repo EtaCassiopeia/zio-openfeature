@@ -8,13 +8,15 @@
 
 | Call | Sends |
 |---|---|
-| `track(name)` | the event name |
+| `track(name)` | the event name, with the merged context |
 | `track(name, context)` | the event name and a targeting context |
 | `track(name, details)` | the event name and `TrackingEventDetails` |
 | `track(name, context, details)` | all three |
 
-The provider receives the context merged exactly as for an evaluation (see
-[Evaluation context](context.md#context-levels)). `TrackingEventDetails` has an optional numeric `value` and
+The provider receives the context levels merged as for an evaluation (see
+[Evaluation context](context.md#context-levels)). Otherwise `track` is not like an evaluation: it runs no hooks, so
+context a `before` hook adds is not sent, and the evaluation timeout doesn't apply, so a slow provider makes `track`
+slow. `TrackingEventDetails` has an optional numeric `value` and
 `attributes`: `TrackingEventDetails(value)` or `.withValue(value)` sets the value, and `.withAttribute(key, value)`
 adds an attribute. A provider that does not support tracking ignores the call.
 

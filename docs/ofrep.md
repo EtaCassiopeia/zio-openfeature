@@ -35,8 +35,9 @@ startup instead of at the first evaluation. The contrib provider then runs its o
 whose top-level domain it does not know, such as `.test`; that is an `InvalidConfiguration` too.
 
 `make` returns an `IO`; `scoped` and `layer` shut the provider down with their scope or layer, giving up on a shutdown
-that takes longer than 5 seconds and logging a warning, while a provider from `make` is shut down by the `FeatureFlags`
-layer you register it with. Each takes a base URL, an `OFREPProviderConfig`,
+that takes longer than 5 seconds and logging a warning, while a provider from `make` is shut down by a `FeatureFlags`
+layer that [owns the API](providers.md#who-shuts-down-the-api). A layer with a domain doesn't by default, so use `scoped`
+or `layer` there. Each takes a base URL, an `OFREPProviderConfig`,
 or the contrib provider's own `OfrepProviderOptions`.
 
 ```scala

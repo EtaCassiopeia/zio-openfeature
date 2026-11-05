@@ -49,8 +49,9 @@ A shutdown while `initialize` waits for the datafile ends that wait at once; the
 error. `STALE` still serves the last datafile (see [below](#datafile-updates-and-staleness)); how `FeatureFlags` treats
 each state is in [Lifecycle](lifecycle.md).
 
-The provider owns a polling thread and an HTTP client; a `FeatureFlags` layer shuts it down on close. Otherwise use
-`scoped` or `layer`, which shut it down with their scope:
+The provider owns a polling thread and an HTTP client. A `FeatureFlags` layer that
+[owns the API](providers.md#who-shuts-down-the-api) shuts it down on close; a layer with a domain doesn't by default.
+Otherwise use `scoped` or `layer`, which shut it down with their scope:
 
 ```scala
 --8<-- "Optimizely.scala:scoped"
@@ -66,6 +67,9 @@ config. `scoped` and `layer` give up on a shutdown that takes longer than 10 sec
 | `boolean` | whether the flag is enabled for this user |
 | `string` | the variable `value`; else the variation key; else your default |
 | `int`, `long`, `double`, `obj` | the variable `value`; else your default |
+
+A variable that doesn't exist is not an error, so a misspelled `openfeature.variableKey` won't show up as one: you get
+the variation key or your default, as above. Check the reason or the value to catch it.
 
 A variable of another type is a `TypeMismatch`, never a silent default or a parse:
 
@@ -176,6 +180,8 @@ provider's `initWait` (25 s by default):
 ```
 
 The fallback hides outages, so alert on `Fatal` soon after start (wrong key or unreachable datafile URL) and on `Stale`.
+`Stale` needs `pollingInterval` set, since that turns the staleness watchdog on. Without it an outage after start leaves
+the last datafile serving with status `Ready`: nothing to alert on, and the breaker stays closed.
 
 ## Configuration reference
 

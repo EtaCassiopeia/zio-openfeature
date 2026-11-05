@@ -168,7 +168,7 @@ fails with `InvalidConfiguration` for a bad URL. The contrib provider is its `.u
 | `TypeMismatch(...).actual`, `OverrideTypeMismatch(...).actual` | `.detail` |
 | `Unreachable(...).cause0` | `.underlying` |
 | `case EmptyFlagVariables(_)` | delete the arm: it was never raised |
-| `FeatureFlagError.isRecoverable(e)` | `FeatureFlagError.isFlagError(e)`; `ProviderStatus.isRecoverable` stays |
+| `FeatureFlagError.isRecoverable(e)` | `FeatureFlagError.isFlagError(e)`, which says the error is about the flag, not that a retry would help: write your own retry rule. `ProviderStatus.isRecoverable` stays |
 
 **Narrower error channels.** Each operation fails with a sealed sub-trait of what it can raise:
 
@@ -205,6 +205,9 @@ After:
 ```scala
 --8<-- "Upgrading.scala:errors"
 ```
+
+The `killSwitch` here dies on any evaluation error, and its `default` is not served. To read `false` in an outage, use
+`booleanOrDefault("kill-switch", false)`: see [What `default` does](evaluating.md#what-default-does).
 
 Trap: **a handler for `Throwable` now also catches these errors.** A `FeatureFlagError` matches `case t: Throwable`, and
 an `IO[FeatureFlagError, A]` conforms to `Task[A]`. Check `case _: Throwable` arms on a channel that mixes flag errors
@@ -282,6 +285,11 @@ takes the SDK's classes directly (`new FirstMatchStrategy()`). See
 
 The settings moved to two objects. `fromAcquireAsync(acquire, fallback)` and `(acquire, fallback, config)` use the
 defaults for the rest.
+
+!!! warning "Since 2.1.0: remove `shutdown()` from `acquire`'s finalizers"
+    The library now shuts down every provider `acquire` returns, exactly once. A finalizer that still calls `shutdown()`
+    makes a second call, which breaks a provider whose `shutdown()` is not idempotent. Keep finalizers for other
+    resources, and build a new provider on each attempt: one returned twice comes back already shut down.
 
 | 1.x argument | 2.0 |
 |---|---|

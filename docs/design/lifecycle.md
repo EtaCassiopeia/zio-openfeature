@@ -82,7 +82,7 @@ ever-readiness, a deferred init deadline and the generation; and **`step`** is o
 input to the next state, the status it moved to and the effects to run. Every refusal is decided in `step`, so no entry
 path can skip it. The swap lock stays as the serializer of the multi-step sequences.
 
-The status lives in the status ref, which the testkit may share and set directly; the rest of the record lives beside
+The status lives in the status ref, which the testkit shares (its `setStatus` goes through `step` while an instance is attached, and writes the ref only when none is); the rest of the record lives beside
 it, and every step runs under the status ref's `modifyZIO`, whose semaphore makes both writes one step. The gate and the provider name, which SDK threads and the evaluator
 read synchronously, are written in the same step; a swap's start writes the generation right after its step has
 published the status, so a reader that sees the new generation also sees the swap's `NotReady`; the effects run after it, never under the semaphore.

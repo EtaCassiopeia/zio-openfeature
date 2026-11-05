@@ -20,7 +20,7 @@ works, for example [flagd](https://flagd.dev/), [LaunchDarkly](https://launchdar
 |:--|:--|
 | Start the provider first, failing at startup if it cannot | `FeatureFlags.fromProvider(provider)` |
 | Start the app at once; the provider readies in the background | `FeatureFlags.fromProviderAsync(provider)` |
-| A domain, hooks, timeouts or other settings | `FeatureFlags.fromProvider(provider, FeatureFlagsConfig.default.with...)` |
+| A domain, hooks, timeouts or other settings | `FeatureFlags.fromProvider(provider, FeatureFlagsConfig.default.with...)`; add `.withAsyncInit` for an async start, since `fromProviderAsync` takes no config |
 | Several providers asked in order | [`FeatureFlags.multiProvider(providers)`](#ask-several-providers-in-order), then any factory above |
 | Serve a fallback while a slow provider is built | [`FeatureFlags.fromAcquireAsync`](#start-on-a-fallback-fromacquireasync) |
 | One client per domain, created on demand | [`FeatureFlagRegistry.fromProvider`](#one-client-per-domain-featureflagregistry) |

@@ -70,7 +70,7 @@ hooks.
 |---|---|
 | `FeatureHook.logging(logBefore, logAfter, logError)` | plain log lines: `before` at debug (off by default), `after` at info, `error` at error |
 | `FeatureHook.structuredLogging(beforeLevel, afterLevel, errorLevel, logContext, redactKeys)` | log lines with `flag.*` annotations (`before` and `after` at debug, `error` at warning by default); `logContext` adds `flag.context.*` minus `redactKeys` |
-| `FeatureHook.metrics((key, duration, success) => ...)` | calls you once per evaluation with its duration |
+| `FeatureHook.metrics((key, duration, success) => ...)` | calls you once per evaluation with its duration. `success` is false whenever the `error` stage ran, even if `*OrDefault` served your default. An interrupted evaluation reports nothing |
 | `FeatureHook.metricsDetailed(onSuccess, onError)` | the same, with the `HookContext` and the resolution or error |
 | `FeatureHook.contextValidator(requireTargetingKey, requiredAttributes)` | warns when the targeting key or an attribute is missing; never fails |
 | `FeatureHook.noop` | does nothing |
@@ -101,8 +101,9 @@ Stages return `UIO`, so a hook cannot fail an evaluation. Handle anything that m
 ```
 
 A defect (a thrown exception) in `before` or `after` skips the rest of that stage, runs `error` with a
-`ProviderError`, runs `finallyAfter`, and then fails the evaluation with that defect. After an `after` defect,
-`finallyAfter` receives your default with reason `Error` and code `General`.
+`ProviderError`, runs `finallyAfter`, and then ends the evaluation with that defect. On the typed tier the effect dies:
+this is a defect, not a `FeatureFlagError`, so `catchAll` won't see it. The total tier absorbs it, logs it and serves
+your default. After an `after` defect, `finallyAfter` receives your default with reason `Error` and code `General`.
 
 ## Adding context in `before`
 

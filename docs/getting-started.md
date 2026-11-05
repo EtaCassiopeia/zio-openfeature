@@ -32,8 +32,8 @@ Coming from 1.x? See [Upgrading to 2.0](upgrading.md).
 
 ## Your first flag
 
-`FeatureFlags` is a ZIO service. Ask it for a flag by key, with the default to serve when the flag cannot be read.
-`booleanOrDefault` never fails; `boolean`, shown below, fails instead. Here it runs on the testkit's in-memory
+`FeatureFlags` is a ZIO service. Ask it for a flag by key, with a default. `boolean`, shown below, fails if the flag
+cannot be read; `booleanOrDefault` serves your default instead and never fails. Here it runs on the testkit's in-memory
 provider, so nothing else is needed:
 
 ```scala
@@ -55,7 +55,8 @@ flagd, add `"dev.openfeature.contrib.providers" % "flagd" % "<version>"` and pas
 ## Two ways to read a flag
 
 The typed tier fails when the flag cannot be read; the total tier serves your default. On the typed tier the default
-is still sent to the provider and to hooks, but it is not served. See [Evaluating flags](evaluating.md#two-tiers).
+does not protect you in an outage: it is only sent to the provider and to hooks. See
+[What `default` does](evaluating.md#what-default-does).
 
 ```scala
 --8<-- "GettingStarted.scala:two-tiers"

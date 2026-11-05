@@ -46,8 +46,9 @@ the same instance.
 | `asyncReadyLayer(flags, initDelay)` | `NotReady`, then `Ready` after `initDelay` (default 100 ms) | a provider that becomes ready on its own |
 | `layerFrom(provider)` | as the provider is | you built the provider yourself with `make` / `makeNamed` |
 
-None of these needs a `Scope`: each layer owns its own and shuts the provider down when it is released. `providerLayer`
-provides just a `TestFeatureProvider`, without `FeatureFlags`.
+None of these needs a `Scope`: each layer manages its own. Releasing it closes its `FeatureFlags` instance but does not
+call the provider's `shutdown()`, so the provider's status stays as it was. `providerLayer` provides just a
+`TestFeatureProvider`, without `FeatureFlags`.
 
 `flags` is a `Map[String, Any]`, or typed overrides (`Flag := value`, below). To build a provider without a layer, use
 `TestFeatureProvider.make(flags)`, or `makeNamed(name, flags)` to give it its own metadata name. A name matters when you
@@ -191,7 +192,7 @@ sees every event you emit.
 | `setErrorMode(mode)` | every evaluation fails with `mode`: `FlagNotFound`, `ParseError`, `TypeMismatch`, `ProviderNotReady` or `General` |
 | `setFailing(true)` | same as `setErrorMode(ErrorMode.General)`; `setFailing(false)` clears it |
 | `setFailureProbability(p)` | each evaluation fails with probability `p` (clamped to 0-1) |
-| `setDelay(d)` | each evaluation sleeps `d` first, on the real clock |
+| `setDelay(d)` | each evaluation sleeps `d` first, on the real clock. The 1 second evaluation timeout runs on ZIO's clock, so to test it add `@@ TestAspect.withLiveClock`: under the default `TestClock` it never fires, and the read succeeds after the delay |
 | `clearErrorMode`, `clearDelay`, `clearBehavior` | undo the above |
 
 Each control has a test aspect that sets it before the test and restores what it found afterwards, so aspects nest:

@@ -39,6 +39,20 @@ and message, with your default as the value:
 --8<-- "Evaluating.scala:total"
 ```
 
+### What `default` does
+
+Every read takes a `default`, because the OpenFeature SDK needs one for every evaluation. What it does depends on the
+tier:
+
+| When | `boolean`, `value`, `*Details` | `booleanOrDefault`, `valueOrDefault`, `resolveOrDefault` |
+|:--|:--|:--|
+| The read fails: flag missing, wrong type, provider down, timeout | **Fails. `default` is not returned** | Returns `default` |
+| The provider answers normally and returns the `default` it was given | Returns it, with reason `Default` | Returns it, with reason `Default` |
+
+So on the typed tier `default = false` does not mean "false during an outage". Handle the error, or use the
+`*OrDefault` form. The second row depends on the provider: some use the value you passed when, say, no rule matched.
+Hooks see `default` on both tiers.
+
 !!! note "Both tiers run the same evaluation"
     Context, hooks, transactions and timeouts are identical, and hooks see a failed evaluation in their `error` stage
     either way. The total tier absorbs typed errors and defects; only interruption propagates. Both tiers also take a
@@ -54,7 +68,7 @@ The `*Details` methods and `resolveOrDefault` return a `FlagResolution[A]`:
 
 | Field | Meaning |
 |---|---|
-| `value` | the flag's value, or your default |
+| `value` | the flag's value. On the total tier, your default if the read failed |
 | `variant` | the variant the provider picked, if it names one |
 | `reason` | a `ResolutionReason`: `Static`, `Default`, `TargetingMatch`, `Split`, `Cached`, `Disabled`, `Stale`, `Error`, `Unknown`, or `Other(value)` for a provider's own |
 | `errorCode` | an `ErrorCode`, set when a default was served: `FlagNotFound`, `TypeMismatch`, `ParseError`, `TargetingKeyMissing`, `InvalidContext`, `ProviderNotReady`, `ProviderFatal`, `General` |
@@ -122,9 +136,12 @@ the one you need: `boolean("k", false, options = opts)`.
 | `withHook(hook)`, `withHooks(hooks)` | run these [hooks](hooks.md) for this call, as well as the instance's own |
 | `withHint(key, value)` | data the hooks read from their hints |
 | `withHookHints(hints)` | replace all the hints with a `HookHints`; `hookHints` reads them back |
-| `withTimeout(duration)` | bound this call |
+| `withTimeout(duration)` | bound the provider call |
 | `withoutTimeout` | no timeout, and no timer overhead |
 | (neither) | the instance's timeout, **1 second** unless configured |
+
+The timeout covers only the provider call. Hooks and the [`ContextSource`](context.md) run outside it, so a slow hook
+makes the call slow without timing out. Keep them fast.
 
 Set instance-wide defaults on the `FeatureFlagsConfig` (all fields are in the [config table](providers.md)):
 

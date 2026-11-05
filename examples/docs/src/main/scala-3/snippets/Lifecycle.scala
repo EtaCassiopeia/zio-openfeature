@@ -17,7 +17,7 @@ object Lifecycle:
   // --8<-- [end:readiness]
 
   // --8<-- [start:not-ready]
-  // While the provider starts, serve the default instead of failing
+  // While the provider starts, answer false instead of failing
   val checkout: ZIO[FeatureFlags, FeatureFlagError, Boolean] =
     FeatureFlags.boolean("new-checkout", default = false).catchSome { case _: FeatureFlagError.ProviderNotReady =>
       ZIO.succeed(false)

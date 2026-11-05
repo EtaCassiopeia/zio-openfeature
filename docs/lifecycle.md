@@ -52,12 +52,15 @@ down. It does not poll, and any number of fibers can wait at once.
     `AcquireStatus` (see [Start on a fallback](providers.md#start-on-a-fallback-fromacquireasync)).
 
 With an [async start](providers.md#sync-or-async-start), evaluations fail with `ProviderNotReady` until the provider is
-ready. Serve the default meanwhile (the `*OrDefault` calls do this for every error, see
-[Evaluating flags](evaluating.md)):
+ready. To answer something meanwhile, either use the `*OrDefault` calls, which serve your default for every error (see
+[Evaluating flags](evaluating.md#what-default-does)), or recover from this one error yourself:
 
 ```scala
 --8<-- "Lifecycle.scala:not-ready"
 ```
+
+Here the `catchSome` provides the answer, not `default = false`: `boolean` fails whatever its default, and other errors
+still fail.
 
 `providerMetadata` and `clientMetadata` return the provider's `name` and the client's `domain` and `version`.
 

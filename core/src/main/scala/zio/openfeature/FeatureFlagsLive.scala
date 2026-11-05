@@ -172,6 +172,9 @@ final private[openfeature] class FeatureFlagsLive(
 
   private[openfeature] def onStaleEvent(details: EventDetails): UIO[Unit] = eventBridge.onStaleEvent(details)
 
+  private[openfeature] def onConfigurationChangedEvent(details: EventDetails): UIO[Unit] =
+    eventBridge.onConfigurationChangedEvent(details)
+
   private[openfeature] def onSdkEvent(event: JavaProviderEvent, details: EventDetails): UIO[Unit] =
     eventBridge.onSdkEvent(event, details)
 

@@ -193,7 +193,9 @@ there is one.
 
 The library's variables are held by `LifecycleState` (`core/.../internal/LifecycleState.scala`), mostly under the same
 names; the rows below say where one is held elsewhere. Every library action is one or more steps of
-`LifecycleStep.step`, which `LifecycleStepSpec` tests per action.
+`LifecycleStep.step`, which `LifecycleStepSpec` tests per action. The event hub is not modelled:
+`Lifecycle.whenAdmitted`, which publishes a provider's event, shares the steps' semaphore but runs no step and writes no
+record.
 
 | Variable | `LifecycleState` field |
 |:--|:--|

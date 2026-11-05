@@ -95,23 +95,19 @@ final private[openfeature] class EventBridge(
           .as((signal, transitioned))
       }
 
-  // The SDK stamps every dispatched event with the emitting provider's metadata name — or NULL when the provider has
-  // no metadata/name (verified sdk-1.21.0, OpenFeatureAPI.runHandlersForProvider). An event that does not match the
+  // The SDK stamps every dispatched event with the emitting provider's metadata name — or NULL when the provider has no
+  // metadata/name (verified sdk-1.21.0, OpenFeatureAPI.runHandlersForProvider). An event that does not match the
   // CURRENT provider is a stale event from a replaced/failed provider still queued on the SDK's emitter executor: it
-  // must not drive the status machine. An event with no name cannot be attributed to a *different* provider, so it
-  // fails open; two providers with no name are indistinguishable, as same-named swaps are (a known limitation of the
-  // identity guard). A `Pending` current name fails open too: a provider like the SDK's MultiProvider only gets its name
-  // inside initialize(), while its own events carry it, and the fail-open ends once it has initialized.
+  // must not drive the status machine or reach observers (see `publish`). An event with no name cannot be attributed to
+  // a *different* provider, so it fails open; two providers with no name are indistinguishable, as same-named swaps are
+  // (a known limitation of the identity guard). A `Pending` current name fails open too: a provider like the SDK's
+  // MultiProvider only gets its name inside initialize(), while its own events carry it, and the fail-open ends once it
+  // has initialized.
   //
   // Phase 2 watch-point: re-verify this identity-guard behaviour once the OpenFeature Java SDK ships the
   // spec-v0.9.0 provider-event marker — it may offer a more direct way to attribute an event to its emitting provider.
   private def fromCurrentProvider(details: EventDetails): Boolean =
-    (Option(details.getProviderName), providerNameRef.get()) match {
-      case (None, _)                        => true
-      case (_, ProviderName.Pending)        => true
-      case (Some(_), ProviderName.Nameless) => false
-      case (Some(n), ProviderName.Named(c)) => n == c
-    }
+    EventBridge.attributable(Option(details.getProviderName), providerNameRef.get())
 
   /** Settle a `Pending` name once the status is `Ready`: the SDK's state for the slot was READY, which a provider's own
     * emission can also make it while its `initialize()` runs, so a wrapper still initializing keeps `Pending`, and the
@@ -137,8 +133,8 @@ final private[openfeature] class EventBridge(
         name => lifecycle.run(LifecycleInput.NameRead(provider, name)).unit
       )
 
-  // Truthful payloads: publish under the name the SDK stamped on the event (the actual emitter), falling back to the
-  // current provider only when the event carries none.
+  // Publish under the name the SDK stamped on the event, falling back to the current provider when it carries none.
+  // `publish` has refused an event stamped with another provider's name, so the two agree when the event is published.
   private def eventProviderMetadata(details: EventDetails): ProviderMetadata = {
     val name = details.getProviderName
     ProviderMetadata(if (name == null) providerNameRef.get().render else name)
@@ -159,12 +155,23 @@ final private[openfeature] class EventBridge(
           .as(FlagMetadata.empty)
       )
 
-  // Bridge event bodies as pure effects, so tests can drive them directly with a builder-constructed
-  // EventDetails. The Java-side Consumers registered in startEventBridge are thin wrappers that run these via
-  // `runHandler`. Events are ALWAYS published for observers; identity/machine gating applies only to the status
+  // Bridge event bodies as pure effects, so tests can drive them directly with a builder-constructed EventDetails. The
+  // Java-side Consumers registered in startEventBridge are thin wrappers that run these via `runHandler`. Observers get
+  // an event the identity guard attributes to the installed provider (see `publish`); the machine gates only the status
   // transition and the onReady latch. The one exception is a PROVIDER_READY the SDK itself does not back with a ready
-  // state (see `onSdkEvent`): that one is not delivered at all. With `fromSdk` the status signal comes from the
-  // SDK's state for the slot (`applySdkSignal`); without it, from the event type.
+  // state (see `onSdkEvent`): that one is not delivered at all. With `fromSdk` the status signal comes from the SDK's
+  // state for the slot (`applySdkSignal`); without it, from the event type.
+
+  /** Publish a provider's event to the instance's observers, unless the identity guard attributes it to another
+    * provider. Decided against the record and published in one serialized step, so an event of the provider a swap
+    * replaces is published before that swap starts or not at all.
+    */
+  private def publish(details: EventDetails, event: => ProviderEvent): UIO[Unit] =
+    lifecycle
+      .whenAdmitted(st => EventBridge.attributable(Option(details.getProviderName), st.name))(
+        state.eventHub.publish(event).unit
+      )
+      .unit
 
   /** The status signal applied for an event and its transition; None for an event from another provider, or one the
     * SDK's state for the slot does not back.
@@ -179,7 +186,7 @@ final private[openfeature] class EventBridge(
       applyFor(fromCurrentProvider(details), fromSdk, Signal.EventReady).flatMap { applied =>
         // Before the event and the latch, so whoever waits for this READY reads the name.
         settlePendingName *>
-          state.eventHub.publish(ProviderEvent.Ready(eventProviderMetadata(details), em)) *>
+          publish(details, ProviderEvent.Ready(eventProviderMetadata(details), em)) *>
           // The latch counts READY deliveries from the current provider.
           ZIO.succeed(onReady.foreach(_.countDown())).when(applied.nonEmpty)
       }.unit
@@ -225,18 +232,23 @@ final private[openfeature] class EventBridge(
         // instead of stalling the full timeout.
         ZIO.succeed(onReady.foreach(_.countDown())).when(applied.exists(_._2.contains(ProviderStatus.Fatal)))
       } *>
-        state.eventHub
-          .publish(
-            ProviderEvent.Error(error, eventProviderMetadata(details), errorCode, Option(details.getMessage), em)
-          )
-          .unit
+        publish(
+          details,
+          ProviderEvent.Error(error, eventProviderMetadata(details), errorCode, Option(details.getMessage), em)
+        )
     }
 
   private[openfeature] def onStaleEvent(details: EventDetails, fromSdk: Boolean = false): UIO[Unit] =
     extractEventMetadata(details).flatMap { em =>
       val reason = Option(details.getMessage).getOrElse("Provider stale")
       applyFor(fromCurrentProvider(details), fromSdk, Signal.EventStale) *>
-        state.eventHub.publish(ProviderEvent.Stale(reason, eventProviderMetadata(details), em)).unit
+        publish(details, ProviderEvent.Stale(reason, eventProviderMetadata(details), em))
+    }
+
+  private[openfeature] def onConfigurationChangedEvent(details: EventDetails): UIO[Unit] =
+    extractEventMetadata(details).flatMap { em =>
+      val flags = Option(details.getFlagsChanged).map(_.asScala.toSet).getOrElse(Set.empty[String])
+      publish(details, ProviderEvent.ConfigurationChanged(flags, eventProviderMetadata(details), em))
     }
 
   // Bridge Java SDK provider events to ZIO event system
@@ -265,16 +277,7 @@ final private[openfeature] class EventBridge(
 
       val configHandler: java.util.function.Consumer[EventDetails] = details =>
         runHandler(runtime, "PROVIDER_CONFIGURATION_CHANGED")(
-          ZIO.suspendSucceed {
-            val flags = Option(details.getFlagsChanged)
-              .map(_.asScala.toSet)
-              .getOrElse(Set.empty[String])
-            extractEventMetadata(details).flatMap { em =>
-              state.eventHub
-                .publish(ProviderEvent.ConfigurationChanged(flags, eventProviderMetadata(details), em))
-                .unit
-            }
-          }
+          ZIO.suspendSucceed(onConfigurationChangedEvent(details))
         )
 
       // Deregistration thunk stored on the instance so `shutdown` can remove the handlers BEFORE tearing down the API
@@ -448,6 +451,15 @@ final private[openfeature] class EventBridge(
 }
 
 private[openfeature] object EventBridge {
+
+  /** Whether an event the SDK stamped with `stamped` can be the installed provider's, named `installed`. */
+  def attributable(stamped: Option[String], installed: ProviderName): Boolean =
+    (stamped, installed) match {
+      case (None, _)                        => true
+      case (_, ProviderName.Pending)        => true
+      case (Some(_), ProviderName.Nameless) => false
+      case (Some(n), ProviderName.Named(c)) => n == c
+    }
 
   /** The status signal the SDK's state for the slot implies; none while it is `NOT_READY` or unknown. Also the
     * lifecycle replay's bridge, so the replay checks the mapping as written.

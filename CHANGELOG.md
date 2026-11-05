@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A late event of a replaced provider no longer reaches handlers or the event stream.** The SDK runs a handler some
+  time after it picked it for an event, so an event of the provider a swap replaced could reach the bridge after the
+  swap, and was published anyway: a handler registered after `setProvider` returned could get `Ready`, `Error`, `Stale`
+  or `ConfigurationChanged` naming the old provider, and a late `Error` arrived while the status was `Ready` on the new
+  one. A provider's event is now published only while the identity guard attributes it to the installed provider, under
+  the same semaphore as a swap's start, so once `setProvider` returns no event stamped with the other provider's name is
+  published. This reverses the 1.0.0 note that a replaced provider's event "is still published for observers".
+  **Two consequences:** after a swap that fails and rolls back, the failed provider's `Error` is published only if the
+  bridge handled it before the rollback, and `setProvider`'s failure is what reports it. A straggler from the
+  `fromAcquireAsync` fallback after the switch is not published either. **One more effect:** an instance whose domain
+  another instance rebound no longer gets that provider's events, as its status already didn't follow them. Providers
+  are told apart by name, so a late event is still published if it has no name, if the installed provider has the same
+  name, or while the installed provider's name is unknown.
+
 ## [2.1.0] — 2026-11-05
 
 ### Added

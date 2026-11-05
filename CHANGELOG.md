@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **`CachingProvider` with `contextKeys` keeps the targeting key in the cache key.** With `contextKeys` set, it used to
+  be left out unless listed, so every user shared one cached answer per flag: in a 50% rollout, every user got the first
+  user's answer until the entry expired, with nothing logged. **Behaviour change for anyone using `withContextKeys`
+  without listing `"targetingKey"`:** expect more provider calls and possibly evictions, so size `maxEntries` for active
+  users times flags read. Answers are only ever more correct. To share entries across users as before, add the new
+  `CachingConfig.withoutTargetingKey`, which also works without `contextKeys`. Listing `"targetingKey"` together with
+  `withoutTargetingKey` is rejected as `InvalidConfiguration`.
+
 ### Fixed
 
 - **A late event of a replaced provider no longer reaches handlers or the event stream.** The SDK runs a handler some

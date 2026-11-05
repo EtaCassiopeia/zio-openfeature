@@ -40,6 +40,10 @@ object Extras:
   val byPlanAndRegion: CachingConfig = CachingConfig.default.withTtl(5.minutes).withContextKeys(Set("plan", "region"))
   // --8<-- [end:caching-context-keys]
 
+  // --8<-- [start:caching-shared]
+  val sharedByPlan: CachingConfig = CachingConfig.default.withContextKeys(Set("plan")).withoutTargetingKey
+  // --8<-- [end:caching-shared]
+
   // --8<-- [start:caching-invalidate]
   def refreshEveryMinute(cache: CachingProvider): URIO[Scope, Unit] =
     cache.invalidateAll.repeat(Schedule.fixed(1.minute)).forkScoped.unit

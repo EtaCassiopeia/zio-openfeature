@@ -256,6 +256,12 @@ object CachingProviderSpec extends ZIOSpecDefault {
 
   private val ctx = new ImmutableContext()
 
+  private def userCtx(user: String, attributes: (String, String)*): ImmutableContext = {
+    val attrs = new java.util.HashMap[String, Value]()
+    attributes.foreach { case (k, v) => attrs.put(k, new Value(v)) }
+    new ImmutableContext(user, attrs)
+  }
+
   def spec = suite("CachingProvider")(
     suite("Cache hits and misses")(
       test("first evaluation is a miss, second is a hit with CACHED reason") {
@@ -299,23 +305,103 @@ object CachingProviderSpec extends ZIOSpecDefault {
       }
     ),
     suite("Context key filtering")(
-      test("contextKeys filters high-cardinality fields from cache key") {
+      test("contextKeys keeps the targeting key: two users on one plan get their own entries") {
         val underlying = new CountingProvider(Map("flag" -> true))
-        val cached     = CachingProvider(
-          underlying,
-          CachingConfig.default.withContextKeys(Set("plan"))
+        val cached     = CachingProvider(underlying, CachingConfig.default.withContextKeys(Set("plan")))
+        val _          = cached.getBooleanEvaluation("flag", false, userCtx("ann", "plan" -> "pro"))
+        val _          = cached.getBooleanEvaluation("flag", false, userCtx("bob", "plan" -> "pro"))
+        val ann        = cached.getBooleanEvaluation("flag", false, userCtx("ann", "plan" -> "pro"))
+        val bob        = cached.getBooleanEvaluation("flag", false, userCtx("bob", "plan" -> "pro"))
+        assertTrue(underlying.evaluationCount.get() == 2, ann.getReason == "CACHED", bob.getReason == "CACHED")
+      },
+      test("contextKeys ignores an attribute it doesn't list: one user's request ids share an entry") {
+        val underlying = new CountingProvider(Map("flag" -> true))
+        val cached     = CachingProvider(underlying, CachingConfig.default.withContextKeys(Set("plan")))
+        val _      = cached.getBooleanEvaluation("flag", false, userCtx("ann", "plan" -> "pro", "requestId" -> "r1"))
+        val second = cached.getBooleanEvaluation("flag", false, userCtx("ann", "plan" -> "pro", "requestId" -> "r2"))
+        assertTrue(underlying.evaluationCount.get() == 1, second.getReason == "CACHED")
+      },
+      test("a rollout by targeting key behind contextKeys gives every user their own answer on a second pass") {
+        // On for a user whose id ends in an even digit.
+        val rollout = new CountingProvider(Map.empty) {
+          override def getBooleanEvaluation(key: String, default: java.lang.Boolean, ctx: OFEvaluationContext) = {
+            evaluationCount.incrementAndGet()
+            ProviderEvaluations.of[java.lang.Boolean](
+              java.lang.Boolean.valueOf(ctx.getTargetingKey.last.asDigit % 2 == 0),
+              "TARGETING_MATCH"
+            )
+          }
+        }
+        val cached = CachingProvider(rollout, CachingConfig.default.withContextKeys(Set("plan")))
+        def pass() = (0 to 9).toList.map(i =>
+          cached.getBooleanEvaluation("flag", false, userCtx(s"user-$i", "plan" -> "pro")).getValue.booleanValue
         )
-        // Two contexts with same "plan" but different targeting key (e.g., per-request UUID)
-        val attrs1 = new java.util.HashMap[String, Value]()
-        attrs1.put("plan", new Value("premium"))
-        val attrs2 = new java.util.HashMap[String, Value]()
-        attrs2.put("plan", new Value("premium"))
-        val ctx1 = new ImmutableContext("user-aaa-111", attrs1)
-        val ctx2 = new ImmutableContext("user-bbb-222", attrs2)
-        cached.getBooleanEvaluation("flag", false, ctx1) // miss
-        val r2 = cached.getBooleanEvaluation("flag", false, ctx2) // hit — same "plan"
-        assertTrue(r2.getReason == "CACHED") &&
-        assertTrue(underlying.evaluationCount.get() == 1)
+        val first       = pass()
+        val second      = pass()
+        val alternating = List(true, false, true, false, true, false, true, false, true, false)
+        assertTrue(first == alternating, second == alternating, rollout.evaluationCount.get() == 10)
+      },
+      test("withoutTargetingKey: two users on one plan share an entry") {
+        val underlying = new CountingProvider(Map("flag" -> true))
+        val cached = CachingProvider(underlying, CachingConfig.default.withContextKeys(Set("plan")).withoutTargetingKey)
+        val _      = cached.getBooleanEvaluation("flag", false, userCtx("ann", "plan" -> "pro"))
+        val bob    = cached.getBooleanEvaluation("flag", false, userCtx("bob", "plan" -> "pro"))
+        val _      = cached.getBooleanEvaluation("flag", false, userCtx("cid", "plan" -> "free"))
+        assertTrue(underlying.evaluationCount.get() == 2, bob.getReason == "CACHED")
+      },
+      test("withoutTargetingKey alone keys on the rest of the context") {
+        val underlying = new CountingProvider(Map("flag" -> true))
+        val cached     = CachingProvider(underlying, CachingConfig.default.withoutTargetingKey)
+        val _          = cached.getBooleanEvaluation("flag", false, userCtx("ann", "plan" -> "pro"))
+        val bob        = cached.getBooleanEvaluation("flag", false, userCtx("bob", "plan" -> "pro"))
+        val shared     = underlying.evaluationCount.get()
+        val cid        = cached.getBooleanEvaluation("flag", false, userCtx("cid", "plan" -> "free"))
+        assertTrue(
+          shared == 1,
+          bob.getReason == "CACHED",
+          underlying.evaluationCount.get() == 2,
+          cid.getReason != "CACHED"
+        )
+      },
+      test("withoutTargetingKey works in either order with withContextKeys") {
+        val underlying = new CountingProvider(Map("flag" -> true))
+        val cached = CachingProvider(underlying, CachingConfig.default.withoutTargetingKey.withContextKeys(Set("plan")))
+        val _      = cached.getBooleanEvaluation("flag", false, userCtx("ann", "plan" -> "pro", "requestId" -> "r1"))
+        val bob    = cached.getBooleanEvaluation("flag", false, userCtx("bob", "plan" -> "pro", "requestId" -> "r2"))
+        assertTrue(underlying.evaluationCount.get() == 1, bob.getReason == "CACHED")
+      },
+      test("listing targetingKey in contextKeys still gives per-user entries") {
+        val underlying = new CountingProvider(Map("flag" -> true))
+        val cached     = CachingProvider(underlying, CachingConfig.default.withContextKeys(Set("plan", "targetingKey")))
+        val _          = cached.getBooleanEvaluation("flag", false, userCtx("ann", "plan" -> "pro"))
+        val _          = cached.getBooleanEvaluation("flag", false, userCtx("bob", "plan" -> "pro"))
+        val again      = cached.getBooleanEvaluation("flag", false, userCtx("ann", "plan" -> "pro"))
+        assertTrue(underlying.evaluationCount.get() == 2, again.getReason == "CACHED")
+      },
+      test("a context with no targeting key shares an entry, as before") {
+        val underlying = new CountingProvider(Map("flag" -> true))
+        val cached     = CachingProvider(underlying, CachingConfig.default.withContextKeys(Set("plan")))
+        val attrs      = new java.util.HashMap[String, Value]()
+        attrs.put("plan", new Value("pro"))
+        val _      = cached.getBooleanEvaluation("flag", false, new ImmutableContext(attrs))
+        val second = cached.getBooleanEvaluation("flag", false, new ImmutableContext(attrs))
+        assertTrue(underlying.evaluationCount.get() == 1, second.getReason == "CACHED")
+      },
+      test("an empty targeting key and a missing one get separate entries under contextKeys") {
+        val underlying = new CountingProvider(Map("flag" -> true))
+        val cached     = CachingProvider(underlying, CachingConfig.default.withContextKeys(Set("plan")))
+        val attrs      = new java.util.HashMap[String, Value]()
+        attrs.put("plan", new Value("pro"))
+        val _       = cached.getBooleanEvaluation("flag", false, new ImmutableContext("", attrs))
+        val missing = cached.getBooleanEvaluation("flag", false, new ImmutableContext(attrs))
+        assertTrue(underlying.evaluationCount.get() == 2, missing.getReason != "CACHED")
+      },
+      test("a null context is handled with withoutTargetingKey") {
+        val underlying = new CountingProvider(Map("flag" -> true))
+        val cached     = CachingProvider(underlying, CachingConfig.default.withoutTargetingKey)
+        val _          = cached.getBooleanEvaluation("flag", false, null)
+        val second     = cached.getBooleanEvaluation("flag", false, null)
+        assertTrue(underlying.evaluationCount.get() == 1, second.getReason == "CACHED")
       },
       test("contextKeys never drops openfeature.variableKey from the cache key") {
         // Answers with the variable it was asked for, as Optimizely's variable override does.
@@ -337,14 +423,21 @@ object CachingProviderSpec extends ZIOSpecDefault {
           val _          = cached.getStringEvaluation("f", "", ctx("color"))
           (cached.getStringEvaluation("f", "", ctx("label")), underlying.evaluationCount.get())
         }
-        val (keyed, keyedCount) = readBoth(CachingConfig.default.withContextKeys(Set("plan")))
-        val (full, fullCount)   = readBoth(CachingConfig.default)
+        val (keyed, keyedCount)   = readBoth(CachingConfig.default.withContextKeys(Set("plan")))
+        val (full, fullCount)     = readBoth(CachingConfig.default)
+        val (shared, sharedCount) =
+          readBoth(CachingConfig.default.withContextKeys(Set("plan")).withoutTargetingKey)
+        val (rest, restCount) = readBoth(CachingConfig.default.withoutTargetingKey)
         assertTrue(
           keyed.getValue == "label",
           keyed.getReason != "CACHED",
           keyedCount == 2,
           full.getValue == "label",
-          fullCount == 2
+          fullCount == 2,
+          shared.getValue == "label",
+          sharedCount == 2,
+          rest.getValue == "label",
+          restCount == 2
         )
       },
       test("different values in contextKeys produce separate cache entries") {
@@ -363,18 +456,18 @@ object CachingProviderSpec extends ZIOSpecDefault {
         cached.getBooleanEvaluation("flag", false, ctx2)
         assertTrue(underlying.evaluationCount.get() == 2)
       },
-      test("empty contextKeys ignores all context — caches by flag key only") {
-        val underlying = new CountingProvider(Map("flag" -> true))
-        val cached     = CachingProvider(
-          underlying,
-          CachingConfig.default.withContextKeys(Set.empty)
+      test("empty contextKeys caches by flag key and targeting key, or flag key alone withoutTargetingKey") {
+        def calls(config: CachingConfig) = {
+          val underlying = new CountingProvider(Map("flag" -> true))
+          val cached     = CachingProvider(underlying, config)
+          val _          = cached.getBooleanEvaluation("flag", false, userCtx("ann", "plan" -> "pro"))
+          val _          = cached.getBooleanEvaluation("flag", false, userCtx("bob", "plan" -> "free"))
+          underlying.evaluationCount.get()
+        }
+        assertTrue(
+          calls(CachingConfig.default.withContextKeys(Set.empty)) == 2,
+          calls(CachingConfig.default.withContextKeys(Set.empty).withoutTargetingKey) == 1
         )
-        val ctx1 = new ImmutableContext("user-1")
-        val ctx2 = new ImmutableContext("user-2")
-        cached.getBooleanEvaluation("flag", false, ctx1) // miss
-        val r2 = cached.getBooleanEvaluation("flag", false, ctx2) // hit — context ignored
-        assertTrue(r2.getReason == "CACHED") &&
-        assertTrue(underlying.evaluationCount.get() == 1)
       },
       test("without contextKeys, different targeting keys produce cache misses") {
         val underlying = new CountingProvider(Map("flag" -> true))

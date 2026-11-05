@@ -32,12 +32,15 @@ private[extras] object ConfigValidation {
     )
   }
 
-  /** `maxEntries >= 1`, `ttl > 0`. `contextKeys` is not checked: `Some(Set.empty)` deliberately ignores the context. */
+  /** `maxEntries >= 1`, `ttl > 0`, and `contextKeys` does not list the targeting key `withoutTargetingKey` leaves out.
+    * `Some(Set.empty)` is valid: it ignores the attributes.
+    */
   def caching(config: CachingConfig): Validated[CachingConfig] =
     result(
       config,
       atLeastOne("CachingConfig", "maxEntries", config.maxEntries) ++
-        positive("CachingConfig", "ttl", config.ttl)
+        positive("CachingConfig", "ttl", config.ttl) ++
+        targetingKeyConsistent(config)
     )
 
   /** For the unsafe `apply` constructors, which follow the `require` convention. */
@@ -53,6 +56,10 @@ private[extras] object ConfigValidation {
     atLeastOne(owner, "failureThreshold", failureThreshold) ++
       positive(owner, "resetTimeout", resetTimeout) ++
       atLeastOne(owner, "halfOpenMaxCalls", halfOpenMaxCalls)
+
+  private def targetingKeyConsistent(config: CachingConfig): List[String] =
+    if (config.keyByTargetingKey || !config.contextKeys.exists(_.contains(CachingProvider.TargetingKeyAttribute))) Nil
+    else List("CachingConfig.contextKeys lists targetingKey, which contradicts withoutTargetingKey")
 
   private def atLeastOne(owner: String, field: String, value: Int): List[String] =
     if (value >= 1) Nil else List(s"$owner.$field must be >= 1, got $value")

@@ -87,7 +87,12 @@ object WrapperConfigValidationSpec extends ZIOSpecDefault {
     ("maxEntries = 0", CachingConfig.default.withMaxEntries(0), "CachingConfig.maxEntries must be >= 1, got 0"),
     ("maxEntries = -1", CachingConfig.default.withMaxEntries(-1), "CachingConfig.maxEntries must be >= 1, got -1"),
     ("ttl = Zero", CachingConfig.default.withTtl(Duration.Zero), "CachingConfig.ttl must be > 0, got PT0S"),
-    ("ttl = -1s", CachingConfig.default.withTtl(minusOneSecond), "CachingConfig.ttl must be > 0, got PT-1S")
+    ("ttl = -1s", CachingConfig.default.withTtl(minusOneSecond), "CachingConfig.ttl must be > 0, got PT-1S"),
+    (
+      "targetingKey listed together with withoutTargetingKey",
+      CachingConfig.default.withContextKeys(Set("plan", "targetingKey")).withoutTargetingKey,
+      "CachingConfig.contextKeys lists targetingKey, which contradicts withoutTargetingKey"
+    )
   )
 
   def spec = suite("WrapperConfigValidation")(
@@ -143,11 +148,21 @@ object WrapperConfigValidationSpec extends ZIOSpecDefault {
           for (failure <- cachingFailure(config)) yield assertTrue(failure == Some(expected))
         }
       } ++ List(
+        test("scoped rejects targetingKey listed together with withoutTargetingKey") {
+          val config = CachingConfig.default.withContextKeys(Set("targetingKey")).withoutTargetingKey
+          for (failure <- ZIO.scoped(CachingProvider.scoped(new CountingDelegate, config)).flip.option)
+            yield assertTrue(
+              failure.map(_.reason) ==
+                Some("CachingConfig.contextKeys lists targetingKey, which contradicts withoutTargetingKey")
+            )
+        },
         test("accepts an Infinity ttl, empty contextKeys and the default config") {
           val accepted = List(
             CachingConfig.default,
             CachingConfig.default.withTtl(Duration.Infinity),
-            CachingConfig.default.withMaxEntries(1).withContextKeys(Set.empty)
+            CachingConfig.default.withMaxEntries(1).withContextKeys(Set.empty),
+            CachingConfig.default.withContextKeys(Set("plan")).withoutTargetingKey,
+            CachingConfig.default.withContextKeys(Set("plan", "targetingKey"))
           )
           for (failures <- ZIO.foreach(accepted)(cachingFailure)) yield assertTrue(failures.forall(_.isEmpty))
         }
@@ -166,6 +181,14 @@ object WrapperConfigValidationSpec extends ZIOSpecDefault {
         val thrown  = scala.util.Try(CachingProvider(new CountingDelegate, CachingConfig.default.withMaxEntries(0)))
         val message = thrown.failed.toOption.collect { case e: IllegalArgumentException => e.getMessage }
         assertTrue(message == Some("CachingConfig.maxEntries must be >= 1, got 0"))
+      },
+      test("CachingProvider.apply rejects targetingKey listed together with withoutTargetingKey") {
+        val config  = CachingConfig.default.withContextKeys(Set("targetingKey")).withoutTargetingKey
+        val thrown  = scala.util.Try(CachingProvider(new CountingDelegate, config))
+        val message = thrown.failed.toOption.collect { case e: IllegalArgumentException => e.getMessage }
+        assertTrue(
+          message == Some("CachingConfig.contextKeys lists targetingKey, which contradicts withoutTargetingKey")
+        )
       },
       test("CircuitBreaker standalone construction validates CircuitBreakerConfig, probeTimeout included") {
         val thrown =

@@ -485,6 +485,57 @@ private[openfeature] object FeatureFlagsFactories {
       )
     )
 
+  // What has become of the provider one attempt's `acquire` returns. It can arrive after the attempt was abandoned.
+  sealed private trait Arrival
+  private object Arrival {
+    case object Waiting                               extends Arrival
+    final case class Arrived(real: OFFeatureProvider) extends Arrival
+    case object Abandoned                             extends Arrival
+  }
+
+  /** `effect.disconnect`, so the per-attempt timeout returns promptly even when `acquire` is a blocking
+    * `attemptBlocking(new Provider(...))`, except that the interrupt waits for a blocking call to return. Interrupting
+    * during the call discards the value it returns, and that value is a provider nobody could then shut down. A fiber
+    * suspended where an interrupt lands holds no such value, so it is interrupted at once. The caller waits for that,
+    * so its finalizers usually finish first, but only up to a bound: a suspended fiber can be waiting for a child stuck
+    * in a blocking call, and a hung attempt must not hang the timeout or the layer's release.
+    */
+  private def abandonable[A](effect: Task[A]): Task[A] =
+    ZIO.uninterruptibleMask { restore =>
+      restore(effect).forkDaemon.flatMap { fiber =>
+        restore(fiber.join).onInterrupt(
+          fiber.status.flatMap {
+            case status: Fiber.Status.Suspended if RuntimeFlags.interruption(status.runtimeFlags) =>
+              ZIO
+                .withClock(Clock.ClockLive)(
+                  Timeouts.boundedFinalizer(fiber.interrupt, AbandonWait)(
+                    ZIO.logWarning(s"fromAcquireAsync: an abandoned attempt did not stop within $AbandonWait")
+                  )
+                )
+                .unit
+            case _ => interruptOnceSuspended(fiber).forkDaemon.unit
+          }
+        )
+      }
+    }
+
+  // `status` reads `Running` throughout a blocking call, and an uninterruptible region keeps a queued interrupt until it
+  // ends, when it would discard the region's value. The clock is the live one, so that a test clock doesn't hold this
+  // up. A fiber looping forever without suspending is left to loop, as it would be in an uninterruptible region.
+  private def interruptOnceSuspended(fiber: Fiber.Runtime[Any, Any]): UIO[Unit] =
+    fiber.status.flatMap {
+      case Fiber.Status.Done                                                                => ZIO.unit
+      case status: Fiber.Status.Suspended if RuntimeFlags.interruption(status.runtimeFlags) => fiber.interrupt.unit
+      case _                                                                                =>
+        ZIO.withClock(Clock.ClockLive)(ZIO.sleep(AbandonPoll)) *> interruptOnceSuspended(fiber)
+    }
+
+  private val AbandonPoll = 100.millis
+  private val AbandonWait = 1.second
+
+  private def shutDownOwned(provider: OFFeatureProvider): UIO[Unit] =
+    ProviderRegistration.boundedProviderShutdown(provider, "fromAcquireAsync (not in service)")
+
   /** `config.initMode` does not apply: the fallback is installed at once and the real provider always arrives later. */
   def fromAcquireAsync(
     acquire: RIO[Scope, OFFeatureProvider],
@@ -505,6 +556,16 @@ private[openfeature] object FeatureFlagsFactories {
     // carry an intersection.
     ZLayer.scopedEnvironment {
       for {
+        // What the library must shut down and is not serving, and the scope of the provider `acquire` returned. One
+        // finalizer releases both, registered before `build` so it runs after the fiber's interrupt and the API's
+        // shutdown: a serving provider stops before its resources go away, and the fiber cannot swap in a provider whose
+        // resources are gone.
+        owned     <- Ref.make(Option.empty[OFFeatureProvider])
+        candidate <- Ref.make(Option.empty[Scope.Closeable])
+        _         <- ZIO.addFinalizerExit { exit =>
+          owned.getAndSet(None).flatMap(ZIO.foreachDiscard(_)(shutDownOwned)) *>
+            candidate.getAndSet(None).flatMap(ZIO.foreachDiscard(_)(_.close(exit)))
+        }
         // Build immediately on a fresh fallback. An in-memory fallback whose init fails is a programming bug, not a
         // recoverable condition, so a failed build is a defect (`orDie`) — this is what makes the layer a `URLayer`.
         firstFallback <- fallback
@@ -527,60 +588,86 @@ private[openfeature] object FeatureFlagsFactories {
           maxAbandonedCalls = maxAbandonedCalls
         ).orDie
         // One attempt = acquire, then verify the candidate, inside a child scope of the layer scope. The child scope
-        // exists so a REJECTED candidate (acquire failed after registering finalizers, verify failed, or the attempt
-        // timed out) is released right away instead of lingering until layer close; the ACCEPTED candidate's scope is
-        // handed to the layer scope, so a real provider acquired but not yet swapped is still torn down on layer
-        // release. Interruption (layer release mid-attempt) takes the same close-the-child path via `onError`. The
-        // mask keeps "close on failure" and "hand over on success" from being skipped by an interrupt landing between
-        // them; `restore` keeps the attempt itself interruptible.
+        // exists so a REJECTED candidate is released right away instead of lingering until layer close. Whatever
+        // `acquire` returned is the library's to shut down from the moment it arrives, before the scope closes: `arrival`
+        // holds it until the attempt is accepted. An attempt abandoned before it arrives leaves both to the abandoned
+        // fiber, because the constructor still running may be using what the scope holds. The mask keeps "shut down and
+        // close on failure" and "take ownership on success" from being skipped by an interrupt landing between them;
+        // `restore` keeps the attempt itself interruptible.
         attempt = ZIO.uninterruptibleMask { restore =>
           for {
-            layerScope <- ZIO.scope
-            candidate  <- Scope.make
-            real       <- restore(
+            scope   <- Scope.make
+            arrival <- Ref.make[Arrival](Arrival.Waiting)
+            release = (real: OFFeatureProvider, cause: Cause[Any]) =>
+              shutDownOwned(real) *> scope.close(Exit.failCause(cause))
+            real <- restore(
               Timeouts.failAfter(
-                candidate
-                  .extend[Any](acquire.flatMap(real => verify(real).as(real)))
-                  // `.disconnect` so the per-attempt timeout returns promptly even when `acquire` is an uninterruptible
-                  // `attemptBlocking(new Provider(...))` — the underlying constructor may keep running in the background,
-                  // but the retry advances instead of waiting on a hung attempt. A finalizer it registers late lands in
-                  // an already-closed child scope and runs immediately.
-                  .disconnect,
+                abandonable(
+                  ZIO.uninterruptibleMask { inner =>
+                    inner(scope.extend[Any](acquire))
+                      .onError(cause => scope.close(Exit.failCause(cause)))
+                      .flatMap { real =>
+                        arrival.modify {
+                          case Arrival.Abandoned =>
+                            (release(real, Cause.empty) *> ZIO.interrupt, Arrival.Abandoned)
+                          case _ => (inner(verify(real)).as(real), Arrival.Arrived(real))
+                        }.flatten
+                      }
+                  }
+                ),
                 constructionTimeout,
                 new TimeoutException(s"Provider construction exceeded $constructionTimeout")
               )
-            ).onError(cause => candidate.close(Exit.failCause(cause)))
-            _ <- layerScope.addFinalizerExit(candidate.close(_))
-          } yield (candidate, real)
+            ).onError { cause =>
+              arrival.modify {
+                case Arrival.Arrived(real) => (release(real, cause), Arrival.Abandoned)
+                case _                     => (ZIO.unit, Arrival.Abandoned)
+              }.flatten
+            }
+            _ <- owned.set(Some(real)) *> candidate.set(Some(scope))
+          } yield real
         }
+        // A provider that does not make it into service is dead: shut it down (a composed stack reaches the real
+        // provider and the fresh fallback) and release the candidate now rather than at layer close. With nothing owned
+        // there is nothing to discard: construction never got that far, or the provider is serving and its candidate
+        // has to outlive it.
+        discard = (cause: Cause[Any]) =>
+          owned
+            .getAndSet(None)
+            .flatMap(ZIO.foreachDiscard(_) { provider =>
+              shutDownOwned(provider) *>
+                candidate.getAndSet(None).flatMap(ZIO.foreachDiscard(_)(_.close(Exit.failCause(cause))))
+            })
+            .uninterruptible
         // Background construction + swap. The fiber is `forkScoped`, so an in-flight attempt is interrupted on
         // release. A terminal construction/verification/swap failure is caught, reported, and left on the fallback —
         // nothing escapes to the (already-built) layer.
         construct =
           for {
-            accepted <- attempt.retry(constructionRetry)
-            candidate = accepted._1
-            freshFallback <- fallback
-            composed = compose(accepted._2, freshFallback)
-            // A composed stack that does not make it into service is dead: shut it down (which reaches the real provider
-            // and the fresh fallback) and release the candidate now rather than at layer close. `Scope.close` is
-            // idempotent, so the layer-scope finalizer is then a no-op.
-            discard = (cause: Cause[Any]) =>
-              ProviderRegistration.boundedProviderShutdown(composed, "fromAcquireAsync (discarded provider)") *>
-                candidate.close(Exit.failCause(cause))
+            real <- attempt.retry(constructionRetry)
+            // The fresh fallback is owned from the moment it exists: the stack holds it, or a compose that threw leaves
+            // it to be shut down here. `compose` is synchronous, so a release waits for it.
+            composed <- ZIO.uninterruptibleMask { restore =>
+              restore(fallback).flatMap { freshFallback =>
+                ZIO
+                  .succeed(compose(real, freshFallback))
+                  .tapErrorCause(_ => shutDownOwned(freshFallback))
+                  .tap(stack => owned.set(Some(stack)))
+              }
+            }
             // Initialize the composed stack ourselves, where the SDK's `setProvider` used to, bounded the same way. The
-            // fallback keeps serving throughout; the shutdown above is best-effort against an init still running.
+            // fallback keeps serving throughout; a shutdown of the stack is best-effort against an init still running.
             _ <- ProviderRegistration
               .boundedInitialize(composed, ff.apiEvaluationContext, initTimeout)
               .zipRight(verifyProviderState(composed))
               .mapError(e => ProviderSwapFailed(FeatureFlagError.ProviderInitializationFailed(e)))
-              .onError(discard)
-            switched <- ff.switchProvider(switch, composed).onError(discard)
+            switched <- ff.switchProvider(switch, composed).tap(ok => owned.set(None).when(ok)).uninterruptible
             _        <- ZIO.unless(switched) {
-              val e = new IllegalStateException(
-                "provider replaced by setProvider before the acquired provider was swapped in"
+              ZIO.fail(
+                new IllegalStateException(
+                  "provider replaced by setProvider before the acquired provider was swapped in"
+                )
               )
-              discard(Cause.fail(e)) *> ZIO.fail(e)
             }
             // State flips before the callback so a probe reading `AcquireStatus.get` from inside it already sees Live.
             _ <- state.set(AcquireState.Live) *> onSwapped
@@ -590,16 +677,21 @@ private[openfeature] object FeatureFlagsFactories {
         // Cause is handled, not just typed failures: a defect (say `acquire = ZIO.succeed(new Provider(...))` whose
         // constructor throws) would otherwise kill the fiber with the state stuck at Constructing and no callback —
         // a probe waiting for the outcome would hang. A defect is still re-raised after being recorded, so it keeps
-        // whatever visibility an unhandled fiber defect had before; interruption (layer release) is not an outcome.
+        // whatever visibility an unhandled fiber defect had before; interruption (layer release) is not an outcome, and
+        // the release's finalizer takes care of what is owned.
         _ <- construct.catchAllCause { cause =>
           val e      = cause.squashWith(identity)
           val record =
             if (cause.isInterruptedOnly) ZIO.unit
             else
-              state.get.flatMap {
-                case AcquireState.Constructing => state.set(AcquireState.Failed(e)) *> onConstructionError(e)
-                case _                         => ZIO.unit // a defect in `onSwapped` must not retract Live
-              }
+              // A finalizer that dies must not keep the failure from being recorded.
+              discard(cause).catchAllCause(c =>
+                ZIO.logWarningCause("fromAcquireAsync: discarding a provider failed", c)
+              ) *>
+                state.get.flatMap {
+                  case AcquireState.Constructing => state.set(AcquireState.Failed(e)) *> onConstructionError(e)
+                  case _                         => ZIO.unit // a defect in `onSwapped` must not retract Live
+                }
           record *> ZIO.when(cause.isDie || cause.isInterrupted)(ZIO.refailCause(cause))
         }.forkScoped
       } yield ZEnvironment[FeatureFlags](ff).add[FeatureFlagsAdmin](ff).add[AcquireStatus](AcquireStatus.fromRef(state))

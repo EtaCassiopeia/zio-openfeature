@@ -164,11 +164,12 @@ why, in a description line starting `formal: unaffected because`.
 | `formal/lifecycle`, traces and replay | Trace validation: each run the lifecycle test suites record is a behaviour of the model. Replay: behaviours generated from the model are replayed against the lifecycle's pure step | `validate.py`, `generate.py`, `LifecycleReplaySpec` | `formal/lifecycle/README.md`, `formal/lifecycle/replay-map.md` |
 | `formal/registry` | One API shared by several instances: a single owner tears it down, each registered provider is shut down exactly once, one client per domain | `Registry.cfg` | `formal/registry/README.md` |
 | `formal/lane` | `OrderedEmitter`, the lane the wrappers re-emit events through: slot writes follow the order of receipt, no deadlock with the SDK's lock, no dropped emission | `Lane.cfg`, `Witness.cfg` | `formal/lane/README.md` |
+| `formal/acquire` | `fromAcquireAsync`'s hand-off of a provider from `acquire` to the switch against a layer release: every provider shut down once, before its resources close | `Acquire.cfg`, `AcquireShared.cfg`, `mutants.py` | [README](https://github.com/EtaCassiopeia/zio-openfeature/blob/main/formal/acquire/README.md) |
 | `formal/caching` | `CachingProvider`: an invalidation holds against every order of lookup and write-back, a failed or `DEFAULT` result is not kept, a caller is not handed another lookup's failure | `Caching.cfg` | `formal/caching/README.md` |
 | `formal/circuitbreaker` | The circuit breaker's lock-free state machine: at most one half-open probe, stale outcomes ignored, a dead probe's slot freed | `CircuitBreaker.cfg`, `Signals.cfg`, `Liveness.cfg` | `formal/circuitbreaker/README.md` |
 
-The lifecycle, registry, lane, caching and breaker models also have a `mutants.py` that puts each fixed bug back into the
-model and checks that a property catches it. The registry, lane, caching and breaker mutants run on every pull request;
+The lifecycle, registry, lane, acquire, caching and breaker models also have a `mutants.py` that puts each fixed bug back into the
+model and checks that a property catches it. The registry, lane, acquire, caching and breaker mutants run on every pull request;
 the lifecycle mutants run on `main` and by hand.
 
 A pull request checks smaller bounds for the lifecycle model than `main` does. `LifecyclePR.cfg` allows one provider

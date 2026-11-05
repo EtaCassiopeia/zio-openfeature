@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.2.0] — 2026-11-05
+
 ### Changed
 
 - **`CachingProvider` with `contextKeys` keeps the targeting key in the cache key.** With `contextKeys` set, it used to
@@ -15,7 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   without listing `"targetingKey"`:** expect more provider calls and possibly evictions, so size `maxEntries` for active
   users times flags read. Answers are only ever more correct. To share entries across users as before, add the new
   `CachingConfig.withoutTargetingKey`, which also works without `contextKeys`. Listing `"targetingKey"` together with
-  `withoutTargetingKey` is rejected as `InvalidConfiguration`.
+  `withoutTargetingKey` is rejected as `InvalidConfiguration` (#826).
 
 ### Fixed
 
@@ -31,7 +33,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `fromAcquireAsync` fallback after the switch is not published either. **One more effect:** an instance whose domain
   another instance rebound no longer gets that provider's events, as its status already didn't follow them. Providers
   are told apart by name, so a late event is still published if it has no name, if the installed provider has the same
-  name, or while the installed provider's name is unknown.
+  name, or while the installed provider's name is unknown (#825).
 
 ## [2.1.0] — 2026-11-05
 
@@ -2531,7 +2533,8 @@ promotes `[Unreleased]` to the new version section when a release tag is cut.
 
 Internal refactors that don't change behaviour or surface area don't need a CHANGELOG entry. When in doubt: write one.
 
-[Unreleased]: https://github.com/EtaCassiopeia/zio-openfeature/compare/v2.1.0...HEAD
+[Unreleased]: https://github.com/EtaCassiopeia/zio-openfeature/compare/v2.2.0...HEAD
+[2.2.0]: https://github.com/EtaCassiopeia/zio-openfeature/compare/v2.1.0...v2.2.0
 [2.1.0]: https://github.com/EtaCassiopeia/zio-openfeature/compare/v2.0.0...v2.1.0
 [2.0.0]: https://github.com/EtaCassiopeia/zio-openfeature/compare/v1.2.1...v2.0.0
 [1.2.1]: https://github.com/EtaCassiopeia/zio-openfeature/compare/v1.2.0...v1.2.1

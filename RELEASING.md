@@ -7,8 +7,8 @@ the commit carries a `v*` tag and a `-SNAPSHOT` otherwise:
   which runs the tests on both Scala versions, publishes to Maven Central, and creates a GitHub Release.
 - **Snapshots** — every commit on `main` triggers [`.github/workflows/snapshot.yml`](.github/workflows/snapshot.yml)
   *after* CI passes, publishing to the Sonatype Central snapshots repository under a single moving
-  `<next>-SNAPSHOT` coordinate (the latest `v*` tag with its final number bumped, e.g. `2.0.1-SNAPSHOT` after
-  `v2.0.0`; see the `version` override in [`build.sbt`](build.sbt)). It tracks the next release automatically —
+  `<next>-SNAPSHOT` coordinate (the latest `v*` tag with its final number bumped, e.g. `2.1.1-SNAPSHOT` after
+  `v2.1.0`; see the `version` override in [`build.sbt`](build.sbt)). It tracks the next release automatically —
   no manual version bump — and `workflow_dispatch` allows an on-demand snapshot. Consumer instructions live in
   [`docs/getting-started.md`](docs/getting-started.md) ("Trying unreleased changes").
 
@@ -34,7 +34,7 @@ Run through this on `main` (or the release branch) **before** tagging:
       `build.sbt`. An unreleased version has a row marked "(unreleased)" until this step.
 - [ ] **Version references** — grep `docs/`, `README.md` and `mkdocs.yml` for the previous version string and update any
       hardcoded mention. The snapshot example in `docs/getting-started.md` names the version after the latest tag
-      (`2.0.1-SNAPSHOT` after `v2.0.0`); after this release it is the next patch of the new tag.
+      (`2.1.1-SNAPSHOT` after `v2.1.0`); after this release it is the next patch of the new tag.
 - [ ] **Green `main`** — the full build matrix must be green on the commit you are about to tag.
 
 ## Binary compatibility policy

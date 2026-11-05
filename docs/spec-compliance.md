@@ -6,7 +6,8 @@ context. The static-context paradigm (client side) and its context reconciliatio
 
 | ZIO OpenFeature | [OpenFeature specification](https://github.com/open-feature/spec) | [OpenFeature Java SDK](https://github.com/open-feature/java-sdk) |
 |:----------------|:-----------------------------------------------------------------|:-----------------------------------------------------------------|
-| 2.0.x (latest published: 2.0.0) | [v0.9.0](https://github.com/open-feature/spec/releases/tag/v0.9.0) | 1.23.0 |
+| 2.1.x (latest published: 2.1.0) | [v0.9.0](https://github.com/open-feature/spec/releases/tag/v0.9.0) | 1.23.0 |
+| 2.0.x | [v0.9.0](https://github.com/open-feature/spec/releases/tag/v0.9.0) | 1.23.0 |
 | 1.2.x | [v0.9.0](https://github.com/open-feature/spec/releases/tag/v0.9.0) | 1.23.0 |
 | 1.1.x | v0.9.0 | 1.22.1 |
 | 1.0.0 | [v0.8.0](https://github.com/open-feature/spec/releases/tag/v0.8.0) | 1.21.0 |

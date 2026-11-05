@@ -29,39 +29,50 @@ import scala.jdk.CollectionConverters._
   * @param ttl
   *   Time-to-live for cached entries. Must be `> 0`; `Duration.Infinity` means entries never expire.
   * @param contextKeys
-  *   If set, only these context attribute keys are included in the cache key hash — the targeting key is NOT included
-  *   unless you list `"targetingKey"` yourself. Use this when contexts contain high-cardinality fields (e.g.,
-  *   per-request UUIDs) that would defeat caching. For example, `withContextKeys(Set("plan", "region"))` caches by plan
-  *   and region, ignoring `userId` and the targeting key — so every user shares one entry, which breaks percentage
-  *   rollouts; add `"targetingKey"` when the flag targets individual users. If unset (default), the full context,
-  *   targeting key included, is hashed. `openfeature.variableKey` is always part of the key: it chooses which
-  *   Optimizely variable a read returns.
+  *   If set, only these context attributes and the targeting key make up the cache key. Use this when contexts contain
+  *   per-request fields, such as a request id, that would defeat caching. For example,
+  *   `withContextKeys(Set("plan", "region"))` caches per user, plan and region. If unset (default), the whole context
+  *   is used. `openfeature.variableKey` is always part of the key: it chooses which Optimizely variable a read returns.
+  * @param keyByTargetingKey
+  *   Whether the targeting key is part of the cache key, with or without `contextKeys`. Default true; see
+  *   [[withoutTargetingKey]]. When false, `contextKeys` must not list `"targetingKey"`.
   */
 final class CachingConfig private (
   val maxEntries: Int,
   val ttl: Duration,
-  val contextKeys: Option[Set[String]]
+  val contextKeys: Option[Set[String]],
+  val keyByTargetingKey: Boolean
 ) {
   private def copy(
     maxEntries: Int = maxEntries,
     ttl: Duration = ttl,
-    contextKeys: Option[Set[String]] = contextKeys
-  ): CachingConfig = new CachingConfig(maxEntries, ttl, contextKeys)
+    contextKeys: Option[Set[String]] = contextKeys,
+    keyByTargetingKey: Boolean = keyByTargetingKey
+  ): CachingConfig = new CachingConfig(maxEntries, ttl, contextKeys, keyByTargetingKey)
 
   def withMaxEntries(n: Int): CachingConfig = copy(maxEntries = n)
   def withTtl(d: Duration): CachingConfig   = copy(ttl = d)
 
-  /** Hash only these context attribute keys into the cache key; see the `contextKeys` note above. */
+  /** Only these context attributes and the targeting key make up the cache key; see the `contextKeys` note above. */
   def withContextKeys(keys: Set[String]): CachingConfig = copy(contextKeys = Some(keys))
 
-  override def toString: String = s"CachingConfig(maxEntries=$maxEntries, ttl=$ttl, contextKeys=$contextKeys)"
+  /** Leave the targeting key out of the cache key, so all users share an entry. Only for flags that don't vary by user,
+    * or for traffic whose targeting key is random per request. A flag that does vary by user then returns the first
+    * user's answer to everyone until the entry expires. Building a provider fails if `contextKeys` lists
+    * `"targetingKey"` too.
+    */
+  def withoutTargetingKey: CachingConfig = copy(keyByTargetingKey = false)
+
+  override def toString: String =
+    s"CachingConfig(maxEntries=$maxEntries, ttl=$ttl, contextKeys=$contextKeys, keyByTargetingKey=$keyByTargetingKey)"
 }
 
 object CachingConfig {
 
   /** [[CachingProvider.DefaultMaxEntries]] entries, a [[CachingProvider.DefaultTtl]] ttl, and the full context hashed.
     */
-  val default: CachingConfig = new CachingConfig(CachingProvider.DefaultMaxEntries, CachingProvider.DefaultTtl, None)
+  val default: CachingConfig =
+    new CachingConfig(CachingProvider.DefaultMaxEntries, CachingProvider.DefaultTtl, None, keyByTargetingKey = true)
 }
 
 /** A cache key combining the flag key, evaluation type, and a fingerprint of the evaluation context. Uses a string
@@ -207,10 +218,8 @@ final class CachingProvider private (
   private def contextFingerprint(ctx: OFEvaluationContext): String =
     if (ctx == null) "null"
     else {
-      val tk = config.contextKeys match {
-        case Some(_) => "" // targeting key is often high-cardinality; only include if in contextKeys
-        case None    => Option(ctx.getTargetingKey).getOrElse("")
-      }
+      // "n" is not a length-prefixed string, so a missing key differs from an empty one, which the SDK treats as a key.
+      val tk = Option(ctx.getTargetingKey).filter(_ => config.keyByTargetingKey).fold("n")(lp)
       val entries: List[(String, AnyRef)] = (config.contextKeys, Option(ctx.asUnmodifiableMap())) match {
         case (Some(keys), Some(m)) =>
           m.asScala.toList
@@ -219,8 +228,11 @@ final class CachingProvider private (
         case (None, Some(m)) => m.asScala.toList.sortBy(_._1)
         case (_, None)       => Nil
       }
-      val attrs = entries.map { case (k, v) => s"${lp(k)}=${lp(valueFingerprint(v))}" }.mkString(",")
-      s"${lp(tk)}|$attrs"
+      // The SDK also exposes the targeting key as an attribute, so leaving it out takes both forms.
+      val keyed =
+        if (config.keyByTargetingKey) entries else entries.filterNot(_._1 == CachingProvider.TargetingKeyAttribute)
+      val attrs = keyed.map { case (k, v) => s"${lp(k)}=${lp(valueFingerprint(v))}" }.mkString(",")
+      s"$tk|$attrs"
     }
 
   // Type-tagged and recursive: a provider may target on an attribute's type (`"30"` is not `30`) or on a list's or a
@@ -379,6 +391,9 @@ object CachingProvider {
   // Provider-steering attributes: they choose what a read returns, not who asks, so they are part of the key whatever
   // `contextKeys` says. `openfeature.variableKey` is read by `OptimizelyFeatureProvider` (its `VariableKeyAttribute`).
   private[extras] val AlwaysKeyed: Set[String] = Set("openfeature.variableKey")
+
+  /** The name the SDK gives the targeting key among a context's attributes. */
+  private[extras] val TargetingKeyAttribute: String = "targetingKey"
 
   val DefaultMaxEntries: Int = 1000
   val DefaultTtl: Duration   = 5.minutes

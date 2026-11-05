@@ -145,11 +145,24 @@ object ExtrasSpec extends ZIOSpecDefault:
           _ <- flags(cached)(FeatureFlags.booleanOrDefault("f", false) *> FeatureFlags.booleanOrDefault("f", false))
         yield assertTrue(remote.calls.get == 2)
       },
-      test("contextKeys: users on the same plan share an entry") {
+      test("contextKeys: each user has an entry that ignores a per-request attribute") {
+        val remote = new CountingProvider
+        val ctx    = (user: String, request: String) =>
+          EvaluationContext(user).withAttribute("plan", "pro").withAttribute("requestId", request)
+        for
+          cached <- CachingProvider.make(remote, CachingConfig.default.withContextKeys(Set("plan")))
+          _ <- flags(cached)(
+            FeatureFlags.boolean("f", false, ctx("ann", "r1")) *>
+              FeatureFlags.boolean("f", false, ctx("ann", "r2")) *>
+              FeatureFlags.boolean("f", false, ctx("bob", "r3"))
+          )
+        yield assertTrue(remote.calls.get == 2)
+      },
+      test("withoutTargetingKey: users on the same plan share an entry") {
         val remote = new CountingProvider
         val ctx    = (user: String) => EvaluationContext(user).withAttribute("plan", "pro")
         for
-          cached <- CachingProvider.make(remote, CachingConfig.default.withContextKeys(Set("plan")))
+          cached <- CachingProvider.make(remote, Extras.sharedByPlan)
           _ <- flags(cached)(
             FeatureFlags.boolean("f", false, ctx("ann")) *> FeatureFlags.boolean("f", false, ctx("bob"))
           )

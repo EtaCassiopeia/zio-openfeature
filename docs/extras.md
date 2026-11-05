@@ -108,7 +108,8 @@ Keeps a provider's answers for a while, using [zio-cache](https://github.com/zio
 |---|---|---|---|
 | `maxEntries` | `1000` | `withMaxEntries(n)` | entries kept before the least recently used is evicted; at least `1` |
 | `ttl` | `5.minutes` | `withTtl(d)` | how long an entry is served; greater than zero, `Duration.Infinity` never expires |
-| `contextKeys` | `None` | `withContextKeys(keys)` | context attributes that make up the cache key; `None` uses the whole context |
+| `contextKeys` | `None` | `withContextKeys(keys)` | context attributes that make up the cache key, with the targeting key; `None` uses the whole context |
+| `keyByTargetingKey` | `true` | `withoutTargetingKey` | whether the targeting key is part of the cache key; `withoutTargetingKey` also rejects a `contextKeys` that lists `"targetingKey"` |
 
 A per-request attribute such as a request id makes every evaluation its own entry, so nothing is served from cache.
 Name the attributes that change the answer:
@@ -117,9 +118,23 @@ Name the attributes that change the answer:
 --8<-- "Extras.scala:caching-context-keys"
 ```
 
-With `contextKeys` set, the targeting key is left out of the cache key too, **so all users share one cached answer**,
-which breaks per-user targeting and percentage rollouts. If the flag varies by user, add `"targetingKey"` to the set.
-`Some(Set.empty)` caches by flag key alone.
+The targeting key stays in the cache key, with or without `contextKeys`, so each user gets their own answer.
+`Some(Set.empty)` caches by flag key and targeting key.
+
+Use `withoutTargetingKey` to share one entry across users, when flags don't vary by user or the targeting key is random
+per request:
+
+```scala
+--8<-- "Extras.scala:caching-shared"
+```
+
+**A flag that does vary by user then returns the first user's answer to everyone until the entry expires**, which breaks
+per-user targeting and percentage rollouts. With it, `Some(Set.empty)` caches by flag key alone.
+
+Per-user entries need room: set `maxEntries` to cover active users times flags read, or the cache evicts entries before
+they help. In one measurement, 5,000 users reading one flag through the default 1,000 entries got no hits on a second
+pass.
+
 `openfeature.variableKey` is always part of the key: it chooses which Optimizely variable a read returns, so leaving it
 out would serve one variable's value for another.
 The key takes each attribute's type and shape, not just its text: `"30"` and `30` are different keys, as are lists

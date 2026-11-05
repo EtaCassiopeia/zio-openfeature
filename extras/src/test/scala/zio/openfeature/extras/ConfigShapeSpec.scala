@@ -14,7 +14,8 @@ object ConfigShapeSpec extends ZIOSpecDefault {
       assertTrue(
         c.maxEntries == CachingProvider.DefaultMaxEntries,
         c.ttl == CachingProvider.DefaultTtl,
-        c.contextKeys.isEmpty
+        c.contextKeys.isEmpty,
+        c.keyByTargetingKey
       )
     },
     test("CachingConfig with* returns a copy and leaves the receiver as it was") {
@@ -27,11 +28,21 @@ object ConfigShapeSpec extends ZIOSpecDefault {
         CachingConfig.default.contextKeys.isEmpty
       )
     },
+    test("withoutTargetingKey returns a copy, and the other setters keep it") {
+      val shared = CachingConfig.default.withMaxEntries(5).withoutTargetingKey
+      val later  = shared.withTtl(2.minutes).withContextKeys(Set("plan")).withMaxEntries(6)
+      assertTrue(
+        !shared.keyByTargetingKey,
+        shared.maxEntries == 5,
+        !later.keyByTargetingKey,
+        CachingConfig.default.keyByTargetingKey
+      )
+    },
     test("CachingConfig.toString names every field") {
       assertTrue(
         CachingConfig.default.withContextKeys(Set("plan")).toString ==
           s"CachingConfig(maxEntries=${CachingProvider.DefaultMaxEntries}, ttl=${CachingProvider.DefaultTtl}, " +
-          "contextKeys=Some(Set(plan)))"
+          "contextKeys=Some(Set(plan)), keyByTargetingKey=true)"
       )
     },
     test("CircuitBreakerConfig.default carries the documented defaults") {

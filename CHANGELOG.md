@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.1.0] — 2026-11-05
+
 ### Added
 
 - **`FeatureFlags.subscribeEvents`: an event stream already subscribed when it returns** (#814).
@@ -18,7 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A swap could report `Ready` for a provider another registration had just replaced.** The wait for the SDK's write
   checked the slot's binding before reading its state, so a rebind in between returned the new provider's state as its
-  own. It now reads first and checks after, and fails with the replaced registration's error.
+  own. It now reads first and checks after, and fails with the replaced registration's error (#819).
 - **`fromAcquireAsync` shuts down every provider `acquire` returns exactly once, and closes `acquire`'s `Scope` after
   that** (#813). A release between the steps of the hand-off left a provider and its fresh fallback running; a `verify`
   rejection, a timed-out attempt and a constructor returning after one left a bare provider running; a failed
@@ -2503,7 +2505,8 @@ promotes `[Unreleased]` to the new version section when a release tag is cut.
 
 Internal refactors that don't change behaviour or surface area don't need a CHANGELOG entry. When in doubt: write one.
 
-[Unreleased]: https://github.com/EtaCassiopeia/zio-openfeature/compare/v2.0.0...HEAD
+[Unreleased]: https://github.com/EtaCassiopeia/zio-openfeature/compare/v2.1.0...HEAD
+[2.1.0]: https://github.com/EtaCassiopeia/zio-openfeature/compare/v2.0.0...v2.1.0
 [2.0.0]: https://github.com/EtaCassiopeia/zio-openfeature/compare/v1.2.1...v2.0.0
 [1.2.1]: https://github.com/EtaCassiopeia/zio-openfeature/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/EtaCassiopeia/zio-openfeature/compare/v1.1.2...v1.2.0

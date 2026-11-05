@@ -22,8 +22,8 @@ and 25. The examples on this site use Scala 3 syntax; see [Using Scala 2.13](#us
 Coming from 1.x? See [Upgrading to 2.0](upgrading.md).
 
 ??? note "Trying unreleased changes"
-    Every commit on `main` publishes the next version with a `-SNAPSHOT` suffix (for example `2.0.1-SNAPSHOT` after
-    `v2.0.0`). Add the snapshots resolver to use it. Snapshots change without notice; pin a release for anything you
+    Every commit on `main` publishes the next version with a `-SNAPSHOT` suffix (for example `2.1.1-SNAPSHOT` after
+    `v2.1.0`). Add the snapshots resolver to use it. Snapshots change without notice; pin a release for anything you
     ship.
 
     ```scala

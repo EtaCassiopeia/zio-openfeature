@@ -10,6 +10,8 @@ name: Formal model
 # The registry model (formal/registry) checks the ownership rules of one API shared by several instances, with its
 # mutants.
 # The event lane model (formal/lane) checks OrderedEmitter against the SDK's API lock, with its witnesses and mutants.
+# The acquire model (formal/acquire) checks fromAcquireAsync's hand-off of a provider against a layer release, with its
+# mutants.
 # Trace validation checks that runs of the library are behaviours of the model: on pull requests the checker's own
 # fixtures, on main, nightly and on demand also the runs the lifecycle test suites record. The replay checks the other
 # direction: behaviours generated from the model are replayed against the lifecycle's pure step (formal/lifecycle/
@@ -31,6 +33,7 @@ on:
       - 'core/src/main/scala/zio/openfeature/internal/OrphanedProviders.scala'
       - 'core/src/main/scala/zio/openfeature/internal/SwitchableProvider.scala'
       - 'core/src/main/scala/zio/openfeature/internal/FeatureFlagsFactories.scala'
+      - 'core/src/main/scala/zio/openfeature/internal/LongAwareMultiProvider.scala'
       - 'core/src/main/scala/zio/openfeature/internal/LifecycleProbe.scala'
       - 'core/src/main/scala/zio/openfeature/internal/OrderedEmitter.scala'
       - 'core/src/main/scala/zio/openfeature/internal/ManagedProvider.scala'
@@ -58,6 +61,7 @@ on:
       - 'core/src/main/scala/zio/openfeature/internal/OrphanedProviders.scala'
       - 'core/src/main/scala/zio/openfeature/internal/SwitchableProvider.scala'
       - 'core/src/main/scala/zio/openfeature/internal/FeatureFlagsFactories.scala'
+      - 'core/src/main/scala/zio/openfeature/internal/LongAwareMultiProvider.scala'
       - 'core/src/main/scala/zio/openfeature/internal/LifecycleProbe.scala'
       - 'core/src/main/scala/zio/openfeature/internal/OrderedEmitter.scala'
       - 'core/src/main/scala/zio/openfeature/internal/ManagedProvider.scala'
@@ -181,6 +185,14 @@ jobs:
           git diff --exit-code -- Lane.tla
           java -XX:+UseParallelGC -cp ../../tla2tools.jar tlc2.TLC -workers auto -config Lane.cfg Lane.tla
           python3 witness.py ../../tla2tools.jar
+          python3 mutants.py ../../tla2tools.jar
+      # The acquire hand-off (formal/acquire): the ownership design, owning and shared, then the code at 2.0.0 and the bugs
+      # the design excludes (mutants.py). Under a minute, so on every pull request.
+      - name: Check the acquire model
+        working-directory: formal/acquire
+        run: |
+          java -cp ../../tla2tools.jar tlc2.TLC -config Acquire.cfg Acquire.tla
+          java -cp ../../tla2tools.jar tlc2.TLC -config AcquireShared.cfg Acquire.tla
           python3 mutants.py ../../tla2tools.jar
 
   # Each fixed lifecycle bug and each progress bug, put back into the model. Too slow for every pull request.

@@ -12,7 +12,8 @@ import dev.openfeature.sdk.{FeatureProvider => OFFeatureProvider}
   *
   * @param compose
   *   how to combine (real, freshFallback) into the swapped-in provider; [[FeatureFlags.defaultAcquireCompose]] by
-  *   default
+  *   default. Its `shutdown()` has to reach both. It runs on the construction fiber and should not block: layer release
+  *   waits for it
   * @param constructionRetry
   *   retry policy for the `acquire` + `verify` attempt
   * @param constructionTimeout

@@ -70,12 +70,14 @@ final private[openfeature] class LongAwareMultiProvider(
   private var chainState  = ProviderState.NOT_READY: ProviderState
   private var running     = false
   private val attachedTo  = Array.fill(children.size)(new AtomicBoolean(false))
+  private val shutDown    = new AtomicBoolean(false)
 
   override def initialize(ctx: OFEvaluationContext): Unit = initialize(ctx, null)
 
   // The SDK may initialize the chain again without shutting it down first (a swap's rollback re-registers it), so a
   // child this chain is already attached to keeps that attachment.
   override def initialize(ctx: OFEvaluationContext, domain: String): Unit = {
+    shutDown.set(false)
     lock.synchronized {
       running = false
       setAll(ProviderState.NOT_READY)
@@ -114,14 +116,17 @@ final private[openfeature] class LongAwareMultiProvider(
     }
   }
 
-  override def shutdown(): Unit = {
-    lock.synchronized {
-      running = false
-      chainState = ProviderState.NOT_READY
+  // Once per initialization: the SDK's initialize calls this when a member fails, and whoever owns the chain then calls
+  // it again. A chain initialized again, as a retry of a failed initialization does, has members to shut down again.
+  override def shutdown(): Unit =
+    if (shutDown.compareAndSet(false, true)) {
+      lock.synchronized {
+        running = false
+        chainState = ProviderState.NOT_READY
+      }
+      childStates.indices.foreach(detach)
+      super.shutdown()
     }
-    childStates.indices.foreach(detach)
-    super.shutdown()
-  }
 
   @scala.annotation.nowarn("msg=deprecated")
   override def getState: ProviderState = lock.synchronized(chainState)

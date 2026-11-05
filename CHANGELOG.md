@@ -14,6 +14,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   published right after it, with no sign. `subscribeEvents` is scoped and subscribes before it returns; run its stream
   once. `events` is unchanged. A `FeatureFlags` implementor that doesn't override the new method keeps the lazy behaviour.
 
+### Fixed
+
+- **`fromAcquireAsync` shuts down every provider `acquire` returns exactly once, and closes `acquire`'s `Scope` after
+  that** (#813). A release between the steps of the hand-off left a provider and its fresh fallback running; a `verify`
+  rejection, a timed-out attempt and a constructor returning after one left a bare provider running; a failed
+  `initialize()` under the default chain shut members down twice, on `FeatureFlags.multiProvider` too; and a resource
+  `acquire` registered closed while its provider was still serving. A chain's `shutdown()` now runs once per
+  initialization. A swapped-in provider on an instance that doesn't own the API is still left to the API's owner.
+
+  **Behaviour changes:**
+  - The library is now the only owner of that provider, so remove `shutdown()` from any finalizer `acquire` registers. A
+    finalizer that still calls it now makes a second call wherever the library used to leave the provider to it: a
+    rejected or abandoned attempt, or a release before the stack exists. Other paths already made two or more. A provider
+    with a non-idempotent `shutdown()` needs the call removed. The library's own `.scoped` providers tolerate it.
+  - An `acquire` that returns the same instance on each retry gets it back shut down, so build a new one per attempt.
+  - An abandoned attempt blocked in a constructor is no longer interrupted until the call returns, and its `Scope` stays
+    open until then, so the constructor keeps what it is using. An attempt suspended in an asynchronous call is
+    interrupted at once, as before.
+
 ## [2.0.0] — 2026-11-04
 
 **Upgrading from 1.x:** `docs/upgrading.md` lists what to change in your code and the behaviour changes that compile

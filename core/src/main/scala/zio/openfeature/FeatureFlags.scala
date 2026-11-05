@@ -1085,17 +1085,25 @@ object FeatureFlags extends FeatureFlagsTransactionAccessors {
     *     exceeds `initTimeout` is a swap failure: the composed stack is shut down, the fallback keeps serving, and the
     *     state becomes `Failed`. A user `setProvider` that lands before the switch wins: the acquired provider is
     *     discarded and the state becomes `Failed`.
-    *   - **Teardown.** Every attempt runs `acquire` in its own child `Scope`. A candidate that does not make it into
-    *     service — `acquire` failed after registering finalizers, `verify` failed, the attempt timed out, or the swap
-    *     itself failed — has that scope closed immediately, so its finalizers run then rather than at layer close. The
-    *     candidate that is swapped in has its scope handed to the layer scope, so a real provider acquired but not yet
-    *     swapped is still torn down on layer release, and layer release still interrupts an in-flight attempt. As
-    *     before, this only tears down what `acquire` registers in its `Scope` (e.g. via `ZIO.acquireRelease`); a bare
-    *     `attemptBlocking(new Provider(...))` registers no finalizer, so teardown of the not-yet-swapped provider is
-    *     then the caller's responsibility.
+    *   - **Teardown.** The library shuts down every provider `acquire` returns, exactly once: the one it swapped in
+    *     with the API, when the instance owns the API, and any other as soon as it is out of the running. Don't call
+    *     `shutdown()` from a finalizer `acquire` registers. Its `Scope` is for the provider's other resources, such as
+    *     an HTTP client. Every attempt has its own child `Scope`, which closes after the provider has shut down: right
+    *     away for a candidate that does not make it into service, at layer release for the one that does. A swapped-in
+    *     provider on an instance that does not own the API stays bound to that API, so the API's owner shuts it down,
+    *     and its `Scope` still closes at layer release.
+    *   - **An abandoned attempt.** A timeout or a layer release does not wait for a blocking constructor. It keeps its
+    *     `Scope` open, and when it returns the provider is shut down and the `Scope` closes; one that never returns
+    *     keeps them for good. An attempt suspended in an asynchronous call is interrupted, and whatever that call would
+    *     have returned is lost, so run the constructor directly in `acquire`: behind a `fork`, a `timeout` or a
+    *     `zipPar` the waiting fiber is suspended, and the library cannot reach what the constructor returns. If that
+    *     interrupt does not finish, the timeout or the release goes on after a short bound and leaves it running.
+    *   - `compose` runs on the construction fiber and should not block, because layer release waits for it.
     *
     * @param acquire
-    *   the real provider as a scoped effect (typically `ZIO.attemptBlocking(new Provider(...))`)
+    *   the real provider as a scoped effect (typically `ZIO.attemptBlocking(new Provider(...))`). The library owns the
+    *   provider it returns; its `Scope` is for that provider's other resources, and closes after the provider's
+    *   `shutdown()`
     * @param fallback
     *   a scoped effect producing a FRESH fallback instance each time it is run
     * @param config

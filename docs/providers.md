@@ -192,7 +192,7 @@ The layer's error type is `Nothing`: a real provider that never comes up is retr
 
 | Argument | Meaning |
 |:--|:--|
-| `acquire` | Builds the real provider. Register cleanup in its `Scope` so a rejected one is closed. |
+| `acquire` | Builds the real provider. The library shuts down every provider it returns, exactly once, so don't call `shutdown()` from a finalizer. Its `Scope` is for the provider's other resources, and closes after that `shutdown()`. |
 | `fallback` | Builds a fallback; runs again for the swap, so return a fresh instance each time. |
 | `config` | A [`FeatureFlagsConfig`](#configure-it-with-featureflagsconfig): domain, version, hooks, timeouts (`initTimeout` bounds the swapped-in provider's initialization), API ownership, context source, fallback logging and `maxAbandonedCalls`. `initMode` does not apply: the fallback serves at once and the real provider always comes later. |
 | `acquireConfig` | An `AcquireConfig`: what only this path takes, below. |

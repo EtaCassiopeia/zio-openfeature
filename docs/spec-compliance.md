@@ -62,6 +62,7 @@ and runs them on every build, twice: the `conformance` module runs them with Cuc
 | Ready, error, stale, configuration-changed events | `ProviderEvent.Ready`, `Error`, `Stale`, `ConfigurationChanged`, each with the provider's event metadata |
 | Add and remove handlers | `FeatureFlagsAdmin.onProviderReady`, `onProviderError`, `onProviderStale`, `onConfigurationChanged`, or `on(eventType, handler)`; each returns an effect that removes the handler |
 | Run a handler at once if the provider is already in that state (§5.3.3) | yes |
+| Do not run handlers for a provider the client is not associated with (§5.1.3) | yes, including an event the SDK dispatched before a swap and handed over after it. Providers are told apart by name, so an event with no name, with the installed provider's name, or arriving while the installed name is unknown is not caught. See [React to events](lifecycle.md#react-to-events) |
 | All events as a stream | `FeatureFlags.subscribeEvents` or `FeatureFlags.events`, a `ZStream` |
 | Multi-Provider status and events (Appendix A) | `FeatureFlags.multiProvider`: the worst member status, `FATAL` > `NOT_READY` > `ERROR` > `STALE` > `READY`; a member's status event re-emitted only when it changes that, a configuration change always. See [Providers](providers.md#ask-several-providers-in-order). |
 | **Tracking (§6)** | |

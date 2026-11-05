@@ -411,7 +411,7 @@ private[openfeature] object LifecycleStep {
   * reads the swap's NotReady. That write is outside the semaphore, so only the step that moved the generation makes it:
   * a swap's start, under the swap lock, so these writes cannot reorder. A write from every step could land after a
   * later swap's and move the mirror back, and `Evaluator.gated` would read that as a swap. The effects a step returns
-  * run after it, never under the semaphore.
+  * run after it, never under the semaphore; `whenAdmitted` is the one thing that runs an effect under it.
   */
 final private[openfeature] class Lifecycle(
   statusRef: SubscriptionRef[ProviderStatus],
@@ -452,6 +452,17 @@ final private[openfeature] class Lifecycle(
 
   /** The record, read under the same semaphore as every step. */
   def read: UIO[LifecycleState] = runWith(state => (LifecycleInput.Idle, state)).map(_._1)
+
+  /** Run `effect` under the semaphore every step runs under, if `admit` accepts the record, and say whether it ran. It
+    * is then ordered against every step: one admitted before a swap's start has finished when that swap starts. Every
+    * step waits for it, so it is only for an effect that cannot block, such as a publish to the sliding event hub.
+    */
+  def whenAdmitted(admit: LifecycleState => Boolean)(effect: UIO[Unit]): UIO[Boolean] =
+    statusRef.modifyZIO { status =>
+      rest.get.flatMap { stored =>
+        if (admit(stored.copy(status = status))) effect.as((true, status)) else ZIO.succeed((false, status))
+      }
+    }
 
   /** The record as of the last step, for a synchronous reader. */
   def snapshot: LifecycleState = view.get()

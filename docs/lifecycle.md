@@ -30,8 +30,9 @@ uses the status to decide whether an evaluation may run, and publishes the provi
   SDK still reports `NOT_READY` for the provider changes nothing: it comes from another registration, such as a replaced
   provider with the same name. An `ERROR` or `STALE` still reaches your handlers as sent; a `READY` handled while the
   SDK reports `NOT_READY` is dropped before it reaches them.
-- An event from a provider that is no longer installed does not change the status: the Java SDK delivers a provider's
-  events only to the domains it is bound to, and the status follows the SDK's state for the installed provider.
+- An event from a provider that is no longer installed neither changes the status nor is published to handlers or the
+  event stream: the Java SDK delivers a provider's events only to the domains it is bound to, the library drops one that
+  arrives after the swap, and the status follows the SDK's state for the installed provider.
 - `status.canEvaluate` is true for `Ready` and `Stale`; `status.isRecoverable` is false only for `Fatal`.
 - [`fromAcquireAsync`](providers.md#start-on-a-fallback-fromacquireasync) never changes the status when it switches from
   its fallback to the real provider. How the start works, and how long it may take, is set on the
@@ -86,6 +87,14 @@ Register a handler for the events you care about. Each registration returns an e
 
 - The subscription is in place before registration returns, so no later event is missed. An event that arrives while
   you register may reach the handler twice: make handlers idempotent.
+- Once `setProvider` returns, no further event from the provider it replaced is published, so a handler registered after
+  that sees none. A handler registered earlier may still be working through events published before the swap started. A
+  swap that failed and rolled back reports through `setProvider`'s failure, not an `Error` event.
+- The library tells providers apart by the name on the event. A late event is still published if it has no name, if the
+  installed provider has the same name, or while the installed provider's name is unknown, as after a swap that timed
+  out on a provider that names itself in `initialize()`.
+- If another instance binds its provider to the same domain, this instance's handlers don't get that provider's events,
+  just as its status doesn't follow them. `setProvider` on this instance takes the domain back.
 - When the status already matches, the handler gets a payload that describes the current state, not the event that
   caused it.
 - A handler that dies is logged, and keeps its subscription.

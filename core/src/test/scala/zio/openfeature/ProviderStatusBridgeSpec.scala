@@ -187,25 +187,26 @@ object ProviderStatusBridgeSpec extends ZIOSpecDefault {
     suite("a provider with no name")(namelessShapes.map { case (shape, metadata) =>
       lateEventsFromTheReplacedProvider(shape, metadata)
     }: _*),
-    test("mismatched provider name: status unchanged, event still published under the stamped name") {
+    test("mismatched provider name: status unchanged, event not delivered") {
       for {
         ref <- SubscriptionRef.make[ProviderStatus](ProviderStatus.Ready)
         out <- ZIO.scoped {
           build(ref, "current").flatMap { ff =>
             for {
-              received <- Promise.make[Nothing, ProviderEvent]
-              cancel   <- ff.on(ProviderEventType.Error, e => received.succeed(e).unit)
-              _        <- ff.onErrorEvent(details("stale-other", message = "boom"))
-              event    <- awaitSignal(received)
-              status   <- ff.providerStatus
-              _        <- cancel
-            } yield assertTrue(
-              status == ProviderStatus.Ready, // mismatch => status untouched
-              event match {
-                case e: ProviderEvent.Error => e.providerMetadata.name == "stale-other"
-                case _                      => false
-              }
-            )
+              names  <- Ref.make(Vector.empty[String])
+              marked <- Promise.make[Nothing, Unit]
+              cancel <- ff.on(
+                ProviderEventType.Error,
+                e => names.update(_ :+ e.metadata.name) *> marked.succeed(()).when(e.metadata.name == "current").unit
+              )
+              _      <- ff.onErrorEvent(details("stale-other", message = "boom"))
+              status <- ff.providerStatus
+              // Events reach a handler in the order they were published, so nothing earlier is still on its way.
+              _    <- ff.onErrorEvent(details("current", message = "marker"))
+              _    <- awaitSignal(marked)
+              seen <- names.get
+              _    <- cancel
+            } yield assertTrue(status == ProviderStatus.Ready, seen == Vector("current"))
           }
         }
       } yield out

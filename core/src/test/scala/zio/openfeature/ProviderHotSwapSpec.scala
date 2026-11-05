@@ -537,6 +537,39 @@ object ProviderHotSwapSpec extends ZIOSpecDefault {
         } yield assertTrue(before eq q, down, swap.isRight, after eq p)
       }
     } @@ TestAspect.withLiveClock,
+    test("an instance whose shared slot a sibling took does not get that provider's events") {
+      ZIO.scoped {
+        val api    = OpenFeatureAPI.createIsolated()
+        val domain = s"shared-${java.util.UUID.randomUUID()}"
+        val p      = new Counting("P", blocking = false)
+        val q      = new Counting("Q", blocking = false)
+        for {
+          ffA    <- buildOn(api, domain, p)
+          ffB    <- buildOn(api, domain, q)
+          seenA  <- Ref.make(Vector.empty[String])
+          marked <- Promise.make[Nothing, Unit]
+          gotB   <- Promise.make[Nothing, String]
+          _      <- ffA.on(
+            ProviderEventType.Error,
+            e => seenA.update(_ :+ e.metadata.name) *> marked.succeed(()).when(e.metadata.name == "P").unit
+          )
+          _ <- ffB.on(ProviderEventType.Error, e => gotB.succeed(e.metadata.name).unit)
+          _ <- emitError(q, "Q: backend down")
+          b <- gotB.await.timeout(10.seconds)
+          // The SDK runs each domain handler on its own thread, so give ffA's the same chance to run.
+          _ <- ZIO.sleep(200.millis)
+          _ <- ffA.onErrorEvent(
+            dev.openfeature.sdk.EventDetails
+              .builder()
+              .providerName("P")
+              .build()
+              .asInstanceOf[dev.openfeature.sdk.EventDetails]
+          )
+          _    <- marked.await.timeout(10.seconds)
+          seen <- seenA.get
+        } yield assertTrue(b == Some("Q"), seen == Vector("P"))
+      }
+    } @@ TestAspect.withLiveClock,
     test("setProvider of a provider already bound to another domain and in ERROR succeeds with status Error") {
       ZIO.scoped {
         val api = OpenFeatureAPI.createIsolated()

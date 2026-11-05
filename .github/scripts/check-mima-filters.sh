@@ -13,7 +13,7 @@
 # up to the first line that is neither a filter nor a comment (one marker for a group of filters on the same symbol).
 # A filter scalafmt wrapped takes the second form.
 # Any other filter is a break of the public API, allowed only on the way to a major release: when the highest `v*` tag
-# has a higher major than the `mimaPreviousArtifacts` baseline (a `v2.0.0-RC1` tag unlocks breaking filters for 2.0).
+# has a higher major than the `mimaPreviousArtifacts` baseline (a `v3.0.0-RC1` tag unlocks breaking filters for 3.0).
 #
 # While a major is in development there is no baseline: `mimaPreviousArtifacts := Set.empty, // no baseline: <why>`. No
 # filter can then excuse anything, so any filter fails, and having none passes. A build with neither a baseline nor that
@@ -40,6 +40,10 @@ if [ -z "$baseline" ]; then
     die "no mimaPreviousArtifacts version, and no '// no baseline: <why>' marker, in $BUILD_FILE"
   no_baseline=true
 fi
+case "$baseline" in
+  "" | [0-9]*.[0-9]*.[0-9]*) ;;
+  *) die "mimaPreviousArtifacts names '$baseline' in $BUILD_FILE, not an x.y.z version; is the parse still right?" ;;
+esac
 baseline_major="${baseline%%.*}"
 
 # The highest `v*` tag by version, not `git describe`: CI checks out shallow, where no tag is reachable from HEAD.
@@ -135,7 +139,13 @@ if [ "$no_baseline" = true ] && [ "$violations" -eq 0 ]; then
   echo "OK: no baseline while a major is in development, and no filters."
   exit 0
 fi
-[ "$checked" -gt 0 ] || die "no MiMa or TASTy-MiMa filter found in $BUILD_FILE; is the parse still right?"
+if [ "$checked" -eq 0 ]; then
+  # A release right after a major has no filters. A filter setting with nothing read from it means the parse broke.
+  ! grep -Eq '^[^/]*(mimaBinaryIssueFilters|tastyMiMaConfig)' "$BUILD_FILE" ||
+    die "$BUILD_FILE sets MiMa or TASTy-MiMa filters, but none was read; is the parse still right?"
+  echo "OK: baseline $baseline, and no filters."
+  exit 0
+fi
 
 if [ "$violations" -gt 0 ]; then
   echo "$violations filter(s) break the binary compatibility policy (RELEASING.md). Excuse only a symbol under" \

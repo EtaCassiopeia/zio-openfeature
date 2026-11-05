@@ -208,7 +208,7 @@ lazy val commonSettings = Seq(
     "dev.zio" %% "zio-test-sbt" % zioVersion % Test
   ),
   // Each module's last release, per `RELEASING.md`. check-mima-filters.sh reads the version from this line.
-  mimaPreviousArtifacts := Set(organization.value %% moduleName.value % "2.0.0"),
+  mimaPreviousArtifacts := Set(organization.value %% moduleName.value % "2.1.0"),
   // TASTy only exists for the Scala 3 artifacts.
   tastyMiMaPreviousArtifacts := { if (scalaBinaryVersion.value == "3") mimaPreviousArtifacts.value else Set.empty },
   checkPublishedPins         := checkPublishedPinsTask.value,

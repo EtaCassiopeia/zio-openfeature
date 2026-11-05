@@ -442,7 +442,25 @@ trait FeatureFlags extends FeatureFlagsTransactions {
       case false => ZIO.none
     }
 
+  /** Every event as a stream. It subscribes when it first runs and misses what is published before that, so
+    * `events.foreach(...).forkScoped` can lose an event published right after it returns. To lose none, use
+    * [[subscribeEvents]].
+    */
   def events: ZStream[Any, Nothing, ProviderEvent]
+
+  /** The event stream, subscribed before this returns: an event published after that reaches the stream, whenever it
+    * first runs, as long as the subscription is open and the stream is fewer than 256 events behind. Past that the
+    * oldest are dropped.
+    *
+    * The subscription ends when the stream's first run ends, the scope closes, or the instance shuts down, and unread
+    * events go with it. Run the stream once: a run after the first has ended is empty, and so is a stream subscribed
+    * after the instance shut down.
+    *
+    * A concrete default so an existing implementor keeps compiling. It returns [[events]], so an implementor that does
+    * not override it subscribes when the stream first runs.
+    */
+  def subscribeEvents: ZIO[Scope, Nothing, ZStream[Any, Nothing, ProviderEvent]] = ZIO.succeed(events)
+
   def providerStatus: UIO[ProviderStatus]
 
   /** Semantically block until the provider reaches an evaluable state (`canEvaluate` — Ready/Stale), returns early on
@@ -748,6 +766,9 @@ object FeatureFlags extends FeatureFlagsTransactionAccessors {
 
   def events: ZStream[FeatureFlags, Nothing, ProviderEvent] =
     ZStream.serviceWithStream(_.events)
+
+  def subscribeEvents: ZIO[FeatureFlags with Scope, Nothing, ZStream[Any, Nothing, ProviderEvent]] =
+    ZIO.serviceWithZIO[FeatureFlags](_.subscribeEvents)
 
   def providerStatus: ZIO[FeatureFlags, Nothing, ProviderStatus] =
     ZIO.serviceWithZIO(_.providerStatus)

@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`FeatureFlags.subscribeEvents`: an event stream already subscribed when it returns** (#814).
+  `FeatureFlags.events` subscribes only when it first runs, so `events.foreach(...).forkScoped` can lose an event
+  published right after it, with no sign. `subscribeEvents` is scoped and subscribes before it returns; run its stream
+  once. `events` is unchanged. A `FeatureFlags` implementor that doesn't override the new method keeps the lazy behaviour.
+
 ### Fixed
 
 - **`fromAcquireAsync` shuts down every provider `acquire` returns exactly once, and closes `acquire`'s `Scope` after

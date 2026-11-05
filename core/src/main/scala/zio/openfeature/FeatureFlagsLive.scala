@@ -275,6 +275,9 @@ final private[openfeature] class FeatureFlagsLive(
   override def events: ZStream[Any, Nothing, ProviderEvent] =
     ZStream.fromHub(state.eventHub)
 
+  override def subscribeEvents: ZIO[Scope, Nothing, ZStream[Any, Nothing, ProviderEvent]] =
+    ZStream.fromHubScoped(state.eventHub)
+
   override def providerStatus: UIO[ProviderStatus] =
     state.statusRef.get
 

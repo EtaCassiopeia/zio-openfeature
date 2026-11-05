@@ -99,11 +99,21 @@ Register a handler for the events you care about. Each registration returns an e
 
 ## Read the event stream
 
-`FeatureFlags.events` is a `ZStream` of every event. It ends when the instance shuts down.
+`FeatureFlags.subscribeEvents` gives you a `ZStream` that is already subscribed when it returns, so it receives events
+published from then on, even before you run it. The subscription ends when the stream's first run ends, its scope
+closes or the instance shuts down, and any unread events go with it. Run it once: a later run is empty.
 
 ```scala
 --8<-- "Lifecycle.scala:events"
 ```
+
+`FeatureFlags.events` is the same stream without the subscription: it subscribes when it first runs. Between forking
+`events.foreach(...)` and that first run, an event can be lost without any sign. That matters most for
+`ConfigurationChanged`, which `providerStatus` can't tell you about afterwards. If you need only one event type, `on`
+also subscribes before it returns.
+
+Neither form replays history: use `providerStatus` for the state before you subscribed. A subscriber that falls more
+than 256 events behind loses the oldest.
 
 | `ProviderEvent` (`eventType`) | Fields |
 |:--|:--|

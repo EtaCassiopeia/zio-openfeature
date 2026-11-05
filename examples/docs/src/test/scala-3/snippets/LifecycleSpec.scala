@@ -70,14 +70,13 @@ object LifecycleSpec extends ZIOSpecDefault:
     test("events: a configuration change reaches the stream") {
       for
         received <- Promise.make[Nothing, Set[String]]
-        _ <- FeatureFlags.events
+        stream <- FeatureFlags.subscribeEvents
+        _ <- stream
           .collect { case ProviderEvent.ConfigurationChanged(keys, _, _) => keys }
           .foreach(received.succeed(_))
           .forkScoped
         provider <- ZIO.service[TestFeatureProvider]
-        // Re-emit until the forked subscriber has seen one: it may not be subscribed yet on the first
-        _ <- (provider.emitEvent(ProviderEvent.ConfigurationChanged(Set("banner"), ProviderMetadata("test"))) *>
-          ZIO.sleep(20.millis)).repeatUntilZIO(_ => received.isDone)
+        _ <- provider.emitEvent(ProviderEvent.ConfigurationChanged(Set("banner"), ProviderMetadata("test")))
         keys <- received.await
       yield assertTrue(keys == Set("banner"))
     } @@ TestAspect.withLiveClock,

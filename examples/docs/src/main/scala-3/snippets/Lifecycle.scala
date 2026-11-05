@@ -46,16 +46,16 @@ object Lifecycle:
 
   // --8<-- [start:events]
   val logEvents: ZIO[FeatureFlags & Scope, Nothing, Unit] =
-    FeatureFlags.events
-      .foreach {
+    FeatureFlags.subscribeEvents.flatMap { // already subscribed when this returns
+      _.foreach {
         case ProviderEvent.Ready(meta, _)                   => ZIO.logInfo(s"$meta ready")
         case ProviderEvent.ConfigurationChanged(keys, _, _) => ZIO.logInfo(s"changed: $keys")
         case ProviderEvent.Stale(reason, _, _)              => ZIO.logWarning(s"stale: $reason")
         case ProviderEvent.Error(_, _, code, message, _)    => ZIO.logError(s"$code ${message.getOrElse("")}")
         case ProviderEvent.Reconnecting(_, _)               => ZIO.unit
-      }
-      .forkScoped // runs until the scope closes or the instance shuts down
-      .unit
+      }.forkScoped // runs until the scope closes or the instance shuts down
+        .unit
+    }
   // --8<-- [end:events]
 
   // --8<-- [start:shutdown]

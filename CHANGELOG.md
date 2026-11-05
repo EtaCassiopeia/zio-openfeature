@@ -16,6 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A swap could report `Ready` for a provider another registration had just replaced.** The wait for the SDK's write
+  checked the slot's binding before reading its state, so a rebind in between returned the new provider's state as its
+  own. It now reads first and checks after, and fails with the replaced registration's error.
 - **`fromAcquireAsync` shuts down every provider `acquire` returns exactly once, and closes `acquire`'s `Scope` after
   that** (#813). A release between the steps of the hand-off left a provider and its fresh fallback running; a `verify`
   rejection, a timed-out attempt and a constructor returning after one left a bare provider running; a failed

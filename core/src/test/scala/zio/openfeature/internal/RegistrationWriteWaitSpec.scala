@@ -127,7 +127,8 @@ object RegistrationWriteWaitSpec extends ZIOSpecDefault {
         entered,
         settled.exists(_.left.toOption.exists(_.isInstanceOf[ProviderRegistration.RegistrationSuperseded]))
       )
-    } @@ TestAspect.withLiveClock,
+      // Repeated: the rebind can land anywhere in the wait, including between its check and its read of the slot.
+    } @@ TestAspect.withLiveClock @@ TestAspect.nonFlaky(2000),
     test("through setProvider: it times out with status Error, and the SDK's late READY recovers it") {
       val first = new Parked("first", parkFrom = Int.MaxValue)
       val p     = new Parked("second", parkFrom = 1)

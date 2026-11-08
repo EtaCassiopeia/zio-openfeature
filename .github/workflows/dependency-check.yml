@@ -58,9 +58,14 @@ jobs:
           restore-keys: nvd-db-
 
       - name: Install OWASP Dependency-Check
+        # The SHA-256 of the release zip. Bump it with the version: download the zip and check it against the
+        # `.sha1` Maven Central publishes for org.owasp:dependency-check-cli:<version>:zip:release, then pin
+        # `sha256sum` of it here.
+        env:
+          DC_VERSION: 12.1.0
+          DC_SHA256: 0e5ba6ae58e753d5841048c6c8e495dbc4c7a4ea921a2b14daeac65195700532
         run: |
-          DC_VERSION=12.1.0
-          curl -sL "https://github.com/jeremylong/DependencyCheck/releases/download/v${DC_VERSION}/dependency-check-${DC_VERSION}-release.zip" -o /tmp/dc.zip
+          scripts/fetch-asset.sh "https://github.com/jeremylong/DependencyCheck/releases/download/v${DC_VERSION}/dependency-check-${DC_VERSION}-release.zip" "${DC_SHA256}" /tmp/dc.zip
           unzip -q /tmp/dc.zip -d /opt
 
       - name: Run dependency check

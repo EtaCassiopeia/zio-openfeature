@@ -405,14 +405,36 @@ object AcquireOwnershipSpec extends ZIOSpecDefault {
           count <- settled(real.shutdowns.get(), 1)
         } yield assertTrue(count == 1, verified.get() == 0)
       },
-      test("an attempt suspended in an asynchronous call: its resource closes with the timeout") {
+      // An abandoned attempt is interrupted once it is suspended, so its resource closes then, possibly after the
+      // timeout is reported: an attempt not yet scheduled reads as running, and is interrupted by a later poll.
+      test("an attempt suspended in an asynchronous call: its resource closes once it is interrupted") {
         val closed  = new AtomicInteger(0)
         val acquire = ZIO.acquireRelease(ZIO.unit)(_ => ZIO.succeed(closed.incrementAndGet())) *>
           ZIO.never.as(new Counting("never"): FeatureProvider)
         val config = noRetry.withConstructionTimeout(50.millis)
-        buildAndRelease(FeatureFlags.fromAcquireAsync(acquire, new Fallbacks().effect, isolated, config)) { env =>
-          awaitOutcome(env).as(assertTrue(closed.get() == 1))
+        for {
+          state <- buildAndRelease(FeatureFlags.fromAcquireAsync(acquire, new Fallbacks().effect, isolated, config))(
+            awaitOutcome(_)
+          )
+          count <- settled(closed.get(), 1)
+        } yield assertTrue(state.isInstanceOf[AcquireState.Failed], count == 1)
+      },
+      test("an attempt still running when the timeout fires: the timeout is reported, then its resource closes") {
+        // Spins without suspending past the timeout, so the interrupt finds the attempt running, not suspended.
+        def spin(d: Duration): Unit = {
+          val end = java.lang.System.nanoTime() + d.toNanos
+          while (java.lang.System.nanoTime() < end) ()
         }
+        val closed  = new AtomicInteger(0)
+        val acquire = ZIO.acquireRelease(ZIO.unit)(_ => ZIO.succeed(closed.incrementAndGet())) *>
+          ZIO.succeed(spin(150.millis)) *> ZIO.never.as(new Counting("never"): FeatureProvider)
+        val config = noRetry.withConstructionTimeout(50.millis)
+        for {
+          state <- buildAndRelease(FeatureFlags.fromAcquireAsync(acquire, new Fallbacks().effect, isolated, config))(
+            awaitOutcome(_)
+          )
+          count <- settled(closed.get(), 1)
+        } yield assertTrue(state.isInstanceOf[AcquireState.Failed], count == 1)
       },
       suite("a hung attempt holds up neither the timeout nor the release")(
         {

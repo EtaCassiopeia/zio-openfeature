@@ -536,6 +536,144 @@ private[openfeature] object FeatureFlagsFactories {
   private def shutDownOwned(provider: OFFeatureProvider): UIO[Unit] =
     ProviderRegistration.boundedProviderShutdown(provider, "fromAcquireAsync (not in service)")
 
+  /** One attempt = acquire, then verify the candidate, inside a child scope of the layer scope. The child scope exists
+    * so a REJECTED candidate is released right away instead of lingering until layer close. Whatever `acquire` returned
+    * is the library's to shut down from the moment it arrives, before the scope closes: `arrival` holds it until the
+    * attempt is accepted. An attempt abandoned before it arrives leaves both to the abandoned fiber, because the
+    * constructor still running may be using what the scope holds. The mask keeps "shut down and close on failure" and
+    * "take ownership on success" from being skipped by an interrupt landing between them; `restore` keeps the attempt
+    * itself interruptible.
+    */
+  private def acquireAttempt(
+    acquire: RIO[Scope, OFFeatureProvider],
+    verify: OFFeatureProvider => Task[Unit],
+    constructionTimeout: Duration,
+    owned: Ref[Option[OFFeatureProvider]],
+    candidate: Ref[Option[Scope.Closeable]]
+  ): Task[OFFeatureProvider] =
+    ZIO.uninterruptibleMask { restore =>
+      for {
+        scope   <- Scope.make
+        arrival <- Ref.make[Arrival](Arrival.Waiting)
+        release = (real: OFFeatureProvider, cause: Cause[Any]) =>
+          shutDownOwned(real) *> scope.close(Exit.failCause(cause))
+        real <- restore(
+          Timeouts.failAfter(
+            abandonable(
+              ZIO.uninterruptibleMask { inner =>
+                inner(scope.extend[Any](acquire))
+                  .onError(cause => scope.close(Exit.failCause(cause)))
+                  .flatMap { real =>
+                    arrival.modify {
+                      case Arrival.Abandoned =>
+                        (release(real, Cause.empty) *> ZIO.interrupt, Arrival.Abandoned)
+                      case _ => (inner(verify(real)).as(real), Arrival.Arrived(real))
+                    }.flatten
+                  }
+              }
+            ),
+            constructionTimeout,
+            new TimeoutException(s"Provider construction exceeded $constructionTimeout")
+          )
+        ).onError { cause =>
+          arrival.modify {
+            case Arrival.Arrived(real) => (release(real, cause), Arrival.Abandoned)
+            case _                     => (ZIO.unit, Arrival.Abandoned)
+          }.flatten
+        }
+        _ <- owned.set(Some(real)) *> candidate.set(Some(scope))
+      } yield real
+    }
+
+  /** A provider that does not make it into service is dead: shut it down (a composed stack reaches the real provider
+    * and the fresh fallback) and release the candidate now rather than at layer close. With nothing owned there is
+    * nothing to discard: construction never got that far, or the provider is serving and its candidate has to outlive
+    * it.
+    */
+  private def discardOwned(
+    owned: Ref[Option[OFFeatureProvider]],
+    candidate: Ref[Option[Scope.Closeable]]
+  )(cause: Cause[Any]): UIO[Unit] =
+    owned
+      .getAndSet(None)
+      .flatMap(ZIO.foreachDiscard(_) { provider =>
+        shutDownOwned(provider) *>
+          candidate.getAndSet(None).flatMap(ZIO.foreachDiscard(_)(_.close(Exit.failCause(cause))))
+      })
+      .uninterruptible
+
+  /** Background construction + swap. The fiber is `forkScoped`, so an in-flight attempt is interrupted on release. A
+    * terminal construction/verification/swap failure is caught, reported, and left on the fallback — nothing escapes to
+    * the (already-built) layer.
+    */
+  private def constructAndSwitch(
+    attempt: Task[OFFeatureProvider],
+    fallback: URIO[Scope, OFFeatureProvider],
+    compose: (OFFeatureProvider, OFFeatureProvider) => OFFeatureProvider,
+    ff: FeatureFlagsLive,
+    switch: ManagedProvider,
+    state: SubscriptionRef[AcquireState],
+    owned: Ref[Option[OFFeatureProvider]],
+    initTimeout: Duration,
+    onSwapped: UIO[Unit]
+  ): ZIO[Scope, Throwable, Unit] =
+    for {
+      real <- attempt
+      // The fresh fallback is owned from the moment it exists: the stack holds it, or a compose that threw leaves
+      // it to be shut down here. `compose` is synchronous, so a release waits for it.
+      composed <- ZIO.uninterruptibleMask { restore =>
+        restore(fallback).flatMap { freshFallback =>
+          ZIO
+            .succeed(compose(real, freshFallback))
+            .tapErrorCause(_ => shutDownOwned(freshFallback))
+            .tap(stack => owned.set(Some(stack)))
+        }
+      }
+      // Initialize the composed stack ourselves, where the SDK's `setProvider` used to, bounded the same way. The
+      // fallback keeps serving throughout; a shutdown of the stack is best-effort against an init still running.
+      _ <- ProviderRegistration
+        .boundedInitialize(composed, ff.apiEvaluationContext, initTimeout)
+        .zipRight(verifyProviderState(composed))
+        .mapError(e => ProviderSwapFailed(FeatureFlagError.ProviderInitializationFailed(e)))
+      switched <- ff.switchProvider(switch, composed).tap(ok => owned.set(None).when(ok)).uninterruptible
+      _        <- ZIO.unless(switched) {
+        ZIO.fail(
+          new IllegalStateException(
+            "provider replaced by setProvider before the acquired provider was swapped in"
+          )
+        )
+      }
+      // State flips before the callback so a probe reading `AcquireStatus.get` from inside it already sees Live.
+      _ <- state.set(AcquireState.Live) *> onSwapped
+    } yield ()
+
+  /** Same ordering on the failure side: Failed is observable before `onConstructionError` runs. Failed is terminal —
+    * the schedule is exhausted (or the swap failed) and nothing restarts construction. The whole Cause is handled, not
+    * just typed failures: a defect (say `acquire = ZIO.succeed(new Provider(...))` whose constructor throws) would
+    * otherwise kill the fiber with the state stuck at Constructing and no callback — a probe waiting for the outcome
+    * would hang. A defect is still re-raised after being recorded, so it keeps whatever visibility an unhandled fiber
+    * defect had before; interruption (layer release) is not an outcome, and the release's finalizer takes care of what
+    * is owned.
+    */
+  private def recordConstructionOutcome(
+    cause: Cause[Throwable],
+    discard: Cause[Any] => UIO[Unit],
+    state: SubscriptionRef[AcquireState],
+    onConstructionError: Throwable => UIO[Unit]
+  ): Task[Unit] = {
+    val e      = cause.squashWith(identity)
+    val record =
+      if (cause.isInterruptedOnly) ZIO.unit
+      else
+        // A finalizer that dies must not keep the failure from being recorded.
+        discard(cause).catchAllCause(c => ZIO.logWarningCause("fromAcquireAsync: discarding a provider failed", c)) *>
+          state.get.flatMap {
+            case AcquireState.Constructing => state.set(AcquireState.Failed(e)) *> onConstructionError(e)
+            case _                         => ZIO.unit // a defect in `onSwapped` must not retract Live
+          }
+    record *> ZIO.when(cause.isDie || cause.isInterrupted)(ZIO.refailCause(cause)).unit
+  }
+
   /** `config.initMode` does not apply: the fallback is installed at once and the real provider always arrives later. */
   def fromAcquireAsync(
     acquire: RIO[Scope, OFFeatureProvider],
@@ -587,113 +725,19 @@ private[openfeature] object FeatureFlagsFactories {
           fallbackLogging = config.fallbackLogging,
           maxAbandonedCalls = maxAbandonedCalls
         ).orDie
-        // One attempt = acquire, then verify the candidate, inside a child scope of the layer scope. The child scope
-        // exists so a REJECTED candidate is released right away instead of lingering until layer close. Whatever
-        // `acquire` returned is the library's to shut down from the moment it arrives, before the scope closes: `arrival`
-        // holds it until the attempt is accepted. An attempt abandoned before it arrives leaves both to the abandoned
-        // fiber, because the constructor still running may be using what the scope holds. The mask keeps "shut down and
-        // close on failure" and "take ownership on success" from being skipped by an interrupt landing between them;
-        // `restore` keeps the attempt itself interruptible.
-        attempt = ZIO.uninterruptibleMask { restore =>
-          for {
-            scope   <- Scope.make
-            arrival <- Ref.make[Arrival](Arrival.Waiting)
-            release = (real: OFFeatureProvider, cause: Cause[Any]) =>
-              shutDownOwned(real) *> scope.close(Exit.failCause(cause))
-            real <- restore(
-              Timeouts.failAfter(
-                abandonable(
-                  ZIO.uninterruptibleMask { inner =>
-                    inner(scope.extend[Any](acquire))
-                      .onError(cause => scope.close(Exit.failCause(cause)))
-                      .flatMap { real =>
-                        arrival.modify {
-                          case Arrival.Abandoned =>
-                            (release(real, Cause.empty) *> ZIO.interrupt, Arrival.Abandoned)
-                          case _ => (inner(verify(real)).as(real), Arrival.Arrived(real))
-                        }.flatten
-                      }
-                  }
-                ),
-                constructionTimeout,
-                new TimeoutException(s"Provider construction exceeded $constructionTimeout")
-              )
-            ).onError { cause =>
-              arrival.modify {
-                case Arrival.Arrived(real) => (release(real, cause), Arrival.Abandoned)
-                case _                     => (ZIO.unit, Arrival.Abandoned)
-              }.flatten
-            }
-            _ <- owned.set(Some(real)) *> candidate.set(Some(scope))
-          } yield real
-        }
-        // A provider that does not make it into service is dead: shut it down (a composed stack reaches the real
-        // provider and the fresh fallback) and release the candidate now rather than at layer close. With nothing owned
-        // there is nothing to discard: construction never got that far, or the provider is serving and its candidate
-        // has to outlive it.
-        discard = (cause: Cause[Any]) =>
-          owned
-            .getAndSet(None)
-            .flatMap(ZIO.foreachDiscard(_) { provider =>
-              shutDownOwned(provider) *>
-                candidate.getAndSet(None).flatMap(ZIO.foreachDiscard(_)(_.close(Exit.failCause(cause))))
-            })
-            .uninterruptible
-        // Background construction + swap. The fiber is `forkScoped`, so an in-flight attempt is interrupted on
-        // release. A terminal construction/verification/swap failure is caught, reported, and left on the fallback —
-        // nothing escapes to the (already-built) layer.
-        construct =
-          for {
-            real <- attempt.retry(constructionRetry)
-            // The fresh fallback is owned from the moment it exists: the stack holds it, or a compose that threw leaves
-            // it to be shut down here. `compose` is synchronous, so a release waits for it.
-            composed <- ZIO.uninterruptibleMask { restore =>
-              restore(fallback).flatMap { freshFallback =>
-                ZIO
-                  .succeed(compose(real, freshFallback))
-                  .tapErrorCause(_ => shutDownOwned(freshFallback))
-                  .tap(stack => owned.set(Some(stack)))
-              }
-            }
-            // Initialize the composed stack ourselves, where the SDK's `setProvider` used to, bounded the same way. The
-            // fallback keeps serving throughout; a shutdown of the stack is best-effort against an init still running.
-            _ <- ProviderRegistration
-              .boundedInitialize(composed, ff.apiEvaluationContext, initTimeout)
-              .zipRight(verifyProviderState(composed))
-              .mapError(e => ProviderSwapFailed(FeatureFlagError.ProviderInitializationFailed(e)))
-            switched <- ff.switchProvider(switch, composed).tap(ok => owned.set(None).when(ok)).uninterruptible
-            _        <- ZIO.unless(switched) {
-              ZIO.fail(
-                new IllegalStateException(
-                  "provider replaced by setProvider before the acquired provider was swapped in"
-                )
-              )
-            }
-            // State flips before the callback so a probe reading `AcquireStatus.get` from inside it already sees Live.
-            _ <- state.set(AcquireState.Live) *> onSwapped
-          } yield ()
-        // Same ordering on the failure side: Failed is observable before `onConstructionError` runs. Failed is
-        // terminal — the schedule is exhausted (or the swap failed) and nothing restarts construction. The whole
-        // Cause is handled, not just typed failures: a defect (say `acquire = ZIO.succeed(new Provider(...))` whose
-        // constructor throws) would otherwise kill the fiber with the state stuck at Constructing and no callback —
-        // a probe waiting for the outcome would hang. A defect is still re-raised after being recorded, so it keeps
-        // whatever visibility an unhandled fiber defect had before; interruption (layer release) is not an outcome, and
-        // the release's finalizer takes care of what is owned.
-        _ <- construct.catchAllCause { cause =>
-          val e      = cause.squashWith(identity)
-          val record =
-            if (cause.isInterruptedOnly) ZIO.unit
-            else
-              // A finalizer that dies must not keep the failure from being recorded.
-              discard(cause).catchAllCause(c =>
-                ZIO.logWarningCause("fromAcquireAsync: discarding a provider failed", c)
-              ) *>
-                state.get.flatMap {
-                  case AcquireState.Constructing => state.set(AcquireState.Failed(e)) *> onConstructionError(e)
-                  case _                         => ZIO.unit // a defect in `onSwapped` must not retract Live
-                }
-          record *> ZIO.when(cause.isDie || cause.isInterrupted)(ZIO.refailCause(cause))
-        }.forkScoped
+        attempt = acquireAttempt(acquire, verify, constructionTimeout, owned, candidate)
+        _ <- constructAndSwitch(
+          attempt.retry(constructionRetry),
+          fallback,
+          compose,
+          ff,
+          switch,
+          state,
+          owned,
+          initTimeout,
+          onSwapped
+        ).catchAllCause(recordConstructionOutcome(_, discardOwned(owned, candidate), state, onConstructionError))
+          .forkScoped
       } yield ZEnvironment[FeatureFlags](ff).add[FeatureFlagsAdmin](ff).add[AcquireStatus](AcquireStatus.fromRef(state))
     }
   }

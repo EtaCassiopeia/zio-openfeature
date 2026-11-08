@@ -63,7 +63,9 @@ object LifecycleModelSpec extends ZIOSpecDefault {
 
   final private case class Sut(ff: FeatureFlagsLive, events: Queue[ProviderEvent], swaps: SwapOrder)
 
-  /** How one of two concurrent swaps ended: the instance's answer, a fiber that died, or none within [[SwapBound]]. */
+  /** How a swap the harness ran concurrently ended: the instance's answer, a fiber that died, or none within
+    * [[SwapBound]].
+    */
   sealed private trait SwapOutcome
   private object SwapOutcome {
     case object Succeeded                            extends SwapOutcome
@@ -109,10 +111,10 @@ object LifecycleModelSpec extends ZIOSpecDefault {
     if (rank(a._1) <= rank(b._1)) List(a._2, b._2) else List(b._2, a._2)
   }
 
-  /** The model after two swaps in serial order, and what their outcomes broke. A kind that settles successfully is
-    * expected to return `Right`; one that returned `Left` instead is stepped as a failed swap, so the model follows the
-    * path the instance took and a later step does not repeat the one disagreement. A `FailingInit` is expected to fail
-    * initializing, and nothing else. A swap that did not return within [[SwapBound]] is stepped as planned and
+  /** The model after one or two swaps in serial order, and what their outcomes broke. A kind that settles successfully
+    * is expected to return `Right`; one that returned `Left` instead is stepped as a failed swap, so the model follows
+    * the path the instance took and a later step does not repeat the one disagreement. A `FailingInit` is expected to
+    * fail initializing, and nothing else. A swap that did not return within [[SwapBound]] is stepped as planned and
     * reported, as is one whose fiber died.
     */
   private def afterSwaps(
@@ -601,33 +603,36 @@ object LifecycleModelSpec extends ZIOSpecDefault {
               case Action.Evaluate => evaluate(sut)
               case _               => emit(run.providers(emitter.id), other, tag).as(Chunk.empty)
             }
-            _ <- swap.await.timeout(SwapBound)
-            planned = before.step(s, who)
-            kept    = planned.installed.exists(_.id == who.id)
+            outcome <- swap.await.timeout(SwapBound).map(SwapOutcome.of)
+            // The swap's outcome steps the model, as for a pair of swaps: a `Left` from a kind that should succeed is a
+            // failed swap, reported, not a success the model then expects to see.
+            (planned, broken) = afterSwaps(before, List((s, who, outcome)))
+            kept              = planned.installed.exists(_.id == who.id)
+            told              = s"$where; ${who.id}: $outcome"
             _ <- ZIO.when(planned.serving)(
               awaitEvent(sut, EventWait)(isReadyFrom(planned.installed.fold(who.name)(_.name)))
             )
             _ <- ZIO.when(Action.isEmit(other))(awaitEvent(sut, MaybeEventWait)(tagged(tag)))
-            swapped = planned
             // The event can take effect before the swap, after it (only while its sender is still installed), or be
             // dropped while the swap is in flight.
             afterEmit =
-              if (swapped.installed.exists(_.id == emitter.id)) swapped.step(other, who) else swapped
+              if (planned.installed.exists(_.id == emitter.id)) planned.step(other, who) else planned
             candidates =
-              if (Action.isEmit(other)) List(swapped, before.step(other, who).step(s, who), afterEmit)
-              else List(swapped)
-            checked <- checkAny(sut, candidates, where)
+              if (Action.isEmit(other))
+                List(planned, afterSwaps(before.step(other, who), List((s, who, outcome)))._1, afterEmit)
+              else List(planned)
+            checked <- checkAny(sut, candidates, told)
             (model, seen) = checked
             installed     = if (kept) who else emitter
             // An evaluation sees the instance before the swap, during it (NotReady), or after it.
-            wrong = unexpected(evaluated, List(before, before.copy(status = ProviderStatus.NotReady), swapped))
+            wrong = unexpected(evaluated, List(before, before.copy(status = ProviderStatus.NotReady), planned))
           } yield run.copy(
             model = model,
             providers = run.providers + (who.id -> p),
             installed = installed,
             replaced = Some(if (kept) emitter else who),
-            violations = run.violations ++ seen ++
-              (if (wrong.isEmpty) Chunk.empty else Chunk(s"$where: evaluations during the swap gave $wrong"))
+            violations = run.violations ++ broken.map(v => s"$told: $v") ++ seen ++
+              (if (wrong.isEmpty) Chunk.empty else Chunk(s"$told: evaluations during the swap gave $wrong"))
           )
 
         case (a, b) =>
@@ -1121,6 +1126,17 @@ object LifecycleModelSpec extends ZIOSpecDefault {
             verdict.installed.id == "pa",
             verdict.broken.isEmpty,
             seen.isEmpty
+          )
+        }
+      },
+      test("a swap beside an evaluation whose call is refused is reported, not modelled as a success") {
+        // After Shutdown every swap is refused with ProviderNotReady; the generator never pairs one there, so this
+        // hand-written sequence is the one way to make a swap in this branch return Left.
+        runCase(List(Shutdown, Both(SetProvider(Kind.Good), Evaluate))).map { found =>
+          assertTrue(
+            found.exists(
+              _.contains("swap to 'p2-good' (Good) was expected to succeed but returned Left(ProviderNotReady")
+            )
           )
         }
       },

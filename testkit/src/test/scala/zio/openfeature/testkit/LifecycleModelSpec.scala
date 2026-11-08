@@ -578,8 +578,8 @@ object LifecycleModelSpec extends ZIOSpecDefault {
               came
             )
             // Logged, not failed: the inversion is what the model must survive, and the log of a run that saw it is the
-            // evidence that it happens.
-            _    <- ZIO.when(verdict.inverted)(ZIO.logInfo(s"lifecycle model: $where, ${verdict.detail}"))
+            // evidence that it happens. At warning level, because the test runtime's console logger drops info.
+            _    <- ZIO.when(verdict.inverted)(ZIO.logWarning(s"lifecycle model: $where, ${verdict.detail}"))
             _    <- awaitEvent(sut, EventWait)(isReadyFrom(verdict.installed.name))
             seen <- verify(sut, verdict.model, s"$where, ${verdict.detail}")
           } yield run.copy(

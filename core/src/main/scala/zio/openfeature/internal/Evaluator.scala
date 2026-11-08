@@ -164,11 +164,12 @@ final private[openfeature] class Evaluator(
             // resolution re-labelled `Cached`, so it keeps the provider's variant and flag metadata. The decoders accept
             // a numeric or boolean string (an override may be one), so the wire value is first checked against the
             // resolver this read would call: a string the provider served is never a boolean or a number to it.
-            (if (Evaluator.servableAs(cached.wire, flagType.wire)) flagType.decode(cached.wire)
-             else
-               Left(
-                 s"cached as ${cached.wire.getClass.getSimpleName}, not from the ${flagType.wire.name} resolver"
-               )) match {
+            // Typed, so a condition folded to a constant still leaves an `Either`, not a bare `Left` that makes the
+            // `Right` case a compile error (mutation testing folds it).
+            val servable: Either[String, A] =
+              if (Evaluator.servableAs(cached.wire, flagType.wire)) flagType.decode(cached.wire)
+              else Left(s"cached as ${cached.wire.getClass.getSimpleName}, not from the ${flagType.wire.name} resolver")
+            servable match {
               case Right(decoded) =>
                 val prior = cached.evaluation.resolution
                 ZIO.succeed(

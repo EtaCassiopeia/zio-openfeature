@@ -121,8 +121,7 @@ jobs:
           distribution: 'temurin'
       - name: Download the TLA+ tools
         run: |
-          curl -sSLo tla2tools.jar "https://github.com/tlaplus/tlaplus/releases/download/${TLA_TOOLS_VERSION}/tla2tools.jar"
-          echo "${TLA_TOOLS_SHA256}  tla2tools.jar" | sha256sum -c -
+          scripts/fetch-asset.sh "https://github.com/tlaplus/tlaplus/releases/download/${TLA_TOOLS_VERSION}/tla2tools.jar" "${TLA_TOOLS_SHA256}" tla2tools.jar
       - name: Check the lifecycle model
         working-directory: formal/lifecycle
         env:
@@ -151,8 +150,7 @@ jobs:
           distribution: 'temurin'
       - name: Download the TLA+ tools
         run: |
-          curl -sSLo tla2tools.jar "https://github.com/tlaplus/tlaplus/releases/download/${TLA_TOOLS_VERSION}/tla2tools.jar"
-          echo "${TLA_TOOLS_SHA256}  tla2tools.jar" | sha256sum -c -
+          scripts/fetch-asset.sh "https://github.com/tlaplus/tlaplus/releases/download/${TLA_TOOLS_VERSION}/tla2tools.jar" "${TLA_TOOLS_SHA256}" tla2tools.jar
       # Recovery: the temporal properties under FairSpec, on Liveness.cfg's small bounds and without symmetry, which
       # TLC's liveness checking does not support soundly.
       - name: Check the lifecycle model's recovery properties
@@ -209,8 +207,7 @@ jobs:
           distribution: 'temurin'
       - name: Download the TLA+ tools
         run: |
-          curl -sSLo tla2tools.jar "https://github.com/tlaplus/tlaplus/releases/download/${TLA_TOOLS_VERSION}/tla2tools.jar"
-          echo "${TLA_TOOLS_SHA256}  tla2tools.jar" | sha256sum -c -
+          scripts/fetch-asset.sh "https://github.com/tlaplus/tlaplus/releases/download/${TLA_TOOLS_VERSION}/tla2tools.jar" "${TLA_TOOLS_SHA256}" tla2tools.jar
       - name: Check that the model catches each fixed lifecycle bug and each progress bug
         working-directory: formal/lifecycle
         run: python3 mutants.py ../../tla2tools.jar
@@ -224,8 +221,7 @@ jobs:
       - uses: actions/checkout@v7
       - name: Download TLAPS
         run: |
-          curl -sSfLo tlapm.tar.gz "https://github.com/${GITHUB_REPOSITORY}/releases/download/${TLAPM_RELEASE}/tlapm-1.6.0-pre-x86_64-linux-gnu.tar.gz"
-          echo "${TLAPM_SHA256}  tlapm.tar.gz" | sha256sum -c -
+          scripts/fetch-asset.sh "https://github.com/${GITHUB_REPOSITORY}/releases/download/${TLAPM_RELEASE}/tlapm-1.6.0-pre-x86_64-linux-gnu.tar.gz" "${TLAPM_SHA256}" tlapm.tar.gz
           tar xzf tlapm.tar.gz
       # --stretch: the largest steps outrun the default prover timeouts on a CI runner.
       - name: Check the lifecycle model's proofs
@@ -247,10 +243,8 @@ jobs:
         uses: sbt/setup-sbt@v1
       - name: Download the TLA+ tools and community modules
         run: |
-          curl -sSfLo tla2tools.jar "https://github.com/${GITHUB_REPOSITORY}/releases/download/${TRACE_TLA_TOOLS_RELEASE}/tla2tools.jar"
-          echo "${TRACE_TLA_TOOLS_SHA256}  tla2tools.jar" | sha256sum -c -
-          curl -sSLo CommunityModules-deps.jar "https://github.com/tlaplus/CommunityModules/releases/download/${COMMUNITY_MODULES_VERSION}/CommunityModules-deps.jar"
-          echo "${COMMUNITY_MODULES_SHA256}  CommunityModules-deps.jar" | sha256sum -c -
+          scripts/fetch-asset.sh "https://github.com/${GITHUB_REPOSITORY}/releases/download/${TRACE_TLA_TOOLS_RELEASE}/tla2tools.jar" "${TRACE_TLA_TOOLS_SHA256}" tla2tools.jar
+          scripts/fetch-asset.sh "https://github.com/tlaplus/CommunityModules/releases/download/${COMMUNITY_MODULES_VERSION}/CommunityModules-deps.jar" "${COMMUNITY_MODULES_SHA256}" CommunityModules-deps.jar
       - name: Check that the checker accepts and rejects its fixtures
         working-directory: formal/lifecycle
         # A long trace can take several minutes on a 2-core runner. A fixture left undecided fails this step, and a recorded
@@ -319,8 +313,7 @@ jobs:
           distribution: 'temurin'
       - name: Download the TLA+ tools
         run: |
-          curl -sSLo tla2tools.jar "https://github.com/tlaplus/tlaplus/releases/download/${TLA_TOOLS_VERSION}/tla2tools.jar"
-          echo "${TLA_TOOLS_SHA256}  tla2tools.jar" | sha256sum -c -
+          scripts/fetch-asset.sh "https://github.com/tlaplus/tlaplus/releases/download/${TLA_TOOLS_VERSION}/tla2tools.jar" "${TLA_TOOLS_SHA256}" tla2tools.jar
       - name: Check the circuit breaker model
         working-directory: formal/circuitbreaker
         run: |
@@ -380,8 +373,7 @@ jobs:
           distribution: 'temurin'
       - name: Download the TLA+ tools
         run: |
-          curl -sSLo tla2tools.jar "https://github.com/tlaplus/tlaplus/releases/download/${TLA_TOOLS_VERSION}/tla2tools.jar"
-          echo "${TLA_TOOLS_SHA256}  tla2tools.jar" | sha256sum -c -
+          scripts/fetch-asset.sh "https://github.com/tlaplus/tlaplus/releases/download/${TLA_TOOLS_VERSION}/tla2tools.jar" "${TLA_TOOLS_SHA256}" tla2tools.jar
       - name: Check the cache model
         working-directory: formal/caching
         run: |

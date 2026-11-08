@@ -61,7 +61,126 @@ object LifecycleModelSpec extends ZIOSpecDefault {
 
   type Provider = FaultyProvider[FeatureProvider]
 
-  final private case class Sut(ff: FeatureFlagsLive, events: Queue[ProviderEvent])
+  final private case class Sut(ff: FeatureFlagsLive, events: Queue[ProviderEvent], swaps: SwapOrder)
+
+  /** How one of two concurrent swaps ended: the instance's answer, a fiber that died, or none within [[SwapBound]]. */
+  sealed private trait SwapOutcome
+  private object SwapOutcome {
+    case object Succeeded                            extends SwapOutcome
+    final case class Failed(error: FeatureFlagError) extends SwapOutcome
+    final case class Died(cause: Cause[Nothing])     extends SwapOutcome {
+      override def toString: String = s"Died(${cause.dieOption.fold("interrupted")(_.toString)})"
+    }
+    case object Unfinished extends SwapOutcome
+
+    def of(exit: Option[Exit[Nothing, Either[FeatureFlagError, Unit]]]): SwapOutcome = exit match {
+      case Some(Exit.Success(Right(()))) => Succeeded
+      case Some(Exit.Success(Left(e)))   => Failed(e)
+      case Some(Exit.Failure(cause))     => Died(cause)
+      case None                          => Unfinished
+    }
+  }
+
+  /** Records the fiber of each swap the lock admitted: one that reached `SwapStart`, or one skipped because the slot
+    * already held its provider (`SwapSkipped`). Both points are reached holding the swap lock, so the order of these
+    * records is the order the lock admitted the swaps, which the order their calls return is not: a call that returns
+    * first may have been admitted second. A swap refused before either point is not recorded.
+    */
+  final private class SwapOrder(ref: Ref[Chunk[FiberId]]) extends LifecycleProbe {
+    def at(point: LifecycleProbe.Point): UIO[Unit] = point match {
+      case LifecycleProbe.Point.SwapStart | LifecycleProbe.Point.SwapSkipped =>
+        ZIO.fiberIdWith(id => ref.update(_ :+ id))
+      case _ => ZIO.unit
+    }
+    def reset: UIO[Unit]             = ref.set(Chunk.empty)
+    def started: UIO[Chunk[FiberId]] = ref.get
+  }
+
+  private object SwapOrder {
+    def make: UIO[SwapOrder] = Ref.make(Chunk.empty[FiberId]).map(new SwapOrder(_))
+  }
+
+  /** `a` and `b` in the order `started` lists their keys; a key `started` does not list comes last. */
+  private def admittedOrder[K, A](started: Chunk[K], a: (K, A), b: (K, A)): List[A] = {
+    def rank(k: K): Int = started.indexOf(k) match {
+      case -1 => Int.MaxValue
+      case i  => i
+    }
+    if (rank(a._1) <= rank(b._1)) List(a._2, b._2) else List(b._2, a._2)
+  }
+
+  /** The model after two swaps in serial order, and what their outcomes broke. A kind that settles successfully is
+    * expected to return `Right`; one that returned `Left` instead is stepped as a failed swap, so the model follows the
+    * path the instance took and a later step does not repeat the one disagreement. A `FailingInit` is expected to fail
+    * initializing, and nothing else. A swap that did not return within [[SwapBound]] is stepped as planned and
+    * reported, as is one whose fiber died.
+    */
+  private def afterSwaps(
+    before: Model,
+    steps: List[(Action.SetProvider, Installed, SwapOutcome)]
+  ): (Model, Chunk[String]) =
+    steps.foldLeft((before, Chunk.empty[String])) { case ((m, broken), (act, who, outcome)) =>
+      val expectsFailure = act.kind == Kind.FailingInit
+      def swap           = s"swap to '${who.id}' (${act.kind})"
+      outcome match {
+        case SwapOutcome.Succeeded if expectsFailure =>
+          (m.step(act.copy(kind = Kind.Good), who), broken :+ s"$swap was expected to fail but succeeded")
+        case SwapOutcome.Succeeded => (m.step(act, who), broken)
+        case SwapOutcome.Failed(FeatureFlagError.ProviderInitializationFailed(_)) if expectsFailure =>
+          (m.step(act, who), broken)
+        case SwapOutcome.Failed(e) if expectsFailure =>
+          (m.step(act, who), broken :+ s"$swap was expected to fail initializing but returned Left($e)")
+        case SwapOutcome.Failed(e) =>
+          (
+            m.step(act.copy(kind = Kind.FailingInit), who),
+            broken :+ s"$swap was expected to succeed but returned Left($e)"
+          )
+        case died: SwapOutcome.Died => (m.step(act, who), broken :+ s"$swap died: $died")
+        case SwapOutcome.Unfinished => (m.step(act, who), broken :+ s"$swap did not finish within $SwapBound")
+      }
+    }
+
+  /** What a pair of concurrent swaps came to: the serial order and outcomes, the model, who serves and who was
+    * replaced, what the outcomes broke, and one line that says all of it for a violation.
+    */
+  final private case class PairVerdict(
+    steps: List[(Action.SetProvider, Installed, SwapOutcome)],
+    model: Model,
+    installed: Installed,
+    replaced: Installed,
+    broken: Chunk[String],
+    detail: String,
+    inverted: Boolean
+  )
+
+  /** Judge a pair from what the instance showed: `started`, the keys of the swaps the lock admitted in order, and
+    * `returned`, the ids of the swaps in the order their calls returned. `inverted` says the two orders differ, which
+    * the model must survive and a nightly log should show.
+    */
+  private def judgePair[K](
+    before: Model,
+    installedBefore: Installed,
+    a: (K, Action.SetProvider, Installed, SwapOutcome),
+    b: (K, Action.SetProvider, Installed, SwapOutcome),
+    started: Chunk[K],
+    returned: List[String]
+  ): PairVerdict = {
+    val steps           = admittedOrder(started, a._1 -> ((a._2, a._3, a._4)), b._1 -> ((b._2, b._3, b._4)))
+    val (model, broken) = afterSwaps(before, steps)
+    val installed       = model.installed.getOrElse(installedBefore)
+    val admitted        = steps.map(_._2.id)
+    PairVerdict(
+      steps,
+      model,
+      installed,
+      // The provider the pair replaced; when both swaps failed, the later failed one.
+      replaced = if (installed.id == installedBefore.id) steps.last._2 else installedBefore,
+      broken,
+      detail = s"swaps admitted ${admitted.mkString(" then ")}, returned ${returned.mkString(" then ")}; " +
+        s"${a._3.id}: ${a._4}, ${b._3.id}: ${b._4}",
+      inverted = returned.length == 2 && admitted != returned
+    )
+  }
 
   final private case class Run(
     model: Model,
@@ -436,27 +555,37 @@ object LifecycleModelSpec extends ZIOSpecDefault {
           val whoA = whoFor(run, ka, ra, s"p$index-a-${label(ka)}")
           val whoB = whoFor(run, kb, rb, s"p$index-b-${label(kb)}")
           for {
-            pa    <- newProvider(whoA, ka)
-            pb    <- newProvider(whoB, kb)
-            order <- Ref.make(List.empty[String])
-            fa    <- (sut.ff.setProvider(pa).either *> order.update(_ :+ "a")).fork
-            fb    <- (sut.ff.setProvider(pb).either *> order.update(_ :+ "b")).fork
-            _     <- fa.await.timeout(SwapBound) *> fb.await.timeout(SwapBound)
-            done  <- order.get
-            (firstA, steps) =
-              if (done.headOption.contains("a")) (true, List((a, whoA), (b, whoB)))
-              else (false, List((b, whoB), (a, whoA)))
-            model     = steps.foldLeft(before) { case (m, (act, who)) => m.step(act, who) }
-            installed = model.installed.getOrElse(run.installed)
-            _    <- awaitEvent(sut, EventWait)(isReadyFrom(installed.name))
-            seen <- verify(sut, model, s"$where, swaps finished ${if (firstA) "a then b" else "b then a"}")
+            pa       <- newProvider(whoA, ka)
+            pb       <- newProvider(whoB, kb)
+            _        <- sut.swaps.reset
+            returned <- Ref.make(List.empty[String])
+            fa       <- (sut.ff.setProvider(pa).either <* returned.update(_ :+ whoA.id)).fork
+            fb       <- (sut.ff.setProvider(pb).either <* returned.update(_ :+ whoB.id)).fork
+            ea       <- fa.await.timeout(SwapBound)
+            eb       <- fb.await.timeout(SwapBound)
+            came     <- returned.get
+            started  <- sut.swaps.started
+            // The serial order is the lock's, not the order the calls returned in: a call can return after the one
+            // the lock admitted next, and the model must install the provider the lock admitted last.
+            verdict = judgePair(
+              before,
+              run.installed,
+              (fa.id, a, whoA, SwapOutcome.of(ea)),
+              (fb.id, b, whoB, SwapOutcome.of(eb)),
+              started,
+              came
+            )
+            // Logged, not failed: the inversion is what the model must survive, and the log of a run that saw it is the
+            // evidence that it happens.
+            _    <- ZIO.when(verdict.inverted)(ZIO.logInfo(s"lifecycle model: $where, ${verdict.detail}"))
+            _    <- awaitEvent(sut, EventWait)(isReadyFrom(verdict.installed.name))
+            seen <- verify(sut, verdict.model, s"$where, ${verdict.detail}")
           } yield run.copy(
-            model = model,
+            model = verdict.model,
             providers = run.providers + (whoA.id -> pa) + (whoB.id -> pb),
-            installed = installed,
-            // The provider the pair replaced; when both swaps failed, the later failed one.
-            replaced = Some(if (installed.id == run.installed.id) steps.last._2 else run.installed),
-            violations = run.violations ++ seen
+            installed = verdict.installed,
+            replaced = Some(verdict.replaced),
+            violations = run.violations ++ verdict.broken.map(v => s"$where, ${verdict.detail}: $v") ++ seen
           )
 
         case (s @ Action.SetProvider(kind, reuse), paired) =>
@@ -527,13 +656,13 @@ object LifecycleModelSpec extends ZIOSpecDefault {
       }
     } yield next
 
-  private def runSteps(
-    actions: List[Action],
-    trace: Option[TraceProbe]
-  ): URIO[Scope, (Chunk[String], Map[String, Provider])] = {
-    val first = Installed("p0-initial", "p0-initial")
+  /** An instance built on a fresh `Good` provider named `first`, on its own API, with the swap-order recorder and the
+    * event queue the checks read; and that provider.
+    */
+  private def makeSut(first: Installed, trace: Option[TraceProbe]): URIO[Scope, (Sut, Provider)] =
     for {
       initial <- newProvider(first, Kind.Good)
+      swaps   <- SwapOrder.make
       ff      <- FeatureFlagsFactories
         .build(
           initial,
@@ -544,7 +673,7 @@ object LifecycleModelSpec extends ZIOSpecDefault {
           addShutdownFinalizer = true,
           apiOverride = Some(OpenFeatureAPI.createIsolated()),
           initTimeout = InitTimeout,
-          probe = TraceProbe.alongside(LifecycleProbe.none, trace)
+          probe = TraceProbe.alongside(swaps, trace)
         )
         .orDie
       queue <- Queue.unbounded[ProviderEvent]
@@ -552,8 +681,17 @@ object LifecycleModelSpec extends ZIOSpecDefault {
       _ <- ZIO.foreachDiscard(List(ProviderEventType.Ready, ProviderEventType.Error, ProviderEventType.Stale)) { t =>
         ZIO.acquireRelease(ff.on(t, e => queue.offer(e).unit))(cancel => cancel)
       }
-      sut   = Sut(ff, queue)
-      start = Run(Model.initial(first), Map(first.id -> initial), first, first, None, None, Nil, Chunk.empty)
+    } yield (Sut(ff, queue, swaps), initial)
+
+  private def runSteps(
+    actions: List[Action],
+    trace: Option[TraceProbe]
+  ): URIO[Scope, (Chunk[String], Map[String, Provider])] = {
+    val first = Installed("p0-initial", "p0-initial")
+    for {
+      made <- makeSut(first, trace)
+      (sut, initial) = made
+      start          = Run(Model.initial(first), Map(first.id -> initial), first, first, None, None, Nil, Chunk.empty)
       seen <- verify(sut, start.model, "initial")
       _    <- ZIO.foreachDiscard(trace)(_.begin)
       last <- ZIO.foldLeft(actions.zipWithIndex)(start.copy(violations = seen)) { case (run, (action, i)) =>
@@ -763,8 +901,32 @@ object LifecycleModelSpec extends ZIOSpecDefault {
         List(Both(SetProvider(Kind.SlowInit), EmitError(fatal = false)), Both(SetProvider(Kind.FailingInit), EmitStale))
       ),
       regression(
-        "two swaps at once install the one that finished last",
+        "two swaps at once install the one the lock admitted last",
         List(Both(SetProvider(Kind.SlowInit), SetProvider(Kind.Good)), Evaluate)
+      ),
+      regression(
+        "two swaps at once, one reusing the installed name, install the one the lock admitted last",
+        List(
+          SetProvider(Kind.SlowInit, reuseName = true),
+          Both(SetProvider(Kind.Good, reuseName = true), SetProvider(Kind.Good))
+        )
+      ),
+      regression(
+        "a reused name beside a fresh one in concurrent swaps, then events, an interrupt and a failing swap",
+        List(
+          Both(SetProvider(Kind.SlowInit, reuseName = true), SetProvider(Kind.SlowShutdown, reuseName = true)),
+          SetProvider(Kind.SlowInit, reuseName = true),
+          EmitError(fatal = false),
+          Both(SetProvider(Kind.SlowShutdown, reuseName = true), SetProvider(Kind.SlowShutdown)),
+          Both(EmitError(fatal = false), EmitError(fatal = false)),
+          EmitFromReplaced(EmitError(fatal = false)),
+          EmitReady,
+          Both(EmitError(fatal = false), EmitReady),
+          InterruptSwap,
+          Evaluate,
+          SetProvider(Kind.FailingInit),
+          Both(SetProvider(Kind.SlowShutdown), EmitStale)
+        )
       ),
       regression(
         "two events at once settle on one of their orders",
@@ -813,6 +975,154 @@ object LifecycleModelSpec extends ZIOSpecDefault {
           afterThat.status == ProviderStatus.NotReady,
           flagged.contains("providerStatus is Ready after shutdown")
         )
+      },
+      test("two swaps at once are ordered by the lock's admission, not by which call returned first") {
+        assertTrue(
+          admittedOrder(Chunk("fb", "fa"), "fa" -> "a", "fb" -> "b") == List("b", "a"),
+          admittedOrder(Chunk("fa", "fb"), "fa" -> "a", "fb" -> "b") == List("a", "b"),
+          // A swap refused before the lock-held protocol began comes after one the lock admitted.
+          admittedOrder(Chunk("fb"), "fa" -> "a", "fb" -> "b") == List("b", "a"),
+          admittedOrder(Chunk.empty[String], "fa" -> "a", "fb" -> "b") == List("a", "b")
+        )
+      },
+      test("a swap expected to succeed that failed is modelled as a failed swap and reported") {
+        val p0              = Installed("p0", "p0")
+        val pa              = Installed("pa", "p0")
+        val pb              = Installed("pb", "pb")
+        val err             = FeatureFlagError.ProviderInitializationFailed(new RuntimeException("init boom"))
+        val (model, broken) = afterSwaps(
+          Model.initial(p0),
+          List(
+            (SetProvider(Kind.Good), pb, SwapOutcome.Succeeded),
+            (SetProvider(Kind.Good, reuseName = true), pa, SwapOutcome.Failed(err))
+          )
+        )
+        assertTrue(
+          model.installed.map(_.id) == Some("pb"),
+          model.status == ProviderStatus.Ready,
+          broken.length == 1,
+          broken.headOption.exists(_.startsWith("swap to 'pa' (Good) was expected to succeed but returned"))
+        )
+      },
+      test("the verdict on a pair follows the lock's order and names both orders and both outcomes") {
+        val p0 = Installed("p0", "p0")
+        val pa = Installed("pa", "pa")
+        val pb = Installed("pb", "pb")
+        val v  = judgePair(
+          Model.initial(p0),
+          p0,
+          ("fa", SetProvider(Kind.Good), pa, SwapOutcome.Succeeded),
+          ("fb", SetProvider(Kind.Good), pb, SwapOutcome.Succeeded),
+          started = Chunk("fb", "fa"),
+          returned = List("pa", "pb")
+        )
+        assertTrue(
+          v.steps.map(_._2.id) == List("pb", "pa"),
+          v.installed.id == "pa",
+          v.replaced.id == "p0",
+          v.inverted,
+          v.broken.isEmpty,
+          v.detail == "swaps admitted pb then pa, returned pa then pb; pa: Succeeded, pb: Succeeded"
+        )
+      },
+      test("a pair that both failed keeps the installed provider, and the later failed one is the replaced one") {
+        val p0   = Installed("p0", "p0")
+        val pa   = Installed("pa", "pa")
+        val pb   = Installed("pb", "pb")
+        val init = SwapOutcome.Failed(FeatureFlagError.ProviderInitializationFailed(new RuntimeException("x")))
+        val v    = judgePair(
+          Model.initial(p0),
+          p0,
+          ("fa", SetProvider(Kind.FailingInit), pa, init),
+          ("fb", SetProvider(Kind.FailingInit), pb, init),
+          started = Chunk("fa", "fb"),
+          returned = List("pa", "pb")
+        )
+        assertTrue(
+          v.installed.id == "p0",
+          v.replaced.id == "pb",
+          v.model.status == ProviderStatus.Ready,
+          v.broken.isEmpty,
+          !v.inverted
+        )
+      },
+      test("outcomes the pair did not plan are reported, and the model follows the path the instance took") {
+        val p0                 = Installed("p0", "p0")
+        val p1                 = Installed("p1", "p1")
+        val p2                 = Installed("p2", "p2")
+        val notReady           = FeatureFlagError.ProviderNotReady(ProviderStatus.NotReady)
+        val (lucky, saidLucky) =
+          afterSwaps(Model.initial(p0), List((SetProvider(Kind.FailingInit), p1, SwapOutcome.Succeeded)))
+        val (wrongKind, saidWrong) =
+          afterSwaps(Model.initial(p0), List((SetProvider(Kind.FailingInit), p1, SwapOutcome.Failed(notReady))))
+        val (died, saidDied) = afterSwaps(
+          Model.initial(p0),
+          List((SetProvider(Kind.Good), p1, SwapOutcome.Died(Cause.die(new RuntimeException("boom")))))
+        )
+        val (hung, saidHung) = afterSwaps(
+          Model.initial(p0),
+          List(
+            (SetProvider(Kind.Good), p1, SwapOutcome.Succeeded),
+            (SetProvider(Kind.Good), p2, SwapOutcome.Unfinished)
+          )
+        )
+        assertTrue(
+          lucky.installed.map(_.id) == Some("p1"),
+          saidLucky == Chunk("swap to 'p1' (FailingInit) was expected to fail but succeeded"),
+          wrongKind.installed.map(_.id) == Some("p0"),
+          saidWrong == Chunk(
+            s"swap to 'p1' (FailingInit) was expected to fail initializing but returned Left($notReady)"
+          ),
+          died.installed.map(_.id) == Some("p1"),
+          saidDied == Chunk("swap to 'p1' (Good) died: Died(java.lang.RuntimeException: boom)"),
+          hung.installed.map(_.id) == Some("p2"),
+          saidHung == Chunk(s"swap to 'p2' (Good) did not finish within $SwapBound")
+        )
+      },
+      test("two swaps whose calls return in the reverse of the lock's order are modelled in the lock's order") {
+        val first = Installed("p0", "p0")
+        val a     = Installed("pa", "pa")
+        val b     = Installed("pb", "pb")
+        ZIO.scoped {
+          for {
+            made <- makeSut(first, None)
+            (sut, _) = made
+            pa       <- newProvider(a, Kind.Good)
+            pb       <- newProvider(b, Kind.Good)
+            _        <- sut.swaps.reset
+            gate     <- Promise.make[Nothing, Unit]
+            returned <- Ref.make(List.empty[String])
+            // `b` holds the lock before `a` is even called, and its call is the one that returns last.
+            fb <- (sut.ff.setProvider(pb).either <* gate.await <* returned.update(_ :+ b.id)).fork
+            _  <- sut.swaps.started
+              .repeatUntil(_.nonEmpty)
+              .timeout(SwapBound)
+              .someOrFail(new IllegalStateException("the first swap did not reach SwapStart"))
+            fa      <- (sut.ff.setProvider(pa).either <* returned.update(_ :+ a.id)).fork
+            ea      <- fa.await.timeout(SwapBound)
+            _       <- gate.succeed(())
+            eb      <- fb.await.timeout(SwapBound)
+            came    <- returned.get
+            started <- sut.swaps.started
+            verdict = judgePair(
+              Model.initial(first),
+              first,
+              (fa.id, SetProvider(Kind.Good), a, SwapOutcome.of(ea)),
+              (fb.id, SetProvider(Kind.Good), b, SwapOutcome.of(eb)),
+              started,
+              came
+            )
+            seen <- verify(sut, verdict.model, "reverse return order")
+          } yield assertTrue(
+            started == Chunk[FiberId](fb.id, fa.id),
+            came == List("pa", "pb"),
+            verdict.inverted,
+            verdict.steps.map(_._2.id) == List("pb", "pa"),
+            verdict.installed.id == "pa",
+            verdict.broken.isEmpty,
+            seen.isEmpty
+          )
+        }
       },
       test("the checker tells two providers with the same name apart by who answered") {
         val old      = Installed("p0", "shared")

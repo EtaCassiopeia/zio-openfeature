@@ -10,7 +10,10 @@ import dev.openfeature.sdk.{
   ProviderState,
   Value
 }
+import dev.openfeature.sdk.HeldClientApi
 import dev.openfeature.sdk.exceptions.{FatalError, GeneralError}
+import java.util.concurrent.{CountDownLatch, TimeUnit}
+import java.util.concurrent.atomic.AtomicBoolean
 import zio._
 import zio.openfeature.internal.{Bound, ManagedProvider, ProviderRegistration}
 import zio.openfeature.internal.ProviderRegistration.Settled
@@ -153,6 +156,33 @@ object ProviderRegistrationSpec extends ZIOSpecDefault {
         }
       }
     ),
+    test("an initialize() that throws before the registration reads the slot still fails it: it is no reuse") {
+      val domain   = s"registration-${java.util.UUID.randomUUID()}"
+      val thrown   = new CountDownLatch(1)
+      val held     = new AtomicBoolean(false)
+      val sawError = new AtomicBoolean(false)
+      // Hold the registration's first read of its slot until initialize() has thrown and the SDK reports ERROR; the
+      // test asserts both happened, so a hold that timed out cannot pass without exercising the race.
+      lazy val api: OpenFeatureAPI = new HeldClientApi(d =>
+        if (d == domain && held.compareAndSet(false, true) && thrown.await(5, TimeUnit.SECONDS)) {
+          val deadline = java.lang.System.nanoTime() + 5.seconds.toNanos
+          while (!sawError.get() && java.lang.System.nanoTime() - deadline < 0)
+            if (api.getClient(d, null).getProviderState == ProviderState.ERROR) sawError.set(true)
+            else Thread.sleep(1)
+        }
+      )
+      val provider = new Provider("p", _ => { thrown.countDown(); throw new RuntimeException("bad config") })
+      ProviderRegistration
+        .registerAndAwait(api, Some(domain), Bound.Managed(ManagedProvider(provider)), 5.seconds)
+        .either
+        .map(result =>
+          assertTrue(
+            sawError.get(),
+            result.left.toOption.exists(e => String.valueOf(e.getMessage).contains("bad config"))
+          )
+        )
+        .ensuring(ZIO.attemptBlocking(api.shutdown()).ignore)
+    },
     suite("a provider the slot already holds")(
       test("one that is ready settles Ready with no second initialize()") {
         registered { (api, domain) =>

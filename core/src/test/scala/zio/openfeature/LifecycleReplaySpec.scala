@@ -455,8 +455,9 @@ object LifecycleReplaySpec extends ZIOSpecDefault {
       !holderInitializing(model, providers)(registration) && !model.oldPending(providers.nameOf(previous))
 
     def admit(model: ModelState, providers: Providers, p: String): LifecycleInput.Admit =
+      // As a swap asks: the user's provider, and the wrapper the library holds for it.
       LifecycleInput.Admit(
-        providers(p),
+        providers(p).delegate,
         Some(providers(p)),
         initializing(model, providers),
         holderInitializing(model, providers),

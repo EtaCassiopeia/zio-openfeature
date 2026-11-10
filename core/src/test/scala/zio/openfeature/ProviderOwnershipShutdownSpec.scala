@@ -19,8 +19,8 @@ import dev.openfeature.sdk.{
   Value
 }
 import dev.openfeature.sdk.exceptions.GeneralError
-import java.util.concurrent.{CountDownLatch, TimeoutException}
-import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.{CountDownLatch, TimeUnit, TimeoutException}
+import java.util.concurrent.atomic.{AtomicBoolean, AtomicInteger}
 import scala.reflect.ClassTag
 
 /** Who shuts a provider down when a build, an init deadline or a timed-out swap fails on it: the library only for a
@@ -266,8 +266,60 @@ object ProviderOwnershipShutdownSpec extends ZIOSpecDefault {
           count   <- ZIO.succeed(provider.shutdowns.get())
         } yield assertTrue(swap.isFailure, pending, settled, count == 1)
       }
+    },
+    test("one the user registers in a slot again before the swap's init settles is left: that slot serves it now") {
+      val api      = OpenFeatureAPI.createIsolated()
+      val provider = new Gated(open = true)
+      val incoming = new Gated(failure = Some("boom"))
+      ZIO.scoped {
+        for {
+          _       <- ZIO.attemptBlocking(api.setProviderAndWait("d", provider))
+          ff      <- syncBuild(api, provider, Some("d"), 300.millis, owns = true)
+          swap    <- ff.setProvider(incoming).exit
+          pending <- orphansLeft(ff)
+          _       <- ZIO.attemptBlocking(api.setProviderAndWait(provider))
+          _       <- ZIO.succeed(incoming.gate.countDown())
+          settled <- orphansSettled(ff)
+          count   <- ZIO.succeed(provider.shutdowns.get())
+        } yield assertTrue(swap.isFailure, pending, settled, count == 0)
+      }
+    },
+    // Pins the wait through the watcher's interrupt, which waits out its uninterruptible settle; resolveAll's own
+    // await of the entry adds nothing while every caller holds the swap lock.
+    test("shutdown waits for a shutdown of a timed-out swap's previous provider that its watcher has started") {
+      val api      = OpenFeatureAPI.createIsolated()
+      val provider = new SlowShutdown
+      val incoming = new Gated(failure = Some("boom"))
+      ZIO.scoped {
+        for {
+          ff      <- syncBuild(api, provider, Some("d"), 300.millis, owns = true)
+          swap    <- ff.setProvider(incoming).exit
+          pending <- orphansLeft(ff)
+          _       <- ZIO.succeed(incoming.gate.countDown())
+          started <- ZIO.attemptBlocking(provider.started.await(5, TimeUnit.SECONDS))
+          closing <- ff.shutdown.fork
+          _       <- Live.live(ZIO.sleep(200.millis))
+          early   <- closing.poll
+          _       <- ZIO.succeed(provider.release.countDown())
+          _       <- closing.join
+          done    <- ZIO.succeed(provider.finished.get())
+        } yield assertTrue(swap.isFailure, pending, started, early.isEmpty, done)
+      }
     }
   )
+
+  // Its shutdown() blocks until released, so a test can see who waits for it.
+  private class SlowShutdown extends Gated(open = true) {
+    val started                   = new CountDownLatch(1)
+    val release                   = new CountDownLatch(1)
+    val finished                  = new AtomicBoolean(false)
+    override def shutdown(): Unit = {
+      started.countDown()
+      release.await(5, TimeUnit.SECONDS): Unit
+      finished.set(true)
+      super.shutdown()
+    }
+  }
 
   private val sharedWrapper = suite("the library's wrapper of a provider a sibling domain is initializing")(
     test("a build whose wait times out fails and leaves the sibling to finish") {

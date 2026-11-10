@@ -78,7 +78,8 @@ object LifecycleStepSpec extends ZIOSpecDefault {
     initializing: ManagedProvider => Boolean = _ => false,
     released: Boolean = true
   ) =
-    LifecycleInput.Admit(m, Some(m), initializing, _.bound.managed.exists(initializing), (_, _) => released)
+    // As a swap asks: the user's provider, and the wrapper the library holds for it.
+    LifecycleInput.Admit(m.delegate, Some(m), initializing, _.bound.managed.exists(initializing), (_, _) => released)
 
   private val admitUnwrapped = LifecycleInput.Admit(p0, None, _ => false, _ => false, (_, _) => true)
 

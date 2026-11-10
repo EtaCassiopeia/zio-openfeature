@@ -267,7 +267,9 @@ owning its API, the topology whose teardown the counts constrain; the shutdown
 points outside a teardown (the SDK's queued shutdown, an orphan's settle, a rollback's cleanup) stay free. A run is accepted when such a behaviour
 exists. The check is of the order of the library's steps and what was recorded about them; the statuses a run observed
 are not compared, which `LifecycleModelSpec`'s own oracle does. A trace TLC cannot decide in time is reported as
-undecided without failing the run, and a run that checks no trace at all fails.
+undecided without failing the run, and a run that checks no trace at all fails. A TLC that cannot run, or whose output
+says neither way, is a tool error, never a rejection, and fails the run and both halves of the self-test
+(`test_validate.py` checks this without the TLC jars).
 
 ```sh
 curl -sSLo tla2tools-1.8.0.jar https://github.com/tlaplus/tlaplus/releases/download/v1.8.0/tla2tools.jar

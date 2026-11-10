@@ -8,7 +8,8 @@ Usage: python3 validate.py <tla2tools.jar> <CommunityModules-deps.jar> <trace di
 
 Each trace (ndjson of probe points) is turned into model action labels (trace_labels.py), then TLC searches
 TraceValidation.tla for a behaviour of Lifecycle that takes those library steps in that order. Exits non-zero when a
-trace is rejected, when no trace was checked, or when a trace cannot be read; prints a summary. A trace TLC cannot decide
+trace is rejected, when TLC fails (a tool error: it could not run, or its output says neither way), when no trace was
+checked, or when a trace cannot be read; prints a summary. A trace TLC cannot decide
 within TRACE_TIMEOUT_SECS (default 300) is reported as undecided and does not fail the run.
 """
 import glob
@@ -25,11 +26,14 @@ here = os.path.dirname(os.path.abspath(__file__))
 TIMEOUT_SECS = int(os.environ.get("TRACE_TIMEOUT_SECS", "300"))
 TLC_WORKERS = int(os.environ.get("TRACE_TLC_WORKERS", "2"))
 PARALLEL = max(1, (os.cpu_count() or 2) // TLC_WORKERS)
-ACCEPTED, REJECTED, UNDECIDED = "accepted", "rejected", "undecided"
+# TOOL: TLC could not decide the trace at all (a missing jar or java, a crash, a parse error). Never a rejection: a
+# broken checker would otherwise pass every reject fixture and turn every recorded run into a reported bug.
+ACCEPTED, REJECTED, UNDECIDED, TOOL = "accepted", "rejected", "undecided", "tool error"
 
 
 def check(tla_jar, cm_jar, actions):
-    """ACCEPTED when TLC finds a behaviour matching `actions`, REJECTED when it shows there is none, else UNDECIDED."""
+    """ACCEPTED when TLC finds a behaviour matching `actions`, REJECTED when it shows there is none, UNDECIDED when it
+    runs out of time, else TOOL."""
     swaps = sum(1 for a in actions if a["action"] == "SwapStart")
     deliveries = sum(1 for a in actions if a["action"] == "Deliver")
     # Only the shutdown behaviours the run observed: each one multiplies the search by the registrations.
@@ -68,17 +72,23 @@ INVARIANT TraceNotDone
         with open(os.path.join(d, "TraceValidation.cfg"), "w") as f:
             f.write(cfg)
         try:
-            out = subprocess.run(
-                ["java", "-XX:+UseParallelGC", "-cp", f"{tla_jar}{os.pathsep}{cm_jar}", "tlc2.TLC", "-workers", str(TLC_WORKERS),
-                 "-deadlock", "-config", "TraceValidation.cfg", "TraceValidation.tla"],
-                cwd=d, capture_output=True, text=True, timeout=TIMEOUT_SECS).stdout
+            run = subprocess.run(
+                # TLC parses into java.io.tmpdir; a default one that is missing or unwritable fails the parse.
+                ["java", "-XX:+UseParallelGC", f"-Djava.io.tmpdir={d}", "-cp", f"{tla_jar}{os.pathsep}{cm_jar}",
+                 "tlc2.TLC", "-workers", str(TLC_WORKERS), "-deadlock", "-config", "TraceValidation.cfg",
+                 "TraceValidation.tla"],
+                cwd=d, capture_output=True, text=True, timeout=TIMEOUT_SECS)
         except subprocess.TimeoutExpired:
             return UNDECIDED, f"undecided after {TIMEOUT_SECS}s"
+        except OSError as e:
+            return TOOL, f"TLC failed: could not run java: {e}"
+    out = run.stdout
     if "Invariant TraceNotDone is violated" in out:
         return ACCEPTED, ""
     if "No error has been found" in out:
         return REJECTED, "no behaviour of the model takes these steps"
-    return REJECTED, "TLC failed: " + out[-800:]
+    # A JVM that could not start TLC says why on stderr.
+    return TOOL, "TLC failed: " + out[-800:] + run.stderr[-500:]
 
 
 def collect(args):
@@ -119,15 +129,15 @@ def main():
     if sys.argv[3] == "--selftest":
         selftest(tla_jar, cm_jar, sys.argv[4])
     results = run(tla_jar, cm_jar, collect(sys.argv[3:]))
-    count = {v: sum(1 for r in results if r[2] == v) for v in (ACCEPTED, REJECTED, UNDECIDED, None)}
+    count = {v: sum(1 for r in results if r[2] == v) for v in (ACCEPTED, REJECTED, UNDECIDED, TOOL, None)}
     print(f"{count[ACCEPTED]} accepted, {count[REJECTED]} rejected, {count[UNDECIDED]} undecided, "
-          f"{count[None]} skipped (not modelled), of {len(results)} traces")
+          f"{count[TOOL]} tool error, {count[None]} skipped (not modelled), of {len(results)} traces")
     for path, actions, verdict, why in results:
-        if verdict in (REJECTED, UNDECIDED):
+        if verdict in (REJECTED, UNDECIDED, TOOL):
             print(f"{verdict.upper()} {os.path.basename(path)}: {[a['action'] for a in actions]}\n  {why}")
     if count[ACCEPTED] == 0:
         print("No trace was accepted: nothing was checked.")
-    sys.exit(1 if count[REJECTED] or count[ACCEPTED] == 0 else 0)
+    sys.exit(1 if count[REJECTED] or count[TOOL] or count[ACCEPTED] == 0 else 0)
 
 
 if __name__ == "__main__":

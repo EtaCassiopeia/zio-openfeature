@@ -18,6 +18,14 @@ Trace == ndJsonDeserialize(TraceFile)
 
 VARIABLE i
 
+\* The providers a SwapStart has installed.  Those it has not are interchangeable (none has state the model reads before
+\* SdkBind), so in a run that names no provider a SwapStart installs one already seen or one canonical unseen one: the
+\* symmetry reduction, without TLC permuting every state over all orderings of the providers.  A run that names some
+\* steps but not a SwapStart lets it install any provider: the canonical one may not be the one a later step names.
+VARIABLE seen
+
+Candidates == seen \cup (IF Providers \subseteq seen THEN {} ELSE {CHOOSE q \in Providers \ seen : TRUE})
+
 Next1 == IF i < Len(Trace) THEN Trace[i + 1].action ELSE "END"
 Step == Trace[i + 1]
 
@@ -47,6 +55,7 @@ TInit ==
     \* A run that recorded an orphan is an owning instance's (only an owner records them).
     /\ (Trace[1].owner => owns)
     /\ i = 0
+    /\ seen = {}
 
 \* The SDK's steps happen only where the trace's next library step can need them: an initialize() outcome before the
 \* swap or watcher step that reads it, or before a delivery; an emitted event only before a delivery, and then only when
@@ -62,9 +71,15 @@ NeedsInit == Next1 \in {"SwapDone", "SwapRollback", "SwapFailNoRollback", "SwapR
 \* ("") names nothing, so any provider will do.
 Named(p, n) == n = "" \/ ToString(p) = n
 
+\* No step of the run names a provider.
+Unnamed == \A k \in 1..Len(Trace) : Trace[k].provider = "" /\ Trace[k].watch = ""
+
+SwapNext ==
+    Next1 = "SwapStart" /\ \E p \in (IF Step.provider # "" THEN All ELSE IF Unnamed THEN Candidates ELSE Providers) :
+        /\ Lib("SwapStart", Named(p, Step.provider) /\ SwapStart(p))
+        /\ seen' = seen \cup ({p} \cap Providers)
+
 TraceNext ==
-    \/ Next1 = "SwapStart" /\ \E p \in (IF Step.provider = "" THEN Providers ELSE All) :
-         Lib("SwapStart", Named(p, Step.provider) /\ SwapStart(p))
     \/ Lib("SdkBind", SdkBind)
     \/ Lib("SwapDone", SwapDone /\ sdk[swap.new] = Step.state)
     \/ Lib("SwapTimeout", SwapTimeout)
@@ -89,14 +104,10 @@ TraceNext ==
     \/ /\ Next1 = "Deliver" /\ ~\E ev \in events : ev.p = bound /\ Recorded(ev.e)
        /\ \E e \in {"READY", "STALE", "ERROR", "FATAL"} : Recorded(e) /\ Env(Emit(bound, e))
 
-\* The providers a swap installs are interchangeable while the run does not name them; validate.py drops the symmetry
-\* when it does.
-Symmetry == Permutations(Providers)
-
 \* Recorded runs carry no evaluations (MaxEvals = 0).
-TraceStep == TraceNext /\ UNCHANGED evals
+TraceStep == (SwapNext \/ (TraceNext /\ UNCHANGED seen)) /\ UNCHANGED evals
 
-TraceSpec == TInit /\ [][TraceStep]_<< vars, i >>
+TraceSpec == TInit /\ [][TraceStep]_<< vars, i, seen >>
 
 \* Violated exactly when some behaviour of the model matches the whole trace.
 TraceNotDone == i < Len(Trace)

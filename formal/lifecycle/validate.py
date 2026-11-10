@@ -50,11 +50,10 @@ def check(tla_jar, cm_jar, actions):
         with open(trace, "w") as f:
             for a in actions:
                 f.write(json.dumps(a) + "\n")
-        # A run that names its providers (q0, q1, ... by trace_labels.py) is not symmetric in them.
+        # A run that names its providers (q0, q1, ... by trace_labels.py) may name more of them than it swaps.
         named = {int(a[k][1:]) for a in actions for k in ("provider", "watch") if a.get(k)}
         count = max([swaps] + list(named))
         providers = ", ".join(f"q{k}" for k in range(1, count + 1)) or ""
-        symmetry = "" if named else "SYMMETRY Symmetry\n"
         cfg = f"""CONSTANTS
     P0 = q0
     Providers = {{{providers}}}
@@ -68,7 +67,7 @@ def check(tla_jar, cm_jar, actions):
 INIT TInit
 NEXT TraceStep
 INVARIANT TraceNotDone
-{symmetry}"""
+"""
         with open(os.path.join(d, "TraceValidation.cfg"), "w") as f:
             f.write(cfg)
         try:

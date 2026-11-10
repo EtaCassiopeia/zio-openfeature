@@ -301,8 +301,10 @@ providers that share a name) on `Begin`, `SwapStart`, `ProviderShutDown` and `Or
 library) on `ProviderShutDown`, and `provider` (the event's provider name) on `DeliverEvent`. `GateDown` marks the swap
 having its outcome with the generation gate about to drop; it is not labelled. `trace_labels.py` names each instance
 `q0` (the `Begin` line's), `q1`, ... by first appearance, and `TraceValidation.tla` makes a `SwapStart` or
-`OrphanResolved` match only those providers. A run that names its providers is not symmetric in them, so `validate.py`
-drops `SYMMETRY` for it; a run without identity fields is checked as before.
+`OrphanResolved` match only those providers. A run without identity fields lets each `SwapStart` install a provider
+already installed or one canonical uninstalled one (`Candidates` in `TraceValidation.tla`): uninstalled providers have no
+state the model reads before `SdkBind`, so this is the symmetry reduction without TLC's `SYMMETRY`, which permuted every state over all orderings of
+the providers and set the pace on a long trace.
 
 The other points belong to one of those steps, except `SwapSkipped`, a `setProvider` of the bound provider, which is no
 action, and `AwaitSdkShutDown`, the wait `SwapStart`'s guard stands for. A run that reaches `Watchdog`, or records an

@@ -69,7 +69,14 @@ final private[openfeature] class OrphanedProviders(api: OpenFeatureAPI, probe: L
   def awaitSettling(provider: ManagedProvider): UIO[Unit] =
     ZIO.foreachDiscard(entries.get.filter(e => (e.previous.sdk eq provider) && e.claimed.get()))(_.done.await)
 
-  /** Settle every entry now: those whose new provider has not initialized get their previous provider shut down. */
+  /** Settle every entry now: those whose new provider has not initialized get their previous provider shut down.
+    *
+    * Every caller (`shutdown`, the scope finalizer) holds `swapLock`, as does every `record`, so interrupting the
+    * watcher already waits out a settle it has started: that settle is uninterruptible, and `interrupt` returns once
+    * the fiber has ended. Either the watcher settled the entry or the `settle` below claims it. The final `done.await`
+    * covers a settle racing from outside the lock; no caller does that today, but one added outside the lock relies on
+    * it.
+    */
   def resolveAll: UIO[Unit] =
     ZIO.succeed(closing.complete(null)) *>
       ZIO.foreachDiscard(entries.get)(entry =>

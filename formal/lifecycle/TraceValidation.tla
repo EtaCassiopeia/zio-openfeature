@@ -24,7 +24,19 @@ VARIABLE i
 \* steps but not a SwapStart lets it install any provider: the canonical one may not be the one a later step names.
 VARIABLE seen
 
+\* The SDK's steps a run records: the initialize() outcomes it ended with (`owed[p][ok]`: those a recorded InitOutcome added
+\* and the model's SdkInitOk / SdkInitFail has not yet used up), and the shutdowns its executor ran (`called[p]`, from a
+\* recorded ShutDownOld, used up by SdkShutDownOld).  A run that records some of one kind pins that kind: the model may
+\* take such a step only where the run recorded it.  A run that records none leaves those steps free.
+VARIABLES owed, called
+
 Candidates == seen \cup (IF Providers \subseteq seen THEN {} ELSE {CHOOSE q \in Providers \ seen : TRUE})
+
+\* A run whose recorder records every initialize() outcome (it says so on Begin), or one that records some.
+PinInits == (Len(Trace) > 0 /\ Trace[1].pinInits) \/ \E k \in 1..Len(Trace) : Trace[k].action = "InitOutcome"
+\* Pinned only in a run that records some: the wrapper records a provider's first shutdown() of a cycle only, so a
+\* queued SDK shutdown it absorbs leaves no record, and an unpinned run must leave that step free.
+PinShuts == \E k \in 1..Len(Trace) : Trace[k].action = "ShutDownOld"
 
 Next1 == IF i < Len(Trace) THEN Trace[i + 1].action ELSE "END"
 Step == Trace[i + 1]
@@ -57,6 +69,8 @@ TInit ==
     /\ (Trace[1].owner => owns)
     /\ i = 0
     /\ seen = {}
+    /\ owed = [p \in All |-> [ok \in BOOLEAN |-> 0]]
+    /\ called = [p \in All |-> 0]
 
 \* The SDK's steps happen only where the trace's next library step can need them: an initialize() outcome before the
 \* swap or watcher step that reads it, or before a delivery; an emitted event only before a delivery, and then only when
@@ -80,7 +94,25 @@ SwapNext ==
         /\ Lib("SwapStart", Named(p, Step.provider) /\ SwapStart(p))
         /\ seen' = seen \cup ({p} \cap Providers)
 
-TraceNext ==
+Took(p, ok) ==
+    IF PinInits THEN owed[p][ok] > 0 /\ owed' = [owed EXCEPT ![p][ok] = @ - 1] ELSE UNCHANGED owed
+
+\* The SDK's executor ran the shutdown it queued for p; only before the steps that read whether it has run (the two
+\* guards, and a teardown, which runs any still queued itself and counts it).  Free everywhere, it multiplies the search
+\* on a long trace past the time limit.
+CalledOld(p) ==
+    IF PinShuts THEN called[p] > 0 /\ called' = [called EXCEPT ![p] = @ - 1] ELSE UNCHANGED called
+
+InitNext ==
+    \/ \E p \in All : Lib("InitOutcome", Named(p, Step.provider) /\ owed' = [owed EXCEPT ![p][Step.ok] = @ + 1] /\ UNCHANGED vars)
+    \/ /\ PinInits \/ NeedsInit
+       /\ \E p \in All : (Env(SdkInitOk(p)) /\ Took(p, TRUE)) \/ (Env(SdkInitFail(p)) /\ Took(p, FALSE))
+
+ShutNext ==
+    \/ \E p \in All : Lib("ShutDownOld", Named(p, Step.provider) /\ called' = [called EXCEPT ![p] = @ + 1] /\ UNCHANGED vars)
+    \/ Next1 \in {"SwapStart", "OrphanResolved", "ShutdownDone", "ScopeClose"} /\ \E p \in All : Env(SdkShutDownOld(p)) /\ CalledOld(p)
+
+PlainNext ==
     \/ Lib("SdkBind", SdkBind)
     \/ Lib("SwapDone", SwapDone /\ sdk[swap.new] = Step.state)
     \/ Lib("SwapTimeout", SwapTimeout)
@@ -97,18 +129,19 @@ TraceNext ==
     \/ Lib("ShutdownStart", ShutdownStart)
     \/ Lib("ShutdownDone", ShutdownDone /\ TornDown(~(shutDown \/ closed \/ ~owns)))
     \/ Lib("ScopeClose", ScopeClose /\ TornDown(~(shutDown \/ ~owns)))
-    \/ NeedsInit /\ \E p \in All : Env(SdkInitOk(p) \/ SdkInitFail(p) \/ EmitStaleWhileStarting(p))
-    \* No probe point records the SDK's executor running a shutdown it queued, so that step is free, but only before the
-    \* steps that read whether it has run: the two guards, and a teardown, which runs any still queued itself and counts
-    \* it.  Free everywhere, it multiplies the search on a long trace past the time limit.
-    \/ Next1 \in {"SwapStart", "OrphanResolved", "ShutdownDone", "ScopeClose"} /\ \E p \in All : Env(SdkShutDownOld(p))
+    \/ NeedsInit /\ \E p \in All : Env(EmitStaleWhileStarting(p))
     \/ /\ Next1 = "Deliver" /\ ~\E ev \in events : ev.p = bound /\ Recorded(ev.e)
        /\ \E e \in {"READY", "STALE", "ERROR", "FATAL"} : Recorded(e) /\ Env(Emit(bound, e))
 
 \* Recorded runs carry no evaluations (MaxEvals = 0).
-TraceStep == (SwapNext \/ (TraceNext /\ UNCHANGED seen)) /\ UNCHANGED evals
+TraceStep ==
+    /\ \/ SwapNext /\ UNCHANGED << owed, called >>
+       \/ PlainNext /\ UNCHANGED << seen, owed, called >>
+       \/ InitNext /\ UNCHANGED << seen, called >>
+       \/ ShutNext /\ UNCHANGED << seen, owed >>
+    /\ UNCHANGED evals
 
-TraceSpec == TInit /\ [][TraceStep]_<< vars, i, seen >>
+TraceSpec == TInit /\ [][TraceStep]_<< vars, i, seen, owed, called >>
 
 \* Violated exactly when some behaviour of the model matches the whole trace.
 TraceNotDone == i < Len(Trace)

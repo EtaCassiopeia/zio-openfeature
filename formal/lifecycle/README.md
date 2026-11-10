@@ -257,14 +257,22 @@ per run (`TraceProbe` in testkit's tests; `ZOF_TRACE_DIR` sets the directory, `t
 `trace_labels.py` turns a run into the library actions above, with what the run recorded about each: a delivered
 event's type, whether a swap or its rollback ended `STALE`, whether the rollback succeeded. `TraceValidation.tla` then
 lets TLC search for a behaviour of `Lifecycle` that takes exactly those library steps in that order, with the SDK's
-steps (an `initialize()` returning or throwing, a provider emitting) free. The registered wrapper's own points
-(`InitEntered`, `InitReturned`) mark those SDK steps and are not labelled; its `ProviderShutDown` and `ShutdownReturned(ok)` points
+steps (an `initialize()` returning or throwing, a provider emitting) free, except the two kinds a run records. The
+registered wrapper's `InitEntered` and `InitReturned` points mark the SDK's steps and are not labelled; its `InitOutcome`
+point is, recorded just before the outcome is published to whoever waits on it: `SdkInitOk` and `SdkInitFail` then take
+only the outcomes the run recorded, so a `SwapStart` of a provider whose `initialize()` has not ended, or of one
+replaced while the replacing `initialize()` runs, is rejected rather than rescued by an outcome placed just before it.
+Likewise a `ProviderShutDown` outside a teardown on the SDK's executor is labelled `ShutDownOld`, and `SdkShutDownOld`
+takes only those, so a `SwapStart` of a provider the SDK has queued a shutdown for is rejected unless the run saw that
+shutdown first. Init outcomes are pinned in every run whose recorder says on `Begin` that it records them all (`pins`), and queued
+shutdowns in a run that records some, since the wrapper records only a provider's first `shutdown()` of a cycle; an
+older recording leaves both free. Its `ProviderShutDown` and `ShutdownReturned(ok)` points
 are counted on the teardown they fall in (how many providers the teardown shut down, how many of those calls threw,
 how many returned at all), and `TearDown` may shut down no more providers, and no more of each behaviour, than the
 run counted (the SDK's executor can run a queued shutdown inside the teardown that the model placed before it, when
 the watcher's bound elapsed, so the run may count one more); an `OrphanRecorded` point marks the run's instance as
 owning its API, the topology whose teardown the counts constrain; the shutdown
-points outside a teardown (the SDK's queued shutdown, an orphan's settle, a rollback's cleanup) stay free. A run is accepted when such a behaviour
+points outside a teardown that are not the SDK's queued shutdown (an orphan's settle, a rollback's cleanup) stay free. A run is accepted when such a behaviour
 exists. The check is of the order of the library's steps and what was recorded about them; the statuses a run observed
 are not compared, which `LifecycleModelSpec`'s own oracle does. A trace TLC cannot decide in time is reported as
 undecided without failing the run, and a run that checks no trace at all fails. A TLC that cannot run, or whose output
@@ -293,25 +301,28 @@ run.
 | `ApplySignal(SwapFailed)` in a swap that ends with no timeout, rollback or recorded orphan (an instance that does not own its API records none) | `SwapFailNoRollback`, before the `SwapReconcile` |
 | `Begin` with `arg` `pending` (the initial provider's `initialize()` had not settled when the run began) | not an action: the run starts from `InitAsync` instead of the sync build's `InitWith` |
 | `DeliverEvent` outside a swap, before any shutdown | `Deliver` |
-| `OrphanResolved(previous, watch)` outside a shutdown, inside a swap too (a failed swap settles an earlier swap's entry before it ends) | `OrphanResolved`, naming the entry's provider and the one it watches |
+| `OrphanDropped(previous, watch)` outside a shutdown, inside a swap too (a failed swap settles an earlier swap's entry before it ends) | `OrphanResolved`, naming the entry's provider and the one it watches |
+| `InitOutcome(provider, ok)` | `InitOutcome`, which `SdkInitOk` (`ok`) or `SdkInitFail` uses up |
+| `ProviderShutDown` outside a teardown, whose `caller` is the SDK's executor (`openfeature-provider-thread-*`) | `ShutDownOld`, which `SdkShutDownOld` uses up |
 | `ShutdownStart`, `ShutdownDone`, `ScopeClose` | the action of the same name |
 
 Points carry the provider objects, not names, so that production, whose probe is a no-op, builds nothing: `TraceProbe`
 derives the identity. Each line gains `provider` (the name) and `providerInstance` (the identity hash, which tells apart
-providers that share a name) on `Begin`, `SwapStart`, `ProviderShutDown` and `OrphanResolved` (its previous provider),
-`watch` and `watchInstance` on `OrphanResolved`, `caller` (the thread name, which tells the SDK's executor from the
+providers that share a name) on `Begin`, `SwapStart`, `InitOutcome`, `ProviderShutDown` and `OrphanResolved` and
+`OrphanDropped` (their previous provider), `watch` and `watchInstance` on `OrphanResolved` and `OrphanDropped`, `caller` (the thread name, which tells the SDK's executor from the
 library) on `ProviderShutDown`, and `provider` (the event's provider name) on `DeliverEvent`. `GateDown` marks the swap
 having its outcome with the generation gate about to drop; it is not labelled. `trace_labels.py` names each instance
 `q0` (the `Begin` line's), `q1`, ... by first appearance, and `TraceValidation.tla` makes a `SwapStart` or
-`OrphanResolved` match only those providers. A run without identity fields lets each `SwapStart` install a provider
+`OrphanResolved`, `InitOutcome` or `ShutDownOld` match only those providers. A run without identity fields lets each `SwapStart` install a provider
 already installed or one canonical uninstalled one (`Candidates` in `TraceValidation.tla`): uninstalled providers have no
 state the model reads before `SdkBind`, so this is the symmetry reduction without TLC's `SYMMETRY`, which permuted every state over all orderings of
 the providers and set the pace on a long trace.
 
-The other points belong to one of those steps, except `SwapSkipped`, a `setProvider` of the bound provider, which is no
+`OrphanResolved` is recorded at the claim, before the settle's wait for the SDK's shutdown, so the entry's step is taken
+from `OrphanDropped`, when it leaves the list; the claim is no action. The other points belong to one of those steps, except `SwapSkipped`, a `setProvider` of the bound provider, which is no
 action, and `AwaitSdkShutDown`, the wait `SwapStart`'s guard stands for. A run that reaches `Watchdog`, or records an
 orphan after a rollback (a rollback that timed out), both of which the model leaves out, is skipped. The SDK's
-`SdkShutDownOld` is free, like its other steps.
+other steps are free.
 
 ### Model-based replay
 

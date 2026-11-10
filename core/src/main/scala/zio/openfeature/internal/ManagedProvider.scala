@@ -209,18 +209,23 @@ final private[openfeature] class ManagedProvider private (
     }
     inFlight.computeIfAbsent(k, _ => new AtomicInteger(0)).incrementAndGet()
     started.incrementAndGet()
+    val target = delegate
     at(LifecycleProbe.Point.InitEntered)
-    try {
-      body
+    val failure =
+      try { body; None }
+      catch { case e: Throwable => Some(e) }
+    // Recorded before the in-flight count drops: a swap's admission reads that count, so a swap admitted once it has
+    // dropped finds the outcome already recorded.
+    try at(LifecycleProbe.Point.InitOutcome(target, ok = failure.isEmpty))
+    finally {
       inFlight.get(k).decrementAndGet()
-      current.outcome.complete(())
-    } catch {
-      case e: Throwable =>
-        inFlight.get(k).decrementAndGet()
-        current.outcome.completeExceptionally(e)
-        throw e
-    } finally at(LifecycleProbe.Point.InitReturned)
-    ()
+      failure match {
+        case None    => current.outcome.complete(())
+        case Some(e) => current.outcome.completeExceptionally(e)
+      }
+      at(LifecycleProbe.Point.InitReturned)
+    }
+    failure.foreach(e => throw e)
   }
 
   // Under cycleLock. A new cycle after a shutdown: a fresh lane, and the provider's events attached again.

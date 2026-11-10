@@ -24,7 +24,7 @@ final class TraceProbe private () extends LifecycleProbe {
 
   /** The instance is built on `initial`: what follows is the run. The line's `arg` is `pending` when the initial
     * provider's `initialize()` has not settled yet, so the run starts like the model's async build; a quick async build
-    * that settled first starts like a sync one.
+    * that settled first starts like a sync one. `pins` says the run records every `initialize()` outcome.
     */
   def begin(initial: OFFeatureProvider): UIO[Unit] =
     ZIO.succeed {
@@ -33,7 +33,8 @@ final class TraceProbe private () extends LifecycleProbe {
       record(
         "Begin",
         if (pending) "pending" else "",
-        List("provider" -> who.name, "providerInstance" -> who.instance)
+        // `pins`: this recorder records every initialize() outcome, so the check may pin the model's to them.
+        List("provider" -> who.name, "providerInstance" -> who.instance, "pins" -> "inits")
       )
     }
 
@@ -101,6 +102,9 @@ object TraceProbe {
     case Point.SwapStart(p)                    => named("provider", "providerInstance", p)
     case Point.OrphanResolved(previous, watch) =>
       named("provider", "providerInstance", previous) ++ named("watch", "watchInstance", watch)
+    case Point.OrphanDropped(previous, watch) =>
+      named("provider", "providerInstance", previous) ++ named("watch", "watchInstance", watch)
+    case Point.InitOutcome(p, _)              => named("provider", "providerInstance", p)
     case Point.DeliverEvent(_, provider)      => List("provider" -> provider)
     case Point.ProviderShutDown(_, p, caller) => named("provider", "providerInstance", p) :+ ("caller" -> caller)
     case _                                    => Nil
@@ -111,6 +115,7 @@ object TraceProbe {
     case Point.DeliverEvent(event, _)       => event
     case Point.ProviderShutDown(call, _, _) => call.toString
     case Point.ShutdownReturned(call, ok)   => s"$call $ok"
+    case Point.InitOutcome(_, ok)           => ok.toString
     case _                                  => ""
   }
 

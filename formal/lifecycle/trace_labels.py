@@ -27,21 +27,32 @@ The mapping (formal/lifecycle/README.md, "Trace validation"):
                                         into SwapRollback
   DeliverEvent, outside a swap and
     before any shutdown              -> Deliver
-  OrphanResolved, outside a shutdown
+  OrphanDropped, outside a shutdown
     or scope close, inside a swap
     too (a failed swap settles an
-    earlier one's entry)             -> OrphanResolved, naming the entry's provider and the one it watches
+    earlier one's entry)             -> OrphanResolved, naming the entry's provider and the one it watches. The claim
+                                        (the OrphanResolved point) comes before the settle's wait for the SDK's shutdown
+                                        and is no step: the entry leaves the list at OrphanDropped.
+                                        An entry claimed and its provider shut down before a teardown starts is resolved
+                                        there, before the teardown's step, when its drop comes after the teardown began.
+  InitOutcome                        -> InitOutcome, naming the provider, `ok` whether its initialize() returned. A
+                                        pending Begin's own provider may record it just before the Begin line.
+  ProviderShutDown outside a
+    teardown, on the SDK's executor  -> ShutDownOld, naming the provider (the SDK's queued shutdown of a replaced one)
   ShutdownStart, ShutdownDone,
   ScopeClose                         -> themselves
 A named provider is `q0` (the Begin line's instance, and only that), `q1`, `q2`, ... by first appearance of its
 instance in seq order: a label's `provider` and `watch` hold that name, or "" when the record carries no identity.
 Everything else is part of one of those steps, or no action at all: the other status writes, LateReady, SwapSkipped (a
-setProvider of the bound provider, which changes nothing), the SwapDone point that closes
-every swap, GateDown (the gate dropping inside it), deliveries while a swap's gate is up (the model drops those), and deliveries once a shutdown has started
-(the bridge is deregistered then; a handler already running records one anyway). Watchdog is not modelled.
+setProvider of the bound provider, which changes nothing), the SwapDone point that closes every swap, GateDown (the
+gate dropping inside it), deliveries while a swap's gate is up (the model drops those), and deliveries once a shutdown
+has started (the bridge is deregistered then; a handler already running records one anyway). Watchdog is not modelled.
 AwaitSdkShutDown is the wait SwapStart's guard stands for, before the swap starts.
 InitEntered and InitReturned, which the registered wrapper records, are SDK steps (an `initialize()` running and
-returning), which the check leaves free. ProviderShutDown and ShutdownReturned(ok) are counted on the teardown they
+returning), which the check leaves free. The model's SdkInitOk and SdkInitFail are pinned to the InitOutcome records,
+and its SdkShutDownOld to the ShutDownOld ones, but only in a run that records some: an older recording leaves them
+free. A recording without OrphanDropped resolves an entry at its OrphanResolved claim, as before. ProviderShutDown and
+ShutdownReturned(ok) are counted on the teardown they
 fall in: a ShutdownDone or ScopeClose label carries `shuts`, how many providers' shutdown() the teardown called,
 `threw`, how many of those calls threw, and `returned`, how many returned at all (the rest outlived the bound); the
 model's TearDown may shut down no more providers, and no more of each behaviour, than the run counted (the SDK's
@@ -63,6 +74,8 @@ def labels(records):
         raise ValueError("the run has no Begin marker")
     out = []
     names = {}
+    # The SDK's executor, which runs shutDownOld; the library's own calls run on the ZIO blocking pool.
+    sdk_thread = "openfeature-provider-thread-"
 
     def who(r, key):
         """The model name of the provider instance `r` records under `key`, or "" when it records none."""
@@ -73,6 +86,8 @@ def labels(records):
         return names.setdefault(instance, f"q{len(names) + (0 if 'q0' in names.values() else 1)}")
 
     pending = records[begin].get("arg") == "pending"
+    # A recorder that records every initialize() outcome says so on Begin; one that does not leaves the model's free.
+    pin_inits = records[begin].get("pins") == "inits"
     initial = records[begin].get("providerInstance")
     if initial:
         names[initial] = "q0"
@@ -92,10 +107,14 @@ def labels(records):
     in_shutdown = False
     shut_down = False
     closed = False
+    claims = []  # entries claimed and not yet dropped: [previous, watch, whether previous was shut down since]
+    # A recording made before the settle recorded its drop marks an entry resolved at its claim, as before.
+    resolved = "OrphanDropped" if any(r["point"] == "OrphanDropped" for r in records) else "OrphanResolved"
 
     def act(label, **fields):
         entry = {"action": label, "event": "", "state": "", "ok": False, "shuts": -1, "threw": 0, "returned": 0,
-                 "owner": owner, "provider": "", "watch": "", "pending": pending}
+                 "owner": owner, "provider": "", "watch": "", "pending": pending,
+                 "pinInits": pin_inits}
         entry.update(fields)
         out.append(entry)
         return entry
@@ -119,14 +138,36 @@ def labels(records):
                 entry["returned"] += 1
                 entry["threw"] += ok == "false"
 
+    # The pending initial provider's init can end between Begin's check and its line, so its outcome precedes the line.
+    if pending and initial:
+        for r in records[:begin]:
+            if r["point"] == "InitOutcome" and r.get("providerInstance") == initial:
+                act("InitOutcome", provider="q0", ok=r.get("arg") == "true")
+
+    def resolve_claims():
+        """An entry whose provider was shut down after its claim has settled, though its drop may come after the
+        teardown that is starting: the model resolves it before the teardown's step."""
+        for claim in [c for c in claims if c[2]]:
+            act("OrphanResolved", provider=claim[0], watch=claim[1])
+            claims.remove(claim)
+
     for r in records[begin + 1:]:
         point, arg = r["point"], r.get("arg", "")
         if point == "Watchdog":
             return None
+        claiming = resolved == "OrphanDropped" and point == "OrphanResolved"
+        if claiming and not (closed or in_shutdown) and who(r, "providerInstance"):
+            claims.append([who(r, "providerInstance"), who(r, "watchInstance"), False])
+        if point == "ProviderShutDown" and not (closed or in_shutdown):
+            for claim in claims:
+                claim[2] = claim[2] or claim[0] == who(r, "providerInstance")
+        if point == "OrphanDropped":
+            claims[:] = [c for c in claims if c[:2] != [who(r, "providerInstance"), who(r, "watchInstance")]]
         if closed:
             count(teardown, point, arg)
             continue
         if point == "ScopeClose":
+            resolve_claims()
             teardown = act("ScopeClose", shuts=0 if recorded else -1)
             calls.clear()
             closed = True
@@ -139,11 +180,18 @@ def labels(records):
                 count(teardown, point, arg)
             continue
         if point == "ShutdownStart":
+            resolve_claims()
             act("ShutdownStart")
             # The teardown's points come between ShutdownStart and ShutdownDone; the entry is labelled at ShutdownDone.
             teardown = act("ShutdownDone", shuts=0 if recorded else -1)
             calls.clear()
             in_shutdown = shut_down = True
+            continue
+        if point == "InitOutcome":
+            act("InitOutcome", provider=who(r, "providerInstance"), ok=arg == "true")
+            continue
+        if point == "ProviderShutDown" and r.get("caller", "").startswith(sdk_thread):
+            act("ShutDownOld", provider=who(r, "providerInstance"))
             continue
         if point == "SwapStart":
             act("SwapStart", provider=who(r, "providerInstance"))
@@ -180,14 +228,14 @@ def labels(records):
                     act("SwapFailNoRollback")
                 act("SwapReconcile")
             # A failed swap settles an earlier swap's orphan before it ends; the model's OrphanResolved takes no lock.
-            elif point == "OrphanResolved":
+            elif point == resolved:
                 act("OrphanResolved", provider=who(r, "providerInstance"), watch=who(r, "watchInstance"))
             elif point == "SwapDone":
                 in_swap = False
             continue
         if point == "DeliverEvent" and not shut_down:
             act("Deliver", event=arg.replace("PROVIDER_", ""))
-        elif point == "OrphanResolved":
+        elif point == resolved:
             act("OrphanResolved", provider=who(r, "providerInstance"), watch=who(r, "watchInstance"))
     # A run cut off inside a shutdown never reached ShutdownDone: the entry made for it is not a step it took.
     if in_shutdown:

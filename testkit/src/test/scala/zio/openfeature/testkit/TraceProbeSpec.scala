@@ -78,6 +78,28 @@ object TraceProbeSpec extends ZIOSpecDefault {
         )
       }
     },
+    test("the run's start is pending while the initial provider is initializing, and not once it settled") {
+      val started = new java.util.concurrent.CountDownLatch(1)
+      val release = new java.util.concurrent.CountDownLatch(1)
+      val gated   = new NoOpProvider {
+        override def initialize(ctx: dev.openfeature.sdk.EvaluationContext): Unit = {
+          started.countDown()
+          release.await()
+        }
+      }
+      val wrapper = ManagedProvider(gated)
+      for {
+        running <- ZIO.attemptBlocking(wrapper.initialize(null)).fork
+        _       <- ZIO.attemptBlocking(started.await())
+        during  <- recorded(_.begin(gated))
+        _       <- ZIO.succeed(release.countDown())
+        _       <- running.join
+        after   <- recorded(_.begin(gated))
+      } yield assertTrue(
+        field(during.head, "arg").contains("pending"),
+        field(after.head, "arg").contains("")
+      )
+    },
     test("an event names its provider and keeps its event as the argument") {
       points(Point.DeliverEvent("PROVIDER_READY", "x"), Point.DeliverEvent("PROVIDER_STALE", "")).map { lines =>
         assertTrue(

@@ -6,7 +6,9 @@ name the providers its point concerns: `providerInstance` (and `watchInstance`),
 providers sharing a name; `provider`/`watch` are their names, `caller` the thread of a shutdown.
 Output: a list of model actions, each {"action": label, ...} with what the run recorded about it (a delivered event's
 type, the SDK state a swap or its rollback settled in, whether the rollback succeeded), or None when the run uses something
-the model does not cover. A run without its Begin marker raises ValueError: the recording is broken.
+the model does not cover. The Begin line's arg is "pending" when the initial provider's initialize() had not settled by
+then (an async build); every label carries that as `pending`. A run without its Begin marker raises ValueError: the
+recording is broken.
 
 The mapping (formal/lifecycle/README.md, "Trace validation"):
   SwapStart                          -> SwapStart, naming its provider
@@ -18,6 +20,9 @@ The mapping (formal/lifecycle/README.md, "Trace validation"):
                                         recorded no SdkBind (its registration was refused)
   OrphanRecorded, no timeout or
     rollback in the same swap        -> SwapFailNoRollback
+  ApplySignal(SwapFailed), no other
+    outcome by SwapReconcile         -> SwapFailNoRollback, before SwapReconcile (an instance that does not own its API
+                                        records no orphan)
   OrphanRecorded after a rollback    -> the run is not covered: a rollback that timed out, whose wait the model folds
                                         into SwapRollback
   DeliverEvent, outside a swap and
@@ -67,6 +72,7 @@ def labels(records):
         # q0 is the Begin line's provider alone: a run whose Begin names none must not make its first swap's q0.
         return names.setdefault(instance, f"q{len(names) + (0 if 'q0' in names.values() else 1)}")
 
+    pending = records[begin].get("arg") == "pending"
     initial = records[begin].get("providerInstance")
     if initial:
         names[initial] = "q0"
@@ -81,6 +87,7 @@ def labels(records):
     in_swap = False
     swap_outcome = None
     rollback = None
+    failed = False
     bound_new = False
     in_shutdown = False
     shut_down = False
@@ -88,7 +95,7 @@ def labels(records):
 
     def act(label, **fields):
         entry = {"action": label, "event": "", "state": "", "ok": False, "shuts": -1, "threw": 0, "returned": 0,
-                 "owner": owner, "provider": "", "watch": ""}
+                 "owner": owner, "provider": "", "watch": "", "pending": pending}
         entry.update(fields)
         out.append(entry)
         return entry
@@ -140,7 +147,7 @@ def labels(records):
             continue
         if point == "SwapStart":
             act("SwapStart", provider=who(r, "providerInstance"))
-            in_swap, swap_outcome, rollback, bound_new = True, None, None, False
+            in_swap, swap_outcome, rollback, bound_new, failed = True, None, None, False, False
             continue
         if in_swap:
             succeeded = (re.match(r"(SwapSucceeded|RollbackSucceeded)\((Ready|Stale|Error|Fatal)\b", arg)
@@ -165,7 +172,12 @@ def labels(records):
             elif point == "OrphanRecorded" and swap_outcome is None:
                 swap_outcome = "SwapFailNoRollback"
                 act("SwapFailNoRollback")
+            elif point == "ApplySignal" and arg.startswith("SwapFailed"):
+                failed = True
             elif point == "SwapReconcile":
+                if failed and swap_outcome is None:
+                    swap_outcome = "SwapFailNoRollback"
+                    act("SwapFailNoRollback")
                 act("SwapReconcile")
             # A failed swap settles an earlier swap's orphan before it ends; the model's OrphanResolved takes no lock.
             elif point == "OrphanResolved":

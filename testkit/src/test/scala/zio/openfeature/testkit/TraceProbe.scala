@@ -22,11 +22,19 @@ final class TraceProbe private () extends LifecycleProbe {
   def at(point: Point): UIO[Unit] =
     ZIO.succeed(record(point.name, TraceProbe.argument(point), TraceProbe.identityFields(point)))
 
-  /** The instance is built on `initial`: what follows is the run. */
+  /** The instance is built on `initial`: what follows is the run. The line's `arg` is `pending` when the initial
+    * provider's `initialize()` has not settled yet, so the run starts like the model's async build; a quick async build
+    * that settled first starts like a sync one.
+    */
   def begin(initial: OFFeatureProvider): UIO[Unit] =
     ZIO.succeed {
-      val who = TraceProbe.Who.of(initial)
-      record("Begin", "", List("provider" -> who.name, "providerInstance" -> who.instance))
+      val who     = TraceProbe.Who.of(initial)
+      val pending = ManagedProvider.existing(initial).exists(_.initsInFlightAnywhere > 0)
+      record(
+        "Begin",
+        if (pending) "pending" else "",
+        List("provider" -> who.name, "providerInstance" -> who.instance)
+      )
     }
 
   /** Write the run to `<dir>/<name>.ndjson`. A failure to write is reported, never thrown. */

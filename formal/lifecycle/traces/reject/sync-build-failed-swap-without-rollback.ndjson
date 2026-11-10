@@ -1,0 +1,8 @@
+{"seq":0,"point":"Begin","arg":"","provider":"p0","providerInstance":"a0"}
+{"seq":1,"point":"SwapStart","arg":"","provider":"p1","providerInstance":"a1"}
+{"seq":2,"point":"ApplySignal","arg":"SwapStarted"}
+{"seq":3,"point":"SdkBind","arg":""}
+{"seq":4,"point":"ApplySignal","arg":"SwapFailed"}
+{"seq":5,"point":"ApplySignal","arg":"EventError(false)"}
+{"seq":6,"point":"SwapReconcile","arg":""}
+{"seq":7,"point":"SwapDone","arg":""}

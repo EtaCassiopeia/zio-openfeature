@@ -290,6 +290,8 @@ run.
 | `SdkBind`, `SwapTimeout`, `SwapRollback`, `SwapReconcile` | the action of the same name |
 | `ApplySignal(SwapSucceeded(settled))` | `SwapDone`, pinned to the settled state |
 | `OrphanRecorded` in a swap with no other outcome | `SwapFailNoRollback` |
+| `ApplySignal(SwapFailed)` in a swap that ends with no timeout, rollback or recorded orphan (an instance that does not own its API records none) | `SwapFailNoRollback`, before the `SwapReconcile` |
+| `Begin` with `arg` `pending` (the initial provider's `initialize()` had not settled when the run began) | not an action: the run starts from `InitAsync` instead of the sync build's `InitWith` |
 | `DeliverEvent` outside a swap, before any shutdown | `Deliver` |
 | `OrphanResolved(previous, watch)` outside a shutdown, inside a swap too (a failed swap settles an earlier swap's entry before it ends) | `OrphanResolved`, naming the entry's provider and the one it watches |
 | `ShutdownStart`, `ShutdownDone`, `ScopeClose` | the action of the same name |

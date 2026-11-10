@@ -15,7 +15,10 @@ The mapping (formal/lifecycle/README.md, "Trace validation"):
   SdkBind                            -> SdkBind
   ApplySignal(SwapSucceeded(_))      -> SwapDone, settled in its state
   SwapTimeout                        -> SwapTimeout
-  SwapReconcile                      -> SwapReconcile
+  SwapReconcile                      -> SwapReconcile, carrying `status`: the last StatusWritten before the swap's
+                                        SwapDone point, which is the status the swap ends on ("" when it wrote none, or
+                                        when an event was delivered between SwapReconcile and SwapDone: the model's
+                                        step does not include a write that comes after it)
   SwapRollback                       -> SwapRollback, or SwapRollbackUnbound when the swap
                                         recorded no SdkBind (its registration was refused)
   OrphanRecorded, no timeout or
@@ -26,7 +29,14 @@ The mapping (formal/lifecycle/README.md, "Trace validation"):
   OrphanRecorded after a rollback    -> the run is not covered: a rollback that timed out, whose wait the model folds
                                         into SwapRollback
   DeliverEvent, outside a swap and
-    before any shutdown              -> Deliver
+    before any shutdown              -> Deliver, carrying `status`: the StatusWritten that follows it, when exactly one
+                                        delivery is waiting for its write and the status is not Fatal (the model's SDK
+                                        state FATAL is final for a provider, the SDK's is not)
+  DeliverEvent in a swap after
+    GateDown, no InitOutcome since,
+    before SwapReconcile, from the
+    provider the slot binds (by name) -> Deliver, without a status: the gate is down in the code but not in the model,
+                                        whose SwapReconcile reads the state the event reported
   OrphanDropped, outside a shutdown
     or scope close, inside a swap
     too (a failed swap settles an
@@ -43,9 +53,11 @@ The mapping (formal/lifecycle/README.md, "Trace validation"):
   ScopeClose                         -> themselves
 A named provider is `q0` (the Begin line's instance, and only that), `q1`, `q2`, ... by first appearance of its
 instance in seq order: a label's `provider` and `watch` hold that name, or "" when the record carries no identity.
-Everything else is part of one of those steps, or no action at all: the other status writes, LateReady, SwapSkipped (a
+Everything else is part of one of those steps, or no action at all: the StatusWritten points (read as the `status` of the
+step they fall in), LateReady, SwapSkipped (a
 setProvider of the bound provider, which changes nothing), the SwapDone point that closes every swap, GateDown (the
-gate dropping inside it), deliveries while a swap's gate is up (the model drops those), and deliveries once a shutdown
+gate dropping inside it), deliveries while a swap's gate is up (the model drops those) and those after it that are not
+the bound provider's, and deliveries once a shutdown
 has started (the bridge is deregistered then; a handler already running records one anyway). Watchdog is not modelled.
 AwaitSdkShutDown is the wait SwapStart's guard stands for, before the swap starts.
 InitEntered and InitReturned, which the registered wrapper records, are SDK steps (an `initialize()` running and
@@ -91,6 +103,8 @@ def labels(records):
     initial = records[begin].get("providerInstance")
     if initial:
         names[initial] = "q0"
+    # The metadata name of each model provider: a delivered event names its provider by that alone.
+    provider_names = {"q0": records[begin].get("provider", "")}
     for r in records[begin + 1:]:  # first appearance in seq order, not in the order the labels are made
         for key in ("providerInstance", "watchInstance"):
             who(r, key)
@@ -104,6 +118,13 @@ def labels(records):
     rollback = None
     failed = False
     bound_new = False
+    swap_prev = None  # the provider bound when the swap started
+    bound = "q0"  # the provider the slot binds
+    gate_down = False  # a swap's GateDown has been recorded, and no initialize() outcome since
+    reconcile = None  # the swap's SwapReconcile label, which closes its status
+    swap_status = ""  # the last status written since the swap started
+    late_delivery = False  # an event was delivered between the swap's SwapReconcile and SwapDone
+    open_delivers = []  # Deliver labels outside a swap that no status write has been attributed to yet
     in_shutdown = False
     shut_down = False
     closed = False
@@ -114,8 +135,10 @@ def labels(records):
     def act(label, **fields):
         entry = {"action": label, "event": "", "state": "", "ok": False, "shuts": -1, "threw": 0, "returned": 0,
                  "owner": owner, "provider": "", "watch": "", "pending": pending,
-                 "pinInits": pin_inits}
+                 "pinInits": pin_inits, "status": ""}
         entry.update(fields)
+        if label != "Deliver":
+            open_delivers.clear()
         out.append(entry)
         return entry
 
@@ -188,6 +211,7 @@ def labels(records):
             in_shutdown = shut_down = True
             continue
         if point == "InitOutcome":
+            gate_down = False
             act("InitOutcome", provider=who(r, "providerInstance"), ok=arg == "true")
             continue
         if point == "ProviderShutDown" and r.get("caller", "").startswith(sdk_thread):
@@ -195,7 +219,10 @@ def labels(records):
             continue
         if point == "SwapStart":
             act("SwapStart", provider=who(r, "providerInstance"))
+            provider_names[who(r, "providerInstance")] = r.get("provider", "")
             in_swap, swap_outcome, rollback, bound_new, failed = True, None, None, False, False
+            swap_prev, swap_new = bound, who(r, "providerInstance")
+            gate_down, reconcile, swap_status, late_delivery = False, None, "", False
             continue
         if in_swap:
             succeeded = (re.match(r"(SwapSucceeded|RollbackSucceeded)\((Ready|Stale|Error|Fatal)\b", arg)
@@ -203,6 +230,7 @@ def labels(records):
             if point == "SdkBind":
                 act("SdkBind")
                 bound_new = True
+                bound = swap_new
             elif succeeded and succeeded.group(1) == "SwapSucceeded" and swap_outcome is None:
                 swap_outcome = "SwapDone"
                 act("SwapDone", state=succeeded.group(2).upper())
@@ -215,6 +243,7 @@ def labels(records):
             elif point == "SwapRollback" and swap_outcome is None:
                 swap_outcome = "SwapRollback"
                 rollback = act("SwapRollback" if bound_new else "SwapRollbackUnbound")
+                bound = swap_prev
             elif point == "OrphanRecorded" and swap_outcome == "SwapRollback":
                 return None
             elif point == "OrphanRecorded" and swap_outcome is None:
@@ -226,15 +255,32 @@ def labels(records):
                 if failed and swap_outcome is None:
                     swap_outcome = "SwapFailNoRollback"
                     act("SwapFailNoRollback")
-                act("SwapReconcile")
+                reconcile = act("SwapReconcile")
             # A failed swap settles an earlier swap's orphan before it ends; the model's OrphanResolved takes no lock.
             elif point == resolved:
                 act("OrphanResolved", provider=who(r, "providerInstance"), watch=who(r, "watchInstance"))
+            elif point == "GateDown":
+                gate_down = True
+            elif point == "StatusWritten":
+                swap_status = arg
+            elif point == "DeliverEvent":
+                if reconcile is not None:
+                    late_delivery = True
+                elif gate_down and not shut_down and r.get("provider") and r.get("provider") == provider_names.get(bound):
+                    act("Deliver", event=arg.replace("PROVIDER_", ""))
             elif point == "SwapDone":
                 in_swap = False
+                if reconcile is not None and not late_delivery:
+                    reconcile["status"] = swap_status
             continue
         if point == "DeliverEvent" and not shut_down:
-            act("Deliver", event=arg.replace("PROVIDER_", ""))
+            open_delivers.append(act("Deliver", event=arg.replace("PROVIDER_", "")))
+        elif point == "StatusWritten":
+            # Not Fatal: the model's SDK state FATAL is final for a provider, which the SDK's is not, so a run that
+            # delivers more events after a fatal one would have no behaviour.
+            if len(open_delivers) == 1 and arg != "Fatal":
+                open_delivers[0]["status"] = arg
+            open_delivers.clear()
         elif point == resolved:
             act("OrphanResolved", provider=who(r, "providerInstance"), watch=who(r, "watchInstance"))
     # A run cut off inside a shutdown never reached ShutdownDone: the entry made for it is not a step it took.

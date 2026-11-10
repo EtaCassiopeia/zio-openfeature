@@ -273,8 +273,17 @@ run counted (the SDK's executor can run a queued shutdown inside the teardown th
 the watcher's bound elapsed, so the run may count one more); an `OrphanRecorded` point marks the run's instance as
 owning its API, the topology whose teardown the counts constrain; the shutdown
 points outside a teardown that are not the SDK's queued shutdown (an orphan's settle, a rollback's cleanup) stay free. A run is accepted when such a behaviour
-exists. The check is of the order of the library's steps and what was recorded about them; the statuses a run observed
-are not compared, which `LifecycleModelSpec`'s own oracle does. A trace TLC cannot decide in time is reported as
+exists. The check is of the order of the library's steps and what was recorded about them, and of the status
+two kinds of step leave: `StatusWritten` (recorded by `EventBridge` once per transition it writes, with the new status; `SwapStart`'s `NotReady` goes through the swap's own step and records none)
+gives `SwapReconcile` the status the swap ends on, which the model's `SwapReconcile` must write (skipped when the swap
+wrote none, or when an event was delivered between its `SwapReconcile` and `SwapDone`, which the code writes after the
+step the model compares), and `Deliver` the status written right after it (when one delivery alone is waiting for its
+write, and not for `Fatal`). A delivery inside a swap after `GateDown`, from the provider the slot binds, is a `Deliver`
+too: the code's gate is down there, the model's drops it and the reconcile reads the state the event reported. Such a
+step reads the SDK's state, which an emit not delivered yet may have set, so the model may emit first: for a `Deliver`
+only its own kind, even while one is pending, and for a `SwapReconcile` only a kind the run delivers later. A wider
+rule would let the model emit whatever status a wrong run recorded. The
+statuses the other steps leave are not compared, which `LifecycleModelSpec`'s own oracle does. A trace TLC cannot decide in time is reported as
 undecided without failing the run, and a run that checks no trace at all fails. A TLC that cannot run, or whose output
 says neither way, is a tool error, never a rejection, and fails the run and both halves of the self-test
 (`test_validate.py` checks this without the TLC jars).

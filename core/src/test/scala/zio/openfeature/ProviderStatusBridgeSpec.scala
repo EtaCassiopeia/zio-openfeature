@@ -50,14 +50,18 @@ object ProviderStatusBridgeSpec extends ZIOSpecDefault {
   private class LateMetadataProvider extends InertProvider("unused") {
     private val proceed                      = new CountDownLatch(1)
     @volatile private var metadata: Metadata = null
+    @volatile var entered                    = false
+    @volatile var returned                   = false
 
     def finishInitializing(): Unit = proceed.countDown()
 
     @scala.annotation.nowarn("msg=deprecated")
     override def getMetadata: Metadata                      = metadata
     override def initialize(ctx: OFEvaluationContext): Unit = {
+      entered = true
       proceed.await()
       metadata = new Metadata { override def getName: String = "multiprovider" }
+      returned = true
     }
     override def shutdown(): Unit = {
       proceed.countDown()
@@ -78,6 +82,21 @@ object ProviderStatusBridgeSpec extends ZIOSpecDefault {
   /** The guard only catches a hang, on the live clock; nothing is measured against it. */
   private def awaitSignal[A](promise: Promise[Nothing, A]): Task[A] =
     Live.live(promise.await.timeoutFail(new RuntimeException("the awaited signal never arrived"))(30.seconds))
+
+  /** What the instance and the provider show when the READY under the provider's own name never came, so a run that
+    * hangs says which step it is stuck at: whether the SDK entered and finished `initialize()`, and whether the name
+    * settled without a READY being published under it.
+    */
+  private def lateMetadataState(ff: FeatureFlagsLive, provider: LateMetadataProvider): UIO[RuntimeException] =
+    for {
+      status <- ff.providerStatus
+      name   <- ff.providerMetadata.map(_.name)
+      wrapper = zio.openfeature.internal.ManagedProvider.existing(provider)
+    } yield new RuntimeException(
+      s"no READY was published under 'multiprovider' within the bound: status=$status name=$name " +
+        s"initialize entered=${provider.entered} returned=${provider.returned} " +
+        s"wrapper inits started=${wrapper.map(_.initsStarted)} in flight=${wrapper.map(_.initsInFlightAnywhere)}"
+    )
 
   /** Initializes at once. */
   private class QuickProvider(nm: String) extends InertProvider(nm) {
@@ -262,7 +281,7 @@ object ProviderStatusBridgeSpec extends ZIOSpecDefault {
               status    <- ff.providerStatus
               _         <- ZIO.succeed(provider.finishInitializing())
               _         <- ff.onReadyEvent(details("other"))
-              _         <- awaitSignal(named)
+              _         <- awaitSignal(named).catchAll(_ => lateMetadataState(ff, provider).flatMap(s => ZIO.fail(s)))
               afterName <- ff.providerMetadata.map(_.name)
             } yield assertTrue(
               during == FeatureFlags.UnknownProviderName,

@@ -3,3 +3,4 @@
 # issue is fixed. One per line: `<suite class>` or `<suite class>::<test name>`, then `# <tracking issue>`; an entry
 # without a tracking note does not count as tracked.
 zio.openfeature.testkit.LifecycleModelSpec::every generated lifecycle sequence agrees with the documented contract  # #832: a pair of concurrent swaps; the harness now reports the lock order and both outcomes. Remove once the nightly has shown the cause.
+zio.openfeature.ProviderStatusBridgeSpec::lazy-metadata provider: a READY stamped with another name does not name it, even while it initializes  # #860: no READY under the provider's own name in 1 of 5 nightly runs; not reproduced locally in 600 runs. The test now reports where it is stuck. Remove once a run shows the cause.

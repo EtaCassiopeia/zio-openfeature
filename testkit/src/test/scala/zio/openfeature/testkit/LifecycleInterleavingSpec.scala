@@ -151,7 +151,8 @@ object LifecycleInterleavingSpec extends ZIOSpecDefault {
         "InitReturned",
         "DeliverEvent",
         "SwapReconcile",
-        "SwapDone"
+        "SwapDone",
+        "GateDown"
       ),
     Primary.SwapFailing ->
       Set(
@@ -165,7 +166,8 @@ object LifecycleInterleavingSpec extends ZIOSpecDefault {
         "SwapRollback",
         "RollbackBind",
         "SwapReconcile",
-        "SwapDone"
+        "SwapDone",
+        "GateDown"
       ),
     Primary.SwapHanging ->
       Set(
@@ -178,7 +180,8 @@ object LifecycleInterleavingSpec extends ZIOSpecDefault {
         "OrphanRecorded",
         "SwapReconcile",
         "LateReady",
-        "SwapDone"
+        "SwapDone",
+        "GateDown"
       ),
     Primary.Shutdown   -> Set("ShutdownStart", "ApplySignal", "ProviderShutDown", "ShutdownReturned", "ShutdownDone"),
     Primary.EventError -> Set("DeliverEvent", "ApplySignal")
@@ -347,7 +350,7 @@ object LifecycleInterleavingSpec extends ZIOSpecDefault {
         second <- provider("p2")
         third  <- provider("p3", Fault.Throw(new RuntimeException("p3: initialize fails")))
         warmed <- probe.armAfterBuild
-        _      <- ZIO.foreachDiscard(trace)(_.begin)
+        _      <- ZIO.foreachDiscard(trace)(_.begin(initial))
         cold       = if (warmed) Chunk.empty else Chunk(s"$where: the build's READY never reached the bridge")
         before     = Model.initial(p0)
         primaryRun = primary match {

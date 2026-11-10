@@ -160,7 +160,7 @@ object ReplacedProviderEventsSpec extends ZIOSpecDefault {
 
   def spec = suite("ReplacedProviderEventsSpec")(
     test("a READY of the replaced provider that reaches the bridge after the swap is not delivered") {
-      lateReady(LifecycleProbe.Point.DeliverEvent("PROVIDER_READY"))
+      lateReady(LifecycleProbe.Point.DeliverEvent("PROVIDER_READY", "first"))
     },
     test("a READY of the replaced provider that passed the identity guard before the swap is not delivered after it") {
       lateReady(LifecycleProbe.Point.ApplySignal(ProviderStatusMachine.Signal.EventReady))

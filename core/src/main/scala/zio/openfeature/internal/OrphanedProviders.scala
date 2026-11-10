@@ -2,7 +2,12 @@ package zio.openfeature.internal
 
 import java.util.concurrent.atomic.{AtomicBoolean, AtomicReference}
 
-import dev.openfeature.sdk.{EventProviderAccess, OpenFeatureAPI, ProviderStateAccess}
+import dev.openfeature.sdk.{
+  EventProviderAccess,
+  FeatureProvider => OFFeatureProvider,
+  OpenFeatureAPI,
+  ProviderStateAccess
+}
 import zio._
 
 /** Providers that a timed-out swap or rollback left registered nowhere, until the registration that replaced them
@@ -51,7 +56,15 @@ final private[openfeature] class OrphanedProviders(api: OpenFeatureAPI, probe: L
   ): UIO[Unit] =
     for {
       done <- Promise.make[Nothing, Unit]
-      entry = new Entry(previous, previousName, incomingName, done, settled, heldByVisibleSlot(previous))
+      entry = new Entry(
+        previous,
+        previousName,
+        incomingName,
+        incoming.provider,
+        done,
+        settled,
+        heldByVisibleSlot(previous)
+      )
       _ <- ZIO.succeed(entries.updateAndGet(entry :: _))
       // A watcher that starts after a resolve has claimed the entry settles nothing.
       // Settling is uninterruptible, so a resolve that interrupts the watcher waits for a settle already under way. The
@@ -92,7 +105,7 @@ final private[openfeature] class OrphanedProviders(api: OpenFeatureAPI, probe: L
       .flatMap { won =>
         ZIO.when(won)(
           probe.at(
-            LifecycleProbe.Point.OrphanResolved
+            LifecycleProbe.Point.OrphanResolved(entry.previous.sdk, entry.watch)
           ) *> (if (entry.heldWhenRecorded || heldByVisibleSlot(entry.previous))
                   ZIO.logDebug(
                     s"setProvider: leaving '${entry.previousName}': a slot of the API holds it, or did when it was replaced"
@@ -171,6 +184,7 @@ private[openfeature] object OrphanedProviders {
     val previous: Bound,
     val previousName: String,
     val incomingName: String,
+    val watch: OFFeatureProvider,
     val done: Promise[Nothing, Unit],
     val settled: UIO[Unit],
     // Read when recorded: a slot that lets go of it later, or the API's shutdown, leaves its shutdown to the SDK.

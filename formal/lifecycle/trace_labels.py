@@ -1,13 +1,15 @@
 """Turn a recorded run (the lifecycle probe points a test passed) into the model actions it took.
 
 Input: ndjson lines {"seq": n, "point": "<LifecycleProbe point name>", "arg": "<payload or empty>"}, possibly
-out of order (several threads record), with a {"point": "Begin"} marker once the instance is built.
+out of order (several threads record), with a {"point": "Begin"} marker once the instance is built. A line may also
+name the providers its point concerns: `providerInstance` (and `watchInstance`), an identity hash that tells apart
+providers sharing a name; `provider`/`watch` are their names, `caller` the thread of a shutdown.
 Output: a list of model actions, each {"action": label, ...} with what the run recorded about it (a delivered event's
 type, the SDK state a swap or its rollback settled in, whether the rollback succeeded), or None when the run uses something
 the model does not cover. A run without its Begin marker raises ValueError: the recording is broken.
 
 The mapping (formal/lifecycle/README.md, "Trace validation"):
-  SwapStart                          -> SwapStart
+  SwapStart                          -> SwapStart, naming its provider
   SdkBind                            -> SdkBind
   ApplySignal(SwapSucceeded(_))      -> SwapDone, settled in its state
   SwapTimeout                        -> SwapTimeout
@@ -21,12 +23,16 @@ The mapping (formal/lifecycle/README.md, "Trace validation"):
   DeliverEvent, outside a swap and
     before any shutdown              -> Deliver
   OrphanResolved, outside a shutdown
-    or scope close                   -> OrphanResolved
+    or scope close, inside a swap
+    too (a failed swap settles an
+    earlier one's entry)             -> OrphanResolved, naming the entry's provider and the one it watches
   ShutdownStart, ShutdownDone,
   ScopeClose                         -> themselves
+A named provider is `q0` (the Begin line's instance, and only that), `q1`, `q2`, ... by first appearance of its
+instance in seq order: a label's `provider` and `watch` hold that name, or "" when the record carries no identity.
 Everything else is part of one of those steps, or no action at all: the other status writes, LateReady, SwapSkipped (a
 setProvider of the bound provider, which changes nothing), the SwapDone point that closes
-every swap, deliveries while a swap's gate is up (the model drops those), and deliveries once a shutdown has started
+every swap, GateDown (the gate dropping inside it), deliveries while a swap's gate is up (the model drops those), and deliveries once a shutdown has started
 (the bridge is deregistered then; a handler already running records one anyway). Watchdog is not modelled.
 AwaitSdkShutDown is the wait SwapStart's guard stands for, before the swap starts.
 InitEntered and InitReturned, which the registered wrapper records, are SDK steps (an `initialize()` running and
@@ -51,6 +57,22 @@ def labels(records):
     if begin is None:
         raise ValueError("the run has no Begin marker")
     out = []
+    names = {}
+
+    def who(r, key):
+        """The model name of the provider instance `r` records under `key`, or "" when it records none."""
+        instance = r.get(key)
+        if not instance:
+            return ""
+        # q0 is the Begin line's provider alone: a run whose Begin names none must not make its first swap's q0.
+        return names.setdefault(instance, f"q{len(names) + (0 if 'q0' in names.values() else 1)}")
+
+    initial = records[begin].get("providerInstance")
+    if initial:
+        names[initial] = "q0"
+    for r in records[begin + 1:]:  # first appearance in seq order, not in the order the labels are made
+        for key in ("providerInstance", "watchInstance"):
+            who(r, key)
     recorded = any(r["point"] == "ProviderShutDown" for r in records)
     # Only an instance that owns its API records an orphan, so one marks the run's instance as the owner; the model
     # then takes the owning topology, whose teardown the counts constrain.
@@ -66,7 +88,7 @@ def labels(records):
 
     def act(label, **fields):
         entry = {"action": label, "event": "", "state": "", "ok": False, "shuts": -1, "threw": 0, "returned": 0,
-                 "owner": owner}
+                 "owner": owner, "provider": "", "watch": ""}
         entry.update(fields)
         out.append(entry)
         return entry
@@ -117,7 +139,7 @@ def labels(records):
             in_shutdown = shut_down = True
             continue
         if point == "SwapStart":
-            act("SwapStart")
+            act("SwapStart", provider=who(r, "providerInstance"))
             in_swap, swap_outcome, rollback, bound_new = True, None, None, False
             continue
         if in_swap:
@@ -145,13 +167,16 @@ def labels(records):
                 act("SwapFailNoRollback")
             elif point == "SwapReconcile":
                 act("SwapReconcile")
+            # A failed swap settles an earlier swap's orphan before it ends; the model's OrphanResolved takes no lock.
+            elif point == "OrphanResolved":
+                act("OrphanResolved", provider=who(r, "providerInstance"), watch=who(r, "watchInstance"))
             elif point == "SwapDone":
                 in_swap = False
             continue
         if point == "DeliverEvent" and not shut_down:
             act("Deliver", event=arg.replace("PROVIDER_", ""))
         elif point == "OrphanResolved":
-            act("OrphanResolved")
+            act("OrphanResolved", provider=who(r, "providerInstance"), watch=who(r, "watchInstance"))
     # A run cut off inside a shutdown never reached ShutdownDone: the entry made for it is not a step it took.
     if in_shutdown:
         del out[-1]

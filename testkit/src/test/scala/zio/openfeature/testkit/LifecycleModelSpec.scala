@@ -90,7 +90,7 @@ object LifecycleModelSpec extends ZIOSpecDefault {
     */
   final private class SwapOrder(ref: Ref[Chunk[FiberId]]) extends LifecycleProbe {
     def at(point: LifecycleProbe.Point): UIO[Unit] = point match {
-      case LifecycleProbe.Point.SwapStart | LifecycleProbe.Point.SwapSkipped =>
+      case _: LifecycleProbe.Point.SwapStart | LifecycleProbe.Point.SwapSkipped =>
         ZIO.fiberIdWith(id => ref.update(_ :+ id))
       case _ => ZIO.unit
     }
@@ -698,7 +698,7 @@ object LifecycleModelSpec extends ZIOSpecDefault {
       (sut, initial) = made
       start          = Run(Model.initial(first), Map(first.id -> initial), first, first, None, None, Nil, Chunk.empty)
       seen <- verify(sut, start.model, "initial")
-      _    <- ZIO.foreachDiscard(trace)(_.begin)
+      _    <- ZIO.foreachDiscard(trace)(_.begin(initial))
       last <- ZIO.foldLeft(actions.zipWithIndex)(start.copy(violations = seen)) { case (run, (action, i)) =>
         perform(sut, run, action, i + 1)
       }

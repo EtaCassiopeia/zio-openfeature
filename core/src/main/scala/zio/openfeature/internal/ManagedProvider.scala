@@ -177,7 +177,7 @@ final private[openfeature] class ManagedProvider private (
     }
     ended.foreach { case (target, cycleLane, signal, cycle) =>
       val call = ManagedProvider.shutdownCalls.incrementAndGet()
-      at(LifecycleProbe.Point.ProviderShutDown(call))
+      at(LifecycleProbe.Point.ProviderShutDown(call, target, Thread.currentThread().getName))
       try {
         val failure = try { target.shutdown(); None }
         catch { case e: Throwable => Some(e) }

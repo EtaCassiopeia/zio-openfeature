@@ -1,0 +1,41 @@
+{"seq":0,"point":"InitEntered","arg":""}
+{"seq":1,"point":"InitReturned","arg":""}
+{"seq":2,"point":"DeliverEvent","arg":"PROVIDER_READY","provider":"p0"}
+{"seq":3,"point":"ApplySignal","arg":"EventReady"}
+{"seq":4,"point":"Begin","arg":"","provider":"p0","providerInstance":"758ae29a"}
+{"seq":5,"point":"SwapStart","arg":"","provider":"p1","providerInstance":"4e1ff688"}
+{"seq":6,"point":"ApplySignal","arg":"SwapStarted"}
+{"seq":7,"point":"SwapBind","arg":""}
+{"seq":8,"point":"SdkBind","arg":""}
+{"seq":9,"point":"InitEntered","arg":""}
+{"seq":10,"point":"SwapTimeout","arg":""}
+{"seq":11,"point":"ApplySignal","arg":"SwapFailed"}
+{"seq":12,"point":"OrphanRecorded","arg":""}
+{"seq":13,"point":"GateDown","arg":""}
+{"seq":14,"point":"SwapReconcile","arg":""}
+{"seq":15,"point":"LateReady","arg":""}
+{"seq":16,"point":"SwapDone","arg":""}
+{"seq":17,"point":"SwapStart","arg":"","provider":"p3","providerInstance":"a1b93a4"}
+{"seq":18,"point":"ApplySignal","arg":"SwapStarted"}
+{"seq":19,"point":"SwapBind","arg":""}
+{"seq":20,"point":"SdkBind","arg":""}
+{"seq":21,"point":"InitEntered","arg":""}
+{"seq":22,"point":"InitReturned","arg":""}
+{"seq":23,"point":"DeliverEvent","arg":"PROVIDER_ERROR","provider":"p3"}
+{"seq":24,"point":"ApplySignal","arg":"SwapFailed"}
+{"seq":25,"point":"ApplySignal","arg":"EventError(false)"}
+{"seq":26,"point":"OrphanRecorded","arg":""}
+{"seq":27,"point":"GateDown","arg":""}
+{"seq":28,"point":"SwapReconcile","arg":""}
+{"seq":29,"point":"ApplySignal","arg":"EventError(false)"}
+{"seq":30,"point":"OrphanResolved","arg":"","provider":"p1","providerInstance":"4e1ff688","watch":"p3","watchInstance":"a1b93a4"}
+{"seq":31,"point":"SwapDone","arg":""}
+{"seq":32,"point":"ProviderShutDown","arg":"724","provider":"p1","providerInstance":"4e1ff688","caller":"zio-default-blocking-2"}
+{"seq":33,"point":"ShutdownReturned","arg":"724 true"}
+{"seq":34,"point":"InitReturned","arg":""}
+{"seq":35,"point":"OrphanResolved","arg":"","provider":"p0","providerInstance":"758ae29a","watch":"p1","watchInstance":"4e1ff688"}
+{"seq":36,"point":"ProviderShutDown","arg":"728","provider":"p0","providerInstance":"758ae29a","caller":"openfeature-provider-thread-2"}
+{"seq":37,"point":"ShutdownReturned","arg":"728 true"}
+{"seq":38,"point":"ScopeClose","arg":""}
+{"seq":39,"point":"ProviderShutDown","arg":"729","provider":"p3","providerInstance":"a1b93a4","caller":"openfeature-provider-thread-1"}
+{"seq":40,"point":"ShutdownReturned","arg":"729 true"}

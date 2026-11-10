@@ -76,6 +76,11 @@ private[openfeature] object LifecycleProbe {
       */
     final case class OrphanResolved(previous: OFFeatureProvider, watch: OFFeatureProvider) extends Point
 
+    /** A pending previous provider has left the list, after it was shut down or released to the SDK: the settle that
+      * began at [[OrphanResolved]] is over. Carries the same `previous` and `watch`.
+      */
+    final case class OrphanDropped(previous: OFFeatureProvider, watch: OFFeatureProvider) extends Point
+
     /** An event the SDK delivered reached the bridge, on the SDK's handler thread. Carries the event's name and the
       * name of the provider it came from.
       */
@@ -90,10 +95,16 @@ private[openfeature] object LifecycleProbe {
     /** A registered provider's `initialize()` returned or threw; its outcome is recorded. */
     case object InitReturned extends Point
 
+    /** A registered provider's `initialize()` ended with `ok` (it returned, or threw), recorded just before the outcome
+      * is published to whoever waits on it, so that whoever observes the outcome records its next point after this one.
+      * Carries `provider`, the one that was initialized.
+      */
+    final case class InitOutcome(provider: OFFeatureProvider, ok: Boolean) extends Point
+
     /** A registered provider's `shutdown()` is about to run, for the first time in its cycle; `call` numbers the call,
       * so that its return can be told from another call's. Carries `provider`, the one shut down, and `caller`, the
-      * name of the thread running it: the SDK's executor for its queued shutdown of a replaced provider, else the
-      * library's.
+      * name of the thread running it: the SDK's executor for its queued shutdown of a replaced provider and for the
+      * API's own teardown, else the library's.
       */
     final case class ProviderShutDown(call: Long, provider: OFFeatureProvider, caller: String) extends Point
 

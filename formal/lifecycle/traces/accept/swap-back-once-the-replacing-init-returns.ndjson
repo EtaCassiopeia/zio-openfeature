@@ -1,0 +1,18 @@
+{"seq":0,"point":"Begin","arg":"","provider":"p0","providerInstance":"a0"}
+{"seq":1,"point":"SwapStart","arg":"","provider":"p1","providerInstance":"a1"}
+{"seq":2,"point":"ApplySignal","arg":"SwapStarted"}
+{"seq":3,"point":"SdkBind","arg":""}
+{"seq":4,"point":"SwapTimeout","arg":""}
+{"seq":5,"point":"LateReady","arg":""}
+{"seq":6,"point":"SwapReconcile","arg":""}
+{"seq":7,"point":"SwapDone","arg":""}
+{"seq":8,"point":"InitOutcome","arg":"true","provider":"p1","providerInstance":"a1"}
+{"seq":9,"point":"ProviderShutDown","arg":"1","provider":"p0","providerInstance":"a0","caller":"openfeature-provider-thread-1"}
+{"seq":10,"point":"ShutdownReturned","arg":"1 true"}
+{"seq":11,"point":"SwapStart","arg":"","provider":"p0","providerInstance":"a0"}
+{"seq":12,"point":"ApplySignal","arg":"SwapStarted"}
+{"seq":13,"point":"SdkBind","arg":""}
+{"seq":14,"point":"InitOutcome","arg":"true","provider":"p0","providerInstance":"a0"}
+{"seq":15,"point":"ApplySignal","arg":"SwapSucceeded(Ready)"}
+{"seq":16,"point":"SwapReconcile","arg":""}
+{"seq":17,"point":"SwapDone","arg":""}

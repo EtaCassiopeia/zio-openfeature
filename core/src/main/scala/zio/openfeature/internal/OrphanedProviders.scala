@@ -138,7 +138,10 @@ final private[openfeature] class OrphanedProviders(api: OpenFeatureAPI, probe: L
                           "in a swap or rollback that timed out and has not finished initializing"
                       ) *> shutDown(entry)
                   }).ensuring(
-            ZIO.succeed(entries.updateAndGet(_.filterNot(_ eq entry))) *> entry.settled *> entry.done.succeed(())
+            ZIO.succeed(entries.updateAndGet(_.filterNot(_ eq entry))) *>
+              probe.at(
+                LifecycleProbe.Point.OrphanDropped(entry.previous.sdk, entry.watch)
+              ) *> entry.settled *> entry.done.succeed(())
           )
         )
       }

@@ -68,6 +68,18 @@ object TraceProbeSpec extends ZIOSpecDefault {
         )
       }
     },
+    test("a dropped orphan and an init outcome name their providers") {
+      val (previous, watch) = (new NoOpProvider(), new NoOpProvider())
+      points(Point.OrphanDropped(previous, watch), Point.InitOutcome(watch, ok = false), Point.SwapStart(watch)).map {
+        lines =>
+          assertTrue(
+            field(lines.head, "watchInstance") == field(lines(2), "providerInstance"),
+            field(lines.head, "providerInstance").isDefined,
+            field(lines(1), "providerInstance") == field(lines(2), "providerInstance"),
+            field(lines(1), "arg").contains("false")
+          )
+      }
+    },
     test("the run's start names the instance's first provider") {
       val initial = new NoOpProvider()
       recorded(trace => trace.begin(initial) *> trace.at(Point.SwapStart(initial))).map { lines =>

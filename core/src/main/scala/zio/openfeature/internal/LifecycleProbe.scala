@@ -2,6 +2,7 @@ package zio.openfeature.internal
 
 import dev.openfeature.sdk.{FeatureProvider => OFFeatureProvider}
 import zio._
+import zio.openfeature.ProviderStatus
 
 /** Named points in the provider lifecycle where a test can hold a fiber and run a competing action before letting it
   * go. Production instances use [[LifecycleProbe.none]], whose `at` is a constant no-op.
@@ -88,6 +89,9 @@ private[openfeature] object LifecycleProbe {
 
     /** A status signal is about to be applied, outside the serialized write. */
     final case class ApplySignal(signal: ProviderStatusMachine.Signal) extends Point
+
+    /** The bridge's status write moved the status, recorded once per transition with the new status. */
+    final case class StatusWritten(status: ProviderStatus) extends Point
 
     /** A registered provider's `initialize()` was entered (by the SDK, on its executor), before it runs. */
     case object InitEntered extends Point

@@ -1,0 +1,30 @@
+{"seq": 0, "point": "InitEntered", "arg": ""}
+{"seq": 1, "point": "InitOutcome", "arg": "true", "provider": "p0", "providerInstance": "67d6a3ff"}
+{"seq": 2, "point": "InitReturned", "arg": ""}
+{"seq": 3, "point": "Begin", "arg": "", "provider": "p0", "providerInstance": "67d6a3ff", "pins": "inits"}
+{"seq": 4, "point": "DeliverEvent", "arg": "PROVIDER_READY", "provider": "p0"}
+{"seq": 5, "point": "ApplySignal", "arg": "EventReady"}
+{"seq": 6, "point": "SwapStart", "arg": "", "provider": "p1", "providerInstance": "60ec8911"}
+{"seq": 7, "point": "ApplySignal", "arg": "SwapStarted"}
+{"seq": 8, "point": "SwapBind", "arg": ""}
+{"seq": 9, "point": "SdkBind", "arg": ""}
+{"seq": 10, "point": "InitEntered", "arg": ""}
+{"seq": 11, "point": "SwapTimeout", "arg": ""}
+{"seq": 12, "point": "ApplySignal", "arg": "SwapFailed"}
+{"seq": 13, "point": "StatusWritten", "arg": "Error"}
+{"seq": 14, "point": "OrphanRecorded", "arg": ""}
+{"seq": 15, "point": "InitOutcome", "arg": "true", "provider": "p1", "providerInstance": "60ec8911"}
+{"seq": 16, "point": "InitReturned", "arg": ""}
+{"seq": 17, "point": "OrphanResolved", "arg": "", "provider": "p0", "providerInstance": "67d6a3ff", "watch": "p1", "watchInstance": "60ec8911"}
+{"seq": 18, "point": "DeliverEvent", "arg": "PROVIDER_READY", "provider": "p1"}
+{"seq": 19, "point": "ApplySignal", "arg": "EventReady"}
+{"seq": 20, "point": "ProviderShutDown", "arg": "747", "provider": "p0", "providerInstance": "67d6a3ff", "caller": "openfeature-provider-thread-2"}
+{"seq": 21, "point": "ShutdownReturned", "arg": "747 true"}
+{"seq": 22, "point": "OrphanDropped", "arg": "", "provider": "p0", "providerInstance": "67d6a3ff", "watch": "p1", "watchInstance": "60ec8911"}
+{"seq": 23, "point": "GateDown", "arg": ""}
+{"seq": 24, "point": "SwapReconcile", "arg": ""}
+{"seq": 25, "point": "LateReady", "arg": ""}
+{"seq": 26, "point": "SwapDone", "arg": ""}
+{"seq": 27, "point": "ScopeClose", "arg": ""}
+{"seq": 28, "point": "ProviderShutDown", "arg": "750", "provider": "p1", "providerInstance": "60ec8911", "caller": "openfeature-provider-thread-1"}
+{"seq": 29, "point": "ShutdownReturned", "arg": "750 true"}

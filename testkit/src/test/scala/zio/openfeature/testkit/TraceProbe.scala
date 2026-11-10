@@ -112,6 +112,7 @@ object TraceProbe {
 
   private def argument(point: Point): String = point match {
     case Point.ApplySignal(signal)          => signal.toString
+    case Point.StatusWritten(status)        => status.toString
     case Point.DeliverEvent(event, _)       => event
     case Point.ProviderShutDown(call, _, _) => call.toString
     case Point.ShutdownReturned(call, ok)   => s"$call $ok"

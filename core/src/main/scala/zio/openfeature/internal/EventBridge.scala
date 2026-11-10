@@ -61,7 +61,10 @@ final private[openfeature] class EventBridge(
     */
   private[openfeature] def applySignal(signal: Signal): UIO[Option[ProviderStatus]] =
     probe.at(LifecycleProbe.Point.ApplySignal(signal)) *>
-      lifecycle.run(LifecycleInput.Status(signal)).map(_.transitioned)
+      lifecycle.run(LifecycleInput.Status(signal)).map(_.transitioned).tap(statusWritten)
+
+  private def statusWritten(transitioned: Option[ProviderStatus]): UIO[Unit] =
+    ZIO.foreachDiscard(transitioned)(next => probe.at(LifecycleProbe.Point.StatusWritten(next)))
 
   /** [[applySignal]] for an event the SDK delivered: the signal is the one the SDK's own state for this client's slot
     * implies, read inside the serialized write; `own` (the event's signal) applies only when the slot is unreadable, or
@@ -92,6 +95,7 @@ final private[openfeature] class EventBridge(
           .foreachDiscard(unreadable)(e =>
             ZIO.logWarningCause("event bridge: could not read the SDK state; applying the event as sent", Cause.die(e))
           )
+          .zipRight(statusWritten(transitioned))
           .as((signal, transitioned))
       }
 

@@ -145,6 +145,7 @@ object LifecycleInterleavingSpec extends ZIOSpecDefault {
       Set(
         "SwapStart",
         "ApplySignal",
+        "StatusWritten",
         "SwapBind",
         "SdkBind",
         "InitEntered",
@@ -159,6 +160,7 @@ object LifecycleInterleavingSpec extends ZIOSpecDefault {
       Set(
         "SwapStart",
         "ApplySignal",
+        "StatusWritten",
         "SwapBind",
         "SdkBind",
         "InitEntered",
@@ -175,6 +177,7 @@ object LifecycleInterleavingSpec extends ZIOSpecDefault {
       Set(
         "SwapStart",
         "ApplySignal",
+        "StatusWritten",
         "SwapBind",
         "SdkBind",
         "InitEntered",
@@ -185,8 +188,15 @@ object LifecycleInterleavingSpec extends ZIOSpecDefault {
         "SwapDone",
         "GateDown"
       ),
-    Primary.Shutdown   -> Set("ShutdownStart", "ApplySignal", "ProviderShutDown", "ShutdownReturned", "ShutdownDone"),
-    Primary.EventError -> Set("DeliverEvent", "ApplySignal")
+    Primary.Shutdown -> Set(
+      "ShutdownStart",
+      "ApplySignal",
+      "StatusWritten",
+      "ProviderShutDown",
+      "ShutdownReturned",
+      "ShutdownDone"
+    ),
+    Primary.EventError -> Set("DeliverEvent", "ApplySignal", "StatusWritten")
   )
 
   /** Points a primary may also pass, depending on timing: an event the SDK sends while the provider initializes or

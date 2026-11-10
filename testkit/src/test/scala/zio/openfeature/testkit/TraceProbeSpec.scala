@@ -122,6 +122,11 @@ object TraceProbeSpec extends ZIOSpecDefault {
         )
       }
     },
+    test("a status write keeps the new status as the argument") {
+      points(Point.StatusWritten(zio.openfeature.ProviderStatus.Stale)).map { lines =>
+        assertTrue(field(lines.head, "point").contains("StatusWritten"), field(lines.head, "arg").contains("Stale"))
+      }
+    },
     test("a shutdown names its provider, instance and caller") {
       points(Point.ProviderShutDown(7L, new NoOpProvider(), "sdk-thread")).map { lines =>
         assertTrue(

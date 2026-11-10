@@ -47,6 +47,10 @@ Recorded(e) == IF Step.event = "ERROR" THEN e \in {"ERROR", "FATAL"} ELSE e = St
 Lib(label, A) == Next1 = label /\ A /\ i' = i + 1
 Env(A) == A /\ UNCHANGED i
 
+\* The status the run recorded the step as leaving (trace_labels.py), if it recorded one: the status the step's own
+\* update must write.
+WroteStatus == Step.status = "" \/ status' = Step.status
+
 \* The shutdowns a teardown made, as the run recorded them (trace_labels.py): when the step tears the API down, the
 \* model's teardown shuts down no more providers than the run counted, and no more of them throwing, hanging past the
 \* bound, or returning.  No more, rather than exactly: the SDK's executor may run a shutdown it queued inside the
@@ -119,12 +123,12 @@ PlainNext ==
     \/ Lib("SwapFailNoRollback", SwapFailNoRollback)
     \/ Next1 = "SwapRollbackUnbound" /\ Env(SdkBindFail)
     \/ Lib("SwapRollbackUnbound", SwapRollbackUnbound)
-    \/ Lib("SwapReconcile", SwapReconcile)
+    \/ Lib("SwapReconcile", SwapReconcile /\ WroteStatus)
     \* No probe point records an interrupt of the caller, so the model's own steps for it are free.
     \/ Env(CallerInterrupt)
     \/ \E early \in BOOLEAN, r \in {"READY", "STALE", "ERROR", "FATAL"} :
          Lib("SwapRollback", (Step.ok => r = Step.state) /\ SwapRollback(Step.ok, r, early))
-    \/ \E ev \in events : Lib("Deliver", Recorded(ev.e) /\ DeliverToBridge(ev))
+    \/ \E ev \in events : Lib("Deliver", Recorded(ev.e) /\ DeliverToBridge(ev) /\ WroteStatus)
     \/ \E o \in orphans : Lib("OrphanResolved", Named(o.prev, Step.provider) /\ Named(o.watch, Step.watch) /\ OrphanResolved(o))
     \/ Lib("ShutdownStart", ShutdownStart)
     \/ Lib("ShutdownDone", ShutdownDone /\ TornDown(~(shutDown \/ closed \/ ~owns)))
@@ -132,6 +136,16 @@ PlainNext ==
     \/ NeedsInit /\ \E p \in All : Env(EmitStaleWhileStarting(p))
     \/ /\ Next1 = "Deliver" /\ ~\E ev \in events : ev.p = bound /\ Recorded(ev.e)
        /\ \E e \in {"READY", "STALE", "ERROR", "FATAL"} : Recorded(e) /\ Env(Emit(bound, e))
+    \* A step that must write a given status reads the SDK's state, which an emit the run has not delivered yet may have
+    \* set.  A delivery's own kind may be emitted again even while one of it is pending; a reconcile may read only an emit
+    \* the run delivers later.  Any emit at all would let the model write the status a wrong run recorded.
+    \/ /\ Next1 = "Deliver" /\ Step.status # ""
+       /\ \E e \in {"READY", "STALE", "ERROR", "FATAL"} : Recorded(e) /\ Env(Emit(bound, e))
+    \/ /\ Next1 = "SwapReconcile" /\ Step.status # ""
+       /\ \E e \in {"READY", "STALE", "ERROR", "FATAL"} :
+            /\ \E k \in (i + 2)..Len(Trace) :
+                 Trace[k].action = "Deliver" /\ Trace[k].event = (IF e = "FATAL" THEN "ERROR" ELSE e)
+            /\ Env(Emit(bound, e))
 
 \* Recorded runs carry no evaluations (MaxEvals = 0).
 TraceStep ==

@@ -1,0 +1,36 @@
+{"seq":0,"point":"InitEntered","arg":""}
+{"seq":1,"point":"InitOutcome","arg":"true","provider":"p0","providerInstance":"7db1601a"}
+{"seq":2,"point":"InitReturned","arg":""}
+{"seq":3,"point":"DeliverEvent","arg":"PROVIDER_READY","provider":"p0"}
+{"seq":4,"point":"ApplySignal","arg":"EventReady"}
+{"seq":5,"point":"Begin","arg":"","provider":"p0","providerInstance":"7db1601a","pins":"inits"}
+{"seq":6,"point":"SwapStart","arg":"","provider":"p1","providerInstance":"73671af5"}
+{"seq":7,"point":"ApplySignal","arg":"SwapStarted"}
+{"seq":8,"point":"SwapBind","arg":""}
+{"seq":9,"point":"SdkBind","arg":""}
+{"seq":10,"point":"InitEntered","arg":""}
+{"seq":11,"point":"InitOutcome","arg":"false","provider":"p1","providerInstance":"73671af5"}
+{"seq":12,"point":"InitReturned","arg":""}
+{"seq":13,"point":"ApplySignal","arg":"SwapFailed"}
+{"seq":14,"point":"StatusWritten","arg":"Error"}
+{"seq":15,"point":"SwapRollback","arg":""}
+{"seq":16,"point":"RollbackBind","arg":""}
+{"seq":17,"point":"InitEntered","arg":""}
+{"seq":18,"point":"InitOutcome","arg":"true","provider":"p0","providerInstance":"7db1601a"}
+{"seq":19,"point":"InitReturned","arg":""}
+{"seq":20,"point":"DeliverEvent","arg":"PROVIDER_READY","provider":"p0"}
+{"seq":21,"point":"ApplySignal","arg":"EventReady"}
+{"seq":22,"point":"ProviderShutDown","arg":"482","provider":"p1","providerInstance":"73671af5","caller":"openfeature-provider-thread-3"}
+{"seq":23,"point":"ApplySignal","arg":"RollbackSucceeded(Ready)"}
+{"seq":24,"point":"ShutdownReturned","arg":"482 true"}
+{"seq":25,"point":"StatusWritten","arg":"Ready"}
+{"seq":26,"point":"GateDown","arg":""}
+{"seq":27,"point":"SwapReconcile","arg":""}
+{"seq":28,"point":"ApplySignal","arg":"EventStale"}
+{"seq":29,"point":"StatusWritten","arg":"Stale"}
+{"seq":30,"point":"SwapDone","arg":""}
+{"seq":31,"point":"DeliverEvent","arg":"PROVIDER_STALE","provider":"p0"}
+{"seq":32,"point":"ApplySignal","arg":"EventStale"}
+{"seq":33,"point":"ScopeClose","arg":""}
+{"seq":34,"point":"ProviderShutDown","arg":"487","provider":"p0","providerInstance":"7db1601a","caller":"openfeature-provider-thread-3"}
+{"seq":35,"point":"ShutdownReturned","arg":"487 true"}

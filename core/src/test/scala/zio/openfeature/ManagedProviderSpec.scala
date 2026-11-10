@@ -126,8 +126,8 @@ object ManagedProviderSpec extends ZIOSpecDefault {
         thrown <- ZIO.attemptBlocking(wrapper.shutdown()).either
         again  <- ZIO.attemptBlocking(wrapper.shutdown()).either
         recorded = points.toArray.toList.collect {
-          case LifecycleProbe.Point.ProviderShutDown(_)     => "called"
-          case LifecycleProbe.Point.ShutdownReturned(_, ok) => s"returned $ok"
+          case LifecycleProbe.Point.ProviderShutDown(_, _, _) => "called"
+          case LifecycleProbe.Point.ShutdownReturned(_, ok)   => s"returned $ok"
         }
       } yield assertTrue(
         thrown.left.exists(_.getMessage == "shutdown fails"),

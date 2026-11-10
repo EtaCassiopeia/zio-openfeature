@@ -649,7 +649,7 @@ final private[openfeature] class FeatureFlagsLive(
 
   private def runSwap(incoming: Bound, newProvider: OFFeatureProvider): IO[LifecycleError, Unit] = {
     val swap = for {
-      _ <- probe.at(Point.SwapStart)
+      _ <- probe.at(Point.SwapStart(newProvider))
       incomingName = ProviderNames.beforeInit(newProvider)
       newName      = incomingName.render
       _ <- probe.at(Point.ApplySignal(Signal.SwapStarted))
@@ -744,7 +744,7 @@ final private[openfeature] class FeatureFlagsLive(
     // The re-read of the slot after it is part of the protected region too: an interrupt of the caller, held back until
     // the swap's outcome, would otherwise skip it and leave a state the SDK reached while the gate was up unapplied.
     swap
-      .ensuring(lifecycle.run(LifecycleInput.GateDown))
+      .ensuring(probe.at(Point.GateDown) *> lifecycle.run(LifecycleInput.GateDown))
       .tapBoth(
         {
           // A state the SDK reached for the new provider between the timeout and the gate dropping was suppressed: a

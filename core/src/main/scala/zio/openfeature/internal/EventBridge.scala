@@ -202,7 +202,10 @@ final private[openfeature] class EventBridge(
     * state is delivered, and the status follows that state.
     */
   private[openfeature] def onSdkEvent(event: JavaProviderEvent, details: EventDetails): UIO[Unit] =
-    probe.at(LifecycleProbe.Point.DeliverEvent(event.name)) *> deliver(event, details)
+    ZIO.suspendSucceed {
+      val provider = Option(details.getProviderName).getOrElse("")
+      probe.at(LifecycleProbe.Point.DeliverEvent(event.name, provider)) *> deliver(event, details)
+    }
 
   private def deliver(event: JavaProviderEvent, details: EventDetails): UIO[Unit] = event match {
     case JavaProviderEvent.PROVIDER_READY =>

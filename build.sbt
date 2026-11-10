@@ -1,4 +1,5 @@
 import net.nmoncho.sbt.dependencycheck.settings._
+import tastymima.intf.ProblemMatcher
 
 val scala213Version = "2.13.18"
 val scala3Version   = "3.3.9"
@@ -305,7 +306,11 @@ lazy val core = (project in file("core"))
     ),
     // The lifecycle replay (LifecycleReplaySpec) reads the model's behaviours from this property; the forked test JVM
     // does not inherit the build JVM's properties, so it is passed on.
-    Test / javaOptions ++= sys.props.get("zof.lifecycle.behaviours").map("-Dzof.lifecycle.behaviours=" + _).toList
+    Test / javaOptions ++= sys.props.get("zof.lifecycle.behaviours").map("-Dzof.lifecycle.behaviours=" + _).toList,
+    // The lifecycle probe's points carry the provider they concern since 2.2.0; the probe is internal test tooling.
+    tastyMiMaConfig ~= (_.withMoreProblemFilters(
+      java.util.Arrays.asList(ProblemMatcher.make("zio.openfeature.internal.LifecycleProbe.Point.*"))
+    ))
   )
 
 // Extras module - built-in providers (HOCON, env vars, caching wrapper)

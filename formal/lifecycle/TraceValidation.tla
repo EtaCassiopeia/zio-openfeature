@@ -58,8 +58,13 @@ TInit ==
 NeedsInit == Next1 \in {"SwapDone", "SwapRollback", "SwapFailNoRollback", "SwapReconcile", "OrphanResolved", "Deliver",
                           "ScopeClose", "ShutdownDone"}
 
+\* Whether the recorded name `n` is `p`: a model value q1 prints as "q1" (trace_labels.py).  A record without identity
+\* ("") names nothing, so any provider will do.
+Named(p, n) == n = "" \/ ToString(p) = n
+
 TraceNext ==
-    \/ \E p \in Providers : Lib("SwapStart", SwapStart(p))
+    \/ Next1 = "SwapStart" /\ \E p \in (IF Step.provider = "" THEN Providers ELSE All) :
+         Lib("SwapStart", Named(p, Step.provider) /\ SwapStart(p))
     \/ Lib("SdkBind", SdkBind)
     \/ Lib("SwapDone", SwapDone /\ sdk[swap.new] = Step.state)
     \/ Lib("SwapTimeout", SwapTimeout)
@@ -72,7 +77,7 @@ TraceNext ==
     \/ \E early \in BOOLEAN, r \in {"READY", "STALE", "ERROR", "FATAL"} :
          Lib("SwapRollback", (Step.ok => r = Step.state) /\ SwapRollback(Step.ok, r, early))
     \/ \E ev \in events : Lib("Deliver", Recorded(ev.e) /\ DeliverToBridge(ev))
-    \/ \E o \in orphans : Lib("OrphanResolved", OrphanResolved(o))
+    \/ \E o \in orphans : Lib("OrphanResolved", Named(o.prev, Step.provider) /\ Named(o.watch, Step.watch) /\ OrphanResolved(o))
     \/ Lib("ShutdownStart", ShutdownStart)
     \/ Lib("ShutdownDone", ShutdownDone /\ TornDown(~(shutDown \/ closed \/ ~owns)))
     \/ Lib("ScopeClose", ScopeClose /\ TornDown(~(shutDown \/ ~owns)))
@@ -84,7 +89,8 @@ TraceNext ==
     \/ /\ Next1 = "Deliver" /\ ~\E ev \in events : ev.p = bound /\ Recorded(ev.e)
        /\ \E e \in {"READY", "STALE", "ERROR", "FATAL"} : Recorded(e) /\ Env(Emit(bound, e))
 
-\* The providers a swap installs are interchangeable.
+\* The providers a swap installs are interchangeable while the run does not name them; validate.py drops the symmetry
+\* when it does.
 Symmetry == Permutations(Providers)
 
 \* Recorded runs carry no evaluations (MaxEvals = 0).

@@ -427,7 +427,13 @@ object ProviderHotSwapSpec extends ZIOSpecDefault {
   /** Records every lifecycle point reached, with its payload. */
   final private class RecordingProbe extends zio.openfeature.internal.LifecycleProbe {
     val points = new java.util.concurrent.ConcurrentLinkedQueue[String]()
-    def at(p: zio.openfeature.internal.LifecycleProbe.Point): UIO[Unit] = ZIO.succeed(points.add(p.toString)).unit
+    def at(p: zio.openfeature.internal.LifecycleProbe.Point): UIO[Unit] = ZIO.succeed {
+      // Only a signal's payload is asserted on; the other points are recorded by name.
+      points.add(p match {
+        case _: zio.openfeature.internal.LifecycleProbe.Point.ApplySignal => p.toString
+        case _                                                            => p.name
+      })
+    }.unit
     def since(mark: Int): List[String] = points.toArray.toList.map(_.toString).drop(mark)
   }
 

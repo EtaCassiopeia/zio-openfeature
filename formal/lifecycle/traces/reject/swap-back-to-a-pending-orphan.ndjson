@@ -1,0 +1,15 @@
+{"seq":0,"point":"Begin","arg":"","provider":"p0","providerInstance":"a0"}
+{"seq":1,"point":"SwapStart","arg":"","provider":"p1","providerInstance":"a1"}
+{"seq":2,"point":"ApplySignal","arg":"SwapStarted"}
+{"seq":3,"point":"SdkBind","arg":""}
+{"seq":4,"point":"SwapTimeout","arg":""}
+{"seq":5,"point":"OrphanRecorded","arg":""}
+{"seq":6,"point":"LateReady","arg":""}
+{"seq":7,"point":"SwapReconcile","arg":""}
+{"seq":8,"point":"SwapDone","arg":""}
+{"seq":9,"point":"SwapStart","arg":"","provider":"p0","providerInstance":"a0"}
+{"seq":10,"point":"ApplySignal","arg":"SwapStarted"}
+{"seq":11,"point":"SdkBind","arg":""}
+{"seq":12,"point":"ApplySignal","arg":"SwapSucceeded(Ready)"}
+{"seq":13,"point":"SwapReconcile","arg":""}
+{"seq":14,"point":"SwapDone","arg":""}

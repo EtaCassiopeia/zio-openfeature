@@ -7,7 +7,7 @@ import zio.openfeature.testsupport.LeakCheck.{awaitNoLeaks, snapshot}
 import zio._
 import zio.test._
 import zio.openfeature._
-import zio.openfeature.internal.{FeatureFlagsFactories, LifecycleProbe}
+import zio.openfeature.internal.{FeatureFlagsFactories, LifecycleProbe, ManagedProvider}
 import dev.openfeature.sdk.{
   ErrorCode => OFErrorCode,
   FeatureProvider,
@@ -544,6 +544,98 @@ object LifecycleInterleavingSpec extends ZIOSpecDefault {
     ZIO.scoped(run).map { case (probe, status, shutdowns) => (probe.reached, status, shutdowns) }
   }
 
+  /** Run `body` in a scope with a trace recorder when tracing is on, close the scope, then write the trace as `name`.
+    */
+  private def recordedRun[A](name: String)(body: Option[TraceProbe] => URIO[Scope, A]): UIO[A] =
+    for {
+      trace <- TraceProbe.make
+      scope <- Scope.make
+      ran   <- body(trace).provideEnvironment(ZEnvironment[Scope](scope))
+      _     <- scope.close(Exit.unit).timeout(Bound)
+      _     <- ZIO.foreachDiscard(trace)(_.write(s"$name-${java.util.UUID.randomUUID().toString.take(8)}"))
+    } yield ran
+
+  private def awaitStatus(ff: FeatureFlags, wanted: ProviderStatus): UIO[Option[ProviderStatus]] =
+    ff.providerStatus
+      .repeat(Schedule.spaced(10.millis) *> Schedule.recurWhile[ProviderStatus](_ != wanted))
+      .timeout(HoldWait)
+
+  /** An async build whose provider is still initializing when the run begins. A swap to a provider that fails then has
+    * nothing to roll back to; the first provider is released, and a swap to one that initializes ends the run. Returns
+    * the failed swap's result and status, the status once the first provider is released, and what the instance serves
+    * after the last swap.
+    */
+  private def asyncBuildThenSwap: UIO[(Boolean, ProviderStatus, ProviderStatus, String)] =
+    recordedRun("interleaving-async-build-then-swap") { trace =>
+      for {
+        p0 <- provider("p0", Fault.HangUntilReleased, Fault.Succeed)
+        p1 <- provider("p1", Fault.Throw(new RuntimeException("p1: initialize fails")))
+        p2 <- provider("p2")
+        ff <- FeatureFlagsFactories
+          .buildAsync(
+            p0,
+            domain = Some(s"interleaving-${java.util.UUID.randomUUID()}"),
+            version = None,
+            initialHooks = Nil,
+            statusRef = None,
+            addShutdownFinalizer = true,
+            apiOverride = Some(OpenFeatureAPI.createIsolated()),
+            initTimeout = 1.minute,
+            probe = TraceProbe.alongside(LifecycleProbe.none, trace)
+          )
+          .orDie
+        _ <- ZIO.addFinalizer(p0.release)
+        _ <- ZIO
+          .succeed(ManagedProvider.existing(p0).exists(_.initsInFlightAnywhere > 0))
+          .repeat(Schedule.spaced(10.millis) && Schedule.recurUntil(identity[Boolean]))
+          .timeout(HoldWait)
+        _       <- ZIO.foreachDiscard(trace)(_.begin(p0))
+        failed  <- ff.setProvider(p1).either
+        errored <- ff.providerStatus
+        _       <- p0.release
+        _       <- ZIO.sleep(Settle)
+        _       <- ff.setProvider(p2).orDie
+        after   <- ff.providerStatus
+        who     <- ff.string(Who, "").orDie
+      } yield (failed.isLeft, errored, after, who)
+    }
+
+  /** An instance that does not own its API swaps to a provider whose `initialize()` outlives the swap's bound, then to
+    * one that fails while the first still initializes: no rollback, and no orphan, which only an owner records. Returns
+    * the failed swap's result and the status after it.
+    */
+  private def nonOwningFailedSwapOntoInitializing: UIO[(Boolean, ProviderStatus)] =
+    recordedRun("interleaving-non-owning-failed-swap-onto-initializing") { trace =>
+      for {
+        api <- ZIO.succeed(OpenFeatureAPI.createIsolated())
+        _   <- ZIO.addFinalizer(ZIO.succeed(api.shutdown()))
+        p0  <- provider("p0")
+        p1  <- provider("p1", Fault.HangUntilReleased, Fault.Succeed)
+        p2  <- provider("p2", Fault.Throw(new RuntimeException("p2: initialize fails")))
+        ff  <- FeatureFlagsFactories
+          .build(
+            p0,
+            domain = Some(s"interleaving-${java.util.UUID.randomUUID()}"),
+            version = None,
+            initialHooks = Nil,
+            statusRef = None,
+            addShutdownFinalizer = false,
+            apiOverride = Some(api),
+            initTimeout = InitTimeout,
+            probe = TraceProbe.alongside(LifecycleProbe.none, trace)
+          )
+          .orDie
+        _      <- ZIO.addFinalizer(p1.release)
+        _      <- awaitStatus(ff, ProviderStatus.Ready)
+        _      <- ZIO.foreachDiscard(trace)(_.begin(p0))
+        _      <- ff.setProvider(p1).either
+        failed <- ff.setProvider(p2).either
+        after  <- ff.providerStatus
+        _      <- p1.release
+        _      <- ZIO.sleep(Settle)
+      } yield (failed.isLeft, after)
+    }
+
   private def grid: List[(Primary, String, Competitor)] =
     for {
       primary    <- Primary.all
@@ -600,6 +692,18 @@ object LifecycleInterleavingSpec extends ZIOSpecDefault {
       test("a READY while the init watchdog is held wins, and the watchdog leaves the provider running") {
         watchdogRacedByReady.map { case (reached, status, shutdowns) =>
           assertTrue(reached.contains("Watchdog"), status == ProviderStatus.Ready, shutdowns == 0)
+        }
+      },
+      test(
+        "an async build still initializing at the run's start fails a swap, is released, then is swapped to a fresh provider"
+      ) {
+        asyncBuildThenSwap.map { case (failed, errored, after, who) =>
+          assertTrue(failed, errored == ProviderStatus.Error, after == ProviderStatus.Ready, who == "p2")
+        }
+      },
+      test("a non-owning instance's failed swap onto a still-initializing provider ends in Error without a crash") {
+        nonOwningFailedSwapOntoInitializing.map { case (failed, status) =>
+          assertTrue(failed, status == ProviderStatus.Error)
         }
       }
     )

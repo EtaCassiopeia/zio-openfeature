@@ -1,0 +1,35 @@
+{"seq":0,"point":"InitEntered","arg":""}
+{"seq":1,"point":"InitReturned","arg":""}
+{"seq":2,"point":"DeliverEvent","arg":"PROVIDER_READY","provider":"p0"}
+{"seq":3,"point":"ApplySignal","arg":"EventReady"}
+{"seq":4,"point":"Begin","arg":"","provider":"p0","providerInstance":"1a87d5b9"}
+{"seq":5,"point":"SwapStart","arg":"","provider":"p1","providerInstance":"2dca90fd"}
+{"seq":6,"point":"ApplySignal","arg":"SwapStarted"}
+{"seq":7,"point":"SwapBind","arg":""}
+{"seq":8,"point":"SdkBind","arg":""}
+{"seq":9,"point":"InitEntered","arg":""}
+{"seq":10,"point":"SwapTimeout","arg":""}
+{"seq":11,"point":"ApplySignal","arg":"SwapFailed"}
+{"seq":12,"point":"GateDown","arg":""}
+{"seq":13,"point":"SwapReconcile","arg":""}
+{"seq":14,"point":"LateReady","arg":""}
+{"seq":15,"point":"SwapDone","arg":""}
+{"seq":16,"point":"SwapStart","arg":"","provider":"p2","providerInstance":"9ae0ff"}
+{"seq":17,"point":"ApplySignal","arg":"SwapStarted"}
+{"seq":18,"point":"SwapBind","arg":""}
+{"seq":19,"point":"SdkBind","arg":""}
+{"seq":20,"point":"InitEntered","arg":""}
+{"seq":21,"point":"InitReturned","arg":""}
+{"seq":22,"point":"DeliverEvent","arg":"PROVIDER_ERROR","provider":"p2"}
+{"seq":23,"point":"ApplySignal","arg":"SwapFailed"}
+{"seq":24,"point":"ApplySignal","arg":"EventError(false)"}
+{"seq":25,"point":"GateDown","arg":""}
+{"seq":26,"point":"SwapReconcile","arg":""}
+{"seq":27,"point":"ApplySignal","arg":"EventError(false)"}
+{"seq":28,"point":"SwapDone","arg":""}
+{"seq":29,"point":"InitReturned","arg":""}
+{"seq":30,"point":"ProviderShutDown","arg":"3","provider":"p0","providerInstance":"1a87d5b9","caller":"openfeature-provider-thread-2"}
+{"seq":31,"point":"ShutdownReturned","arg":"3 true"}
+{"seq":32,"point":"ScopeClose","arg":""}
+{"seq":33,"point":"ProviderShutDown","arg":"4","provider":"p2","providerInstance":"9ae0ff","caller":"openfeature-provider-thread-1"}
+{"seq":34,"point":"ShutdownReturned","arg":"4 true"}

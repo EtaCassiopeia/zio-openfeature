@@ -49,9 +49,10 @@ TornDown(tearsDown) ==
        /\ Cardinality({p \in TearDownShuts : shutBehaviour[p] = "hangs"}) <= Step.shuts - Step.returned
        /\ Cardinality({p \in TearDownShuts : shutBehaviour[p] = "ok"}) <= Step.returned - Step.threw
 
-\* The instance is built on P0, which the SDK has reported READY; that READY may still be on its way to the bridge.
+\* The instance is built on P0: which the SDK has reported READY, that READY perhaps still on its way to the bridge, or
+\* which is still initializing when the run begins (an async build; trace_labels.py reads that off the Begin line).
 TInit ==
-    /\ InitWith({[p |-> P0, e |-> "READY"]})
+    /\ IF Trace[1].pending THEN InitAsync ELSE InitWith({[p |-> P0, e |-> "READY"]})
     \* A run that recorded an orphan is an owning instance's (only an owner records them).
     /\ (Trace[1].owner => owns)
     /\ i = 0

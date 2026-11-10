@@ -587,7 +587,7 @@ object LifecycleInterleavingSpec extends ZIOSpecDefault {
         _ <- ZIO.addFinalizer(p0.release)
         _ <- ZIO
           .succeed(ManagedProvider.existing(p0).exists(_.initsInFlightAnywhere > 0))
-          .repeat(Schedule.spaced(10.millis) && Schedule.recurUntil(identity[Boolean]))
+          .repeat(Schedule.spaced(10.millis) && Schedule.recurUntil((inFlight: Boolean) => inFlight))
           .timeout(HoldWait)
         _       <- ZIO.foreachDiscard(trace)(_.begin(p0))
         failed  <- ff.setProvider(p1).either

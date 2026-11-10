@@ -8,6 +8,7 @@ import zio.test._
 import zio.openfeature.internal.ProviderEvaluations
 import dev.openfeature.sdk.{
   EvaluationContext => OFEvaluationContext,
+  EventDetails,
   EventProvider,
   Metadata,
   OpenFeatureAPI,
@@ -152,6 +153,35 @@ object SingleReadyDeliverySpec extends ZIOSpecDefault {
         } yield assertTrue(count == 1L, status == ProviderStatus.Ready)
       }
     } @@ TestAspect.nonFlaky(200),
+    test("a READY from another provider does not release the latch while the current one still initializes") {
+      ZIO.scoped {
+        for {
+          gated <- ZIO.succeed(new GatedProvider("gated"))
+          latch <- ZIO.succeed(new CountDownLatch(1))
+          ff    <- FeatureFlags.buildAsync(
+            gated,
+            domain = Some(domain()),
+            version = None,
+            initialHooks = Nil,
+            statusRef = None,
+            addShutdownFinalizer = true,
+            apiOverride = Some(OpenFeatureAPI.createIsolated()),
+            onReady = Some(latch)
+          )
+          _      <- ff.onReadyEvent(EventDetails.builder().providerName("replaced").build().asInstanceOf[EventDetails])
+          left   <- ZIO.succeed(latch.getCount)
+          before <- ff.providerStatus
+          _      <- ZIO.succeed(gated.release())
+          _      <- awaitCount(latch, 0)
+          after  <- ff.providerStatus
+        } yield assertTrue(
+          left == 1L,
+          before == ProviderStatus.NotReady,
+          latch.getCount == 0L,
+          after == ProviderStatus.Ready
+        )
+      }
+    },
     test("a provider already ready in the slot is reported Ready by the SDK's single replay") {
       ZIO.scoped {
         for {

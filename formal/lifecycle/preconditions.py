@@ -53,7 +53,9 @@ def main():
             sys.exit(f"{action} {pre}: its text no longer occurs exactly once in Lifecycle.tla")
         actions = trace_labels.labels(trace_labels.read(os.path.join(here, "traces", "reject", fixture + ".ndjson")))
         validate.here = here
-        baseline, _ = validate.check(tla_jar, cm_jar, actions)
+        baseline, why = validate.check(tla_jar, cm_jar, actions)
+        if baseline == validate.TOOL:
+            sys.exit(f"reject/{fixture}: {why}")
         if baseline != validate.REJECTED:
             sys.exit(f"reject/{fixture}: {baseline} by the model as it stands, so it shows nothing")
         with tempfile.TemporaryDirectory() as d:
@@ -61,7 +63,9 @@ def main():
                 f.write(spec.replace(old, new))
             shutil.copy(os.path.join(here, "TraceValidation.tla"), d)
             validate.here = d
-            verdict, _ = validate.check(tla_jar, cm_jar, actions)
+            verdict, why = validate.check(tla_jar, cm_jar, actions)
+        if verdict == validate.TOOL:
+            sys.exit(f"reject/{fixture} without {action} {pre}: {why}")
         ok = verdict == validate.ACCEPTED
         print(f"{action} {pre}: {'exercised by' if ok else 'NOT exercised by'} reject/{fixture} ({verdict})")
         if not ok:

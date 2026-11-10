@@ -245,6 +245,9 @@ jobs:
         run: |
           scripts/fetch-asset.sh "https://github.com/${GITHUB_REPOSITORY}/releases/download/${TRACE_TLA_TOOLS_RELEASE}/tla2tools.jar" "${TRACE_TLA_TOOLS_SHA256}" tla2tools.jar
           scripts/fetch-asset.sh "https://github.com/tlaplus/CommunityModules/releases/download/${COMMUNITY_MODULES_VERSION}/CommunityModules-deps.jar" "${COMMUNITY_MODULES_SHA256}" CommunityModules-deps.jar
+      - name: Check that the checker reports a TLC that cannot run as a tool error
+        working-directory: formal/lifecycle
+        run: python3 -m unittest test_validate
       - name: Check that the checker accepts and rejects its fixtures
         working-directory: formal/lifecycle
         # A long trace can take several minutes on a 2-core runner. A fixture left undecided fails this step, and a recorded

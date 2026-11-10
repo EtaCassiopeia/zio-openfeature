@@ -20,7 +20,9 @@ The mapping (formal/lifecycle/README.md, "Trace validation"):
                                         when an event was delivered between SwapReconcile and SwapDone: the model's
                                         step does not include a write that comes after it)
   SwapRollback                       -> SwapRollback, or SwapRollbackUnbound when the swap
-                                        recorded no SdkBind (its registration was refused)
+                                        recorded no SdkBind (its registration was refused), carrying `seenBefore`:
+                                        whether the swap's provider instance appeared on any record before the
+                                        swap's SwapStart, the Begin line included
   OrphanRecorded, no timeout or
     rollback in the same swap        -> SwapFailNoRollback
   ApplySignal(SwapFailed), no other
@@ -119,6 +121,7 @@ def labels(records):
     failed = False
     bound_new = False
     swap_prev = None  # the provider bound when the swap started
+    swap_seen = False  # the swap's provider instance appeared in the run before the swap started
     bound = "q0"  # the provider the slot binds
     gate_down = False  # a swap's GateDown has been recorded, and no initialize() outcome since
     reconcile = None  # the swap's SwapReconcile label, which closes its status
@@ -135,7 +138,7 @@ def labels(records):
     def act(label, **fields):
         entry = {"action": label, "event": "", "state": "", "ok": False, "shuts": -1, "threw": 0, "returned": 0,
                  "owner": owner, "provider": "", "watch": "", "pending": pending,
-                 "pinInits": pin_inits, "status": ""}
+                 "pinInits": pin_inits, "status": "", "seenBefore": False}
         entry.update(fields)
         if label != "Deliver":
             open_delivers.clear()
@@ -174,7 +177,7 @@ def labels(records):
             act("OrphanResolved", provider=claim[0], watch=claim[1])
             claims.remove(claim)
 
-    for r in records[begin + 1:]:
+    for k, r in enumerate(records[begin + 1:], begin + 1):
         point, arg = r["point"], r.get("arg", "")
         if point == "Watchdog":
             return None
@@ -223,6 +226,8 @@ def labels(records):
             in_swap, swap_outcome, rollback, bound_new, failed = True, None, None, False, False
             swap_prev, swap_new = bound, who(r, "providerInstance")
             gate_down, reconcile, swap_status, late_delivery = False, None, "", False
+            swap_seen = bool(swap_new) and any(
+                e.get("providerInstance") == r.get("providerInstance") for e in records[:k])
             continue
         if in_swap:
             succeeded = (re.match(r"(SwapSucceeded|RollbackSucceeded)\((Ready|Stale|Error|Fatal)\b", arg)
@@ -242,7 +247,7 @@ def labels(records):
                 act("SwapTimeout")
             elif point == "SwapRollback" and swap_outcome is None:
                 swap_outcome = "SwapRollback"
-                rollback = act("SwapRollback" if bound_new else "SwapRollbackUnbound")
+                rollback = act("SwapRollback" if bound_new else "SwapRollbackUnbound", seenBefore=swap_seen)
                 bound = swap_prev
             elif point == "OrphanRecorded" and swap_outcome == "SwapRollback":
                 return None

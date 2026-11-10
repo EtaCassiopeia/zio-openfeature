@@ -116,12 +116,18 @@ ShutNext ==
     \/ \E p \in All : Lib("ShutDownOld", Named(p, Step.provider) /\ called' = [called EXCEPT ![p] = @ + 1] /\ UNCHANGED vars)
     \/ Next1 \in {"SwapStart", "OrphanResolved", "ShutdownDone", "ScopeClose"} /\ \E p \in All : Env(SdkShutDownOld(p)) /\ CalledOld(p)
 
+\* A registration is refused when the provider is attached to another API, or another registration's initialize() of
+\* it is running.  A run cannot show either for a provider it has not named before the swap (or names not at all), so
+\* only then is the refusal allowed.  An initialize() of the swap's own provider running in this run would have refused the
+\* SwapStart itself, so the model never reaches a refusal with one running.
+Refusable == ~Step.seenBefore
+
 PlainNext ==
     \/ Lib("SdkBind", SdkBind)
     \/ Lib("SwapDone", SwapDone /\ sdk[swap.new] = Step.state)
     \/ Lib("SwapTimeout", SwapTimeout)
     \/ Lib("SwapFailNoRollback", SwapFailNoRollback)
-    \/ Next1 = "SwapRollbackUnbound" /\ Env(SdkBindFail)
+    \/ Next1 = "SwapRollbackUnbound" /\ Env(SdkBindFail /\ Refusable)
     \/ Lib("SwapRollbackUnbound", SwapRollbackUnbound)
     \/ Lib("SwapReconcile", SwapReconcile /\ WroteStatus)
     \* No probe point records an interrupt of the caller, so the model's own steps for it are free.

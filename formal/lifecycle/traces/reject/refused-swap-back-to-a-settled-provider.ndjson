@@ -1,0 +1,23 @@
+{"seq":0,"point":"Begin","arg":"","provider":"p0","providerInstance":"a0"}
+{"seq":1,"point":"SwapStart","arg":"","provider":"p1","providerInstance":"a1"}
+{"seq":2,"point":"ApplySignal","arg":"SwapStarted"}
+{"seq":3,"point":"SdkBind","arg":""}
+{"seq":4,"point":"InitOutcome","arg":"true","provider":"p1","providerInstance":"a1"}
+{"seq":5,"point":"ApplySignal","arg":"SwapSucceeded(Ready)"}
+{"seq":6,"point":"SwapReconcile","arg":""}
+{"seq":7,"point":"SwapDone","arg":""}
+{"seq":8,"point":"SwapStart","arg":"","provider":"p2","providerInstance":"a2"}
+{"seq":9,"point":"ApplySignal","arg":"SwapStarted"}
+{"seq":10,"point":"SdkBind","arg":""}
+{"seq":11,"point":"InitOutcome","arg":"true","provider":"p2","providerInstance":"a2"}
+{"seq":12,"point":"ApplySignal","arg":"SwapSucceeded(Ready)"}
+{"seq":13,"point":"SwapReconcile","arg":""}
+{"seq":14,"point":"SwapDone","arg":""}
+{"seq":15,"point":"ProviderShutDown","arg":"1","provider":"p1","providerInstance":"a1","caller":"openfeature-provider-thread-1"}
+{"seq":16,"point":"ShutdownReturned","arg":"1 true"}
+{"seq":17,"point":"SwapStart","arg":"","provider":"p1","providerInstance":"a1"}
+{"seq":18,"point":"ApplySignal","arg":"SwapStarted"}
+{"seq":19,"point":"SwapRollback","arg":""}
+{"seq":20,"point":"ApplySignal","arg":"RollbackSucceeded(Ready)"}
+{"seq":21,"point":"SwapReconcile","arg":""}
+{"seq":22,"point":"SwapDone","arg":""}

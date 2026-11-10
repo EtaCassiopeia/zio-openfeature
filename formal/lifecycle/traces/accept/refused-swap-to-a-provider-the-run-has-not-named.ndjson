@@ -1,0 +1,7 @@
+{"seq":0,"point":"Begin","arg":"","provider":"p0","providerInstance":"a0"}
+{"seq":1,"point":"SwapStart","arg":"","provider":"p1","providerInstance":"a1"}
+{"seq":2,"point":"ApplySignal","arg":"SwapStarted"}
+{"seq":3,"point":"SwapRollback","arg":""}
+{"seq":4,"point":"ApplySignal","arg":"RollbackSucceeded(Ready)"}
+{"seq":5,"point":"SwapReconcile","arg":""}
+{"seq":6,"point":"SwapDone","arg":""}

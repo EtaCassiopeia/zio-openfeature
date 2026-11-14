@@ -79,6 +79,22 @@ Taking it around the submission only, and releasing it before the wait, is harml
 waits on the lane while holding a lock and only one lane emission runs at a time. Holding either lock across the wait
 deadlocks: the write lock always, the read lock only once a writer has queued.
 
+## How it is compared with the code
+
+Neither trace validation nor replay: most of the model is the SDK's, and its lock cannot be recorded or driven from this
+repository. `OrderedEmitterSdkSpec` (core) runs the real lane against the real SDK (an isolated `OpenFeatureAPI`) and
+checks the model's claims there:
+
+| Check | What it ties to the model |
+|:--|:--|
+| "the slot follows the order of enqueue while writers keep taking the write lock" | `SlotOrderFollowsReceipt`, `EmissionsLand` and no deadlock, with `Writer`s taking the write lock throughout |
+| "while a setProviderAndWait holds the write lock, one emission is handed over and none lands" | `ERead` waiting on `CanRead`, and `Lane` handing over one emission at a time |
+| "close gives up within its bound behind a held write lock, and what was still queued is never delivered" | `Stalled` and the cut-off `Witness.cfg` shows (`NoDrop` fails under `setProviderAndWait`), with a `setProviderAndWait` on another slot holding the lock in place of one whose `shutDownOld` closes the lane |
+
+Each check fails when the lane's code is changed: dropping `.await()` from `emitAndAwait`, a lane of two threads, and a
+`close()` without its bound. The SDK's own actions (`Emitter`, `Writer`, `Shutdown`) and the mutants where the lane
+holds a lock cannot be put into the code, so they stay in the model only.
+
 ## What is outside the model
 
 - **Time.** `close()`'s bound elapses only while the lane is stalled: its emission waits for the lock, and the lock's

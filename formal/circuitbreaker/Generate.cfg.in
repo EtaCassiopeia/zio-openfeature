@@ -1,0 +1,12 @@
+CONSTANTS
+    Callers = {c1, c2}
+    Signals = {s1, s2}
+    FailureThreshold = 2
+    HalfOpenMaxCalls = 2
+    MaxCalls = 1000
+    MaxDeaths = 3
+    MaxSignals = 1000
+    OutDir = "{out}"
+    Depth = {depth}
+SPECIFICATION GSpec
+ACTION_CONSTRAINT Export

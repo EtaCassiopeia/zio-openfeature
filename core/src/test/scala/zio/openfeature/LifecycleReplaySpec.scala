@@ -1,10 +1,7 @@
 package zio.openfeature
 
-import java.nio.file.{Files, Path, Paths}
-
 import scala.collection.mutable
-import scala.jdk.CollectionConverters._
-import scala.util.{Try, Using}
+import scala.util.Try
 
 import zio._
 import zio.test._
@@ -30,6 +27,8 @@ import zio.openfeature.internal.{
 }
 import zio.openfeature.internal.ProviderRegistration.{Registration, Settled}
 import zio.openfeature.internal.ProviderStatusMachine.Signal
+import zio.openfeature.testsupport.ModelBehaviours
+import zio.openfeature.testsupport.ModelBehaviours.{Act, Behaviour, Json, ModelState, parseBehaviour}
 
 /** Behaviours of the TLA+ model (`formal/lifecycle/Generate.tla`, written by `generate.py`), replayed through
   * `LifecycleStep.step`: after every step the record's library variables must equal the model's. The map from a model
@@ -44,168 +43,25 @@ import zio.openfeature.internal.ProviderStatusMachine.Signal
   */
 object LifecycleReplaySpec extends ZIOSpecDefault {
 
-  // A small JSON reader for what TLC's Json module writes: objects, arrays, strings, integers, booleans and null.
-  sealed trait Json
-  object Json {
-    final case class Str(value: String)             extends Json
-    final case class Num(value: Long)               extends Json
-    final case class Bool(value: Boolean)           extends Json
-    case object Null                                extends Json
-    final case class Arr(items: Vector[Json])       extends Json
-    final case class Obj(fields: Map[String, Json]) extends Json
+  /** What the replay reads of a model state: the lifecycle model's variables. */
+  implicit final class LifecycleModel(m: ModelState) {
+    import m._
 
-    def parse(text: String): Either[String, Json] = {
-      val reader = new Reader(text)
-      for {
-        value <- reader.value()
-        _     <- reader.end()
-      } yield value
-    }
-
-    final private class Reader(text: String) {
-      private var at = 0
-
-      private def skip(): Unit = while (at < text.length && text.charAt(at).isWhitespace) at += 1
-
-      private def fail(what: String): Either[String, Nothing] = Left(s"$what at offset $at")
-
-      def end(): Either[String, Unit] = { skip(); if (at == text.length) Right(()) else fail("trailing text") }
-
-      def value(): Either[String, Json] = {
-        skip()
-        if (at >= text.length) fail("unexpected end")
-        else
-          text.charAt(at) match {
-            case '{'                        => at += 1; obj(Map.empty)
-            case '['                        => at += 1; arr(Vector.empty)
-            case '"'                        => str().map(Str(_))
-            case 't'                        => literal("true", Bool(true))
-            case 'f'                        => literal("false", Bool(false))
-            case 'n'                        => literal("null", Null)
-            case c if c == '-' || c.isDigit => num()
-            case c                          => fail(s"unexpected '$c'")
-          }
-      }
-
-      private def literal(word: String, value: Json): Either[String, Json] =
-        if (text.startsWith(word, at)) { at += word.length; Right(value) }
-        else fail(s"expected $word")
-
-      private def num(): Either[String, Json] = {
-        val start = at
-        if (text.charAt(at) == '-') at += 1
-        while (at < text.length && text.charAt(at).isDigit) at += 1
-        if (at < text.length && (text.charAt(at) == '.' || text.charAt(at) == 'e' || text.charAt(at) == 'E'))
-          fail("a number that is not an integer")
-        else Try(text.substring(start, at).toLong).toOption.map(Num(_)).toRight(s"not an integer at offset $start")
-      }
-
-      private def str(): Either[String, String] = {
-        at += 1
-        val out = new StringBuilder
-        var bad = Option.empty[String]
-        while (bad.isEmpty && at < text.length && text.charAt(at) != '"')
-          text.charAt(at) match {
-            case '\\' if at + 1 < text.length =>
-              text.charAt(at + 1) match {
-                case '"'                         => out += '"'; at += 2
-                case '\\'                        => out += '\\'; at += 2
-                case '/'                         => out += '/'; at += 2
-                case 'n'                         => out += '\n'; at += 2
-                case 't'                         => out += '\t'; at += 2
-                case 'r'                         => out += '\r'; at += 2
-                case 'b'                         => out += '\b'; at += 2
-                case 'f'                         => out += '\f'; at += 2
-                case 'u' if at + 5 < text.length =>
-                  Try(Integer.parseInt(text.substring(at + 2, at + 6), 16)).toOption match {
-                    case Some(code) => out += code.toChar; at += 6
-                    case None       => bad = Some(s"bad unicode escape at offset $at")
-                  }
-                case other => bad = Some(s"bad escape '\\$other' at offset $at")
-              }
-            case c => out += c; at += 1
-          }
-        bad match {
-          case Some(why)                 => Left(why)
-          case None if at >= text.length => fail("unterminated string")
-          case None                      => at += 1; Right(out.toString)
-        }
-      }
-
-      private def arr(items: Vector[Json]): Either[String, Json] = {
-        skip()
-        if (at < text.length && text.charAt(at) == ']') { at += 1; Right(Arr(items)) }
-        else
-          value().flatMap { v =>
-            skip()
-            if (at < text.length && text.charAt(at) == ',') { at += 1; arr(items :+ v) }
-            else if (at < text.length && text.charAt(at) == ']') { at += 1; Right(Arr(items :+ v)) }
-            else fail("expected , or ]")
-          }
-      }
-
-      private def obj(fields: Map[String, Json]): Either[String, Json] = {
-        skip()
-        if (at < text.length && text.charAt(at) == '}') { at += 1; Right(Obj(fields)) }
-        else if (at >= text.length || text.charAt(at) != '"') fail("expected a key")
-        else
-          str().flatMap { key =>
-            skip()
-            if (at >= text.length || text.charAt(at) != ':') fail("expected :")
-            else {
-              at += 1
-              value().flatMap { v =>
-                skip()
-                if (at < text.length && text.charAt(at) == ',') { at += 1; obj(fields + (key -> v)) }
-                else if (at < text.length && text.charAt(at) == '}') { at += 1; Right(Obj(fields + (key -> v))) }
-                else fail("expected , or }")
-              }
-            }
-          }
-      }
-    }
-  }
-
-  /** One state of a behaviour: the model's variables after `act`. */
-  final case class ModelState(act: Act, vars: Map[String, Json]) {
-    private def field(name: String): Json = vars.getOrElse(name, sys.error(s"no variable $name"))
-
-    private def asStr(j: Json): String = j match {
-      case Json.Str(s) => s
-      case other       => sys.error(s"not a string: $other")
-    }
-    private def asNum(j: Json): Long = j match {
-      case Json.Num(n) => n
-      case other       => sys.error(s"not a number: $other")
-    }
-    private def asBool(j: Json): Boolean = j match {
-      case Json.Bool(b) => b
-      case other        => sys.error(s"not a boolean: $other")
-    }
-    private def str(name: String): String            = asStr(field(name))
-    private def bool(name: String): Boolean          = asBool(field(name))
-    private def fun(name: String): Map[String, Json] = field(name) match {
-      case Json.Obj(fields) => fields
-      case other            => sys.error(s"$name is not a function: $other")
-    }
-    private def record(name: String, fields: Map[String, Json], key: String): String =
-      asStr(fields.getOrElse(key, sys.error(s"$name has no field $key")))
-
-    lazy val status: String                   = str("status")
-    lazy val installed: String                = str("installed")
-    lazy val lock: String                     = str("lock")
-    lazy val gate: Boolean                    = bool("gate")
-    lazy val shutDown: Boolean                = bool("shutDown")
-    lazy val closed: Boolean                  = bool("closed")
-    lazy val owns: Boolean                    = bool("owns")
-    lazy val bound: String                    = str("bound")
-    lazy val sdk: Map[String, String]         = fun("sdk").map { case (p, s) => p -> asStr(s) }
-    lazy val inits: Map[String, Long]         = fun("inits").map { case (p, n) => p -> asNum(n) }
-    lazy val prevOf: Map[String, String]      = fun("prevOf").map { case (p, s) => p -> asStr(s) }
-    lazy val oldPending: Map[String, Boolean] = fun("oldPending").map { case (p, b) => p -> asBool(b) }
+    def status: String                   = str("status")
+    def installed: String                = str("installed")
+    def lock: String                     = str("lock")
+    def gate: Boolean                    = bool("gate")
+    def shutDown: Boolean                = bool("shutDown")
+    def closed: Boolean                  = bool("closed")
+    def owns: Boolean                    = bool("owns")
+    def bound: String                    = str("bound")
+    def sdk: Map[String, String]         = fun("sdk").map { case (p, s) => p -> asStr(s) }
+    def inits: Map[String, Long]         = fun("inits").map { case (p, n) => p -> asNum(n) }
+    def prevOf: Map[String, String]      = fun("prevOf").map { case (p, s) => p -> asStr(s) }
+    def oldPending: Map[String, Boolean] = fun("oldPending").map { case (p, b) => p -> asBool(b) }
 
     /** The swap in flight: its new and previous provider, the status before it, and its phase. */
-    lazy val swap: Option[(String, String, String, String)] = field("swap") match {
+    def swap: Option[(String, String, String, String)] = field("swap") match {
       case Json.Str("None") => None
       case Json.Obj(fields) =>
         Some(
@@ -220,10 +76,10 @@ object LifecycleReplaySpec extends ZIOSpecDefault {
     }
 
     /** The provider a swap in flight is registering, whose replacement the code has not recorded yet. */
-    lazy val inFlight: Option[String] = swap.collect { case (p, _, _, "wait") => p }
+    def inFlight: Option[String] = swap.collect { case (p, _, _, "wait") => p }
 
     /** Each orphan entry as the provider left behind and the one watched. */
-    lazy val orphans: Set[(String, String)] = field("orphans") match {
+    def orphans: Set[(String, String)] = field("orphans") match {
       case Json.Arr(items) =>
         items.map {
           case Json.Obj(fields) =>
@@ -246,22 +102,6 @@ object LifecycleReplaySpec extends ZIOSpecDefault {
     )
   }
 
-  /** The action that produced a state, with its parameters. */
-  final case class Act(name: String, params: Map[String, Json]) {
-    def str(name: String): String = params.get(name) match {
-      case Some(Json.Str(s)) => s
-      case other             => sys.error(s"$this has no string $name: $other")
-    }
-    def bool(name: String): Boolean = params.get(name) match {
-      case Some(Json.Bool(b)) => b
-      case other              => sys.error(s"$this has no boolean $name: $other")
-    }
-  }
-
-  object Act {
-    def apply(name: String, params: (String, Json)*): Act = Act(name, params.toMap)
-  }
-
   /** The library variables, as the README's variables table maps them, from either side. */
   final case class Lib(
     status: String,
@@ -274,8 +114,6 @@ object LifecycleReplaySpec extends ZIOSpecDefault {
     shutDown: Boolean,
     closed: Boolean
   )
-
-  final case class Behaviour(name: String, states: List[ModelState])
 
   final case class Mismatch(behaviour: String, step: Int, action: String, what: String) {
     override def toString: String = s"$behaviour step $step ($action): $what"
@@ -813,66 +651,11 @@ object LifecycleReplaySpec extends ZIOSpecDefault {
     )
   }
 
-  // Loading
-
-  def parseBehaviour(name: String, lines: List[String]): Either[String, Behaviour] = {
-    val parsed = lines.zipWithIndex.filter(_._1.trim.nonEmpty).map { case (line, i) =>
-      Json.parse(line).left.map(e => s"$name line ${i + 1}: $e").flatMap {
-        case Json.Obj(fields) =>
-          fields.get("act") match {
-            case Some(Json.Obj(act)) =>
-              act.get("name") match {
-                case Some(Json.Str(actName)) =>
-                  Right(ModelState(Act(actName, act - "name"), fields - "act" - "_action"))
-                case _ => Left(s"$name line ${i + 1}: act has no name")
-              }
-            case _ => Left(s"$name line ${i + 1}: no act")
-          }
-        case _ => Left(s"$name line ${i + 1}: not an object")
-      }
-    }
-    parsed
-      .foldLeft[Either[String, Vector[ModelState]]](Right(Vector.empty)) { (acc, next) =>
-        acc.flatMap(states => next.map(states :+ _))
-      }
-      .flatMap { states =>
-        if (states.size < 2) Left(s"$name: fewer than two states")
-        else if (states.head.act.name != "Init") Left(s"$name: does not start with Init")
-        else Right(Behaviour(name, states.toList))
-      }
-  }
-
-  def files(path: Path): List[Path] =
-    if (Files.isDirectory(path))
-      Using.resource(Files.list(path))(
-        _.iterator().asScala.filter(_.toString.endsWith(".ndjson")).toList.sortBy(_.getFileName.toString)
-      )
-    else if (Files.exists(path)) List(path)
-    else sys.error(s"$path does not exist")
-
-  val location: Option[String] =
-    sys.props
-      .get("zof.lifecycle.behaviours")
-      .orElse(sys.env.get("ZOF_LIFECYCLE_BEHAVIOURS"))
-      .map(_.trim)
-      .filter(_.nonEmpty)
-
-  def load(location: String): Task[List[Behaviour]] =
-    ZIO.attempt(location.split(',').toList.map(_.trim).filter(_.nonEmpty).map(Paths.get(_)).flatMap(files)).flatMap {
-      paths =>
-        ZIO.foreach(paths) { p =>
-          ZIO
-            .attempt(Files.readAllLines(p).asScala.toList)
-            .flatMap(lines =>
-              ZIO.fromEither(parseBehaviour(p.getFileName.toString, lines)).mapError(new IllegalArgumentException(_))
-            )
-        }
-    }
+  private val location: Option[String] =
+    ModelBehaviours.location("zof.lifecycle.behaviours", "ZOF_LIFECYCLE_BEHAVIOURS")
 
   private val loaded: Task[List[Behaviour]] =
-    location.fold[Task[List[Behaviour]]](
-      ZIO.fail(new IllegalStateException("zof.lifecycle.behaviours (or ZOF_LIFECYCLE_BEHAVIOURS) is not set"))
-    )(load)
+    ModelBehaviours.loadRequired(location, "zof.lifecycle.behaviours (or ZOF_LIFECYCLE_BEHAVIOURS)")
 
   // A hand-written behaviour for the checks that need no generated set: the sync build on p0 with a timed-out swap
   // to p1, whose initialize() then throws, so the orphan is settled by the library; then a shutdown and the close.

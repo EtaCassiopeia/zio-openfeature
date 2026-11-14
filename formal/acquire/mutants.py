@@ -19,10 +19,12 @@ CLOSE_FIRST = r'''FixRelease1 ==
     /\ Fix /\ rel = 0 /\ rel' = 1
     /\ CloseCandidate
     /\ UNCHANGED <<pc, real, serving, owned, composed, stackShut>>
+    /\ UNCHANGED attempts
 
 FixRelease2 ==
     /\ Fix /\ rel = 1 /\ rel' = 2
-    /\ (InterruptBetween \/ InterruptInInit \/ (pc \in Stopped /\ UNCHANGED <<pc, real, serving, owned, shutdowns, closed, usedClosed, composed, stackShut>>))
+    /\ (InterruptBetween \/ InterruptInInit \/ (pc \in Stopped /\ UNCHANGED <<pc, real, serving, owned, shutdowns, closed, usedClosed, composed, stackShut>>
+                                                          /\ UNCHANGED attempts))
 
 FixRelease3 == Fix /\ rel = 2 /\ ApiShutdown(3)
 
@@ -47,6 +49,21 @@ cases = {
         (FIX_RELEASE, CLOSE_FIRST)]),
     'the chain does not absorb its second shutdown': ('ShutDownOnce', True, False, True, [
         ('shutdowns + (IF Fix THEN 1 ELSE 2)', 'shutdowns + 2')]),
+    'a late arrival is taken for the attempt in progress': ('AbandonedNeverOwned', True, False, True, [
+        ('Abandoned == \\E a \\in Attempts : LateArrive(a) \\/ LateFail(a)', r'''LateAccepted(a) ==
+    /\ ab[a].st = "running" /\ pc = "attempt"
+    /\ pc' = "accepted" /\ real' = TRUE /\ owned' = "real" /\ realFrom' = a
+    /\ UNCHANGED <<rel, serving, shutdowns, closed, usedClosed, composed, stackShut, att, ab>>
+
+Abandoned == \E a \in Attempts : LateArrive(a) \/ LateFail(a) \/ LateAccepted(a)''')]),
+    'a late arrival is not shut down': ('NoLeak', True, False, True, [
+        ('provider |-> TRUE, shuts |-> 1,', 'provider |-> TRUE, shuts |-> 0,')]),
+    'the timeout closes the scope it abandons': ('NoCloseUnderConstructor', True, False, True, [
+        ('''    /\\ ab' = [ab EXCEPT ![att].st = "running"]  \\* its scope stays open for its constructor''',
+         '''    /\\ ab' = [ab EXCEPT ![att].st = "running", ![att].scopeClosed = TRUE]''')]),
+    'the release closes an abandoned attempt\'s scope': ('NoCloseUnderConstructor', True, False, True, [
+        ("    /\\ ab' = ab  \\* an abandoned attempt's scope is its own fiber's to close",
+         r'''    /\ ab' = [a \in Attempts |-> IF ab[a].st = "running" THEN [ab[a] EXCEPT !.scopeClosed = TRUE] ELSE ab[a]]''')]),
 }
 
 
@@ -63,6 +80,7 @@ def tlc(module, invariant, fix, user_shuts, owning):
     Fix = {str(fix).upper()}
     UserShuts = {str(user_shuts).upper()}
     Owning = {str(owning).upper()}
+    MaxAttempts = 2
 
 SPECIFICATION Spec
 

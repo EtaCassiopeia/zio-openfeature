@@ -67,3 +67,9 @@ The model has one attempt, which is never abandoned, and one release. `AcquireOw
 value that arrives after its attempt was abandoned, the scope an abandoned attempt keeps open until its constructor
 returns, the interrupt that waits for a blocking call to return (`abandonable`), a `compose` that throws, and the real
 `Scope` semantics.
+
+## When its code changes
+
+`code-paths` lists the code this model describes. A pull request that changes one of those files without changing this
+directory states why in its description, with a line `formal/acquire: unaffected because <reason>`; the `Formal model`
+workflow's `model-or-reason` job checks it.

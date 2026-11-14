@@ -91,3 +91,9 @@ deadlocks: the write lock always, the read lock only once a writer has queued.
 - **The delegate's pool size.** It is unbounded, one thread per emission, as the SDK's cached pools are.
 - **Interrupts.** `Awaitable.await()` ignores them, which is why the lane's thread is a daemon. `close()`'s
   `shutdownNow()` cannot cut a stalled wait short, and the model has no interrupt step.
+
+## When its code changes
+
+`code-paths` lists the code this model describes. A pull request that changes one of those files without changing this
+directory states why in its description, with a line `formal/lane: unaffected because <reason>`; the `Formal model`
+workflow's `model-or-reason` job checks it.

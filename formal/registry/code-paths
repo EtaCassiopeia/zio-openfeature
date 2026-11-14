@@ -1,0 +1,5 @@
+# The code formal/registry describes. A pull request that changes one of these files without changing formal/registry/
+# needs a description line 'formal/registry: unaffected because <reason>' (formal/model_or_reason.py).
+core/src/main/scala/zio/openfeature/FeatureFlagRegistry.scala
+core/src/main/scala/zio/openfeature/FeatureFlagsLive.scala
+core/src/main/scala/zio/openfeature/internal/ApiInstances.scala

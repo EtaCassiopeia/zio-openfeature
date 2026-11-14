@@ -1,0 +1,12 @@
+# The code formal/lifecycle describes. A pull request that changes one of these files without changing
+# formal/lifecycle/ needs a description line 'formal/lifecycle: unaffected because <reason>'
+# (formal/model_or_reason.py).
+core/src/main/scala/zio/openfeature/FeatureFlagsLive.scala
+core/src/main/scala/zio/openfeature/internal/Bound.scala
+core/src/main/scala/zio/openfeature/internal/EventBridge.scala
+core/src/main/scala/zio/openfeature/internal/FeatureFlagsFactories.scala
+core/src/main/scala/zio/openfeature/internal/LifecycleState.scala
+core/src/main/scala/zio/openfeature/internal/ManagedProvider.scala
+core/src/main/scala/zio/openfeature/internal/OrphanedProviders.scala
+core/src/main/scala/zio/openfeature/internal/ProviderRegistration.scala
+core/src/main/scala/zio/openfeature/internal/ProviderStatusMachine.scala

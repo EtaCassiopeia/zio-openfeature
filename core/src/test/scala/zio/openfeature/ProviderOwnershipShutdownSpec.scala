@@ -1,6 +1,7 @@
 package zio.openfeature
 
 import zio._
+import zio.stream.SubscriptionRef
 import zio.test._
 import zio.openfeature.internal.{
   Bound,
@@ -57,14 +58,15 @@ object ProviderOwnershipShutdownSpec extends ZIOSpecDefault {
     provider: FeatureProvider,
     domain: Option[String],
     initTimeout: Duration,
-    owns: Boolean = false
+    owns: Boolean = false,
+    statusRef: Option[SubscriptionRef[ProviderStatus]] = None
   ): ZIO[Scope, Throwable, FeatureFlagsLive] =
     FeatureFlags.build(
       provider,
       domain = domain,
       version = None,
       initialHooks = Nil,
-      statusRef = None,
+      statusRef = statusRef,
       addShutdownFinalizer = owns,
       apiOverride = Some(api),
       initTimeout = initTimeout
@@ -134,6 +136,33 @@ object ProviderOwnershipShutdownSpec extends ZIOSpecDefault {
         held  <- ZIO.succeed(api.getProvider() eq provider)
         _     <- ZIO.succeed(provider.gate.countDown())
       } yield assertTrue(failedWith[TimeoutException](exit), count == 0, held)
+    },
+    test("a build whose wait times out leaves its status Error, and a READY after the failure does not reach it") {
+      val api      = OpenFeatureAPI.createIsolated()
+      val provider = new Gated()
+      val readies  = new AtomicInteger(0)
+      for {
+        status <- SubscriptionRef.make[ProviderStatus](ProviderStatus.NotReady)
+        _      <- ZIO.succeed(api.setProvider(provider))
+        _      <- ZIO.succeed(api.onProviderReady { _ => readies.incrementAndGet(); () })
+        out    <- ZIO.scoped {
+          // Read inside the build's scope: closing it removes the bridge's handlers anyway.
+          syncBuild(api, provider, Some("d"), 300.millis, statusRef = Some(status)).exit.flatMap { exit =>
+            for {
+              failed <- status.get
+              // initialize() returns, so the SDK sends the provider's READY.
+              _     <- ZIO.succeed(provider.gate.countDown())
+              ready <- Live.live(ZIO.succeed(readies.get).repeatUntil(_ > 0).timeout(5.seconds))
+              moved <- Live.live(status.get.repeatUntil(_ != ProviderStatus.Error).timeout(500.millis))
+            } yield assertTrue(
+              failedWith[TimeoutException](exit),
+              failed == ProviderStatus.Error,
+              ready.isDefined,
+              moved.isEmpty
+            )
+          }
+        }
+      } yield out
     },
     test("the same when the user registered it in the build's own slot") {
       val api      = OpenFeatureAPI.createIsolated()

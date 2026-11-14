@@ -1,0 +1,5 @@
+# The code formal/circuitbreaker describes. A pull request that changes one of these files without changing
+# formal/circuitbreaker/ needs a description line 'formal/circuitbreaker: unaffected because <reason>'
+# (formal/model_or_reason.py).
+extras/src/main/scala/zio/openfeature/extras/CircuitBreaker.scala
+extras/src/main/scala/zio/openfeature/extras/CircuitBreakerProvider.scala

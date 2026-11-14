@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`fromAcquireAsync` no longer shuts a provider down while its `verify` is still running.** An attempt whose
+  `constructionTimeout` or layer release landed during a blocking `verify` released the candidate at once: its
+  `shutdown()` ran and `acquire`'s `Scope` closed while `verify` could still be using both. The attempt now keeps them,
+  as it already did for a blocking constructor, and releases them once `verify` returns (#875).
+
 ## [2.2.0] — 2026-11-05
 
 ### Changed

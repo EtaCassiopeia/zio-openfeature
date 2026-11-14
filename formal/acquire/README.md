@@ -19,6 +19,7 @@ python3 mutants.py tla2tools.jar
 | `Fix` | `TRUE` is the ownership design. `FALSE` is the code at 2.0.0, kept so its traces stay checkable |
 | `UserShuts` | `acquire`'s finalizer also calls `shutdown()`, the idiom the 2.0.0 scaladoc pointed at. The design's configs leave it off: the library can't deduplicate a call on the raw provider |
 | `Owning` | The layer's release shuts the API down, so the serving stack goes with it. `AcquireShared.cfg` turns it off: the stack stays bound and the API's owner shuts it down |
+| `MaxAttempts` | Attempts the retry schedule allows (`attempt.retry(constructionRetry)`); 2 in both configs, so an attempt can start while an abandoned one's constructor still runs |
 
 ## Actions and the code
 
@@ -29,22 +30,29 @@ python3 mutants.py tla2tools.jar
 | `Compose` | The uninterruptible step that runs `compose` and moves `owned` to the stack |
 | `InitOk`, `InitFails` | `boundedInitialize`. A failing chain has already shut itself down, and `LongAwareMultiProvider.shutdown` absorbs the second call |
 | `SwitchOk`, `SwitchRefused` | `switchProvider`, uninterruptible with the clearing of `owned`. A refusal goes to `discard` |
-| `InterruptBetween`, `InterruptInInit` | The fiber's interrupt. The design attaches nothing to it: the finalizer covers what is owned |
-| `FixRelease1` to `FixRelease3` | The layer's finalizers, in reverse order of registration: the fiber's interrupt, the API's shutdown, then what is still owned and the candidate |
+| `Timeout` | The attempt's `Timeouts.failAfter` fires while it waits for its constructor: `abandonable` gives up on it and its `onError` marks it `Abandoned`. The next attempt starts, or construction fails |
+| `AcquireFails` | The constructor fails or is interrupted: its `onError` closes the attempt's scope, with no provider |
+| `LateArrive(a)` | An abandoned attempt's constructor returns: it sees `Abandoned`, shuts the provider down, then closes the attempt's scope |
+| `LateFail(a)` | An abandoned attempt's constructor fails, or is interrupted once it suspends (`interruptOnceSuspended`): its scope closes |
+| `InterruptBetween`, `InterruptInInit` | The fiber's interrupt. The design attaches nothing to it: the finalizer covers what is owned. An attempt still waiting for its constructor is abandoned, as on a timeout |
+| `FixRelease1` to `FixRelease3` | The layer's finalizers, in reverse order of registration: the fiber's interrupt, the API's shutdown, then what is still owned and the candidate, which is only ever an accepted attempt's scope |
 
 ## Invariants
 
 | Invariant | What it says |
 |:--|:--|
-| `NoLeak` | At the end of a release, a provider `acquire` returned has been shut down, unless it is still bound to a shared API |
+| `NoLeak` | At the end of a release, a provider `acquire` returned has been shut down, unless it is still bound to a shared API; an abandoned attempt's, once no constructor still runs |
 | `NoStackLeak` | The same for the stack, and so for the fresh fallback in it |
-| `ShutDownOnce` | No provider is shut down twice |
-| `ShutDownBeforeResources` | A provider's `shutdown()` runs before its resources close |
-| `FinalizersRun` | `acquire`'s finalizers run, whatever happened |
+| `ShutDownOnce` | No provider is shut down twice, per attempt |
+| `ShutDownBeforeResources` | A provider's `shutdown()` runs before its resources close, per attempt |
+| `FinalizersRun` | `acquire`'s finalizers run for every attempt whose constructor has returned |
+| `NoCloseUnderConstructor` | No attempt's scope is closed while its constructor may still be using it: the rule `acquireAttempt`'s doc states |
+| `AbandonedNeverOwned` | A provider an abandoned attempt returns is never owned or handed on, and so never served |
 
 `mutants.py` checks that the code at 2.0.0 breaks the first four, with 2 shutdowns from the library alone and 3 with a
-user finalizer, and puts each bug the design excludes into the model. Each is checked against the one invariant named
-for it, so none passes vacuously.
+user finalizer, and puts each bug the design excludes into the model, including a late arrival taken for the attempt in
+progress, a late arrival not shut down, and a timeout or a release that closes an abandoned attempt's scope. Each is
+checked against the one invariant named for it, so none passes vacuously.
 
 ## What ties this to the code
 
@@ -60,10 +68,23 @@ rules on the real code, so change the two together.
 | `ShutDownOnce` | "initialize fails under the default compose, bare", "racing the end of initialize", "two shutdowns reach each member once" |
 | `ShutDownBeforeResources` | "an owning instance shuts the provider down before a resource acquire registered closes", "initialize fails: the provider shuts down before a resource acquire registered closes" |
 | `FinalizersRun` | "a stack still bound to a shared API is left to that API's owner, and the resource closes" |
+| `NoCloseUnderConstructor` | "a blocking constructor keeps its resource until it returns, then shuts down before the resource closes" |
+| `AbandonedNeverOwned` | "the attempt times out and the constructor returns later: once", "verify does not run on a provider that arrived after its attempt was abandoned" |
 
 ## Out of reach
 
-The model has one attempt, which is never abandoned, and one release. `AcquireOwnershipSpec` alone covers: retries, a
-value that arrives after its attempt was abandoned, the scope an abandoned attempt keeps open until its constructor
-returns, the interrupt that waits for a blocking call to return (`abandonable`), a `compose` that throws, and the real
-`Scope` semantics.
+The model has one release, and verify is part of the step that accepts an attempt. So it does not see an attempt whose
+timeout or interrupt lands while verify is still running: the code then releases the provider, shutting it down and
+closing the attempt's scope, while verify may still be using it, and the timed-out attempt is retried ("the attempt
+times out during verify: once" pins the shutdown count). An attempt after a rejected one is not modelled either: the
+rejected provider is shut down and its scope closed before the retry starts, the state `LateArrive` leaves. The next
+attempt starts as soon as one times out, where the code first waits for the retry's delay: the model has more
+behaviours there than the code, never fewer.
+`AcquireOwnershipSpec` alone covers how long the interrupt waits for a blocking call to return (`abandonable`'s bound),
+a `compose` that throws, and the real `Scope` semantics.
+
+## When its code changes
+
+`code-paths` lists the code this model describes. A pull request that changes one of those files without changing this
+directory states why in its description, with a line `formal/acquire: unaffected because <reason>`; the `Formal model`
+workflow's `model-or-reason` job checks it.

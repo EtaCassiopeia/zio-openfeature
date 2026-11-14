@@ -124,3 +124,9 @@ terminate.
   the current state is, by contract. Only direct use of the engine reaches them, so the model records with permits.
 - **The returned booleans.** `didClose` and `didOpen` drive the wrapper's emissions, and are not modelled.
 - **Long overflow.** Epochs and failure counts are unbounded in the model's types, and only reach the budgets.
+
+## When its code changes
+
+`code-paths` lists the code this model describes. A pull request that changes one of those files without changing this
+directory states why in its description, with a line `formal/circuitbreaker: unaffected because <reason>`; the `Formal
+model` workflow's `model-or-reason` job checks it.

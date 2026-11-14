@@ -44,6 +44,10 @@ Step == Trace[i + 1]
 \* A recorded ERROR is the SDK's PROVIDER_ERROR, which carries a fatal one too.
 Recorded(e) == IF Step.event = "ERROR" THEN e \in {"ERROR", "FATAL"} ELSE e = Step.event
 
+\* The run delivers an event of kind e after its next step (a recorded ERROR carries a fatal one too).
+DeliveredLater(e) ==
+    \E k \in (i + 2)..Len(Trace) : Trace[k].action = "Deliver" /\ Trace[k].event = (IF e = "FATAL" THEN "ERROR" ELSE e)
+
 Lib(label, A) == Next1 = label /\ A /\ i' = i + 1
 Env(A) == A /\ UNCHANGED i
 
@@ -143,15 +147,14 @@ PlainNext ==
     \/ /\ Next1 = "Deliver" /\ ~\E ev \in events : ev.p = bound /\ Recorded(ev.e)
        /\ \E e \in {"READY", "STALE", "ERROR", "FATAL"} : Recorded(e) /\ Env(Emit(bound, e))
     \* A step that must write a given status reads the SDK's state, which an emit the run has not delivered yet may have
-    \* set.  A delivery's own kind may be emitted again even while one of it is pending; a reconcile may read only an emit
-    \* the run delivers later.  Any emit at all would let the model write the status a wrong run recorded.
+    \* set: the SDK sets the state in the emit task and runs the handlers on another pool, so a later emit can overtake
+    \* an earlier event's handler.  A delivery's own kind may be emitted again even while one of it is pending; a
+    \* delivery or a reconcile may also read an emit of a kind the run delivers later.  Any emit at all would let the
+    \* model write the status a wrong run recorded.
     \/ /\ Next1 = "Deliver" /\ Step.status # ""
-       /\ \E e \in {"READY", "STALE", "ERROR", "FATAL"} : Recorded(e) /\ Env(Emit(bound, e))
+       /\ \E e \in {"READY", "STALE", "ERROR", "FATAL"} : (Recorded(e) \/ DeliveredLater(e)) /\ Env(Emit(bound, e))
     \/ /\ Next1 = "SwapReconcile" /\ Step.status # ""
-       /\ \E e \in {"READY", "STALE", "ERROR", "FATAL"} :
-            /\ \E k \in (i + 2)..Len(Trace) :
-                 Trace[k].action = "Deliver" /\ Trace[k].event = (IF e = "FATAL" THEN "ERROR" ELSE e)
-            /\ Env(Emit(bound, e))
+       /\ \E e \in {"READY", "STALE", "ERROR", "FATAL"} : DeliveredLater(e) /\ Env(Emit(bound, e))
 
 \* Recorded runs carry no evaluations (MaxEvals = 0).
 TraceStep ==

@@ -281,9 +281,12 @@ wrote none, or when an event was delivered between its `SwapReconcile` and `Swap
 step the model compares), and `Deliver` the status written right after it (when one delivery alone is waiting for its
 write, and not for `Fatal`). A delivery inside a swap after `GateDown`, from the provider the slot binds, is a `Deliver`
 too: the code's gate is down there, the model's drops it and the reconcile reads the state the event reported. Such a
-step reads the SDK's state, which an emit not delivered yet may have set, so the model may emit first: for a `Deliver`
-only its own kind, even while one is pending, and for a `SwapReconcile` only a kind the run delivers later. A wider
-rule would let the model emit whatever status a wrong run recorded. The
+step reads the SDK's state, which an emit not delivered yet may have set (the SDK sets the state in the emit task and
+runs the handlers on a separate pool, so a later emit can overtake an earlier event's handler), so the model may emit
+first: for a `Deliver` its own kind, even while one is pending, and for either step a kind the run delivers later
+(fixtures `accept/recorded-delivery-reads-a-later-emit`, `reject/delivery-writes-a-state-no-later-emit-set`). A wider
+rule would let the model emit whatever status a wrong run recorded. Not covered: an overtaking emit delivered while a
+swap's gate is up is dropped by the labels, so a status it set is still rejected. The
 statuses the other steps leave are not compared, which `LifecycleModelSpec`'s own oracle does. A trace TLC cannot decide in time is reported as
 undecided without failing the run, and a run that checks no trace at all fails. A TLC that cannot run, or whose output
 says neither way, is a tool error, never a rejection, and fails the run and both halves of the self-test

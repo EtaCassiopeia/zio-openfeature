@@ -154,8 +154,11 @@ and add it to the reach table.
 
 **Model checking.** `formal/` holds TLA+ models of the library's concurrent protocols. The `Formal model` workflow
 checks them with TLC, on a pull request that touches `formal/`, the workflow, or the code a model maps (the paths are
-listed in the workflow), and on `main`. A pull request that changes the lifecycle code without changing the model says
-why, in a description line starting `formal: unaffected because`.
+listed in the workflow), and on `main`. Each model lists the code it describes in `formal/<model>/code-paths`. A pull
+request that changes one of those files without changing that model says why, in a description line `formal/<model>:
+unaffected because <reason>`, one per model (a file two models list needs both lines); the bare `formal: unaffected
+because` still counts for the lifecycle. The `model-or-reason` job checks this, and that every listed file is in the
+workflow's path filters.
 
 | Model | What it checks | Configs and tools | README |
 |:------|:---------------|:------------------|:-------|

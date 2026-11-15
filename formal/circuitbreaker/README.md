@@ -25,29 +25,16 @@ blocks.
 
 ## Actions and the code
 
-Line numbers are of `CircuitBreaker.scala`.
-
-| Model | Code |
-|:--|:--|
-| `st` | `stateRef`, `CircuitBreakerState(circuit, consecutiveFailures, epoch)` (69) |
-| `Transition` | `transition` (155): every circuit transition bumps the epoch |
-| `CAcquireRead` | `acquire` (124): a closed circuit admits on the read alone; `ProbeFrom` is `probeFrom` (142) |
-| `CAcquireCas` | `acquire`'s `compareAndSet` (133). A lost one decides again (136) |
-| `CEvaluate`, first branch | environment: a probe dies, and never records. Its permit is gone and its slot stays occupied |
-| `CRecordRead` | `current(permit)` (163), then the decision of `recordSuccess` (179), `recordReachable` (217) or `recordFailure` (247), in `RecordNext` |
-| `CRecordCas` | the `compareAndSet` of those three (189, 194, 197, 226, 230, 257, 260) |
-| `SRead`, `SCas` with a `Trip` | `trip(reason, stale)` (279), in `TripNext` |
-| `SRead`, `SCas` with a `Reset` | `resetIf(opener)` (303), in `ResetNext`. Openers `{External, Polled}` are `reset()` (298), an event READY; `{Polled}` is `resetIfOpenedBy(Polled)` (301), a polled READY |
-| `SRead`, `SCas` with `ToHalfOpen` | `transitionToHalfOpen` (319), in `ToHalfOpenNext` |
-| `CTick`, `resetElapsed` | `ResetTimeoutElapses`: `now - sinceNanos >= resetTimeout` (145) |
-| `CTick`, `probeElapsed` | `ProbeTimeoutElapses`: `now - probeStartNanos >= probeTimeout` (151) |
+`replay-map.md` maps each model action to the code it stands for, by name, and says what the replay calls at each step.
+`CircuitBreakerReplaySpec` replays the model's behaviours through the real class, so the map is checked rather than
+trusted.
 
 Why the abstraction of time is safe:
 
 - **CAS equality.** `sinceNanos` and `probeStartNanos` are not in `st`, but they only change together with the epoch, so
   equality over `st` decides each `compareAndSet` as equality over the real state does.
 - **The deadlines.** A flag may flip at any moment, which covers every real schedule. An open-to-open step keeps
-  `sinceNanos` (285, 287), so it keeps `resetElapsed`. Any other transition clears both flags.
+  `sinceNanos`, so it keeps `resetElapsed`. Any other transition clears both flags.
 - **The clock read.** The code reads the clock just after the state, and the model reads both at once. It makes no
   difference: if the state moved in between, the `compareAndSet` fails and the decision is thrown away.
 
@@ -124,3 +111,39 @@ terminate.
   the current state is, by contract. Only direct use of the engine reaches them, so the model records with permits.
 - **The returned booleans.** `didClose` and `didOpen` drive the wrapper's emissions, and are not modelled.
 - **Long overflow.** Epochs and failure counts are unbounded in the model's types, and only reach the budgets.
+
+## Replay against the code
+
+The model's behaviours are replayed through the real class: `Generate.tla` labels each step of a random walk, TLC writes
+the walks, and `CircuitBreakerReplaySpec` drives `CircuitBreaker` with the call each step stands for and compares the
+state after every step. `replay-map.md` is the map. `formal/generate.py` generates the walks, then the spec replays
+them:
+
+```sh
+python3 ../generate.py . tla2tools.jar CommunityModules-deps.jar /tmp/breaker-behaviours \
+    --actions pluscal:CircuitBreaker.tla --num 2000 --depth 40 --seed 7
+# from the repository root:
+sbt "-Dzof.breaker.behaviours=/tmp/breaker-behaviours,formal/circuitbreaker/mbt-regressions" \
+    "extras/testOnly zio.openfeature.extras.CircuitBreakerReplaySpec"
+```
+
+`tla2tools.jar` is TLC 1.8 and `CommunityModules-deps.jar` is the community modules' (Json). Without
+`zof.breaker.behaviours` (or `ZOF_BREAKER_BEHAVIOURS`) the spec is ignored, unless `ZOF_BREAKER_BEHAVIOURS_REQUIRED` is
+set, when it fails.
+
+`mbt-regressions/` holds the shortest behaviours that reach each case a random walk reaches only by luck (the probes
+that close the circuit, a takeover, a reset that meets `Open(Failures)`), written by `targets.py`, plus any behaviour that
+once failed the replay. They are replayed on every run.
+
+**What stays out of reach.**
+
+- The CAS retry loops: the replay sends no input at a lost `compareAndSet`, since the code retries inside the call.
+  `CircuitBreakerLincheckSpec` checks that the class is linearizable, and the replay assumes it.
+- The permit-less API (`recordSuccess()` and the like), which the model does not have.
+- `CircuitBreakerProvider`'s evaluation timeout, error classification and event plumbing.
+
+## When its code changes
+
+`code-paths` lists the code this model describes. A pull request that changes one of those files without changing this
+directory states why in its description, with a line `formal/circuitbreaker: unaffected because <reason>`; the `Formal
+model` workflow's `model-or-reason` job checks it.

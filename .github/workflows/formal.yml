@@ -1,11 +1,11 @@
 name: Formal model
 
-# TLC checks the provider-lifecycle model (formal/lifecycle) on every change to it and to the lifecycle code it models.
-# A pull request that changes the lifecycle code without changing the model says why in its description. TLC also checks
-# the recovery properties under fairness (Liveness.cfg), an evaluation's re-check against swaps (Evaluation.cfg), and
-# that a provider's silent death stays reachable and unreported (witness.py). On main and on demand, the mutants also
-# run: each fixed lifecycle bug, each evaluation bug and each progress bug is put back into the model and must be
-# caught.
+# TLC checks the provider-lifecycle model (formal/lifecycle) on every change to it and to the lifecycle code it
+# models. A pull request that changes the code any model describes (formal/<model>/code-paths) without changing that
+# model says why in its description, one line per model. TLC also checks the recovery properties under fairness
+# (Liveness.cfg), an evaluation's re-check against swaps (Evaluation.cfg), and that a provider's silent death stays
+# reachable and unreported (witness.py). On main and on demand, the mutants also run: each fixed lifecycle bug, each
+# evaluation bug and each progress bug is put back into the model and must be caught.
 # TLAPS proves the lifecycle model's structural invariants for all sizes (LifecycleProofs.tla).
 # The registry model (formal/registry) checks the ownership rules of one API shared by several instances, with its
 # mutants.
@@ -31,7 +31,6 @@ on:
       - 'core/src/main/scala/zio/openfeature/internal/ProviderRegistration.scala'
       - 'core/src/main/scala/zio/openfeature/internal/ProviderStatusMachine.scala'
       - 'core/src/main/scala/zio/openfeature/internal/OrphanedProviders.scala'
-      - 'core/src/main/scala/zio/openfeature/internal/SwitchableProvider.scala'
       - 'core/src/main/scala/zio/openfeature/internal/FeatureFlagsFactories.scala'
       - 'core/src/main/scala/zio/openfeature/internal/LongAwareMultiProvider.scala'
       - 'core/src/main/scala/zio/openfeature/internal/LifecycleProbe.scala'
@@ -39,6 +38,8 @@ on:
       - 'core/src/main/scala/zio/openfeature/internal/ManagedProvider.scala'
       - 'core/src/main/scala/zio/openfeature/internal/LifecycleState.scala'
       - 'core/src/test/scala/zio/openfeature/LifecycleReplaySpec.scala'
+      - 'test-support/src/test/scala/zio/openfeature/testsupport/ModelBehaviours.scala'
+      - 'extras/src/test/scala/zio/openfeature/extras/CircuitBreakerReplaySpec.scala'
       - 'extras/src/main/scala/zio/openfeature/extras/CircuitBreaker.scala'
       - 'extras/src/main/scala/zio/openfeature/extras/CircuitBreakerProvider.scala'
       - 'testkit/src/test/scala/zio/openfeature/testkit/TraceProbe.scala'
@@ -59,7 +60,6 @@ on:
       - 'core/src/main/scala/zio/openfeature/internal/ProviderRegistration.scala'
       - 'core/src/main/scala/zio/openfeature/internal/ProviderStatusMachine.scala'
       - 'core/src/main/scala/zio/openfeature/internal/OrphanedProviders.scala'
-      - 'core/src/main/scala/zio/openfeature/internal/SwitchableProvider.scala'
       - 'core/src/main/scala/zio/openfeature/internal/FeatureFlagsFactories.scala'
       - 'core/src/main/scala/zio/openfeature/internal/LongAwareMultiProvider.scala'
       - 'core/src/main/scala/zio/openfeature/internal/LifecycleProbe.scala'
@@ -67,6 +67,8 @@ on:
       - 'core/src/main/scala/zio/openfeature/internal/ManagedProvider.scala'
       - 'core/src/main/scala/zio/openfeature/internal/LifecycleState.scala'
       - 'core/src/test/scala/zio/openfeature/LifecycleReplaySpec.scala'
+      - 'test-support/src/test/scala/zio/openfeature/testsupport/ModelBehaviours.scala'
+      - 'extras/src/test/scala/zio/openfeature/extras/CircuitBreakerReplaySpec.scala'
       - 'extras/src/main/scala/zio/openfeature/extras/CircuitBreaker.scala'
       - 'extras/src/main/scala/zio/openfeature/extras/CircuitBreakerProvider.scala'
       - 'testkit/src/test/scala/zio/openfeature/testkit/TraceProbe.scala'
@@ -280,6 +282,26 @@ jobs:
           name: lifecycle-behaviours
           path: behaviours/
           retention-days: 14
+      # The circuit breaker the same way: behaviours of formal/circuitbreaker replayed through the real CircuitBreaker
+      # (formal/circuitbreaker/replay-map.md), with the targeted ones in its mbt-regressions.
+      - name: Generate behaviours of the circuit breaker model
+        env:
+          NUM: ${{ github.event_name == 'schedule' && '20000' || '2000' }}
+          SEED: ${{ github.event_name == 'schedule' && github.run_id || '7' }}
+        run: |
+          echo "seed ${SEED}, ${NUM} behaviours"
+          python3 formal/generate.py formal/circuitbreaker tla2tools.jar CommunityModules-deps.jar "${GITHUB_WORKSPACE}/breaker-behaviours" --actions pluscal:CircuitBreaker.tla --num "${NUM}" --depth 40 --seed "${SEED}"
+      - name: Replay the behaviours through the circuit breaker
+        env:
+          ZOF_BREAKER_BEHAVIOURS_REQUIRED: '1'
+        run: sbt "-Dzof.breaker.behaviours=${GITHUB_WORKSPACE}/breaker-behaviours,${GITHUB_WORKSPACE}/formal/circuitbreaker/mbt-regressions" "extras/testOnly zio.openfeature.extras.CircuitBreakerReplaySpec"
+      - name: Keep the circuit breaker's behaviours
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: breaker-behaviours
+          path: breaker-behaviours/
+          retention-days: 14
       - name: Record the lifecycle test suites' runs
         if: github.event_name != 'pull_request'
         env:
@@ -329,7 +351,8 @@ jobs:
           python3 witness.py ../../tla2tools.jar
           python3 mutants.py ../../tla2tools.jar
 
-  # A lifecycle change without a model change is fine when it does not affect the protocol, but the author says so.
+  # A change to the code a model describes goes with that model, or the description says why not, for every model:
+  # each one lists its code in formal/<model>/code-paths, and every listed file must be in the path filters above.
   model-or-reason:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
@@ -338,27 +361,19 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+      - name: Check the rule's own tests
+        working-directory: formal
+        run: python3 -m unittest test_model_rules
+      - name: Check every model's code is in the path filters
+        working-directory: formal
+        run: python3 check_paths.py
       - name: Require a model change or a stated reason
+        working-directory: formal
         env:
           BASE: ${{ github.event.pull_request.base.sha }}
           HEAD: ${{ github.event.pull_request.head.sha }}
           BODY: ${{ github.event.pull_request.body }}
-        run: |
-          changed=$(git diff --name-only "$BASE...$HEAD")
-          lifecycle=$(printf '%s\n' "$changed" | grep -E '^core/src/main/scala/zio/openfeature/(FeatureFlagsLive|internal/(EventBridge|ProviderRegistration|ProviderStatusMachine|OrphanedProviders|SwitchableProvider|FeatureFlagsFactories))\.scala$' || true)
-          model=$(printf '%s\n' "$changed" | grep -E '^formal/' || true)
-          if [ -z "$lifecycle" ] || [ -n "$model" ]; then
-            echo "Nothing to check: no lifecycle file changed, or the model changed with it."
-            exit 0
-          fi
-          if printf '%s\n' "$BODY" | grep -qiE '^formal: unaffected because .+'; then
-            echo "The description states why the model is unaffected."
-            exit 0
-          fi
-          echo "::error::This pull request changes the lifecycle code without changing formal/lifecycle:"
-          printf '%s\n' "$lifecycle"
-          echo "::error::Update the model, or add a line to the description: 'formal: unaffected because <reason>'."
-          exit 1
+        run: python3 model_or_reason.py "$BASE" "$HEAD"
 
   # The cache model (formal/caching): the checked-in translation must match the PlusCal, then the epoch, failed-lookup and
   # joiner properties (Caching.cfg), the documented limits (witness.py) and the bugs the cache's design excludes

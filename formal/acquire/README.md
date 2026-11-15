@@ -82,3 +82,9 @@ the attempt's timeout lands during that release. The next attempt starts as soon
 waits for the retry's delay: the model has more behaviours there than the code, never fewer.
 `AcquireOwnershipSpec` alone covers how long the interrupt waits for a blocking call to return (`abandonable`'s bound),
 a `compose` that throws, and the real `Scope` semantics.
+
+## When its code changes
+
+`code-paths` lists the code this model describes. A pull request that changes one of those files without changing this
+directory states why in its description, with a line `formal/acquire: unaffected because <reason>`; the `Formal model`
+workflow's `model-or-reason` job checks it.

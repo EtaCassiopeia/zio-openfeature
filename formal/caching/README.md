@@ -115,3 +115,9 @@ epoch. So the mutant counts the invalidation from its clear, and the witness wit
   at its old version after the invalidation, and no cache could tell.
 - **`shutdown` and direct `invalidateAll` calls.** They run the same two steps as `Invalidator`, whose `covers` reads the
   version at the first step, so a call with no change is a weaker case of the one modelled.
+
+## When its code changes
+
+`code-paths` lists the code this model describes. A pull request that changes one of those files without changing this
+directory states why in its description, with a line `formal/caching: unaffected because <reason>`; the `Formal model`
+workflow's `model-or-reason` job checks it.

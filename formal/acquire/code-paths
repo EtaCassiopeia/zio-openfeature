@@ -1,0 +1,3 @@
+# The code formal/acquire describes. A pull request that changes one of these files without changing formal/acquire/
+# needs a description line 'formal/acquire: unaffected because <reason>' (formal/model_or_reason.py).
+core/src/main/scala/zio/openfeature/internal/FeatureFlagsFactories.scala

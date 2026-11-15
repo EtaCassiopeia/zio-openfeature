@@ -64,7 +64,7 @@ jobs:
       # The root `scalafmtCheckAll` only reaches aggregated modules, so the non-aggregated provider fault tests (#470)
       # are named explicitly.
       - name: Check formatting
-        run: sbt scalafmtCheckAll scalafmtSbtCheck providerFaultTests/scalafmtCheckAll fuzz/scalafmtCheckAll
+        run: sbt scalafmtCheckAll scalafmtSbtCheck providerFaultTests/scalafmtCheckAll fuzz/scalafmtCheckAll simulation/scalafmtCheckAll
 
   # Build + test on every supported (JDK, Scala) pair. The library requires Java 17+.
   # JDK 17, 21 and 25 are the LTS releases that cover the realistic deployment window. The Scala entries name a line:
@@ -207,7 +207,8 @@ jobs:
   # testing story — so a public API change that breaks the documented usage fails CI instead of rotting silently.
   examples:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # Raised from 10 when the simulation joined: it also compiles the core, extras and testkit test sources.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
       - name: Set up JDK 21
@@ -227,6 +228,10 @@ jobs:
       # Compile only: the fuzz targets run in the weekly `Fuzzing` workflow.
       - name: Compile the fuzz targets
         run: sbt "fuzz/Test/compile"
+      # The whole-system simulation runs in-process at its base budget here (about 30 s); the nightly property tests
+      # run it at 10x. It is not aggregated, so `+test` does not reach it.
+      - name: Run the simulation
+        run: sbt "simulation/test"
 
   # Conformance runs the vendored OpenFeature gherkin suite via Cucumber. It is Scala 3 only and not aggregated by
   # root (so `++2.13.x test` doesn't try to compile it), hence its own job on the primary JDK / default Scala.

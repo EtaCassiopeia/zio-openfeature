@@ -643,6 +643,27 @@ lazy val fuzz = (project in file("fuzz"))
     Test / javaOptions += "-XX:+EnableDynamicAgentLoading"
   )
 
+// Whole-system stateful simulation: random provider stacks (cache, breaker, deferred, widening, multi-provider) over
+// scripted leaves, driven by random command sequences and checked against a reference model (sequential mode) and
+// invariants (concurrent mode). Not in the root aggregate; run with `sbt simulation/test` (scale with ZOF_PBT_SCALE,
+// pin with ZOF_PBT_SEED).
+lazy val simulation = (project in file("simulation"))
+  .settings(lintSettings)
+  .dependsOn(core, extras, testkit % "test->test")
+  .settings(
+    name               := "zio-openfeature-simulation",
+    publish / skip     := true,
+    crossScalaVersions := Seq(scala3Version),
+    testFrameworks += new TestFramework("zio.test.sbt.ZTestFramework"),
+    libraryDependencies ++= Seq(
+      "dev.zio" %% "zio-test"     % zioVersion % Test,
+      "dev.zio" %% "zio-test-sbt" % zioVersion % Test
+    ),
+    Test / fork := true,
+    Test / javaOptions += "-XX:+EnableDynamicAgentLoading",
+    Test / unmanagedSourceDirectories += (LocalRootProject / baseDirectory).value / "test-support" / "src" / "test" / "scala"
+  )
+
 // Reference applications. Not published; their value is staying compilable so the README and `examples/README.md`
 // snippets are guaranteed to work against the current public API.
 lazy val examplesCommon = Seq(

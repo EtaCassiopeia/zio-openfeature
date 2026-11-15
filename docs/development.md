@@ -11,6 +11,7 @@
 | `testkit` | `TestFeatureProvider` and the test helpers |
 | `conformance`, `conformance-zio-bdd` | The OpenFeature spec's gherkin suite, run with Cucumber and with zio-bdd; `conformance-zio-bdd` also runs the provider TCK |
 | `provider-fault-tests` | Real providers under network faults (local only; see [Extra checks](#extra-checks)) |
+| `simulation` | Not published. The whole-system simulation: random provider stacks under random commands (see [Extra checks](#extra-checks)) |
 | `examples/docs`, `examples/testkit-app`, `examples/ofrep-init-timeout` | Not published. `docs` holds every code sample on this site, with tests that run them; the others are reference apps |
 
 [Under the hood](architecture.md) has the module dependency diagram.
@@ -38,11 +39,11 @@ also covers the binary-compatibility baselines.
 
 | Job | Run it locally |
 |:----|:---------------|
-| format | `sbt scalafmtCheckAll scalafmtSbtCheck providerFaultTests/scalafmtCheckAll fuzz/scalafmtCheckAll` (`providerFaultTests` and `fuzz` are not aggregated, so format them explicitly) |
+| format | `sbt scalafmtCheckAll scalafmtSbtCheck providerFaultTests/scalafmtCheckAll fuzz/scalafmtCheckAll simulation/scalafmtCheckAll` (`providerFaultTests`, `fuzz` and `simulation` are not aggregated, so format them explicitly) |
 | build and test, JDK 17, 21 and 25, Scala 2.13 and 3 | `sbt +test` |
 | binary compatibility | `sbt +mimaReportBinaryIssues tastyMiMaReportIssues`, then `.github/scripts/check-mima-filters.sh` |
 | published POMs | `sbt +checkPublishedPins +optimizely/checkOptimizelyJsonParser` |
-| examples, and the fault-test and fuzz sources | `sbt examplesOfrepInitTimeout/compile examplesTestkitApp/test examplesDocs/test providerFaultTests/Test/compile fuzz/Test/compile` |
+| examples, the fault-test and fuzz sources, and the simulation | `sbt examplesOfrepInitTimeout/compile examplesTestkitApp/test examplesDocs/test providerFaultTests/Test/compile fuzz/Test/compile simulation/test` |
 | conformance | `sbt conformance/test conformanceZioBdd/test` |
 | gherkin copies in sync (every push); upstream drift (weekly) | `.github/scripts/check-gherkin-drift.sh mirror`; `.github/scripts/check-gherkin-drift.sh upstream main` |
 | provider TCK upstream drift (weekly) | `.github/scripts/check-provider-tck-drift.sh upstream main` |
@@ -140,6 +141,20 @@ ZOF_PBT_SCALE=10 ZOF_PBT_SEED=<seed> sbt "core/testOnly -- -tags property"
 
 A new property test takes `@@ PropertyBudget(n)` from `zio.openfeature.testsupport` (compiled into every module's
 tests), so the nightly run picks it up.
+
+**Whole-system simulation.** The `simulation` module (Scala 3, not published, not aggregated) builds random provider
+stacks (`CachingProvider`, `CircuitBreakerProvider`, `DeferredProvider` and multi-providers over scripted leaf
+providers) and runs random command sequences against them: evaluations, swaps between stacks, flag and fault changes,
+provider events and shutdown. `SequentialSimulationSpec` checks every answer, hook stage and shutdown against a pure
+reference model. `ConcurrentSimulationSpec` races evaluation workers against a swapper and a mutator and checks
+invariants only (no defects, hook totals, every provider shut down). A failure prints the command trace up to the
+first divergence, and each run prints coverage counters, so a generator that stops reaching a path shows up. Both
+tests carry `PropertyBudget`, so pull requests run the base count and the nightly runs them at 10×. Replay with the
+printed seed:
+
+```sh
+ZOF_PBT_SCALE=10 ZOF_PBT_SEED=<seed> sbt simulation/test
+```
 
 **Deterministic interleavings.** Random timing finds lifecycle races slowly and cannot replay them, so
 `LifecycleInterleavingSpec` (testkit) enumerates them instead. The lifecycle code calls a probe at named points of the

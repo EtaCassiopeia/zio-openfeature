@@ -485,12 +485,14 @@ private[openfeature] object FeatureFlagsFactories {
       )
     )
 
-  // What has become of the provider one attempt's `acquire` returns. It can arrive after the attempt was abandoned.
+  // What has become of the provider one attempt's `acquire` returns. It can arrive, or finish `verify`, after the
+  // attempt was abandoned.
   sealed private trait Arrival
   private object Arrival {
-    case object Waiting                               extends Arrival
-    final case class Arrived(real: OFFeatureProvider) extends Arrival
-    case object Abandoned                             extends Arrival
+    case object Waiting                                 extends Arrival
+    final case class Verifying(real: OFFeatureProvider) extends Arrival
+    final case class Arrived(real: OFFeatureProvider)   extends Arrival
+    case object Abandoned                               extends Arrival
   }
 
   /** `effect.disconnect`, so the per-attempt timeout returns promptly even when `acquire` is a blocking
@@ -536,13 +538,14 @@ private[openfeature] object FeatureFlagsFactories {
   private def shutDownOwned(provider: OFFeatureProvider): UIO[Unit] =
     ProviderRegistration.boundedProviderShutdown(provider, "fromAcquireAsync (not in service)")
 
-  /** One attempt = acquire, then verify the candidate, inside a child scope of the layer scope. The child scope exists
-    * so a REJECTED candidate is released right away instead of lingering until layer close. Whatever `acquire` returned
-    * is the library's to shut down from the moment it arrives, before the scope closes: `arrival` holds it until the
-    * attempt is accepted. An attempt abandoned before it arrives leaves both to the abandoned fiber, because the
-    * constructor still running may be using what the scope holds. The mask keeps "shut down and close on failure" and
-    * "take ownership on success" from being skipped by an interrupt landing between them; `restore` keeps the attempt
-    * itself interruptible.
+  /** One attempt = acquire, then verify the candidate, inside a scope of its own (not a child of the layer's). The
+    * scope exists so a REJECTED candidate is released right away instead of lingering until layer close. Whatever
+    * `acquire` returned is the library's to shut down from the moment it arrives, before the scope closes: `arrival`
+    * holds it until the attempt is accepted. An attempt abandoned before it is accepted, in `acquire` or in `verify`,
+    * leaves both to its own fiber, because the constructor or `verify` still running may be using the provider and what
+    * the scope holds; the fiber also releases a candidate `verify` rejects. The mask keeps "shut down and close on
+    * failure" and "take ownership on success" from being skipped by an interrupt landing between them; `restore` keeps
+    * the attempt itself interruptible.
     */
   private def acquireAttempt(
     acquire: RIO[Scope, OFFeatureProvider],
@@ -557,6 +560,21 @@ private[openfeature] object FeatureFlagsFactories {
         arrival <- Ref.make[Arrival](Arrival.Waiting)
         release = (real: OFFeatureProvider, cause: Cause[Any]) =>
           shutDownOwned(real) *> scope.close(Exit.failCause(cause))
+        // `verify`, then settled by this fiber, as a constructor's return is: a provider whose attempt was abandoned
+        // meanwhile, that `verify` rejects, or whose `verify` was interrupted, is released here, once `verify` no
+        // longer uses it.
+        verified = (inner: ZIO.InterruptibilityRestorer, real: OFFeatureProvider) =>
+          inner(verify(real)).exit.flatMap { exit =>
+            arrival.modify {
+              case Arrival.Abandoned =>
+                (release(real, exit.causeOption.getOrElse(Cause.empty)) *> ZIO.interrupt, Arrival.Abandoned)
+              case _ =>
+                exit match {
+                  case Exit.Success(_)     => (ZIO.succeed(real), Arrival.Arrived(real))
+                  case Exit.Failure(cause) => (release(real, cause) *> ZIO.failCause(cause), Arrival.Abandoned)
+                }
+            }.flatten
+          }
         real <- restore(
           Timeouts.failAfter(
             abandonable(
@@ -567,7 +585,7 @@ private[openfeature] object FeatureFlagsFactories {
                     arrival.modify {
                       case Arrival.Abandoned =>
                         (release(real, Cause.empty) *> ZIO.interrupt, Arrival.Abandoned)
-                      case _ => (inner(verify(real)).as(real), Arrival.Arrived(real))
+                      case _ => (verified(inner, real), Arrival.Verifying(real))
                     }.flatten
                   }
               }

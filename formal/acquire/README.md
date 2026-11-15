@@ -73,13 +73,13 @@ rules on the real code, so change the two together.
 
 ## Out of reach
 
-The model has one release, and verify is part of the step that accepts an attempt. So it does not see an attempt whose
-timeout or interrupt lands while verify is still running: the code then releases the provider, shutting it down and
-closing the attempt's scope, while verify may still be using it, and the timed-out attempt is retried ("the attempt
-times out during verify: once" pins the shutdown count). An attempt after a rejected one is not modelled either: the
-rejected provider is shut down and its scope closed before the retry starts, the state `LateArrive` leaves. The next
-attempt starts as soon as one times out, where the code first waits for the retry's delay: the model has more
-behaviours there than the code, never fewer.
+The model has one release, and verify is part of the step that accepts an attempt, so `Timeout` and `InterruptBetween`
+at `pc = "attempt"` cover an attempt abandoned in `acquire` or in verify alike: in the code, too, the attempt's own
+fiber releases the provider once the constructor or verify returns ("a timeout during a blocking verify keeps the
+provider and its resource until verify returns"). An attempt after a rejected one is not modelled: the rejected provider
+is shut down and its scope closed by its attempt's fiber, the state `LateArrive` leaves, before the retry starts unless
+the attempt's timeout lands during that release. The next attempt starts as soon as one times out, where the code first
+waits for the retry's delay: the model has more behaviours there than the code, never fewer.
 `AcquireOwnershipSpec` alone covers how long the interrupt waits for a blocking call to return (`abandonable`'s bound),
 a `compose` that throws, and the real `Scope` semantics.
 

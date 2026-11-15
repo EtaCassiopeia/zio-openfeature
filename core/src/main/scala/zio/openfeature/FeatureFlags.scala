@@ -1092,12 +1092,13 @@ object FeatureFlags extends FeatureFlagsTransactionAccessors {
     *     away for a candidate that does not make it into service, at layer release for the one that does. A swapped-in
     *     provider on an instance that does not own the API stays bound to that API, so the API's owner shuts it down,
     *     and its `Scope` still closes at layer release.
-    *   - **An abandoned attempt.** A timeout or a layer release does not wait for a blocking constructor. It keeps its
-    *     `Scope` open, and when it returns the provider is shut down and the `Scope` closes; one that never returns
-    *     keeps them for good. An attempt suspended in an asynchronous call is interrupted, and whatever that call would
-    *     have returned is lost, so run the constructor directly in `acquire`: behind a `fork`, a `timeout` or a
-    *     `zipPar` the waiting fiber is suspended, and the library cannot reach what the constructor returns. If that
-    *     interrupt does not finish, the timeout or the release goes on after a short bound and leaves it running.
+    *   - **An abandoned attempt.** A timeout or a layer release does not wait for a blocking constructor or `verify`.
+    *     The attempt keeps its provider and its `Scope`, and when the call returns the provider is shut down and the
+    *     `Scope` closes; one that never returns keeps them for good. An attempt suspended in an asynchronous call is
+    *     interrupted, and whatever that call would have returned is lost, so run the constructor directly in `acquire`:
+    *     behind a `fork`, a `timeout` or a `zipPar` the waiting fiber is suspended, and the library cannot reach what
+    *     the constructor returns. If that interrupt does not finish, the timeout or the release goes on after a short
+    *     bound and leaves it running.
     *   - `compose` runs on the construction fiber and should not block, because layer release waits for it.
     *
     * @param acquire

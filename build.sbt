@@ -329,7 +329,10 @@ lazy val extras = (project in file("extras"))
     ),
     // Lincheck's model checker instruments classes through a dynamically attached agent; JDK 21+ warns about that
     // unless it is enabled explicitly.
-    Test / javaOptions += "-XX:+EnableDynamicAgentLoading"
+    Test / javaOptions += "-XX:+EnableDynamicAgentLoading",
+    // The breaker replay (CircuitBreakerReplaySpec) reads the model's behaviours from this property; the forked test
+    // JVM does not inherit the build JVM's properties, so it is passed on.
+    Test / javaOptions ++= sys.props.get("zof.breaker.behaviours").map("-Dzof.breaker.behaviours=" + _).toList
   )
 
 // Patched, aligned Jackson family for the OFREP provider's transitive HTTP stack. Applied to `ofrep` both as

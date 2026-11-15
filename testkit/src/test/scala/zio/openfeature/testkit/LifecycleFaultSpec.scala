@@ -5,6 +5,7 @@ import java.util.concurrent.TimeoutException
 import zio._
 import zio.test._
 import zio.openfeature._
+import zio.openfeature.internal.FeatureFlagsFactories
 import dev.openfeature.sdk.{FeatureProvider, OpenFeatureAPI}
 
 // The stuck-initialize, interrupted-swap and teardown scenarios, re-expressed with FaultyProvider.
@@ -15,20 +16,25 @@ object LifecycleFaultSpec extends ZIOSpecDefault {
   private val initTimeout = 300.millis
   private val testBound   = 20.seconds
 
+  /** Builds the run's instance, recording into `trace` from here on. */
   private def buildIsolated(
     provider: FeatureProvider,
+    trace: Option[TraceProbe],
     timeout: Duration = initTimeout
   ): ZIO[Scope, Throwable, FeatureFlagsLive] =
-    FeatureFlags.build(
-      provider,
-      domain = Some(s"lifecycle-fault-${java.util.UUID.randomUUID()}"),
-      version = None,
-      initialHooks = Nil,
-      statusRef = None,
-      addShutdownFinalizer = true,
-      apiOverride = Some(OpenFeatureAPI.createIsolated()),
-      initTimeout = timeout
-    )
+    FeatureFlagsFactories
+      .build(
+        provider,
+        domain = Some(s"lifecycle-fault-${java.util.UUID.randomUUID()}"),
+        version = None,
+        initialHooks = Nil,
+        statusRef = None,
+        addShutdownFinalizer = true,
+        apiOverride = Some(OpenFeatureAPI.createIsolated()),
+        initTimeout = timeout,
+        probe = TraceRecording.probe(trace)
+      )
+      .tap(_ => ZIO.foreachDiscard(trace)(_.begin(provider)))
 
   private def old: UIO[TestFeatureProvider] = TestFeatureProvider.makeNamed("old", Map("x" -> false))
 
@@ -47,12 +53,20 @@ object LifecycleFaultSpec extends ZIOSpecDefault {
   private def bounded[E, A](label: String)(effect: ZIO[Scope, E, A]): ZIO[Any, Any, A] =
     ZIO.scoped(effect).timeoutFail(s"$label did not complete within $testBound")(testBound)
 
+  /** `bounded`, recording the run as `name` (one instance, built with `buildIsolated`). */
+  private def recorded[E, A](label: String, name: String)(
+    body: Option[TraceProbe] => ZIO[Scope, E, A]
+  ): ZIO[Any, Any, A] =
+    TraceRecording
+      .recorded(s"fault-$name")(body)
+      .timeoutFail(s"$label did not complete within $testBound")(testBound)
+
   def spec = suite("LifecycleFaultSpec")(
     suite("stuck initialize")(
       test("a swap whose initialize() ignores shutdown fails at the init timeout with status Error") {
-        bounded("timed-out swap") {
+        recorded("timed-out swap", "timed-out-swap-then-next") { trace =>
           for {
-            ff     <- old.flatMap(buildIsolated(_))
+            ff     <- old.flatMap(buildIsolated(_, trace))
             stuck  <- FaultyProvider.scoped(name = "stuck")
             _      <- stuck.script(Op.Initialize, Fault.HangUntilReleased)
             timed  <- elapsedMillis(ff.setProvider(stuck).either)
@@ -72,10 +86,10 @@ object LifecycleFaultSpec extends ZIOSpecDefault {
         }
       },
       test("a timed-out swap never gets the previous provider shut down when the new one finishes later") {
-        bounded("timed-out swap") {
+        recorded("timed-out swap", "timed-out-swap-keeps-previous") { trace =>
           for {
             previous <- FaultyProvider.scoped(Map("x" -> false), name = "old")
-            ff       <- buildIsolated(previous)
+            ff       <- buildIsolated(previous, trace)
             slow     <- FaultyProvider.scoped(name = "slow")
             _        <- slow.script(Op.Initialize, Fault.HangUntilShutdown)
             result   <- ff.setProvider(slow).either
@@ -86,9 +100,9 @@ object LifecycleFaultSpec extends ZIOSpecDefault {
         }
       },
       test("a timed-out swap recovers to Ready once the new provider finishes initializing") {
-        bounded("late-ready swap") {
+        recorded("late-ready swap", "late-ready-swap") { trace =>
           for {
-            ff     <- old.flatMap(buildIsolated(_))
+            ff     <- old.flatMap(buildIsolated(_, trace))
             slow   <- FaultyProvider.scoped(Map("x" -> true), name = "slow")
             _      <- slow.script(Op.Initialize, Fault.Delay(800.millis))
             result <- ff.setProvider(slow).either
@@ -127,9 +141,9 @@ object LifecycleFaultSpec extends ZIOSpecDefault {
       },
       test("a failed init rolls back to the previous provider, and the next attempt succeeds") {
         val error = new RuntimeException("first init fails")
-        bounded("retried swap") {
+        recorded("retried swap", "retried-swap") { trace =>
           for {
-            ff         <- old.flatMap(buildIsolated(_, timeout = 10.seconds))
+            ff         <- old.flatMap(buildIsolated(_, trace, timeout = 10.seconds))
             next       <- FaultyProvider.scoped(Map("x" -> true), name = "next")
             _          <- next.script(Op.Initialize, Fault.Throw(error), Fault.Succeed)
             first      <- ff.setProvider(next).either
@@ -153,9 +167,9 @@ object LifecycleFaultSpec extends ZIOSpecDefault {
     ),
     suite("interrupted swap")(
       test("interrupted while the new provider initializes, then it succeeds: Ready on the new provider") {
-        bounded("interrupted swap") {
+        recorded("interrupted swap", "interrupted-swap-then-ready") { trace =>
           for {
-            ff          <- old.flatMap(buildIsolated(_, timeout = 10.seconds))
+            ff          <- old.flatMap(buildIsolated(_, trace, timeout = 10.seconds))
             next        <- FaultyProvider.scoped(Map("x" -> true), name = "next")
             _           <- next.script(Op.Initialize, Fault.HangUntilReleased)
             fiber       <- ff.setProvider(next).either.fork
@@ -171,9 +185,9 @@ object LifecycleFaultSpec extends ZIOSpecDefault {
         }
       },
       test("interrupted while the new provider initializes, then it fails: rolled back to the previous provider") {
-        bounded("interrupted swap") {
+        recorded("interrupted swap", "interrupted-swap-then-fails") { trace =>
           for {
-            ff     <- old.flatMap(buildIsolated(_, timeout = 10.seconds))
+            ff     <- old.flatMap(buildIsolated(_, trace, timeout = 10.seconds))
             next   <- FaultyProvider.scoped(Map("x" -> true), name = "next")
             _      <- next.script(Op.Initialize, Fault.Delay(500.millis, Fault.Throw(new RuntimeException("late"))))
             fiber  <- ff.setProvider(next).either.fork
@@ -186,9 +200,9 @@ object LifecycleFaultSpec extends ZIOSpecDefault {
         }
       },
       test("an interrupt during a never-finishing init completes within the init timeout bound") {
-        bounded("interrupted stuck swap") {
+        recorded("interrupted stuck swap", "interrupted-stuck-swap") { trace =>
           for {
-            ff     <- old.flatMap(buildIsolated(_))
+            ff     <- old.flatMap(buildIsolated(_, trace))
             stuck  <- FaultyProvider.scoped(name = "stuck")
             _      <- stuck.script(Op.Initialize, Fault.HangUntilReleased)
             fiber  <- ff.setProvider(stuck).either.fork
@@ -204,8 +218,9 @@ object LifecycleFaultSpec extends ZIOSpecDefault {
         for {
           hanging <- FaultyProvider.make(name = "hanging")
           _       <- hanging.script(Op.Shutdown, Fault.HangUntilReleased)
-          timed   <- elapsedMillis(ZIO.scoped(buildIsolated(hanging))).timeoutFail("scope close hung")(testBound)
-          _       <- hanging.release
+          timed <- elapsedMillis(TraceRecording.recorded("fault-hanging-shutdown-teardown")(buildIsolated(hanging, _)))
+            .timeoutFail("scope close hung")(testBound)
+          _ <- hanging.release
           // The SDK interrupts the stuck shutdown() once its executor's wait expires.
           calls <- hanging.calls(Op.Shutdown).repeatUntil(_.nonEmpty).timeout(5.seconds)
           interrupted = calls.exists(_.exists(_.outcome.isInstanceOf[FaultyProvider.Outcome.Threw]))
@@ -213,9 +228,9 @@ object LifecycleFaultSpec extends ZIOSpecDefault {
       },
       // The shutdown waits for the swap to time out (status Error, which does not end the wait) and then ends it.
       test("a fiber parked in awaitReady() during a swap returns when the instance shuts down") {
-        bounded("awaitReady during shutdown") {
+        recorded("awaitReady during shutdown", "await-ready-during-shutdown") { trace =>
           for {
-            ff     <- old.flatMap(buildIsolated(_, timeout = 1.second))
+            ff     <- old.flatMap(buildIsolated(_, trace, timeout = 1.second))
             gated  <- FaultyProvider.scoped(name = "gated")
             _      <- gated.script(Op.Initialize, Fault.HangUntilReleased)
             swap   <- ff.setProvider(gated).either.fork // holds the instance NotReady while `gated` initializes
@@ -234,11 +249,11 @@ object LifecycleFaultSpec extends ZIOSpecDefault {
         }
       },
       test("an interrupted shutdown still completes to NotReady") {
-        bounded("interrupted shutdown") {
+        recorded("interrupted shutdown", "interrupted-shutdown") { trace =>
           for {
             provider <- FaultyProvider.scoped(name = "slow-shutdown")
             _        <- provider.script(Op.Shutdown, Fault.HangUntilReleased)
-            ff       <- buildIsolated(provider)
+            ff       <- buildIsolated(provider, trace)
             fiber    <- ff.shutdown.fork
             _        <- provider.awaitEntered(Op.Shutdown)
             killer   <- fiber.interrupt.fork
@@ -334,9 +349,9 @@ object LifecycleFaultSpec extends ZIOSpecDefault {
             next <- FaultyProvider.scoped(Map("x" -> true), name = "next")
             _    <- next.script(Op.Initialize, Fault.Throw(new RuntimeException("init failed")))
             _    <- next.script(Op.Shutdown, Fault.HangUntilReleased)
-            res  <- ZIO.scoped {
+            res  <- TraceRecording.recorded("fault-rollback-fails-blocking-shutdown") { trace =>
               for {
-                ff        <- buildIsolated(previous)
+                ff        <- buildIsolated(previous, trace)
                 res       <- elapsedMillis(ff.setProvider(next).either).disconnect.timeout(8.seconds)
                 reInits   <- previous.entered(Op.Initialize)
                 shutdowns <- next.entered(Op.Shutdown)

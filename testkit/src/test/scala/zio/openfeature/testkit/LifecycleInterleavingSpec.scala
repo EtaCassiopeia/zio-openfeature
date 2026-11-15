@@ -556,17 +556,6 @@ object LifecycleInterleavingSpec extends ZIOSpecDefault {
     ZIO.scoped(run).map { case (probe, status, shutdowns) => (probe.reached, status, shutdowns) }
   }
 
-  /** Run `body` in a scope with a trace recorder when tracing is on, close the scope, then write the trace as `name`.
-    */
-  private def recordedRun[A](name: String)(body: Option[TraceProbe] => URIO[Scope, A]): UIO[A] =
-    for {
-      trace <- TraceProbe.make
-      scope <- Scope.make
-      ran   <- body(trace).provideEnvironment(ZEnvironment[Scope](scope))
-      _     <- scope.close(Exit.unit).timeout(Bound)
-      _     <- ZIO.foreachDiscard(trace)(_.write(s"$name-${java.util.UUID.randomUUID().toString.take(8)}"))
-    } yield ran
-
   private def awaitStatus(ff: FeatureFlags, wanted: ProviderStatus): UIO[Option[ProviderStatus]] =
     ff.providerStatus
       .repeat(Schedule.spaced(10.millis) *> Schedule.recurWhile[ProviderStatus](_ != wanted))
@@ -578,7 +567,7 @@ object LifecycleInterleavingSpec extends ZIOSpecDefault {
     * after the last swap.
     */
   private def asyncBuildThenSwap: UIO[(Boolean, ProviderStatus, ProviderStatus, String)] =
-    recordedRun("interleaving-async-build-then-swap") { trace =>
+    TraceRecording.recorded("interleaving-async-build-then-swap") { trace =>
       for {
         p0 <- provider("p0", Fault.HangUntilReleased, Fault.Succeed)
         p1 <- provider("p1", Fault.Throw(new RuntimeException("p1: initialize fails")))
@@ -593,7 +582,7 @@ object LifecycleInterleavingSpec extends ZIOSpecDefault {
             addShutdownFinalizer = true,
             apiOverride = Some(OpenFeatureAPI.createIsolated()),
             initTimeout = 1.minute,
-            probe = TraceProbe.alongside(LifecycleProbe.none, trace)
+            probe = TraceRecording.probe(trace)
           )
           .orDie
         _ <- ZIO.addFinalizer(p0.release)
@@ -617,7 +606,7 @@ object LifecycleInterleavingSpec extends ZIOSpecDefault {
     * the failed swap's result and the status after it.
     */
   private def nonOwningFailedSwapOntoInitializing: UIO[(Boolean, ProviderStatus)] =
-    recordedRun("interleaving-non-owning-failed-swap-onto-initializing") { trace =>
+    TraceRecording.recorded("interleaving-non-owning-failed-swap-onto-initializing") { trace =>
       for {
         api <- ZIO.succeed(OpenFeatureAPI.createIsolated())
         _   <- ZIO.addFinalizer(ZIO.succeed(api.shutdown()))
@@ -634,7 +623,7 @@ object LifecycleInterleavingSpec extends ZIOSpecDefault {
             addShutdownFinalizer = false,
             apiOverride = Some(api),
             initTimeout = InitTimeout,
-            probe = TraceProbe.alongside(LifecycleProbe.none, trace)
+            probe = TraceRecording.probe(trace)
           )
           .orDie
         _      <- ZIO.addFinalizer(p1.release)

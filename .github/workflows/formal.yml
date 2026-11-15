@@ -47,6 +47,10 @@ on:
       - 'testkit/src/test/scala/zio/openfeature/testkit/TraceProbe.scala'
       - 'testkit/src/test/scala/zio/openfeature/testkit/LifecycleModelSpec.scala'
       - 'testkit/src/test/scala/zio/openfeature/testkit/LifecycleInterleavingSpec.scala'
+      - 'testkit/src/test/scala/zio/openfeature/testkit/TraceRecording.scala'
+      - 'testkit/src/test/scala/zio/openfeature/testkit/LifecycleFaultSpec.scala'
+      - 'testkit/src/test/scala/zio/openfeature/testkit/OrphanedProviderSpec.scala'
+      - 'testkit/src/test/scala/zio/openfeature/testkit/ProviderNameSpec.scala'
       - 'extras/src/main/scala/zio/openfeature/extras/CachingProvider.scala'
   push:
     branches: [main]
@@ -78,6 +82,10 @@ on:
       - 'testkit/src/test/scala/zio/openfeature/testkit/TraceProbe.scala'
       - 'testkit/src/test/scala/zio/openfeature/testkit/LifecycleModelSpec.scala'
       - 'testkit/src/test/scala/zio/openfeature/testkit/LifecycleInterleavingSpec.scala'
+      - 'testkit/src/test/scala/zio/openfeature/testkit/TraceRecording.scala'
+      - 'testkit/src/test/scala/zio/openfeature/testkit/LifecycleFaultSpec.scala'
+      - 'testkit/src/test/scala/zio/openfeature/testkit/OrphanedProviderSpec.scala'
+      - 'testkit/src/test/scala/zio/openfeature/testkit/ProviderNameSpec.scala'
       - 'extras/src/main/scala/zio/openfeature/extras/CachingProvider.scala'
   schedule:
     - cron: '17 3 * * *'
@@ -336,7 +344,10 @@ jobs:
         env:
           ZOF_TRACE: '1'
           ZOF_TRACE_DIR: ${{ github.workspace }}/traces
-        run: sbt "testkit/testOnly zio.openfeature.testkit.LifecycleModelSpec zio.openfeature.testkit.LifecycleInterleavingSpec"
+        run: >-
+          sbt "testkit/testOnly zio.openfeature.testkit.LifecycleModelSpec zio.openfeature.testkit.LifecycleInterleavingSpec
+          zio.openfeature.testkit.LifecycleFaultSpec zio.openfeature.testkit.OrphanedProviderSpec
+          zio.openfeature.testkit.ProviderNameSpec"
       - name: Check every recorded run is a behaviour of the model
         if: github.event_name != 'pull_request'
         working-directory: formal/lifecycle

@@ -3,6 +3,7 @@ package zio.openfeature.testkit
 import zio._
 import zio.test._
 import zio.openfeature._
+import zio.openfeature.internal.FeatureFlagsFactories
 import dev.openfeature.sdk.{EventDetails, FeatureProvider, OpenFeatureAPI}
 
 /** The name an instance reports for a provider that has none: `FeatureFlags.UnknownProviderName`, never `null`, on
@@ -19,31 +20,36 @@ object ProviderNameSpec extends ZIOSpecDefault {
   private def named(name: String): URIO[Scope, FaultyProvider[TestFeatureProvider]] =
     FaultyProvider.scoped(Map("flag" -> false), name)
 
+  /** Builds an instance, recording into `trace` from here on when it is the run's only one. */
   private def build(
     provider: FeatureProvider,
     api: OpenFeatureAPI = OpenFeatureAPI.createIsolated(),
     domain: String = "provider-name",
-    initTimeout: Duration = FeatureFlags.DefaultInitTimeout
+    initTimeout: Duration = FeatureFlags.DefaultInitTimeout,
+    trace: Option[TraceProbe] = None
   ): ZIO[Scope, Throwable, FeatureFlagsLive] =
-    FeatureFlags.build(
-      provider,
-      domain = Some(domain),
-      version = None,
-      initialHooks = Nil,
-      statusRef = None,
-      addShutdownFinalizer = true,
-      apiOverride = Some(api),
-      initTimeout = initTimeout
-    )
+    FeatureFlagsFactories
+      .build(
+        provider,
+        domain = Some(domain),
+        version = None,
+        initialHooks = Nil,
+        statusRef = None,
+        addShutdownFinalizer = true,
+        apiOverride = Some(api),
+        initTimeout = initTimeout,
+        probe = TraceRecording.probe(trace)
+      )
+      .tap(_ => ZIO.foreachDiscard(trace)(_.begin(provider)))
 
   private def forShape(shape: MetadataShape) =
     suite(shape.toString)(
       test("a swap to the provider reports the unknown name") {
-        ZIO.scoped {
+        TraceRecording.recorded(s"naming-$shape-swap") { trace =>
           for {
             first  <- named("first")
             next   <- nameless(shape)
-            ff     <- build(first)
+            ff     <- build(first, trace = trace)
             before <- ff.providerMetadata
             _      <- ff.setProvider(next)
             after  <- ff.providerMetadata
@@ -76,10 +82,10 @@ object ProviderNameSpec extends ZIOSpecDefault {
         }
       } @@ TestAspect.withLiveClock,
       test("a sync build of the provider has no name: an event carrying one is another provider's") {
-        ZIO.scoped {
+        TraceRecording.recorded(s"naming-$shape-sync-build") { trace =>
           for {
             provider <- nameless(shape)
-            ff       <- build(provider)
+            ff       <- build(provider, trace = trace)
             _        <- ff.onErrorEvent(EventDetails.builder().providerName("another").build())
             status   <- ff.providerStatus
             name     <- ff.providerMetadata.map(_.name)
@@ -87,7 +93,7 @@ object ProviderNameSpec extends ZIOSpecDefault {
         }
       },
       test("a swap refused while another provider holds it names it with the unknown name") {
-        ZIO.scoped {
+        TraceRecording.recorded(s"naming-$shape-refused-swap") { trace =>
           for {
             // Starts at once when built, and hangs when the rollback registers it again.
             holder <- named("holder")
@@ -95,7 +101,7 @@ object ProviderNameSpec extends ZIOSpecDefault {
             // Fails its first start, so the swap rolls back onto the holder.
             next    <- nameless(shape)
             _       <- next.script(Op.Initialize, Fault.Throw(new RuntimeException("first start fails")), Fault.Succeed)
-            ff      <- build(holder, initTimeout = 500.millis)
+            ff      <- build(holder, initTimeout = 500.millis, trace = trace)
             failed  <- ff.setProvider(next).either
             refused <- ff.setProvider(next).either
             _       <- holder.release

@@ -1,0 +1,3 @@
+# The code formal/caching describes. A pull request that changes one of these files without changing formal/caching/
+# needs a description line 'formal/caching: unaffected because <reason>' (formal/model_or_reason.py).
+extras/src/main/scala/zio/openfeature/extras/CachingProvider.scala

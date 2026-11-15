@@ -485,5 +485,6 @@ the named property violated:
 ## When the lifecycle code changes
 
 The `Formal model` workflow runs TLC on every pull request that touches the files above or this directory, and the
-mutants on `main` and on demand. A pull request that changes one of the lifecycle files without changing the model
-states why in its description, with a line starting `formal: unaffected because`.
+mutants on `main` and on demand. A pull request that changes a file in `code-paths` without changing this directory
+states why in its description, with a line `formal/lifecycle: unaffected because <reason>` (the bare
+`formal: unaffected because` also counts here).

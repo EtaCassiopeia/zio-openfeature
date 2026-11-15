@@ -141,3 +141,9 @@ once failed the replay. They are replayed on every run.
   `CircuitBreakerLincheckSpec` checks that the class is linearizable, and the replay assumes it.
 - The permit-less API (`recordSuccess()` and the like), which the model does not have.
 - `CircuitBreakerProvider`'s evaluation timeout, error classification and event plumbing.
+
+## When its code changes
+
+`code-paths` lists the code this model describes. A pull request that changes one of those files without changing this
+directory states why in its description, with a line `formal/circuitbreaker: unaffected because <reason>`; the `Formal
+model` workflow's `model-or-reason` job checks it.

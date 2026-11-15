@@ -1,0 +1,3 @@
+# The code formal/lane describes. A pull request that changes one of these files without changing formal/lane/ needs a
+# description line 'formal/lane: unaffected because <reason>' (formal/model_or_reason.py).
+core/src/main/scala/zio/openfeature/internal/OrderedEmitter.scala

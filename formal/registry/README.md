@@ -118,3 +118,9 @@ them one at a time: a mutant usually breaks several, and in one run TLC reports 
 - **Time**, as in the lifecycle model.
 - **Trace validation.** The registry specs would need a recorder per instance; the lifecycle model's checker reads one
   instance's probe points. A follow-up.
+
+## When its code changes
+
+`code-paths` lists the code this model describes. A pull request that changes one of those files without changing this
+directory states why in its description, with a line `formal/registry: unaffected because <reason>`; the `Formal model`
+workflow's `model-or-reason` job checks it.

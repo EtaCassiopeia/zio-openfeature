@@ -11,7 +11,8 @@ name: Formal model
 # mutants.
 # The event lane model (formal/lane) checks OrderedEmitter against the SDK's API lock, with its witnesses and mutants.
 # The acquire model (formal/acquire) checks fromAcquireAsync's hand-off of a provider against a layer release, with its
-# mutants.
+# mutants; on every run, the runs fromAcquireAsync's test suites record are checked against it, and must take every
+# action of the model between them.
 # Trace validation checks that runs of the library are behaviours of the model: on pull requests the checker's own
 # fixtures, on main, nightly and on demand also the runs the lifecycle test suites record. The replay checks the other
 # direction: behaviours generated from the model are replayed against the lifecycle's pure step (formal/lifecycle/
@@ -42,10 +43,13 @@ on:
       - 'extras/src/test/scala/zio/openfeature/extras/CircuitBreakerReplaySpec.scala'
       - 'extras/src/main/scala/zio/openfeature/extras/CircuitBreaker.scala'
       - 'extras/src/main/scala/zio/openfeature/extras/CircuitBreakerProvider.scala'
-      - 'testkit/src/test/scala/zio/openfeature/testkit/TraceProbe.scala'
+      - 'core/src/test/scala/zio/openfeature/testkit/TraceProbe.scala'
       - 'testkit/src/test/scala/zio/openfeature/testkit/LifecycleModelSpec.scala'
       - 'testkit/src/test/scala/zio/openfeature/testkit/LifecycleInterleavingSpec.scala'
-      - 'testkit/src/test/scala/zio/openfeature/testkit/TraceRecording.scala'
+      - 'core/src/test/scala/zio/openfeature/testkit/TraceRecording.scala'
+      - 'core/src/test/scala/zio/openfeature/AcquireRecording.scala'
+      - 'core/src/test/scala/zio/openfeature/AcquireOwnershipSpec.scala'
+      - 'core/src/test/scala/zio/openfeature/AcquireNoNotReadyWindowSpec.scala'
       - 'testkit/src/test/scala/zio/openfeature/testkit/LifecycleFaultSpec.scala'
       - 'testkit/src/test/scala/zio/openfeature/testkit/OrphanedProviderSpec.scala'
       - 'testkit/src/test/scala/zio/openfeature/testkit/ProviderNameSpec.scala'
@@ -75,10 +79,13 @@ on:
       - 'extras/src/test/scala/zio/openfeature/extras/CircuitBreakerReplaySpec.scala'
       - 'extras/src/main/scala/zio/openfeature/extras/CircuitBreaker.scala'
       - 'extras/src/main/scala/zio/openfeature/extras/CircuitBreakerProvider.scala'
-      - 'testkit/src/test/scala/zio/openfeature/testkit/TraceProbe.scala'
+      - 'core/src/test/scala/zio/openfeature/testkit/TraceProbe.scala'
       - 'testkit/src/test/scala/zio/openfeature/testkit/LifecycleModelSpec.scala'
       - 'testkit/src/test/scala/zio/openfeature/testkit/LifecycleInterleavingSpec.scala'
-      - 'testkit/src/test/scala/zio/openfeature/testkit/TraceRecording.scala'
+      - 'core/src/test/scala/zio/openfeature/testkit/TraceRecording.scala'
+      - 'core/src/test/scala/zio/openfeature/AcquireRecording.scala'
+      - 'core/src/test/scala/zio/openfeature/AcquireOwnershipSpec.scala'
+      - 'core/src/test/scala/zio/openfeature/AcquireNoNotReadyWindowSpec.scala'
       - 'testkit/src/test/scala/zio/openfeature/testkit/LifecycleFaultSpec.scala'
       - 'testkit/src/test/scala/zio/openfeature/testkit/OrphanedProviderSpec.scala'
       - 'testkit/src/test/scala/zio/openfeature/testkit/ProviderNameSpec.scala'
@@ -330,6 +337,47 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: lifecycle-traces
+          path: traces/
+          retention-days: 14
+
+  # The runs AcquireOwnershipSpec and AcquireNoNotReadyWindowSpec record, checked against the acquire model, with the
+  # checker's own fixtures and the transitions the runs cover (formal/acquire/README.md). A few minutes, so on every
+  # pull request.
+  acquire-traces:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - name: Set up JDK 21
+        uses: actions/setup-java@v6
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: sbt
+      - name: Set up sbt
+        uses: sbt/setup-sbt@v1
+      - name: Download the TLA+ tools and community modules
+        run: |
+          scripts/fetch-asset.sh "https://github.com/${GITHUB_REPOSITORY}/releases/download/${TRACE_TLA_TOOLS_RELEASE}/tla2tools.jar" "${TRACE_TLA_TOOLS_SHA256}" tla2tools.jar
+          scripts/fetch-asset.sh "https://github.com/tlaplus/CommunityModules/releases/download/${COMMUNITY_MODULES_VERSION}/CommunityModules-deps.jar" "${COMMUNITY_MODULES_SHA256}" CommunityModules-deps.jar
+      - name: Check that the checker accepts and rejects its fixtures, and that each guard is exercised by one
+        working-directory: formal/acquire
+        run: |
+          python3 validate.py ../../tla2tools.jar ../../CommunityModules-deps.jar --selftest traces
+          python3 preconditions.py ../../tla2tools.jar ../../CommunityModules-deps.jar
+      - name: Record fromAcquireAsync's test suites' runs
+        env:
+          ZOF_TRACE: '1'
+          ZOF_TRACE_DIR: ${{ github.workspace }}/traces
+        run: sbt "core/testOnly zio.openfeature.AcquireOwnershipSpec zio.openfeature.AcquireNoNotReadyWindowSpec"
+      - name: Check every recorded run is a behaviour of the model, and that the runs take every action
+        working-directory: formal/acquire
+        run: python3 validate.py ../../tla2tools.jar ../../CommunityModules-deps.jar "${GITHUB_WORKSPACE}/traces/acquire" --coverage
+      - name: Keep the recorded runs
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: acquire-traces
           path: traces/
           retention-days: 14
 

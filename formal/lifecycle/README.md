@@ -255,9 +255,10 @@ primary whose provider does not hang.
 The model is only worth what it says about the code, so runs of the code are checked against it. With `ZOF_TRACE=1`,
 `LifecycleModelSpec`, `LifecycleInterleavingSpec`, `LifecycleFaultSpec`, `OrphanedProviderSpec` and `ProviderNameSpec`
 record every lifecycle probe point each run passes, one ndjson file per run (`TraceProbe` and `TraceRecording` in
-testkit's tests; `ZOF_TRACE_DIR` sets the directory, `target/traces` by default). A run records only when it builds one
-instance through `FeatureFlagsFactories`, which takes the probe: runs that build through a public factory
-(`fromProvider`, `fromAcquireAsync`), whose build fails, or that build a second instance on the same API record nothing.
+core's tests, which testkit's tests depend on; `ZOF_TRACE_DIR` sets the directory, `target/traces` by default). A run
+records only when it builds one instance through `FeatureFlagsFactories`, which takes the probe: runs that build
+through a public factory (`fromProvider`, `fromAcquireAsync`), whose build fails, or that build a second instance on
+the same API record nothing.
 `trace_labels.py` turns a run into the library actions above, with what the run recorded about each: a delivered
 event's type, whether a swap or its rollback ended `STALE`, whether the rollback succeeded. `TraceValidation.tla` then
 lets TLC search for a behaviour of `Lifecycle` that takes exactly those library steps in that order, with the SDK's

@@ -1,0 +1,14 @@
+CONSTANTS
+    P0 = p0
+    Providers = {p1, p2}
+    MaxSwaps = 3
+    MaxEvents = 1
+    MaxEvals = 0
+    AllowDeath = FALSE
+    Behaviours = {"ok", "throws", "hangs"}
+    None = None
+    OutDir = "{out}"
+    Depth = {depth}
+    ShutdownFrom = {shutdown_from}
+SPECIFICATION GSpec
+ACTION_CONSTRAINT Export

@@ -38,6 +38,8 @@ on:
       - 'core/src/main/scala/zio/openfeature/internal/ManagedProvider.scala'
       - 'core/src/main/scala/zio/openfeature/internal/LifecycleState.scala'
       - 'core/src/test/scala/zio/openfeature/LifecycleReplaySpec.scala'
+      - 'test-support/src/test/scala/zio/openfeature/testsupport/ModelBehaviours.scala'
+      - 'extras/src/test/scala/zio/openfeature/extras/CircuitBreakerReplaySpec.scala'
       - 'extras/src/main/scala/zio/openfeature/extras/CircuitBreaker.scala'
       - 'extras/src/main/scala/zio/openfeature/extras/CircuitBreakerProvider.scala'
       - 'testkit/src/test/scala/zio/openfeature/testkit/TraceProbe.scala'
@@ -65,6 +67,8 @@ on:
       - 'core/src/main/scala/zio/openfeature/internal/ManagedProvider.scala'
       - 'core/src/main/scala/zio/openfeature/internal/LifecycleState.scala'
       - 'core/src/test/scala/zio/openfeature/LifecycleReplaySpec.scala'
+      - 'test-support/src/test/scala/zio/openfeature/testsupport/ModelBehaviours.scala'
+      - 'extras/src/test/scala/zio/openfeature/extras/CircuitBreakerReplaySpec.scala'
       - 'extras/src/main/scala/zio/openfeature/extras/CircuitBreaker.scala'
       - 'extras/src/main/scala/zio/openfeature/extras/CircuitBreakerProvider.scala'
       - 'testkit/src/test/scala/zio/openfeature/testkit/TraceProbe.scala'
@@ -277,6 +281,26 @@ jobs:
         with:
           name: lifecycle-behaviours
           path: behaviours/
+          retention-days: 14
+      # The circuit breaker the same way: behaviours of formal/circuitbreaker replayed through the real CircuitBreaker
+      # (formal/circuitbreaker/replay-map.md), with the targeted ones in its mbt-regressions.
+      - name: Generate behaviours of the circuit breaker model
+        env:
+          NUM: ${{ github.event_name == 'schedule' && '20000' || '2000' }}
+          SEED: ${{ github.event_name == 'schedule' && github.run_id || '7' }}
+        run: |
+          echo "seed ${SEED}, ${NUM} behaviours"
+          python3 formal/generate.py formal/circuitbreaker tla2tools.jar CommunityModules-deps.jar "${GITHUB_WORKSPACE}/breaker-behaviours" --actions pluscal:CircuitBreaker.tla --num "${NUM}" --depth 40 --seed "${SEED}"
+      - name: Replay the behaviours through the circuit breaker
+        env:
+          ZOF_BREAKER_BEHAVIOURS_REQUIRED: '1'
+        run: sbt "-Dzof.breaker.behaviours=${GITHUB_WORKSPACE}/breaker-behaviours,${GITHUB_WORKSPACE}/formal/circuitbreaker/mbt-regressions" "extras/testOnly zio.openfeature.extras.CircuitBreakerReplaySpec"
+      - name: Keep the circuit breaker's behaviours
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: breaker-behaviours
+          path: breaker-behaviours/
           retention-days: 14
       - name: Record the lifecycle test suites' runs
         if: github.event_name != 'pull_request'

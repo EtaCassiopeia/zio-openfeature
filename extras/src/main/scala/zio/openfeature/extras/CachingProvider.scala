@@ -13,7 +13,7 @@ import dev.openfeature.sdk.{
   Value
 }
 import zio._
-import zio.cache.{Cache, Lookup}
+import zio.cache.{Cache, CacheStats, Lookup}
 import zio.openfeature.FeatureFlagError
 import zio.openfeature.internal.OrderedEmitter
 import java.util.concurrent.atomic.AtomicBoolean
@@ -384,6 +384,23 @@ final class CachingProvider private (
     Unsafe.unsafe { implicit u =>
       runtime.unsafe.run(invalidateAll).getOrThrowFiberFailure()
     }
+
+  // What the model replay (CachingReplaySpec) compares: the epoch, and whether an entry, pending or complete, is held
+  // for an evaluation's key under epoch `gen`, with zio-cache's hit and miss counts.
+  private[extras] def currentGeneration: Long = generation.get()
+
+  private[extras] def probe(
+    key: String,
+    flagType: String,
+    context: OFEvaluationContext,
+    gen: Long
+  ): (Boolean, CacheStats) = {
+    val ck =
+      new CacheKey(key, flagType, contextFingerprint(context), gen, () => sys.error("a probe is never evaluated"))
+    Unsafe.unsafe { implicit u =>
+      runtime.unsafe.run(cache.contains(ck) <*> cache.cacheStats).getOrThrowFiberFailure()
+    }
+  }
 }
 
 object CachingProvider {

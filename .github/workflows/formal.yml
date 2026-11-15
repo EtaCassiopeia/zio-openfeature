@@ -40,6 +40,8 @@ on:
       - 'core/src/test/scala/zio/openfeature/LifecycleReplaySpec.scala'
       - 'test-support/src/test/scala/zio/openfeature/testsupport/ModelBehaviours.scala'
       - 'extras/src/test/scala/zio/openfeature/extras/CircuitBreakerReplaySpec.scala'
+      - 'extras/src/test/scala/zio/openfeature/extras/CachingReplaySpec.scala'
+      - 'extras/src/test/scala/zio/openfeature/extras/CachingInvalidationRaceSpec.scala'
       - 'extras/src/main/scala/zio/openfeature/extras/CircuitBreaker.scala'
       - 'extras/src/main/scala/zio/openfeature/extras/CircuitBreakerProvider.scala'
       - 'testkit/src/test/scala/zio/openfeature/testkit/TraceProbe.scala'
@@ -69,6 +71,8 @@ on:
       - 'core/src/test/scala/zio/openfeature/LifecycleReplaySpec.scala'
       - 'test-support/src/test/scala/zio/openfeature/testsupport/ModelBehaviours.scala'
       - 'extras/src/test/scala/zio/openfeature/extras/CircuitBreakerReplaySpec.scala'
+      - 'extras/src/test/scala/zio/openfeature/extras/CachingReplaySpec.scala'
+      - 'extras/src/test/scala/zio/openfeature/extras/CachingInvalidationRaceSpec.scala'
       - 'extras/src/main/scala/zio/openfeature/extras/CircuitBreaker.scala'
       - 'extras/src/main/scala/zio/openfeature/extras/CircuitBreakerProvider.scala'
       - 'testkit/src/test/scala/zio/openfeature/testkit/TraceProbe.scala'
@@ -232,7 +236,8 @@ jobs:
 
   traces:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    # On main it also runs the cache's code mutants, each an extras recompile.
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v7
       - name: Set up JDK 21
@@ -301,6 +306,30 @@ jobs:
         with:
           name: breaker-behaviours
           path: breaker-behaviours/
+          retention-days: 14
+      # The cache: behaviours of formal/caching, restricted to steps a test can schedule, replayed through the real
+      # CachingProvider under a controlled schedule (formal/caching/replay-map.md), with its targeted ones as well.
+      - name: Generate behaviours of the cache model
+        env:
+          NUM: ${{ github.event_name == 'schedule' && '20000' || '2000' }}
+          SEED: ${{ github.event_name == 'schedule' && github.run_id || '7' }}
+        run: |
+          echo "seed ${SEED}, ${NUM} behaviours"
+          python3 formal/generate.py formal/caching tla2tools.jar CommunityModules-deps.jar "${GITHUB_WORKSPACE}/caching-behaviours" --actions pluscal:Caching.tla --num "${NUM}" --depth 30 --seed "${SEED}"
+      - name: Replay the behaviours through the cache
+        env:
+          ZOF_CACHING_BEHAVIOURS_REQUIRED: '1'
+        run: sbt "-Dzof.caching.behaviours=${GITHUB_WORKSPACE}/caching-behaviours,${GITHUB_WORKSPACE}/formal/caching/mbt-regressions" "extras/testOnly zio.openfeature.extras.CachingReplaySpec"
+      # Each source mutant of CachingProvider recompiles extras, so on main and by hand only.
+      - name: Check each code mutant of the cache turns the replay red
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        run: python3 formal/caching/codemutants.py "${GITHUB_WORKSPACE}/caching-behaviours,${GITHUB_WORKSPACE}/formal/caching/mbt-regressions"
+      - name: Keep the cache's behaviours
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: caching-behaviours
+          path: caching-behaviours/
           retention-days: 14
       - name: Record the lifecycle test suites' runs
         if: github.event_name != 'pull_request'

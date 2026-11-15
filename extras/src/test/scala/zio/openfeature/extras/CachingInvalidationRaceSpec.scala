@@ -22,7 +22,7 @@ import java.util.concurrent.atomic.{AtomicInteger, AtomicReference}
 object CachingInvalidationRaceSpec extends ZIOSpecDefault {
 
   /** Answers `current`; while `gate` is armed, the first call parks inside the delegate until released. */
-  private class GatedProvider extends EventProvider {
+  private[extras] class GatedProvider extends EventProvider {
     val current                           = new AtomicReference[java.lang.Boolean](java.lang.Boolean.FALSE)
     val calls                             = new AtomicInteger(0)
     @volatile var entered: CountDownLatch = new CountDownLatch(0)

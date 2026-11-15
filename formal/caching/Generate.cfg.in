@@ -1,0 +1,7 @@
+CONSTANTS
+    MaxCallers = 3
+    MaxChanges = 2
+    OutDir = "{out}"
+    Depth = {depth}
+SPECIFICATION GSpec
+ACTION_CONSTRAINT Export

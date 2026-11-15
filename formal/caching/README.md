@@ -116,6 +116,32 @@ epoch. So the mutant counts the invalidation from its clear, and the witness wit
 - **`shutdown` and direct `invalidateAll` calls.** They run the same two steps as `Invalidator`, whose `covers` reads the
   version at the first step, so a call with no change is a weaker case of the one modelled.
 
+## The replay through the code
+
+`Generate.tla` labels each step of the model, and `../generate.py` writes random behaviours of it, which
+`CachingReplaySpec` (extras) replays through the real `CachingProvider` under a schedule the test controls, comparing
+the state once settled. `replay-map.md` maps each action to the code. `targets.py` writes the targeted behaviours in
+`mbt-regressions/`, and `codemutants.py` requires four bugs put into the source to turn the replay red.
+
+```sh
+python3 ../generate.py . tla2tools.jar CommunityModules-deps.jar behaviours --actions pluscal:Caching.tla --depth 30
+sbt -Dzof.caching.behaviours=formal/caching/behaviours,formal/caching/mbt-regressions \
+  "extras/testOnly zio.openfeature.extras.CachingReplaySpec"
+python3 codemutants.py formal/caching/behaviours,formal/caching/mbt-regressions
+```
+
+TLC 1.8 and the community modules are needed for `generate.py` and `targets.py`. The replay cannot split some steps, so
+`GNext` lets only the processes in the middle of one step until it ends; every generated behaviour is still one of
+`Caching`. What stays out of reach of the replay:
+
+- **Clear-then-bump ordering.** The invalidation is one fused step, so the model's mutant for the order cannot be caught
+  from code.
+- **The window between write-back and tail** (`MapNeverHoldsBad`). An owner's `CWrite` and `CTail` are fused, so no
+  caller hits a failed or `DEFAULT` result in between. The same holds for a caller's `CStart` and `CGet`: no
+  invalidation falls between reading the epoch and asking the map.
+- **Late joiner wake-ups.** A joiner wakes as soon as the lookup it joined writes, not arbitrarily later.
+- **TTL and eviction**, which the model does not have either.
+
 ## When its code changes
 
 `code-paths` lists the code this model describes. A pull request that changes one of those files without changing this

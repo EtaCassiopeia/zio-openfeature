@@ -387,6 +387,60 @@ object AcquireOwnershipSpec extends ZIOSpecDefault {
           _ <- settled(trail.size(), 2)
         } yield assertTrue(during == Nil, trail.asScala.toList == List("real.shutdown", "resource.closed"))
       },
+      test("a timeout during a blocking verify keeps the provider and its resource until verify returns") {
+        val trail   = new ConcurrentLinkedQueue[String]()
+        val gate    = new CountDownLatch(1)
+        val real    = new Counting("real", trail)
+        val acquire = withResource(trail, real)
+        val config  = noRetry.withConstructionTimeout(50.millis).withVerify(_ => ZIO.attemptBlocking(gate.await()).unit)
+        (for {
+          during <- buildAndRelease(FeatureFlags.fromAcquireAsync(acquire, new Fallbacks().effect, isolated, config)) {
+            env => awaitOutcome(env).as(trail.asScala.toList)
+          }
+          released <- ZIO.succeed(trail.asScala.toList)
+          _        <- ZIO.succeed(gate.countDown())
+          _        <- settled(trail.size(), 2)
+        } yield assertTrue(
+          during == Nil,
+          released == Nil,
+          trail.asScala.toList == List("real.shutdown", "resource.closed")
+        )).ensuring(ZIO.succeed(gate.countDown()))
+      },
+      test("a layer release during a blocking verify leaves the provider and its resource until verify returns") {
+        val trail    = new ConcurrentLinkedQueue[String]()
+        val gate     = new CountDownLatch(1)
+        val verified = new CountDownLatch(1)
+        val real     = new Counting("real", trail)
+        val acquire  = withResource(trail, real)
+        val config   = noRetry.withVerify { _ =>
+          ZIO.attemptBlocking { verified.countDown(); gate.await() }.unit
+        }
+        (for {
+          _ <- buildAndRelease(FeatureFlags.fromAcquireAsync(acquire, new Fallbacks().effect, isolated, config)) { _ =>
+            awaitLatch(verified, "verify")
+          }
+          released <- ZIO.succeed(trail.asScala.toList)
+          _        <- ZIO.succeed(gate.countDown())
+          _        <- settled(trail.size(), 2)
+        } yield assertTrue(released == Nil, trail.asScala.toList == List("real.shutdown", "resource.closed")))
+          .ensuring(ZIO.succeed(gate.countDown()))
+      },
+      test("verify rejects: the provider shuts down once, then its resource closes") {
+        val trail   = new ConcurrentLinkedQueue[String]()
+        val real    = new Counting("real", trail)
+        val acquire = withResource(trail, real)
+        val config  = noRetry.withVerify(_ => ZIO.fail(new RuntimeException("verify boom")))
+        for {
+          state <- buildAndRelease(FeatureFlags.fromAcquireAsync(acquire, new Fallbacks().effect, isolated, config))(
+            awaitOutcome(_)
+          )
+          _ <- settled(trail.size(), 2)
+        } yield assertTrue(
+          state.isInstanceOf[AcquireState.Failed],
+          real.shutdowns.get() == 1,
+          trail.asScala.toList == List("real.shutdown", "resource.closed")
+        )
+      },
       test("verify does not run on a provider that arrived after its attempt was abandoned") {
         val gate     = new CountDownLatch(1)
         val real     = new Counting("real")

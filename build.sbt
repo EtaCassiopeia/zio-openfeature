@@ -410,8 +410,8 @@ lazy val optimizely = (project in file("optimizely"))
       // NOTE: on a core-api/core-httpclient upgrade, re-verify `com/optimizely/ab/ObservingOptimizelyHttpClient.java`
       // — it lives in the `com.optimizely.ab` package to reach the package-private `OptimizelyHttpClient` ctor and
       // `getHttpClient()` (the staleness fetch-observation seam for #267). A version bump breaks it at compile time.
-      "com.optimizely.ab" % "core-api"             % "4.6.0",
-      "com.optimizely.ab" % "core-httpclient-impl" % "4.6.0",
+      "com.optimizely.ab" % "core-api"             % "4.7.0",
+      "com.optimizely.ab" % "core-httpclient-impl" % "4.7.0",
       "org.wiremock"      % "wiremock"             % wiremockVersion % Test,
       // WireMock's Guava is the only one on this module's classpaths, so the pin is test scope and ships to no consumer.
       guavaPin % Test

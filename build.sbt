@@ -34,7 +34,7 @@ val jacksonVersion            = "2.22.4"
 val jacksonAnnotationsVersion = "2.22"
 
 // Guava reaches us through the OFREP contrib provider, and through WireMock in tests; see `guavaPin`.
-val guavaVersion = "33.7.2-jre"
+val guavaVersion = "33.8.0-jre"
 
 // OpenFeature Specification Compatibility
 // Spec version: v0.9.0 (https://github.com/open-feature/spec)

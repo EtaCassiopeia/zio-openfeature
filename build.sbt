@@ -30,7 +30,7 @@ lazy val wiremockTestSupport = Seq(
 // to `2.22`), so it cannot share `jacksonVersion` — `2.22.4` does not exist for that artifact.
 // 2.22.4 rejects a lone UTF-16 surrogate in a JSON field name (jackson-core #1683): such an OFREP object flag is a
 // PARSE_ERROR with the default (#534).
-val jacksonVersion            = "2.22.4"
+val jacksonVersion            = "2.23.0"
 val jacksonAnnotationsVersion = "2.22"
 
 // Guava reaches us through the OFREP contrib provider, and through WireMock in tests; see `guavaPin`.

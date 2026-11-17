@@ -4,6 +4,7 @@ import zio._
 import zio.test._
 import zio.test.TestAspect.sequential
 import zio.openfeature._
+import zio.openfeature.internal.FeatureFlagsFactories
 
 /** SDK 1.22.0 supplies the bound domain to `FeatureProvider.initialize(ctx, domain)`
   * (https://github.com/open-feature/java-sdk/issues/1982).
@@ -15,12 +16,17 @@ import zio.openfeature._
   */
 object BoundDomainSpec extends ZIOSpecDefault {
 
+  private def build(provider: TestFeatureProvider, config: FeatureFlagsConfig) =
+    RegistryRecording
+      .instanceProbe()
+      .flatMap(probe => FeatureFlagsFactories.fromProvider(provider, config, statusRef = None, probe = probe).build)
+
   def spec = suite("bound domain")(
     test("a domain-registered client delivers its domain to the provider") {
       ZIO.scoped {
         for {
           provider <- TestFeatureProvider.make
-          _        <- FeatureFlags.fromProvider(provider, FeatureFlagsConfig.default.withDomain("checkout")).build
+          _        <- build(provider, FeatureFlagsConfig.default.withDomain("checkout"))
           domain   <- provider.boundDomain
         } yield assertTrue(domain.contains("checkout"))
       }
@@ -29,10 +35,10 @@ object BoundDomainSpec extends ZIOSpecDefault {
       ZIO.scoped {
         for {
           provider <- TestFeatureProvider.make
-          _        <- FeatureFlags.fromProvider(provider).build
+          _        <- build(provider, FeatureFlagsConfig.default)
           domain   <- provider.boundDomain
         } yield assertTrue(domain.isEmpty)
       }
     }
-  ) @@ sequential
+  ) @@ sequential @@ RegistryRecording.eachTest("bound-domain")
 }

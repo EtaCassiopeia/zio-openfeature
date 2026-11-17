@@ -8,7 +8,8 @@ name: Formal model
 # evaluation bug and each progress bug is put back into the model and must be caught.
 # TLAPS proves the lifecycle model's structural invariants for all sizes (LifecycleProofs.tla).
 # The registry model (formal/registry) checks the ownership rules of one API shared by several instances, with its
-# mutants.
+# mutants; on every run, the runs of several instances on one API that the registry and ownership suites record are
+# checked against it, and must take every action of the model but Lookup between them.
 # The event lane model (formal/lane) checks OrderedEmitter against the SDK's API lock, with its witnesses and mutants.
 # The acquire model (formal/acquire) checks fromAcquireAsync's hand-off of a provider against a layer release, with its
 # mutants; on every run, the runs fromAcquireAsync's test suites record are checked against it, and must take every
@@ -56,6 +57,11 @@ on:
       - 'testkit/src/test/scala/zio/openfeature/testkit/OrphanedProviderSpec.scala'
       - 'testkit/src/test/scala/zio/openfeature/testkit/ProviderNameSpec.scala'
       - 'extras/src/main/scala/zio/openfeature/extras/CachingProvider.scala'
+      - 'core/src/test/scala/zio/openfeature/RegistryRecording.scala'
+      - 'core/src/test/scala/zio/openfeature/ProviderOwnershipShutdownSpec.scala'
+      - 'core/src/test/scala/zio/openfeature/FeatureFlagRegistrySpec.scala'
+      - 'testkit/src/test/scala/zio/openfeature/testkit/RegistryFaultSpec.scala'
+      - 'testkit/src/test/scala/zio/openfeature/testkit/BoundDomainSpec.scala'
   push:
     branches: [main]
     paths:
@@ -94,6 +100,11 @@ on:
       - 'testkit/src/test/scala/zio/openfeature/testkit/OrphanedProviderSpec.scala'
       - 'testkit/src/test/scala/zio/openfeature/testkit/ProviderNameSpec.scala'
       - 'extras/src/main/scala/zio/openfeature/extras/CachingProvider.scala'
+      - 'core/src/test/scala/zio/openfeature/RegistryRecording.scala'
+      - 'core/src/test/scala/zio/openfeature/ProviderOwnershipShutdownSpec.scala'
+      - 'core/src/test/scala/zio/openfeature/FeatureFlagRegistrySpec.scala'
+      - 'testkit/src/test/scala/zio/openfeature/testkit/RegistryFaultSpec.scala'
+      - 'testkit/src/test/scala/zio/openfeature/testkit/BoundDomainSpec.scala'
   schedule:
     - cron: '17 3 * * *'
   workflow_dispatch:
@@ -426,6 +437,49 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: acquire-traces
+          path: traces/
+          retention-days: 14
+
+  # The runs of several instances on one API that the ownership and registry suites record, checked against the
+  # registry model, with the checker's own fixtures and its guards (formal/registry/README.md). A few minutes, so on
+  # every pull request.
+  registry-traces:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - name: Set up JDK 21
+        uses: actions/setup-java@v6
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: sbt
+      - name: Set up sbt
+        uses: sbt/setup-sbt@v1
+      - name: Download the TLA+ tools and community modules
+        run: |
+          scripts/fetch-asset.sh "https://github.com/${GITHUB_REPOSITORY}/releases/download/${TRACE_TLA_TOOLS_RELEASE}/tla2tools.jar" "${TRACE_TLA_TOOLS_SHA256}" tla2tools.jar
+          scripts/fetch-asset.sh "https://github.com/tlaplus/CommunityModules/releases/download/${COMMUNITY_MODULES_VERSION}/CommunityModules-deps.jar" "${COMMUNITY_MODULES_SHA256}" CommunityModules-deps.jar
+      - name: Check that the checker accepts and rejects its fixtures, and that each guard is exercised by one
+        working-directory: formal/registry
+        run: |
+          python3 validate.py ../../tla2tools.jar ../../CommunityModules-deps.jar --selftest traces
+          python3 preconditions.py ../../tla2tools.jar ../../CommunityModules-deps.jar
+      - name: Record the runs of several instances on one API
+        env:
+          ZOF_TRACE: '1'
+          ZOF_TRACE_DIR: ${{ github.workspace }}/traces
+        run: >-
+          sbt "core/testOnly zio.openfeature.ProviderOwnershipShutdownSpec zio.openfeature.FeatureFlagRegistrySpec"
+          "testkit/testOnly zio.openfeature.testkit.RegistryFaultSpec zio.openfeature.testkit.BoundDomainSpec"
+      - name: Check every recorded run is a behaviour of the model, and that the runs take every action but Lookup
+        working-directory: formal/registry
+        run: python3 validate.py ../../tla2tools.jar ../../CommunityModules-deps.jar "${GITHUB_WORKSPACE}/traces/registry" --reached
+      - name: Keep the recorded runs
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: registry-traces
           path: traces/
           retention-days: 14
 

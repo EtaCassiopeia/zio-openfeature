@@ -12,9 +12,10 @@ import java.util.concurrent.atomic.AtomicLong
 import scala.jdk.CollectionConverters._
 
 /** Records the lifecycle probe points a run passes, one JSON line each, for `formal/lifecycle/validate.py`, which
-  * checks the run is a behaviour of the TLA+ lifecycle model, or, for a `fromAcquireAsync` run, for
-  * `formal/acquire/validate.py`. Lines carry a sequence number taken when the point is reached, since several threads
-  * record; `begin` marks the moment the instance is built and the run starts.
+  * checks the run is a behaviour of the TLA+ lifecycle model, for a `fromAcquireAsync` run, for
+  * `formal/acquire/validate.py`, and for a run of several instances on one API, for `formal/registry/validate.py`.
+  * Lines carry a sequence number taken when the point is reached, since several threads record; `begin` marks the
+  * moment the instance is built and the run starts.
   */
 final class TraceProbe private () extends LifecycleProbe {
   private val seq     = new AtomicLong(0)
@@ -22,6 +23,37 @@ final class TraceProbe private () extends LifecycleProbe {
 
   def at(point: Point): UIO[Unit] =
     ZIO.succeed(record(point.name, TraceProbe.argument(point), TraceProbe.identityFields(point)))
+
+  /** The probe of one of several instances on one API: its points go into this run's sequence, each line tagged
+    * `"instance": tag`. A provider's wrapper records with the probe of the instance that first wrapped it.
+    */
+  def forInstance(tag: String): LifecycleProbe =
+    new LifecycleProbe {
+      def at(point: Point): UIO[Unit] =
+        ZIO.succeed(
+          record(point.name, TraceProbe.argument(point), TraceProbe.identityFields(point) :+ ("instance" -> tag))
+        )
+    }
+
+  /** A step the test itself takes on the API, outside the library, recorded once it has happened: `UserBind`, binding
+    * `provider` to `domain`'s slot; `UserApiShutdown`, the API's own shutdown; `UserRetryInit`, the SDK initializing a
+    * slot's failed provider again.
+    */
+  private[openfeature] def environment(
+    step: String,
+    domain: Option[String] = None,
+    provider: Option[OFFeatureProvider] = None
+  ): UIO[Unit] =
+    ZIO.succeed(
+      record(
+        step,
+        "",
+        domain.map("domain" -> _).toList ++ provider.toList.flatMap(TraceProbe.named("provider", "providerInstance", _))
+      )
+    )
+
+  /** How many lines the run has recorded so far. */
+  private[openfeature] def size: Int = records.size()
 
   /** The instance is built on `initial`: what follows is the run. The line's `arg` is `pending` when the initial
     * provider's `initialize()` has not settled yet, so the run starts like the model's async build; a quick async build
@@ -123,7 +155,7 @@ object TraceProbe {
       )
   }
 
-  private def named(nameKey: String, instanceKey: String, p: OFFeatureProvider): List[(String, String)] = {
+  private[openfeature] def named(nameKey: String, instanceKey: String, p: OFFeatureProvider): List[(String, String)] = {
     val who = Who.of(p)
     List(nameKey -> who.name, instanceKey -> who.instance)
   }
@@ -137,19 +169,26 @@ object TraceProbe {
       named("provider", "providerInstance", previous) ++ named("watch", "watchInstance", watch)
     case Point.OrphanDropped(previous, watch) =>
       named("provider", "providerInstance", previous) ++ named("watch", "watchInstance", watch)
-    case Point.InitOutcome(p, _)              => named("provider", "providerInstance", p)
-    case Point.DeliverEvent(_, provider)      => List("provider" -> provider)
-    case Point.ProviderShutDown(_, p, caller) => named("provider", "providerInstance", p) :+ ("caller" -> caller)
-    case Point.AcquireAttemptStart(a)         => List(attempt(a))
-    case Point.AcquireVerifyFailed(a)         => List(attempt(a))
-    case Point.AcquireFailed(a)               => List(attempt(a))
-    case Point.AcquireAbandoned(a, _)         => List(attempt(a))
-    case Point.AcquireAccepted(a, p)          => attempt(a) :: named("provider", "providerInstance", p)
-    case Point.AcquireRejected(a, p)          => attempt(a) :: named("provider", "providerInstance", p)
-    case Point.AcquireLateArrival(a, p)       => attempt(a) :: named("provider", "providerInstance", p)
-    case Point.AcquireComposed(p)             => named("provider", "providerInstance", p)
-    case Point.AcquireReleaseOwned(held)      => held.toList.flatMap(named("provider", "providerInstance", _))
-    case _                                    => Nil
+    case Point.InitOutcome(p, _)                 => named("provider", "providerInstance", p)
+    case Point.DeliverEvent(_, provider)         => List("provider" -> provider)
+    case Point.ProviderShutDown(_, p, caller)    => named("provider", "providerInstance", p) :+ ("caller" -> caller)
+    case Point.AcquireAttemptStart(a)            => List(attempt(a))
+    case Point.AcquireVerifyFailed(a)            => List(attempt(a))
+    case Point.AcquireFailed(a)                  => List(attempt(a))
+    case Point.AcquireAbandoned(a, _)            => List(attempt(a))
+    case Point.AcquireAccepted(a, p)             => attempt(a) :: named("provider", "providerInstance", p)
+    case Point.AcquireRejected(a, p)             => attempt(a) :: named("provider", "providerInstance", p)
+    case Point.AcquireLateArrival(a, p)          => attempt(a) :: named("provider", "providerInstance", p)
+    case Point.AcquireComposed(p)                => named("provider", "providerInstance", p)
+    case Point.AcquireReleaseOwned(held)         => held.toList.flatMap(named("provider", "providerInstance", _))
+    case Point.BuildBind(p, domain, owns, async) =>
+      named("provider", "providerInstance", p) ++ domain.map("domain" -> _).toList ++
+        List("owns" -> owns.toString, "async" -> async.toString)
+    case Point.FailedRegistration(p) => named("provider", "providerInstance", p)
+    case Point.FailDecided(p, _)     => named("provider", "providerInstance", p)
+    case Point.RegistryInsert(d)     => d.map("domain" -> _).toList
+    case Point.RegistryComplete(d)   => d.map("domain" -> _).toList
+    case _                           => Nil
   }
 
   private def argument(point: Point): String = point match {
@@ -162,6 +201,7 @@ object TraceProbe {
     case Point.AcquireAbandoned(_, i)       => i.toString
     case Point.AcquireStackInit(ok)         => ok.toString
     case Point.AcquireSwitched(ok)          => ok.toString
+    case Point.FailDecided(_, shut)         => shut.toString
     case _                                  => ""
   }
 

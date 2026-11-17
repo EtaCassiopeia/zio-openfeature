@@ -75,8 +75,13 @@ object FeatureFlagRegistrySpec extends ZIOSpecDefault {
     override def hashCode: Int                              = 1
   }
 
-  private def registryLayer(defaultProvider: SimpleProvider): ZLayer[Scope, Throwable, FeatureFlagRegistry] =
-    FeatureFlagRegistry.fromProvider(defaultProvider)
+  private def makeRegistry(defaultProvider: SimpleProvider): ZIO[Scope, Throwable, FeatureFlagRegistry] =
+    RegistryRecording.registryProbe.flatMap { probe =>
+      FeatureFlagRegistry
+        .fromProvider(defaultProvider, FeatureFlagsConfig.default, probe)
+        .build
+        .map(_.get[FeatureFlagRegistry])
+    }
 
   // Poll an AtomicInteger until it reaches `target` (or a live-time bound), so assertions on the SDK's async
   // provider shutdown (dispatched to its own executor at registry release) don't race a fixed sleep.
@@ -95,7 +100,7 @@ object FeatureFlagRegistrySpec extends ZIOSpecDefault {
       ZIO.scoped {
         val provider = new SimpleProvider("Default", Map("flag" -> true))
         for {
-          registry <- registryLayer(provider).build.map(_.get[FeatureFlagRegistry])
+          registry <- makeRegistry(provider)
           client   <- registry.getClient("billing")
           value    <- client.boolean("flag", default = false)
         } yield assertTrue(value == true)
@@ -106,7 +111,7 @@ object FeatureFlagRegistrySpec extends ZIOSpecDefault {
         val defaultProvider = new SimpleProvider("Default", Map("flag" -> false))
         val billingProvider = new SimpleProvider("Billing", Map("flag" -> true))
         for {
-          registry <- registryLayer(defaultProvider).build.map(_.get[FeatureFlagRegistry])
+          registry <- makeRegistry(defaultProvider)
           _        <- registry.setProvider("billing", billingProvider)
           client   <- registry.getClient("billing")
           value    <- client.boolean("flag", default = false)
@@ -118,7 +123,7 @@ object FeatureFlagRegistrySpec extends ZIOSpecDefault {
         val providerA = new SimpleProvider("A", Map("flag" -> true))
         val providerB = new SimpleProvider("B", Map("flag" -> false))
         for {
-          registry <- registryLayer(providerA).build.map(_.get[FeatureFlagRegistry])
+          registry <- makeRegistry(providerA)
           client   <- registry.getClient("domain1")
           v1       <- client.boolean("flag", default = false)
           _        <- registry.setProvider("domain1", providerB)
@@ -130,7 +135,7 @@ object FeatureFlagRegistrySpec extends ZIOSpecDefault {
       ZIO.scoped {
         val provider = new SimpleProvider("Default", Map.empty)
         for {
-          registry <- registryLayer(provider).build.map(_.get[FeatureFlagRegistry])
+          registry <- makeRegistry(provider)
           c1       <- registry.getClient("domain1")
           c2       <- registry.getClient("domain1")
         } yield assertTrue(c1 eq c2)
@@ -140,7 +145,7 @@ object FeatureFlagRegistrySpec extends ZIOSpecDefault {
       ZIO.scoped {
         val provider = new SimpleProvider("Default", Map("flag" -> true))
         for {
-          registry <- registryLayer(provider).build.map(_.get[FeatureFlagRegistry])
+          registry <- makeRegistry(provider)
           client   <- registry.defaultClient
           value    <- client.boolean("flag", default = false)
         } yield assertTrue(value == true)
@@ -152,7 +157,7 @@ object FeatureFlagRegistrySpec extends ZIOSpecDefault {
         val billingProvider = new SimpleProvider("Billing", Map("flag" -> "billing"))
         val authProvider    = new SimpleProvider("Auth", Map("flag" -> "auth"))
         for {
-          registry <- registryLayer(defaultProvider).build.map(_.get[FeatureFlagRegistry])
+          registry <- makeRegistry(defaultProvider)
           _        <- registry.setProvider("billing", billingProvider)
           _        <- registry.setProvider("auth", authProvider)
           billing  <- registry.getClient("billing")
@@ -172,7 +177,7 @@ object FeatureFlagRegistrySpec extends ZIOSpecDefault {
       ZIO.scoped {
         val provider = new SimpleProvider("Default", Map.empty)
         for {
-          registry <- registryLayer(provider).build.map(_.get[FeatureFlagRegistry])
+          registry <- makeRegistry(provider)
           c1       <- registry.defaultClient
           c2       <- registry.defaultClient
         } yield assertTrue(c1 eq c2)
@@ -183,7 +188,7 @@ object FeatureFlagRegistrySpec extends ZIOSpecDefault {
         val defaultProvider = new SimpleProvider("Default", Map("flag" -> "default"))
         val customProvider  = new SimpleProvider("Custom", Map("flag" -> "custom"))
         for {
-          registry <- registryLayer(defaultProvider).build.map(_.get[FeatureFlagRegistry])
+          registry <- makeRegistry(defaultProvider)
           _        <- registry.setProvider("late", customProvider)
           client   <- registry.getClient("late")
           value    <- client.string("flag", default = "none")
@@ -200,7 +205,7 @@ object FeatureFlagRegistrySpec extends ZIOSpecDefault {
         }
         val recoveryProvider = new SimpleProvider("Recovery", Map("flag" -> "recovered"))
         for {
-          registry <- registryLayer(defaultProvider).build.map(_.get[FeatureFlagRegistry])
+          registry <- makeRegistry(defaultProvider)
           client   <- registry.getClient("domain1")
           v1       <- client.string("flag", default = "none")
           result   <- registry.setProvider("domain1", failingProvider).either
@@ -233,7 +238,7 @@ object FeatureFlagRegistrySpec extends ZIOSpecDefault {
           }
         }
         for {
-          registry  <- registryLayer(defaultProvider).build.map(_.get[FeatureFlagRegistry])
+          registry  <- makeRegistry(defaultProvider)
           _         <- registry.setProvider("slow", slowProvider)
           slowFiber <- registry.getClient("slow").fork
           // Ensure the slow build is actually in flight before asking for the fast domain
@@ -256,7 +261,7 @@ object FeatureFlagRegistrySpec extends ZIOSpecDefault {
       for {
         during <- ZIO.scoped {
           for {
-            registry <- registryLayer(provider).build.map(_.get[FeatureFlagRegistry])
+            registry <- makeRegistry(provider)
             clients  <- ZIO.foreach(List("shared-a", "shared-b", "shared-c"))(registry.getClient)
             values   <- ZIO.foreach(clients)(_.boolean("flag", default = false))
             wrapper  <- ZIO.succeed(zio.openfeature.internal.ManagedProvider.existing(provider))
@@ -282,7 +287,7 @@ object FeatureFlagRegistrySpec extends ZIOSpecDefault {
       val b      = new EqualProvider(initsB)
       ZIO.scoped {
         for {
-          registry <- registryLayer(new SimpleProvider("Default", Map.empty)).build.map(_.get[FeatureFlagRegistry])
+          registry <- makeRegistry(new SimpleProvider("Default", Map.empty))
           _        <- registry.setProvider("equal-a", a)
           _        <- registry.setProvider("equal-b", b)
           ca       <- registry.getClient("equal-a")
@@ -313,7 +318,7 @@ object FeatureFlagRegistrySpec extends ZIOSpecDefault {
           }
         }
         for {
-          registry <- registryLayer(provider).build.map(_.get[FeatureFlagRegistry])
+          registry <- makeRegistry(provider)
           clientsR <- ZIO.collectAllPar((1 to 8).map(_ => registry.getClient("same")))
         } yield assertTrue(
           initCount.get() == 1,
@@ -330,7 +335,7 @@ object FeatureFlagRegistrySpec extends ZIOSpecDefault {
         }
         val goodProvider = new SimpleProvider("Good", Map("flag" -> "good"))
         for {
-          registry <- registryLayer(defaultProvider).build.map(_.get[FeatureFlagRegistry])
+          registry <- makeRegistry(defaultProvider)
           _        <- registry.setProvider("retryable", failingProvider)
           first    <- registry.getClient("retryable").either
           // The failed build is not memoized: register a working provider and retry
@@ -349,7 +354,7 @@ object FeatureFlagRegistrySpec extends ZIOSpecDefault {
         val defaultProvider = new SimpleProvider("Default", Map.empty)
         val billingProvider = new SimpleProvider("Billing", Map.empty)
         for {
-          registry <- registryLayer(defaultProvider).build.map(_.get[FeatureFlagRegistry])
+          registry <- makeRegistry(defaultProvider)
           _        <- registry.setProvider("billing", billingProvider)
           client   <- registry.getClient("billing")
           meta     <- client.providerMetadata
@@ -368,7 +373,7 @@ object FeatureFlagRegistrySpec extends ZIOSpecDefault {
         }
         val goodProvider = new SimpleProvider("Good", Map("flag" -> "good"))
         for {
-          registry <- registryLayer(defaultProvider).build.map(_.get[FeatureFlagRegistry])
+          registry <- makeRegistry(defaultProvider)
           // Live clock so the regression guard (a hang) is bounded in real time; the registry's own
           // readiness poll uses blocking sleeps, so the default frozen TestClock would never fire timeout.
           result <- Live.live(
@@ -411,7 +416,7 @@ object FeatureFlagRegistrySpec extends ZIOSpecDefault {
       for {
         duringUse <- ZIO.scoped {
           for {
-            registry <- registryLayer(defaultProvider).build.map(_.get[FeatureFlagRegistry])
+            registry <- makeRegistry(defaultProvider)
             _        <- registry.setProvider("a", p)
             client   <- registry.getClient("a")
             v        <- client.string("flag", default = "none")
@@ -435,7 +440,7 @@ object FeatureFlagRegistrySpec extends ZIOSpecDefault {
       for {
         duringUse <- ZIO.scoped {
           for {
-            registry <- registryLayer(defaultProvider).build.map(_.get[FeatureFlagRegistry])
+            registry <- makeRegistry(defaultProvider)
             _        <- registry.setProvider("a", pa)
             _        <- registry.setProvider("b", pb)
             ca       <- registry.getClient("a")
@@ -456,5 +461,5 @@ object FeatureFlagRegistrySpec extends ZIOSpecDefault {
         afterB == 1
       )
     }
-  )
+  ) @@ RegistryRecording.eachTest("registry")
 }

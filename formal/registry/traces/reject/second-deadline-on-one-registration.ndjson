@@ -1,0 +1,26 @@
+{"seq":0,"point":"BuildBind","arg":"","provider":"gated","providerInstance":"14429842","domain":"a","owns":"false","async":"true","instance":"b1"}
+{"seq":1,"point":"InitEntered","arg":"","instance":"b1"}
+{"seq":2,"point":"BuildBind","arg":"","provider":"gated","providerInstance":"14429842","domain":"b","owns":"false","async":"true","instance":"b2"}
+{"seq":3,"point":"DeliverEvent","arg":"PROVIDER_READY","provider":"gated","instance":"b1"}
+{"seq":4,"point":"DeliverEvent","arg":"PROVIDER_READY","provider":"gated","instance":"b2"}
+{"seq":5,"point":"Watchdog","arg":"","instance":"b2"}
+{"seq":6,"point":"ApplySignal","arg":"InitTimeout","instance":"b2"}
+{"seq":7,"point":"FailedRegistration","arg":"","provider":"gated","providerInstance":"14429842","instance":"b2"}
+{"seq":8,"point":"FailDecided","arg":"false","provider":"gated","providerInstance":"14429842","instance":"b2"}
+{"seq":9,"point":"Watchdog","arg":"","instance":"b1"}
+{"seq":10,"point":"ApplySignal","arg":"InitTimeout","instance":"b1"}
+{"seq":11,"point":"FailedRegistration","arg":"","provider":"gated","providerInstance":"14429842","instance":"b1"}
+{"seq":12,"point":"FailDecided","arg":"true","provider":"gated","providerInstance":"14429842","instance":"b1"}
+{"seq":13,"point":"ProviderShutDown","arg":"23","provider":"gated","providerInstance":"14429842","caller":"zio-default-blocking-3","instance":"b1"}
+{"seq":14,"point":"ShutdownReturned","arg":"23 true","instance":"b1"}
+{"seq":15,"point":"InitOutcome","arg":"true","provider":"gated","providerInstance":"14429842","instance":"b1"}
+{"seq":16,"point":"FailedRegistration","arg":"","provider":"gated","providerInstance":"14429842","instance":"b1"}
+{"seq":17,"point":"FailDecided","arg":"true","provider":"gated","providerInstance":"14429842","instance":"b1"}
+{"seq":18,"point":"InitReturned","arg":"","instance":"b1"}
+{"seq":19,"point":"DeliverEvent","arg":"PROVIDER_READY","provider":"gated","instance":"b2"}
+{"seq":20,"point":"DeliverEvent","arg":"PROVIDER_READY","provider":"gated","instance":"b1"}
+{"seq":21,"point":"ApplySignal","arg":"EventReady","instance":"b1"}
+{"seq":22,"point":"ApplySignal","arg":"EventReady","instance":"b2"}
+{"seq":23,"point":"ScopeClose","arg":"","instance":"b2"}
+{"seq":24,"point":"ScopeClose","arg":"","instance":"b1"}
+{"seq":25,"point":"UserApiShutdown","arg":""}

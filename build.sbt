@@ -26,11 +26,11 @@ lazy val wiremockTestSupport = Seq(
 )
 
 // Jackson reaches us only through the OFREP contrib provider; see `jacksonPins` above the `ofrep` module.
-// `jackson-annotations` is versioned WITHOUT a patch component from 2.20 onwards (jackson-bom 2.22.4 pins it
-// to `2.22`), so it cannot share `jacksonVersion` — `2.22.4` does not exist for that artifact.
+// `jackson-annotations` is versioned WITHOUT a patch component from 2.20 onwards (jackson-bom 2.23.0 pins it
+// to `2.23`), so it cannot share `jacksonVersion` — `2.23.0` does not exist for that artifact.
 // 2.22.4 rejects a lone UTF-16 surrogate in a JSON field name (jackson-core #1683): such an OFREP object flag is a
 // PARSE_ERROR with the default (#534).
-val jacksonVersion            = "2.22.4"
+val jacksonVersion            = "2.23.0"
 val jacksonAnnotationsVersion = "2.23"
 
 // Guava reaches us through the OFREP contrib provider, and through WireMock in tests; see `guavaPin`.
@@ -308,8 +308,14 @@ lazy val core = (project in file("core"))
     // does not inherit the build JVM's properties, so it is passed on.
     Test / javaOptions ++= sys.props.get("zof.lifecycle.behaviours").map("-Dzof.lifecycle.behaviours=" + _).toList,
     // The lifecycle probe's points carry the provider they concern since 2.2.0; the probe is internal test tooling.
+    // The registry and the factories take that probe too: `FeatureFlagRegistryLive` is a private class and
+    // `FeatureFlagsFactories` a private[openfeature] object, so no caller outside the library can see either signature.
     tastyMiMaConfig ~= (_.withMoreProblemFilters(
-      java.util.Arrays.asList(ProblemMatcher.make("zio.openfeature.internal.LifecycleProbe.Point.*"))
+      java.util.Arrays.asList(
+        ProblemMatcher.make("zio.openfeature.internal.LifecycleProbe.Point.*"),
+        ProblemMatcher.make("zio.openfeature.FeatureFlagRegistryLive.<init>"), // non-public: private[openfeature]
+        ProblemMatcher.make("zio.openfeature.internal.FeatureFlagsFactories.fromProvider")
+      )
     ))
   )
 

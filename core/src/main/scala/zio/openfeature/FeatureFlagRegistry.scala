@@ -103,10 +103,11 @@ object FeatureFlagRegistry {
 /** Registry implementation.
   *
   * Concurrency design: the single `lock` only ever guards map/ref bookkeeping — never provider initialization. Each
-  * domain's client is memoized as a `Promise`; the first caller inserts the promise (under the lock) and runs the build
-  * outside the lock, so a slow provider for one domain cannot stall `getClient` for other domains. Concurrent callers
-  * for the same domain await the same promise, guaranteeing at most one build per domain. On build failure the promise
-  * is failed (typed) and removed, making the failure visible to all waiters while allowing later retries.
+  * domain's client is memoized as a `Promise`; the first caller inserts the promise and forks its build in one step
+  * under the lock that an interrupt cannot split, and the build runs outside the lock, so a slow provider for one
+  * domain cannot stall `getClient` for other domains. Concurrent callers for the same domain await the same promise,
+  * guaranteeing at most one build per domain. On build failure the promise is failed (typed) and removed, making the
+  * failure visible to all waiters while allowing later retries.
   *
   * Hook bookkeeping: completing a build's promise and registering its accumulated API hooks happens in one lock
   * section, and `addZioApiHook` updates the hook list and notifies completed clients in another — so a hook is applied
@@ -173,7 +174,9 @@ final private class FeatureFlagRegistryLive(
       } yield ()
     }
 
-  /** Get-or-insert the memoized promise under the lock, build outside it (first caller only), await. */
+  /** Get-or-insert the memoized promise under the lock, the first caller forking its build in the same uninterruptible
+    * step, then await it.
+    */
   private def memoizedClient(
     domain: Option[String],
     get: UIO[Option[Promise[FeatureFlagError, FeatureFlagsLive]]],
@@ -181,22 +184,23 @@ final private class FeatureFlagRegistryLive(
     remove: UIO[Unit]
   ): IO[FeatureFlagError, FeatureFlags] =
     for {
-      inserted <- lock.withPermit {
-        get.flatMap {
-          case Some(p) => ZIO.succeed((p, false))
-          case None    =>
-            Promise
-              .make[FeatureFlagError, FeatureFlagsLive]
-              .flatMap(p => put(p) *> probe(domain).at(LifecycleProbe.Point.RegistryInsert(domain)).as((p, true)))
+      // The lookup, the insert and the fork of the build that settles the promise are one uninterruptible section, so
+      // an interrupted caller never leaves a promise in the map that no build completes. Only the wait for the permit,
+      // before the section, and the wait on the promise, after it, can be interrupted.
+      promise <- lock.withPermit {
+        ZIO.uninterruptible {
+          get.flatMap {
+            case Some(p) => ZIO.succeed(p)
+            case None    =>
+              Promise.make[FeatureFlagError, FeatureFlagsLive].tap { p =>
+                // The build runs on its own fiber in the registry scope: interrupting the caller that happened to
+                // trigger it must not strand the other fibers awaiting the same promise.
+                put(p) *> probe(domain).at(LifecycleProbe.Point.RegistryInsert(domain)) *>
+                  runBuild(domain, p, remove).forkIn(scope)
+              }
+          }
         }
       }
-      promise = inserted._1
-      isOwner = inserted._2
-      // The build runs on its own fiber in the registry scope: interrupting the caller that happened to
-      // trigger the build must not strand the other fibers awaiting the same promise. (Making the build
-      // uninterruptible on the caller fiber is not an option — fibers forked inside it, like buildAsync's
-      // init watchdog, would inherit uninterruptibility and block scope close.)
-      _      <- ZIO.when(isOwner)(runBuild(domain, promise, remove).forkIn(scope))
       client <- promise.await
     } yield client
 
@@ -208,7 +212,9 @@ final private class FeatureFlagRegistryLive(
     promise: Promise[FeatureFlagError, FeatureFlagsLive],
     remove: UIO[Unit]
   ): UIO[Unit] =
-    buildClient(domain)
+    // Only the build itself is interruptible: fibers it forks, like buildAsync's init watchdog, must not inherit the
+    // uninterruptible section that forked it, or they would block scope close. Settling the promise is not.
+    buildClient(domain).interruptible
       // `foldCauseZIO`, not `foldZIO`: a *defect* (a throwing SDK call that escaped the typed channel) is not a
       // typed failure, so `foldZIO` would let it kill this fiber with the promise never settled and the entry never
       // removed — every current and future `getClient` for this domain would then block on `promise.await` forever.

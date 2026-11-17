@@ -254,7 +254,8 @@ A domain names a client, so different parts of an app can use different provider
 ```
 
 - `getClient(domain)` builds the client once and returns the same instance afterwards, even for concurrent callers.
-  `defaultClient` is the client without a domain.
+  `defaultClient` is the client without a domain. Interrupting a caller does not cancel the build: the other callers,
+  and the next one, get its client.
 - A domain without its own provider uses the default one. `setProvider(domain, provider)` registers one, and swaps it in
   if the client exists.
 - A provider that fails or is not ready within `initTimeout` (30 seconds by default) gives

@@ -280,27 +280,34 @@ object SingleReadyDeliverySpec extends ZIOSpecDefault {
       }
     },
     test("an ERROR the SDK sent the failed build's bridge before its handlers were removed cannot write Ready later") {
+      // One failed build. Whether the SDK picks the bridge's handler for the ERROR before the build removes it is a
+      // race, and only a picked delivery is held: a build whose delivery was not picked is retried.
+      val heldBuild = for {
+        api       <- ZIO.succeed(OpenFeatureAPI.createIsolated())
+        dom       <- ZIO.succeed(domain())
+        statusRef <- SubscriptionRef.make[ProviderStatus](ProviderStatus.NotReady)
+        release   <- Promise.make[Nothing, Unit]
+        hold = new HoldErrors(release)
+        exit <- FeatureFlagsFactories
+          .build(
+            new ErrorEmittingProvider("same"),
+            domain = Some(dom),
+            version = None,
+            initialHooks = Nil,
+            statusRef = Some(statusRef),
+            addShutdownFinalizer = false,
+            apiOverride = Some(api),
+            probe = hold
+          )
+          .exit
+        _ <- Live.live(ZIO.sleep(10.millis).repeatUntil(_ => hold.held.get() > 0).timeout(1.second))
+        _ <- ZIO.unless(hold.held.get() > 0)(release.succeed(()))
+      } yield (api, dom, statusRef, release, hold, exit)
       ZIO.scoped {
         for {
-          api       <- ZIO.succeed(OpenFeatureAPI.createIsolated())
-          dom       <- ZIO.succeed(domain())
-          statusRef <- SubscriptionRef.make[ProviderStatus](ProviderStatus.NotReady)
-          release   <- Promise.make[Nothing, Unit]
-          hold = new HoldErrors(release)
-          exit <- FeatureFlagsFactories
-            .build(
-              new ErrorEmittingProvider("same"),
-              domain = Some(dom),
-              version = None,
-              initialHooks = Nil,
-              statusRef = Some(statusRef),
-              addShutdownFinalizer = false,
-              apiOverride = Some(api),
-              probe = hold
-            )
-            .exit
-          // The SDK picked the bridge's handler for the ERROR before the build removed it; the delivery is held.
-          _ <- Live.live(ZIO.sleep(10.millis).repeatUntil(_ => hold.held.get() > 0).timeout(5.seconds))
+          // Bounded by the suite's timeout; a build usually has its delivery held at the first try.
+          built <- heldBuild.repeatUntil(_._5.held.get() > 0)
+          (api, dom, statusRef, release, hold, exit) = built
           // The slot now serves a ready provider with the failed one's name; the held delivery reads that slot.
           _     <- ZIO.attemptBlocking(api.setProviderAndWait(dom, new BoolProvider("same")))
           _     <- release.succeed(())

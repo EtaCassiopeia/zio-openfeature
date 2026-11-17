@@ -474,7 +474,8 @@ lazy val schema = (project in file("schema"))
 
 // Testkit module - testing utilities
 lazy val testkit = (project in file("testkit"))
-  .dependsOn(core)
+  // core's tests hold the trace recorder (TraceProbe) that testkit's lifecycle specs record with.
+  .dependsOn(core % "compile->compile;test->test")
   .settings(
     name := "zio-openfeature-testkit",
     commonSettings,

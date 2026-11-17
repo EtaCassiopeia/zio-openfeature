@@ -34,7 +34,7 @@ val jacksonVersion            = "2.22.4"
 val jacksonAnnotationsVersion = "2.23"
 
 // Guava reaches us through the OFREP contrib provider, and through WireMock in tests; see `guavaPin`.
-val guavaVersion = "33.7.2-jre"
+val guavaVersion = "33.8.0-jre"
 
 // OpenFeature Specification Compatibility
 // Spec version: v0.9.0 (https://github.com/open-feature/spec)
@@ -329,7 +329,7 @@ lazy val extras = (project in file("extras"))
     libraryDependencies ++= Seq(
       "dev.zio"     %% "zio"       % zioVersion,
       "dev.zio"     %% "zio-cache" % "0.2.8",
-      "com.typesafe" % "config"    % "1.4.9",
+      "com.typesafe" % "config"    % "1.4.10",
       // Linearizability checks of the lock-free state machines. Test scope only.
       "org.jetbrains.lincheck" % "lincheck" % "3.7" % Test
     ),
@@ -416,8 +416,8 @@ lazy val optimizely = (project in file("optimizely"))
       // NOTE: on a core-api/core-httpclient upgrade, re-verify `com/optimizely/ab/ObservingOptimizelyHttpClient.java`
       // — it lives in the `com.optimizely.ab` package to reach the package-private `OptimizelyHttpClient` ctor and
       // `getHttpClient()` (the staleness fetch-observation seam for #267). A version bump breaks it at compile time.
-      "com.optimizely.ab" % "core-api"             % "4.6.0",
-      "com.optimizely.ab" % "core-httpclient-impl" % "4.6.0",
+      "com.optimizely.ab" % "core-api"             % "4.7.0",
+      "com.optimizely.ab" % "core-httpclient-impl" % "4.7.0",
       "org.wiremock"      % "wiremock"             % wiremockVersion % Test,
       // WireMock's Guava is the only one on this module's classpaths, so the pin is test scope and ships to no consumer.
       guavaPin % Test

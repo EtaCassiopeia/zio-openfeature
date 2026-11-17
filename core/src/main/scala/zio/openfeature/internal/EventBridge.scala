@@ -52,6 +52,10 @@ final private[openfeature] class EventBridge(
   // Whether the bridge's handlers are on the client: set when they are added, cleared when they are removed.
   private val attached = new java.util.concurrent.atomic.AtomicBoolean(false)
 
+  // Set before the handlers are removed, and never cleared. The SDK runs a handler on its own pool some time after it
+  // picked it for an event, so removal does not stop a delivery already picked; such a delivery applies no signal.
+  private val stopped = new java.util.concurrent.atomic.AtomicBoolean(false)
+
   /** Whether the bridge's handlers are still registered with the client. */
   private[openfeature] def bridgeAttached: Boolean = attached.get()
 
@@ -75,7 +79,9 @@ final private[openfeature] class EventBridge(
     * either order unless the provider awaits each one (the extras wrappers do), and the status follows the slot. For
     * the same reason an event from the installed provider never finds the slot `NOT_READY`: one that does is about
     * another registration (a replaced provider with the same name, which the identity guard cannot tell apart), and
-    * applies no signal. Returns the signal applied, if any, and the transition.
+    * applies no signal. Nor does an event reaching a bridge whose handlers have been removed: the slot may already
+    * serve another provider, whose state is not this instance's. The slot is read before that check, so a slot state
+    * written after the removal is never applied. Returns the signal applied, if any, and the transition.
     */
   private def applySdkSignal(own: Signal): UIO[(Option[Signal], Option[ProviderStatus])] =
     probe.at(LifecycleProbe.Point.ApplySignal(own)) *> lifecycle
@@ -86,8 +92,9 @@ final private[openfeature] class EventBridge(
           else
             try (EventBridge.signalForSlot(client.getProviderState), None)
             catch { case scala.util.control.NonFatal(e) => (Some(own), Some(e)) }
-        // No signal for the slot: a step that changes nothing.
-        (signal.fold[LifecycleInput](LifecycleInput.Idle)(LifecycleInput.Status(_)), (signal, unreadable))
+        val applied = signal.filterNot(_ => stopped.get())
+        // No signal for the slot, or a stopped bridge: a step that changes nothing.
+        (applied.fold[LifecycleInput](LifecycleInput.Idle)(LifecycleInput.Status(_)), (applied, unreadable))
       }
       .map { case ((signal, unreadable), outcome) => (signal, outcome.transitioned, unreadable) }
       .flatMap { case (signal, transitioned, unreadable) =>
@@ -290,6 +297,7 @@ final private[openfeature] class EventBridge(
       // Deregistration thunk stored on the instance so `shutdown` can remove the handlers BEFORE tearing down the API
       // (no emitter thread can then race the teardown); the scope finalizer keeps calling it too (idempotent).
       val deregister: () => Unit = () => {
+        stopped.set(true)
         client.removeHandler(JavaProviderEvent.PROVIDER_READY, readyHandler)
         client.removeHandler(JavaProviderEvent.PROVIDER_ERROR, errorHandler)
         client.removeHandler(JavaProviderEvent.PROVIDER_STALE, staleHandler)

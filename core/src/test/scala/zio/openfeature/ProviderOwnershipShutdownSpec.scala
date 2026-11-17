@@ -61,16 +61,19 @@ object ProviderOwnershipShutdownSpec extends ZIOSpecDefault {
     owns: Boolean = false,
     statusRef: Option[SubscriptionRef[ProviderStatus]] = None
   ): ZIO[Scope, Throwable, FeatureFlagsLive] =
-    FeatureFlags.build(
-      provider,
-      domain = domain,
-      version = None,
-      initialHooks = Nil,
-      statusRef = statusRef,
-      addShutdownFinalizer = owns,
-      apiOverride = Some(api),
-      initTimeout = initTimeout
-    )
+    RegistryRecording.instanceProbe().flatMap { probe =>
+      FeatureFlagsFactories.build(
+        provider,
+        domain = domain,
+        version = None,
+        initialHooks = Nil,
+        statusRef = statusRef,
+        addShutdownFinalizer = owns,
+        apiOverride = Some(api),
+        initTimeout = initTimeout,
+        probe = probe
+      )
+    }
 
   private def asyncBuild(
     api: OpenFeatureAPI,
@@ -79,17 +82,33 @@ object ProviderOwnershipShutdownSpec extends ZIOSpecDefault {
     initTimeout: Duration,
     onReady: Option[CountDownLatch] = None
   ): ZIO[Scope, Throwable, FeatureFlagsLive] =
-    FeatureFlags.buildAsync(
-      provider,
-      domain = Some(domain),
-      version = None,
-      initialHooks = Nil,
-      statusRef = None,
-      addShutdownFinalizer = false,
-      apiOverride = Some(api),
-      onReady = onReady,
-      initTimeout = initTimeout
-    )
+    RegistryRecording.instanceProbe().flatMap { probe =>
+      FeatureFlagsFactories.buildAsync(
+        provider,
+        domain = Some(domain),
+        version = None,
+        initialHooks = Nil,
+        statusRef = None,
+        addShutdownFinalizer = false,
+        apiOverride = Some(api),
+        onReady = onReady,
+        initTimeout = initTimeout,
+        probe = probe
+      )
+    }
+
+  // The test's own steps on the API, outside the library: recorded for the trace check (RegistryRecording).
+  private def bindDirectly(api: OpenFeatureAPI, domain: Option[String], provider: FeatureProvider): UIO[Unit] =
+    ZIO.succeed(domain.fold(api.setProvider(provider))(api.setProvider(_, provider))) *>
+      RegistryRecording.environment("UserBind", domain, Some(provider))
+
+  private def bindAndWait(api: OpenFeatureAPI, domain: Option[String], provider: FeatureProvider): Task[Unit] =
+    ZIO
+      .attemptBlocking(domain.fold(api.setProviderAndWait(provider))(api.setProviderAndWait(_, provider)))
+      .ensuring(RegistryRecording.environment("UserBind", domain, Some(provider)))
+
+  private def shutDownApi(api: OpenFeatureAPI): Task[Unit] =
+    RegistryRecording.environment("UserApiShutdown") *> ZIO.attemptBlocking(api.shutdown())
 
   private def failedWith[E <: Throwable](exit: Exit[Throwable, Any])(implicit tag: ClassTag[E]): Boolean =
     exit.causeOption.flatMap(_.failureOption).exists(tag.runtimeClass.isInstance)
@@ -130,7 +149,7 @@ object ProviderOwnershipShutdownSpec extends ZIOSpecDefault {
       val api      = OpenFeatureAPI.createIsolated()
       val provider = new Gated()
       for {
-        _     <- ZIO.succeed(api.setProvider(provider))
+        _     <- bindDirectly(api, None, provider)
         exit  <- ZIO.scoped(syncBuild(api, provider, Some("d"), 300.millis)).exit
         count <- ZIO.succeed(provider.shutdowns.get())
         held  <- ZIO.succeed(api.getProvider() eq provider)
@@ -143,7 +162,7 @@ object ProviderOwnershipShutdownSpec extends ZIOSpecDefault {
       val readies  = new AtomicInteger(0)
       for {
         status <- SubscriptionRef.make[ProviderStatus](ProviderStatus.NotReady)
-        _      <- ZIO.succeed(api.setProvider(provider))
+        _      <- bindDirectly(api, None, provider)
         _      <- ZIO.succeed(api.onProviderReady { _ => readies.incrementAndGet(); () })
         out    <- ZIO.scoped {
           // Read inside the build's scope: closing it removes the bridge's handlers anyway.
@@ -168,7 +187,7 @@ object ProviderOwnershipShutdownSpec extends ZIOSpecDefault {
       val api      = OpenFeatureAPI.createIsolated()
       val provider = new Gated()
       for {
-        _     <- ZIO.succeed(api.setProvider("d", provider))
+        _     <- bindDirectly(api, Some("d"), provider)
         exit  <- ZIO.scoped(syncBuild(api, provider, Some("d"), 300.millis)).exit
         count <- ZIO.succeed(provider.shutdowns.get())
         held  <- ZIO.succeed(api.getProvider("d") eq provider)
@@ -179,7 +198,7 @@ object ProviderOwnershipShutdownSpec extends ZIOSpecDefault {
       val api      = OpenFeatureAPI.createIsolated()
       val provider = new Gated(failure = Some("boom"))
       for {
-        _     <- ZIO.succeed(api.setProvider(provider))
+        _     <- bindDirectly(api, None, provider)
         fiber <- ZIO.scoped(syncBuild(api, provider, Some("d"), 10.seconds)).exit.fork
         // Nothing shows the build has reached its wait: an unbound domain reads the default slot, which holds it.
         _     <- Live.live(ZIO.sleep(300.millis))
@@ -195,7 +214,7 @@ object ProviderOwnershipShutdownSpec extends ZIOSpecDefault {
       val provider = new Gated(failure = Some("boom"), open = true)
       for {
         // Fails by design: this is the state the build then finds.
-        _     <- ZIO.attemptBlocking(api.setProviderAndWait(provider)).ignore
+        _     <- bindAndWait(api, None, provider).ignore
         exit  <- ZIO.scoped(syncBuild(api, provider, Some("d"), 5.seconds)).exit
         count <- ZIO.succeed(provider.shutdowns.get())
       } yield assertTrue(failedWith[GeneralError](exit), count == 0)
@@ -205,7 +224,7 @@ object ProviderOwnershipShutdownSpec extends ZIOSpecDefault {
       val provider = new Gated()
       val latch    = new CountDownLatch(1)
       for {
-        _   <- ZIO.succeed(api.setProvider(provider))
+        _   <- bindDirectly(api, None, provider)
         out <- ZIO.scoped {
           asyncBuild(api, provider, "d", 1.second, Some(latch)).flatMap { ff =>
             for {
@@ -234,7 +253,7 @@ object ProviderOwnershipShutdownSpec extends ZIOSpecDefault {
       val readies  = new AtomicInteger(0)
       for {
         _   <- ZIO.succeed(api.onProviderReady { _ => readies.incrementAndGet(); () })
-        _   <- ZIO.succeed(api.setProvider("d", provider))
+        _   <- bindDirectly(api, Some("d"), provider)
         out <- ZIO.scoped {
           asyncBuild(api, provider, "d", 1.hour, Some(latch)).flatMap { ff =>
             for {
@@ -258,10 +277,10 @@ object ProviderOwnershipShutdownSpec extends ZIOSpecDefault {
       val api      = OpenFeatureAPI.createIsolated()
       val provider = new Gated()
       for {
-        _    <- ZIO.succeed(api.setProvider(provider))
+        _    <- bindDirectly(api, None, provider)
         exit <- ZIO.scoped(syncBuild(api, provider, Some("d"), 300.millis)).exit
         _    <- ZIO.succeed(provider.gate.countDown())
-        _    <- ZIO.attemptBlocking(api.shutdown())
+        _    <- shutDownApi(api)
       } yield assertTrue(exit.isFailure, provider.shutdowns.get() == 1)
     },
     test("a swap off it that times out and then fails leaves it while the default slot holds it") {
@@ -270,7 +289,7 @@ object ProviderOwnershipShutdownSpec extends ZIOSpecDefault {
       val incoming = new Gated(failure = Some("boom"))
       ZIO.scoped {
         for {
-          _       <- ZIO.attemptBlocking(api.setProviderAndWait(provider))
+          _       <- bindAndWait(api, None, provider)
           ff      <- syncBuild(api, provider, Some("d"), 300.millis, owns = true)
           swap    <- ff.setProvider(incoming).exit
           pending <- orphansLeft(ff)
@@ -286,7 +305,7 @@ object ProviderOwnershipShutdownSpec extends ZIOSpecDefault {
       val incoming = new Gated(failure = Some("boom"))
       ZIO.scoped {
         for {
-          _       <- ZIO.attemptBlocking(api.setProviderAndWait("d", provider))
+          _       <- bindAndWait(api, Some("d"), provider)
           ff      <- syncBuild(api, provider, Some("d"), 300.millis, owns = true)
           swap    <- ff.setProvider(incoming).exit
           pending <- orphansLeft(ff)
@@ -302,11 +321,11 @@ object ProviderOwnershipShutdownSpec extends ZIOSpecDefault {
       val incoming = new Gated(failure = Some("boom"))
       ZIO.scoped {
         for {
-          _       <- ZIO.attemptBlocking(api.setProviderAndWait("d", provider))
+          _       <- bindAndWait(api, Some("d"), provider)
           ff      <- syncBuild(api, provider, Some("d"), 300.millis, owns = true)
           swap    <- ff.setProvider(incoming).exit
           pending <- orphansLeft(ff)
-          _       <- ZIO.attemptBlocking(api.setProviderAndWait(provider))
+          _       <- bindAndWait(api, None, provider)
           _       <- ZIO.succeed(incoming.gate.countDown())
           settled <- orphansSettled(ff)
           count   <- ZIO.succeed(provider.shutdowns.get())
@@ -395,17 +414,19 @@ object ProviderOwnershipShutdownSpec extends ZIOSpecDefault {
     domain: String,
     probe: LifecycleProbe
   ): ZIO[Scope, Throwable, FeatureFlagsLive] =
-    FeatureFlagsFactories.build(
-      provider,
-      domain = Some(domain),
-      version = None,
-      initialHooks = Nil,
-      statusRef = None,
-      addShutdownFinalizer = false,
-      apiOverride = Some(api),
-      initTimeout = 10.seconds,
-      probe = probe
-    )
+    RegistryRecording.instanceProbe(probe).flatMap { probe =>
+      FeatureFlagsFactories.build(
+        provider,
+        domain = Some(domain),
+        version = None,
+        initialHooks = Nil,
+        statusRef = None,
+        addShutdownFinalizer = false,
+        apiOverride = Some(api),
+        initTimeout = 10.seconds,
+        probe = probe
+      )
+    }
 
   private def holdAt(point: LifecycleProbe.Point, reached: Promise[Nothing, Unit], release: Promise[Nothing, Unit]) =
     new LifecycleProbe {
@@ -539,6 +560,7 @@ object ProviderOwnershipShutdownSpec extends ZIOSpecDefault {
           _      <- atReconcile.await
           _      <- build.join
           before <- ZIO.succeed(failing.shutdowns.get())
+          _      <- RegistryRecording.environment("UserRetryInit", Some("b"), Some(failing))
           retry  <- ProviderRegistration.retryFailedInitialization(api, Some("b"), failing, 10.seconds).exit.fork
           _      <- Live.live(ZIO.succeed(inits.get()).repeatUntil(_ == 2).timeout(5.seconds))
           _      <- goReconcile.succeed(())
@@ -704,7 +726,7 @@ object ProviderOwnershipShutdownSpec extends ZIOSpecDefault {
       val provider = new Counting
       ZIO.scoped {
         for {
-          _     <- ZIO.succeed(api.setProvider("x", provider))
+          _     <- bindDirectly(api, Some("x"), provider)
           _     <- asyncBuild(api, provider, "x", 1.hour)
           bound <- ZIO.attempt(Bound.of(api, Some("y"), provider))
           exit  <- ZIO.scoped(syncBuild(api, provider, Some("y"), 300.millis)).exit
@@ -725,7 +747,7 @@ object ProviderOwnershipShutdownSpec extends ZIOSpecDefault {
       val api      = OpenFeatureAPI.createIsolated()
       val provider = new Counting
       for {
-        _     <- ZIO.succeed(api.setProvider("x", provider))
+        _     <- bindDirectly(api, Some("x"), provider)
         built <- ZIO.scoped(asyncBuild(api, provider, "x", 1.hour).map(new java.lang.ref.WeakReference(_)))
         // Past the instance itself, when the collector takes it in time: its slot still holds the provider.
         _ <- Live.live(
@@ -744,7 +766,7 @@ object ProviderOwnershipShutdownSpec extends ZIOSpecDefault {
       val incoming = new Gated(failure = Some("boom"))
       ZIO.scoped {
         for {
-          _       <- ZIO.attemptBlocking(api.setProviderAndWait("x", provider))
+          _       <- bindAndWait(api, Some("x"), provider)
           _       <- syncBuild(api, provider, Some("x"), 5.seconds)
           ff      <- syncBuild(api, provider, Some("d"), 300.millis, owns = true)
           swap    <- ff.setProvider(incoming).exit
@@ -760,7 +782,7 @@ object ProviderOwnershipShutdownSpec extends ZIOSpecDefault {
       val provider = new Gated(open = true)
       ZIO.scoped {
         for {
-          _   <- ZIO.attemptBlocking(api.setProviderAndWait("x", provider))
+          _   <- bindAndWait(api, Some("x"), provider)
           onY <- syncBuild(api, provider, Some("y"), 5.seconds)
           _   <- syncBuild(api, provider, Some("x"), 5.seconds)
           inY = ManagedProvider.existing(provider).exists(w => api.getProvider("y") eq w)
@@ -781,7 +803,7 @@ object ProviderOwnershipShutdownSpec extends ZIOSpecDefault {
       for {
         _ <- ZIO.scoped {
           for {
-            _  <- ZIO.attemptBlocking(api.setProviderAndWait("x", provider))
+            _  <- bindAndWait(api, Some("x"), provider)
             _  <- syncBuild(api, provider, Some("x"), 5.seconds)
             ff <- syncBuild(api, provider, Some("d"), 300.millis, owns = true)
             _  <- ff.setProvider(incoming).exit
@@ -797,7 +819,7 @@ object ProviderOwnershipShutdownSpec extends ZIOSpecDefault {
       ZIO.scoped {
         for {
           _     <- syncBuild(api, provider, None, 5.seconds)
-          _     <- ZIO.attemptBlocking(api.setProviderAndWait("x", provider))
+          _     <- bindAndWait(api, Some("x"), provider)
           _     <- syncBuild(api, provider, Some("x"), 5.seconds)
           bound <- ZIO.attempt(Bound.of(api, Some("y"), provider))
         } yield assertTrue(bound == Bound.Foreign(provider))
@@ -810,7 +832,7 @@ object ProviderOwnershipShutdownSpec extends ZIOSpecDefault {
       }
       ZIO.scoped {
         for {
-          _     <- ZIO.attemptBlocking(api.setProviderAndWait("x", provider))
+          _     <- bindAndWait(api, Some("x"), provider)
           bound <- ZIO.attempt(Bound.of(api, Some("y"), provider))
           exit  <- syncBuild(api, provider, Some("y"), 5.seconds).exit
         } yield assertTrue(bound.managed.isDefined, exit.isSuccess)
@@ -823,7 +845,7 @@ object ProviderOwnershipShutdownSpec extends ZIOSpecDefault {
       }
       ZIO.scoped {
         for {
-          _     <- ZIO.attemptBlocking(api.setProviderAndWait("x", provider))
+          _     <- bindAndWait(api, Some("x"), provider)
           _     <- syncBuild(api, provider, Some("x"), 5.seconds)
           exit  <- ZIO.scoped(syncBuild(api, provider, Some("y"), 5.seconds)).exit
           count <- ZIO.succeed(provider.shutdowns.get())
@@ -836,7 +858,7 @@ object ProviderOwnershipShutdownSpec extends ZIOSpecDefault {
       val api      = OpenFeatureAPI.createIsolated()
       val provider = new Counting
       for {
-        _     <- ZIO.succeed(api.setProvider("x", provider))
+        _     <- bindDirectly(api, Some("x"), provider)
         _     <- Live.live(ZIO.succeed(provider.inits.get()).repeatUntil(_ == 1).timeout(5.seconds))
         bound <- ZIO.attempt(Bound.of(api, Some("y"), provider))
         _     <- ZIO.succeed(provider.gate.countDown())
@@ -918,13 +940,47 @@ object ProviderOwnershipShutdownSpec extends ZIOSpecDefault {
           } yield count
         }
         _ <- ZIO.succeed(provider.gate.countDown())
-        _ <- ZIO.attemptBlocking(api.shutdown())
+        _ <- shutDownApi(api)
       } yield assertTrue(count == 1, provider.shutdowns.get() == 1)
+    }
+  )
+
+  private val sharedApi = suite("an instance that shares its API")(
+    test("shut down on its own, leaves the API and the provider a sibling is bound to") {
+      val api      = OpenFeatureAPI.createIsolated()
+      val provider = new Gated(open = true)
+      ZIO.scoped {
+        for {
+          a      <- syncBuild(api, provider, Some("a"), 5.seconds)
+          b      <- syncBuild(api, provider, Some("b"), 5.seconds)
+          _      <- a.shutdown
+          count  <- shutdownsAfterSettling(provider)
+          status <- b.providerStatus
+          held = ManagedProvider.existing(provider).exists(w => api.getProvider("b") eq w)
+        } yield assertTrue(count == 0, status == ProviderStatus.Ready, held)
+      }
+    },
+    test("the owner's shutdown retires it and shuts the provider they share down once") {
+      val api      = OpenFeatureAPI.createIsolated()
+      val provider = new Gated(open = true)
+      ZIO.scoped {
+        for {
+          owner   <- syncBuild(api, provider, None, 5.seconds, owns = true)
+          sibling <- syncBuild(api, provider, Some("a"), 5.seconds)
+          _       <- owner.shutdown
+          status  <- sibling.providerStatus
+          first   <- Live.live(ZIO.succeed(provider.shutdowns.get()).repeatUntil(_ > 0).timeout(5.seconds))
+          // A second shutdown would land on the SDK's executor too: give it the same window before counting.
+          _     <- Live.live(ZIO.sleep(300.millis))
+          count <- ZIO.succeed(provider.shutdowns.get())
+        } yield assertTrue(first.isDefined, count == 1, status == ProviderStatus.NotReady)
+      }
     }
   )
 
   def spec =
     suite("ProviderOwnershipShutdownSpec")(
+      sharedApi,
       userRegistered,
       otherDomain,
       sharedWrapper,
@@ -932,5 +988,5 @@ object ProviderOwnershipShutdownSpec extends ZIOSpecDefault {
       swapBehindSibling,
       ownRegistration
     ) @@
-      TestAspect.sequential @@ TestAspect.timeout(120.seconds)
+      TestAspect.sequential @@ TestAspect.timeout(120.seconds) @@ RegistryRecording.eachTest("ownership")
 }

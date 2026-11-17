@@ -1,0 +1,83 @@
+"""Check that every guard the trace check rests on is exercised by a reject fixture, both ways.
+
+Usage: python3 preconditions.py <tla2tools.jar> <CommunityModules-deps.jar>.  For each guard below (an action's
+precondition in Registry.tla, or a check RegistryTrace.tla adds), its reject fixture under traces/reject must be
+rejected as the model stands and accepted once the guard is deleted: that shows the fixture is the run the guard rules
+out, and that the check is not passing for some other reason. Exits non-zero when a guard is not exercised.
+"""
+import os
+import shutil
+import sys
+import tempfile
+
+import trace_labels
+import validate
+from tracecheck import ACCEPTED, REJECTED, TOOL
+
+here = os.path.dirname(os.path.abspath(__file__))
+TRACE = "RegistryTrace.tla"
+
+# (the guard, the text it is deleted from, that text without it, the fixture it rules out, the file)
+guards = [
+    ("Create: one owner", "    /\\ own => owner = None\n", "", "two-owners"),
+    ("Create: the slot holds no other provider", "    /\\ bound[d] \\in {None, p}\n", "",
+     "build-binds-over-a-user-provider"),
+    ("SwapDone: no failure marked", "    /\\ swapping = i\n    /\\ failedOn[i] # bound[d]\n", "    /\\ swapping = i\n",
+     "succeeds-after-its-failure"),
+    ("UserBind: an empty slot", "    /\\ bound[d] = None\n    /\\ p \\notin everBound\n",
+     "    /\\ p \\notin everBound\n",
+     "user-binds-a-held-slot"),
+    ("FailMark: once per provider",
+     "    /\\ failedOn[i] # bound[domainOf[i]]\n    /\\ bound[domainOf[i]] \\in registered\n",
+     "    /\\ bound[domainOf[i]] \\in registered\n", "failure-marked-twice"),
+    ("OwnerClose: no failure deciding", "    /\\ deciding = {}\n    /\\ lock = None\n", "    /\\ lock = None\n",
+     "owner-closes-while-a-failure-decides"),
+    ("FailDecide: the model's decision", "         /\\ Agrees(p, LibraryShuts(n, p), Step.shut)\n", "",
+     "failure-defers-to-nobody", TRACE),
+    ("SwapFail: the model's decision", 'Lib("SwapFail", SwapDecided(Step.instance) /\\ SwapFail(Step.instance))',
+     'Lib("SwapFail", SwapFail(Step.instance))', "rollback-defers-to-a-failed-sibling-and-shuts-it-down", TRACE),
+    ("FailMark: once per registration, one that has ended too",
+     "         /\\ failedOn[n] # bound[domainOf[n]]\n         /\\ absorbed'", "         /\\ absorbed'",
+     "second-deadline-on-one-registration", TRACE),
+    ("End: the shutdowns",
+     "           Step.shuts[q] < 0 \\/ (Step.shuts[q] <= total[q] /\\ total[q] <= Step.shuts[q] + Step.late[q])",
+     "           TRUE", "provider-shut-down-twice", TRACE),
+]
+
+
+def main():
+    tla_jar, cm_jar = os.path.abspath(sys.argv[1]), os.path.abspath(sys.argv[2])
+    unexercised = []
+    for name, old, new, fixture, *file in guards:
+        file = file[0] if file else "Registry.tla"
+        spec = open(os.path.join(here, file)).read()
+        if spec.count(old) != 1:
+            sys.exit(f"{name}: its text no longer occurs exactly once in {file}")
+        actions = trace_labels.labels(trace_labels.read(os.path.join(here, "traces", "reject", fixture + ".ndjson")))
+        if isinstance(actions, str):
+            sys.exit(f"reject/{fixture}: skipped ({actions}), so it shows nothing")
+        validate.here = here
+        baseline, why, _ = validate.check(tla_jar, cm_jar, actions)
+        if baseline == TOOL:
+            sys.exit(f"reject/{fixture}: {why}")
+        if baseline != REJECTED:
+            sys.exit(f"reject/{fixture}: {baseline} by the model as it stands, so it shows nothing")
+        with tempfile.TemporaryDirectory() as d:
+            for f in ("Registry.tla", TRACE):
+                shutil.copy(os.path.join(here, f), d)
+            with open(os.path.join(d, file), "w") as f:
+                f.write(spec.replace(old, new))
+            validate.here = d
+            verdict, why, _ = validate.check(tla_jar, cm_jar, actions)
+        if verdict == TOOL:
+            sys.exit(f"reject/{fixture} without {name}: {why}")
+        ok = verdict == ACCEPTED
+        print(f"{name}: {'exercised by' if ok else 'NOT exercised by'} reject/{fixture} ({verdict})")
+        if not ok:
+            unexercised.append(name)
+    if unexercised:
+        sys.exit("not exercised: " + ", ".join(unexercised))
+
+
+if __name__ == "__main__":
+    main()

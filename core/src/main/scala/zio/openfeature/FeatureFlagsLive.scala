@@ -465,28 +465,33 @@ final private[openfeature] class FeatureFlagsLive(
     label: String,
     timeout: Duration = ProviderRegistration.DefaultShutdownTimeout
   ): UIO[Boolean] =
-    ZIO.suspendSucceed {
-      failedRegistration.set(Some(registration.sdk))
-      // A provider's metadata may throw, and this runs on a path already reporting a failure.
-      def nameOf(provider: OFFeatureProvider): UIO[String] =
-        ZIO.attempt(ProviderNames.of(provider)).orElseSucceed(FeatureFlags.UnknownProviderName)
-      registration match {
-        case Bound.Foreign(provider) =>
-          nameOf(provider)
-            .flatMap(name =>
-              ZIO.logWarning(
-                s"$label: leaving provider '$name' running: it is registered with the API outside this instance, so " +
-                  "its shutdown is the SDK's, when its slot lets go of it or the API shuts down"
-              )
-            )
-            .as(false)
-        case Bound.Managed(wrapper) if ApiInstances.heldByAnother(api, this, wrapper) =>
-          nameOf(wrapper)
-            .flatMap(name => ZIO.logDebug(s"$label: another instance is bound to '$name'; leaving it"))
-            .as(false)
-        case Bound.Managed(wrapper) => ProviderRegistration.boundedProviderShutdown(wrapper, label, timeout).as(true)
+    ZIO.succeed(failedRegistration.set(Some(registration.sdk))) *>
+      probe.at(Point.FailedRegistration(registration.sdk)) *> ZIO.suspendSucceed {
+        // A provider's metadata may throw, and this runs on a path already reporting a failure.
+        def nameOf(provider: OFFeatureProvider): UIO[String] =
+          ZIO.attempt(ProviderNames.of(provider)).orElseSucceed(FeatureFlags.UnknownProviderName)
+        // Recorded right after the siblings are read, before acting on it.
+        def decided(shut: Boolean) = probe.at(Point.FailDecided(registration.sdk, shut))
+        registration match {
+          case Bound.Foreign(provider) =>
+            decided(shut = false) *>
+              nameOf(provider)
+                .flatMap(name =>
+                  ZIO.logWarning(
+                    s"$label: leaving provider '$name' running: it is registered with the API outside this instance, " +
+                      "so its shutdown is the SDK's, when its slot lets go of it or the API shuts down"
+                  )
+                )
+                .as(false)
+          case Bound.Managed(wrapper) if ApiInstances.heldByAnother(api, this, wrapper) =>
+            decided(shut = false) *>
+              nameOf(wrapper)
+                .flatMap(name => ZIO.logDebug(s"$label: another instance is bound to '$name'; leaving it"))
+                .as(false)
+          case Bound.Managed(wrapper) =>
+            decided(shut = true) *> ProviderRegistration.boundedProviderShutdown(wrapper, label, timeout).as(true)
+        }
       }
-    }
 
   /** Async-init watchdog escalation. Only when the machine actually transitions (the provider never became usable — the
     * `everReady` gate) does it publish a terminal Error event with code PROVIDER_FATAL, release the onReady latch, and
@@ -697,7 +702,8 @@ final private[openfeature] class FeatureFlagsLive(
               recordOrphan(oldProvider, oldName, newName, registration.toOption)
           case failure =>
             ZIO.when(registration.isRight && !wasSuperseded(failure))(
-              ZIO.succeed(failedRegistration.set(Some(incoming.sdk)))
+              ZIO.succeed(failedRegistration.set(Some(incoming.sdk))) *> probe
+                .at(Point.FailedRegistration(incoming.sdk))
             ) *>
               failedBeforeBinding(oldProvider.sdk, previousName, before).flatMap { handled =>
                 if (handled) ZIO.unit
@@ -956,7 +962,8 @@ final private[openfeature] class FeatureFlagsLive(
   // An instance that owns its API retires the others on it first: their provider goes with the API. Before taking its
   // own swap lock, and a retirement never retires anything itself, so two owners of one API cannot wait on each other.
   override def shutdown: UIO[Unit] =
-    ZIO.when(ownsApi)(ApiInstances.retireSiblings(api, this)) *> teardown(tearDownApi = ownsApi)
+    ZIO.when(ownsApi)(probe.at(Point.RetireSiblings) *> ApiInstances.retireSiblings(api, this)) *>
+      teardown(tearDownApi = ownsApi)
 
   /** The teardown of an instance that does not own its API, called when the instance that does tears it down: the
     * instance's own state goes, and its status ends `NotReady` as after its own `shutdown`.

@@ -1,0 +1,7 @@
+{"seq":0,"point":"UserBind","arg":"","domain":"x","provider":"gated","providerInstance":"e140d42"}
+{"seq":1,"point":"BuildBind","arg":"","provider":"gated","providerInstance":"badc0de1","domain":"x","owns":"false","async":"true","instance":"b1"}
+{"seq":2,"point":"DeliverEvent","arg":"PROVIDER_READY","provider":"gated","instance":"b1"}
+{"seq":3,"point":"DeliverEvent","arg":"PROVIDER_READY","provider":"gated","instance":"b1"}
+{"seq":4,"point":"ApplySignal","arg":"EventReady","instance":"b1"}
+{"seq":5,"point":"StatusWritten","arg":"Ready","instance":"b1"}
+{"seq":6,"point":"ScopeClose","arg":"","instance":"b1"}

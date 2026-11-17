@@ -167,6 +167,7 @@ object LifecycleInterleavingSpec extends ZIOSpecDefault {
         "InitReturned",
         "InitOutcome",
         "DeliverEvent",
+        "FailedRegistration",
         "SwapRollback",
         "RollbackBind",
         "SwapReconcile",
@@ -208,7 +209,8 @@ object LifecycleInterleavingSpec extends ZIOSpecDefault {
       Primary.SwapGood    -> Set("ProviderShutDown", "ShutdownReturned"),
       Primary.SwapFailing -> Set("ProviderShutDown", "ShutdownReturned"),
       Primary.SwapHanging -> Set("DeliverEvent"),
-      Primary.Shutdown    -> Set("DeliverEvent")
+      // RetireSiblings comes before the shutdown takes its lock: an interrupt held there cancels it, so it is never held.
+      Primary.Shutdown -> Set("DeliverEvent", "RetireSiblings")
     ).withDefaultValue(Set.empty)
 
   // The system under test

@@ -18,7 +18,9 @@ import dev.openfeature.sdk.exceptions.FatalError
 object RegistryFaultSpec extends ZIOSpecDefault {
 
   private def registry(default: FeatureProvider) =
-    FeatureFlagRegistry.fromProvider(default).build.map(_.get[FeatureFlagRegistry])
+    RegistryRecording.registryProbe.flatMap { probe =>
+      FeatureFlagRegistry.fromProvider(default, FeatureFlagsConfig.default, probe).build.map(_.get[FeatureFlagRegistry])
+    }
 
   private def bounded[R, E, A](label: String)(effect: ZIO[R, E, A]): ZIO[R, Any, A] =
     effect.timeoutFail(s"$label did not finish")(60.seconds)
@@ -223,7 +225,8 @@ object RegistryFaultSpec extends ZIOSpecDefault {
         }
       }
     )
-  ) @@ TestAspect.sequential @@ TestAspect.withLiveClock @@ TestAspect.timeout(120.seconds)
+  ) @@ TestAspect.sequential @@ TestAspect.withLiveClock @@ TestAspect.timeout(120.seconds) @@
+    RegistryRecording.eachTest("registry-fault")
 
   // A provider registered for domain "d" on an isolated API, its initialize() scripted, after that first
   // initialization has settled.

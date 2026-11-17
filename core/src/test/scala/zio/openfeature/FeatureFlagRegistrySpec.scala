@@ -95,6 +95,31 @@ object FeatureFlagRegistrySpec extends ZIOSpecDefault {
       )
       .as(counter.get())
 
+  /** A domain's client build fails, then the user registers a second provider there, which fails too or starts. Returns
+    * how often each provider was shut down once the registry has closed.
+    */
+  private def shutdownsAfterAFailedBuild(failsToo: Boolean): UIO[(Int, Int)] = {
+    val firstShut  = new java.util.concurrent.atomic.AtomicInteger(0)
+    val secondShut = new java.util.concurrent.atomic.AtomicInteger(0)
+    def counted(name: String, shut: java.util.concurrent.atomic.AtomicInteger, fails: Boolean) =
+      new SimpleProvider(name, Map.empty) {
+        override def initialize(ctx: OFEvaluationContext): Unit =
+          if (fails) throw new RuntimeException(s"$name failed to start")
+        override def shutdown(): Unit = { shut.incrementAndGet(); () }
+      }
+    ZIO.scoped {
+      for {
+        registry <- makeRegistry(new SimpleProvider("Default", Map.empty))
+        _        <- registry.setProvider("d", counted("First", firstShut, fails = true))
+        _        <- registry.getClient("d").either
+        _        <- registry.setProvider("d", counted("Second", secondShut, fails = failsToo))
+        _        <- registry.getClient("d").either
+      } yield ()
+    }.orDie *> awaitCount(firstShut, 1) *> awaitCount(secondShut, 1) *>
+      // Room for a second shutdown of the first provider, were one coming.
+      Live.live(ZIO.sleep(200.millis)) *> ZIO.succeed((firstShut.get(), secondShut.get()))
+  }
+
   def spec = suite("FeatureFlagRegistry")(
     test("getClient returns a working client using default provider") {
       ZIO.scoped {
@@ -349,6 +374,18 @@ object FeatureFlagRegistrySpec extends ZIOSpecDefault {
         )
       }
     },
+    suite("a failed client build releases its provider")(
+      test("even when the provider registered next in its domain fails too") {
+        shutdownsAfterAFailedBuild(failsToo = true).map { case (first, second) =>
+          assertTrue(first == 1, second == 1)
+        }
+      },
+      test("once, when the provider registered next in its domain starts") {
+        shutdownsAfterAFailedBuild(failsToo = false).map { case (first, second) =>
+          assertTrue(first == 1, second == 1)
+        }
+      }
+    ) @@ TestAspect.withLiveClock,
     test("provider metadata reflects the domain provider") {
       ZIO.scoped {
         val defaultProvider = new SimpleProvider("Default", Map.empty)

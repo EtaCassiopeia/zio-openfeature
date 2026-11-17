@@ -272,9 +272,38 @@ final private class FeatureFlagRegistryLive(
         )
         .mapError(t => FeatureFlagError.ProviderInitializationFailed(t))
         // An async registry hands the client out at once; it reports its own status while the provider starts.
-        .tap(client => ZIO.unless(config.initMode == InitMode.Async)(awaitReady(client)))
+        .tap(client =>
+          ZIO
+            .unless(config.initMode == InitMode.Async)(awaitReady(client))
+            .tapError(_ =>
+              releaseReplacedFailure(domain, provider) *> ZIO.succeed(lastFailed.put(domain, (provider, client)))
+            )
+        )
         .onError(cause => child.close(Exit.failCause(cause)))
+      _ <- ZIO.succeed(lastFailed.remove(domain))
     } yield client
+
+  // The provider and client of each domain's last failed build. A failed provider is left running, so that a later
+  // `getClient` can initialize it again: a provider that owns its client cannot come back from a shutdown. The SDK
+  // shuts it down once another provider in that slot initializes; when that one fails too, nothing else would.
+  private val lastFailed =
+    new java.util.concurrent.ConcurrentHashMap[Option[String], (OFFeatureProvider, FeatureFlagsLive)]()
+
+  /** After a build of `provider` failed: release the domain's earlier failed provider, if `provider` replaced it. The
+    * failed client decides, as a failed build does, so a provider registered outside the registry, or one another
+    * instance serves, is left alone.
+    */
+  private def releaseReplacedFailure(domain: Option[String], provider: OFFeatureProvider): UIO[Unit] =
+    Option(lastFailed.get(domain)) match {
+      case Some((previous, client)) if !(previous eq provider) =>
+        client
+          .shutDownFailedBuild(
+            "registry build (failed provider replaced by one that failed too)",
+            ProviderRegistration.failedProviderShutdownTimeout(config.initTimeout)
+          )
+          .unit
+      case _ => ZIO.unit
+    }
 
   /** Wait for the freshly registered provider to become usable, failing typed on error states or timeout.
     *

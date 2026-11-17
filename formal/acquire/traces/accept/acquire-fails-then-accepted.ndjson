@@ -1,0 +1,13 @@
+{"seq":0,"point":"Begin","arg":"","owning":"true","userShuts":"false"}
+{"seq":1,"point":"AcquireAttemptStart","arg":"","attempt":"a0000001"}
+{"seq":2,"point":"AcquireFailed","arg":"","attempt":"a0000001"}
+{"seq":3,"point":"AcquireAbandoned","arg":"false","attempt":"a0000001"}
+{"seq":4,"point":"AcquireAttemptStart","arg":"","attempt":"a0000002"}
+{"seq":5,"point":"AcquireAccepted","arg":"","attempt":"a0000002","provider":"Counting","providerInstance":"70000001"}
+{"seq":6,"point":"AcquireComposed","arg":"","provider":"Counting","providerInstance":"5ac00001"}
+{"seq":7,"point":"AcquireStackInit","arg":"true"}
+{"seq":8,"point":"AcquireSwitched","arg":"true"}
+{"seq":9,"point":"AcquireReleaseInterrupted","arg":""}
+{"seq":10,"point":"ScopeClose","arg":""}
+{"seq":11,"point":"AcquireReleaseOwned","arg":""}
+{"seq":12,"point":"End","arg":"","shuts":"70000001:1","stack":"1","closed":"","shutAfterClose":""}

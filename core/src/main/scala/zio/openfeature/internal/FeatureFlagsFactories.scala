@@ -293,7 +293,7 @@ private[openfeature] object FeatureFlagsFactories {
       case EvaluationTimeout.After(d) => Some(d)
     }
 
-  private def ownsApiOf(config: FeatureFlagsConfig): Boolean = config.apiOwnership match {
+  private[openfeature] def ownsApiOf(config: FeatureFlagsConfig): Boolean = config.apiOwnership match {
     case ApiOwnership.Auto     => config.domain.isEmpty
     case ApiOwnership.Owned    => true
     case ApiOwnership.Shared   => false
@@ -485,12 +485,14 @@ private[openfeature] object FeatureFlagsFactories {
       )
     )
 
-  // What has become of the provider one attempt's `acquire` returns. It can arrive after the attempt was abandoned.
+  // What has become of the provider one attempt's `acquire` returns. It can arrive, or finish `verify`, after the
+  // attempt was abandoned.
   sealed private trait Arrival
   private object Arrival {
-    case object Waiting                               extends Arrival
-    final case class Arrived(real: OFFeatureProvider) extends Arrival
-    case object Abandoned                             extends Arrival
+    case object Waiting                                 extends Arrival
+    final case class Verifying(real: OFFeatureProvider) extends Arrival
+    final case class Arrived(real: OFFeatureProvider)   extends Arrival
+    case object Abandoned                               extends Arrival
   }
 
   /** `effect.disconnect`, so the per-attempt timeout returns promptly even when `acquire` is a blocking
@@ -536,38 +538,72 @@ private[openfeature] object FeatureFlagsFactories {
   private def shutDownOwned(provider: OFFeatureProvider): UIO[Unit] =
     ProviderRegistration.boundedProviderShutdown(provider, "fromAcquireAsync (not in service)")
 
-  /** One attempt = acquire, then verify the candidate, inside a child scope of the layer scope. The child scope exists
-    * so a REJECTED candidate is released right away instead of lingering until layer close. Whatever `acquire` returned
-    * is the library's to shut down from the moment it arrives, before the scope closes: `arrival` holds it until the
-    * attempt is accepted. An attempt abandoned before it arrives leaves both to the abandoned fiber, because the
-    * constructor still running may be using what the scope holds. The mask keeps "shut down and close on failure" and
-    * "take ownership on success" from being skipped by an interrupt landing between them; `restore` keeps the attempt
-    * itself interruptible.
+  /** One attempt = acquire, then verify the candidate, inside a scope of its own (not a child of the layer's). The
+    * scope exists so a REJECTED candidate is released right away instead of lingering until layer close. Whatever
+    * `acquire` returned is the library's to shut down from the moment it arrives, before the scope closes: `arrival`
+    * holds it until the attempt is accepted. An attempt abandoned before it is accepted, in `acquire` or in `verify`,
+    * leaves both to its own fiber, because the constructor or `verify` still running may be using the provider and what
+    * the scope holds; the fiber also releases a candidate `verify` rejects. The mask keeps "shut down and close on
+    * failure" and "take ownership on success" from being skipped by an interrupt landing between them; `restore` keeps
+    * the attempt itself interruptible.
     */
   private def acquireAttempt(
     acquire: RIO[Scope, OFFeatureProvider],
     verify: OFFeatureProvider => Task[Unit],
     constructionTimeout: Duration,
     owned: Ref[Option[OFFeatureProvider]],
-    candidate: Ref[Option[Scope.Closeable]]
+    candidate: Ref[Option[Scope.Closeable]],
+    probe: LifecycleProbe
   ): Task[OFFeatureProvider] =
     ZIO.uninterruptibleMask { restore =>
       for {
         scope   <- Scope.make
+        _       <- probe.at(LifecycleProbe.Point.AcquireAttemptStart(scope))
         arrival <- Ref.make[Arrival](Arrival.Waiting)
         release = (real: OFFeatureProvider, cause: Cause[Any]) =>
           shutDownOwned(real) *> scope.close(Exit.failCause(cause))
+        // `verify`, then settled by this fiber, as a constructor's return is: a provider whose attempt was abandoned
+        // meanwhile, that `verify` rejects, or whose `verify` was interrupted, is released here, once `verify` no
+        // longer uses it.
+        verified = (inner: ZIO.InterruptibilityRestorer, real: OFFeatureProvider) =>
+          inner(verify(real)).exit.flatMap { exit =>
+            arrival.modify {
+              case Arrival.Abandoned =>
+                (
+                  release(real, exit.causeOption.getOrElse(Cause.empty)) *>
+                    probe.at(LifecycleProbe.Point.AcquireLateArrival(scope, real)) *> ZIO.interrupt,
+                  Arrival.Abandoned
+                )
+              case _ =>
+                exit match {
+                  case Exit.Success(_)     => (ZIO.succeed(real), Arrival.Arrived(real))
+                  case Exit.Failure(cause) =>
+                    (
+                      ZIO.unless(cause.isInterrupted)(probe.at(LifecycleProbe.Point.AcquireVerifyFailed(scope))) *>
+                        release(real, cause) *> probe.at(LifecycleProbe.Point.AcquireRejected(scope, real)) *>
+                        ZIO.failCause(cause),
+                      Arrival.Abandoned
+                    )
+                }
+            }.flatten
+          }
         real <- restore(
           Timeouts.failAfter(
             abandonable(
               ZIO.uninterruptibleMask { inner =>
                 inner(scope.extend[Any](acquire))
-                  .onError(cause => scope.close(Exit.failCause(cause)))
+                  .onError(cause =>
+                    scope.close(Exit.failCause(cause)).ensuring(probe.at(LifecycleProbe.Point.AcquireFailed(scope)))
+                  )
                   .flatMap { real =>
                     arrival.modify {
                       case Arrival.Abandoned =>
-                        (release(real, Cause.empty) *> ZIO.interrupt, Arrival.Abandoned)
-                      case _ => (inner(verify(real)).as(real), Arrival.Arrived(real))
+                        (
+                          release(real, Cause.empty) *>
+                            probe.at(LifecycleProbe.Point.AcquireLateArrival(scope, real)) *> ZIO.interrupt,
+                          Arrival.Abandoned
+                        )
+                      case _ => (verified(inner, real), Arrival.Verifying(real))
                     }.flatten
                   }
               }
@@ -577,11 +613,18 @@ private[openfeature] object FeatureFlagsFactories {
           )
         ).onError { cause =>
           arrival.modify {
-            case Arrival.Arrived(real) => (release(real, cause), Arrival.Abandoned)
-            case _                     => (ZIO.unit, Arrival.Abandoned)
+            case Arrival.Arrived(real) =>
+              (
+                probe.at(LifecycleProbe.Point.AcquireAbandoned(scope, cause.isInterrupted)) *> release(real, cause) *>
+                  probe.at(LifecycleProbe.Point.AcquireLateArrival(scope, real)),
+                Arrival.Abandoned
+              )
+            case _ =>
+              (probe.at(LifecycleProbe.Point.AcquireAbandoned(scope, cause.isInterrupted)), Arrival.Abandoned)
           }.flatten
         }
         _ <- owned.set(Some(real)) *> candidate.set(Some(scope))
+        _ <- probe.at(LifecycleProbe.Point.AcquireAccepted(scope, real))
       } yield real
     }
 
@@ -592,13 +635,15 @@ private[openfeature] object FeatureFlagsFactories {
     */
   private def discardOwned(
     owned: Ref[Option[OFFeatureProvider]],
-    candidate: Ref[Option[Scope.Closeable]]
+    candidate: Ref[Option[Scope.Closeable]],
+    probe: LifecycleProbe
   )(cause: Cause[Any]): UIO[Unit] =
     owned
       .getAndSet(None)
       .flatMap(ZIO.foreachDiscard(_) { provider =>
-        shutDownOwned(provider) *>
-          candidate.getAndSet(None).flatMap(ZIO.foreachDiscard(_)(_.close(Exit.failCause(cause))))
+        (shutDownOwned(provider) *>
+          candidate.getAndSet(None).flatMap(ZIO.foreachDiscard(_)(_.close(Exit.failCause(cause)))))
+          .ensuring(probe.at(LifecycleProbe.Point.AcquireDiscarded))
       })
       .uninterruptible
 
@@ -615,7 +660,8 @@ private[openfeature] object FeatureFlagsFactories {
     state: SubscriptionRef[AcquireState],
     owned: Ref[Option[OFFeatureProvider]],
     initTimeout: Duration,
-    onSwapped: UIO[Unit]
+    onSwapped: UIO[Unit],
+    probe: LifecycleProbe
   ): ZIO[Scope, Throwable, Unit] =
     for {
       real <- attempt
@@ -627,6 +673,7 @@ private[openfeature] object FeatureFlagsFactories {
             .succeed(compose(real, freshFallback))
             .tapErrorCause(_ => shutDownOwned(freshFallback))
             .tap(stack => owned.set(Some(stack)))
+            .tap(stack => probe.at(LifecycleProbe.Point.AcquireComposed(stack)))
         }
       }
       // Initialize the composed stack ourselves, where the SDK's `setProvider` used to, bounded the same way. The
@@ -634,9 +681,17 @@ private[openfeature] object FeatureFlagsFactories {
       _ <- ProviderRegistration
         .boundedInitialize(composed, ff.apiEvaluationContext, initTimeout)
         .zipRight(verifyProviderState(composed))
+        .tapBoth(
+          _ => probe.at(LifecycleProbe.Point.AcquireStackInit(ok = false)),
+          _ => probe.at(LifecycleProbe.Point.AcquireStackInit(ok = true))
+        )
         .mapError(e => ProviderSwapFailed(FeatureFlagError.ProviderInitializationFailed(e)))
-      switched <- ff.switchProvider(switch, composed).tap(ok => owned.set(None).when(ok)).uninterruptible
-      _        <- ZIO.unless(switched) {
+      switched <- ff
+        .switchProvider(switch, composed)
+        .tap(ok => owned.set(None).when(ok))
+        .tap(ok => probe.at(LifecycleProbe.Point.AcquireSwitched(ok)))
+        .uninterruptible
+      _ <- ZIO.unless(switched) {
         ZIO.fail(
           new IllegalStateException(
             "provider replaced by setProvider before the acquired provider was swapped in"
@@ -680,6 +735,16 @@ private[openfeature] object FeatureFlagsFactories {
     fallback: URIO[Scope, OFFeatureProvider],
     config: FeatureFlagsConfig,
     acquireConfig: AcquireConfig
+  ): URLayer[Any, FeatureFlags with FeatureFlagsAdmin with AcquireStatus] =
+    fromAcquireAsync(acquire, fallback, config, acquireConfig, LifecycleProbe.none)
+
+  /** `fromAcquireAsync`, passing the hand-off's steps, and the instance's lifecycle steps, to `probe`. */
+  private[openfeature] def fromAcquireAsync(
+    acquire: RIO[Scope, OFFeatureProvider],
+    fallback: URIO[Scope, OFFeatureProvider],
+    config: FeatureFlagsConfig,
+    acquireConfig: AcquireConfig,
+    probe: LifecycleProbe
   ): URLayer[Any, FeatureFlags with FeatureFlagsAdmin with AcquireStatus] = {
     val compose             = acquireConfig.compose
     val constructionRetry   = acquireConfig.constructionRetry
@@ -701,15 +766,18 @@ private[openfeature] object FeatureFlagsFactories {
         owned     <- Ref.make(Option.empty[OFFeatureProvider])
         candidate <- Ref.make(Option.empty[Scope.Closeable])
         _         <- ZIO.addFinalizerExit { exit =>
-          owned.getAndSet(None).flatMap(ZIO.foreachDiscard(_)(shutDownOwned)) *>
-            candidate.getAndSet(None).flatMap(ZIO.foreachDiscard(_)(_.close(exit)))
+          owned.getAndSet(None).flatMap { held =>
+            (ZIO.foreachDiscard(held)(shutDownOwned) *>
+              candidate.getAndSet(None).flatMap(ZIO.foreachDiscard(_)(_.close(exit))))
+              .ensuring(probe.at(LifecycleProbe.Point.AcquireReleaseOwned(held)))
+          }
         }
         // Build immediately on a fresh fallback. An in-memory fallback whose init fails is a programming bug, not a
         // recoverable condition, so a failed build is a defect (`orDie`) — this is what makes the layer a `URLayer`.
         firstFallback <- fallback
         // The one provider the SDK ever sees on this path: it delegates to the fallback until the real provider
         // is initialized, then is flipped to the composed stack. No SDK swap, so no NotReady window.
-        switch = ManagedProvider.switchable(firstFallback)
+        switch = ManagedProvider.switchable(firstFallback, probe)
         state <- SubscriptionRef.make[AcquireState](AcquireState.Constructing)
         ff    <- build(
           switch,
@@ -723,9 +791,12 @@ private[openfeature] object FeatureFlagsFactories {
           initTimeout = initTimeout,
           contextSource = config.contextSource,
           fallbackLogging = config.fallbackLogging,
-          maxAbandonedCalls = maxAbandonedCalls
+          maxAbandonedCalls = maxAbandonedCalls,
+          probe = probe
         ).orDie
-        attempt = acquireAttempt(acquire, verify, constructionTimeout, owned, candidate)
+        attempt = acquireAttempt(acquire, verify, constructionTimeout, owned, candidate, probe)
+        // Runs once the release has interrupted the fiber below, and the fiber has ended.
+        _ <- ZIO.addFinalizer(probe.at(LifecycleProbe.Point.AcquireReleaseInterrupted))
         _ <- constructAndSwitch(
           attempt.retry(constructionRetry),
           fallback,
@@ -735,8 +806,9 @@ private[openfeature] object FeatureFlagsFactories {
           state,
           owned,
           initTimeout,
-          onSwapped
-        ).catchAllCause(recordConstructionOutcome(_, discardOwned(owned, candidate), state, onConstructionError))
+          onSwapped,
+          probe
+        ).catchAllCause(recordConstructionOutcome(_, discardOwned(owned, candidate, probe), state, onConstructionError))
           .forkScoped
       } yield ZEnvironment[FeatureFlags](ff).add[FeatureFlagsAdmin](ff).add[AcquireStatus](AcquireStatus.fromRef(state))
     }

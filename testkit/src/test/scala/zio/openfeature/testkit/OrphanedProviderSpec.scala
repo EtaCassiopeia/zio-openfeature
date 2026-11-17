@@ -5,6 +5,7 @@ import zio.openfeature.testsupport.LeakCheck.{awaitNoLeaks, snapshot}
 import zio._
 import zio.test._
 import zio.openfeature._
+import zio.openfeature.internal.FeatureFlagsFactories
 import dev.openfeature.sdk.{FeatureProvider, OpenFeatureAPI}
 
 // A swap that times out leaves the SDK holding the new provider and nothing holding the previous one: the SDK shuts
@@ -16,17 +17,25 @@ object OrphanedProviderSpec extends ZIOSpecDefault {
   private val testBound   = 30.seconds
   private val LeakBound   = 5.seconds
 
-  private def build(provider: FeatureProvider, owned: Boolean = true): ZIO[Scope, Throwable, FeatureFlagsLive] =
-    FeatureFlags.build(
-      provider,
-      domain = Some(s"orphaned-provider-${java.util.UUID.randomUUID()}"),
-      version = None,
-      initialHooks = Nil,
-      statusRef = None,
-      addShutdownFinalizer = owned,
-      apiOverride = Some(OpenFeatureAPI.createIsolated()),
-      initTimeout = initTimeout
-    )
+  /** Builds the run's instance, recording into `trace` from here on. */
+  private def build(
+    provider: FeatureProvider,
+    trace: Option[TraceProbe],
+    owned: Boolean = true
+  ): ZIO[Scope, Throwable, FeatureFlagsLive] =
+    FeatureFlagsFactories
+      .build(
+        provider,
+        domain = Some(s"orphaned-provider-${java.util.UUID.randomUUID()}"),
+        version = None,
+        initialHooks = Nil,
+        statusRef = None,
+        addShutdownFinalizer = owned,
+        apiOverride = Some(OpenFeatureAPI.createIsolated()),
+        initTimeout = initTimeout,
+        probe = TraceRecording.probe(trace)
+      )
+      .tap(_ => ZIO.foreachDiscard(trace)(_.begin(provider)))
 
   private def initFailure(e: FeatureFlagError): Option[Throwable] = e match {
     case FeatureFlagError.ProviderInitializationFailed(t) => Some(t)
@@ -44,12 +53,18 @@ object OrphanedProviderSpec extends ZIOSpecDefault {
     loop(100) *> ZIO.sleep(300.millis) *> read
   }
 
-  /** Runs `body` in its own scope, then reports what it returned and any fiber or thread it left behind. */
-  private def leakFree[A](body: ZIO[Scope, Any, A]): ZIO[Any, Any, (A, List[String])] =
+  /** Runs `body` in its own scope, recorded as `name`, then reports what it returned and any fiber or thread it left
+    * behind.
+    */
+  private def leakFree[A](
+    name: String
+  )(body: Option[TraceProbe] => ZIO[Scope, Any, A]): ZIO[Any, Any, (A, List[String])] =
     for {
       baseline <- snapshot
-      a        <- ZIO.scoped(body).timeoutFail(s"did not complete within $testBound")(testBound)
-      leaked   <- awaitNoLeaks(baseline, LeakBound)
+      a        <- TraceRecording
+        .recorded(s"orphaned-$name")(body)
+        .timeoutFail(s"did not complete within $testBound")(testBound)
+      leaked <- awaitNoLeaks(baseline, LeakBound)
     } yield (a, leaked)
 
   def spec = suite("OrphanedProviderSpec")(
@@ -58,9 +73,9 @@ object OrphanedProviderSpec extends ZIOSpecDefault {
         previous <- FaultyProvider.make(Map("x" -> false), name = "previous")
         incoming <- FaultyProvider.make(Map("x" -> true), name = "incoming")
         _        <- incoming.script(Op.Initialize, lateFailure)
-        result   <- leakFree {
+        result   <- leakFree("late-failure") { trace =>
           for {
-            ff     <- build(previous)
+            ff     <- build(previous, trace)
             swap   <- ff.setProvider(incoming).either
             during <- settled(shutdowns(previous))(_ >= 1)
             status <- ff.providerStatus
@@ -75,9 +90,9 @@ object OrphanedProviderSpec extends ZIOSpecDefault {
         previous <- FaultyProvider.make(Map("x" -> false), name = "previous")
         incoming <- FaultyProvider.make(Map("x" -> true), name = "incoming")
         _        <- incoming.script(Op.Initialize, Fault.Delay(800.millis))
-        result   <- leakFree {
+        result   <- leakFree("late-success") { trace =>
           for {
-            ff     <- build(previous)
+            ff     <- build(previous, trace)
             swap   <- ff.setProvider(incoming).either
             status <- settled(ff.providerStatus)(_ == ProviderStatus.Ready)
             value  <- ff.boolean("x", false)
@@ -93,9 +108,9 @@ object OrphanedProviderSpec extends ZIOSpecDefault {
         incoming <- FaultyProvider.make(Map("x" -> true), name = "incoming")
         good     <- FaultyProvider.make(Map("x" -> true), name = "good")
         _        <- incoming.script(Op.Initialize, lateFailure)
-        result   <- leakFree {
+        result   <- leakFree("later-swap") { trace =>
           for {
-            ff     <- build(previous)
+            ff     <- build(previous, trace)
             _      <- ff.setProvider(incoming).either
             next   <- ff.setProvider(good).either
             during <- settled(shutdowns(previous))(_ >= 1)
@@ -112,9 +127,9 @@ object OrphanedProviderSpec extends ZIOSpecDefault {
         previous <- FaultyProvider.make(Map("x" -> true), name = "previous")
         incoming <- FaultyProvider.make(Map("x" -> false), name = "incoming")
         _        <- incoming.script(Op.Initialize, lateFailure)
-        result   <- leakFree {
+        result   <- leakFree("swap-back") { trace =>
           for {
-            ff     <- build(previous)
+            ff     <- build(previous, trace)
             _      <- ff.setProvider(incoming).either
             early  <- ff.setProvider(previous).either
             held   <- ff.providerStatus
@@ -143,9 +158,9 @@ object OrphanedProviderSpec extends ZIOSpecDefault {
         previous <- FaultyProvider.make(Map("x" -> false), name = "previous")
         incoming <- FaultyProvider.make(Map("x" -> true), name = "incoming")
         _        <- incoming.script(Op.Initialize, Fault.HangUntilReleased)
-        result   <- leakFree {
+        result   <- leakFree("shutdown-while-hanging") { trace =>
           for {
-            ff     <- build(previous)
+            ff     <- build(previous, trace)
             _      <- ff.setProvider(incoming).either
             _      <- ff.shutdown
             status <- ff.providerStatus
@@ -162,7 +177,9 @@ object OrphanedProviderSpec extends ZIOSpecDefault {
         previous <- FaultyProvider.make(Map("x" -> false), name = "previous")
         incoming <- FaultyProvider.make(Map("x" -> true), name = "incoming")
         _        <- incoming.script(Op.Initialize, Fault.HangUntilReleased)
-        result   <- leakFree(build(previous).flatMap(_.setProvider(incoming).either))
+        result   <- leakFree("scope-close-while-hanging")(trace =>
+          build(previous, trace).flatMap(_.setProvider(incoming).either)
+        )
         (_, leaked) = result
         _     <- incoming.release
         after <- shutdowns(previous)
@@ -173,9 +190,9 @@ object OrphanedProviderSpec extends ZIOSpecDefault {
         previous <- FaultyProvider.make(Map("x" -> false), name = "previous")
         incoming <- FaultyProvider.make(Map("x" -> true), name = "incoming")
         _        <- incoming.script(Op.Initialize, lateFailure)
-        result   <- leakFree {
+        result   <- leakFree("non-owning") { trace =>
           for {
-            ff <- build(previous, owned = false)
+            ff <- build(previous, trace, owned = false)
             _  <- ff.setProvider(incoming).either
             _  <- ZIO.sleep(1500.millis)
             _  <- ff.shutdown

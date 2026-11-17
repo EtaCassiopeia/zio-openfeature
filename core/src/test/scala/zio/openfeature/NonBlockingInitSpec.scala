@@ -548,8 +548,10 @@ object NonBlockingInitSpec extends ZIOSpecDefault {
               .flatMap { ff =>
                 for {
                   err <- errP.await.timeoutFail(new RuntimeException("onConstructionError never ran"))(10.seconds)
-                  r   <- released.get
-                  x   <- ff.boolean("x", true)
+                  // A timed-out attempt leaves its candidate to its own fiber, which releases it once the interrupted
+                  // `verify` has stopped, so the last release can land just after onConstructionError runs.
+                  r <- released.get.repeatUntil(_ == 2).timeout(5.seconds).someOrElseZIO(released.get)
+                  x <- ff.boolean("x", true)
                 } yield assertTrue(
                   err.isInstanceOf[java.util.concurrent.TimeoutException],
                   err.getMessage.contains("exceeded"),

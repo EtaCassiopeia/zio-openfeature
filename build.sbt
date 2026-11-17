@@ -26,11 +26,11 @@ lazy val wiremockTestSupport = Seq(
 )
 
 // Jackson reaches us only through the OFREP contrib provider; see `jacksonPins` above the `ofrep` module.
-// `jackson-annotations` is versioned WITHOUT a patch component from 2.20 onwards (jackson-bom 2.22.4 pins it
-// to `2.22`), so it cannot share `jacksonVersion` — `2.22.4` does not exist for that artifact.
+// `jackson-annotations` is versioned WITHOUT a patch component from 2.20 onwards (jackson-bom 2.23.0 pins it
+// to `2.23`), so it cannot share `jacksonVersion` — `2.23.0` does not exist for that artifact.
 // 2.22.4 rejects a lone UTF-16 surrogate in a JSON field name (jackson-core #1683): such an OFREP object flag is a
 // PARSE_ERROR with the default (#534).
-val jacksonVersion            = "2.22.4"
+val jacksonVersion            = "2.23.0"
 val jacksonAnnotationsVersion = "2.23"
 
 // Guava reaches us through the OFREP contrib provider, and through WireMock in tests; see `guavaPin`.

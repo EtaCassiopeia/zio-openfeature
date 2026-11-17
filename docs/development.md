@@ -188,9 +188,9 @@ from a `tooling/tla2tools-*` prerelease of this repository, and TLAPS from a `to
 `TRACE_TLA_TOOLS_RELEASE` and `TLAPM_RELEASE` name them. The other checks use TLC 1.7.4, so running `validate.py` or
 `generate.py` with that jar will not work. A `tooling/*` tag goes on a parentless anchor commit, never on a commit of
 `main`; see [RELEASING.md](https://github.com/EtaCassiopeia/zio-openfeature/blob/main/RELEASING.md#tags). On a pull
-request the traces job checks the checker's fixtures and replays 2000 generated behaviours from a fixed seed. On `main`,
-nightly and by hand it also validates the runs the lifecycle suites record, and nightly it replays 20000 behaviours from
-a rotating seed.
+request the traces job checks the checker's fixtures and replays 2000 generated behaviours from a fixed seed, and the
+recorded-traces job validates the runs the lifecycle suites record, as on `main`, nightly and by hand; nightly the traces
+job replays 20000 behaviours from a rotating seed.
 
 To check a model change locally, run a pull request's bounds first. These are the commands for the lifecycle and
 registry models with TLC 1.7.4; the traces and the replay have their own in `formal/lifecycle/README.md`:

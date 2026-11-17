@@ -305,8 +305,8 @@ python3 validate.py tla2tools-1.8.0.jar CommunityModules-deps.jar ../../testkit/
 Reading the traces needs the community modules' `Json`, which needs TLC 1.8.0; the model check itself stays on 1.7.4.
 `--selftest` checks the checker: the runs under `traces/accept` must be accepted and those under `traces/reject`
 rejected, among them a run recorded with shutdown's lock removed from `FeatureFlagsLive`. The `Formal model` workflow
-runs the self-test on pull requests, and on `main`, nightly and on demand records these suites and validates every
-run.
+runs the self-test, and records these suites and validates every run (its `recorded-traces` job), on every pull
+request as well as on `main`, nightly and on demand.
 
 | Probe point | Library action |
 |:--|:--|

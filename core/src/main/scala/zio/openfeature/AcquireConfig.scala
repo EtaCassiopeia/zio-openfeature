@@ -19,7 +19,8 @@ import dev.openfeature.sdk.{FeatureProvider => OFFeatureProvider}
   * @param constructionTimeout
   *   per-attempt bound on `acquire` + `verify`
   * @param onConstructionError
-  *   run when `acquire`, `verify`, or the swap ultimately fails; the instance stays on the fallback
+  *   run when `acquire`, `verify`, or the swap ultimately fails; the instance stays on the fallback. Every candidate is
+  *   released by then, except one a blocking call still holds (see `FeatureFlags.fromAcquireAsync`)
   * @param verify
   *   run on each acquired candidate before the swap; failure rejects the candidate and counts as a failed attempt.
   *   Accepts every candidate by default. See [[Verify]] for ready-made checks.

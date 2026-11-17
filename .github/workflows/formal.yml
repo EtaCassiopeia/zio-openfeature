@@ -13,10 +13,10 @@ name: Formal model
 # The acquire model (formal/acquire) checks fromAcquireAsync's hand-off of a provider against a layer release, with its
 # mutants; on every run, the runs fromAcquireAsync's test suites record are checked against it, and must take every
 # action of the model between them.
-# Trace validation checks that runs of the library are behaviours of the model: on pull requests the checker's own
-# fixtures, on main, nightly and on demand also the runs the lifecycle test suites record. The replay checks the other
-# direction: behaviours generated from the model are replayed against the lifecycle's pure step (formal/lifecycle/
-# replay-map.md), 2000 from a fixed seed on every run and 20000 from a rotating seed nightly.
+# Trace validation checks that runs of the library are behaviours of the model: the checker's own fixtures, and the runs
+# the lifecycle test suites record (recorded-traces), on every pull request, on main, nightly and on demand. The replay
+# checks the other direction: behaviours generated from the model are replayed against the lifecycle's pure step
+# (formal/lifecycle/replay-map.md), 2000 from a fixed seed on every run and 20000 from a rotating seed nightly.
 on:
   pull_request:
     types: [opened, synchronize, reopened, edited]
@@ -41,6 +41,8 @@ on:
       - 'core/src/test/scala/zio/openfeature/LifecycleReplaySpec.scala'
       - 'test-support/src/test/scala/zio/openfeature/testsupport/ModelBehaviours.scala'
       - 'extras/src/test/scala/zio/openfeature/extras/CircuitBreakerReplaySpec.scala'
+      - 'extras/src/test/scala/zio/openfeature/extras/CachingReplaySpec.scala'
+      - 'extras/src/test/scala/zio/openfeature/extras/CachingInvalidationRaceSpec.scala'
       - 'extras/src/main/scala/zio/openfeature/extras/CircuitBreaker.scala'
       - 'extras/src/main/scala/zio/openfeature/extras/CircuitBreakerProvider.scala'
       - 'core/src/test/scala/zio/openfeature/testkit/TraceProbe.scala'
@@ -77,6 +79,8 @@ on:
       - 'core/src/test/scala/zio/openfeature/LifecycleReplaySpec.scala'
       - 'test-support/src/test/scala/zio/openfeature/testsupport/ModelBehaviours.scala'
       - 'extras/src/test/scala/zio/openfeature/extras/CircuitBreakerReplaySpec.scala'
+      - 'extras/src/test/scala/zio/openfeature/extras/CachingReplaySpec.scala'
+      - 'extras/src/test/scala/zio/openfeature/extras/CachingInvalidationRaceSpec.scala'
       - 'extras/src/main/scala/zio/openfeature/extras/CircuitBreaker.scala'
       - 'extras/src/main/scala/zio/openfeature/extras/CircuitBreakerProvider.scala'
       - 'core/src/test/scala/zio/openfeature/testkit/TraceProbe.scala'
@@ -247,7 +251,8 @@ jobs:
 
   traces:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    # On main it also runs the cache's code mutants, each an extras recompile.
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v7
       - name: Set up JDK 21
@@ -317,8 +322,52 @@ jobs:
           name: breaker-behaviours
           path: breaker-behaviours/
           retention-days: 14
+      # The cache: behaviours of formal/caching, restricted to steps a test can schedule, replayed through the real
+      # CachingProvider under a controlled schedule (formal/caching/replay-map.md), with its targeted ones as well.
+      - name: Generate behaviours of the cache model
+        env:
+          NUM: ${{ github.event_name == 'schedule' && '20000' || '2000' }}
+          SEED: ${{ github.event_name == 'schedule' && github.run_id || '7' }}
+        run: |
+          echo "seed ${SEED}, ${NUM} behaviours"
+          python3 formal/generate.py formal/caching tla2tools.jar CommunityModules-deps.jar "${GITHUB_WORKSPACE}/caching-behaviours" --actions pluscal:Caching.tla --num "${NUM}" --depth 30 --seed "${SEED}"
+      - name: Replay the behaviours through the cache
+        env:
+          ZOF_CACHING_BEHAVIOURS_REQUIRED: '1'
+        run: sbt "-Dzof.caching.behaviours=${GITHUB_WORKSPACE}/caching-behaviours,${GITHUB_WORKSPACE}/formal/caching/mbt-regressions" "extras/testOnly zio.openfeature.extras.CachingReplaySpec"
+      # Each source mutant of CachingProvider recompiles extras, so on main and by hand only.
+      - name: Check each code mutant of the cache turns the replay red
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        run: python3 formal/caching/codemutants.py "${GITHUB_WORKSPACE}/caching-behaviours,${GITHUB_WORKSPACE}/formal/caching/mbt-regressions"
+      - name: Keep the cache's behaviours
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: caching-behaviours
+          path: caching-behaviours/
+          retention-days: 14
+
+  # Every run the lifecycle test suites record is a behaviour of the model, on pull requests too, so a change the model
+  # rejects fails before it merges. A job of its own, so it runs alongside the others; it finishes within the longest of
+  # them (model-checks). When it outgrows that, shard it by recording spec.
+  recorded-traces:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - name: Set up JDK 21
+        uses: actions/setup-java@v6
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: sbt
+      - name: Set up sbt
+        uses: sbt/setup-sbt@v1
+      - name: Download the TLA+ tools and community modules
+        run: |
+          scripts/fetch-asset.sh "https://github.com/${GITHUB_REPOSITORY}/releases/download/${TRACE_TLA_TOOLS_RELEASE}/tla2tools.jar" "${TRACE_TLA_TOOLS_SHA256}" tla2tools.jar
+          scripts/fetch-asset.sh "https://github.com/tlaplus/CommunityModules/releases/download/${COMMUNITY_MODULES_VERSION}/CommunityModules-deps.jar" "${COMMUNITY_MODULES_SHA256}" CommunityModules-deps.jar
       - name: Record the lifecycle test suites' runs
-        if: github.event_name != 'pull_request'
         env:
           ZOF_TRACE: '1'
           ZOF_TRACE_DIR: ${{ github.workspace }}/traces
@@ -327,13 +376,12 @@ jobs:
           zio.openfeature.testkit.LifecycleFaultSpec zio.openfeature.testkit.OrphanedProviderSpec
           zio.openfeature.testkit.ProviderNameSpec"
       - name: Check every recorded run is a behaviour of the model
-        if: github.event_name != 'pull_request'
         working-directory: formal/lifecycle
         env:
           TRACE_TIMEOUT_SECS: '900'
         run: python3 validate.py ../../tla2tools.jar ../../CommunityModules-deps.jar "${GITHUB_WORKSPACE}/traces"
       - name: Keep the recorded runs
-        if: failure() && github.event_name != 'pull_request'
+        if: failure()
         uses: actions/upload-artifact@v7
         with:
           name: lifecycle-traces

@@ -528,8 +528,8 @@ object AcquireOwnershipSpec extends ZIOSpecDefault {
           } yield assertTrue(count == 1, verified.get() == 0)
         }
       },
-      // An abandoned attempt is interrupted once it is suspended, so its resource closes then, possibly after the
-      // timeout is reported: an attempt not yet scheduled reads as running, and is interrupted by a later poll.
+      // An abandoned attempt is interrupted once it is suspended, and the timeout waits for its resource to close. One
+      // not yet scheduled when the timeout fires reads as running, is interrupted by a later poll, and closes after.
       test("an attempt suspended in an asynchronous call: its resource closes once it is interrupted") {
         val closed  = new AtomicInteger(0)
         val acquire = ZIO.acquireRelease(ZIO.unit)(_ => ZIO.succeed(closed.incrementAndGet())) *>
@@ -646,6 +646,20 @@ object AcquireOwnershipSpec extends ZIOSpecDefault {
           } yield assertTrue(count == 1)
         }
       },
+      // The timeout waits for an attempt suspended in verify to be interrupted and released, so the release is done
+      // before the outcome is observable. Repeated: a wait cut short loses only a race, not every run.
+      test("a timeout during a suspended verify: shut down and closed before the outcome is observable") {
+        val trail   = new ConcurrentLinkedQueue[String]()
+        val real    = new Counting("real", trail)
+        val acquire = withResource(trail, real)
+        val config  = noRetry.withConstructionTimeout(50.millis).withVerify(_ => ZIO.never)
+        for {
+          during <- buildAndRelease(FeatureFlags.fromAcquireAsync(acquire, new Fallbacks().effect, isolated, config)) {
+            env =>
+              awaitOutcome(env).as(trail.asScala.toList)
+          }
+        } yield assertTrue(during == List("real.shutdown", "resource.closed"))
+      } @@ TestAspect.nonFlaky(100),
       test("a setProvider wins the swap, bare: once") {
         val gate = new CountDownLatch(1)
         val real = new Counting("real", initGate = Some(gate))

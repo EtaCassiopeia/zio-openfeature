@@ -16,6 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `constructionTimeout` or layer release landed during a blocking `verify` released the candidate at once: its
   `shutdown()` ran and `acquire`'s `Scope` closed while `verify` could still be using both. The attempt now keeps them,
   as it already did for a blocking constructor, and releases them once `verify` returns (#875).
+- **A failed build's status can no longer turn `Ready` from a late event.** The SDK runs a handler some time after it
+  picked it, so removing the failed build's event handlers did not stop a delivery already picked. That delivery wrote
+  the slot's current state, which is `Ready` once another provider with the same name is ready in the slot. A bridge
+  whose handlers have been removed now applies no status (#903).
 
 ## [2.2.0] — 2026-11-05
 

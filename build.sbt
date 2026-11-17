@@ -31,10 +31,10 @@ lazy val wiremockTestSupport = Seq(
 // 2.22.4 rejects a lone UTF-16 surrogate in a JSON field name (jackson-core #1683): such an OFREP object flag is a
 // PARSE_ERROR with the default (#534).
 val jacksonVersion            = "2.22.4"
-val jacksonAnnotationsVersion = "2.22"
+val jacksonAnnotationsVersion = "2.23"
 
 // Guava reaches us through the OFREP contrib provider, and through WireMock in tests; see `guavaPin`.
-val guavaVersion = "33.7.2-jre"
+val guavaVersion = "33.8.0-jre"
 
 // OpenFeature Specification Compatibility
 // Spec version: v0.9.0 (https://github.com/open-feature/spec)
@@ -474,7 +474,8 @@ lazy val schema = (project in file("schema"))
 
 // Testkit module - testing utilities
 lazy val testkit = (project in file("testkit"))
-  .dependsOn(core)
+  // core's tests hold the trace recorder (TraceProbe) that testkit's lifecycle specs record with.
+  .dependsOn(core % "compile->compile;test->test")
   .settings(
     name := "zio-openfeature-testkit",
     commonSettings,

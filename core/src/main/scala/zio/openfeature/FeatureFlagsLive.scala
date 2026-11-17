@@ -493,6 +493,14 @@ final private[openfeature] class FeatureFlagsLive(
         }
       }
 
+  /** Release the registration this instance was built with, whose initialization failed, once its caller knows nothing
+    * else will: the async build hands the instance out before its provider is ready, so the build's own failure path
+    * never runs. As there, the bridge's handlers are removed first, and `shutDownFailedRegistration` decides what to
+    * leave alone.
+    */
+  private[openfeature] def shutDownFailedBuild(label: String, timeout: Duration): UIO[Boolean] =
+    stopEventBridge *> shutDownFailedRegistration(Bound.ofRegistered(initialProvider), label, timeout)
+
   /** Async-init watchdog escalation. Only when the machine actually transitions (the provider never became usable — the
     * `everReady` gate) does it publish a terminal Error event with code PROVIDER_FATAL, release the onReady latch, and
     * shut the provider down if that is the library's to do, in that order: a provider stuck in `initialize()` often

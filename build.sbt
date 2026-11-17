@@ -313,7 +313,7 @@ lazy val core = (project in file("core"))
     tastyMiMaConfig ~= (_.withMoreProblemFilters(
       java.util.Arrays.asList(
         ProblemMatcher.make("zio.openfeature.internal.LifecycleProbe.Point.*"),
-        ProblemMatcher.make("zio.openfeature.FeatureFlagRegistryLive.<init>"),
+        ProblemMatcher.make("zio.openfeature.FeatureFlagRegistryLive.<init>"), // non-public: private[openfeature]
         ProblemMatcher.make("zio.openfeature.internal.FeatureFlagsFactories.fromProvider")
       )
     ))

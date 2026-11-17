@@ -31,7 +31,7 @@ lazy val wiremockTestSupport = Seq(
 // 2.22.4 rejects a lone UTF-16 surrogate in a JSON field name (jackson-core #1683): such an OFREP object flag is a
 // PARSE_ERROR with the default (#534).
 val jacksonVersion            = "2.22.4"
-val jacksonAnnotationsVersion = "2.22"
+val jacksonAnnotationsVersion = "2.23"
 
 // Guava reaches us through the OFREP contrib provider, and through WireMock in tests; see `guavaPin`.
 val guavaVersion = "33.7.2-jre"

@@ -66,7 +66,9 @@ object EventIdentityAcrossSwapsSpec extends ZIOSpecDefault {
   }
 
   def spec = suite("EventIdentityAcrossSwapsSpec")(
-    test("after a swap, a pre-swap stream and handler see none of the old provider's events, and all of the new one's") {
+    test(
+      "after a swap, a pre-swap stream and handler see none of the old provider's later events, and all of the new one's"
+    ) {
       ZIO.scoped {
         for {
           a   <- ZIO.succeed(new Emitting("A"))
@@ -104,12 +106,16 @@ object EventIdentityAcrossSwapsSpec extends ZIOSpecDefault {
           _       <- ZIO.sleep(300.millis)
           all     <- seen.get
           handled <- viaOn.get
-          names = all.map(_.metadata.name).toSet
-          flags = all.collect { case ProviderEvent.ConfigurationChanged(f, _, _) => f }.flatten
+          // A's own initial READY may reach the stream after the subscription and before the swap: the SDK delivers a
+          // READY late, as sent, and the bridge publishes it while A is still installed. Every other event of A's is
+          // one it emitted after the swap, and none of those may be published.
+          fromAAfterSwap = all.filter(e => e.metadata.name == "A" && !e.isInstanceOf[ProviderEvent.Ready])
+          flags          = all.collect { case ProviderEvent.ConfigurationChanged(f, _, _) => f }.flatten
           status <- ff.providerStatus
         } yield assertTrue(
           ok.isDefined,
-          !names.contains("A"),
+          fromAAfterSwap.isEmpty,
+          all.count(e => e.metadata.name == "A") <= 1,
           !handled.exists(_.metadata.name == "A"),
           flags.sorted == Chunk("end", "new-1", "new-2"),
           handled.collect { case ProviderEvent.ConfigurationChanged(f, _, _) => f }.flatten.sorted == Chunk(

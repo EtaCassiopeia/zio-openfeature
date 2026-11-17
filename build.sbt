@@ -308,8 +308,14 @@ lazy val core = (project in file("core"))
     // does not inherit the build JVM's properties, so it is passed on.
     Test / javaOptions ++= sys.props.get("zof.lifecycle.behaviours").map("-Dzof.lifecycle.behaviours=" + _).toList,
     // The lifecycle probe's points carry the provider they concern since 2.2.0; the probe is internal test tooling.
+    // The registry and the factories take that probe too: `FeatureFlagRegistryLive` is a private class and
+    // `FeatureFlagsFactories` a private[openfeature] object, so no caller outside the library can see either signature.
     tastyMiMaConfig ~= (_.withMoreProblemFilters(
-      java.util.Arrays.asList(ProblemMatcher.make("zio.openfeature.internal.LifecycleProbe.Point.*"))
+      java.util.Arrays.asList(
+        ProblemMatcher.make("zio.openfeature.internal.LifecycleProbe.Point.*"),
+        ProblemMatcher.make("zio.openfeature.FeatureFlagRegistryLive.<init>"),
+        ProblemMatcher.make("zio.openfeature.internal.FeatureFlagsFactories.fromProvider")
+      )
     ))
   )
 

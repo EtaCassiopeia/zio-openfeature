@@ -12,8 +12,9 @@ import java.util.concurrent.atomic.AtomicLong
 import scala.jdk.CollectionConverters._
 
 /** Records the lifecycle probe points a run passes, one JSON line each, for `formal/lifecycle/validate.py`, which
-  * checks the run is a behaviour of the TLA+ lifecycle model. Lines carry a sequence number taken when the point is
-  * reached, since several threads record; `begin` marks the moment the instance is built and the run starts.
+  * checks the run is a behaviour of the TLA+ lifecycle model, or, for a `fromAcquireAsync` run, for
+  * `formal/acquire/validate.py`. Lines carry a sequence number taken when the point is reached, since several threads
+  * record; `begin` marks the moment the instance is built and the run starts.
   */
 final class TraceProbe private () extends LifecycleProbe {
   private val seq     = new AtomicLong(0)
@@ -38,10 +39,39 @@ final class TraceProbe private () extends LifecycleProbe {
       )
     }
 
+  /** A `fromAcquireAsync` run starts, on an instance that shuts its API down on release (`owning`), with an `acquire`
+    * whose own finalizer shuts the provider down too (`userShuts`).
+    */
+  def beginAcquire(owning: Boolean, userShuts: Boolean): UIO[Unit] =
+    ZIO.succeed(record("Begin", "", List("owning" -> owning.toString, "userShuts" -> userShuts.toString)))
+
+  /** A `fromAcquireAsync` run is over: the `shutdown()` calls each of `shuts` received; those the composed stack
+    * received (`stack`); whether a resource `acquire` registered has closed (`closed`), and whether a provider was shut
+    * down after it closed (`shutAfterClose`). Only what the run observed: each left out is unconstrained.
+    */
+  def endAcquire(
+    shuts: List[(OFFeatureProvider, Int)],
+    stack: Option[Int],
+    closed: Option[Boolean],
+    shutAfterClose: Option[Boolean]
+  ): UIO[Unit] =
+    ZIO.succeed(
+      record(
+        "End",
+        "",
+        List(
+          "shuts"          -> shuts.map { case (p, n) => s"${TraceProbe.Who.of(p).instance}:$n" }.mkString(","),
+          "stack"          -> stack.fold("")(_.toString),
+          "closed"         -> closed.fold("")(_.toString),
+          "shutAfterClose" -> shutAfterClose.fold("")(_.toString)
+        )
+      )
+    )
+
   /** Write the run to `<dir>/<name>.ndjson`. A failure to write is reported, never thrown. */
   def write(name: String): UIO[Unit] = write(name, TraceProbe.directory)
 
-  private[testkit] def write(name: String, dir: Path): UIO[Unit] =
+  private[openfeature] def write(name: String, dir: Path): UIO[Unit] =
     ZIO
       .attemptBlocking {
         Files.createDirectories(dir)
@@ -68,7 +98,7 @@ object TraceProbe {
   def directory: Path = Paths.get(sys.env.getOrElse("ZOF_TRACE_DIR", "target/traces"))
 
   /** A recorder whatever `ZOF_TRACE` says, for testing the recorder itself; `make` is the gated one. */
-  private[testkit] def recording: TraceProbe = new TraceProbe()
+  private[openfeature] def recording: TraceProbe = new TraceProbe()
 
   /** A recorder when tracing is enabled. */
   def make: UIO[Option[TraceProbe]] = ZIO.succeed(if (enabled) Some(new TraceProbe()) else None)
@@ -98,6 +128,9 @@ object TraceProbe {
     List(nameKey -> who.name, instanceKey -> who.instance)
   }
 
+  private def attempt(scope: Scope): (String, String) =
+    "attempt" -> Integer.toHexString(java.lang.System.identityHashCode(scope))
+
   private def identityFields(point: Point): List[(String, String)] = point match {
     case Point.SwapStart(p)                    => named("provider", "providerInstance", p)
     case Point.OrphanResolved(previous, watch) =>
@@ -107,6 +140,15 @@ object TraceProbe {
     case Point.InitOutcome(p, _)              => named("provider", "providerInstance", p)
     case Point.DeliverEvent(_, provider)      => List("provider" -> provider)
     case Point.ProviderShutDown(_, p, caller) => named("provider", "providerInstance", p) :+ ("caller" -> caller)
+    case Point.AcquireAttemptStart(a)         => List(attempt(a))
+    case Point.AcquireVerifyFailed(a)         => List(attempt(a))
+    case Point.AcquireFailed(a)               => List(attempt(a))
+    case Point.AcquireAbandoned(a, _)         => List(attempt(a))
+    case Point.AcquireAccepted(a, p)          => attempt(a) :: named("provider", "providerInstance", p)
+    case Point.AcquireRejected(a, p)          => attempt(a) :: named("provider", "providerInstance", p)
+    case Point.AcquireLateArrival(a, p)       => attempt(a) :: named("provider", "providerInstance", p)
+    case Point.AcquireComposed(p)             => named("provider", "providerInstance", p)
+    case Point.AcquireReleaseOwned(held)      => held.toList.flatMap(named("provider", "providerInstance", _))
     case _                                    => Nil
   }
 
@@ -117,6 +159,9 @@ object TraceProbe {
     case Point.ProviderShutDown(call, _, _) => call.toString
     case Point.ShutdownReturned(call, ok)   => s"$call $ok"
     case Point.InitOutcome(_, ok)           => ok.toString
+    case Point.AcquireAbandoned(_, i)       => i.toString
+    case Point.AcquireStackInit(ok)         => ok.toString
+    case Point.AcquireSwitched(ok)          => ok.toString
     case _                                  => ""
   }
 

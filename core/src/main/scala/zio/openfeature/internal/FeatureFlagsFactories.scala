@@ -72,7 +72,7 @@ private[openfeature] object FeatureFlagsFactories {
     self: java.util.concurrent.atomic.AtomicReference[FeatureFlagsLive]
   ): UIO[Unit] =
     // An owner retires the other instances on the API first, as `shutdown` does, and before this one's lock.
-    ZIO.when(ownsApi)(ApiInstances.retireSiblings(api, self.get())) *>
+    ZIO.when(ownsApi)(probe.at(LifecycleProbe.Point.RetireSiblings) *> ApiInstances.retireSiblings(api, self.get())) *>
       swapLock.withPermit(
         ZIO.suspendSucceed(ZIO.foreachDiscard(Option(self.get()))(_.markClosed)) *>
           probe.at(LifecycleProbe.Point.ScopeClose) *>
@@ -270,7 +270,8 @@ private[openfeature] object FeatureFlagsFactories {
           )
       settled <- ProviderRegistration
         .registerThenAwait(api, domain, bound, initTimeout)(
-          ZIO.unless(early)(ff.startEventBridge).unit
+          probe.at(LifecycleProbe.Point.BuildBind(managed, domain, addShutdownFinalizer, async = false)) *>
+            ZIO.unless(early)(ff.startEventBridge).unit
         )
         .tapError(failedBuild)
       // A provider reused from another domain of this API is serving there: the build fails without shutting it down.
@@ -319,7 +320,8 @@ private[openfeature] object FeatureFlagsFactories {
     config: FeatureFlagsConfig,
     statusRef: Option[SubscriptionRef[ProviderStatus]],
     apiOverride: Option[OpenFeatureAPI] = None,
-    onReady: Option[java.util.concurrent.CountDownLatch] = None
+    onReady: Option[java.util.concurrent.CountDownLatch] = None,
+    probe: LifecycleProbe = LifecycleProbe.none
   ): ZLayer[Any, Throwable, FeatureFlags with FeatureFlagsAdmin] =
     bothServices {
       val evalTimeout = evaluationTimeoutOf(config)
@@ -340,7 +342,8 @@ private[openfeature] object FeatureFlagsFactories {
             onReady = onReady,
             contextSource = config.contextSource,
             fallbackLogging = config.fallbackLogging,
-            maxAbandonedCalls = config.maxAbandonedCalls
+            maxAbandonedCalls = config.maxAbandonedCalls,
+            probe = probe
           )
         case InitMode.Async =>
           buildAsync(
@@ -356,7 +359,8 @@ private[openfeature] object FeatureFlagsFactories {
             initTimeout = config.initTimeout,
             contextSource = config.contextSource,
             fallbackLogging = config.fallbackLogging,
-            maxAbandonedCalls = config.maxAbandonedCalls
+            maxAbandonedCalls = config.maxAbandonedCalls,
+            probe = probe
           )
       }
     }
@@ -454,6 +458,7 @@ private[openfeature] object FeatureFlagsFactories {
       // compute pool. (The sync `build` path uses `attemptBlocking` because `ProviderRegistration` blocks a thread
       // polling for the init outcome.)
       _ <- ZIO.attempt(ProviderRegistration.bind(api, domain, bound)).tapError(_ => ff.stopEventBridge)
+      _ <- probe.at(LifecycleProbe.Point.BuildBind(managed, domain, addShutdownFinalizer, async = true))
       _ <- ZIO.unless(early)(ff.startEventBridge)
       _ <- ff.reconcileRegistration(managed)
       // Init watchdog: after initTimeout, escalate to Fatal ONLY if the provider never became usable

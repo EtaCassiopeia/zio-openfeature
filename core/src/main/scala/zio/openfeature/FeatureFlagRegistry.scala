@@ -2,7 +2,7 @@ package zio.openfeature
 
 import dev.openfeature.sdk.{FeatureProvider => OFFeatureProvider, OpenFeatureAPI}
 import zio._
-import zio.openfeature.internal.{ApiInstances, FeatureFlagsFactories, ProviderRegistration}
+import zio.openfeature.internal.{ApiInstances, FeatureFlagsFactories, LifecycleProbe, ProviderRegistration}
 
 trait FeatureFlagRegistry {
 
@@ -59,6 +59,17 @@ object FeatureFlagRegistry {
     defaultProvider: OFFeatureProvider,
     config: FeatureFlagsConfig
   ): ZLayer[Any, Throwable, FeatureFlagRegistry] =
+    fromProvider(defaultProvider, config, _ => LifecycleProbe.none)
+
+  /** [[fromProvider(OFFeatureProvider, FeatureFlagsConfig)]] whose client for each domain (`None` for the default
+    * client) is built with `probe(domain)`, which also records the registry's own steps for that domain; `probe(None)`
+    * records the finalizer's.
+    */
+  private[openfeature] def fromProvider(
+    defaultProvider: OFFeatureProvider,
+    config: FeatureFlagsConfig,
+    probe: Option[String] => LifecycleProbe
+  ): ZLayer[Any, Throwable, FeatureFlagRegistry] =
     ZLayer.scoped {
       for {
         api            <- ZIO.succeed(OpenFeatureAPI.createIsolated())
@@ -77,10 +88,14 @@ object FeatureFlagRegistry {
           defaultRef,
           lock,
           zioApiHooksRef,
-          config
+          config,
+          probe
         )
         // The registry owns its API: its clients go NotReady with it rather than serve the SDK's No-op answers.
-        _ <- ZIO.addFinalizer(ApiInstances.retireAll(api) *> ProviderRegistration.boundedApiShutdown(api))
+        _ <- ZIO.addFinalizer(
+          probe(None).at(LifecycleProbe.Point.ApiShutdown) *> ApiInstances.retireAll(api) *>
+            ProviderRegistration.boundedApiShutdown(api)
+        )
       } yield registry
     }
 }
@@ -106,23 +121,24 @@ final private class FeatureFlagRegistryLive(
   defaultRef: Ref[Option[Promise[FeatureFlagError, FeatureFlagsLive]]],
   lock: Semaphore,
   zioApiHooksRef: Ref[List[FeatureHook]],
-  config: FeatureFlagsConfig
+  config: FeatureFlagsConfig,
+  probe: Option[String] => LifecycleProbe
 ) extends FeatureFlagRegistry {
 
   override def getClient(domain: String): IO[FeatureFlagError, FeatureFlags] =
     memoizedClient(
+      Some(domain),
       get = clients.get.map(_.get(domain)),
       put = p => clients.update(_ + (domain -> p)),
-      remove = clients.update(_ - domain),
-      buildClient = buildClient(Some(domain))
+      remove = clients.update(_ - domain)
     )
 
   override def defaultClient: IO[FeatureFlagError, FeatureFlags] =
     memoizedClient(
+      None,
       get = defaultRef.get,
       put = p => defaultRef.set(Some(p)),
-      remove = defaultRef.set(None),
-      buildClient = buildClient(None)
+      remove = defaultRef.set(None)
     )
 
   override def setProvider(domain: String, provider: OFFeatureProvider): IO[FeatureFlagError, Unit] =
@@ -159,16 +175,19 @@ final private class FeatureFlagRegistryLive(
 
   /** Get-or-insert the memoized promise under the lock, build outside it (first caller only), await. */
   private def memoizedClient(
+    domain: Option[String],
     get: UIO[Option[Promise[FeatureFlagError, FeatureFlagsLive]]],
     put: Promise[FeatureFlagError, FeatureFlagsLive] => UIO[Unit],
-    remove: UIO[Unit],
-    buildClient: IO[FeatureFlagError, FeatureFlagsLive]
+    remove: UIO[Unit]
   ): IO[FeatureFlagError, FeatureFlags] =
     for {
       inserted <- lock.withPermit {
         get.flatMap {
           case Some(p) => ZIO.succeed((p, false))
-          case None    => Promise.make[FeatureFlagError, FeatureFlagsLive].flatMap(p => put(p).as((p, true)))
+          case None    =>
+            Promise
+              .make[FeatureFlagError, FeatureFlagsLive]
+              .flatMap(p => put(p) *> probe(domain).at(LifecycleProbe.Point.RegistryInsert(domain)).as((p, true)))
         }
       }
       promise = inserted._1
@@ -177,7 +196,7 @@ final private class FeatureFlagRegistryLive(
       // trigger the build must not strand the other fibers awaiting the same promise. (Making the build
       // uninterruptible on the caller fiber is not an option — fibers forked inside it, like buildAsync's
       // init watchdog, would inherit uninterruptibility and block scope close.)
-      _      <- ZIO.when(isOwner)(runBuild(buildClient, promise, remove).forkIn(scope))
+      _      <- ZIO.when(isOwner)(runBuild(domain, promise, remove).forkIn(scope))
       client <- promise.await
     } yield client
 
@@ -185,11 +204,11 @@ final private class FeatureFlagRegistryLive(
     * fibers unblock. The build itself is bounded by the init timeout.
     */
   private def runBuild(
-    buildClient: IO[FeatureFlagError, FeatureFlagsLive],
+    domain: Option[String],
     promise: Promise[FeatureFlagError, FeatureFlagsLive],
     remove: UIO[Unit]
   ): UIO[Unit] =
-    buildClient
+    buildClient(domain)
       // `foldCauseZIO`, not `foldZIO`: a *defect* (a throwing SDK call that escaped the typed channel) is not a
       // typed failure, so `foldZIO` would let it kill this fiber with the promise never settled and the entry never
       // removed — every current and future `getClient` for this domain would then block on `promise.await` forever.
@@ -208,7 +227,8 @@ final private class FeatureFlagRegistryLive(
           },
         client =>
           lock.withPermit {
-            zioApiHooksRef.get.flatMap(client.addZioApiHooks) *> promise.succeed(client)
+            zioApiHooksRef.get.flatMap(client.addZioApiHooks) *>
+              probe(domain).at(LifecycleProbe.Point.RegistryComplete(domain)) *> promise.succeed(client)
           }.unit
       )
       .onInterrupt(promise.interrupt)
@@ -234,7 +254,7 @@ final private class FeatureFlagRegistryLive(
       child  <- scope.fork
       client <- child
         .extend[Any](
-          FeatureFlags.buildAsync(
+          FeatureFlagsFactories.buildAsync(
             provider,
             domain = domain,
             version = config.version,
@@ -246,7 +266,8 @@ final private class FeatureFlagRegistryLive(
             initTimeout = config.initTimeout,
             contextSource = config.contextSource,
             fallbackLogging = config.fallbackLogging,
-            maxAbandonedCalls = config.maxAbandonedCalls
+            maxAbandonedCalls = config.maxAbandonedCalls,
+            probe = probe(domain)
           )
         )
         .mapError(t => FeatureFlagError.ProviderInitializationFailed(t))

@@ -1,0 +1,18 @@
+{"seq":0,"point":"InitEntered","arg":"","instance":"b1"}
+{"seq":1,"point":"BuildBind","arg":"","provider":"gated","providerInstance":"481a34f7","domain":"a","owns":"false","async":"false","instance":"b1"}
+{"seq":2,"point":"InitOutcome","arg":"true","provider":"gated","providerInstance":"481a34f7","instance":"b1"}
+{"seq":3,"point":"InitReturned","arg":"","instance":"b1"}
+{"seq":4,"point":"DeliverEvent","arg":"PROVIDER_READY","provider":"gated","instance":"b1"}
+{"seq":5,"point":"ApplySignal","arg":"EventReady","instance":"b1"}
+{"seq":6,"point":"StatusWritten","arg":"Ready","instance":"b1"}
+{"seq":7,"point":"BuildBind","arg":"","provider":"gated","providerInstance":"481a34f7","domain":"b","owns":"false","async":"false","instance":"b2"}
+{"seq":8,"point":"ShutdownStart","arg":"","instance":"b1"}
+{"seq":9,"point":"ApplySignal","arg":"ShutdownStarted","instance":"b1"}
+{"seq":10,"point":"StatusWritten","arg":"ShuttingDown","instance":"b1"}
+{"seq":11,"point":"ProviderShutDown","arg":"1","provider":"gated","providerInstance":"481a34f7","caller":"openfeature-provider-thread-2","instance":"b1"}
+{"seq":12,"point":"ShutdownReturned","arg":"1 true","instance":"b1"}
+{"seq":13,"point":"ShutdownDone","arg":"","instance":"b1"}
+{"seq":14,"point":"ApplySignal","arg":"ShutdownCompleted","instance":"b1"}
+{"seq":15,"point":"StatusWritten","arg":"NotReady","instance":"b1"}
+{"seq":16,"point":"ScopeClose","arg":"","instance":"b2"}
+{"seq":17,"point":"ScopeClose","arg":"","instance":"b1"}

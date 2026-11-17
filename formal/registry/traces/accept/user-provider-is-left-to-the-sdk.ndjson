@@ -1,0 +1,14 @@
+{"seq":0,"point":"UserBind","arg":"","domain":"x","provider":"gated","providerInstance":"e140d42"}
+{"seq":1,"point":"BuildBind","arg":"","provider":"gated","providerInstance":"e140d42","domain":"x","owns":"false","async":"true","instance":"b1"}
+{"seq":2,"point":"BuildBind","arg":"","provider":"gated","providerInstance":"e140d42","domain":"y","owns":"false","async":"false","instance":"b2"}
+{"seq":3,"point":"DeliverEvent","arg":"PROVIDER_READY","provider":"gated","instance":"b1"}
+{"seq":4,"point":"DeliverEvent","arg":"PROVIDER_READY","provider":"gated","instance":"b2"}
+{"seq":5,"point":"ApplySignal","arg":"EventError(false)","instance":"b2"}
+{"seq":6,"point":"StatusWritten","arg":"Error","instance":"b2"}
+{"seq":7,"point":"FailedRegistration","arg":"","provider":"gated","providerInstance":"e140d42","instance":"b2"}
+{"seq":8,"point":"FailDecided","arg":"false","provider":"gated","providerInstance":"e140d42","instance":"b2"}
+{"seq":9,"point":"ScopeClose","arg":"","instance":"b2"}
+{"seq":10,"point":"DeliverEvent","arg":"PROVIDER_READY","provider":"gated","instance":"b1"}
+{"seq":11,"point":"ApplySignal","arg":"EventReady","instance":"b1"}
+{"seq":12,"point":"StatusWritten","arg":"Ready","instance":"b1"}
+{"seq":13,"point":"ScopeClose","arg":"","instance":"b1"}

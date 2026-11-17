@@ -8,11 +8,13 @@ import zio.openfeature.ProviderStatus
   * go. Production instances use [[LifecycleProbe.none]], whose `at` is a constant no-op.
   *
   * The points name the steps of the lifecycle protocol: a swap, an SDK event reaching the bridge, a status write, the
-  * init watchdog, a shutdown and the scope close; and, prefixed `Acquire`, the steps of `fromAcquireAsync`'s hand-off
-  * of the provider `acquire` returns, once per attempt or per release. The probe is handed only to the lifecycle
-  * collaborators: `FeatureFlagsLive` for the swap and shutdown, `EventBridge`, `OrphanedProviders`, and the builds for
-  * the watchdog, the scope finalizer and the hand-off. `Evaluator` and `HookPipeline` never receive it, which keeps it
-  * off the evaluation path; `FeatureFlagsLive`'s evaluation methods only delegate to the `Evaluator`.
+  * init watchdog, a shutdown and the scope close; prefixed `Acquire`, the steps of `fromAcquireAsync`'s hand-off of the
+  * provider `acquire` returns, once per attempt or per release; and the steps several instances on one API take (a
+  * build's binding, a failure's decision, an owner retiring the others, the registry's promises). The probe is handed
+  * only to the lifecycle collaborators: `FeatureFlagsLive` for the swap and shutdown, `EventBridge`,
+  * `OrphanedProviders`, the builds for the watchdog, the scope finalizer and the hand-off, and the registry.
+  * `Evaluator` and `HookPipeline` never receive it, which keeps it off the evaluation path; `FeatureFlagsLive`'s
+  * evaluation methods only delegate to the `Evaluator`.
   */
 private[openfeature] trait LifecycleProbe {
   def at(point: LifecycleProbe.Point): UIO[Unit]
@@ -129,6 +131,37 @@ private[openfeature] object LifecycleProbe {
 
     /** The API's scope finalizer started. */
     case object ScopeClose extends Point
+
+    // The steps of several instances on one API (formal/registry): a build binding its slot, a failure deciding about
+    // its provider, an owner retiring the others, and the registry's promise per domain.
+
+    /** A build has bound `provider` to `domain`'s slot: the SDK holds it there. `owns` when the instance owns its API,
+      * `async` when the build returns without waiting for the provider's initialization.
+      */
+    final case class BuildBind(provider: OFFeatureProvider, domain: Option[String], owns: Boolean, async: Boolean)
+        extends Point
+
+    /** A failure under this instance has marked `provider` as failed on it, before looking at its siblings. */
+    final case class FailedRegistration(provider: OFFeatureProvider) extends Point
+
+    /** The failure under this instance has decided whether the library shuts `provider` down (`shut`); the shutdown has
+      * not run yet.
+      */
+    final case class FailDecided(provider: OFFeatureProvider, shut: Boolean) extends Point
+
+    /** An instance that owns its API is about to retire every other instance on it, before tearing the API down. */
+    case object RetireSiblings extends Point
+
+    /** The registry has inserted `domain`'s promise under its lock: its first caller builds the client. */
+    final case class RegistryInsert(domain: Option[String]) extends Point
+
+    /** The registry is completing `domain`'s promise with the client its build returned, under its lock: no caller has
+      * that client yet.
+      */
+    final case class RegistryComplete(domain: Option[String]) extends Point
+
+    /** The registry's finalizer is about to retire its clients and shut its API down. */
+    case object ApiShutdown extends Point
 
     // fromAcquireAsync's hand-off of the provider `acquire` returns. `attempt` is the attempt's own scope, which tells
     // one attempt from another.

@@ -116,8 +116,35 @@ them one at a time: a mutant usually breaks several, and in one run TLC reports 
 - **`fromAcquireAsync`.** Its switch is not an SDK registration (`docs/design/lifecycle.md`); on a shared API it is an
   instance like any other here.
 - **Time**, as in the lifecycle model.
-- **Trace validation.** The registry specs would need a recorder per instance; the lifecycle model's checker reads one
-  instance's probe points. A follow-up.
+- **What the recorded runs cannot reach** (see Trace validation): a registry's retry after a failed build, a timed-out
+  swap, two shared-API layers on one domain, a provider the user bound under a domain no instance is on, and the
+  registry's own close, which the model has no action for: the registry owns its API but is no instance.
+
+## Trace validation
+
+The runs of `ProviderOwnershipShutdownSpec` and `FeatureFlagRegistrySpec` (core), `RegistryFaultSpec` and
+`BoundDomainSpec` (testkit) are checked against the model: every instance on the API records its probe points into one
+sequence, tagged with the instance (`RegistryRecording`, `TraceProbe.forInstance`), and the test records its own steps
+on the API. `trace_labels.py` turns a run into the model's actions (`trace-map.md` maps each to the code and its probe
+point), and TLC searches `RegistryTrace.tla` for a behaviour of the model that takes them, deciding each failure as the
+run did, and ending with as many shutdowns of each provider as the run counted. The model's constants are the run's:
+its instances, domains, providers and swaps.
+
+```sh
+ZOF_TRACE=1 ZOF_TRACE_DIR=$PWD/traces sbt "core/testOnly zio.openfeature.ProviderOwnershipShutdownSpec \
+  zio.openfeature.FeatureFlagRegistrySpec" "testkit/testOnly zio.openfeature.testkit.RegistryFaultSpec \
+  zio.openfeature.testkit.BoundDomainSpec"
+python3 validate.py tla2tools.jar CommunityModules-deps.jar traces/registry --reached
+python3 validate.py tla2tools.jar CommunityModules-deps.jar --selftest traces
+python3 preconditions.py tla2tools.jar CommunityModules-deps.jar
+```
+
+It needs TLC 1.8 and the community modules' `Json`, as `formal/lifecycle`'s check does. `--reached` fails when an action
+other than `Lookup` (unprobed: the memoized `getClient`) is taken by no accepted run. The selftest requires each fixture
+under `traces/accept` accepted and each under `traces/reject` rejected, and `preconditions.py` that deleting each guard
+the check rests on lets its reject fixture through. A run the model does not cover is skipped, and `validate.py` counts
+the skips per spec and reason (`trace-map.md` lists them). CI runs all of it in the `registry-traces` job of
+`formal.yml`.
 
 ## When its code changes
 

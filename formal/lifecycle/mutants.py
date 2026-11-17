@@ -162,16 +162,19 @@ shutdowns = {
 
 # Evaluation bugs: each must make TLC report the named invariant violated on Evaluation.cfg.  Moving the generation's
 # write (to the SDK registration, or to the gate's drop) is not one: the gate covers every moment a new provider can be
-# bound before its outcome, so the generation only has to move while the gate is up (README.md, "Evaluation").
+# bound before its outcome, so the generation only has to move while the gate is up (README.md, "Evaluation").  Nor is
+# a re-check that reads only the generation, now that the check reads the gate: an evaluation that passed the check
+# started with the gate down, so a gate up at its re-check means a swap started since, which moved the generation.
 evaluation = {
     # The answer is returned without the re-check.  It breaks both invariants, and TLC's workers report whichever
     # violation they reach first.
     'an evaluation returns without the re-check': (('NoAnswerDuringSwap', 'NoRejectedAnswer'), [
         ('IF Gen = @.gen0 /\\ ~gate', 'IF TRUE'),
     ]),
-    # The re-check reads only the generation: a swap still in flight, past its outcome with status Error, answers.
-    'the re-check reads only the generation': ('NoAnswerDuringSwap', [
-        ('IF Gen = @.gen0 /\\ ~gate', 'IF Gen = @.gen0'),
+    # The check lets an evaluation through while a swap runs: one started during a failed swap's rollback, with status
+    # Error and the slot still on the failed provider, is answered by it.
+    'the check lets an evaluation through while a swap runs': ('NoRejectedAnswer', [
+        (' \\/ gate THEN "refused"', ' THEN "refused"'),
     ]),
     # The re-check reads only the gate: a swap that starts and ends inside the window leaves the old provider's answer.
     'the re-check reads only the gate': ('NoRejectedAnswer', [

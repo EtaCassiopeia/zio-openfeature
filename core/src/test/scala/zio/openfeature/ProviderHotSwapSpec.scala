@@ -985,6 +985,49 @@ object ProviderHotSwapSpec extends ZIOSpecDefault {
         )
       }
     } @@ TestAspect.withLiveClock,
+    test("an evaluation started during a failed swap's rollback is not served by the failed provider after it ends") {
+      ZIO.scoped {
+        val entered = new java.util.concurrent.CountDownLatch(1)
+        val resume  = new java.util.concurrent.CountDownLatch(1)
+        val a       = new SimpleProvider("A", Map("who" -> "A"))
+        // B's initialize() throws. A call that reaches B answers only once released, after the swap has ended.
+        val b = new SimpleProvider("B", Map("who" -> "B")) {
+          override def initialize(ctx: OFEvaluationContext): Unit = throw new RuntimeException("B: cannot start")
+          override def getStringEvaluation(
+            key: String,
+            defaultValue: String,
+            ctx: OFEvaluationContext
+          ): ProviderEvaluation[String] = {
+            entered.countDown()
+            val _ = resume.await(5, java.util.concurrent.TimeUnit.SECONDS)
+            super.getStringEvaluation(key, defaultValue, ctx)
+          }
+        }
+        for {
+          held    <- Promise.make[Nothing, Unit]
+          release <- Promise.make[Nothing, Unit]
+          _       <- ZIO.addFinalizer(release.succeed(()) *> ZIO.succeed(resume.countDown()))
+          built   <- buildProbed(a, holdAt(zio.openfeature.internal.LifecycleProbe.Point.SwapRollback, held, release))
+          (ff, _, _) = built
+          // The swap is held before its rollback binds A again: the status is Error and the slot still binds B.
+          swap    <- ff.setProvider(b).either.fork
+          reached <- held.await.timeout(5.seconds)
+          // An evaluation that starts now either fails at once or reaches B, which holds its answer.
+          eval <- ff.string("who", "default").either.fork
+          _    <- ZIO.attemptBlocking(entered.await(5, java.util.concurrent.TimeUnit.SECONDS)).race(eval.await.as(true))
+          _    <- release.succeed(())
+          swapped <- swap.join
+          _       <- ZIO.succeed(resume.countDown())
+          result  <- eval.join
+          after   <- ff.string("who", "default")
+        } yield assertTrue(
+          reached.isDefined,
+          swapped.isLeft,
+          result == Left(FeatureFlagError.ProviderNotReady(ProviderStatus.NotReady)),
+          after == "A"
+        )
+      }
+    } @@ TestAspect.withLiveClock,
     test("an evaluation whose provider call spans a whole swap is not served by the provider the swap replaced") {
       ZIO.scoped {
         val entered = new java.util.concurrent.CountDownLatch(1)

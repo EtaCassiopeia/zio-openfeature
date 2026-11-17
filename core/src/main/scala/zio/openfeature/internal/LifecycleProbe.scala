@@ -8,10 +8,11 @@ import zio.openfeature.ProviderStatus
   * go. Production instances use [[LifecycleProbe.none]], whose `at` is a constant no-op.
   *
   * The points name the steps of the lifecycle protocol: a swap, an SDK event reaching the bridge, a status write, the
-  * init watchdog, a shutdown and the scope close. The probe is handed only to the lifecycle collaborators:
-  * `FeatureFlagsLive` for the swap and shutdown, `EventBridge`, `OrphanedProviders`, and the builds for the watchdog
-  * and the scope finalizer. `Evaluator` and `HookPipeline` never receive it, which keeps it off the evaluation path;
-  * `FeatureFlagsLive`'s evaluation methods only delegate to the `Evaluator`.
+  * init watchdog, a shutdown and the scope close; and, prefixed `Acquire`, the steps of `fromAcquireAsync`'s hand-off
+  * of the provider `acquire` returns, once per attempt or per release. The probe is handed only to the lifecycle
+  * collaborators: `FeatureFlagsLive` for the swap and shutdown, `EventBridge`, `OrphanedProviders`, and the builds for
+  * the watchdog, the scope finalizer and the hand-off. `Evaluator` and `HookPipeline` never receive it, which keeps it
+  * off the evaluation path; `FeatureFlagsLive`'s evaluation methods only delegate to the `Evaluator`.
   */
 private[openfeature] trait LifecycleProbe {
   def at(point: LifecycleProbe.Point): UIO[Unit]
@@ -128,6 +129,55 @@ private[openfeature] object LifecycleProbe {
 
     /** The API's scope finalizer started. */
     case object ScopeClose extends Point
+
+    // fromAcquireAsync's hand-off of the provider `acquire` returns. `attempt` is the attempt's own scope, which tells
+    // one attempt from another.
+
+    /** An attempt has its scope; `acquire` has not run yet. */
+    final case class AcquireAttemptStart(attempt: Scope) extends Point
+
+    /** The attempt's `verify` failed, rather than being interrupted. */
+    final case class AcquireVerifyFailed(attempt: Scope) extends Point
+
+    /** The attempt is accepted: `provider` is owned and the attempt's scope is the candidate. */
+    final case class AcquireAccepted(attempt: Scope, provider: OFFeatureProvider) extends Point
+
+    /** `verify` failed or was interrupted before the attempt was abandoned; the attempt's fiber has shut `provider`
+      * down and closed the attempt's scope.
+      */
+    final case class AcquireRejected(attempt: Scope, provider: OFFeatureProvider) extends Point
+
+    /** The attempt's `acquire` failed or was interrupted, and its scope has closed. */
+    final case class AcquireFailed(attempt: Scope) extends Point
+
+    /** The attempt was given up, by its timeout or by the layer's release (`interrupted`): before its provider arrived,
+      * while `verify` ran, or after `verify` passed. Also recorded once the attempt failed on its own, after
+      * [[AcquireFailed]] or [[AcquireRejected]].
+      */
+    final case class AcquireAbandoned(attempt: Scope, interrupted: Boolean) extends Point
+
+    /** `provider` arrived, or its `verify` returned, for an abandoned attempt, or the attempt was abandoned after
+      * `verify` passed; it has been shut down and the attempt's scope closed.
+      */
+    final case class AcquireLateArrival(attempt: Scope, provider: OFFeatureProvider) extends Point
+
+    /** `compose` returned `stack`, which is owned now. */
+    final case class AcquireComposed(stack: OFFeatureProvider) extends Point
+
+    /** The stack's `initialize()` and its state check ended, `ok` or not. */
+    final case class AcquireStackInit(ok: Boolean) extends Point
+
+    /** The switch to the stack returned: `ok` when it serves now. */
+    final case class AcquireSwitched(ok: Boolean) extends Point
+
+    /** What was owned after a failure has been shut down, and the candidate closed. */
+    case object AcquireDiscarded extends Point
+
+    /** The layer's release has interrupted the construct fiber, and the fiber has ended. */
+    case object AcquireReleaseInterrupted extends Point
+
+    /** The layer's release has shut down `owned`, what the library still owned, and closed the candidate. */
+    final case class AcquireReleaseOwned(owned: Option[OFFeatureProvider]) extends Point
   }
 
   val none: LifecycleProbe = new LifecycleProbe {

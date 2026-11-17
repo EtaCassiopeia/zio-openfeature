@@ -267,8 +267,9 @@ final private[openfeature] class ManagedProvider private (
         }
     )
 
-  private def at(point: LifecycleProbe.Point): Unit =
-    Unsafe.unsafe(implicit u => Runtime.default.unsafe.run(probe.at(point)).getOrThrowFiberFailure())
+  private def at(point: => LifecycleProbe.Point): Unit =
+    if (!(probe eq LifecycleProbe.none))
+      Unsafe.unsafe(implicit u => Runtime.default.unsafe.run(probe.at(point)).getOrThrowFiberFailure())
 
   private def key(domain: Option[String]): String = domain.getOrElse("")
 

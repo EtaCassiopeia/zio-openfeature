@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`fromAcquireAsync` releases a timed-out attempt suspended in `verify` before `onConstructionError` runs.** The
+  timeout could misread such an attempt as busy in a blocking call and go on without waiting for it, so its provider
+  could shut down, and its `Scope` close, after the next attempt started or `onConstructionError` ran (#913).
 - **`fromAcquireAsync` no longer shuts a provider down while its `verify` is still running.** An attempt whose
   `constructionTimeout` or layer release landed during a blocking `verify` released the candidate at once: its
   `shutdown()` ran and `acquire`'s `Scope` closed while `verify` could still be using both. The attempt now keeps them,

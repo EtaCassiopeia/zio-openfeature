@@ -504,25 +504,30 @@ private[openfeature] object FeatureFlagsFactories {
     * `attemptBlocking(new Provider(...))`, except that the interrupt waits for a blocking call to return. Interrupting
     * during the call discards the value it returns, and that value is a provider nobody could then shut down. A fiber
     * suspended where an interrupt lands holds no such value, so it is interrupted at once. The caller waits for that,
-    * so its finalizers usually finish first, but only up to a bound: a suspended fiber can be waiting for a child stuck
-    * in a blocking call, and a hung attempt must not hang the timeout or the layer's release.
+    * so the attempt's release is done before the caller goes on, but only up to a bound: a suspended fiber can be
+    * waiting for a child stuck in a blocking call, and a hung attempt must not hang the timeout or the layer's release.
     */
   private def abandonable[A](effect: Task[A]): Task[A] =
     ZIO.uninterruptibleMask { restore =>
-      restore(effect).forkDaemon.flatMap { fiber =>
-        restore(fiber.join).onInterrupt(
-          fiber.status.flatMap {
-            case status: Fiber.Status.Suspended if RuntimeFlags.interruption(status.runtimeFlags) =>
-              ZIO
-                .withClock(Clock.ClockLive)(
-                  Timeouts.boundedFinalizer(fiber.interrupt, AbandonWait)(
-                    ZIO.logWarning(s"fromAcquireAsync: an abandoned attempt did not stop within $AbandonWait")
+      // The caller waits on a promise, not on `fiber.join`: interrupting a join sends the fiber a message, and until the
+      // fiber has processed it `status` reads `Running`, so a fiber suspended in `verify` would look like one in a
+      // blocking call, and be left to release its candidate after the outcome is reported.
+      Promise.make[Throwable, A].flatMap { done =>
+        restore(effect).intoPromise(done).forkDaemon.flatMap { fiber =>
+          restore(done.await).onInterrupt(
+            fiber.status.flatMap {
+              case status: Fiber.Status.Suspended if RuntimeFlags.interruption(status.runtimeFlags) =>
+                ZIO
+                  .withClock(Clock.ClockLive)(
+                    Timeouts.boundedFinalizer(fiber.interrupt, AbandonWait)(
+                      ZIO.logWarning(s"fromAcquireAsync: an abandoned attempt did not stop within $AbandonWait")
+                    )
                   )
-                )
-                .unit
-            case _ => interruptOnceSuspended(fiber).forkDaemon.unit
-          }
-        )
+                  .unit
+              case _ => interruptOnceSuspended(fiber).forkDaemon.unit
+            }
+          )
+        }
       }
     }
 

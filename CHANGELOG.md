@@ -13,6 +13,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   closed.** The swap used to proceed. The old `shutdown()` then returned and closed the provider it had just
   initialized again, while the status read `Ready` and every evaluation failed. `setProvider` now fails with
   `ProviderInitializationFailed` until that call returns (#890).
+- **Building an instance with a provider whose earlier `shutdown()` is still running waits for it, then fails,
+  instead of leaving it closed.** A build on another API, or a registry client, initialized the provider while that
+  call ran; its return then closed the provider while the status read `Ready` and every evaluation failed. The build
+  now waits up to three seconds for the call and fails with `IllegalStateException` if it is still running
+  (`ProviderInitializationFailed` from a registry's `getClient`) (#930).
 - **`fromAcquireAsync` releases a timed-out attempt suspended in `verify` before `onConstructionError` runs.** The
   timeout could misread such an attempt as busy in a blocking call and go on without waiting for it, so its provider
   could shut down, and its `Scope` close, after the next attempt started or `onConstructionError` ran (#913).

@@ -192,6 +192,16 @@ private[openfeature] object FeatureFlagsFactories {
   private def refreshProviderName(provider: OFFeatureProvider, ff: FeatureFlagsLive): Task[Unit] =
     ZIO.attempt(ProviderNames.afterInit(provider)).flatMap(ff.recordProviderName(provider, _))
 
+  /** A build never goes through a swap's admission, so it checks the same signal itself, before anything is bound: a
+    * `shutdown()` of this provider still running (another API replaced or closed it) would close it once initialized
+    * here. Waits for that call as a swap does, then refuses if it still runs.
+    */
+  private def awaitEarlierShutDown(provider: OFFeatureProvider): Task[Unit] =
+    ZIO.foreachDiscard(ManagedProvider.existing(provider).filter(_.shutDownRunning)) { managed =>
+      managed.awaitShutDownReturned(OrphanedProviders.SdkShutDownWait) *>
+        ZIO.when(managed.shutDownRunning)(ZIO.fail(ManagedProvider.stillShuttingDown(managed))).unit
+    }
+
   /** Shared initialization logic for all factory methods. */
   def build(
     provider: OFFeatureProvider,
@@ -212,6 +222,7 @@ private[openfeature] object FeatureFlagsFactories {
   ): ZIO[Scope, Throwable, FeatureFlagsLive] =
     for {
       api <- ZIO.succeed(apiOverride.getOrElse(OpenFeatureAPI.getInstance()))
+      _   <- awaitEarlierShutDown(provider)
       // The SDK registers the library's wrapper, which observes the provider's initialization, shutdown and events; or
       // the provider itself, when this API already holds it.
       bound <- ZIO.attempt(Bound.of(api, domain, provider, probe))
@@ -410,6 +421,7 @@ private[openfeature] object FeatureFlagsFactories {
   ): ZIO[Scope, Throwable, FeatureFlagsLive] =
     for {
       api <- ZIO.succeed(apiOverride.getOrElse(OpenFeatureAPI.getInstance()))
+      _   <- awaitEarlierShutDown(provider)
       // The SDK registers the library's wrapper, which observes the provider's initialization, shutdown and events; or
       // the provider itself, when this API already holds it.
       bound <- ZIO.attempt(Bound.of(api, domain, provider, probe))

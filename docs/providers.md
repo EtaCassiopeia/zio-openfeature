@@ -321,7 +321,11 @@ evaluations keep going. To initialize a provider again, install a new instance.
   provider another slot of a shared API still serves takes: the SDK does not shut that one down, and the swap then
   proceeds. If the provider's own `shutdown()` has started and is still running when that wait ends, `setProvider`
   fails with `ProviderInitializationFailed` rather than install a provider that call would then close. Call it again
-  once the shutdown has returned; each refused call waits the three seconds again. A provider whose earlier `initialize()` has
+  once the shutdown has returned; each refused call waits the three seconds again. Building an instance with such a
+  provider (`fromProvider`, `fromProviderAsync`, a registry client), for example one another API has just replaced or
+  closed, waits for that `shutdown()` the same three seconds and then fails with `IllegalStateException`
+  (`ProviderInitializationFailed` from a registry's `getClient`), rather than initialize a provider the call would then
+  close. A provider whose earlier `initialize()` has
   not returned (the one an async start was built with, one a timed-out swap or rollback installed, or one another
   instance is initializing under a different slot) is refused the same way, however many swaps have happened since,
   until that call returns, and the provider this slot holds stays in place. If `setProvider` is called while the

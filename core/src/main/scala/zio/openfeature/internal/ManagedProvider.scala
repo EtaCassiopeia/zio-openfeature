@@ -69,7 +69,8 @@ final private[openfeature] class ManagedProvider private (
   private var generation = 0L
   private var shutDowns  = new CompletableFuture[Unit]()
   // Guarded by cycleLock. The signal of the cycle the last shutdown ended, which completes once that shutdown has run.
-  private var lastEnded: CompletableFuture[Unit] = shutDowns
+  // Only a shutdown's entry replaces it, so an initialize() entering meanwhile does not hide a shutdown still running.
+  private var lastEnded: CompletableFuture[Unit] = CompletableFuture.completedFuture(())
 
   // The cache entry's key: held here so the entry lives exactly as long as this wrapper. None for a switchable wrapper,
   // which is never cached, so it does not keep the provider it switched away from reachable.
@@ -133,8 +134,25 @@ final private[openfeature] class ManagedProvider private (
   /** Whether the provider's `shutdown()` has run since the last `initialize()`. */
   def shutDownInCycle: Boolean = cycleLock.synchronized(shutDown)
 
-  /** Whether a `shutdown()` of this cycle has reached the provider and not returned. */
-  def shutDownRunning: Boolean = cycleLock.synchronized(shutDown && !lastEnded.isDone)
+  /** Whether a `shutdown()` has reached the provider and not returned, whichever cycle it ended: an `initialize()` that
+    * entered meanwhile does not hide it.
+    */
+  def shutDownRunning: Boolean = cycleLock.synchronized(!lastEnded.isDone)
+
+  /** Waits for the last `shutdown()` that reached the provider to return, at most `within`; at once if none is running.
+    * Unlike [[awaitShutDown]], it does not follow the cycle, so an `initialize()` entering meanwhile does not move what
+    * it waits for. On a wall clock, like every wait on the SDK. Interrupting it cancels nothing shared: it waits on a
+    * future derived from the call's own, which only ever completes normally.
+    */
+  private[openfeature] def awaitShutDownReturned(within: Duration): UIO[Unit] =
+    ZIO
+      .fromCompletableFuture(
+        cycleLock
+          .synchronized(lastEnded)
+          .thenApply[AnyRef](_ => null)
+          .completeOnTimeout(null, within.toMillis, java.util.concurrent.TimeUnit.MILLISECONDS)
+      )
+      .ignore
 
   // Completes when this cycle's shutdown has finished, whether it has yet to start, is running or is done.
   private def cycleShutDown: CompletableFuture[Unit] = cycleLock.synchronized(if (shutDown) lastEnded else shutDowns)
@@ -186,13 +204,14 @@ final private[openfeature] class ManagedProvider private (
         catch { case e: Throwable => Some(e) }
         try at(LifecycleProbe.Point.ShutdownReturned(call, ok = failure.isEmpty))
         finally failure.foreach(throw _)
-      } finally {
-        cycleLane.close()
-        cycleLock.synchronized {
-          if (generation == cycle && attached.compareAndSet(true, false)) EventProviderAccess.detach(target)
-        }
-        signal.complete(()): Unit
-      }
+      } finally
+        // Completed whatever the cleanup throws: an uncompleted signal reads as a shutdown() still running for good.
+        try {
+          cycleLane.close()
+          cycleLock.synchronized {
+            if (generation == cycle && attached.compareAndSet(true, false)) EventProviderAccess.detach(target)
+          }
+        } finally signal.complete(()): Unit
     }
   }
 
@@ -396,6 +415,15 @@ private[openfeature] object ManagedProvider {
     */
   def switchable(initial: OFFeatureProvider, probe: LifecycleProbe = LifecycleProbe.none): ManagedProvider =
     new ManagedProvider(initial, probe, switchable = true)
+
+  /** The refusal for installing `provider` while an earlier `shutdown()` of it still runs: the call would close it once
+    * installed. One message for a swap and a build alike.
+    */
+  def stillShuttingDown(provider: OFFeatureProvider): IllegalStateException =
+    new IllegalStateException(
+      s"'${scala.util.Try(ProviderNames.of(provider)).getOrElse(zio.openfeature.FeatureFlags.UnknownProviderName)}' is still shutting down from an earlier registration and cannot be installed again " +
+        "until that shutdown() returns"
+    )
 
   /** The wrapper around `provider` if one exists, without making one. */
   def existing(provider: OFFeatureProvider): Option[ManagedProvider] = provider match {

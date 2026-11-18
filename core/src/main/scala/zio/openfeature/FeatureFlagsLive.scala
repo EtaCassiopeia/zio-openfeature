@@ -858,10 +858,7 @@ final private[openfeature] class FeatureFlagsLive(
             "until that initialize() returns"
         )
       case Refusal.StillShuttingDown(provider) =>
-        failed(
-          s"'${ProviderNames.of(provider)}' is still shutting down from an earlier registration and cannot be installed again " +
-            "until that shutdown() returns"
-        )
+        FeatureFlagError.ProviderInitializationFailed(ManagedProvider.stillShuttingDown(provider))
       case Refusal.PendingOrphan(provider, incoming) =>
         failed(
           s"'${ProviderNames.of(provider)}' cannot be installed again until '$incoming', which replaced it in a swap or rollback " +

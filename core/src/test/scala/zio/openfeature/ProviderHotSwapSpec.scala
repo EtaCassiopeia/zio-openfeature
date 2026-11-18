@@ -206,6 +206,15 @@ object ProviderHotSwapSpec extends ZIOSpecDefault {
     }
   }
 
+  /** Attaches the wrapper the swap registers for `provider` to something else. The SDK then refuses to register it, and
+    * throws before it binds anything, so a swap to `provider` gets past its own checks and fails at its registration.
+    * Attaching `provider` itself would refuse the swap earlier, when its wrapper is made.
+    */
+  private def attachedElsewhere(provider: dev.openfeature.sdk.FeatureProvider): UIO[Unit] =
+    ZIO.succeed(
+      dev.openfeature.sdk.EventProviderAccess.attach(zio.openfeature.internal.ManagedProvider(provider), (_, _) => ())
+    )
+
   private def await(latch: java.util.concurrent.CountDownLatch): UIO[Boolean] =
     ZIO.succeedBlocking(latch.await(10, java.util.concurrent.TimeUnit.SECONDS))
 
@@ -498,6 +507,25 @@ object ProviderHotSwapSpec extends ZIOSpecDefault {
         }
         .map(_.reduce(_ && _))
     } @@ TestAspect.withLiveClock,
+    test("a swap to a provider whose name cannot be read before it initializes installs it under its later name") {
+      // A wrapper around a provider that has no metadata until it initializes, as a MultiProvider has none.
+      final class NamedOnceInitialized extends SimpleProvider("later", Map("f" -> true)) {
+        @volatile private var initialized = false
+        @scala.annotation.nowarn("msg=deprecated")
+        override def getMetadata: Metadata =
+          if (initialized) super.getMetadata else throw new NullPointerException("no metadata before initialize()")
+        override def initialize(ctx: OFEvaluationContext): Unit = initialized = true
+      }
+      ZIO.scoped {
+        for {
+          ff      <- buildNoDomain(new SimpleProvider("first", Map("f" -> false)))
+          swapped <- ff.setProvider(new NamedOnceInitialized).exit
+          value   <- ff.boolean("f", false).either
+          status  <- ff.providerStatus
+          name    <- ff.providerMetadata.map(_.name)
+        } yield assertTrue(swapped.isSuccess, value == Right(true), status == ProviderStatus.Ready, name == "later")
+      }
+    },
     test("an equal but distinct provider is installed by a swap, domain-scoped or not") {
       ZIO
         .foreach(List(false, true)) { domainScoped =>
@@ -1509,7 +1537,7 @@ object ProviderHotSwapSpec extends ZIOSpecDefault {
           )
           started <- awaitTrue(a.inits.get() == 1)
           // Attached elsewhere already: the SDK's registration throws before it binds B, so the slot keeps A.
-          _      <- ZIO.succeed(dev.openfeature.sdk.EventProviderAccess.attach(b, (_, _) => ()))
+          _      <- attachedElsewhere(b)
           failed <- ff.setProvider(b).either
           status <- ff.providerStatus
           eval   <- ff.boolean("flag", default = false).either
@@ -1544,7 +1572,7 @@ object ProviderHotSwapSpec extends ZIOSpecDefault {
           built <- buildExposed(a, initTimeout = 300.millis)
           (ff, api, domain) = built
           timedOut <- ff.setProvider(b).either
-          _        <- ZIO.succeed(dev.openfeature.sdk.EventProviderAccess.attach(c, (_, _) => ()))
+          _        <- attachedElsewhere(c)
           refused  <- ff.setProvider(c).either
           status   <- ff.providerStatus
           meta     <- ff.providerMetadata
@@ -1581,7 +1609,7 @@ object ProviderHotSwapSpec extends ZIOSpecDefault {
             .repeat(Schedule.spaced(20.millis) && Schedule.recurWhile[ProviderStatus](_ != ProviderStatus.Error))
             .timeout(5.seconds)
             .map(_.isDefined)
-          _      <- ZIO.succeed(dev.openfeature.sdk.EventProviderAccess.attach(b, (_, _) => ()))
+          _      <- attachedElsewhere(b)
           failed <- ff.setProvider(b).either
           status <- ff.providerStatus
           // Never ready, so the watchdog still makes it Fatal at initTimeout.
@@ -1615,10 +1643,7 @@ object ProviderHotSwapSpec extends ZIOSpecDefault {
             initTimeout = 300.millis,
             probe = holdAt(zio.openfeature.internal.LifecycleProbe.Point.SwapRollback, held, release)
           )
-          // The SDK refuses to register a wrapper attached elsewhere: the swap fails at its registration.
-          _ <- ZIO.succeed(
-            dev.openfeature.sdk.EventProviderAccess.attach(zio.openfeature.internal.ManagedProvider(b), (_, _) => ())
-          )
+          _    <- attachedElsewhere(b)
           swap <- ff.setProvider(b).either.fork
           // Held with its gate up past the watchdog's deadline, which the gate drops.
           reached <- held.await.timeout(5.seconds)

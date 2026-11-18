@@ -121,8 +121,23 @@ def check(out, num, depth):
     return counts, short
 
 
-def run(model_dir, tla_jar, cm_jar, out, actions_spec, num, depth, seed, keys, note=""):
-    """Generates and checks; `note` is added to the summary line after the seed. Returns the exit status."""
+def classify_never(never, by_design):
+    """Splits the actions never generated into those absent by design and the rest.
+
+    `by_design` maps an action to `(reason, holds)`: it is absent by design only while `holds` is true. Returns the
+    by-design `(action, reason)` pairs and the other actions, each sorted by action.
+    """
+    expected = [(a, by_design[a][0]) for a in sorted(never) if a in by_design and by_design[a][1]]
+    unexpected = sorted(a for a in never if not (a in by_design and by_design[a][1]))
+    return expected, unexpected
+
+
+def run(model_dir, tla_jar, cm_jar, out, actions_spec, num, depth, seed, keys, note="", by_design=None):
+    """Generates and checks; `note` is added to the summary line after the seed. Returns the exit status.
+
+    With `by_design` (see `classify_never`), an action never generated that is not absent by design fails the run.
+    Without it, never-generated actions are only printed.
+    """
     model_dir = os.path.abspath(model_dir)
     actions, source = actions_of(model_dir, actions_spec)
     unlabelled = unlabelled_of(model_dir, actions_spec, actions)
@@ -136,11 +151,19 @@ def run(model_dir, tla_jar, cm_jar, out, actions_spec, num, depth, seed, keys, n
     for name, count in sorted(counts.items(), key=lambda kv: -kv[1]):
         print(f"  {name:24} {count}")
     never = sorted(actions - set(counts))
-    if never:
-        print(f"never generated: {never}")
+    missing = []
+    if by_design is None:
+        if never:
+            print(f"never generated: {never}")
+    else:
+        expected, missing = classify_never(never, by_design)
+        if expected:
+            print("not generated, by design: " + ", ".join(f"{a} ({reason})" for a, reason in expected))
+        if missing:
+            print(f"never generated: {missing}")
     for s in short:
         print(f"SHORT {s}")
-    return 1 if short else 0
+    return 1 if short or missing else 0
 
 
 def key_value(text):

@@ -271,11 +271,14 @@ final private[openfeature] class Evaluator(
                 .failAfter(
                   ZIO
                     .suspendSucceed(
-                      // Running means the provider is called: an interruption (the timeout's, or the caller's) arriving
-                      // after the move cannot skip the call, which the blocking call itself would not notice anyway.
-                      if (call.compareAndSet(FeatureFlagsLive.CallNotStarted, FeatureFlagsLive.CallRunning))
-                        (probe.at(Point.CallForked) *> effect).uninterruptible
-                      else ZIO.interrupt
+                      probe.at(Point.CallStarting) *> ZIO.suspendSucceed(
+                        // Running means the provider is called: an interruption (the timeout's, or the caller's)
+                        // arriving after the move cannot skip the call, which the blocking call itself would not notice
+                        // anyway.
+                        if (call.compareAndSet(FeatureFlagsLive.CallNotStarted, FeatureFlagsLive.CallRunning))
+                          (probe.at(Point.CallForked) *> effect).uninterruptible
+                        else ZIO.interrupt
+                      )
                     )
                     // Before `.disconnect`, so the finalizer runs on the disconnected fiber when the provider finally
                     // returns, however long after the caller moved on.
@@ -317,7 +320,7 @@ final private[openfeature] class Evaluator(
 
         case Some(Right(erased)) =>
           withTimeout(erased.task)
-            .mapError(e => FeatureFlagError.classify(e))
+            .mapError(e => FeatureFlagError.classify(e, key))
             .flatMap { details =>
               erased.extract(details) match {
                 case Right(value) =>
@@ -339,7 +342,7 @@ final private[openfeature] class Evaluator(
             ProviderCalls.blocking {
               client.getObjectDetails(key, sentDefault, ofContext)
             }
-          ).mapError(e => FeatureFlagError.classify(e))
+          ).mapError(e => FeatureFlagError.classify(e, key))
             .flatMap(details => Evaluator.objectValue(key, flagType.typeName, details).map(v => (details, v)))
             .flatMap { case (details, wireValue) =>
               val providerError = Option(details.getErrorCode).map(ErrorCodeConverter.fromJava)
@@ -582,7 +585,7 @@ private[openfeature] object Evaluator {
       // contrib) can only say so in the message.
       case ErrorCode.General =>
         message match {
-          case Some(m) if FeatureFlagError.looksLikeAuthFailure(m) =>
+          case Some(m) if FeatureFlagError.looksLikeAuthFailure(m, key) =>
             FeatureFlagError.Unauthorized(m, Some(new ProviderReportedError(m)))
           case _ =>
             FeatureFlagError.ProviderError(new ProviderReportedError(message.getOrElse("general error")))

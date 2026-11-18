@@ -75,6 +75,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   users times flags read. Answers are only ever more correct. To share entries across users as before, add the new
   `CachingConfig.withoutTargetingKey`, which also works without `contextKeys`. Listing `"targetingKey"` together with
   `withoutTargetingKey` is rejected as `InvalidConfiguration` (#826).
+- **An object flag served from the caller's default returns that default as passed, not a decoded copy that lost
+  `None` fields.** A provider that answers with the very `Value` it was given, or reports an error, now gets the
+  caller's default served unchanged; before, it was decoded back through the SDK `Value` bridge, which drops a `null`
+  member, so an `Option` field set to `None` took its declared default (#899).
 
 ### Fixed
 

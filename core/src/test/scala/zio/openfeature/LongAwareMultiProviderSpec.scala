@@ -1,6 +1,7 @@
 package zio.openfeature
 
 import java.util.concurrent.ConcurrentLinkedQueue
+import java.util.concurrent.atomic.AtomicBoolean
 
 import zio._
 import zio.test._
@@ -26,6 +27,7 @@ import dev.openfeature.sdk.{
   TrackingEventDetails => OFTrackingEventDetails,
   Value
 }
+import dev.openfeature.sdk.{ProviderEvent, SdkPackageChild}
 
 import scala.jdk.CollectionConverters._
 
@@ -131,6 +133,24 @@ object LongAwareMultiProviderSpec extends ZIOSpecDefault {
       api.setProviderAndWait(provider)
       api
     })(api => ZIO.attemptBlocking(api.shutdown()).orDie)
+
+  private val ctx0: OFEvaluationContext = new ImmutableContext()
+
+  private def sinkChain(children: SdkPackageChild*): LongAwareMultiProvider =
+    new LongAwareMultiProvider(children.toList.map(c => c: FeatureProvider).asJava, MultiProviderStrategy.FirstMatch)
+
+  /** Records the events the chain itself emits. */
+  private def sinkOn(chain: LongAwareMultiProvider): ConcurrentLinkedQueue[ProviderEvent] = {
+    val seen = new ConcurrentLinkedQueue[ProviderEvent]()
+    EventProviderAccess.attach(chain, (event, _) => { seen.add(event); () })
+    seen
+  }
+
+  private def canAttach(child: FeatureProvider): Boolean =
+    scala.util.Try(EventProviderAccess.attach(child, (_, _) => ())).isSuccess
+
+  // A negative check has no event to wait for, so it settles for a bounded time.
+  private val settle = ZIO.sleep(100.millis)
 
   private val big = 5000000000L
 
@@ -417,6 +437,75 @@ object LongAwareMultiProviderSpec extends ZIOSpecDefault {
         )
         chain.track("signup", new ImmutableContext("user-6"), null)
         assertTrue(order.asScala.toList == List("x", "y", "z"))
+      }
+    ),
+    suite("the chain's event wiring")(
+      test("chain shutdown releases every child it attached") {
+        val a, b  = new SdkPackageChild("x")
+        val chain = sinkChain(a, b)
+        chain.initialize(ctx0)
+        chain.shutdown()
+        assertTrue(canAttach(a), canAttach(b))
+      },
+      test("a failed chain initialize releases the children it attached") {
+        val a     = new SdkPackageChild("a")
+        val b     = new SdkPackageChild("b", onInitialize = () => throw new RuntimeException("init failed"))
+        val chain = sinkChain(a, b)
+        val tried = scala.util.Try(chain.initialize(ctx0))
+        assertTrue(tried.isFailure, canAttach(a), canAttach(b))
+      },
+      test("an attach that throws mid-loop releases the children attached before it") {
+        val a     = new SdkPackageChild("a")
+        val b     = new SdkPackageChild("b", attachFails = true)
+        val chain = sinkChain(a, b)
+        val tried = scala.util.Try(chain.initialize(ctx0))
+        assertTrue(tried.isFailure, canAttach(a))
+      },
+      test("a child's status event during a re-initialize is not re-emitted") {
+        val emitDuringInit         = new AtomicBoolean(false)
+        var child: SdkPackageChild = null
+        child = new SdkPackageChild("a", onInitialize = () => if (emitDuringInit.get()) child.emitStale())
+        val chain = sinkChain(child)
+        val seen  = sinkOn(chain)
+        chain.initialize(ctx0)
+        emitDuringInit.set(true)
+        chain.initialize(ctx0)
+        settle.as(assertTrue(!seen.contains(ProviderEvent.PROVIDER_STALE)))
+      },
+      test("the chain never detaches a channel it doesn't own") {
+        val owned   = new SdkPackageChild("owned")
+        val other   = new SdkPackageChild("other")
+        val outside = sinkOn(sinkChain(other))
+        val seen    = new ConcurrentLinkedQueue[ProviderEvent]()
+        EventProviderAccess.attach(owned, (event, _) => { seen.add(event); () })
+        val chain = sinkChain(owned, other)
+        chain.initialize(ctx0)
+        chain.shutdown()
+        owned.emitStale()
+        val again = scala.util.Try(EventProviderAccess.attach(owned, (_, _) => ()))
+        assertTrue(
+          seen.contains(ProviderEvent.PROVIDER_STALE),
+          again.failed.toOption.exists(_.isInstanceOf[IllegalStateException]),
+          outside.isEmpty
+        )
+      },
+      test("an event delivered after shutdown is not re-emitted") {
+        var child: SdkPackageChild = null
+        child = new SdkPackageChild("a", onDetach = () => child.emitStale())
+        val chain = sinkChain(child)
+        val seen  = sinkOn(chain)
+        chain.initialize(ctx0)
+        chain.shutdown()
+        settle.as(assertTrue(!seen.contains(ProviderEvent.PROVIDER_STALE)))
+      },
+      test("a chain initialized again after shutdown re-attaches its children") {
+        val child = new SdkPackageChild("a")
+        val chain = sinkChain(child)
+        chain.initialize(ctx0)
+        chain.shutdown()
+        chain.initialize(ctx0)
+        // The chain's own emitter is closed by its shutdown, so attachment is observed on the child instead.
+        assertTrue(!canAttach(child))
       }
     ),
     suite("fromAcquireAsync with the default compose")(

@@ -116,14 +116,24 @@ build.
 ## Evaluation
 
 `Evaluator.gated` makes a lifecycle decision of its own. It reads `swapGeneration`, checks the status, calls the
-provider, and then re-checks: the answer is returned only if the generation has not moved and no swap is in flight
+provider, and then re-checks. The check fails an evaluation on `NotReady`, `Fatal` and `ShuttingDown`, and on any
+status while a swap is in flight (`swapInProgress`, the gate). After the call, the answer is returned only if the generation has not moved and no swap is in flight
 (`swapInProgress`). Otherwise the evaluation fails with `ProviderNotReady(NotReady)`. The SDK resolves the slot's
 provider per call, so without the re-check a provider the swap has already replaced or rejected could answer.
 
 The model has `MaxEvals` evaluations running alongside the lifecycle, as `EvalRead`, `EvalCheck`, `EvalCall` and
 `EvalReturn`. The generation is `Gen == swaps`, since only `SwapStart` moves either. `Evaluation.cfg` has one
-evaluation on small bounds (two providers besides `P0`, two swaps, one event): 8.9 million distinct states, about 40
-seconds, on every pull request. Every other configuration has `MaxEvals = 0`, so its state space is unchanged.
+evaluation on small bounds (two providers besides `P0`, two swaps, one event): 17.2 million distinct states, about two
+minutes, on every pull request. Every other configuration has `MaxEvals = 0`, so its state space is unchanged.
+
+**The rollback window.** A failed swap's rollback installs the previous provider again and writes status `Error`
+before it registers that provider with the SDK, so for a moment the check reads `Error` while the slot still binds the
+failed provider. `SwapRollback` takes all of that in one step, so the model gives the window to the evaluation instead:
+while `RollingBack` holds (`SwapRollback`'s own guard), `EvalCheck` may read `Error` as well as `status`
+(`CheckedStatus`). Without the gate in the check, an evaluation started there is answered by the failed provider, and
+the answer is returned if it comes back after the swap ends. `NotReadyDuringSwap` still reads `NotReady` in this
+window, since the lifecycle's status variable does not take the code's transient `Error`. No lifecycle action, proof
+obligation, generated trace or replay changes.
 
 The issue that added this stated the contract as: *an answer returned to a caller was produced by a provider that was
 installed, with no swap started or in flight, for the whole window between the generation read and the re-check.*
@@ -144,14 +154,16 @@ refuse it.
 | Evaluation bug | Caught by |
 |:--|:--|
 | The answer is returned without the re-check | `NoAnswerDuringSwap` or `NoRejectedAnswer`: it breaks both, and TLC's workers report whichever they reach first |
-| The re-check reads only the generation: the provider of a swap past its outcome, with status `Error`, answers | `NoAnswerDuringSwap` |
+| The check lets an evaluation through while a swap runs: one started in a failed swap's rollback is answered by the failed provider | `NoRejectedAnswer` |
 | The re-check reads only the gate: a swap that starts and ends inside the window leaves the replaced provider's answer | `NoRejectedAnswer` |
 
 **Where the generation moves does not matter.** Moving its increment to the SDK registration, or to the gate's drop, is
 caught by nothing, and rightly so. The gate is up from `SwapStart` until after the swap's re-read, which covers every
 moment a new provider can be bound before its outcome. The generation's job is a swap that starts and ends inside one
 evaluation's window, and for that it only has to move while the gate is up. `ProviderHotSwapSpec` "an evaluation whose
-provider call spans a whole swap is not served by the provider the swap replaced" pins that job in the code.
+provider call spans a whole swap is not served by the provider the swap replaced" pins that job in the code. Nor
+does a re-check that reads only the generation, now that the check reads the gate: an evaluation that passed the check
+started with the gate down, so a gate up at its re-check means a swap started since, which moved the generation.
 
 **`SwapStart` stays one step.** The code's swap start writes the gate, then the status, then the generation, under the
 swap lock and before the registration. An evaluation that reads the new generation finds the gate already up. One
@@ -182,7 +194,7 @@ there is one.
 | `SwapReconcile` | `setProvider`, after every outcome: `GateDown`, probe point `SwapReconcile` (and `LateReady` after a timeout), then `reconcileRegistration` and the replay of a deferred watchdog deadline; inside the swap's uninterruptible region, with the lock held |
 | `CallerInterrupt` | an interrupt of `setProvider`'s caller, which takes effect only in the phases in `Interruptible`: none, since the swap body and the re-read run uninterruptibly (`runSwap`'s `.uninterruptible`) |
 | `Die` | none: a provider that stops working without reporting it. Only with `AllowDeath` (`Witness.cfg`) |
-| `EvalRead`, `EvalCheck`, `EvalCall`, `EvalReturn` | `Evaluator.gated`: the `swapGeneration` read, `checkProviderStatus`, the provider call through the SDK client, and the re-check (probe point `GateRechecked`) |
+| `EvalRead`, `EvalCheck`, `EvalCall`, `EvalReturn` | `Evaluator.gated`: the `swapGeneration` read, `checkProviderStatus` (the status, and the gate), the provider call through the SDK client, and the re-check (probe point `GateRechecked`) |
 | `Emit`, `EmitStaleWhileStarting` | a provider's `emit`; the SDK's `FeatureProviderStateManager.onEmit` |
 | `Deliver` | `EventBridge.onSdkEvent` and `applySdkSignal` |
 | `OrphanResolved` | `OrphanedProviders.settle` on the registration's outcome, after its bounded wait for the SDK's shutdown when `initialize()` returned; otherwise `CallShutdown` of the previous provider through `boundedProviderShutdown`; then `OrphanSettled` |

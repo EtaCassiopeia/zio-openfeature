@@ -87,14 +87,18 @@ final private[openfeature] class Evaluator(
       // @spec-2.2.7 (+ @spec-1.4.10) as *permitted*, not required, behaviour. A provider in ERROR is typically a
       // transient, recoverable state and commonly still serves cached values — let the evaluation reach it (the
       // provider serves or errors on its own) rather than turning one PROVIDER_ERROR into a total outage.
-      case _ => Exit.unit
+      // Not while a swap runs, whatever its status: the slot may still bind a provider the swap is about to reject (a
+      // rollback runs with status Error before it binds the previous provider again), and an answer that comes back
+      // after the gate drops would pass the re-check in `gated`.
+      case _ =>
+        if (swapInProgress.get()) ZIO.fail(FeatureFlagError.ProviderNotReady(ProviderStatus.NotReady)) else Exit.unit
     }
 
-  /** The readiness check, then `call`, which reaches the provider. The SDK resolves the slot's provider per call, so a
-    * swap's new provider may answer `call` before it has settled: when a swap started since the check, or is still
-    * running (its rollback runs with status `Error`, which the check lets through, while the failed provider is still
-    * bound), the outcome is not trusted and the evaluation fails as one made during the swap does, with
-    * `ProviderNotReady(NotReady)`. A defect or an interruption is kept as it is.
+  /** The readiness check, then `call`, which reaches the provider. The check fails an evaluation that starts while a
+    * swap runs. The SDK resolves the slot's provider per call, so a swap's new provider may answer `call` before it has
+    * settled: when a swap started since the check, or is still running, the outcome is not trusted and the evaluation
+    * fails as one made during the swap does, with `ProviderNotReady(NotReady)`. A defect or an interruption is kept as
+    * it is.
     */
   private def gated[B](call: IO[EvaluationError, B]): IO[EvaluationError, B] =
     ZIO.suspendSucceed {

@@ -626,11 +626,24 @@ EvalRead(k) ==
     /\ evals[k].phase = "idle"
     /\ evals' = [evals EXCEPT ![k] = [@ EXCEPT !.phase = "read", !.gen0 = Gen]]
 
-\* checkProviderStatus: NotReady, Fatal and ShuttingDown fail the evaluation; Ready, Stale and Error let it through.
+\* A failed swap's rollback, once its wait saw the new provider fail (SwapRollback is enabled): the code installs the
+\* previous provider again and writes status Error before it registers that provider with the SDK, so the check can
+\* read Error while the slot still binds the failed provider.  SwapRollback takes all of that in one step, so the
+\* status the check reads is given here instead.
+RollingBack ==
+    /\ swap # None /\ swap.phase = "wait"
+    /\ sdk[swap.new] \in {"ERROR", "FATAL"} /\ ~ran[swap.new]
+    /\ ~(pending = swap.prev /\ sdk[swap.prev] = "NOT_READY")
+
+CheckedStatus == IF RollingBack THEN {status, "Error"} ELSE {status}
+
+\* checkProviderStatus: NotReady, Fatal and ShuttingDown fail the evaluation, and so does any status while a swap is in
+\* flight (swapInProgress, the gate); otherwise Ready, Stale and Error let it through.
 EvalCheck(k) ==
     /\ evals[k].phase = "read"
-    /\ evals' = [evals EXCEPT ![k].phase = IF status \in {"NotReady", "Fatal", "ShuttingDown"} THEN "refused"
-                                                                                               ELSE "checked"]
+    /\ \E s \in CheckedStatus :
+         evals' = [evals EXCEPT ![k].phase = IF s \in {"NotReady", "Fatal", "ShuttingDown"} \/ gate THEN "refused"
+                                                                                         ELSE "checked"]
 
 \* The call: the SDK resolves the slot's provider per call, so whichever provider is bound answers.
 EvalCall(k) ==

@@ -2,6 +2,8 @@ package zio.openfeature
 
 import scala.util.Try
 
+import zio.openfeature.internal.ExactNumber
+
 /** Codec between a domain type `A` and the value a provider carries — its ''wire'' value. For the built-in instances
   * the two coincide; a custom instance (`FlagType.mapped`, `FlagType.from`, or a hand-rolled one) may keep them apart,
   * e.g. a `Phase` enum carried as the string `"dual_write"`.
@@ -81,9 +83,7 @@ object FlagType {
       case l: Long if l.isValidInt => Right(l.toInt)
       case l: Long                 => Left(s"Long value $l is out of Int range")
       case d: Double               => if (d.isValidInt) Right(d.toInt) else Left(s"Double value $d is not a valid Int")
-      case n: Number =>
-        val d = n.doubleValue()
-        if (d.isValidInt) Right(d.toInt) else Left(s"Numeric value $n is not a valid Int")
+      case n: Number => ExactNumber.toInt(n).toRight(s"Numeric value $n is not a valid Int")
       case s: String => s.toIntOption.toRight(s"Cannot parse '$s' as Int")
       case null      => Left("Cannot convert null to Int")
       case _         => Left(s"Cannot convert ${value.getClass.getSimpleName} to Int")
@@ -98,9 +98,7 @@ object FlagType {
       case l: Long   => Right(l)
       case i: Int    => Right(i.toLong)
       case d: Double => if (isExactLong(d)) Right(d.toLong) else Left(s"Double value $d is not a valid Long")
-      case n: Number =>
-        val d = n.doubleValue()
-        if (isExactLong(d)) Right(d.toLong) else Left(s"Numeric value $n is not a valid Long")
+      case n: Number => ExactNumber.toLong(n).toRight(s"Numeric value $n is not a valid Long")
       case s: String => s.toLongOption.toRight(s"Cannot parse '$s' as Long")
       case null      => Left("Cannot convert null to Long")
       case _         => Left(s"Cannot convert ${value.getClass.getSimpleName} to Long")
@@ -116,7 +114,11 @@ object FlagType {
       case f: Float  => Right(f.toDouble)
       case i: Int    => Right(i.toDouble)
       case l: Long   => Right(l.toDouble)
-      case n: Number => Right(n.doubleValue())
+      case n: Number =>
+        // Rounding to Double precision is inherent, as for a Long; only a finite number that overflows to an
+        // infinity is rejected, as the Float decoder does.
+        val d = n.doubleValue()
+        if (d.isInfinite && ExactNumber(n).isDefined) Left(s"Numeric value $n is out of Double range") else Right(d)
       case s: String => s.toDoubleOption.toRight(s"Cannot parse '$s' as Double")
       case null      => Left("Cannot convert null to Double")
       case _         => Left(s"Cannot convert ${value.getClass.getSimpleName} to Double")

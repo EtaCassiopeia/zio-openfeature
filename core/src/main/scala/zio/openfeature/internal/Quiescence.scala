@@ -4,11 +4,11 @@ import zio._
 
 /** What a test built, for an end-state check after it.
   *
-  * Instances and test providers register here when they are made; a test aspect reads the registrations on the test's
-  * own fiber once the body has run and asks each for its violations. Registrations follow the fiber tree, so a test
-  * sees only what it and the fibers it joined built: an instance built in a fiber that is never joined, or in a layer
-  * built outside the test's fiber, is not seen. In production nothing reads them; a registration is one `FiberRef`
-  * update per instance built.
+  * A test aspect opens a collector for the test with [[collecting]]; instances and test providers made while it is open
+  * register in it. The collector is inherited by every fiber the test forks, joined or not, so a registration made on
+  * the fiber ZIO Test runs the body on (a daemon fiber whose `FiberRef` changes never reach the aspect) is still seen.
+  * An instance built in a layer built outside the test's fiber is not seen. In production no collector is open and a
+  * registration is one `FiberRef` read.
   */
 private[openfeature] object Quiescence {
 
@@ -22,13 +22,17 @@ private[openfeature] object Quiescence {
     def violations: UIO[Chunk[String]]
   }
 
-  /** Everything registered by this fiber and the fibers it joined. A forked fiber starts empty, so a join adds only
-    * what that fiber and its own joined children registered, never the parent's entries a second time.
-    */
-  val observed: FiberRef[Chunk[Observed]] =
-    Unsafe.unsafe(implicit u =>
-      FiberRef.unsafe.make(Chunk.empty[Observed], _ => Chunk.empty, (parent, child) => parent ++ child)
-    )
+  // The open collector, if any. A forked fiber gets its parent's, so registrations from any fiber of the test land in
+  // the one the aspect reads.
+  private val collector: FiberRef[Option[Ref[Chunk[Observed]]]] =
+    Unsafe.unsafe(implicit u => FiberRef.unsafe.make(Option.empty[Ref[Chunk[Observed]]]))
 
-  def register(o: Observed): UIO[Unit] = observed.update(_ :+ o)
+  def register(o: Observed): UIO[Unit] =
+    collector.get.flatMap(ZIO.foreachDiscard(_)(_.update(_ :+ o)))
+
+  /** Runs `effect` with a fresh collector open, and passes what was registered while it ran to `after`. */
+  def collecting[R, E, A, B](effect: ZIO[R, E, A])(after: (A, Chunk[Observed]) => ZIO[R, E, B]): ZIO[R, E, B] =
+    Ref.make(Chunk.empty[Observed]).flatMap { ref =>
+      collector.locally(Some(ref))(effect).flatMap(a => ref.get.flatMap(after(a, _)))
+    }
 }

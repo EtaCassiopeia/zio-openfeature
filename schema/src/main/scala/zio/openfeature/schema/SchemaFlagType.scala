@@ -22,12 +22,15 @@ import zio.schema.annotation.fieldDefaultValue
   * ==Wire mapping==
   *
   * Decoding is directed by the schema, and encoding produces exactly what decoding accepts, so the round-trip law
-  * holds.
+  * holds, with two exceptions. A nested `Option` collapses: `Some(None)` is encoded as `null`, which reads as `None`.
+  * And the SDK `Value` bridge drops a `null` structure member, so on the provider path an `Option` field encoded as
+  * `None` arrives absent and takes the field's declared default, as with core's `derived`.
   *
   *   - A '''primitive''' (`Boolean`, `String`, `Int`, `Long`, `Float`, `Double`) is that scalar, read through the
   *     built-in instance, so an integral `Double` reads as an `Int` or `Long`. Other primitives fail to decode.
-  *   - A '''case class''' is an object. Unknown keys are ignored. A missing (or `null`) key takes the field's declared
-  *     default, else `None` for an `Option` field, else fails naming the field.
+  *   - A '''case class''' is an object. Unknown keys are ignored. A missing key takes the field's declared default,
+  *     else `None` for an `Option` field, else fails naming the field. A `null` value is `None` for an `Option` field,
+  *     whatever its declared default, and is read as a missing key for any other field.
   *   - A '''sealed trait''' or enum whose cases all have no fields is a string holding the case name. Reading ignores
   *     case, but an exact match wins; an unknown name fails.
   *   - A sealed trait with any case that has fields is a wrapper object, `{"<CaseName>": {<fields>}}`; a case without
@@ -193,19 +196,20 @@ object SchemaFlagType {
   }
 
   private def fieldValue(record: String, field: Schema.Field[_, _], payload: Map[String, Any]): Either[String, Any] = {
-    val label = field.name
+    val label    = field.name
+    val optional = unwrap(field.schema).isInstanceOf[Schema.Optional[_]]
     payload.get(label) match {
       case Some(raw) if raw != null => decodeWith(field.schema, raw).left.map(reason => s"$record.$label: $reason")
-      case _                        =>
-        // Absent, or `null` (which the SDK drops anyway): the declared default, else `None` for an optional field.
+      // A present `null` is how `None` is encoded, so it is `None` even when the field declares another default.
+      case Some(_) if optional => Right(None)
+      case _                   =>
+        // Absent, or `null` for a field that is not an `Option`: the declared default, else `None` for an optional
+        // field.
         val declared = field.annotations.collectFirst { case d: fieldDefaultValue[_] => d.value }
         declared match {
-          case Some(default) => Right(default)
-          case None          =>
-            unwrap(field.schema) match {
-              case _: Schema.Optional[_] => Right(None)
-              case _                     => Left(s"$record.$label: missing key '$label'")
-            }
+          case Some(default)    => Right(default)
+          case None if optional => Right(None)
+          case None             => Left(s"$record.$label: missing key '$label'")
         }
     }
   }

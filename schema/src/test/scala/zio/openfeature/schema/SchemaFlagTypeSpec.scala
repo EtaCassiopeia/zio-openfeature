@@ -32,6 +32,8 @@ object SchemaFlagTypeSpec extends ZIOSpecDefault {
       FlagTypeLaws.all(Tier.gen),
       FlagTypeLaws.all(Shape.gen),
       FlagTypeLaws.all(Plan.gen),
+      // In memory only: across the SDK Value bridge a None member arrives absent and takes the declared default.
+      FlagTypeLaws.roundTrip(Timeouts.gen),
       // A primitive schema delegates to the built-in instance.
       FlagTypeLaws.all(Gen.int)(SchemaFlagType[Int]),
       // A transformed schema is stored as its underlying shape.
@@ -58,6 +60,25 @@ object SchemaFlagTypeSpec extends ZIOSpecDefault {
         val absent  = Collections.flagType.decode(Map("ids" -> Nil, "weights" -> Map.empty, "tags" -> Nil))
         val present = Collections.flagType.decode(Map("note" -> null, "ids" -> Nil, "weights" -> Map(), "tags" -> Nil))
         assertTrue(absent == Right(Collections(None, Nil, Map.empty, Nil)), present == absent)
+      },
+      test("a null Option field is None even when the field declares another default; an absent one takes it") {
+        assertTrue(
+          Timeouts.flagType.decode(Map("name" -> "a", "retryMs" -> null)) == Right(Timeouts("a", None)),
+          Timeouts.flagType.decode(Map("name" -> "a")) == Right(Timeouts("a", Some(30))),
+          Timeouts.flagType.decode(Timeouts.flagType.encode(Timeouts("a", None))) == Right(Timeouts("a", None))
+        )
+      },
+      test("a null field that is not an Option still reads as a missing key") {
+        assertTrue(
+          WithDefaults.flagType.decode(Map("name" -> "a", "pct" -> null)) == Right(WithDefaults("a", 10, None)),
+          WithDefaults.flagType.decode(Map("name" -> null)).left.exists(_.contains("missing key"))
+        )
+      },
+      test("across the SDK Value bridge a None Option field arrives absent and takes its declared default") {
+        val bridged = zio.openfeature.internal.ValueBridge.valueToAny(
+          zio.openfeature.internal.ValueBridge.anyToValue(Timeouts.flagType.encode(Timeouts("a", None)))
+        )
+        assertTrue(bridged.map(Timeouts.flagType.decode) == Some(Right(Timeouts("a", Some(30)))))
       },
       test("unknown keys are ignored") {
         assertTrue(Limits.flagType.decode(Map("maxItems" -> 3, "label" -> "x", "extra" -> 1)) == Right(Limits(3, "x")))
@@ -163,6 +184,18 @@ object SchemaFlagTypeSpec extends ZIOSpecDefault {
         (for {
           read <- FeatureFlags.value(flag)
         } yield assertTrue(read == Some(Tier.Premium))).provide(TestFeatureProvider.layer(Map("plan" -> "premium")))
+      },
+      test("a domain-value override with a None Option field is served as itself, on first read and re-read") {
+        val dflt = Timeouts("dflt", Some(1))
+        (for {
+          ff <- ZIO.service[FeatureFlags]
+          r  <- ff
+            .transactionEither(overrides = Map("t" -> Timeouts("a", None)))(
+              ff.value[Timeouts]("t", dflt).zip(ff.value[Timeouts]("t", dflt))
+            )
+            .either
+        } yield assertTrue(r.map(_.result) == Right((Timeouts("a", None), Timeouts("a", None)))))
+          .provide(TestFeatureProvider.layer)
       },
       test("an unknown enum name is a TypeMismatch") {
         val flag = FlagDef[Tier]("plan", Tier.Free)

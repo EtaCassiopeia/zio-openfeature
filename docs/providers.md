@@ -319,7 +319,9 @@ evaluations keep going. To initialize a provider again, install a new instance.
   on the SDK's own executor, `setProvider` of the replaced provider waits for the shutdown, for up to three seconds. It
   waits the same way after a swap or rollback that did not time out. Three seconds is also how long installing again a
   provider another slot of a shared API still serves takes: the SDK does not shut that one down, and the swap then
-  proceeds. A provider whose earlier `initialize()` has
+  proceeds. If the provider's own `shutdown()` has started and is still running when that wait ends, `setProvider`
+  fails with `ProviderInitializationFailed` rather than install a provider that call would then close. Call it again
+  once the shutdown has returned; each refused call waits the three seconds again. A provider whose earlier `initialize()` has
   not returned (the one an async start was built with, one a timed-out swap or rollback installed, or one another
   instance is initializing under a different slot) is refused the same way, however many swaps have happened since,
   until that call returns, and the provider this slot holds stays in place. If `setProvider` is called while the

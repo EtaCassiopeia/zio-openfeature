@@ -112,6 +112,26 @@ object ManagedProviderSpec extends ZIOSpecDefault {
         _ <- ZIO.attemptBlocking(wrapper.shutdown())
       } yield assertTrue(once == ((1, true)), !fresh, delegate.shutdowns.get() == 2)
     },
+    test("shutDownRunning is true only while a shutdown() of the cycle runs") {
+      val entered  = new CountDownLatch(1)
+      val release  = new CountDownLatch(1)
+      val delegate = new Delegate {
+        override def shutdown(): Unit = { entered.countDown(); release.await(10, TimeUnit.SECONDS); super.shutdown() }
+      }
+      val wrapper = ManagedProvider(delegate)
+      for {
+        _       <- initOn(wrapper, None).flatMap(_.join)
+        before  <- ZIO.succeed(wrapper.shutDownRunning)
+        closing <- ZIO.attemptBlocking(wrapper.shutdown()).fork
+        _       <- ZIO.attemptBlocking(entered.await(10, TimeUnit.SECONDS))
+        during  <- ZIO.succeed(wrapper.shutDownRunning)
+        _       <- ZIO.succeed(release.countDown())
+        _       <- closing.join
+        after   <- ZIO.succeed(wrapper.shutDownRunning)
+        _       <- initOn(wrapper, None).flatMap(_.join)
+        fresh   <- ZIO.succeed(wrapper.shutDownRunning)
+      } yield assertTrue(!before, during, !after, !fresh)
+    },
     test("a shutdown() that throws is recorded as returned without success, after the call, and the throw propagates") {
       val points = new CopyOnWriteArrayList[LifecycleProbe.Point]()
       val probe  = new LifecycleProbe {

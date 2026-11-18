@@ -60,6 +60,14 @@ object Fixtures {
     implicit val flagType: FlagType[WithDefaults] = SchemaFlagType[WithDefaults]
   }
 
+  // An Option field whose declared default is not None: a None value must not read back as that default.
+  final case class Timeouts(name: String, retryMs: Option[Int] = Some(30))
+  object Timeouts {
+    implicit val schema: Schema[Timeouts]     = DeriveSchema.gen[Timeouts]
+    implicit val flagType: FlagType[Timeouts] = SchemaFlagType[Timeouts]
+    val gen: Gen[Any, Timeouts]               = Gen.alphaNumericString.zipWith(Gen.option(Gen.int))(Timeouts(_, _))
+  }
+
   sealed trait Tier
   object Tier {
     case object Free       extends Tier

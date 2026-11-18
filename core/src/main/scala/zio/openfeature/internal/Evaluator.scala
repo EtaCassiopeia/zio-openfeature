@@ -271,11 +271,14 @@ final private[openfeature] class Evaluator(
                 .failAfter(
                   ZIO
                     .suspendSucceed(
-                      // Running means the provider is called: an interruption (the timeout's, or the caller's) arriving
-                      // after the move cannot skip the call, which the blocking call itself would not notice anyway.
-                      if (call.compareAndSet(FeatureFlagsLive.CallNotStarted, FeatureFlagsLive.CallRunning))
-                        (probe.at(Point.CallForked) *> effect).uninterruptible
-                      else ZIO.interrupt
+                      probe.at(Point.CallStarting) *> ZIO.suspendSucceed(
+                        // Running means the provider is called: an interruption (the timeout's, or the caller's)
+                        // arriving after the move cannot skip the call, which the blocking call itself would not notice
+                        // anyway.
+                        if (call.compareAndSet(FeatureFlagsLive.CallNotStarted, FeatureFlagsLive.CallRunning))
+                          (probe.at(Point.CallForked) *> effect).uninterruptible
+                        else ZIO.interrupt
+                      )
                     )
                     // Before `.disconnect`, so the finalizer runs on the disconnected fiber when the provider finally
                     // returns, however long after the caller moved on.

@@ -34,6 +34,9 @@ private[openfeature] object EvaluationProbe {
     /** About to check the status; the swap generation the answer is checked against is read. */
     case object StatusGate extends Point
 
+    /** The forked call fiber has started and the call is not yet counted as running; timed evaluations only. */
+    case object CallStarting extends Point
+
     /** The provider call is about to run and is counted as running: on the forked call fiber when the evaluation is
       * timed, on the caller otherwise.
       */
@@ -62,6 +65,7 @@ private[openfeature] object EvaluationProbe {
       BeforeHooks,
       TransactionLookup,
       StatusGate,
+      CallStarting,
       CallForked,
       CallReturned,
       Decoded,

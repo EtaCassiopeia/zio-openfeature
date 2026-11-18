@@ -276,6 +276,46 @@ object TransactionCustomTypeSpec extends ZIOSpecDefault {
           }
       }
     },
+    test("an override of the wrong type names its class before the reason") {
+      withProvider { (ff, _) =>
+        def detailOf(override0: Any) =
+          ff.transactionEither(overrides = Map[String, Any]("phase.flag" -> override0)) {
+            ff.value[Phase]("phase.flag", Phase.Off)
+          }.either
+            .map(r => overrideError(r).map(_.detail))
+        for {
+          integer <- detailOf(42)
+          nul     <- detailOf(null)
+        } yield assertTrue(
+          integer.exists(_.startsWith("Integer (")),
+          nul.exists(_.startsWith("null ("))
+        )
+      }
+    },
+    test("a value rejected as both wire and domain value reports both reasons") {
+      withProvider { (ff, _) =>
+        ff.transactionEither(overrides = Map("phase.flag" -> 42)) {
+          ff.value[Phase]("phase.flag", Phase.Off)
+        }.either
+          .map { r =>
+            assertTrue(
+              overrideError(r).exists(
+                _.detail.contains("; not a domain value either: encode threw ClassCastException")
+              )
+            )
+          }
+      }
+    },
+    test("a value with one reason reports it once") {
+      withProvider { (ff, _) =>
+        ff.transactionEither(overrides = Map("str.flag" -> 42)) {
+          ff.string("str.flag", "d")
+        }.either
+          .map { r =>
+            assertTrue(overrideError(r).map(_.detail) == Some("Integer (Cannot convert Integer to String)"))
+          }
+      }
+    },
     test("a null override for a numeric built-in fails OverrideTypeMismatch rather than a defect") {
       // The Int/Long/Double/Float/Object/List decoders used to NPE on null (`value.getClass`), so this was a defect
       // even before the override path looked at the value.

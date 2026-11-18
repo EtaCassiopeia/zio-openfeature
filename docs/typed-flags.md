@@ -89,7 +89,8 @@ libraryDependencies ++= Seq(
 On Scala 2.13, write `implicit val tierFlagType: FlagType[Tier] = SchemaFlagType[Tier](DeriveSchema.gen[Tier])`.
 
 - A **case class** is stored as an **object**, as with `derived`: unknown keys are ignored, and a missing key takes
-  the field's declared default, else `None` for an `Option`, else fails naming the field.
+  the field's declared default, else `None` for an `Option`, else fails naming the field. A `null` `Option` field is
+  `None`, even when the field declares another default.
 - A **sealed trait** whose cases have no fields is stored as a **string**, the case name, read the same way as a
   derived enum.
 - A **sealed trait** with a case that has fields is stored as an object with one key naming the case:

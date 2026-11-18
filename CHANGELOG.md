@@ -40,6 +40,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   was sent to the failed provider; if its answer came back after the swap ended, it was returned. Every evaluation that
   starts while a swap runs now fails with `ProviderNotReady(NotReady)`, as documented, without calling the provider
   (#884).
+- **`SchemaFlagType` keeps a `None` `Option` field that declares a default.** `encode` writes `None` as `null`, and
+  `decode` read a `null` as a missing key, so `Timeouts(retryMs = None)` with a default of `Some(30)` came back as
+  `Some(30)`, both as a domain-value override and on a transaction re-read. A `null` `Option` field now decodes as
+  `None`, and only an absent key takes the declared default. Across the SDK `Value` bridge a `None` member still
+  arrives absent, as with `derived` (#887).
 - **A failed build's status can no longer turn `Ready` from a late event.** The SDK runs a handler some time after it
   picked it, so removing the failed build's event handlers did not stop a delivery already picked. That delivery wrote
   the slot's current state, which is `Ready` once another provider with the same name is ready in the slot. A bridge

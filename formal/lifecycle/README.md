@@ -303,9 +303,12 @@ step reads the SDK's state, which an emit not delivered yet may have set (the SD
 runs the handlers on a separate pool, so a later emit can overtake an earlier event's handler), so the model may emit
 first: for a `Deliver` its own kind, even while one is pending, and for either step a kind the run delivers later
 (fixtures `accept/recorded-delivery-reads-a-later-emit`, `reject/delivery-writes-a-state-no-later-emit-set`). A wider
-rule would let the model emit whatever status a wrong run recorded. Not covered: an overtaking emit delivered while a
-swap's gate is up is dropped by the labels, so a status it set is still rejected. The
-statuses the other steps leave are not compared, which `LifecycleModelSpec`'s own oracle does. A trace TLC cannot decide in time is reported as
+rule would let the model emit whatever status a wrong run recorded. A delivery from the bound provider while a swap's
+gate is up is dropped by the gate, so it is no `Deliver`, but the state it set is still the SDK's when the swap's
+`SwapReconcile` reads it: that label carries the kinds the gate dropped (`dropped`), the model may emit one of them
+before the reconcile, and `MaxEvents` counts them with the deliveries (fixtures
+`accept/recorded-emit-dropped-under-the-gate-read-by-the-reconcile`, `reject/reconcile-error-without-a-dropped-emit`).
+The statuses the other steps leave are not compared, which `LifecycleModelSpec`'s own oracle does. A trace TLC cannot decide in time is reported as
 undecided without failing the run, and a run that checks no trace at all fails. A TLC that cannot run, or whose output
 says neither way, is a tool error, never a rejection, and fails the run and both halves of the self-test
 (`test_validate.py` checks this without the TLC jars).

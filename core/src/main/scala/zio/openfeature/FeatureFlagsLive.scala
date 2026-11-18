@@ -892,14 +892,17 @@ final private[openfeature] class FeatureFlagsLive(
       .when(ownsApi) {
         incoming match {
           case Some(registration) if registration.provider ne previous.sdk =>
+            // The probe point comes before the entry is published: its watcher can settle it at once, when the watched
+            // initialize() has already ended, and a recording must not show that settle before the entry.
             lifecycle.run(LifecycleInput.OrphanRecorded(previous.sdk, incomingName)) *>
+              probe.at(Point.OrphanRecorded) *>
               orphans.record(
                 previous,
                 previousName,
                 incomingName,
                 registration,
                 lifecycle.run(LifecycleInput.OrphanSettled(previous.sdk)).unit
-              ) *> probe.at(Point.OrphanRecorded)
+              )
           case Some(_) => ZIO.unit
           case None    =>
             ZIO.logWarning(

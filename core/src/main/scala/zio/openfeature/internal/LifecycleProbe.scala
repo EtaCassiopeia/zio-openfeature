@@ -72,7 +72,9 @@ private[openfeature] object LifecycleProbe {
     /** After a timed-out swap, about to re-read the SDK's state for a READY that arrived while the gate was up. */
     case object LateReady extends Point
 
-    /** A timed-out swap recorded the provider it replaced as pending. */
+    /** A timed-out or failed swap is about to record the provider it replaced as pending: recorded before the entry is
+      * published, so before the entry's watcher can settle it.
+      */
     case object OrphanRecorded extends Point
 
     /** A pending previous provider is about to be settled: shut down, or released to the SDK. Carries `previous`, the

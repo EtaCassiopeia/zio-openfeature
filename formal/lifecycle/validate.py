@@ -28,7 +28,8 @@ def check(tla_jar, cm_jar, actions):
     """ACCEPTED when TLC finds a behaviour matching `actions`, REJECTED when it shows there is none, UNDECIDED when it
     runs out of time, else TOOL."""
     swaps = sum(1 for a in actions if a["action"] == "SwapStart")
-    deliveries = sum(1 for a in actions if a["action"] == "Deliver")
+    # The deliveries the run recorded, those the swap's gate dropped included: a reconcile may read a dropped one.
+    deliveries = sum(1 for a in actions if a["action"] == "Deliver") + sum(len(a["dropped"]) for a in actions)
     # Only the shutdown behaviours the run observed: each one multiplies the search by the registrations.
     behaviours = ['"ok"']
     if any(a["threw"] > 0 for a in actions):

@@ -89,7 +89,8 @@ libraryDependencies ++= Seq(
 On Scala 2.13, write `implicit val tierFlagType: FlagType[Tier] = SchemaFlagType[Tier](DeriveSchema.gen[Tier])`.
 
 - A **case class** is stored as an **object**, as with `derived`: unknown keys are ignored, and a missing key takes
-  the field's declared default, else `None` for an `Option`, else fails naming the field.
+  the field's declared default, else `None` for an `Option`, else fails naming the field. A `null` `Option` field is
+  `None`, even when the field declares another default.
 - A **sealed trait** whose cases have no fields is stored as a **string**, the case name, read the same way as a
   derived enum.
 - A **sealed trait** with a case that has fields is stored as an object with one key naming the case:
@@ -131,7 +132,9 @@ core builds it from the instance.
     `FlagType.from` takes a decoder and an encoder, and the flag is stored as an **object**. Values inside an object
     flag pass through the SDK, so numbers arrive as `Double` and `null` fields are dropped: decode numbers through
     `FlagType[Int]` or `FlagType[Long]`, and model optional fields as `Option`. The encoder matters even if you never
-    read its output, since your default is encoded and handed to the provider.
+    read its output, since your default is encoded and handed to the provider. When the provider serves that default
+    back (on a miss, an error, or by returning what it was given), you get your default exactly as you passed it, not a
+    decoded copy.
 
     ```scala
     --8<-- "TypedFlags.scala:from"

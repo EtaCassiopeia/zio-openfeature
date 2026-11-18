@@ -363,7 +363,9 @@ disjunct of `LifecycleNext` labelled by a ghost variable `act` (the action and i
 TLC in generation mode on it (`-generate`, TLC 1.8): random behaviours of 20 states, written as one ndjson file each,
 with every variable of the model after every step. Shutdown and the scope close are held back to the last levels
 unless nothing else is enabled, so the sample is not spent in the shut-down state; that only removes choices, so every
-behaviour is a behaviour of `Lifecycle`. `generate.py` fails if an action of `LifecycleNext` has no label.
+behaviour is a behaviour of `Lifecycle`. `generate.py` fails if an action of `LifecycleNext` has no label, and if an
+action is never generated, except `CallerInterrupt` (`Interruptible` is empty: the swap body is uninterruptible) and
+`Die` (`AllowDeath` is `FALSE`: it sets only a ghost the library never reads), each only while that reason holds.
 
 `LifecycleReplaySpec` (core's tests) folds each behaviour through `LifecycleStep.step`, with no fibers, SDK or timing.
 Each library action becomes the inputs the code sends for it, by [replay-map.md](replay-map.md); the SDK's actions

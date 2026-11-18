@@ -555,6 +555,43 @@ object FeatureFlagRegistrySpec extends ZIOSpecDefault {
           count == 0
         )
       }
-    }
+    },
+    test("a client's timed-out swap whose new provider then fails: the registry's close shuts the replaced one down") {
+      val shutA = new java.util.concurrent.atomic.AtomicInteger(0)
+      val gate  = new java.util.concurrent.CountDownLatch(1)
+      val first = new SimpleProvider("A", Map.empty) {
+        override def shutdown(): Unit = { shutA.incrementAndGet(); () }
+      }
+      // Starts only after the swap has timed out, and then fails.
+      val slow = new SimpleProvider("Slow", Map.empty) {
+        override def initialize(ctx: OFEvaluationContext): Unit = {
+          gate.await()
+          throw new RuntimeException("Slow failed to start")
+        }
+      }
+      for {
+        swap <- ZIO.scoped {
+          for {
+            registry <- FeatureFlagRegistry
+              .fromProvider(
+                new SimpleProvider("Default", Map.empty),
+                FeatureFlagsConfig.default.withInitTimeout(300.millis)
+              )
+              .build
+              .map(_.get[FeatureFlagRegistry])
+            _    <- registry.setProvider("d", first)
+            _    <- registry.getClient("d")
+            swap <- registry.setProvider("d", slow).either
+            _    <- ZIO.succeed(gate.countDown())
+            // Slow's initialize() has failed, so the SDK never shuts A down.
+            _ <- Live.live(ZIO.sleep(300.millis))
+          } yield swap
+        }
+        closed <- awaitCount(shutA, 1)
+        // Room for a second shutdown, were one coming.
+        _     <- Live.live(ZIO.sleep(300.millis))
+        after <- ZIO.succeed(shutA.get())
+      } yield assertTrue(swap.isLeft, closed == 1, after == 1)
+    } @@ TestAspect.withLiveClock
   ) @@ RegistryRecording.eachTest("registry")
 }

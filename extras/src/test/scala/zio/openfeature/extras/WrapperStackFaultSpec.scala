@@ -54,6 +54,7 @@ object WrapperStackFaultSpec extends ZIOSpecDefault {
     Fault.Throw(new GeneralError("boom")),
     Fault.Throw(new ProviderNotReadyError("not ready")),
     Fault.Throw(new RuntimeException("unexpected")),
+    Fault.Throw(new StackOverflowError("overflow")),
     Fault.Delay(50.millis),
     Fault.Delay(1.second),
     Fault.HangUntilReleased,
@@ -78,6 +79,7 @@ object WrapperStackFaultSpec extends ZIOSpecDefault {
   private val genShutdownFault: Gen[Any, Fault] = Gen.elements(
     Fault.Succeed,
     Fault.Throw(new RuntimeException("shutdown failed")),
+    Fault.Throw(new StackOverflowError("shutdown overflow")),
     Fault.Delay(500.millis),
     Fault.HangUntilReleased
   )

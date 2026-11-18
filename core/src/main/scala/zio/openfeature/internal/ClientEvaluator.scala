@@ -140,7 +140,7 @@ private[openfeature] object ClientEvaluator {
       default: Boolean,
       context: dev.openfeature.sdk.EvaluationContext
     ): Task[FlagEvaluationDetails[_]] =
-      ZIO.attemptBlocking(client.getBooleanDetails(key, default, context))
+      ProviderCalls.blocking(client.getBooleanDetails(key, default, context))
 
     def extractValue(details: FlagEvaluationDetails[_]): Boolean =
       details.getValue.asInstanceOf[java.lang.Boolean].booleanValue()
@@ -158,7 +158,7 @@ private[openfeature] object ClientEvaluator {
       default: String,
       context: dev.openfeature.sdk.EvaluationContext
     ): Task[FlagEvaluationDetails[_]] =
-      ZIO.attemptBlocking(client.getStringDetails(key, default, context))
+      ProviderCalls.blocking(client.getStringDetails(key, default, context))
 
     def extractValue(details: FlagEvaluationDetails[_]): String =
       details.getValue.asInstanceOf[String]
@@ -173,7 +173,7 @@ private[openfeature] object ClientEvaluator {
       default: Int,
       context: dev.openfeature.sdk.EvaluationContext
     ): Task[FlagEvaluationDetails[_]] =
-      ZIO.attemptBlocking(client.getIntegerDetails(key, Integer.valueOf(default), context))
+      ProviderCalls.blocking(client.getIntegerDetails(key, Integer.valueOf(default), context))
 
     def extractValue(details: FlagEvaluationDetails[_]): Int =
       details.getValue.asInstanceOf[java.lang.Integer].intValue()
@@ -203,7 +203,7 @@ private[openfeature] object ClientEvaluator {
       default: Long,
       context: dev.openfeature.sdk.EvaluationContext
     ): Task[FlagEvaluationDetails[_]] =
-      ZIO.attemptBlocking(client.getLongDetails(key, java.lang.Long.valueOf(default), context))
+      ProviderCalls.blocking(client.getLongDetails(key, java.lang.Long.valueOf(default), context))
 
     // Still `Number`, not a `Long` cast: the SDK's double-backed default path can hand back a boxed Double.
     def extractValue(details: FlagEvaluationDetails[_]): Long =
@@ -223,7 +223,7 @@ private[openfeature] object ClientEvaluator {
       default: Float,
       context: dev.openfeature.sdk.EvaluationContext
     ): Task[FlagEvaluationDetails[_]] =
-      ZIO.attemptBlocking(
+      ProviderCalls.blocking(
         client.getDoubleDetails(key, java.lang.Double.valueOf(default.toDouble), context)
       )
 
@@ -248,7 +248,7 @@ private[openfeature] object ClientEvaluator {
       default: Double,
       context: dev.openfeature.sdk.EvaluationContext
     ): Task[FlagEvaluationDetails[_]] =
-      ZIO.attemptBlocking(client.getDoubleDetails(key, java.lang.Double.valueOf(default), context))
+      ProviderCalls.blocking(client.getDoubleDetails(key, java.lang.Double.valueOf(default), context))
 
     def extractValue(details: FlagEvaluationDetails[_]): Double =
       details.getValue.asInstanceOf[java.lang.Double].doubleValue()

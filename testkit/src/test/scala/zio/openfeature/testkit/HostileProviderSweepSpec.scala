@@ -176,7 +176,9 @@ object HostileProviderSweepSpec extends ZIOSpecDefault {
       }
     },
     test("the table covers every answer shape and thrown corpus entry for every type") {
-      val faults = AnswerShape.values.map(Fault.Answer(_)) ++ HostileProvider.throwables.map(Fault.Throw(_))
+      // A StackOverflowError too: outside the public corpus, which holds only what ZIO does not treat as fatal.
+      val faults = AnswerShape.values.map(Fault.Answer(_)) ++
+        (HostileProvider.throwables :+ new StackOverflowError("hostile provider: stack overflow")).map(Fault.Throw(_))
       ZIO
         .foreach(faults)(f => run(HostileProvider.evaluationOps.map(op => op -> Chunk(f)).toMap).map(f -> _))
         .map(results => assertTrue(results.collect { case (f, v) if v.nonEmpty => s"$f: ${v.mkString("; ")}" }.isEmpty))

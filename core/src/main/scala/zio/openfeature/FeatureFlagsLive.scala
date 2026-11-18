@@ -21,6 +21,7 @@ import zio.openfeature.internal.{
   Bound,
   ManagedProvider,
   OrphanedProviders,
+  ProviderCalls,
   ProviderName,
   ProviderNames,
   ProviderRegistration,
@@ -1063,8 +1064,8 @@ final private[openfeature] class FeatureFlagsLive(
       )
       .flatMap { ofDetails =>
         effectiveContext(context).flatMap { merged =>
-          ZIO
-            .attemptBlocking {
+          ProviderCalls
+            .blocking {
               val ofContext = toJavaContext(merged)
               ofDetails match {
                 case Some(d) => client.track(eventName, ofContext, d)

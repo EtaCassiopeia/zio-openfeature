@@ -3,22 +3,8 @@ package zio.openfeature
 import zio._
 import zio.stream.SubscriptionRef
 import zio.test._
-import zio.openfeature.internal.{
-  Bound,
-  FeatureFlagsFactories,
-  LifecycleProbe,
-  ManagedProvider,
-  ProviderEvaluations,
-  ProviderRegistration
-}
-import dev.openfeature.sdk.{
-  EvaluationContext => OFEvaluationContext,
-  FeatureProvider,
-  Metadata,
-  OpenFeatureAPI,
-  ProviderState,
-  Value
-}
+import zio.openfeature.internal.{Bound, LifecycleProbe, ManagedProvider, ProviderRegistration}
+import dev.openfeature.sdk.{EvaluationContext => OFEvaluationContext, FeatureProvider, OpenFeatureAPI, ProviderState}
 import dev.openfeature.sdk.exceptions.GeneralError
 import java.util.concurrent.{CountDownLatch, TimeUnit, TimeoutException}
 import java.util.concurrent.atomic.{AtomicBoolean, AtomicInteger}
@@ -29,73 +15,7 @@ import scala.reflect.ClassTag
   * stays where it is, and the SDK shuts it down once, when its slot lets go of it.
   */
 object ProviderOwnershipShutdownSpec extends ZIOSpecDefault {
-
-  private class Gated(failure: Option[String] = None, open: Boolean = false) extends FeatureProvider {
-    val shutdowns = new AtomicInteger(0)
-    val gate      = new CountDownLatch(if (open) 0 else 1)
-
-    override def getMetadata: Metadata                      = new Metadata { override def getName: String = "gated" }
-    override def initialize(ctx: OFEvaluationContext): Unit = {
-      gate.await()
-      failure.foreach(msg => throw new GeneralError(msg))
-    }
-    override def shutdown(): Unit = { shutdowns.incrementAndGet(); gate.countDown() }
-
-    override def getBooleanEvaluation(k: String, d: java.lang.Boolean, c: OFEvaluationContext) =
-      ProviderEvaluations.of(d, "DEFAULT")
-    override def getStringEvaluation(k: String, d: String, c: OFEvaluationContext) =
-      ProviderEvaluations.of(d, "DEFAULT")
-    override def getIntegerEvaluation(k: String, d: java.lang.Integer, c: OFEvaluationContext) =
-      ProviderEvaluations.of(d, "DEFAULT")
-    override def getDoubleEvaluation(k: String, d: java.lang.Double, c: OFEvaluationContext) =
-      ProviderEvaluations.of(d, "DEFAULT")
-    override def getObjectEvaluation(k: String, d: Value, c: OFEvaluationContext) =
-      ProviderEvaluations.of(d, "DEFAULT")
-  }
-
-  private def syncBuild(
-    api: OpenFeatureAPI,
-    provider: FeatureProvider,
-    domain: Option[String],
-    initTimeout: Duration,
-    owns: Boolean = false,
-    statusRef: Option[SubscriptionRef[ProviderStatus]] = None
-  ): ZIO[Scope, Throwable, FeatureFlagsLive] =
-    RegistryRecording.instanceProbe().flatMap { probe =>
-      FeatureFlagsFactories.build(
-        provider,
-        domain = domain,
-        version = None,
-        initialHooks = Nil,
-        statusRef = statusRef,
-        addShutdownFinalizer = owns,
-        apiOverride = Some(api),
-        initTimeout = initTimeout,
-        probe = probe
-      )
-    }
-
-  private def asyncBuild(
-    api: OpenFeatureAPI,
-    provider: FeatureProvider,
-    domain: String,
-    initTimeout: Duration,
-    onReady: Option[CountDownLatch] = None
-  ): ZIO[Scope, Throwable, FeatureFlagsLive] =
-    RegistryRecording.instanceProbe().flatMap { probe =>
-      FeatureFlagsFactories.buildAsync(
-        provider,
-        domain = Some(domain),
-        version = None,
-        initialHooks = Nil,
-        statusRef = None,
-        addShutdownFinalizer = false,
-        apiOverride = Some(api),
-        onReady = onReady,
-        initTimeout = initTimeout,
-        probe = probe
-      )
-    }
+  import SharedApiFixtures._
 
   // The test's own steps on the API, outside the library: recorded for the trace check (RegistryRecording).
   private def bindDirectly(api: OpenFeatureAPI, domain: Option[String], provider: FeatureProvider): UIO[Unit] =
@@ -121,28 +41,6 @@ object ProviderOwnershipShutdownSpec extends ZIOSpecDefault {
 
   private def orphansSettled(ff: FeatureFlagsLive): UIO[Boolean] =
     Live.live(orphansLeft(ff).repeatUntil(!_).timeout(10.seconds)).map(_.isDefined)
-
-  // Waits long enough for a shutdown on its way to land: a watchdog runs its effects after the status moved.
-  private def shutdownsAfterSettling(provider: Gated): UIO[Int] =
-    Live.live(
-      ZIO.succeed(provider.shutdowns.get()).repeatUntil(_ > 0).timeout(500.millis).map(_.getOrElse(0))
-    )
-
-  // A sibling's build in flight on `domain`, holding `provider`'s wrapper in its slot while the provider initializes.
-  private def siblingBuilding(
-    api: OpenFeatureAPI,
-    provider: Gated,
-    domain: String
-  ): UIO[Fiber[Throwable, ProviderStatus]] =
-    for {
-      fiber <- ZIO.scoped(syncBuild(api, provider, Some(domain), 30.seconds).flatMap(_.providerStatus)).fork
-      _     <- Live.live(
-        ZIO
-          .succeed(ManagedProvider.existing(provider).exists(w => api.getProvider(domain) eq w))
-          .repeatUntil(identity)
-          .timeout(5.seconds)
-      )
-    } yield fiber
 
   private val userRegistered = suite("a provider the user registered with the API")(
     test("a build whose wait times out fails and leaves it in its slot") {
@@ -401,49 +299,6 @@ object ProviderOwnershipShutdownSpec extends ZIOSpecDefault {
     }
   )
 
-  // Fails on its second initialize(): the rollback that registers it again fails too.
-  private class FailsWhenReinitialized extends Gated(open = true) {
-    private val inits                                       = new AtomicInteger(0)
-    override def initialize(ctx: OFEvaluationContext): Unit =
-      if (inits.incrementAndGet() > 1) throw new GeneralError("re-init boom")
-  }
-
-  private def probedBuild(
-    api: OpenFeatureAPI,
-    provider: FeatureProvider,
-    domain: String,
-    probe: LifecycleProbe
-  ): ZIO[Scope, Throwable, FeatureFlagsLive] =
-    RegistryRecording.instanceProbe(probe).flatMap { probe =>
-      FeatureFlagsFactories.build(
-        provider,
-        domain = Some(domain),
-        version = None,
-        initialHooks = Nil,
-        statusRef = None,
-        addShutdownFinalizer = false,
-        apiOverride = Some(api),
-        initTimeout = 10.seconds,
-        probe = probe
-      )
-    }
-
-  private def holdAt(point: LifecycleProbe.Point, reached: Promise[Nothing, Unit], release: Promise[Nothing, Unit]) =
-    new LifecycleProbe {
-      def at(p: LifecycleProbe.Point): UIO[Unit] =
-        if (p == point) reached.succeed(()) *> release.await else ZIO.unit
-    }
-
-  private def wrapperIn(api: OpenFeatureAPI, provider: Gated, domain: String): UIO[Unit] =
-    Live
-      .live(
-        ZIO
-          .succeed(ManagedProvider.existing(provider).exists(w => api.getProvider(domain) eq w))
-          .repeatUntil(identity)
-          .timeout(5.seconds)
-      )
-      .unit
-
   // `a`, open on `old`, has bound `failing` when a sibling's build on `b` joins it: both share the call that throws. A swap
   // reaching its binding after the sibling's call has started is refused instead.
   private def swapAndBuildFailTogether(api: OpenFeatureAPI, old: Gated, failing: Gated) =
@@ -606,11 +461,6 @@ object ProviderOwnershipShutdownSpec extends ZIOSpecDefault {
       }
     }
   )
-
-  private class Counting(failure: Option[String] = None, open: Boolean = false) extends Gated(failure, open) {
-    val inits                                               = new AtomicInteger(0)
-    override def initialize(ctx: OFEvaluationContext): Unit = { inits.incrementAndGet(); super.initialize(ctx) }
-  }
 
   private val swapBehindSibling = suite("a swap reaching its binding while a sibling initializes the provider")(
     test("is refused, and its previous provider is never touched") {

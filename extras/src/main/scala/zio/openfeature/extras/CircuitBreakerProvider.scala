@@ -15,7 +15,7 @@ import dev.openfeature.sdk.{
 import dev.openfeature.sdk.exceptions.GeneralError
 import zio._
 import zio.openfeature.FeatureFlagError
-import zio.openfeature.internal.{OrderedEmitter, Timeouts}
+import zio.openfeature.internal.{OrderedEmitter, ProviderCalls, Timeouts}
 import java.util.concurrent.atomic.AtomicBoolean
 
 /** Policy for how the circuit breaker reacts to `STALE` provider state. */
@@ -337,14 +337,14 @@ final class CircuitBreakerProvider private (
             ZIO
               // attemptBlockingInterrupt (not attemptBlocking) so the timeout delivers Thread.interrupt to the
               // blocking-pool thread instead of leaking it while the delegate call runs on unbounded.
-              .attemptBlockingInterrupt(evaluate())
+              .attemptBlockingInterrupt(ProviderCalls.guard(evaluate()))
               .disconnect, // detach so timeout completes without waiting for the blocking call
             config.evaluationTimeout,
             new java.util.concurrent.TimeoutException("Evaluation timed out")
           )
         // No timeout to enforce, so stay on the calling thread: the SDK's MultiProvider hands hook context to its
         // resolvers through a thread-local, which another thread cannot see.
-        case _ => ZIO.attempt(evaluate())
+        case _ => ZIO.attempt(ProviderCalls.guard(evaluate()))
       }
       val result = Unsafe.unsafe { implicit u =>
         runtime.unsafe.run(guarded).getOrThrowFiberFailure()
@@ -376,7 +376,7 @@ final class CircuitBreakerProvider private (
         if (didOpen) emitStale("Circuit breaker opened")
         val unwrapped = FiberFailures.unwrap(e)
         val error     = new GeneralError(s"Circuit breaker: delegate failed: ${unwrapped.getMessage}")
-        error.initCause(unwrapped)
+        error.initCause(ProviderCalls.unwrap(unwrapped))
         throw error
     }
 

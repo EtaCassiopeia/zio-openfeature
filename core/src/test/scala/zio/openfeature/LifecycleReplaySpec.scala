@@ -299,7 +299,9 @@ object LifecycleReplaySpec extends ZIOSpecDefault {
         Some(providers(p)),
         initializing(model, providers),
         holderInitializing(model, providers),
-        released(model, providers)
+        released(model, providers),
+        // A shutdown in the model is one step: none is ever still running.
+        _ => false
       )
   }
 

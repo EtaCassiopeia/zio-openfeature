@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Installing again a provider whose earlier `shutdown()` outlasts the three-second wait fails instead of leaving it
+  closed.** The swap used to proceed. The old `shutdown()` then returned and closed the provider it had just
+  initialized again, while the status read `Ready` and every evaluation failed. `setProvider` now fails with
+  `ProviderInitializationFailed` until that call returns (#890).
 - **`fromAcquireAsync` releases a timed-out attempt suspended in `verify` before `onConstructionError` runs.** The
   timeout could misread such an attempt as busy in a blocking call and go on without waiting for it, so its provider
   could shut down, and its `Scope` close, after the next attempt started or `onConstructionError` ran (#913).
@@ -22,6 +26,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   its build left a pending client that nothing completed, and every later call for that domain waited on it. The two
   are now one step an interrupt cannot split. Callers can still be interrupted while they wait for the registry's lock
   or for the build (#885).
+- **`FlagType[Int]` and `FlagType[Long]` read a `BigDecimal`, `BigInteger`, `BigInt` or atomic number exactly.** They
+  rounded it to a `Double` before checking it, so `2^53 + 1` decoded as `2^53` and `5.0000000000000001` as `5`. A whole
+  number in range now decodes as itself, and anything else is a `Left` (an override fails with `OverrideTypeMismatch`).
+  `FlagType[Double]` now rejects a finite number too large for a `Double` instead of serving an infinity. Another
+  `Number` subclass is read from its decimal `toString`, and is a `Left` when that is not a decimal (#886).
 - **`fromAcquireAsync` no longer shuts a provider down while its `verify` is still running.** An attempt whose
   `constructionTimeout` or layer release landed during a blocking `verify` released the candidate at once: its
   `shutdown()` ran and `acquire`'s `Scope` closed while `verify` could still be using both. The attempt now keeps them,
@@ -40,6 +49,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   picked it, so removing the failed build's event handlers did not stop a delivery already picked. That delivery wrote
   the slot's current state, which is `Ready` once another provider with the same name is ready in the slot. A bridge
   whose handlers have been removed now applies no status (#903).
+- **A provider's `StackOverflowError` no longer exits the JVM.** The SDK client catches `Exception` only, and ZIO
+  treats every `VirtualMachineError` as fatal, so one evaluation, `track`, `initialize` or `shutdown` that overflowed
+  its stack ended the process. An evaluation or `track` now fails as `ProviderError` carrying the error, and the total
+  tier serves the default; an `initialize` or `shutdown` fails, or is logged, as for any other throw.
+  `CircuitBreakerProvider` and `CachingProvider` count it as a delegate failure. `OutOfMemoryError` and the
+  other `VirtualMachineError`s stay fatal (#891).
 - **A registry no longer leaks a failed provider that a provider failing too replaced.** A failed provider is left
   running so that `getClient` can initialize it again, and the SDK shuts it down only once another provider in its slot
   initializes. When the user registered another provider for that domain and it failed as well, nothing shut the first

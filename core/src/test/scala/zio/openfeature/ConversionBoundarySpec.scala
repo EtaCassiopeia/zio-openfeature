@@ -133,6 +133,57 @@ object ConversionBoundarySpec extends ZIOSpecDefault {
           FlagType[Long].decode(java.math.BigDecimal.valueOf(7.5)).isLeft
         )
       },
+      test("Int and Long read an arbitrary-precision number exactly, not through a rounded double") {
+        val beyondDouble = 9007199254740993L // 2^53 + 1, the first Long a Double cannot hold
+        assertTrue(
+          FlagType[Long].decode(java.math.BigInteger.valueOf(beyondDouble)) == Right(beyondDouble),
+          FlagType[Long].decode(new java.math.BigDecimal(beyondDouble)) == Right(beyondDouble),
+          FlagType[Long].decode(BigDecimal(beyondDouble)) == Right(beyondDouble),
+          FlagType[Long].decode(BigInt(beyondDouble)) == Right(beyondDouble),
+          FlagType[Long].decode(new java.util.concurrent.atomic.AtomicLong(beyondDouble)) == Right(beyondDouble),
+          FlagType[Long].decode(BigInt(Long.MaxValue)) == Right(Long.MaxValue),
+          FlagType[Long].decode(BigInt(Long.MaxValue) + 1).isLeft,
+          FlagType[Long].decode(BigInt(Long.MinValue)) == Right(Long.MinValue),
+          FlagType[Long].decode(BigInt(Long.MinValue) - 1).isLeft,
+          FlagType[Int].decode(new java.util.concurrent.atomic.AtomicLong(Int.MaxValue.toLong + 1)).isLeft,
+          FlagType[Int].decode(BigInt(Int.MinValue)) == Right(Int.MinValue)
+        )
+      },
+      test("Int and Long reject a fraction finer than a double can see, and accept trailing zeros") {
+        assertTrue(
+          FlagType[Int].decode(new java.math.BigDecimal("5.0000000000000001")).isLeft,
+          FlagType[Long].decode(new java.math.BigDecimal("5.0000000000000001")).isLeft,
+          FlagType[Long].decode(BigDecimal("5.0000000000000001")).isLeft,
+          FlagType[Int].decode(new java.math.BigDecimal("5.000")) == Right(5),
+          FlagType[Long].decode(new java.math.BigDecimal("7E+2")) == Right(700L),
+          FlagType[Long].decode(new java.math.BigDecimal("1E+19")).isLeft
+        )
+      },
+      test("Int and Long read an unknown Number from its decimal form, and reject one that has none") {
+        final class Decimal(s: String) extends Number {
+          def intValue(): Int       = 0
+          def longValue(): Long     = 0L
+          def floatValue(): Float   = 0f
+          def doubleValue(): Double = 0.0
+          override def toString     = s
+        }
+        assertTrue(
+          FlagType[Long].decode(new Decimal("9007199254740993")) == Right(9007199254740993L),
+          FlagType[Int].decode(new Decimal("2.5")).isLeft,
+          FlagType[Long].decode(new Decimal("1/2")).isLeft,
+          FlagType[Long].decode(new Decimal(null)).isLeft
+        )
+      },
+      test("Double rounds an arbitrary-precision number, but rejects one that overflows to an infinity") {
+        assertTrue(
+          FlagType[Double].decode(new java.math.BigDecimal("0.1")) == Right(0.1),
+          FlagType[Double].decode(BigInt(9007199254740993L)) == Right(9007199254740992.0),
+          FlagType[Double].decode(new java.math.BigDecimal("1E+400")).isLeft,
+          FlagType[Double].decode(BigDecimal("-1E+400")).isLeft,
+          FlagType[Double].decode(new java.math.BigDecimal("1E-400")) == Right(0.0),
+          FlagType[Double].decode(java.lang.Float.valueOf(Float.PositiveInfinity)) == Right(Double.PositiveInfinity)
+        )
+      },
       test("Float: NaN and infinity pass, Float.MaxValue passes, a finite double beyond it does not") {
         assertTrue(
           FlagType[Float].decode(Double.NaN).exists(_.isNaN),
@@ -144,6 +195,13 @@ object ConversionBoundarySpec extends ZIOSpecDefault {
         )
       }
     ),
+    test("a Long override given as an arbitrary-precision number is served as exactly that number") {
+      val beyondDouble = 9007199254740993L
+      for {
+        ff <- ZIO.service[FeatureFlags]
+        r  <- ff.transactionEither(overrides = Map("limit" -> BigDecimal(beyondDouble)))(ff.long("limit", 0L)).either
+      } yield assertTrue(r.map(_.result) == Right(beyondDouble))
+    }.provide(FeatureFlags.fromProvider(new DoubleProvider(Map.empty))),
     test("a Float flag gets a Float for every in-range value and a mismatch for a finite overflow") {
       implicit val ft: FlagType[Float] = floatOnly
       for {

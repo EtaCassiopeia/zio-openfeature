@@ -76,10 +76,12 @@ The wrapped provider's events do not reach `FeatureFlags`: use `Fault.Emit` or t
 `HostileProvider` generates whole scripts of wrong answers for property tests: a `Script` maps each `Op` to its
 faults, and `HostileProvider.scripted(script, flags)` is a `FaultyProvider.scoped` with the script applied.
 `evaluationScripts` gives every evaluation op a malformed answer or a thrown exception from `throwables` (a checked
-exception, an unchecked one and a non-fatal `Error`), and `getMetadata` a malformed answer or its own. `scripts` adds
-a hostile `initialize()` (a `READY` emitted from inside it, or one that returns only at shutdown) and a `shutdown()`
-that throws; build over those with a short init timeout, or each never-returning start waits out the default one. Run
-them against what you build on a provider, and assert that nothing dies:
+exception, an unchecked one and a non-fatal `Error`: only what ZIO does not treat as fatal), and `getMetadata` a
+malformed answer or its own. `scripts` adds a hostile `initialize()` (a `READY` emitted from inside it, or one that
+returns only at shutdown) and a `shutdown()` that throws; build over those with a short init timeout, or each
+never-returning start waits out the default one. Run them against what you build on a provider, and assert that
+nothing dies. `FeatureFlags` and the extras wrappers also absorb a provider's `StackOverflowError`; a library that
+hands a provider call to ZIO itself must guard against it, or ZIO exits the JVM:
 
 ```scala
 check(HostileProvider.evaluationScripts) { script =>

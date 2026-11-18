@@ -443,6 +443,9 @@ final private[openfeature] class FeatureFlagsLive(
   // siblings, so of two instances failing together at least one sees the other out and does the shutdown.
   private val failedRegistration = new java.util.concurrent.atomic.AtomicReference[Option[OFFeatureProvider]](None)
 
+  /** The provider the instance has installed: its wrapper, when the library registered one. */
+  private[openfeature] def installedProvider: OFFeatureProvider = lifecycle.snapshot.installed
+
   /** Whether this instance is live, has not failed on `provider`, and its slot holds it. A domain not bound yet reads
     * the default slot, as the SDK resolves it.
     */

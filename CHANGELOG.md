@@ -34,6 +34,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   running so that `getClient` can initialize it again, and the SDK shuts it down only once another provider in its slot
   initializes. When the user registered another provider for that domain and it failed as well, nothing shut the first
   one down, not even the registry's close. The registry now releases it then (#917).
+- **A registry no longer leaks the provider a client's timed-out swap replaced when the new one then fails.** The SDK
+  shuts the replaced provider down only once the new one initializes, and a registry client shares the registry's API,
+  so it left that provider to the registry, which never reached it. The registry now shuts down, at its close, the
+  provider a client's failed swap replaced unless it is already shut down (#918).
 
 ## [2.2.0] — 2026-11-05
 

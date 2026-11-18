@@ -497,6 +497,64 @@ object FeatureFlagRegistrySpec extends ZIOSpecDefault {
         afterA == 1,
         afterB == 1
       )
+    },
+    test("getClient fails with a timeout when the provider is not ready within initTimeout") {
+      val latch = new java.util.concurrent.CountDownLatch(1)
+      val slow  = new SimpleProvider("Slow", Map.empty) {
+        override def initialize(ctx: OFEvaluationContext): Unit = latch.await()
+      }
+      ZIO.scoped {
+        for {
+          probe    <- RegistryRecording.registryProbe
+          registry <- FeatureFlagRegistry
+            .fromProvider(
+              new SimpleProvider("Default", Map.empty),
+              FeatureFlagsConfig.default.withInitTimeout(300.millis),
+              probe
+            )
+            .build
+            .map(_.get[FeatureFlagRegistry])
+          _ <- registry.setProvider("slow", slow)
+          // The frozen TestClock keeps the build's init watchdog still: only the readiness poll can end the wait.
+          client <- registry.getClient("slow").exit.fork
+          exit   <- Live.live(client.join.timeout(10.seconds))
+          _      <- ZIO.succeed(latch.countDown())
+          cause = exit.flatMap(_.causeOption).flatMap(_.failureOption).collect {
+            case FeatureFlagError.ProviderInitializationFailed(t) => t
+          }
+        } yield assertTrue(
+          cause.exists(_.isInstanceOf[java.util.concurrent.TimeoutException]),
+          cause.map(_.getMessage).contains("Provider initialization exceeded PT0.3S")
+        )
+      }
+    },
+    test("a domain whose build fails leaves the registry's API and its other domains serving") {
+      val shutdowns       = new java.util.concurrent.atomic.AtomicInteger(0)
+      val defaultProvider = new SimpleProvider("Default", Map("flag" -> "served")) {
+        override def shutdown(): Unit = { shutdowns.incrementAndGet(); () }
+      }
+      val failing = new SimpleProvider("Bad", Map.empty) {
+        override def initialize(ctx: OFEvaluationContext): Unit = throw new RuntimeException("init boom")
+      }
+      ZIO.scoped {
+        for {
+          registry <- makeRegistry(defaultProvider)
+          healthy  <- registry.getClient("healthy")
+          _        <- registry.setProvider("bad", failing)
+          bad      <- registry.getClient("bad").either
+          status   <- healthy.providerStatus
+          value    <- healthy.string("flag", "fallback")
+          other    <- registry.getClient("other")
+          fresh    <- other.string("flag", "fallback")
+          count    <- ZIO.succeed(shutdowns.get())
+        } yield assertTrue(
+          bad.left.exists(_.isInstanceOf[FeatureFlagError.ProviderInitializationFailed]),
+          status == ProviderStatus.Ready,
+          value == "served",
+          fresh == "served",
+          count == 0
+        )
+      }
     }
   ) @@ RegistryRecording.eachTest("registry")
 }

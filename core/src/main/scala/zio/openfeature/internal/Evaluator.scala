@@ -334,9 +334,10 @@ final private[openfeature] class Evaluator(
           // An object or custom type: resolve through the object surface and decode. The caller's default is ENCODED and sent
           // down — it used to be an empty `Value()`, which meant a provider could never serve the caller's default
           // for a custom type the way it does for the scalar ones.
+          val sentDefault = anyToValue(flagType.encode(default))
           withTimeout(
             ProviderCalls.blocking {
-              client.getObjectDetails(key, anyToValue(flagType.encode(default)), ofContext)
+              client.getObjectDetails(key, sentDefault, ofContext)
             }
           ).mapError(e => FeatureFlagError.classify(e))
             .flatMap(details => Evaluator.objectValue(key, flagType.typeName, details).map(v => (details, v)))
@@ -346,9 +347,12 @@ final private[openfeature] class Evaluator(
 
               decoded match {
                 case Some(Right(value)) =>
+                  // Served from the caller's default (an error, or the very Value that was sent back unchanged): the
+                  // default as passed, not its round trip through the bridge, which drops a `None` field's null.
+                  val served = if (providerError.isDefined || (wireValue eq sentDefault)) default else value
                   toFlagMetadata(details.getFlagMetadata).map { metadata =>
                     FlagResolution(
-                      value = value,
+                      value = served,
                       variant = Option(details.getVariant),
                       reason = Evaluator.toResolutionReason(details.getReason),
                       metadata = metadata,

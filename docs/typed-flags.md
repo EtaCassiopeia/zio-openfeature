@@ -131,7 +131,9 @@ core builds it from the instance.
     `FlagType.from` takes a decoder and an encoder, and the flag is stored as an **object**. Values inside an object
     flag pass through the SDK, so numbers arrive as `Double` and `null` fields are dropped: decode numbers through
     `FlagType[Int]` or `FlagType[Long]`, and model optional fields as `Option`. The encoder matters even if you never
-    read its output, since your default is encoded and handed to the provider.
+    read its output, since your default is encoded and handed to the provider. When the provider serves that default
+    back (on a miss, an error, or by returning what it was given), you get your default exactly as you passed it, not a
+    decoded copy.
 
     ```scala
     --8<-- "TypedFlags.scala:from"

@@ -87,6 +87,8 @@ Register a handler for the events you care about. Each registration returns an e
 
 - The subscription is in place before registration returns, so no later event is missed. An event that arrives while
   you register may reach the handler twice: make handlers idempotent.
+- A handler registered while `setProvider` runs is also called once the swap ends, if the status it leaves matches the
+  handler's state, since the swap's own status change publishes no event.
 - Once `setProvider` returns, no further event from the provider it replaced is published, so a handler registered after
   that sees none. A handler registered earlier may still be working through events published before the swap started. A
   swap that failed and rolled back reports through `setProvider`'s failure, not an `Error` event.

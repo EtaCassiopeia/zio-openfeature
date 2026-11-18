@@ -84,7 +84,7 @@ final private[openfeature] class FeatureFlagsLive(
 
   // The collaborators this instance delegates to. It keeps lifecycle and state: construction, the provider
   // swap, shutdown and status.
-  private val eventBridge = new EventBridge(client, initialProvider, providerNameRef, state, onReady, probe)
+  private val eventBridge = new EventBridge(client, initialProvider, providerNameRef, state, onReady, swapLock, probe)
 
   private val hookPipeline = new HookPipeline(state, providerNameRef, domain, version, evaluationProbe)
   private val evaluator    = new Evaluator(

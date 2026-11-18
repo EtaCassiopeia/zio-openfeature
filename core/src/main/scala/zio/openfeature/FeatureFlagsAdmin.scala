@@ -18,8 +18,9 @@ trait FeatureFlagsAdmin {
   //
   // Delivery semantics: the event subscription is established before the registration effect returns, so no event
   // published afterwards is lost. Handlers with an "associated state" (ready/error/stale) also run immediately when
-  // the provider is already in that state (spec 5.3.3); an event arriving during registration may therefore invoke
-  // the handler twice — delivery is at-least-once and handlers should be idempotent.
+  // the provider is already in that state (spec 5.3.3), or, when registered while a `setProvider` swap runs, once the
+  // swap leaves the status in that state; an event arriving during registration may therefore invoke the handler
+  // twice — delivery is at-least-once and handlers should be idempotent.
 
   /** Register a handler for provider ready events. Returns a cancellation effect.
     *

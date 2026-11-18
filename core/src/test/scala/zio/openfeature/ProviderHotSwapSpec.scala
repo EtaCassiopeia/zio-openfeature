@@ -507,6 +507,25 @@ object ProviderHotSwapSpec extends ZIOSpecDefault {
         }
         .map(_.reduce(_ && _))
     } @@ TestAspect.withLiveClock,
+    test("a swap to a provider whose name cannot be read before it initializes installs it under its later name") {
+      // A wrapper around a provider that has no metadata until it initializes, as a MultiProvider has none.
+      final class NamedOnceInitialized extends SimpleProvider("later", Map("f" -> true)) {
+        @volatile private var initialized = false
+        @scala.annotation.nowarn("msg=deprecated")
+        override def getMetadata: Metadata =
+          if (initialized) super.getMetadata else throw new NullPointerException("no metadata before initialize()")
+        override def initialize(ctx: OFEvaluationContext): Unit = initialized = true
+      }
+      ZIO.scoped {
+        for {
+          ff      <- buildNoDomain(new SimpleProvider("first", Map("f" -> false)))
+          swapped <- ff.setProvider(new NamedOnceInitialized).exit
+          value   <- ff.boolean("f", false).either
+          status  <- ff.providerStatus
+          name    <- ff.providerMetadata.map(_.name)
+        } yield assertTrue(swapped.isSuccess, value == Right(true), status == ProviderStatus.Ready, name == "later")
+      }
+    },
     test("an equal but distinct provider is installed by a swap, domain-scoped or not") {
       ZIO
         .foreach(List(false, true)) { domainScoped =>

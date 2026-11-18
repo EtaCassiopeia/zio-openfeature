@@ -27,7 +27,9 @@ that replaced it initializes, and the bounded wait `Admit` asks for once it has 
 guard, `~oldPending[p]`, in one step with the refusal. That is sound because `Admit` reads both from one record and the
 swap holds its lock from there on, so the swap starts after the wait with neither guard able to turn false in between,
 except that a sibling on a shared API is not in the model. Time is not modelled, so the case where the bound elapses is
-not in it. That case needs the SDK to skip the shutdown, or its executor to be wedged. A rollback that times out is not modelled either (its wait is folded
+not in it. That case needs the SDK to skip the shutdown, or its executor to be wedged. A shutdown that reached the
+provider and is still running when the bound elapses is refused (`StillShuttingDown`); the model's shutdown is one
+step, so it has no such state. A rollback that times out is not modelled either (its wait is folded
 into `SwapRollback`), so its handover to the orphan watcher is pinned only by `ProviderHotSwapSpec`.
 
 ## What it checks

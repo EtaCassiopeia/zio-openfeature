@@ -76,12 +76,20 @@ object LifecycleStepSpec extends ZIOSpecDefault {
   private def admit(
     m: ManagedProvider,
     initializing: ManagedProvider => Boolean = _ => false,
-    released: Boolean = true
+    released: Boolean = true,
+    shuttingDown: Boolean = false
   ) =
     // As a swap asks: the user's provider, and the wrapper the library holds for it.
-    LifecycleInput.Admit(m.delegate, Some(m), initializing, _.bound.managed.exists(initializing), (_, _) => released)
+    LifecycleInput.Admit(
+      m.delegate,
+      Some(m),
+      initializing,
+      _.bound.managed.exists(initializing),
+      (_, _) => released,
+      _ => shuttingDown
+    )
 
-  private val admitUnwrapped = LifecycleInput.Admit(p0, None, _ => false, _ => false, (_, _) => true)
+  private val admitUnwrapped = LifecycleInput.Admit(p0, None, _ => false, _ => false, (_, _) => true, _ => false)
 
   private def swapStart(p: OFFeatureProvider) = LifecycleInput.SwapStart(p, incoming)
 
@@ -299,6 +307,20 @@ object LifecycleStepSpec extends ZIOSpecDefault {
       test("a provider still initializing is not installed again") {
         assertTrue(refusal(ready, admit(m1, _ eq m1)) == Some(Refusal.StillInitializing(m1)))
       },
+      test("a provider whose shutdown is running is waited for, and refused if it still runs after the wait") {
+        val asked   = LifecycleStep.step(ready, admit(m2, shuttingDown = true))
+        val running = LifecycleStep.step(asked.state, LifecycleInput.SdkShutDownAwaited(m2, stillRunning = true))
+        val ended   = LifecycleStep.step(asked.state, LifecycleInput.SdkShutDownAwaited(m2, stillRunning = false))
+        assertTrue(
+          asked.effects == Chunk(LifecycleEffect.AwaitSdkShutDown(m2)),
+          running.effects == Chunk(LifecycleEffect.Refuse(Refusal.StillShuttingDown(m2))),
+          running.state == asked.state,
+          ended.effects.isEmpty
+        )
+      },
+      test("a provider still initializing is refused before its running shutdown is waited for") {
+        assertTrue(refusal(ready, admit(m1, _ eq m1, shuttingDown = true)) == Some(Refusal.StillInitializing(m1)))
+      },
       test("a provider a timed-out swap still holds is not installed again") {
         val (s, _) = run(ready, LifecycleInput.OrphanRecorded(m2, "m1"))
         assertTrue(refusal(s, admit(m2)) == Some(Refusal.PendingOrphan(m2, "m1")))
@@ -326,7 +348,7 @@ object LifecycleStepSpec extends ZIOSpecDefault {
       ) {
         val (s, _)  = run(ready, replaced(m1, m2))
         val asked   = LifecycleStep.step(s, admit(m2, released = false))
-        val ended   = LifecycleStep.step(asked.state, LifecycleInput.SdkShutDownAwaited(m2))
+        val ended   = LifecycleStep.step(asked.state, LifecycleInput.SdkShutDownAwaited(m2, stillRunning = false))
         val retried = LifecycleStep.step(asked.state, admit(m2, released = false))
         assertTrue(
           asked.effects == Chunk(LifecycleEffect.AwaitSdkShutDown(m2)),

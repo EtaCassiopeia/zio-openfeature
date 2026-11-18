@@ -316,7 +316,10 @@ lazy val core = (project in file("core"))
         ProblemMatcher.make("zio.openfeature.FeatureFlagRegistryLive.<init>"), // non-public: private[openfeature]
         ProblemMatcher.make("zio.openfeature.internal.FeatureFlagsFactories.fromProvider"),
         // non-public: private[openfeature]; takes the instance's swap lock since 2.2.0
-        ProblemMatcher.make("zio.openfeature.internal.EventBridge.<init>*")
+        ProblemMatcher.make("zio.openfeature.internal.EventBridge.<init>*"),
+        // non-public: private[openfeature] lifecycle inputs; admission also reads whether a shutdown() still runs
+        ProblemMatcher.make("zio.openfeature.internal.LifecycleInput.Admit.*"),
+        ProblemMatcher.make("zio.openfeature.internal.LifecycleInput.SdkShutDownAwaited.*")
       )
     ))
   )

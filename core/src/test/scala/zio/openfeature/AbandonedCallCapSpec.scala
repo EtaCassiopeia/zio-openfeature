@@ -7,7 +7,7 @@ import zio.openfeature.testsupport.PropertyBudget
 import zio._
 import zio.test._
 import zio.test.TestAspect.{sequential, withLiveClock}
-import zio.openfeature.internal.ProviderEvaluations
+import zio.openfeature.internal.{EvaluationProbe, FeatureFlagsFactories, ProviderEvaluations}
 import dev.openfeature.sdk.{EvaluationContext => OFEvaluationContext, FeatureProvider, Metadata, OpenFeatureAPI, Value}
 
 import java.util.concurrent.{CountDownLatch, RejectedExecutionException, TimeoutException}
@@ -212,6 +212,55 @@ object AbandonedCallCapSpec extends ZIOSpecDefault {
           _       <- fiber.interrupt
           count = ff.abandonedCallCount
         } yield assertTrue(started, count == 1)
+      }
+    },
+    test("after racing calls overshoot the cap, the next timed call is still rejected") {
+      ZIO.scoped {
+        for {
+          p  <- gated
+          ff <- build(p, Some(200.millis), cap = 1)
+          // All three pass the cap check before the first one times out.
+          first   <- ZIO.foreachPar(1 to 3)(_ => ff.boolean("block", default = false).either)
+          counted <- eventually(ff.abandonedCallCount == 3)
+          fourth  <- ff.boolean("fast", default = false).either
+        } yield assertTrue(
+          first.forall(timedOut),
+          counted,
+          rejection(fourth).exists(m => m.contains("3 abandoned provider calls") && m.contains("cap 1")),
+          p.entered.get() == 3
+        )
+      }
+    },
+    test("a call abandoned after its fiber started but before it ran is skipped and leaves the counter at zero") {
+      final class StartingProbe(held: Promise[Nothing, Unit], release: Promise[Nothing, Unit]) extends EvaluationProbe {
+        def at(point: EvaluationProbe.Point): UIO[Unit] =
+          if (point == EvaluationProbe.Point.CallStarting) held.succeed(()) *> release.await else ZIO.unit
+      }
+      ZIO.scoped {
+        for {
+          p       <- gated
+          held    <- Promise.make[Nothing, Unit]
+          release <- Promise.make[Nothing, Unit]
+          ff      <- FeatureFlagsFactories.build(
+            p,
+            domain = Some(s"cap-${java.util.UUID.randomUUID()}"),
+            version = None,
+            initialHooks = Nil,
+            statusRef = None,
+            addShutdownFinalizer = true,
+            apiOverride = Some(OpenFeatureAPI.createIsolated()),
+            evaluationTimeout = Some(5.seconds),
+            maxAbandonedCalls = 3,
+            evaluationProbe = new StartingProbe(held, release)
+          )
+          fiber <- ff.boolean("block", default = false).fork
+          _     <- held.await
+          _     <- fiber.interrupt
+          _     <- release.succeed(())
+          // A negative count would show only after the released fiber's finalizer has run.
+          _ <- ZIO.sleep(100.millis)
+          counts = (ff.abandonedCallCount, p.entered.get())
+        } yield assertTrue(counts == ((0, 0)))
       }
     },
     test("an untimed evaluation (withoutTimeout) is not gated, even at the cap") {

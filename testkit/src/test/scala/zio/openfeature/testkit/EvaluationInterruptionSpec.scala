@@ -118,9 +118,13 @@ object EvaluationInterruptionSpec extends ZIOSpecDefault {
             caller       <- ff.string(Key, "default").fork
             _            <- held.await
             _            <- competitor match {
-              case Competitor.Interrupt => caller.interruptFork
-              case Competitor.Timeout   => ZIO.sleep(ShortTimeout * 2)
-              case Competitor.Release   => ZIO.unit
+              // The held call fiber is a separate one, so waiting for the caller to end waits for its abandon step
+              // (which skips a call that has not started) and not for the hold; at other points the hold is on the
+              // caller itself, possibly in an uninterruptible region.
+              case Competitor.Interrupt =>
+                if (point == Point.CallStarting) caller.interrupt.unit else caller.interruptFork
+              case Competitor.Timeout => ZIO.sleep(ShortTimeout * 2)
+              case Competitor.Release => ZIO.unit
             }
             _          <- release.succeed(())
             exit       <- caller.await

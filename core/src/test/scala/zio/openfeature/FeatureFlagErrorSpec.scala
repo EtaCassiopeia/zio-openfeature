@@ -131,6 +131,40 @@ object FeatureFlagErrorSpec extends ZIOSpecDefault {
           ""
         ).map(FeatureFlagError.looksLikeAuthFailure)
         assertTrue(matched == List(false, false, false, false, false))
+      },
+      test("does not read the flag key the message quotes") {
+        val matched = List(
+          "general error for flag: forbidden-words-filter; HTTP 500" -> "forbidden-words-filter",
+          "Rate limit exceeded for flag: unauthorized-user-banner"   -> "unauthorized-user-banner",
+          "IO error for flag: custom-403-page"                       -> "custom-403-page",
+          "general error for flag: 401; IO error: connection reset"  -> "401"
+        ).map { case (message, key) => FeatureFlagError.looksLikeAuthFailure(message, key) }
+        assertTrue(matched == List(false, false, false, false))
+      },
+      test("still reads an auth failure in a message that quotes the key") {
+        val matched = List(
+          "authentication/authorization error for flag: custom-403-page" -> "custom-403-page",
+          "authentication/authorization error for flag: error"           -> "error",
+          "HTTP 403 Forbidden for flag 'checkout'"                       -> "checkout",
+          "flag o: Forbidden"                                            -> "o"
+        ).map { case (message, key) => FeatureFlagError.looksLikeAuthFailure(message, key) }
+        assertTrue(matched == List(true, true, true, true))
+      }
+    ),
+    suite("classify with a key")(
+      test("a thrown failure whose message quotes the key is not Unauthorized because of the key") {
+        val rejected = FeatureFlagError.classify(
+          new java.util.concurrent.RejectedExecutionException(
+            "Evaluation of 'forbidden-words' rejected: 2 abandoned provider calls are still running"
+          ),
+          "forbidden-words"
+        )
+        val real =
+          FeatureFlagError.classify(new RuntimeException("HTTP 401 for flag forbidden-words"), "forbidden-words")
+        assertTrue(
+          rejected.isInstanceOf[FeatureFlagError.ProviderError],
+          real.isInstanceOf[FeatureFlagError.Unauthorized]
+        )
       }
     ),
     suite("toErrorCode")(

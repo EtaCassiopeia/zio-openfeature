@@ -317,7 +317,7 @@ final private[openfeature] class Evaluator(
 
         case Some(Right(erased)) =>
           withTimeout(erased.task)
-            .mapError(e => FeatureFlagError.classify(e))
+            .mapError(e => FeatureFlagError.classify(e, key))
             .flatMap { details =>
               erased.extract(details) match {
                 case Right(value) =>
@@ -339,7 +339,7 @@ final private[openfeature] class Evaluator(
             ProviderCalls.blocking {
               client.getObjectDetails(key, sentDefault, ofContext)
             }
-          ).mapError(e => FeatureFlagError.classify(e))
+          ).mapError(e => FeatureFlagError.classify(e, key))
             .flatMap(details => Evaluator.objectValue(key, flagType.typeName, details).map(v => (details, v)))
             .flatMap { case (details, wireValue) =>
               val providerError = Option(details.getErrorCode).map(ErrorCodeConverter.fromJava)
@@ -582,7 +582,7 @@ private[openfeature] object Evaluator {
       // contrib) can only say so in the message.
       case ErrorCode.General =>
         message match {
-          case Some(m) if FeatureFlagError.looksLikeAuthFailure(m) =>
+          case Some(m) if FeatureFlagError.looksLikeAuthFailure(m, key) =>
             FeatureFlagError.Unauthorized(m, Some(new ProviderReportedError(m)))
           case _ =>
             FeatureFlagError.ProviderError(new ProviderReportedError(message.getOrElse("general error")))

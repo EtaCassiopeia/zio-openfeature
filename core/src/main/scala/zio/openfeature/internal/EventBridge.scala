@@ -23,6 +23,8 @@ final private[openfeature] class EventBridge(
   providerNameRef: java.util.concurrent.atomic.AtomicReference[ProviderName],
   state: FeatureFlagsState,
   onReady: Option[java.util.concurrent.CountDownLatch],
+  // The instance's swap lock: a swap holds it from its admission to its last status write.
+  swapLock: Semaphore,
   probe: LifecycleProbe = LifecycleProbe.none
 ) {
 
@@ -357,6 +359,11 @@ final private[openfeature] class EventBridge(
     * The subscription is established first, then the current status is checked: no event can fall between the two. The
     * cost is at-least-once delivery — an event arriving in that window may invoke the handler via both the immediate
     * check and the stream.
+    *
+    * A swap in flight moves the status itself, after the new provider's events were published, and publishes nothing
+    * for that move. So a registration that finds the swap lock held and the status not matching checks again once the
+    * lock is free, unless the stream delivered the handler an event in the meantime. The lock is read before the
+    * status: a swap that ends between the two reads has written its status by the second.
     */
   // Isolate a handler invocation so a defect does NOT kill the delivery fiber — the subscription is retained and the
   // handler keeps receiving subsequent events (spec 5.2.5). `suspendSucceed` is essential: it captures a *synchronous*
@@ -374,50 +381,52 @@ final private[openfeature] class EventBridge(
 
   private def subscribeToEvent[A](
     immediateCondition: ProviderStatus => Boolean,
-    immediatePayload: => A,
+    immediatePayload: ProviderMetadata => A,
     collect: PartialFunction[ProviderEvent, A],
     handler: A => UIO[Unit]
-  ): UIO[UIO[Unit]] = {
-    val safe = isolate(handler)
+  ): UIO[UIO[Unit]] = ZIO.suspendSucceed {
+    // Per registration: an effect run twice registers twice.
+    val safe      = isolate(handler)
+    val delivered = new java.util.concurrent.atomic.AtomicBoolean(false)
+    // The payload names the provider installed when it runs.
+    val immediate = ZIO.suspendSucceed(safe(immediatePayload(ProviderMetadata(providerNameRef.get().render))))
+    val recheck   = swapLock.withPermit(ZIO.unit) *> providerStatus.flatMap { status =>
+      ZIO.when(immediateCondition(status) && !delivered.get())(immediate)
+    }
     for {
-      cancel <- consumeEvents(_.collect(collect).foreach(safe))
+      cancel <- consumeEvents(_.collect(collect).foreach(a => ZIO.succeed(delivered.set(true)) *> safe(a)))
+      swap   <- swapLock.available.map(_ == 0)
       status <- providerStatus
-      _      <- ZIO.when(immediateCondition(status))(detached(safe(immediatePayload)))
-    } yield cancel
+      watch  <-
+        if (immediateCondition(status)) detached(immediate).as(ZIO.unit)
+        else if (swap) detached(recheck.interruptible.forkDaemon).map(_.interrupt.unit)
+        else ZIO.succeed(ZIO.unit)
+    } yield watch *> cancel
   }
 
   def onProviderReady(handler: ProviderMetadata => UIO[Unit]): UIO[UIO[Unit]] =
-    ZIO.succeed(providerNameRef.get().render).flatMap { pName =>
-      val metadata = ProviderMetadata(pName)
-      subscribeToEvent(
-        _ == ProviderStatus.Ready,
-        metadata,
-        { case ProviderEvent.Ready(m, _) => m },
-        handler
-      )
-    }
+    subscribeToEvent[ProviderMetadata](
+      _ == ProviderStatus.Ready,
+      m => m,
+      { case ProviderEvent.Ready(m, _) => m },
+      handler
+    )
 
   def onProviderError(handler: (Throwable, ProviderMetadata) => UIO[Unit]): UIO[UIO[Unit]] =
-    ZIO.succeed(providerNameRef.get().render).flatMap { pName =>
-      val metadata = ProviderMetadata(pName)
-      subscribeToEvent(
-        s => s == ProviderStatus.Error || s == ProviderStatus.Fatal,
-        (new RuntimeException("Provider in error state"), metadata),
-        { case ProviderEvent.Error(error, m, _, _, _) => (error, m) },
-        handler.tupled
-      )
-    }
+    subscribeToEvent[(Throwable, ProviderMetadata)](
+      s => s == ProviderStatus.Error || s == ProviderStatus.Fatal,
+      m => (new RuntimeException("Provider in error state"), m),
+      { case ProviderEvent.Error(error, m, _, _, _) => (error, m) },
+      handler.tupled
+    )
 
   def onProviderStale(handler: (String, ProviderMetadata) => UIO[Unit]): UIO[UIO[Unit]] =
-    ZIO.succeed(providerNameRef.get().render).flatMap { pName =>
-      val metadata = ProviderMetadata(pName)
-      subscribeToEvent(
-        _ == ProviderStatus.Stale,
-        ("Provider in stale state", metadata),
-        { case ProviderEvent.Stale(reason, m, _) => (reason, m) },
-        handler.tupled
-      )
-    }
+    subscribeToEvent[(String, ProviderMetadata)](
+      _ == ProviderStatus.Stale,
+      m => ("Provider in stale state", m),
+      { case ProviderEvent.Stale(reason, m, _) => (reason, m) },
+      handler.tupled
+    )
 
   def onConfigurationChanged(handler: (Set[String], ProviderMetadata) => UIO[Unit]): UIO[UIO[Unit]] = {
     // Configuration changed doesn't have an "associated state" so no immediate execution needed.
@@ -429,37 +438,33 @@ final private[openfeature] class EventBridge(
   // errorMessage, eventMetadata, ...), not a narrowed reconstruction. Associated-state events (Ready/Error/Stale) still
   // fire immediately when the provider is already in that state (spec 5.3.3), using a synthetic event that reflects the
   // current state (there is no original event to replay for an already-reached state). All invocations are isolated.
-  // Suspended so the provider name is read when the registration runs, not when the effect is built.
   def on(eventType: ProviderEventType, handler: ProviderEvent => UIO[Unit]): UIO[UIO[Unit]] =
-    ZIO.suspendSucceed {
-      val metadata = ProviderMetadata(providerNameRef.get().render)
-      eventType match {
-        case ProviderEventType.Ready =>
-          subscribeToEvent[ProviderEvent](
-            _ == ProviderStatus.Ready,
-            ProviderEvent.Ready(metadata),
-            { case e: ProviderEvent.Ready => e },
-            handler
-          )
-        case ProviderEventType.Error =>
-          subscribeToEvent[ProviderEvent](
-            s => s == ProviderStatus.Error || s == ProviderStatus.Fatal,
-            ProviderEvent.Error(new RuntimeException("Provider in error state"), metadata),
-            { case e: ProviderEvent.Error => e },
-            handler
-          )
-        case ProviderEventType.Stale =>
-          subscribeToEvent[ProviderEvent](
-            _ == ProviderStatus.Stale,
-            ProviderEvent.Stale("Provider in stale state", metadata),
-            { case e: ProviderEvent.Stale => e },
-            handler
-          )
-        case ProviderEventType.ConfigurationChanged =>
-          consumeEvents(_.filter(_.eventType == ProviderEventType.ConfigurationChanged).foreach(isolate(handler)))
-        case ProviderEventType.Reconnecting =>
-          consumeEvents(_.filter(_.eventType == ProviderEventType.Reconnecting).foreach(isolate(handler)))
-      }
+    eventType match {
+      case ProviderEventType.Ready =>
+        subscribeToEvent[ProviderEvent](
+          _ == ProviderStatus.Ready,
+          m => ProviderEvent.Ready(m),
+          { case e: ProviderEvent.Ready => e },
+          handler
+        )
+      case ProviderEventType.Error =>
+        subscribeToEvent[ProviderEvent](
+          s => s == ProviderStatus.Error || s == ProviderStatus.Fatal,
+          m => ProviderEvent.Error(new RuntimeException("Provider in error state"), m),
+          { case e: ProviderEvent.Error => e },
+          handler
+        )
+      case ProviderEventType.Stale =>
+        subscribeToEvent[ProviderEvent](
+          _ == ProviderStatus.Stale,
+          m => ProviderEvent.Stale("Provider in stale state", m),
+          { case e: ProviderEvent.Stale => e },
+          handler
+        )
+      case ProviderEventType.ConfigurationChanged =>
+        consumeEvents(_.filter(_.eventType == ProviderEventType.ConfigurationChanged).foreach(isolate(handler)))
+      case ProviderEventType.Reconnecting =>
+        consumeEvents(_.filter(_.eventType == ProviderEventType.Reconnecting).foreach(isolate(handler)))
     }
 
   private def providerStatus: UIO[ProviderStatus] = state.statusRef.get

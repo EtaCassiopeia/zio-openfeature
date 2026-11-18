@@ -12,6 +12,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`fromAcquireAsync` releases a timed-out attempt suspended in `verify` before `onConstructionError` runs.** The
   timeout could misread such an attempt as busy in a blocking call and go on without waiting for it, so its provider
   could shut down, and its `Scope` close, after the next attempt started or `onConstructionError` ran (#913).
+- **A Ready, Error or Stale handler registered while a `setProvider` swap is finishing now runs once the status
+  matches.** A swap moves the status itself after the new provider's events were published, and publishes nothing for
+  that move, so a handler registered after those events but before the swap's outcome saw neither an event nor a
+  matching status, and was never called though the status ended in its state. Such a registration now checks the status
+  again once the swap ends, unless an event reached the handler first; cancelling the handler stops that check (#883).
 - **An interrupted `FeatureFlagRegistry.getClient` or `defaultClient` no longer leaves its domain waiting forever.** An
   interrupt (a `timeout`, a lost `race`) landing between the registry recording a domain's pending client and starting
   its build left a pending client that nothing completed, and every later call for that domain waited on it. The two

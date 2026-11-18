@@ -34,7 +34,8 @@ object EndStateCheckSpec extends ZIOSpecDefault {
   private val clean   = observed()
 
   // An instance on its own API, over a provider that is READY once initialized; the caller's scope closes it.
-  private val built: ZIO[Scope, Throwable, FeatureFlagsLive] =
+  // A def: each build gets its own isolated API, so one test closing its owner never retires another test's instance.
+  private def built: ZIO[Scope, Throwable, FeatureFlagsLive] =
     FeatureFlags.build(
       new NoOpProvider {
         @scala.annotation.nowarn("msg=deprecated")

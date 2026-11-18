@@ -56,8 +56,12 @@ object SharedApiSwapRaceSpec extends ZIOSpecDefault {
       val api     = OpenFeatureAPI.createIsolated()
       val old     = new Counting(open = true)
       val failing = new Gated(failure = Some("boom"), open = true)
-      val next    = new Counting(open = true)
-      val armed   = new AtomicBoolean(false)
+      // Named apart from `old`: the event bridge attributes an event to its provider by name, so `next`'s READY must not
+      // read as A's.
+      val next = new Counting(open = true) {
+        override def getMetadata: Metadata = new Metadata { override def getName: String = "next" }
+      }
+      val armed = new AtomicBoolean(false)
       ZIO.scoped {
         for {
           rollback <- Hold(at(Point.SwapRollback), armed)

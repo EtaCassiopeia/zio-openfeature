@@ -8,6 +8,8 @@ import zio.test.TestAspect.withLiveClock
 import zio.openfeature.internal.{LongAwareMultiProvider, ProviderEvaluations}
 import dev.openfeature.sdk.{
   ErrorCode => OFErrorCode,
+  EventProvider,
+  EventProviderAccess,
   EvaluationContext => OFEvaluationContext,
   FeatureProvider,
   FlagEvaluationDetails,
@@ -19,6 +21,8 @@ import dev.openfeature.sdk.{
   Metadata,
   OpenFeatureAPI,
   ProviderEvaluation,
+  ProviderEvent => OFProviderEvent,
+  ProviderEventDetails,
   TrackingEventDetails => OFTrackingEventDetails,
   Value
 }
@@ -129,6 +133,43 @@ object LongAwareMultiProviderSpec extends ZIOSpecDefault {
     })(api => ZIO.attemptBlocking(api.shutdown()).orDie)
 
   private val big = 5000000000L
+
+  /** A child that sends events on demand. */
+  final private class Emitting extends EventProvider {
+    @scala.annotation.nowarn("msg=deprecated")
+    override def getMetadata: Metadata = new Metadata { override def getName: String = "emitting" }
+    override def getBooleanEvaluation(k: String, d: java.lang.Boolean, c: OFEvaluationContext) =
+      ProviderEvaluations.of(d, "DEFAULT")
+    override def getStringEvaluation(k: String, d: String, c: OFEvaluationContext) =
+      ProviderEvaluations.of(d, "DEFAULT")
+    override def getIntegerEvaluation(k: String, d: java.lang.Integer, c: OFEvaluationContext) =
+      ProviderEvaluations.of(d, "DEFAULT")
+    override def getDoubleEvaluation(k: String, d: java.lang.Double, c: OFEvaluationContext) =
+      ProviderEvaluations.of(d, "DEFAULT")
+    override def getObjectEvaluation(k: String, d: Value, c: OFEvaluationContext) = ProviderEvaluations.of(d, "DEFAULT")
+
+    def send(event: OFProviderEvent): UIO[Unit] =
+      ZIO.attemptBlocking { emit(event, ProviderEventDetails.builder().build()).await(); () }.orDie
+  }
+
+  /** An initialized chain over one child, with what the chain emits recorded; `body` drives the child. */
+  private def chainEvents(
+    body: (Emitting, ConcurrentLinkedQueue[OFProviderEvent]) => UIO[Unit]
+  ): UIO[List[OFProviderEvent]] = {
+    val child = new Emitting
+    val chain = FeatureFlags.multiProvider(List(child))
+    val seen  = new ConcurrentLinkedQueue[OFProviderEvent]()
+    ZIO.acquireReleaseWith(
+      ZIO.attemptBlocking {
+        EventProviderAccess.attach(chain, (event, _) => { seen.add(event); () })
+        chain.initialize(new ImmutableContext())
+      }.orDie
+    )(_ => ZIO.attemptBlocking(chain.shutdown()).ignore)(_ => body(child, seen).as(seen.asScala.toList))
+  }
+
+  // The chain re-emits on its own executor: wait, bounded, until `event` has been seen.
+  private def seenWithin(seen: ConcurrentLinkedQueue[OFProviderEvent], event: OFProviderEvent): UIO[Unit] =
+    ZIO.succeed(seen.contains(event)).repeatUntil(identity).timeout(5.seconds).unit
 
   def spec = suite("LongAwareMultiProviderSpec")(
     suite("through FeatureFlags.multiProvider")(
@@ -403,6 +444,25 @@ object LongAwareMultiProviderSpec extends ZIOSpecDefault {
             after.variant.contains("real")
           )
         }
+      }
+    ),
+    suite("a child's events")(
+      test("a child's ERROR is re-emitted by the chain") {
+        chainEvents { (child, seen) =>
+          child.send(OFProviderEvent.PROVIDER_ERROR) *> seenWithin(seen, OFProviderEvent.PROVIDER_ERROR)
+        }.map(seen => assertTrue(seen == List(OFProviderEvent.PROVIDER_ERROR)))
+      },
+      test("a child's READY after its ERROR is re-emitted by the chain") {
+        chainEvents { (child, seen) =>
+          child.send(OFProviderEvent.PROVIDER_ERROR) *> seenWithin(seen, OFProviderEvent.PROVIDER_ERROR) *>
+            child.send(OFProviderEvent.PROVIDER_READY) *> seenWithin(seen, OFProviderEvent.PROVIDER_READY)
+        }.map(seen => assertTrue(seen == List(OFProviderEvent.PROVIDER_ERROR, OFProviderEvent.PROVIDER_READY)))
+      },
+      test("a child's CONFIGURATION_CHANGED is re-emitted by the chain") {
+        chainEvents { (child, seen) =>
+          child.send(OFProviderEvent.PROVIDER_CONFIGURATION_CHANGED) *>
+            seenWithin(seen, OFProviderEvent.PROVIDER_CONFIGURATION_CHANGED)
+        }.map(seen => assertTrue(seen == List(OFProviderEvent.PROVIDER_CONFIGURATION_CHANGED)))
       }
     )
   ) @@ withLiveClock

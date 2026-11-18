@@ -314,7 +314,9 @@ lazy val core = (project in file("core"))
       java.util.Arrays.asList(
         ProblemMatcher.make("zio.openfeature.internal.LifecycleProbe.Point.*"),
         ProblemMatcher.make("zio.openfeature.FeatureFlagRegistryLive.<init>"), // non-public: private[openfeature]
-        ProblemMatcher.make("zio.openfeature.internal.FeatureFlagsFactories.fromProvider")
+        ProblemMatcher.make("zio.openfeature.internal.FeatureFlagsFactories.fromProvider"),
+        // non-public: private[openfeature]; takes the instance's swap lock since 2.2.0
+        ProblemMatcher.make("zio.openfeature.internal.EventBridge.<init>*")
       )
     ))
   )

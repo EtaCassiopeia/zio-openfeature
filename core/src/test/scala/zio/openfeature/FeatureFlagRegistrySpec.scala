@@ -592,6 +592,29 @@ object FeatureFlagRegistrySpec extends ZIOSpecDefault {
         _     <- Live.live(ZIO.sleep(300.millis))
         after <- ZIO.succeed(shutA.get())
       } yield assertTrue(swap.isLeft, closed == 1, after == 1)
+    } @@ TestAspect.withLiveClock,
+    test("a chain a getClient retry initialized again moves its status on a member's event") {
+      val failed = new java.util.concurrent.atomic.AtomicBoolean(false)
+      val steady = new dev.openfeature.sdk.SdkPackageChild("steady")
+      val flaky  = new dev.openfeature.sdk.SdkPackageChild(
+        "flaky",
+        onInitialize = () => if (failed.compareAndSet(false, true)) throw new RuntimeException("flaky init failed")
+      )
+      val chain = FeatureFlags.multiProvider(List(steady, flaky))
+      ZIO.scoped {
+        for {
+          registry <- FeatureFlagRegistry
+            .fromProvider(new SimpleProvider("Default", Map.empty))
+            .build
+            .map(_.get[FeatureFlagRegistry])
+          _      <- registry.setProvider("chain", chain)
+          first  <- registry.getClient("chain").either
+          client <- registry.getClient("chain")
+          before <- client.providerStatus
+          _      <- ZIO.attemptBlocking(steady.emitStale()).orDie
+          after  <- client.providerStatus.repeatUntil(_ == ProviderStatus.Stale).timeout(5.seconds)
+        } yield assertTrue(first.isLeft, before == ProviderStatus.Ready, after.contains(ProviderStatus.Stale))
+      }
     } @@ TestAspect.withLiveClock
   ) @@ RegistryRecording.eachTest("registry")
 }

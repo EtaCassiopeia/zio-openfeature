@@ -46,6 +46,27 @@ object DeferredProviderSpec extends ZIOSpecDefault {
   }
 
   def spec = suite("DeferredProviderSpec")(
+    test("reports not domain-scoped until its provider is built, so two domains can bind it; then the provider's") {
+      val building = new CountDownLatch(1)
+      val proceed  = new CountDownLatch(1)
+      val deferred = new DeferredProvider("deferred")(() => {
+        building.countDown()
+        proceed.await()
+        new RecordingProvider(true) { override def isDomainScoped(): Boolean = true }
+      })
+      val api = dev.openfeature.sdk.OpenFeatureAPI.createIsolated()
+      for {
+        before <- ZIO.succeed(deferred.isDomainScoped())
+        _      <- ZIO.attemptBlocking(api.setProvider("a", deferred))
+        _      <- ZIO.attemptBlocking(building.await())
+        // Still building: the SDK's domain-scoped check lets the same instance into a second domain.
+        bound <- ZIO.attemptBlocking(api.setProvider("b", deferred)).either
+        _     <- ZIO.succeed(proceed.countDown())
+        _     <- ZIO.succeed(deferred.isDomainScoped()).repeatUntil(identity).timeout(10.seconds)
+        after <- ZIO.succeed(deferred.isDomainScoped())
+        _     <- ZIO.attemptBlocking(api.shutdown())
+      } yield assertTrue(!before, bound.isRight, after)
+    } @@ TestAspect.withLiveClock,
     test("initialize after shutdown fails with FatalError instead of silently reporting ready") {
       val dp = DeferredProvider("d")(() => new RecordingProvider(true))
       dp.initialize(ctx)

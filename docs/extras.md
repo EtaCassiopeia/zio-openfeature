@@ -230,6 +230,9 @@ initialization, so startup does not wait:
 
 - Until the real provider is built, evaluations answer `PROVIDER_NOT_READY`. Events are not passed on.
 - After shutdown or a failed start it cannot be restarted; build a new one.
+- Until the real provider is built it reports itself as not domain-scoped, so OpenFeature lets one instance be bound to
+  more than one domain. All of them then share the one provider, initialized for the first domain. For a domain-scoped
+  provider, use one `DeferredProvider` per domain.
 - To answer from a fallback meanwhile, use [`fromAcquireAsync`](providers.md#start-on-a-fallback-fromacquireasync).
 
 ## Integer widening long provider

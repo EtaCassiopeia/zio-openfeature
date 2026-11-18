@@ -21,11 +21,12 @@ labels; its docstring gives the exact rules. `FFF` is `internal/FeatureFlagsFact
 | `FailDecide(i)` | the rest of it: `Bound.Foreign`, `ApiInstances.heldByAnother`, or the shutdown; a failed build's scope then closes | `FailDecided(provider, shut)`, checked against `LibraryShuts` |
 | `CloseInstance(i)` | a non-owner's `shutdown` (`teardown(tearDownApi = false)`) or scope close (`scopeFinalizer`) | `ShutdownDone`, `ScopeClose` |
 | `OwnerClose` | the owner's `shutdown` or scope close: `ApiInstances.retireSiblings`, then the API's shutdown | `RetireSiblings`, then the owner's `ShutdownStart` or `ScopeClose`; the others' teardowns in between are their retirement |
+| `RegistryClose` | the registry's layer finalizer: `ApiInstances.retireAll`, then the API's shutdown | `ApiShutdown`, taken at the end of the run: every client still open is retired first (`UnretiredSibling`), and the shutdowns after it are counted |
 | (the outcome) | each provider's `shutdown()` calls | `ProviderShutDown`, counted per provider into `End` |
 
-Two steps end what is checked, since the model has no action for them: the test's own `api.shutdown()`
-(`UserApiShutdown`), and the registry's finalizer (`ApiShutdown`). The registry owns its API but is no instance, and
-`OwnerClose` needs an owning instance; its clients' scopes close before it, each a `CloseInstance`.
+One step ends what is checked, since the model has no action for it: the test's own `api.shutdown()`
+(`UserApiShutdown`), which retires nothing. The registry's finalizer (`ApiShutdown`) is `RegistryClose`; a client's
+scope that closes before it is a `CloseInstance`, and a failure decision still pending at the close skips the run.
 
 `RegistryTrace.tla` adds three checks to the model's actions: a failure's and a rollback's decision is the model's, for
 a registration that has not ended; the run's owner is the model's; and each provider's `shutdown()` ran as often as the

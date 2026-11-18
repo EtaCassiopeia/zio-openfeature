@@ -1,0 +1,40 @@
+{"seq": 0, "point": "RegistryInsert", "arg": "", "domain": "billing", "instance": "domain:billing"}
+{"seq": 1, "point": "InitEntered", "arg": "", "instance": "domain:billing"}
+{"seq": 2, "point": "BuildBind", "arg": "", "provider": "Billing", "providerInstance": "3cff51d4", "domain": "billing", "owns": "false", "async": "true", "instance": "domain:billing"}
+{"seq": 3, "point": "InitOutcome", "arg": "true", "provider": "Billing", "providerInstance": "3cff51d4", "instance": "domain:billing"}
+{"seq": 4, "point": "InitReturned", "arg": "", "instance": "domain:billing"}
+{"seq": 5, "point": "ApplySignal", "arg": "EventReady", "instance": "domain:billing"}
+{"seq": 6, "point": "StatusWritten", "arg": "Ready", "instance": "domain:billing"}
+{"seq": 7, "point": "DeliverEvent", "arg": "PROVIDER_READY", "provider": "Billing", "instance": "domain:billing"}
+{"seq": 8, "point": "ApplySignal", "arg": "EventReady", "instance": "domain:billing"}
+{"seq": 9, "point": "RegistryComplete", "arg": "", "domain": "billing", "instance": "domain:billing"}
+{"seq": 10, "point": "RegistryInsert", "arg": "", "domain": "auth", "instance": "domain:auth"}
+{"seq": 11, "point": "BuildBind", "arg": "", "provider": "Auth", "providerInstance": "5818772c", "domain": "auth", "owns": "false", "async": "true", "instance": "domain:auth"}
+{"seq": 12, "point": "InitEntered", "arg": "", "instance": "domain:auth"}
+{"seq": 13, "point": "InitOutcome", "arg": "true", "provider": "Auth", "providerInstance": "5818772c", "instance": "domain:auth"}
+{"seq": 14, "point": "InitReturned", "arg": "", "instance": "domain:auth"}
+{"seq": 15, "point": "ApplySignal", "arg": "EventReady", "instance": "domain:auth"}
+{"seq": 16, "point": "DeliverEvent", "arg": "PROVIDER_READY", "provider": "Auth", "instance": "domain:auth"}
+{"seq": 17, "point": "StatusWritten", "arg": "Ready", "instance": "domain:auth"}
+{"seq": 18, "point": "ApplySignal", "arg": "EventReady", "instance": "domain:auth"}
+{"seq": 19, "point": "RegistryComplete", "arg": "", "domain": "auth", "instance": "domain:auth"}
+{"seq": 20, "point": "RegistryInsert", "arg": "", "domain": "other", "instance": "domain:other"}
+{"seq": 21, "point": "BuildBind", "arg": "", "provider": "Default", "providerInstance": "5ff0e576", "domain": "other", "owns": "false", "async": "true", "instance": "domain:other"}
+{"seq": 22, "point": "InitEntered", "arg": "", "instance": "domain:other"}
+{"seq": 23, "point": "InitOutcome", "arg": "true", "provider": "Default", "providerInstance": "5ff0e576", "instance": "domain:other"}
+{"seq": 24, "point": "InitReturned", "arg": "", "instance": "domain:other"}
+{"seq": 25, "point": "ApplySignal", "arg": "EventReady", "instance": "domain:other"}
+{"seq": 26, "point": "DeliverEvent", "arg": "PROVIDER_READY", "provider": "Default", "instance": "domain:other"}
+{"seq": 27, "point": "ApplySignal", "arg": "EventReady", "instance": "domain:other"}
+{"seq": 28, "point": "StatusWritten", "arg": "Ready", "instance": "domain:other"}
+{"seq": 29, "point": "RegistryComplete", "arg": "", "domain": "other", "instance": "domain:other"}
+{"seq": 30, "point": "ScopeClose", "arg": "", "instance": "domain:other"}
+{"seq": 31, "point": "ScopeClose", "arg": "", "instance": "domain:auth"}
+{"seq": 32, "point": "ScopeClose", "arg": "", "instance": "domain:billing"}
+{"seq": 33, "point": "ApiShutdown", "arg": "", "instance": "default"}
+{"seq": 52, "point": "ProviderShutDown", "arg": "30", "provider": "Auth", "providerInstance": "5818772c", "caller": "openfeature-provider-thread-1", "instance": "domain:auth"}
+{"seq": 53, "point": "ProviderShutDown", "arg": "31", "provider": "Default", "providerInstance": "5ff0e576", "caller": "openfeature-provider-thread-2", "instance": "domain:other"}
+{"seq": 54, "point": "ShutdownReturned", "arg": "30 true", "instance": "domain:auth"}
+{"seq": 55, "point": "ShutdownReturned", "arg": "31 true", "instance": "domain:other"}
+{"seq": 56, "point": "ProviderShutDown", "arg": "32", "provider": "Billing", "providerInstance": "3cff51d4", "caller": "openfeature-provider-thread-3", "instance": "domain:billing"}
+{"seq": 57, "point": "ShutdownReturned", "arg": "32 true", "instance": "domain:billing"}

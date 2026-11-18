@@ -319,7 +319,9 @@ lazy val core = (project in file("core"))
         ProblemMatcher.make("zio.openfeature.internal.EventBridge.<init>*"),
         // non-public: private[openfeature] lifecycle inputs; admission also reads whether a shutdown() still runs
         ProblemMatcher.make("zio.openfeature.internal.LifecycleInput.Admit.*"),
-        ProblemMatcher.make("zio.openfeature.internal.LifecycleInput.SdkShutDownAwaited.*")
+        ProblemMatcher.make("zio.openfeature.internal.LifecycleInput.SdkShutDownAwaited.*"),
+        // non-public: private[openfeature] test-only collector, now a per-test collector the aspect opens
+        ProblemMatcher.make("zio.openfeature.internal.Quiescence.observed")
       )
     ))
   )

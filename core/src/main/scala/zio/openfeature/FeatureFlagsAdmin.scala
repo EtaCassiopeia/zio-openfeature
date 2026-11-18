@@ -103,8 +103,10 @@ trait FeatureFlagsAdmin {
     *
     * A shutdown called while a [[setProvider]] swap is in flight, or queued, waits for those swaps to settle (each is
     * bounded by the init timeout) before it starts, so the final `NotReady` is never overwritten by a swap's outcome.
-    * Waiting for an earlier swap to finish can be interrupted, which cancels the shutdown before it has changed
-    * anything; once it starts, it runs to completion.
+    * Waiting for an earlier swap to finish can be interrupted, which cancels the shutdown before it has changed this
+    * instance; once it starts, it runs to completion. An instance that owns its API first retires every other instance
+    * on it, each once its own swaps settle: an interrupt during that step can leave some retired and others not, with
+    * the API still up; the owner's scope close retires the rest and tears the API down.
     *
     * Provider/API teardown depends on ownership. An instance created by a sole-owner factory (e.g. `fromProvider` /
     * `fromProviderAsync`) shuts down the underlying OpenFeature API, and with it its provider. An instance that shares

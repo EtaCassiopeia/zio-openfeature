@@ -173,8 +173,9 @@ given untouched: a shut-down instance is never revived, so build a new layer ins
 A shutdown called while a [provider swap](providers.md#replace-the-provider-at-runtime) is in flight waits for that
 swap to finish first, and for any swap already queued behind it, each bounded by its `initTimeout` and, after a failed
 swap, a rollback's, and then runs. The status ends `NotReady` whatever the swap's outcome. Interrupting a shutdown that
-is still waiting for a swap cancels it before it has changed this instance; on an owner, other instances on the same
-API have already been retired. An instance that owns its API also shuts down a provider that a
+is still waiting for a swap cancels it before it has changed this instance. On an owner, the shutdown first retires the
+other instances on the same API, each once its own swaps settle, so an interrupt in that step can leave some of them
+retired and others not; nothing leaks, as the owner's scope close retires the rest and tears the API down. An instance that owns its API also shuts down a provider that a
 [timed-out swap](providers.md#replace-the-provider-at-runtime) replaced, if the swap's new provider has not become
 ready by then. Closing the layer's scope waits for a swap in flight, and any queued ahead of it, the same way before it
 tears the API down, so it can take as long as those swaps do, each bounded by its `initTimeout` and rollback.

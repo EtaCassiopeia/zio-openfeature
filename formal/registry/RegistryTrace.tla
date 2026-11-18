@@ -87,6 +87,7 @@ TraceStep ==
     \/ Lib("CloseInstance", CloseInstance(Step.instance))
     \* The run's owner is the model's.
     \/ Lib("OwnerClose", owner = Step.instance /\ OwnerClose)
+    \/ Lib("RegistryClose", RegistryClose)
     \/ Next1 = "End" /\ Ended /\ i' = i + 1
 
 TraceSpec == TInit /\ [][TraceStep]_<< vars, traceVars >>

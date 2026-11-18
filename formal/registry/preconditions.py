@@ -30,8 +30,10 @@ guards = [
     ("FailMark: once per provider",
      "    /\\ failedOn[i] # bound[domainOf[i]]\n    /\\ bound[domainOf[i]] \\in registered\n",
      "    /\\ bound[domainOf[i]] \\in registered\n", "failure-marked-twice"),
-    ("OwnerClose: no failure deciding", "    /\\ deciding = {}\n    /\\ lock = None\n", "    /\\ lock = None\n",
-     "owner-closes-while-a-failure-decides"),
+    # Anchored on the owner's phase: RegistryClose has the same deciding and lock guards.
+    ("OwnerClose: no failure deciding",
+     '    /\\ phase[owner] = "open"\n    /\\ swapping = None\n    /\\ deciding = {}\n',
+     '    /\\ phase[owner] = "open"\n    /\\ swapping = None\n', "owner-closes-while-a-failure-decides"),
     ("FailDecide: the model's decision", "         /\\ Agrees(p, LibraryShuts(n, p), Step.shut)\n", "",
      "failure-defers-to-nobody", TRACE),
     ("SwapFail: the model's decision", 'Lib("SwapFail", SwapDecided(Step.instance) /\\ SwapFail(Step.instance))',

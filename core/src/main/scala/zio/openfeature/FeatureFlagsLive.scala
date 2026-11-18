@@ -1079,7 +1079,21 @@ private[openfeature] object FeatureFlagsLive {
   private[openfeature] val CallSkipped    = 4
 
   /** What the end-state check reads of a wrapper the instance registered. */
-  final private[openfeature] case class WrapperEnd(name: String, shutDownInCycle: Boolean, laneRunning: Boolean)
+  /** What the end-state check reads of a wrapper. The name is the provider's own metadata, read only for a wrapper the
+    * check reports, so a live instance's check never calls into the provider.
+    */
+  final private[openfeature] class WrapperEnd(
+    nameOf: => String,
+    val shutDownInCycle: Boolean,
+    val laneRunning: Boolean
+  ) {
+    lazy val name: String = nameOf
+  }
+
+  private[openfeature] object WrapperEnd {
+    def apply(name: => String, shutDownInCycle: Boolean, laneRunning: Boolean): WrapperEnd =
+      new WrapperEnd(name, shutDownInCycle, laneRunning)
+  }
 
   /** The wrappers an instance in `record` registered: the installed provider's, and both sides of each replaced
     * registration, once each.

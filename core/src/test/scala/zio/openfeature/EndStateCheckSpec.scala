@@ -71,6 +71,14 @@ object EndStateCheckSpec extends ZIOSpecDefault {
         val swapping = live.copy(lock = Lock.Swap, orphans = List(orphan -> "incoming"))
         assertTrue(check(swapping, ProviderStatus.Ready).isEmpty)
       },
+      test("a wrapper it does not report has its provider's name left unread") {
+        val unread =
+          WrapperEnd(throw new IllegalStateException("name read"), shutDownInCycle = false, laneRunning = true)
+        assertTrue(
+          check(live, ProviderStatus.Ready, wrappers = List(unread)).isEmpty,
+          check(shutDown, wrappers = List(unread)).isEmpty
+        )
+      },
       test("an ended instance whose wrapper still runs a lane it never shut down") {
         assertTrue(check(shutDown, wrappers = List(active)).isEmpty, check(closed, wrappers = List(active)).isEmpty)
       }

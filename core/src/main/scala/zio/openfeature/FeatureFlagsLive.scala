@@ -14,6 +14,7 @@ import zio.openfeature.internal.{
   LifecycleEffect,
   LifecycleInput,
   LifecycleProbe,
+  LifecycleState,
   Lock,
   Quiescence,
   Timeouts,
@@ -115,24 +116,15 @@ final private[openfeature] class FeatureFlagsLive(
 
       def violations: UIO[Chunk[String]] =
         providerStatus.map { status =>
-          val record   = lifecycle.snapshot
-          val ended    = record.closed || record.shutDown
-          val wrappers = (record.installed :: record.replaced.flatMap { case (h, p) => List(h, p) }).collect {
-            case m: ManagedProvider => m
-          }.distinct
-          Chunk.fromIterable(
-            List(
-              Option.when(abandonedCallCount != 0)(s"$abandonedCallCount abandoned provider calls still counted"),
-              Option.when(ended && eventBridge.bridgeAttached)("the event bridge is still attached to the client"),
-              Option.when((ended || record.lock == Lock.Free) && record.orphans.nonEmpty)(
-                s"orphans left: ${record.orphans.map(_._2).mkString(", ")}"
-              ),
-              Option.when(record.shutDown && status != ProviderStatus.NotReady)(s"shut down with status $status")
-            ).flatten ++
-              (if (ended) wrappers.filter(w => w.shutDownInCycle && w.laneRunning).map { w =>
-                 s"the event lane of '${ProviderNames.of(w)}' still runs after its shutdown"
-               }
-               else Nil)
+          val record = lifecycle.snapshot
+          FeatureFlagsLive.endStateViolations(
+            record,
+            status,
+            abandonedCallCount,
+            eventBridge.bridgeAttached,
+            FeatureFlagsLive.wrappersOf(record).map { w =>
+              FeatureFlagsLive.WrapperEnd(ProviderNames.of(w), w.shutDownInCycle, w.laneRunning)
+            }
           )
         }
     }
@@ -662,13 +654,17 @@ final private[openfeature] class FeatureFlagsLive(
 
   private def skipSwap(newProvider: OFFeatureProvider): UIO[Unit] =
     probe.at(Point.SwapSkipped) *>
-      ZIO.logDebug(s"setProvider: '${ProviderNames.of(newProvider)}' is already the bound provider; nothing to change")
+      ZIO.attempt(ProviderNames.of(newProvider)).orElseSucceed(FeatureFlags.UnknownProviderName).flatMap { name =>
+        ZIO.logDebug(s"setProvider: '$name' is already the bound provider; nothing to change")
+      }
 
   private def runSwap(incoming: Bound, newProvider: OFFeatureProvider): IO[LifecycleError, Unit] = {
     val swap = for {
       _ <- probe.at(Point.SwapStart(newProvider))
-      incomingName = ProviderNames.beforeInit(newProvider)
-      newName      = incomingName.render
+      // Read before `initialize()`, as the build reads it: a wrapper around a MultiProvider, which has no metadata
+      // until it has initialized, may throw. The name is read again once the provider has initialized.
+      incomingName <- ZIO.attempt(ProviderNames.beforeInit(newProvider)).orElseSucceed(ProviderName.Pending)
+      newName = incomingName.render
       _ <- probe.at(Point.ApplySignal(Signal.SwapStarted))
       // One step, before the SDK changes: the gate goes up before the NotReady transition, so no bridge event (a
       // queued READY from the OLD provider) drives the status mid-swap; the generation moves, so an evaluation that
@@ -1085,4 +1081,56 @@ private[openfeature] object FeatureFlagsLive {
   private[openfeature] val CallAbandoned  = 2
   private[openfeature] val CallNotStarted = 3
   private[openfeature] val CallSkipped    = 4
+
+  /** What the end-state check reads of a wrapper the instance registered. */
+  /** What the end-state check reads of a wrapper. The name is the provider's own metadata, read only for a wrapper the
+    * check reports, so a live instance's check never calls into the provider.
+    */
+  final private[openfeature] class WrapperEnd(
+    nameOf: => String,
+    val shutDownInCycle: Boolean,
+    val laneRunning: Boolean
+  ) {
+    lazy val name: String = nameOf
+  }
+
+  private[openfeature] object WrapperEnd {
+    def apply(name: => String, shutDownInCycle: Boolean, laneRunning: Boolean): WrapperEnd =
+      new WrapperEnd(name, shutDownInCycle, laneRunning)
+  }
+
+  /** The wrappers an instance in `record` registered: the installed provider's, and both sides of each replaced
+    * registration, once each.
+    */
+  private[openfeature] def wrappersOf(record: LifecycleState): List[ManagedProvider] =
+    (record.installed :: record.replaced.flatMap { case (h, p) => List(h, p) }).collect { case m: ManagedProvider =>
+      m
+    }.distinct
+
+  /** The end-state check's verdict on an instance in `record` with `status`: what [[FeatureFlagsLive.endState]]
+    * reports. Empty when nothing is wrong.
+    */
+  private[openfeature] def endStateViolations(
+    record: LifecycleState,
+    status: ProviderStatus,
+    abandoned: Int,
+    bridgeAttached: Boolean,
+    wrappers: List[WrapperEnd]
+  ): Chunk[String] = {
+    val ended = record.closed || record.shutDown
+    Chunk.fromIterable(
+      List(
+        Option.when(abandoned != 0)(s"$abandoned abandoned provider calls still counted"),
+        Option.when(ended && bridgeAttached)("the event bridge is still attached to the client"),
+        Option.when((ended || record.lock == Lock.Free) && record.orphans.nonEmpty)(
+          s"orphans left: ${record.orphans.map(_._2).mkString(", ")}"
+        ),
+        Option.when(record.shutDown && status != ProviderStatus.NotReady)(s"shut down with status $status")
+      ).flatten ++
+        (if (ended) wrappers.filter(w => w.shutDownInCycle && w.laneRunning).map { w =>
+           s"the event lane of '${w.name}' still runs after its shutdown"
+         }
+         else Nil)
+    )
+  }
 }

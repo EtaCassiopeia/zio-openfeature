@@ -31,6 +31,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   number in range now decodes as itself, and anything else is a `Left` (an override fails with `OverrideTypeMismatch`).
   `FlagType[Double]` now rejects a finite number too large for a `Double` instead of serving an infinity. Another
   `Number` subclass is read from its decimal `toString`, and is a `Left` when that is not a decimal (#886).
+- **`setProvider`, `FeatureFlagRegistry.setProvider` and an async build no longer fail with a `NullPointerException`
+  for a `CircuitBreakerProvider` or `CachingProvider` around a multi-provider.** Such a wrapper now has no name,
+  instead of throwing, until the multi-provider has initialized, and a swap reads a provider's name again once it has
+  initialized, as the build already did (#882).
 - **`fromAcquireAsync` no longer shuts a provider down while its `verify` is still running.** An attempt whose
   `constructionTimeout` or layer release landed during a blocking `verify` released the candidate at once: its
   `shutdown()` ran and `acquire`'s `Scope` closed while `verify` could still be using both. The attempt now keeps them,

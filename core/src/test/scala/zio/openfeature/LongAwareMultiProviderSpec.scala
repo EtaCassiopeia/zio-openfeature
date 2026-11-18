@@ -27,7 +27,7 @@ import dev.openfeature.sdk.{
   TrackingEventDetails => OFTrackingEventDetails,
   Value
 }
-import dev.openfeature.sdk.{EventProviderAccess, ProviderEvent, SdkPackageChild}
+import dev.openfeature.sdk.{ProviderEvent, SdkPackageChild}
 
 import scala.jdk.CollectionConverters._
 

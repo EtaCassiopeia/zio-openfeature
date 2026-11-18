@@ -498,14 +498,47 @@ object LongAwareMultiProviderSpec extends ZIOSpecDefault {
         chain.shutdown()
         settle.as(assertTrue(!seen.contains(ProviderEvent.PROVIDER_STALE)))
       },
-      test("a chain initialized again after shutdown re-attaches its children") {
+      test("a chain initialized again after shutdown forwards its children's events") {
         val child = new SdkPackageChild("a")
         val chain = sinkChain(child)
+        val seen  = sinkOn(chain)
         chain.initialize(ctx0)
         chain.shutdown()
         chain.initialize(ctx0)
-        // The chain's own emitter is closed by its shutdown, so attachment is observed on the child instead.
-        assertTrue(!canAttach(child))
+        child.emitStale()
+        seenWithin(seen, ProviderEvent.PROVIDER_STALE).as(assertTrue(seen.contains(ProviderEvent.PROVIDER_STALE)))
+      },
+      test("a member that fails its first initialize leaves a chain that forwards events once initialized again") {
+        val failed = new AtomicBoolean(false)
+        val steady = new SdkPackageChild("steady")
+        val flaky  = new SdkPackageChild(
+          "flaky",
+          onInitialize = () => if (failed.compareAndSet(false, true)) throw new RuntimeException("init failed")
+        )
+        val chain  = sinkChain(steady, flaky)
+        val seen   = sinkOn(chain)
+        val first  = scala.util.Try(chain.initialize(ctx0))
+        val second = scala.util.Try(chain.initialize(ctx0))
+        steady.emitStale()
+        seenWithin(seen, ProviderEvent.PROVIDER_STALE).as(
+          assertTrue(first.isFailure, second.isSuccess, seen.contains(ProviderEvent.PROVIDER_STALE))
+        )
+      },
+      test("shutdown reaches every child when one throws, and rethrows the first failure") {
+        val reached = new ConcurrentLinkedQueue[String]()
+        val boom    = new RuntimeException("a shutdown failed")
+        val later   = new RuntimeException("c shutdown failed")
+        val a       = new SdkPackageChild("a", onShutdown = () => { reached.add("a"); throw boom })
+        val b       = new SdkPackageChild("b", onShutdown = () => { reached.add("b"); () })
+        val c       = new SdkPackageChild("c", onShutdown = () => { reached.add("c"); throw later })
+        val chain   = sinkChain(a, b, c)
+        chain.initialize(ctx0)
+        val tried = scala.util.Try(chain.shutdown())
+        assertTrue(
+          reached.asScala.toList == List("a", "b", "c"),
+          tried.failed.toOption.contains(boom),
+          boom.getSuppressed.toList == List(later)
+        )
       }
     ),
     suite("fromAcquireAsync with the default compose")(

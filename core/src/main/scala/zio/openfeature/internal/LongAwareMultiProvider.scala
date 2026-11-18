@@ -46,7 +46,8 @@ import scala.util.Try
   * provider's (`NOT_READY`, then `READY` once initialization succeeds, then whatever its events say), and the chain's
   * own status is the worst of them, by the appendix's precedence `FATAL` > `NOT_READY` > `ERROR` > `STALE` > `READY`. A
   * child's status event is re-emitted, with that child's details, only when it changes the chain's status; a
-  * configuration change is always re-emitted. `getState` reports the chain's status.
+  * configuration change is always re-emitted. `getState` reports the chain's status. A chain shut down and initialized
+  * again, as a retry of a failed initialization does, keeps forwarding its children's events.
   */
 final private[openfeature] class LongAwareMultiProvider(
   providers: java.util.List[OFFeatureProvider],
@@ -118,6 +119,10 @@ final private[openfeature] class LongAwareMultiProvider(
 
   // Once per initialization: the SDK's initialize calls this when a member fails, and whoever owns the chain then calls
   // it again. A chain initialized again, as a retry of a failed initialization does, has members to shut down again.
+  //
+  // It shuts the members down itself rather than through `super.shutdown()`: the SDK's would also close the chain's
+  // own event emitter, which nothing reopens, so a chain initialized again could no longer re-emit its members'
+  // events. The emitter's threads are daemon threads that exit once idle.
   override def shutdown(): Unit =
     if (shutDown.compareAndSet(false, true)) {
       lock.synchronized {
@@ -125,7 +130,7 @@ final private[openfeature] class LongAwareMultiProvider(
         chainState = ProviderState.NOT_READY
       }
       childStates.indices.foreach(detach)
-      super.shutdown()
+      onEveryChild(_.shutdown())
     }
 
   @scala.annotation.nowarn("msg=deprecated")
@@ -200,10 +205,14 @@ final private[openfeature] class LongAwareMultiProvider(
   override def getProviderHooks: java.util.List[OFHook[_]] = hooks
 
   // The SDK's MultiProvider inherits FeatureProvider's no-op `track`, so the event would reach no child. Tracking has no
-  // result for a strategy to pick, so every child is offered it, and one throwing child must not starve the rest: the
-  // first failure is rethrown once all have run, carrying the others as suppressed.
-  override def track(eventName: String, ctx: OFEvaluationContext, details: OFTrackingEventDetails): Unit = {
-    val failures = children.asScala.toList.flatMap(child => Try(child.track(eventName, ctx, details)).failed.toOption)
+  // result for a strategy to pick, so every child is offered it.
+  override def track(eventName: String, ctx: OFEvaluationContext, details: OFTrackingEventDetails): Unit =
+    onEveryChild(_.track(eventName, ctx, details))
+
+  // Runs `call` on every child in order, so one throwing child does not starve the rest; the first failure is rethrown
+  // once all have run, carrying the others as suppressed.
+  private def onEveryChild(call: OFFeatureProvider => Unit): Unit = {
+    val failures = children.asScala.toList.flatMap(child => Try(call(child)).failed.toOption)
     failures.headOption.foreach { first =>
       // Children may rethrow shared or cached instances: a Throwable cannot suppress itself, and one already suppressed
       // by an earlier call must not be added again, or a cached exception's list grows with every event.

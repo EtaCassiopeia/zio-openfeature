@@ -9,6 +9,7 @@ class SdkPackageChild(
   name: String,
   onInitialize: () => Unit = () => (),
   onDetach: () => Unit = () => (),
+  onShutdown: () => Unit = () => (),
   attachFails: Boolean = false
 ) extends EventProvider {
 
@@ -18,7 +19,7 @@ class SdkPackageChild(
   override def initialize(ctx: EvaluationContext): Unit = onInitialize()
 
   // The SDK's shutdown terminates the emitter, and a test re-initializes and emits after the chain shuts this down.
-  override def shutdown(): Unit = ()
+  override def shutdown(): Unit = onShutdown()
 
   override private[sdk] def attach(
     onEmit: TriConsumer[EventProvider, ProviderEvent, ProviderEventDetails],

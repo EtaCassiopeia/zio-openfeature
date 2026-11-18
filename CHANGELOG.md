@@ -18,6 +18,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   call ran; its return then closed the provider while the status read `Ready` and every evaluation failed. The build
   now waits up to three seconds for the call and fails with `IllegalStateException` if it is still running
   (`ProviderInitializationFailed` from a registry's `getClient`) (#930).
+- **A multi-provider chain whose initialization failed and was retried forwards its members' events again.** The
+  failed initialization shut the chain down, which closed the event emitter the chain re-emits its members' events
+  through, and nothing reopened it. After a retry, such as a registry's next `getClient`, the chain read `Ready` but a
+  member's `STALE`, `ERROR`, `READY` or configuration change never reached its handlers or moved its status. A
+  member whose `shutdown()` throws now fails the chain's `shutdown()` with that error, once every member has been
+  shut down, where it used to be only logged (#941).
 - **`fromAcquireAsync` releases a timed-out attempt suspended in `verify` before `onConstructionError` runs.** The
   timeout could misread such an attempt as busy in a blocking call and go on without waiting for it, so its provider
   could shut down, and its `Scope` close, after the next attempt started or `onConstructionError` ran (#913).

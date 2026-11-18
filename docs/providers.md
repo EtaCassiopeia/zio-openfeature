@@ -161,7 +161,8 @@ The strategy decides when the chain moves on:
   `ERROR` event reaches your handlers, with that member's details, only when it changes the chain's status; its
   configuration changes always do. Under `firstSuccessful` one `Fatal` member therefore makes the whole chain `Fatal`,
   although another member could answer. A member that sends no events (not an `EventProvider`, such as a
-  `DeferredProvider`) counts as `Ready` once the chain has initialized.
+  `DeferredProvider`) counts as `Ready` once the chain has initialized. This also holds once a failed initialization
+  of the chain has been retried, for example by a registry's next `getClient`.
 - The chain takes over its members' event channels, as the SDK does for a registered provider. A member whose channel
   something else already holds (it is also registered with an API, sits in another chain, or appears twice in this
   one) keeps it, and counts in this chain as a member that sends no events.

@@ -114,10 +114,12 @@ object RollbackEvaluationWindowSpec extends ZIOSpecDefault {
         val k = r.fold(e => s"err:${e.getClass.getSimpleName}", identity)
         out.update(m => m.updated(k, m.getOrElse(k, 0) + 1))
       } *> ZIO.yieldNow).repeatUntilZIO(_ => stop.get).fork
-      _     <- ZIO.sleep(20.millis)
-      _     <- ZIO.succeed(bInit.countDown())
-      res   <- swap.join
-      _     <- ZIO.succeed(release.countDown())
+      _   <- ZIO.sleep(20.millis)
+      _   <- ZIO.succeed(bInit.countDown())
+      res <- swap.join
+      _   <- ZIO.succeed(release.countDown())
+      // An evaluation that starts while the swap runs is refused, so let one start after it before stopping (bounded).
+      _     <- out.get.repeatUntil(_.contains(if (bFails) "A" else "B")).timeout(5.seconds)
       _     <- stop.set(true)
       _     <- loop.join
       evals <- out.get

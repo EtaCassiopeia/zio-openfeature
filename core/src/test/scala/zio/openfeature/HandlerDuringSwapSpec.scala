@@ -159,7 +159,17 @@ object HandlerDuringSwapSpec extends ZIOSpecDefault {
           ff <- instance(new Instant("A"))
           _  <- ff.awaitReady(5.seconds)
           b = new HoldsNameRead("B")
-          swap   <- ff.setProvider(b).either.fork
+          sawB   <- Promise.make[Nothing, Unit]
+          stream <- ff.subscribeEvents
+          _      <- stream
+            .collect { case ProviderEvent.Ready(m, _) if m.name == "B" => () }
+            .take(1)
+            .runDrain
+            .zipRight(sawB.succeed(()))
+            .forkScoped
+          swap <- ff.setProvider(b).either.fork
+          // B's READY is published before the handler subscribes, so only the re-check could run it.
+          _      <- sawB.await
           parked <- await(b.held)
           calls  <- Ref.make(0)
           cancel <- ff.on(ProviderEventType.Ready, _ => calls.update(_ + 1))

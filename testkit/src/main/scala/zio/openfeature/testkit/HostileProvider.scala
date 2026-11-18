@@ -31,7 +31,10 @@ object HostileProvider {
   /** An `Error` that is not a `VirtualMachineError`: what a provider's own assertion failure looks like. */
   final class HostileError(message: String) extends Error(message)
 
-  /** One checked exception, one unchecked exception and one non-fatal `Error`. */
+  /** One checked exception, one unchecked exception and one non-fatal `Error`: only what ZIO does not treat as fatal.
+    * `FeatureFlags` and the extras wrappers also absorb a provider's `StackOverflowError`, but a library that hands a
+    * provider call to ZIO itself must guard against it, or the JVM exits.
+    */
   val throwables: Chunk[Throwable] = Chunk(
     new java.io.IOException("hostile provider: checked"),
     new IllegalStateException("hostile provider: unchecked"),

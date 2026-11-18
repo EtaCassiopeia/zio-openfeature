@@ -162,9 +162,10 @@ object FeatureFlagError {
   def classify(t: Throwable): EvaluationError with LifecycleError = {
     val msg = Option(t.getMessage).getOrElse("")
     t match {
-      case _: java.net.UnknownHostException   => Unreachable(t)
-      case _: java.net.NoRouteToHostException => Unreachable(t)
-      case _: java.net.ConnectException       => Unreachable(t)
+      case overflow: internal.ProviderCalls.ProviderStackOverflow => ProviderError(overflow.error)
+      case _: java.net.UnknownHostException                       => Unreachable(t)
+      case _: java.net.NoRouteToHostException                     => Unreachable(t)
+      case _: java.net.ConnectException                           => Unreachable(t)
       case _: java.nio.channels.ClosedChannelException if msg.toLowerCase(java.util.Locale.ROOT).contains("connect") =>
         Unreachable(t)
       case _ =>

@@ -31,7 +31,8 @@ import dev.openfeature.sdk.{
   * A response that is not OFREP JSON (an HTML error page from a proxy, an empty body, truncated JSON) is `GENERAL` with
   * the caller's default, whatever its status, on every resolver. The contrib provider parses the body before it reads
   * the status and throws `ParseError` for such a body, which would tell a circuit breaker the server is reachable and
-  * answered bad data; the exception carries no status, so a 200 with malformed JSON is `GENERAL` too. The contrib
+  * answered bad data; the exception carries no status, so a 200 with malformed JSON is `GENERAL` too. A body of JSON
+  * `null` is one as well, though the contrib provider fails on it with a `NullPointerException` instead. The contrib
   * provider also throws `ParseError` for an evaluation context it cannot serialize (a `java.time.Instant` attribute,
   * say), before any request is sent: that one is left as it is, since the server was never asked.
   *
@@ -138,16 +139,20 @@ final class OFREPFeatureProvider private[ofrep] (val underlying: OfrepProvider) 
   ): ProviderEvaluation[T] =
     try resolve
     catch {
-      case e: ParseError if requestSerializes(ctx) =>
-        new ProviderEvaluation[T](
-          defaultValue,
-          null,
-          Reason.ERROR.toString,
-          ErrorCode.GENERAL,
-          s"response is not OFREP JSON (${e.getMessage})",
-          ImmutableMetadata.builder().build()
-        )
+      case e: ParseError if requestSerializes(ctx)                       => notOfrepJson(defaultValue, e.getMessage)
+      case e: NullPointerException if OFREPFeatureProvider.isNullBody(e) =>
+        notOfrepJson(defaultValue, "the body is JSON null")
     }
+
+  private def notOfrepJson[T](defaultValue: T, detail: String): ProviderEvaluation[T] =
+    new ProviderEvaluation[T](
+      defaultValue,
+      null,
+      Reason.ERROR.toString,
+      ErrorCode.GENERAL,
+      s"response is not OFREP JSON ($detail)",
+      ImmutableMetadata.builder().build()
+    )
 
   // The contrib provider serializes the request body with a plain `ObjectMapper`; a context that serializes with one
   // means the failed processing was the response's.
@@ -185,4 +190,17 @@ final class OFREPFeatureProvider private[ofrep] (val underlying: OfrepProvider) 
 
 private object OFREPFeatureProvider {
   private val RequestMapper = new com.fasterxml.jackson.databind.ObjectMapper()
+
+  // The contrib provider reads a body of JSON `null` (with or without trailing bytes) as a null response and passes it
+  // to `Resolution`'s constructor, which dereferences it: a NullPointerException, not the ParseError a body that is not
+  // OFREP JSON gets. Only that NPE is relabeled. A JIT-compiled hot path may throw the JVM's preallocated NPE, which has
+  // no stack trace, so one without frames is taken to be the same failure: it can only come from inside the contrib
+  // resolver call, where this is the one NPE known.
+  private[ofrep] def isNullBody(e: NullPointerException): Boolean =
+    e.getStackTrace.headOption match {
+      case Some(top) => top.getClassName == ResolutionClass && top.getMethodName == "<init>"
+      case None      => true
+    }
+
+  private val ResolutionClass = "dev.openfeature.contrib.providers.ofrep.internal.Resolution"
 }

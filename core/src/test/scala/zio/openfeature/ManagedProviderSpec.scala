@@ -132,6 +132,43 @@ object ManagedProviderSpec extends ZIOSpecDefault {
         fresh   <- ZIO.succeed(wrapper.shutDownRunning)
       } yield assertTrue(!before, during, !after, !fresh)
     },
+    test("shutDownRunning stays true while a shutdown() runs, even after an initialize() enters") {
+      val entered  = new CountDownLatch(1)
+      val release  = new CountDownLatch(1)
+      val delegate = new Delegate {
+        override def shutdown(): Unit = { entered.countDown(); release.await(10, TimeUnit.SECONDS); super.shutdown() }
+      }
+      val wrapper = ManagedProvider(delegate)
+      for {
+        _       <- initOn(wrapper, None).flatMap(_.join)
+        closing <- ZIO.attemptBlocking(wrapper.shutdown()).fork
+        _       <- ZIO.attemptBlocking(entered.await(10, TimeUnit.SECONDS))
+        _       <- initOn(wrapper, None).flatMap(_.join)
+        reinit  <- ZIO.succeed(wrapper.shutDownRunning)
+        _       <- ZIO.succeed(release.countDown())
+        _       <- closing.join
+        after   <- ZIO.succeed(wrapper.shutDownRunning)
+      } yield assertTrue(reinit, !after)
+    },
+    test("interrupting a wait for a running shutdown() leaves it reading as running until the call returns") {
+      val entered  = new CountDownLatch(1)
+      val release  = new CountDownLatch(1)
+      val delegate = new Delegate {
+        override def shutdown(): Unit = { entered.countDown(); release.await(10, TimeUnit.SECONDS); super.shutdown() }
+      }
+      val wrapper = ManagedProvider(delegate)
+      for {
+        _          <- initOn(wrapper, None).flatMap(_.join)
+        closing    <- ZIO.attemptBlocking(wrapper.shutdown()).fork
+        _          <- ZIO.attemptBlocking(entered.await(10, TimeUnit.SECONDS))
+        waiting    <- wrapper.awaitShutDownReturned(10.seconds).fork
+        _          <- waiting.interrupt
+        afterWait  <- ZIO.succeed(wrapper.shutDownRunning)
+        _          <- ZIO.succeed(release.countDown())
+        _          <- closing.join
+        afterClose <- ZIO.succeed(wrapper.shutDownRunning)
+      } yield assertTrue(afterWait, !afterClose)
+    },
     test("a shutdown() that throws is recorded as returned without success, after the call, and the throw propagates") {
       val points = new CopyOnWriteArrayList[LifecycleProbe.Point]()
       val probe  = new LifecycleProbe {

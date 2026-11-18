@@ -7,13 +7,15 @@ TLC (1.8, for `-generate` and the community modules' Json) walks Generate.tla at
 states each, from `seed`. Each behaviour is written to `<out dir>/<n>.ndjson`, one state per line with every variable
 of the model and `act`, the action that produced the state. `LifecycleReplaySpec` (core's tests) replays them against
 `LifecycleStep.step`. Exits non-zero when a behaviour is missing or shorter than `depth`, or when an action of
-`LifecycleNext` has no label in Generate.tla; prints how often each action was generated.
+`LifecycleNext` has no label in Generate.tla, or when an action is never generated, except those absent by design
+(`BY_DESIGN`, each while its condition holds); prints how often each action was generated.
 
 The driver is `formal/generate.py`; this fixes the model (this directory, `Generate.cfg.in`) and its action source.
 """
 import argparse
 import importlib.util
 import os
+import re
 import sys
 
 here = os.path.dirname(os.path.abspath(__file__))
@@ -21,6 +23,17 @@ here = os.path.dirname(os.path.abspath(__file__))
 _spec = importlib.util.spec_from_file_location("model_generate", os.path.join(os.path.dirname(here), "generate.py"))
 generate = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(generate)
+
+
+def by_design(lifecycle_tla, generate_cfg):
+    """The actions the generator never takes on purpose, each with why and whether that still holds."""
+    return {
+        # The swap body runs uninterruptibly, so a caller's interrupt is no step of the lifecycle.
+        "CallerInterrupt": ("Interruptible is empty",
+                            re.search(r"^Interruptible == \{\}\s*$", lifecycle_tla, re.M) is not None),
+        # A silent death sets only a ghost the library never reads, so a replay of it would compare nothing.
+        "Die": ("AllowDeath is FALSE", re.search(r"^\s*AllowDeath = FALSE\s*$", generate_cfg, re.M) is not None),
+    }
 
 
 def main():
@@ -38,7 +51,8 @@ def main():
 
     sys.exit(generate.run(here, args.tla_jar, args.cm_jar, args.out, "next:Lifecycle.tla:LifecycleNext", args.num,
                           args.depth, args.seed, {"shutdown_from": str(shutdown_from)},
-                          f", shutdown from level {shutdown_from}"))
+                          f", shutdown from level {shutdown_from}",
+                          by_design(generate.read(here, "Lifecycle.tla"), generate.read(here, "Generate.cfg.in"))))
 
 
 if __name__ == "__main__":

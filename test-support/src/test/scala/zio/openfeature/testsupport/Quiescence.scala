@@ -20,11 +20,10 @@ import zio.test._
   * bridge and lane checks apply only to an instance that is closed or shut down, and on a live instance the orphan
   * check runs only while no swap or shutdown holds its lock.
   *
-  * What is checked is what the test registered on its own fiber and the fibers it joined (see
-  * `zio.openfeature.internal.Quiescence`): an instance built in a fiber never joined, or in a layer built outside the
-  * test's fiber, is not seen. Resources held by the test's own `Scope` are still open when the checks run, so a test
-  * closes what it builds in a `ZIO.scoped` of its own. The aspect makes the spec sequential, since the leak baseline is
-  * the whole JVM's.
+  * What is checked is what the test registered on any fiber it started, joined or not (see
+  * `zio.openfeature.internal.Quiescence`): an instance built in a layer built outside the test's fiber is not seen.
+  * Resources held by the test's own `Scope` are still open when the checks run, so a test closes what it builds in a
+  * `ZIO.scoped` of its own. The aspect makes the spec sequential, since the leak baseline is the whole JVM's.
   */
 object Quiescence {
 
@@ -36,18 +35,15 @@ object Quiescence {
       test: ZIO[R, TestFailure[E], TestSuccess]
     )(implicit trace: Trace): ZIO[R, TestFailure[E], TestSuccess] =
       LeakCheck.snapshot.flatMap { baseline =>
-        Registry.observed.locally(Chunk.empty) {
-          test.flatMap { success =>
-            for {
-              observed <- Registry.observed.get
-              found    <- settle(distinct(observed))
-              leaks    <- Live.live(LeakCheck.awaitNoLeaks(baseline, Within))
-              problems = found ++ leaks
-              result <-
-                if (problems.isEmpty) ZIO.succeed(success)
-                else ZIO.fail(TestFailure.Assertion(assertTrue(problems.isEmpty) ?? problems.mkString("; ")))
-            } yield result
-          }
+        Registry.collecting(test) { (success, observed) =>
+          for {
+            found <- settle(distinct(observed))
+            leaks <- Live.live(LeakCheck.awaitNoLeaks(baseline, Within))
+            problems = found ++ leaks
+            result <-
+              if (problems.isEmpty) ZIO.succeed(success)
+              else ZIO.fail(TestFailure.Assertion(assertTrue(problems.isEmpty) ?? problems.mkString("; ")))
+          } yield result
         }
       }
   }

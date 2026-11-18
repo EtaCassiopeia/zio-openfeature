@@ -335,7 +335,7 @@ final private[openfeature] class Evaluator(
           // down — it used to be an empty `Value()`, which meant a provider could never serve the caller's default
           // for a custom type the way it does for the scalar ones.
           withTimeout(
-            ZIO.attemptBlocking {
+            ProviderCalls.blocking {
               client.getObjectDetails(key, anyToValue(flagType.encode(default)), ofContext)
             }
           ).mapError(e => FeatureFlagError.classify(e))

@@ -147,7 +147,8 @@ private[openfeature] object LifecycleInput {
     managed: Option[ManagedProvider],
     initializing: ManagedProvider => Boolean,
     holderInitializing: ProviderRegistration.Registration => Boolean,
-    released: (ProviderRegistration.Registration, ManagedProvider) => Boolean
+    released: (ProviderRegistration.Registration, ManagedProvider) => Boolean,
+    shuttingDown: ManagedProvider => Boolean
   ) extends LifecycleInput
 
   /** A timed-out swap or rollback left `previous` behind, held by the pending initialization of `incoming` (model: the
@@ -164,10 +165,10 @@ private[openfeature] object LifecycleInput {
     */
   final case class Replaced(holder: ProviderRegistration.Registration, previous: Bound) extends LifecycleInput
 
-  /** The wait [[LifecycleEffect.AwaitSdkShutDown]] asked for ended, or its bound elapsed: nothing still holds
-    * `provider` back.
+  /** The wait [[LifecycleEffect.AwaitSdkShutDown]] asked for ended, or its bound elapsed: no registration still holds
+    * `provider` back. `stillRunning` when a `shutdown()` of it had started and not returned by then.
     */
-  final case class SdkShutDownAwaited(provider: ManagedProvider) extends LifecycleInput
+  final case class SdkShutDownAwaited(provider: ManagedProvider, stillRunning: Boolean) extends LifecycleInput
 
   /** A swap drops its gate, on every exit. */
   case object GateDown extends LifecycleInput
@@ -216,6 +217,11 @@ private[openfeature] object Refusal {
 
   /** An earlier `initialize()` of `provider` has not returned: the SDK would run a second one alongside it. */
   final case class StillInitializing(provider: OFFeatureProvider) extends Refusal
+
+  /** A `shutdown()` of `provider` has started and not returned within the wait: installed now, it would be closed when
+    * that call returns, while serving.
+    */
+  final case class StillShuttingDown(provider: OFFeatureProvider) extends Refusal
 
   /** The provider of a timed-out swap or rollback, `incoming`, still holds `provider`, and shuts it down if it
     * initializes.
@@ -300,8 +306,10 @@ private[openfeature] object LifecycleStep {
           case _                  => unchanged(state)
         }
 
-      case LifecycleInput.SdkShutDownAwaited(provider) =>
-        Outcome(state.copy(replaced = state.replaced.filterNot(_._2 eq provider)), None, Chunk.empty)
+      case LifecycleInput.SdkShutDownAwaited(provider, stillRunning) =>
+        val refused =
+          if (stillRunning) Chunk(LifecycleEffect.Refuse(Refusal.StillShuttingDown(provider))) else Chunk.empty
+        Outcome(state.copy(replaced = state.replaced.filterNot(_._2 eq provider)), None, refused)
 
       case LifecycleInput.OrphanRecorded(previous, incoming) =>
         Outcome(state.copy(orphans = (previous -> incoming) :: state.orphans), None, Chunk.empty)
@@ -352,9 +360,10 @@ private[openfeature] object LifecycleStep {
       case None    =>
         val (own, others) = state.replaced.partition { case (_, previous) => input.managed.exists(_ eq previous) }
         val kept          = others.filterNot { case (holder, previous) => input.released(holder, previous) }
-        val due           = own.exists { case (holder, previous) =>
+        // A shutdown of it already running is waited for too, whoever started it.
+        val due = own.exists { case (holder, previous) =>
           (holder.provider ne previous) && !input.released(holder, previous)
-        }
+        } || input.managed.exists(input.shuttingDown)
         input.managed.filter(_ => due) match {
           case Some(m) => Outcome(state.copy(replaced = own ++ kept), None, Chunk(LifecycleEffect.AwaitSdkShutDown(m)))
           case None    => Outcome(state.copy(replaced = kept), None, Chunk.empty)

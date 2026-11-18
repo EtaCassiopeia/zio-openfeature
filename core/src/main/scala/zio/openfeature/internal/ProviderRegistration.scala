@@ -398,8 +398,8 @@ private[openfeature] object ProviderRegistration {
   ): UIO[Unit] =
     Timeouts
       .boundedFinalizer(
-        ZIO
-          .attemptBlocking(provider.shutdown())
+        ProviderCalls
+          .blocking(provider.shutdown())
           .tapErrorCause(c => ZIO.logWarningCause(s"$label: provider shutdown failed", c)),
         timeout
       )(ZIO.logWarning(s"$label: provider shutdown exceeded $timeout; not waiting for it"))
@@ -417,9 +417,9 @@ private[openfeature] object ProviderRegistration {
     timeout: Duration
   ): Task[Unit] =
     Timeouts.failAfter(
-      ZIO
+      ProviderCalls
         // The slot's manager holds the provider's wrapper, when the library registered it.
-        .attemptBlocking(
+        .blocking(
           ProviderStateAccess
             .retryFailedInit(
               api,
@@ -444,8 +444,8 @@ private[openfeature] object ProviderRegistration {
     */
   def boundedInitialize(provider: OFFeatureProvider, context: OFEvaluationContext, timeout: Duration): Task[Unit] =
     Timeouts.failAfter(
-      ZIO
-        .attemptBlocking(provider.initialize(context))
+      ProviderCalls
+        .blocking(provider.initialize(context))
         .tapError(e => ZIO.logWarning(s"provider initialize failed: $e"))
         .disconnect,
       timeout,

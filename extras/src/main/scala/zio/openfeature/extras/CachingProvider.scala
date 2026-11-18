@@ -15,7 +15,7 @@ import dev.openfeature.sdk.{
 import zio._
 import zio.cache.{Cache, CacheStats, Lookup}
 import zio.openfeature.FeatureFlagError
-import zio.openfeature.internal.OrderedEmitter
+import zio.openfeature.internal.{OrderedEmitter, ProviderCalls}
 import java.util.concurrent.atomic.AtomicBoolean
 import scala.jdk.CollectionConverters._
 
@@ -440,7 +440,7 @@ object CachingProvider {
         // lookups for the same logical key, so the delegate runs once per miss. The lookup stays on the
         // calling thread (no blocking-pool hop): the SDK's MultiProvider hands hook context to its
         // resolvers through a thread-local, which another thread cannot see.
-        Lookup[CacheKey, Any, Throwable, ProviderEvaluation[Any]](ck => ZIO.attempt(ck.evaluate()))
+        Lookup[CacheKey, Any, Throwable, ProviderEvaluation[Any]](ck => ZIO.attempt(ProviderCalls.guard(ck.evaluate())))
       )
     } yield new CachingProvider(underlying, config, cache, rt)
 

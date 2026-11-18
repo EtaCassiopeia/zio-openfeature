@@ -115,7 +115,9 @@ A `FeatureFlagError` is also a `Throwable`, without a stack trace, so `.orDie` t
 `ff.boolean("dark-mode", false).orDie`. Its `getMessage` is `message` and its `getCause` is `cause`, or `null` for none.
 
 `FeatureFlagError.classify` sorts what a provider throws: network failures become `Unreachable`, HTTP 401 and 403
-`Unauthorized`, the rest `ProviderError`. Recover from the cases you expect and let the rest fail:
+`Unauthorized`, the rest `ProviderError`. A `StackOverflowError` thrown by the provider is a `ProviderError` carrying
+it; other `VirtualMachineError`s, such as `OutOfMemoryError`, are left to ZIO, which treats them as fatal. Recover
+from the cases you expect and let the rest fail:
 
 ```scala
 --8<-- "Evaluating.scala:recover"

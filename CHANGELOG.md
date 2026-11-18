@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Installing again a provider whose earlier `shutdown()` outlasts the three-second wait fails instead of leaving it
+  closed.** The swap used to proceed. The old `shutdown()` then returned and closed the provider it had just
+  initialized again, while the status read `Ready` and every evaluation failed. `setProvider` now fails with
+  `ProviderInitializationFailed` until that call returns (#890).
 - **`fromAcquireAsync` releases a timed-out attempt suspended in `verify` before `onConstructionError` runs.** The
   timeout could misread such an attempt as busy in a blocking call and go on without waiting for it, so its provider
   could shut down, and its `Scope` close, after the next attempt started or `onConstructionError` ran (#913).
@@ -40,6 +44,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   picked it, so removing the failed build's event handlers did not stop a delivery already picked. That delivery wrote
   the slot's current state, which is `Ready` once another provider with the same name is ready in the slot. A bridge
   whose handlers have been removed now applies no status (#903).
+- **A provider's `StackOverflowError` no longer exits the JVM.** The SDK client catches `Exception` only, and ZIO
+  treats every `VirtualMachineError` as fatal, so one evaluation, `track`, `initialize` or `shutdown` that overflowed
+  its stack ended the process. An evaluation or `track` now fails as `ProviderError` carrying the error, and the total
+  tier serves the default; an `initialize` or `shutdown` fails, or is logged, as for any other throw.
+  `CircuitBreakerProvider` and `CachingProvider` count it as a delegate failure. `OutOfMemoryError` and the
+  other `VirtualMachineError`s stay fatal (#891).
 - **A registry no longer leaks a failed provider that a provider failing too replaced.** A failed provider is left
   running so that `getClient` can initialize it again, and the SDK shuts it down only once another provider in its slot
   initializes. When the user registered another provider for that domain and it failed as well, nothing shut the first

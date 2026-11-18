@@ -21,6 +21,7 @@ import zio.openfeature.internal.{
   Bound,
   ManagedProvider,
   OrphanedProviders,
+  ProviderCalls,
   ProviderName,
   ProviderNames,
   ProviderRegistration,
@@ -822,17 +823,30 @@ final private[openfeature] class FeatureFlagsLive(
     for {
       _       <- ZIO.foreachDiscard(managed)(orphans.awaitSettling)
       outcome <- lifecycle.run(
-        LifecycleInput.Admit(newProvider, managed, _.initsInFlightAnywhere > 0, _.initializing, _.released(_))
+        LifecycleInput.Admit(
+          newProvider,
+          managed,
+          _.initsInFlightAnywhere > 0,
+          _.initializing,
+          _.released(_),
+          _.shutDownRunning
+        )
       )
       _ <- ZIO.foreachDiscard(outcome.effects) {
         case LifecycleEffect.Refuse(refusal) => ZIO.fail(refused(refusal))
         // Bounded, by the same bound the orphan watcher uses, and the swap then proceeds: the SDK skips the shutdown of
-        // a provider still registered in another slot of a shared API, and its executor can be wedged. Interruptible,
-        // and before the swap changes anything.
+        // a provider still registered in another slot of a shared API, and its executor can be wedged. A shutdown that
+        // reached the provider and is still running then is refused instead: it would close the provider once
+        // installed. Interruptible, and before the swap changes anything.
         case LifecycleEffect.AwaitSdkShutDown(provider) =>
           probe.at(Point.AwaitSdkShutDown) *>
             provider.awaitShutDown(OrphanedProviders.SdkShutDownWait) *>
-            lifecycle.run(LifecycleInput.SdkShutDownAwaited(provider)).unit
+            lifecycle.run(LifecycleInput.SdkShutDownAwaited(provider, provider.shutDownRunning)).flatMap { awaited =>
+              ZIO.foreachDiscard(awaited.effects) {
+                case LifecycleEffect.Refuse(refusal) => ZIO.fail(refused(refusal))
+                case _                               => ZIO.unit
+              }
+            }
         case _ => ZIO.unit
       }
     } yield ()
@@ -846,6 +860,11 @@ final private[openfeature] class FeatureFlagsLive(
         failed(
           s"'${ProviderNames.of(provider)}' is still initializing from an earlier registration and cannot be installed again " +
             "until that initialize() returns"
+        )
+      case Refusal.StillShuttingDown(provider) =>
+        failed(
+          s"'${ProviderNames.of(provider)}' is still shutting down from an earlier registration and cannot be installed again " +
+            "until that shutdown() returns"
         )
       case Refusal.PendingOrphan(provider, incoming) =>
         failed(
@@ -1045,8 +1064,8 @@ final private[openfeature] class FeatureFlagsLive(
       )
       .flatMap { ofDetails =>
         effectiveContext(context).flatMap { merged =>
-          ZIO
-            .attemptBlocking {
+          ProviderCalls
+            .blocking {
               val ofContext = toJavaContext(merged)
               ofDetails match {
                 case Some(d) => client.track(eventName, ofContext, d)

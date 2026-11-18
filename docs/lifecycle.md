@@ -19,6 +19,8 @@ uses the status to decide whether an evaluation may run, and publishes the provi
 - `Fatal` and `ShuttingDown` ignore both `READY` and `ERROR`. `Fatal` stays until
   [`setProvider`](providers.md#replace-the-provider-at-runtime) installs a new provider.
 - Events that arrive during a swap or after a shutdown do not change the status.
+- While a `setProvider` swap runs, an evaluation that would reach the provider fails with `ProviderNotReady(NotReady)`,
+  whatever the status: a failed swap's rollback reads `Error` before it restores the previous provider.
 - A `READY` event is dropped while the Java SDK still reports the provider `NOT_READY`; the SDK can send one while a
   provider shared with another domain is still initializing. Otherwise the status becomes the state the SDK reports
   (see below). A client registered on a provider that is already

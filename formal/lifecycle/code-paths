@@ -10,3 +10,4 @@ core/src/main/scala/zio/openfeature/internal/ManagedProvider.scala
 core/src/main/scala/zio/openfeature/internal/OrphanedProviders.scala
 core/src/main/scala/zio/openfeature/internal/ProviderRegistration.scala
 core/src/main/scala/zio/openfeature/internal/ProviderStatusMachine.scala
+core/src/main/scala/zio/openfeature/internal/Evaluator.scala

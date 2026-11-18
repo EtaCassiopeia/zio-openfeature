@@ -70,7 +70,7 @@ Keep `FeatureFlags`' `evaluationTimeout` (one second by default) at or below `re
 | The server answers 429, 5xx or another status not listed here | fails with `ProviderError`, whatever the body says | your default, error code `General` |
 | The server answers 400, 404 or 406 with an OFREP JSON body | fails with `InvalidContext` (400, 406) or `FlagNotFound` (404) | your default, with that error code |
 | The server cannot be reached | fails with `ProviderError` | your default, error code `General` |
-| The response is not OFREP JSON (an HTML error page, an empty body, truncated JSON), whatever the status | fails with `ProviderError`; a plain-text body naming the failure (`Forbidden`, `Unauthorized`) reads as `Unauthorized`, since the parse error quotes it | your default, error code `General` |
+| The response is not OFREP JSON (an HTML error page, an empty body, truncated JSON, a JSON `null`), whatever the status | fails with `ProviderError`; a plain-text body naming the failure (`Forbidden`, `Unauthorized`) reads as `Unauthorized`, since the parse error quotes it | your default, error code `General` |
 
 To alert on the total tier, check the resolution's error code:
 

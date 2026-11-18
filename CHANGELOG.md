@@ -79,6 +79,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   users times flags read. Answers are only ever more correct. To share entries across users as before, add the new
   `CachingConfig.withoutTargetingKey`, which also works without `contextKeys`. Listing `"targetingKey"` together with
   `withoutTargetingKey` is rejected as `InvalidConfiguration` (#826).
+- **An OFREP body of JSON `null` is a `GENERAL` error on every resolver.** The contrib provider threw a
+  `NullPointerException` for it, so a raw `OFREPFeatureProvider` read threw, and a `FeatureFlags` read failed with the
+  NPE text in place of "response is not OFREP JSON". Found by the OFREP fuzz target (#888).
 - **An object flag served from the caller's default returns that default as passed, not a decoded copy that lost
   `None` fields.** A provider that answers with the very `Value` it was given, or reports an error, now gets the
   caller's default served unchanged; before, it was decoded back through the SDK `Value` bridge, which drops a `null`

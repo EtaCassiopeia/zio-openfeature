@@ -45,7 +45,8 @@ second instance.
 | `FailMark(i)` | the start of `FeatureFlagsLive.shutDownFailedRegistration`, setting `failedRegistration`: from a build's `failedBuild` (`FeatureFlagsFactories`), after a wait that timed out or a provider that failed, or an async build's init deadline (`escalateInitTimeout`), where the instance stays open, `Fatal`. That the provider never became ready is the lifecycle model's `everReady`, so a deadline may fire on any open instance. An owner's failed build goes through `OwnerClose`, on its scope close |
 | `FailDecide(i)` | the rest of it: `LibraryShuts` is `Bound.Managed` and not `ApiInstances.heldByAnother`, whose `serves` skips an instance that failed on the provider. A build's failure then closes its scope; a retry is another instance here |
 | `CloseInstance(i)` | a non-owner's `shutdown` or scope close: `FeatureFlagsLive.teardown(tearDownApi = false)`, its own state only (the long comment there) |
-| `OwnerClose` | the owner's `shutdown` or scope close: `ApiInstances.retireSiblings` (every other instance on the API retires, `FeatureFlagsLive.retire`), then `ProviderRegistration.boundedApiShutdown`, the SDK's `shutdown`, which shuts every registered provider down once. For the registry it is its layer's finalizer: `ApiInstances.retireAll(api) *> boundedApiShutdown(api)`, with the registry in the owner's role |
+| `OwnerClose` | the owner's `shutdown` or scope close: `ApiInstances.retireSiblings` (every other instance on the API retires, `FeatureFlagsLive.retire`), then `ProviderRegistration.boundedApiShutdown`, the SDK's `shutdown`, which shuts every registered provider down once |
+| `RegistryClose` | the registry's layer finalizer, which owns the API with no instance in the owner's role: `ApiInstances.retireAll(api) *> boundedApiShutdown(api)`; every live client, a building one included, is retired, then the API's shutdown shuts every registered provider down once |
 
 ## The variables and the code
 
@@ -80,6 +81,7 @@ second instance.
 | `FailedWrapperNotAbandoned` | failures do not each defer to the other: a wrapper every holder has failed on and decided about has been shut down, unless a swap may still return to it or a successful one moved off it, where the slot keeps it for the API's owner |
 | `OneInstancePerDomain` | at most one promise per domain, ever: concurrent `getClient` calls on one domain yield one client |
 | `ClosedNonOwnerKeepsSlot` | the slot of a closed non-owner keeps its provider until the owner closes the API |
+| `ClosedApiServesNone` | once the API is gone, no instance is live: an owner's or the registry's close retires them all |
 | `SiblingsUnaffected` (an action property) | a non-owner's close changes no slot and no sibling's phase |
 
 ## Mutants
@@ -98,6 +100,9 @@ them one at a time: a mutant usually breaks several, and in one run TLC reports 
 | A failed build or an init deadline shuts down a provider the user registered (#796) | `UserProviderNeverShutByLibrary` |
 | A failed build or an init deadline shuts down a wrapper a live sibling is bound to (#796) | `LiveSiblingKeepsProvider` |
 | A failure defers to a sibling that has failed on the provider too, so with no owner nothing shuts it down | `FailedWrapperNotAbandoned` |
+| The registry closes without retiring its clients | `ClosedApiServesNone` |
+| The registry's close shuts every provider ever bound, a double shutdown | `SharedShutDownOnce` |
+| The registry closes during a swap | `SharedShutDownOnce` |
 
 ## What is outside the model
 
@@ -117,8 +122,7 @@ them one at a time: a mutant usually breaks several, and in one run TLC reports 
   instance like any other here.
 - **Time**, as in the lifecycle model.
 - **What the recorded runs cannot reach** (see Trace validation): a registry's retry after a failed build, a timed-out
-  swap, two shared-API layers on one domain, a provider the user bound under a domain no instance is on, and the
-  registry's own close, which the model has no action for: the registry owns its API but is no instance.
+  swap, two shared-API layers on one domain, and a provider the user bound under a domain no instance is on.
 
 ## Trace validation
 

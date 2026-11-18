@@ -37,7 +37,7 @@ LEMMA NextType == TypeInv /\ [Next]_vars => TypeInv'
 <1> SUFFICES ASSUME LifecycleNext, UNCHANGED evals PROVE TypeInv'
   <2>1. CASE EvalNext /\ UNCHANGED << status, installed, lock, gate, swap, pending, orphans, bridgeOn, shutDown, closed,
                                       owns, swaps, sdkVars >>
-    BY <2>1 DEF EvalNext, EvalRead, EvalCheck, EvalCall, EvalReturn, Gen, sdkVars
+    BY <2>1 DEF EvalNext, EvalRead, EvalCheck, RollingBack, CheckedStatus, EvalCall, EvalReturn, Gen, sdkVars
   <2>2. CASE UNCHANGED vars
     BY <2>2 DEF vars
   <2> QED

@@ -21,6 +21,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `constructionTimeout` or layer release landed during a blocking `verify` released the candidate at once: its
   `shutdown()` ran and `acquire`'s `Scope` closed while `verify` could still be using both. The attempt now keeps them,
   as it already did for a blocking constructor, and releases them once `verify` returns (#875).
+- **An evaluation started during a failed swap's rollback is no longer served by the failed provider.** The rollback
+  sets the status to `Error` before it binds the previous provider again, and an evaluation that started in that window
+  was sent to the failed provider; if its answer came back after the swap ended, it was returned. Every evaluation that
+  starts while a swap runs now fails with `ProviderNotReady(NotReady)`, as documented, without calling the provider
+  (#884).
 - **A failed build's status can no longer turn `Ready` from a late event.** The SDK runs a handler some time after it
   picked it, so removing the failed build's event handlers did not stop a delivery already picked. That delivery wrote
   the slot's current state, which is `Ready` once another provider with the same name is ready in the slot. A bridge

@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Installing again a provider whose earlier `shutdown()` outlasts the three-second wait fails instead of leaving it
+  closed.** The swap used to proceed. The old `shutdown()` then returned and closed the provider it had just
+  initialized again, while the status read `Ready` and every evaluation failed. `setProvider` now fails with
+  `ProviderInitializationFailed` until that call returns (#890).
 - **`fromAcquireAsync` releases a timed-out attempt suspended in `verify` before `onConstructionError` runs.** The
   timeout could misread such an attempt as busy in a blocking call and go on without waiting for it, so its provider
   could shut down, and its `Scope` close, after the next attempt started or `onConstructionError` ran (#913).

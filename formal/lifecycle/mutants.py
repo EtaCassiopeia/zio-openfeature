@@ -56,8 +56,15 @@ mutants = {
     'a swap reads an error after initialize() returned as a failed initialization': [
         ('    /\\ sdk[swap.new] \\in {"READY", "STALE"} \\/ (ran[swap.new] /\\ sdk[swap.new] \\in {"ERROR", "FATAL"})',
          '    /\\ sdk[swap.new] \\in {"READY", "STALE"}'),
-        ('    /\\ sdk[swap.new] \\in {"ERROR", "FATAL"} /\\ ~ran[swap.new]\n    /\\ ~(pending',
-         '    /\\ sdk[swap.new] \\in {"ERROR", "FATAL"}\n    /\\ ~(pending'),
+        ('SwapRollback(ok, r, early) ==\n    /\\ swap # None /\\ swap.phase = "wait"\n'
+         '    /\\ sdk[swap.new] \\in {"ERROR", "FATAL"} /\\ ~ran[swap.new]\n',
+         'SwapRollback(ok, r, early) ==\n    /\\ swap # None /\\ swap.phase = "wait"\n'
+         '    /\\ sdk[swap.new] \\in {"ERROR", "FATAL"}\n'),
+        # The evaluation check's view of the rollback (RollingBack) mirrors SwapRollback's guard.
+        ('RollingBack ==\n    /\\ swap # None /\\ swap.phase = "wait"\n'
+         '    /\\ sdk[swap.new] \\in {"ERROR", "FATAL"} /\\ ~ran[swap.new]\n',
+         'RollingBack ==\n    /\\ swap # None /\\ swap.phase = "wait"\n'
+         '    /\\ sdk[swap.new] \\in {"ERROR", "FATAL"}\n'),
         ('    /\\ sdk[swap.new] \\in {"ERROR", "FATAL"} /\\ ~ran[swap.new]\n    /\\ pending',
          '    /\\ sdk[swap.new] \\in {"ERROR", "FATAL"}\n    /\\ pending'),
     ],

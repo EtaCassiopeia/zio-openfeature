@@ -133,6 +133,9 @@ final private[openfeature] class ManagedProvider private (
   /** Whether the provider's `shutdown()` has run since the last `initialize()`. */
   def shutDownInCycle: Boolean = cycleLock.synchronized(shutDown)
 
+  /** Whether a `shutdown()` of this cycle has reached the provider and not returned. */
+  def shutDownRunning: Boolean = cycleLock.synchronized(shutDown && !lastEnded.isDone)
+
   // Completes when this cycle's shutdown has finished, whether it has yet to start, is running or is done.
   private def cycleShutDown: CompletableFuture[Unit] = cycleLock.synchronized(if (shutDown) lastEnded else shutDowns)
 

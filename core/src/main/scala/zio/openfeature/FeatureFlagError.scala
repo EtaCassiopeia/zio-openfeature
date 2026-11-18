@@ -159,7 +159,16 @@ object FeatureFlagError {
     * Used by both `core` (wrapping evaluation/tracking failures) and downstream provider modules (OFREP, Optimizely) so
     * operators see consistent error types regardless of which provider is in use.
     */
-  def classify(t: Throwable): EvaluationError with LifecycleError = {
+  def classify(t: Throwable): EvaluationError with LifecycleError = classifyAbout(t, None)
+
+  /** [[classify]] for a failure of the call that read `key` (a flag key, or a `track` event name). The message
+    * heuristic does not read `key` itself, so a key such as `forbidden-words` or `custom-403-page` does not turn a
+    * timeout or an outage into `Unauthorized`.
+    */
+  private[openfeature] def classify(t: Throwable, key: String): EvaluationError with LifecycleError =
+    classifyAbout(t, Some(key))
+
+  private def classifyAbout(t: Throwable, key: Option[String]): EvaluationError with LifecycleError = {
     val msg = Option(t.getMessage).getOrElse("")
     t match {
       case overflow: internal.ProviderCalls.ProviderStackOverflow => ProviderError(overflow.error)
@@ -172,7 +181,7 @@ object FeatureFlagError {
         httpStatus(t) match {
           case Some(status) if AuthStatuses.contains(status) => Unauthorized(extractAuthReason(t, msg), Option(t))
           case Some(_)                                       => ProviderError(t)
-          case None if isHttpAuthFailure(t, msg)             => Unauthorized(extractAuthReason(t, msg), Option(t))
+          case None if isHttpAuthFailure(t, msg, key)        => Unauthorized(extractAuthReason(t, msg), Option(t))
           case None                                          => ProviderError(t)
         }
     }
@@ -201,15 +210,15 @@ object FeatureFlagError {
   // Without a status accessor (the java.net.http client used by contrib providers has none), fall back to the
   // exception's name and message: the canonical "401"/"403" tokens, "unauthorized", "forbidden". This is permissive —
   // a message that happens to contain those for another reason is misclassified — so the original throwable is kept as
-  // the Unauthorized's cause. Word-boundary match so "401"/"403" only hit as standalone tokens: a port 4013, a byte
-  // count, or a flag key containing the digits must not classify as an auth failure.
+  // the Unauthorized's cause. Word-boundary match so "401"/"403" only hit as standalone tokens: a port 4013 or a byte
+  // count must not classify as an auth failure. The flag key is not read at all (see `withoutKey`).
   private val AuthStatusToken = java.util.regex.Pattern.compile("\\b(401|403)\\b")
 
-  private def isHttpAuthFailure(t: Throwable, msg: String): Boolean = {
+  private def isHttpAuthFailure(t: Throwable, msg: String, key: Option[String]): Boolean = {
     val cls = t.getClass.getName
     cls.endsWith("UnauthorizedException") ||
     cls.endsWith("ForbiddenException") ||
-    looksLikeAuthFailure(msg)
+    key.fold(looksLikeAuthFailure(msg))(looksLikeAuthFailure(msg, _))
   }
 
   // The literal the OFREP contrib provider (0.0.2, internal/Resolver.java) puts in a GENERAL evaluation error for a
@@ -220,13 +229,35 @@ object FeatureFlagError {
     * `unauthorized`, `forbidden`, or the OFREP contrib provider's auth literal. Shared by `classify` (thrown
     * exceptions) and the mapping of provider-reported `GENERAL` evaluation errors, which carry only a message.
     */
-  private[openfeature] def looksLikeAuthFailure(message: String): Boolean = {
+  private[openfeature] def looksLikeAuthFailure(message: String): Boolean =
+    namesAuthFailure(message) || message.toLowerCase(java.util.Locale.ROOT).contains(OfrepAuthPrefix)
+
+  /** [[looksLikeAuthFailure]] for a message about `key`. Providers quote the key in their messages (the OFREP contrib
+    * provider in every one), and the key is the caller's choice, so the tokens are matched in the message with the key
+    * taken out. The OFREP literal is matched in the whole message: it precedes the key, and a key such as `error` must
+    * not hide it.
+    */
+  private[openfeature] def looksLikeAuthFailure(message: String, key: String): Boolean =
+    namesAuthFailure(withoutKey(message, key)) ||
+      message.toLowerCase(java.util.Locale.ROOT).contains(OfrepAuthPrefix)
+
+  private def namesAuthFailure(message: String): Boolean = {
     val msgLow = message.toLowerCase(java.util.Locale.ROOT)
     AuthStatusToken.matcher(msgLow).find() ||
     msgLow.contains("unauthorized") ||
-    msgLow.contains("forbidden") ||
-    msgLow.contains(OfrepAuthPrefix)
+    msgLow.contains("forbidden")
   }
+
+  // Each occurrence of the key that stands alone (not inside a longer run of letters and digits) becomes a space: a key
+  // "o" leaves "forbidden" alone, and a key "custom-403-page" leaves no "403" behind. A key equal to an auth word
+  // ("403", "forbidden") also hides that word where the provider wrote it; that ambiguity is read as no auth failure.
+  private def withoutKey(message: String, key: String): String =
+    if (key.isEmpty) message
+    else
+      java.util.regex.Pattern
+        .compile("(?<![\\p{Alnum}])" + java.util.regex.Pattern.quote(key) + "(?![\\p{Alnum}])")
+        .matcher(message)
+        .replaceAll(" ")
 
   private def extractAuthReason(t: Throwable, msg: String): String =
     if (msg.nonEmpty) msg else t.getClass.getSimpleName

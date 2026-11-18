@@ -1068,7 +1068,7 @@ final private[openfeature] class FeatureFlagsLive(
                 case None    => client.track(eventName, ofContext)
               }
             }
-            .mapError(e => FeatureFlagError.classify(e))
+            .mapError(e => FeatureFlagError.classify(e, eventName))
         }
       }
 }

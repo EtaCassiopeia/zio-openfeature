@@ -662,13 +662,17 @@ final private[openfeature] class FeatureFlagsLive(
 
   private def skipSwap(newProvider: OFFeatureProvider): UIO[Unit] =
     probe.at(Point.SwapSkipped) *>
-      ZIO.logDebug(s"setProvider: '${ProviderNames.of(newProvider)}' is already the bound provider; nothing to change")
+      ZIO.attempt(ProviderNames.of(newProvider)).orElseSucceed(FeatureFlags.UnknownProviderName).flatMap { name =>
+        ZIO.logDebug(s"setProvider: '$name' is already the bound provider; nothing to change")
+      }
 
   private def runSwap(incoming: Bound, newProvider: OFFeatureProvider): IO[LifecycleError, Unit] = {
     val swap = for {
       _ <- probe.at(Point.SwapStart(newProvider))
-      incomingName = ProviderNames.beforeInit(newProvider)
-      newName      = incomingName.render
+      // Read before `initialize()`, as the build reads it: a wrapper around a MultiProvider, which has no metadata
+      // until it has initialized, may throw. The name is read again once the provider has initialized.
+      incomingName <- ZIO.attempt(ProviderNames.beforeInit(newProvider)).orElseSucceed(ProviderName.Pending)
+      newName = incomingName.render
       _ <- probe.at(Point.ApplySignal(Signal.SwapStarted))
       // One step, before the SDK changes: the gate goes up before the NotReady transition, so no bridge event (a
       // queued READY from the OLD provider) drives the status mid-swap; the generation moves, so an evaluation that

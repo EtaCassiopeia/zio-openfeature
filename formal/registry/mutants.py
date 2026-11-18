@@ -78,6 +78,30 @@ mutants = {
     'failures defer to each other': (
         ('FailedWrapperNotAbandoned',), [
         (" = p /\\ failedOn[j] # p)\n", " = p)\n")]),
+    # The registry's finalizer shuts the API down without retiring its clients first (ApiInstances.retireAll dropped):
+    # an instance on the API answers after the API is gone.
+    'the registry closes without retiring its clients': (
+        ('ClosedApiServesNone',), [
+        ("    /\\ RetireAll\n    /\\ ShutApi\n    /\\ UNCHANGED << domainOf, owner, ",
+         "    /\\ ShutApi\n    /\\ UNCHANGED << phase, domainOf, owner, ")]),
+    # The registry's close shuts down every provider it ever bound, not the API's registered ones: one a swap or a
+    # failure shut down already is shut down again.
+    'the registry\'s close shuts a provider down twice': (
+        ('SharedShutDownOnce',), [
+        ("    /\\ RetireAll\n    /\\ ShutApi\n    /\\ UNCHANGED << domainOf, owner, ",
+         "    /\\ RetireAll\n"
+         "    /\\ apiOpen' = FALSE\n"
+         "    /\\ bound' = [d \\in Domains |-> None]\n"
+         "    /\\ registered' = {}\n"
+         "    /\\ userOwned' = {}\n"
+         "    /\\ shuts' = [p \\in Providers |-> shuts[p] + (IF p \\in everBound THEN 1 ELSE 0)]\n"
+         "    /\\ by' = [p \\in Providers |-> IF p \\in everBound THEN \"sdk\" ELSE by[p]]\n"
+         "    /\\ UNCHANGED << domainOf, owner, ")]),
+    # The registry's close does not wait for a swap in flight (a retirement that skips the swap lock): the swap settles
+    # on a dead API, and its rollback binds a provider nothing will shut down.
+    'the registry closes during a swap': (
+        ('SharedShutDownOnce',), [
+        ("    /\\ owner = None\n    /\\ swapping = None\n", "    /\\ owner = None\n")]),
 }
 
 

@@ -175,6 +175,16 @@ object FallbackLogLimiterSpec extends ZIOSpecDefault {
           logs <- warnings(base)
         } yield assertTrue(logs.length == 1)
       },
+      test("a finite window beyond Long.MaxValue nanos throttles like Infinity and never overflows") {
+        for {
+          base <- baseline
+          l    <- FallbackLogLimiter.make(FallbackLogging.Throttled(java.time.Duration.ofDays(200000)))
+          _    <- ZIO.foreach(1 to 3)(_ => l.log("k", resolution("k"), None))
+          _    <- TestClock.adjust(36500.days)
+          _    <- l.log("k", resolution("k"), None)
+          logs <- warnings(base)
+        } yield assertTrue(logs.length == 1)
+      },
       test("a value whose toString throws still gets a line, and never fails the effect") {
         val hostile = new AnyRef { override def toString: String = throw new IllegalStateException("no render") }
         val res     = FlagResolution.error[Any]("k", hostile, ErrorCode.General, "x")

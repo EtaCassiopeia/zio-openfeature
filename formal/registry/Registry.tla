@@ -319,8 +319,20 @@ CloseInstance(i) ==
     /\ UNCHANGED << domainOf, owner, apiOpen, lock, swapping, swaps, bound, registered, userOwned, shuts, by, everBound,
                     failedOn, deciding, prior, swappedOff >>
 
-\* The owner's shutdown or scope close: every other instance on the API retires first (ApiInstances.retireSiblings),
-\* then the API shuts every registered provider down, once each (the SDK's shutdown), and the API is gone.
+\* What tearing the API down does, by its owner, an instance or the registry: every instance on the API retires
+\* (ApiInstances.retireSiblings, retireAll), a build in flight included, then the API shuts every registered provider
+\* down, once each (the SDK's shutdown), and the API is gone.
+RetireAll == phase' = [i \in Instances |-> IF Live(i) THEN "closed" ELSE phase[i]]
+
+ShutApi ==
+    /\ apiOpen' = FALSE
+    /\ bound' = [d \in Domains |-> None]
+    /\ registered' = {}
+    /\ userOwned' = {}
+    /\ shuts' = [p \in Providers |-> shuts[p] + (IF p \in registered THEN 1 ELSE 0)]
+    /\ by' = [p \in Providers |-> IF p \in registered THEN "sdk" ELSE by[p]]
+
+\* The owner's shutdown or scope close: the others retire first, then its own teardown takes the API down.
 OwnerClose ==
     /\ apiOpen
     /\ owner # None
@@ -328,15 +340,24 @@ OwnerClose ==
     /\ swapping = None
     /\ deciding = {}
     /\ lock = None
-    /\ phase' = [i \in Instances |-> IF phase[i] = "open" THEN "closed" ELSE phase[i]]
-    /\ apiOpen' = FALSE
+    /\ RetireAll
+    /\ ShutApi
     /\ owner' = None
-    /\ bound' = [d \in Domains |-> None]
-    /\ registered' = {}
-    /\ userOwned' = {}
-    /\ shuts' = [p \in Providers |-> shuts[p] + (IF p \in registered THEN 1 ELSE 0)]
-    /\ by' = [p \in Providers |-> IF p \in registered THEN "sdk" ELSE by[p]]
     /\ UNCHANGED << domainOf, lock, swapping, swaps, everBound, failedOn, deciding, prior, swappedOff >>
+
+\* The registry's finalizer: it owns its API but is no instance (no instance owns it), so its close is the API's.
+\* Its clients' scopes close before it, each a CloseInstance; it then retires every instance on the API
+\* (ApiInstances.retireAll) and shuts the API down (boundedApiShutdown).  Each retirement takes the instance's swap
+\* lock, so a swap in flight settles first.
+RegistryClose ==
+    /\ apiOpen
+    /\ owner = None
+    /\ swapping = None
+    /\ deciding = {}
+    /\ lock = None
+    /\ RetireAll
+    /\ ShutApi
+    /\ UNCHANGED << domainOf, owner, lock, swapping, swaps, everBound, failedOn, deciding, prior, swappedOff >>
 
 Next ==
     \/ \E i \in Instances, d \in Domains : Lookup(i, d)
@@ -352,6 +373,7 @@ Next ==
     \/ \E i \in Instances : FailDecide(i)
     \/ \E i \in Instances : CloseInstance(i)
     \/ OwnerClose
+    \/ RegistryClose
 
 Spec == Init /\ [][Next]_vars
 
@@ -399,6 +421,10 @@ FailedWrapperNotAbandoned ==
 \* Concurrent getClient calls on one domain yield one instance: at most one promise per domain, ever.
 OneInstancePerDomain ==
     \A d \in Domains : Cardinality({i \in Instances : phase[i] # "absent" /\ domainOf[i] = d}) <= 1
+
+\* Once the API is gone no instance serves: every one built on it, or building, was retired with it.
+ClosedApiServesNone ==
+    ~apiOpen => \A i \in Instances : ~Live(i)
 
 \* A non-owner's close changes no sibling and no slot.
 SiblingsUnaffected ==

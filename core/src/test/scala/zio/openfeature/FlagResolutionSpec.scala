@@ -2,6 +2,8 @@ package zio.openfeature
 
 import zio._
 import zio.test._
+import zio.openfeature.internal.Evaluator
+import dev.openfeature.sdk.ImmutableMetadata
 
 object FlagResolutionSpec extends ZIOSpecDefault {
 
@@ -162,6 +164,12 @@ object FlagResolutionSpec extends ZIOSpecDefault {
         assertTrue(resolution.reason == ResolutionReason.Error) &&
         assertTrue(resolution.errorCode == Some(ErrorCode.FlagNotFound)) &&
         assertTrue(resolution.errorMessage == Some("Flag not found"))
+      }
+    ),
+    suite("provider flag metadata")(
+      test("a null metadata value drops that entry only") {
+        val javaMeta = ImmutableMetadata.builder().addString("a", "x").addString("n", null).build()
+        assertTrue(Evaluator.convertImmutableMetadata(javaMeta) == FlagMetadata("a" -> MetadataValue.StringValue("x")))
       }
     )
   )

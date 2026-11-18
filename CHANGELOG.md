@@ -35,6 +35,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   for a `CircuitBreakerProvider` or `CachingProvider` around a multi-provider.** Such a wrapper now has no name,
   instead of throwing, until the multi-provider has initialized, and a swap reads a provider's name again once it has
   initialized, as the build already did (#882).
+- **A flag key no longer decides whether a provider failure is `Unauthorized`.** The auth heuristic read the provider's
+  whole message, and the OFREP contrib provider quotes the key in every `GENERAL` error. So a 5xx, 429 or IO failure
+  for a flag named `forbidden-words-filter`, `unauthorized-user-banner` or `custom-403-page` failed with
+  `Unauthorized`, and so did a hung-provider rejection or a timeout. The key is now taken out before the message is
+  matched. A real 401 or 403 is still `Unauthorized` (#889).
 - **`fromAcquireAsync` no longer shuts a provider down while its `verify` is still running.** An attempt whose
   `constructionTimeout` or layer release landed during a blocking `verify` released the candidate at once: its
   `shutdown()` ran and `acquire`'s `Scope` closed while `verify` could still be using both. The attempt now keeps them,
@@ -79,6 +84,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   users times flags read. Answers are only ever more correct. To share entries across users as before, add the new
   `CachingConfig.withoutTargetingKey`, which also works without `contextKeys`. Listing `"targetingKey"` together with
   `withoutTargetingKey` is rejected as `InvalidConfiguration` (#826).
+- **An OFREP body of JSON `null` is a `GENERAL` error on every resolver.** The contrib provider threw a
+  `NullPointerException` for it, so a raw `OFREPFeatureProvider` read threw, and a `FeatureFlags` read failed with the
+  NPE text in place of "response is not OFREP JSON". Found by the OFREP fuzz target (#888).
 - **An object flag served from the caller's default returns that default as passed, not a decoded copy that lost
   `None` fields.** A provider that answers with the very `Value` it was given, or reports an error, now gets the
   caller's default served unchanged; before, it was decoded back through the SDK `Value` bridge, which drops a `null`

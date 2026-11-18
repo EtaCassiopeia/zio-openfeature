@@ -22,7 +22,7 @@ import tracecheck  # noqa: E402
 from trace_labels import labels, read  # noqa: E402
 
 ACTIONS = ("Check", "Create", "Complete", "SwapStart", "SwapDone", "SwapFailMark", "SwapFail", "UserBind", "FailMark",
-           "FailDecide", "CloseInstance", "OwnerClose")
+           "FailDecide", "CloseInstance", "OwnerClose", "RegistryClose")
 
 
 def strings(xs):

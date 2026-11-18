@@ -21,6 +21,7 @@ library action, the record's library variables must equal the model's.
 | `ScopeClose` | `ScopeClose`; then `OrphanSettled(prev)` for every orphan entry, if the instance owns its API | the API scope finalizer in `FeatureFlagsFactories`: `markClosed`, then `orphans.resolveAll` |
 | `SdkBind`, `SdkBindFail`, `SdkInitOk`, `SdkInitFail`, `SdkShutDownOld`, `Emit`, `EmitStaleWhileStarting`, `Die`, and `Deliver`'s `Discard` case | none: they change the SDK's variables, which the next library input reads | the SDK |
 | `CallerInterrupt` | never generated: `Interruptible` is empty | |
+| `Die` | never generated: `AllowDeath` is `FALSE` in the generator's constants, and a replay of it would compare nothing | |
 
 Where the model folds several code steps into one action, the replay sends them in order and compares after the last.
 Where the code chooses a branch from something the model carries as a variable, the label must agree with it: no

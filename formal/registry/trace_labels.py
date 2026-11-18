@@ -31,8 +31,11 @@ The mapping (formal/registry/trace-map.md):
                                       shutdowns is a step
   UserBind                         -> UserBind; not covered for a provider the library bound before, as its wrapper:
                                       the SDK then holds two registrations of it, which the model cannot tell apart
-  UserApiShutdown, ApiShutdown     -> the end of what is checked: the API's own shutdown, by the test or by the registry
-                                      (which owns its API but is no instance, so the model has no action for its close)
+  ApiShutdown                      -> RegistryClose, the registry's finalizer, taken at the end of the run: the
+                                      retirements (ShutdownDone) and the API's shutdowns that follow are part of it. Every
+                                      instance that opened must have been torn down by then, by its own shutdown or its
+                                      retirement (UnretiredSibling otherwise)
+  UserApiShutdown                  -> the end of what is checked: the test's own api.shutdown(), which retires nothing
   ProviderShutDown                 -> counted per provider into End, up to the end of what is checked
   End                              -> last: `shuts`, how many times each provider's shutdown() ran (-1 for one the user
                                       bound, whose shutdowns no wrapper records)
@@ -94,9 +97,10 @@ def labels(records):
     built_on = set()  # the domains an instance was built on
     owner = None
     retiring = False
-    # The checked part ends at an API shutdown the model has no action for; after the owner's, which is OwnerClose,
-    # only the shutdowns it runs are counted.
-    stopped = owner_closed = False
+    # The checked part ends at an API shutdown the model has no action for; after the owner's (OwnerClose) or the
+    # registry's (RegistryClose), only the shutdowns it runs are counted.
+    stopped = owner_closed = registry_closed = False
+    opened, torn_down = set(), set()  # instances that opened; instances whose teardown ran (a ShutdownDone)
     shut_count, late = {}, {}
     retired = set()  # the instances retired by the owner's RetireSiblings
     library = set()  # the providers the library has bound
@@ -106,6 +110,7 @@ def labels(records):
         if s.phase == "building" and not s.failing:
             emit("Complete", instance=tags[n])
             s.phase = "open"
+            opened.add(n)
 
     def after_close(r):
         """A step of the model after its instance, or the API, has closed: a label no behaviour takes."""
@@ -118,7 +123,9 @@ def labels(records):
             counts = late if stopped else shut_count
             counts[p] = counts.get(p, 0) + 1
             continue
-        if stopped or owner_closed:
+        if point == "ShutdownDone" and n in inst:
+            torn_down.add(n)
+        if stopped or owner_closed or registry_closed:
             if point in STEPS or (point == "ApplySignal" and r.get("arg", "").startswith("SwapSucceeded")):
                 after_close(r)
             continue
@@ -126,8 +133,13 @@ def labels(records):
             return "a timed-out swap"
         if point == "UserRetryInit":
             return "a retry of a failed registration"
-        if point in ("UserApiShutdown", "ApiShutdown"):
+        if point == "UserApiShutdown":
             stopped = True
+            continue
+        if point == "ApiShutdown":
+            if any(m.failing for m in inst.values()):
+                return "a failure's decision interrupted by the registry's close"
+            registry_closed = True
             continue
         if point == "UserBind":
             p, d = prov(r), dom(r)
@@ -248,6 +260,12 @@ def labels(records):
                 complete(n)
                 emit("CloseInstance", instance=tags[n])
                 s.phase = "closed"
+    if registry_closed:
+        # The registry retired every instance on its API (ApiInstances.retireAll) before shutting it down. One whose
+        # build failed or was interrupted may have been collected already, and is not required.
+        for m in sorted(opened - torn_down, key=lambda m: tags[m]):
+            emit("UnretiredSibling", instance=tags[m])
+        emit("RegistryClose")
     user = set(user_slots)
     names = sorted(set(providers.values()), key=lambda p: int(p[1:]))
     emit("End", shuts={p: (-1 if p in user else shut_count.get(p, 0)) for p in names},

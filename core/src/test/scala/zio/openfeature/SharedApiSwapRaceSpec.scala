@@ -3,7 +3,7 @@ package zio.openfeature
 import zio._
 import zio.test._
 import zio.openfeature.SharedApiFixtures._
-import zio.openfeature.internal.{Bound, ManagedProvider, ProviderEvaluations}
+import zio.openfeature.internal.{Bound, LifecycleProbe, ManagedProvider, ProviderEvaluations}
 import zio.openfeature.internal.LifecycleProbe.Point
 import dev.openfeature.sdk.{EvaluationContext => OFEvaluationContext, Metadata, OpenFeatureAPI, ProviderState}
 import dev.openfeature.sdk.exceptions.GeneralError
@@ -174,10 +174,22 @@ object SharedApiSwapRaceSpec extends ZIOSpecDefault {
       ZIO.scoped {
         for {
           reconcile <- Hold(at(Point.SwapReconcile), armed)
-          a         <- probedBuild(api, first, "s", new Holds(List(reconcile)))
+          nextReady <- Promise.make[Nothing, Unit]
+          holds = new Holds(List(reconcile))
+          // The status follows the slot's SDK state on any event from the installed provider, so `next`'s own READY
+          // must have reached the bridge (and been dropped, the swap's gate being up) before the slot binds `bad`.
+          probe = new LifecycleProbe {
+            def at(p: Point): UIO[Unit] =
+              (p match {
+                case Point.DeliverEvent("PROVIDER_READY", "gated") if armed.get() => nextReady.succeed(()).unit
+                case _                                                            => ZIO.unit
+              }) *> holds.at(p)
+          }
+          a         <- probedBuild(api, first, "s", probe)
           _         <- ZIO.succeed(armed.set(true))
           swap      <- a.setProvider(next).exit.fork
           _         <- reconcile.reached.await
+          delivered <- Live.live(nextReady.await.timeout(5.seconds))
           _         <- ZIO.succeed(api.setProvider("s", bad))
           _         <- RegistryRecording.environment("UserBind", Some("s"), Some(bad))
           errored   <- Live.live(
@@ -188,6 +200,7 @@ object SharedApiSwapRaceSpec extends ZIOSpecDefault {
           swapped <- swap.join
           after   <- a.providerStatus
         } yield assertTrue(
+          delivered.isDefined,
           errored.isDefined,
           before == ProviderStatus.Ready,
           swapped.isSuccess,

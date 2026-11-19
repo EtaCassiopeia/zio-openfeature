@@ -3,9 +3,10 @@
 Each `.json` file is one plan the simulation replays before its generated cases, on every run:
 
 - `sequential/` is replayed by `SequentialSimulationSpec` (a `SeqPlan`: a provider stack and a command list);
-- `concurrent/` is replayed by `ConcurrentSimulationSpec` (a `Plan`: a stack, evaluation workers, swaps and mutations).
+- `concurrent/` is replayed by `ConcurrentSimulationSpec` (a `Plan`: a stack, evaluation workers, swaps, mutations
+  and the `scheduleSeed` its schedule probe runs under).
 
-An entry holds no seed or zio-test state, so it replays the same plan after any zio-test upgrade. A directory with no
+An entry holds no zio-test seed or state, so it replays the same plan after any zio-test upgrade. A directory with no
 `.json` file fails its replay test, so a broken resource path cannot pass silently.
 
 ## From a failure to an entry
@@ -16,7 +17,8 @@ An entry holds no seed or zio-test state, so it replays the same plan after any 
 2. Save that one line as `<sequential|concurrent>/<yyyy-mm-dd>-<what>.json`, named for the behaviour it pins.
 3. Fix the bug. The entry fails before the fix and passes after it.
 
-A concurrent plan is replayed, not reproduced exactly: the SDK's threads run outside ZIO's scheduler. Prefer a
+A concurrent plan is replayed under its own `scheduleSeed`, which makes most failures recur, but not reproduced
+exactly: the SDK's threads run outside ZIO's scheduler. Prefer a
 sequential plan when one reproduces the failure.
 
 ## Format

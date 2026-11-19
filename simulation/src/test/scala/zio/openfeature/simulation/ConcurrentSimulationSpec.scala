@@ -2,6 +2,7 @@ package zio.openfeature.simulation
 
 import zio._
 import zio.openfeature._
+import zio.openfeature.internal.LifecycleProbe
 import zio.openfeature.testkit.{HookCall, RecordingHook}
 import zio.openfeature.testsupport.{LeakCheck, PropertyBudget}
 import zio.test.{Spec => _, _}
@@ -11,8 +12,13 @@ import zio.test.{Spec => _, _}
   *   - every evaluation completes (bounded) with a value or a default plus an error code, never a defect;
   *   - hooks: every evaluation runs `before`, one of `after`/`error`, and `finally`, so the totals match;
   *   - an evaluation that starts after `setProvider` returned is never answered by a leaf of the replaced stack;
+  *   - an evaluation answered by a leaf after a swap away from it raised its gate is never a success;
   *   - each replaced stack's leaves are shut down exactly once, and so are the last stack's when the scope closes;
   *   - no fiber or thread outlives the run (LeakCheck).
+  *
+  * Each run goes through a [[SchedulePerturber]] seeded by the plan's `scheduleSeed`: at every lifecycle and evaluation
+  * probe point it passes, yields or sleeps briefly, which makes rare interleavings common. A failure prints the
+  * schedule seed and the tail of the decision log.
   */
 object ConcurrentSimulationSpec extends ZIOSpecDefault {
 
@@ -23,23 +29,26 @@ object ConcurrentSimulationSpec extends ZIOSpecDefault {
     home: Map[String, Kind],
     workers: List[List[Cmd.Eval]],
     swaps: List[Spec],
-    muts: List[Cmd]
+    muts: List[Cmd],
+    scheduleSeed: Long
   )
 
   val genPlan: Gen[Any, Plan] =
     for {
-      home    <- SequentialSimulationSpec.genHomeKinds
-      spec    <- Gens.genSpec(3, home)
-      workers <- Gen.listOfBounded(2, 4)(Gen.listOfBounded(5, 30)(Gens.genEval(home)))
-      swaps   <- Gen.listOfBounded(0, 3)(Gens.genSpec(2, home))
-      muts    <- Gen.listOfBounded(0, 15)(
+      // Drawn first and never shrunk, so shrinking the rest of the plan keeps the schedule that failed.
+      scheduleSeed <- Gen.long.noShrink
+      home         <- SequentialSimulationSpec.genHomeKinds
+      spec         <- Gens.genSpec(3, home)
+      workers      <- Gen.listOfBounded(2, 4)(Gen.listOfBounded(5, 30)(Gens.genEval(home)))
+      swaps        <- Gen.listOfBounded(0, 3)(Gens.genSpec(2, home))
+      muts         <- Gen.listOfBounded(0, 15)(
         Gens.genCmd(7, Nil, home).map {
           case c: Cmd.SetFlag  => c
           case c: Cmd.SetFault => c
           case _               => Cmd.SetFlag(0, "k0", None, emit = true)
         }
       )
-    } yield Plan(spec, home, workers, swaps, muts)
+    } yield Plan(spec, home, workers, swaps, muts, scheduleSeed)
 
   private val evalBound = 10.seconds
 
@@ -53,9 +62,20 @@ object ConcurrentSimulationSpec extends ZIOSpecDefault {
       problems <- Ref.make(Chunk.empty[String])
       evals    <- Ref.make(0)
       report = (p: String) => problems.update(_ :+ p)
+      // A swap raises its gate before it binds the new provider: from then on the current stack's leaves are retiring.
+      perturber = new SchedulePerturber(
+        plan.scheduleSeed,
+        {
+          case LifecycleProbe.Point.SwapBind => current.get.map(_.leaves.values.foreach(_.retiring.set(true)))
+          case _                             => ZIO.unit
+        }
+      )
+      _ <- ZIO.succeed(Stats.declare(SchedulePerturber.declaredCounters))
       _ <- ZIO.scoped {
         for {
-          pair <- Harness.install(built.provider).mapError(e => s"install failed for ${Spec.show(spec0)}: $e")
+          pair <- Harness
+            .installProbed(built.provider, perturber.lifecycle, perturber.evaluation)
+            .mapError(e => s"install failed for ${Spec.show(spec0)}: $e")
           (ff, ad) = pair
           hook   <- RecordingHook.make()
           _      <- ff.addHook(hook)
@@ -75,6 +95,8 @@ object ConcurrentSimulationSpec extends ZIOSpecDefault {
                     val from = o.variant.map(_.takeWhile(_ != ':'))
                     ZIO.when(from.exists(gone.contains))(
                       report(s"eval $key:$kind started after its leaf ${from.get} was replaced, and got $o")
+                    ) *> ZIO.when(o.isSuccess && o.variant.exists(_.endsWith(SimLeaf.LateSuffix)))(
+                      report(s"eval $key:$kind got $o, answered after a swap away from its leaf had started")
                     )
                 }
               } yield ()
@@ -87,10 +109,14 @@ object ConcurrentSimulationSpec extends ZIOSpecDefault {
               _ <- nextId.set(Spec.maxId(ns) + 1)
               _ <- ZIO.succeed(if (Spec.wrapsMulti(ns)) Stats.hit("crun.swap.wrapsMulti"))
               nb = Harness.build(ns)
+              _ <- perturber.note(s"swap to ${Spec.show(ns)} starts")
               _ <- ad.setProvider(nb.provider).sandbox.either.flatMap {
-                case Left(c)  => report(s"setProvider to ${Spec.show(ns)} failed: ${c.prettyPrint.take(400)}")
+                case Left(c) =>
+                  perturber.note(s"swap to ${Spec.show(ns)} failed") *>
+                    report(s"setProvider to ${Spec.show(ns)} failed: ${c.prettyPrint.take(400)}")
                 case Right(_) =>
                   for {
+                    _   <- perturber.note(s"swap to ${Spec.show(ns)} returned")
                     old <- current.getAndSet(nb)
                     _   <- retired.update(old :: _)
                     _   <- Runner.awaitShutdown(old).flatMap(ZIO.foreachDiscard(_)(p => report(s"replaced stack: $p")))
@@ -106,7 +132,7 @@ object ConcurrentSimulationSpec extends ZIOSpecDefault {
               m match {
                 case Cmd.SetFlag(idx, key, value, emit) =>
                   val leaf = b.leaves(ids(idx % ids.size))
-                  ZIO
+                  perturber.note(s"setFlag ${leaf.name} $key=${value.getOrElse("-")} emit=$emit") *> ZIO
                     .attemptBlocking {
                       value.fold(leaf.flags.remove(key): Unit)(v => leaf.flags.put(key, v): Unit)
                       if (emit) leaf.configurationChanged()
@@ -117,8 +143,10 @@ object ConcurrentSimulationSpec extends ZIOSpecDefault {
                         ZIO.succeed(Stats.hit("crun.emitAfterShutdown"))
                       case e => report(s"mutation failed: $e")
                     }
-                case Cmd.SetFault(idx, f) => ZIO.succeed(b.leaves(ids(idx % ids.size)).fault.set(f))
-                case _                    => ZIO.unit
+                case Cmd.SetFault(idx, f) =>
+                  val leaf = b.leaves(ids(idx % ids.size))
+                  perturber.note(s"setFault ${leaf.name} ${f.getOrElse("-")}") *> ZIO.succeed(leaf.fault.set(f))
+                case _ => ZIO.unit
               }
             } *> ZIO.yieldNow
           }
@@ -149,7 +177,7 @@ object ConcurrentSimulationSpec extends ZIOSpecDefault {
       _     <- ZIO.when(ps.nonEmpty)(
         ZIO.fail(
           (s"stack ${Spec.show(spec0)} swaps ${plan.swaps.map(s => Spec.show(Spec.number(s))).mkString(", ")}" +: ps)
-            .mkString("\n")
+            .mkString("\n") + "\n" + perturber.render(150)
         )
       )
     } yield ()

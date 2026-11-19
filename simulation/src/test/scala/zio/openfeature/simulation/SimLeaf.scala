@@ -15,7 +15,7 @@ import dev.openfeature.sdk.{
 import dev.openfeature.sdk.exceptions.{FlagNotFoundError, GeneralError}
 
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.atomic.{AtomicInteger, AtomicReference}
+import java.util.concurrent.atomic.{AtomicBoolean, AtomicInteger, AtomicReference}
 import scala.jdk.CollectionConverters._
 
 /** What a leaf holds under a key. `Echo` answers a string read with a rendering of the context the leaf received. */
@@ -91,8 +91,18 @@ final class SimLeaf(val name: String) extends EventProvider {
   private def error[T](default: T, code: OFErrorCode): ProviderEvaluation[T] =
     ProviderEvaluation.builder[T]().value(default).errorCode(code).errorMessage(s"$name: $code").reason("ERROR").build()
 
+  /** Set once a swap away from this leaf's stack has raised its gate: an answer given from then on carries `@late` in
+    * its variant, and must never reach a caller as a success.
+    */
+  val retiring: AtomicBoolean = new AtomicBoolean(false)
+
   private def ok[T](value: T, key: String, reason: String): ProviderEvaluation[T] =
-    ProviderEvaluation.builder[T]().value(value).variant(s"$name:$key").reason(reason).build()
+    ProviderEvaluation
+      .builder[T]()
+      .value(value)
+      .variant(s"$name:$key" + (if (retiring.get()) SimLeaf.LateSuffix else ""))
+      .reason(reason)
+      .build()
 
   private def answer[T](wire: Wire, key: String, default: T, ctx: OFEvaluationContext): ProviderEvaluation[T] = {
     calls.incrementAndGet(): Unit
@@ -153,6 +163,9 @@ final class SimLeaf(val name: String) extends EventProvider {
 }
 
 object SimLeaf {
+
+  /** The variant suffix of an answer a retiring leaf gave. */
+  val LateSuffix: String = "@late"
 
   /** The rendering an `Echo` answers with: the targeting key, then the string attributes, sorted. */
   def render(tk: Option[String], attrs: Map[String, String]): String =

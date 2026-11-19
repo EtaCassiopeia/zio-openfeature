@@ -10,6 +10,9 @@ object Stats {
 
   def hit(name: String): Unit = counters.computeIfAbsent(name, _ => new LongAdder).increment()
 
+  /** Registers counters at 0 without hitting them, so one never reached still shows as `=0`. */
+  def declare(names: Iterable[String]): Unit = names.foreach(n => counters.computeIfAbsent(n, _ => new LongAdder): Unit)
+
   def render: String =
     counters.asScala.toList.sortBy(_._1).map { case (k, v) => s"$k=${v.sum}" }.mkString("coverage: ", " ", "")
 }

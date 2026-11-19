@@ -148,7 +148,12 @@ stacks (`CachingProvider`, `CircuitBreakerProvider`, `DeferredProvider` and mult
 providers) and runs random command sequences against them: evaluations, swaps between stacks, flag and fault changes,
 provider events and shutdown. `SequentialSimulationSpec` checks every answer, hook stage and shutdown against a pure
 reference model. `ConcurrentSimulationSpec` races evaluation workers against a swapper and a mutator and checks
-invariants only (no defects, hook totals, every provider shut down). A failure prints the command trace up to the
+invariants only (no defects, hook totals, no answer a leaf gave after a swap away from it began, every provider shut
+down). It runs under a seeded schedule probe: at every `LifecycleProbe` and `EvaluationProbe` point a
+`SchedulePerturber` passes, yields or sleeps briefly, decided from the plan's `scheduleSeed`, so rare interleavings
+become common and the seed replays the schedule along with the plan (most failures recur, though not all, since the
+SDK's threads run outside ZIO's scheduler). Its failure prints the schedule seed and the tail of the decision log, and
+the coverage line counts every probe point (`probe.<point>`), showing `=0` for one never reached. A failure prints the command trace up to the
 first divergence, and each run prints coverage counters, so a generator that stops reaching a path shows up. Both
 tests carry `PropertyBudget`, so pull requests run the base count and the nightly runs them at 10×. Replay with the
 printed seed:
@@ -162,7 +167,7 @@ A seed does not survive a zio-test upgrade, so a failure is also kept as its pla
 artifact (`SequentialSimulationSpec.json` or `ConcurrentSimulationSpec.json`). Save that line as
 `simulation/src/test/resources/regressions/<sequential|concurrent>/<yyyy-mm-dd>-<what>.json`. Both specs replay that
 directory before their generated cases, on every pull request, and the replay fails if the directory is empty. An entry
-holds no seed, so it survives zio-test upgrades. A concurrent plan is not replayed exactly (the SDK's threads run
+holds no zio-test seed, so it survives zio-test upgrades; a concurrent entry carries its `scheduleSeed`. A concurrent plan is not replayed exactly (the SDK's threads run
 outside ZIO's scheduler), so when a concurrent failure reproduces as a sequential plan, keep the sequential one. See
 `simulation/src/test/resources/regressions/README.md`.
 

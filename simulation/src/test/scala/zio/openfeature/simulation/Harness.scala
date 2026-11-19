@@ -4,6 +4,7 @@ import dev.openfeature.sdk.{FeatureProvider => OFFeatureProvider, OpenFeatureAPI
 import zio._
 import zio.openfeature._
 import zio.openfeature.extras._
+import zio.openfeature.internal.{EvaluationProbe, FeatureFlagsFactories, LifecycleProbe}
 import zio.openfeature.testkit.HookCall
 
 /** What an evaluation produced, normalized so the model can predict it. */
@@ -67,6 +68,28 @@ object Harness {
       )
       .build
       .map(env => (env.get[FeatureFlags], env.get[FeatureFlagsAdmin]))
+
+  /** As [[install]], with a lifecycle and an evaluation probe: the instance `fromProvider` builds for that config (an
+    * owned API, synchronous init), built directly, since `fromProvider` takes no evaluation probe.
+    */
+  def installProbed(
+    provider: OFFeatureProvider,
+    lifecycle: LifecycleProbe,
+    evaluation: EvaluationProbe
+  ): ZIO[Scope, Throwable, (FeatureFlags, FeatureFlagsAdmin)] =
+    FeatureFlagsFactories
+      .build(
+        provider,
+        domain = Some(s"sim-${java.util.UUID.randomUUID()}"),
+        version = None,
+        initialHooks = Nil,
+        statusRef = None,
+        addShutdownFinalizer = true,
+        apiOverride = Some(OpenFeatureAPI.createIsolated()),
+        probe = lifecycle,
+        evaluationProbe = evaluation
+      )
+      .map(ff => (ff, ff))
 
   private def reasonName(r: ResolutionReason): String = r match {
     case ResolutionReason.Static         => "STATIC"

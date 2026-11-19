@@ -29,7 +29,7 @@ guards = [
      "    /\\ ~\\E q \\in Providers : /\\ replaced[q] = builtOn[i]\n"
      "                            /\\ q \\in registered\n"
      "                            /\\ q \\notin userOwned\n"
-     "                            /\\ SlotsOf(q) = {}\n", "", "registry-retry-fails-too-and-leaves-the-first-running"),
+     "                            /\\ SlotsOf(q) = {}\n", "", "registry-retry-fails-too-and-releases-the-first-only-at-close"),
     ("SwapDone: no failure marked", "    /\\ swapping = i\n    /\\ failedOn[i] # bound[d]\n", "    /\\ swapping = i\n",
      "succeeds-after-its-failure"),
     ("UserBind: an empty slot", "    /\\ bound[d] = None\n    /\\ \\/ p \\notin everBound\n",

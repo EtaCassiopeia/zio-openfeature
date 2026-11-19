@@ -109,15 +109,6 @@ mutants = {
         ('OnlyFailedBuildsEvicted',), [
         ("Evict(i) ==\n    /\\ phase[i] = \"failed\"\n",
          "Evict(i) ==\n    /\\ phase[i] \\in {\"failed\", \"open\"}\n")]),
-    # A retry with another provider fails too and leaves the failed provider it replaced running: no slot holds it any
-    # more, so the API's shutdown skips it and nothing shuts it down.
-    'a failed retry leaves the provider it replaced running': (
-        ('SharedShutDownOnce',), [
-        ("    \\/ \\E i \\in Instances : ReleaseReplaced(i)\n", ""),
-        ("    /\\ ~\\E q \\in Providers : /\\ replaced[q] = builtOn[i]\n"
-         "                            /\\ q \\in registered\n"
-         "                            /\\ q \\notin userOwned\n"
-         "                            /\\ SlotsOf(q) = {}\n", "")]),
     # A registry client's timed-out swap whose new provider then fails leaves the provider it replaced running: the
     # registry's close does not release it (FeatureFlagRegistry.releaseLeftBehind dropped, as before it existed), and
     # the API's shutdown cannot reach a provider no slot holds.
@@ -131,6 +122,13 @@ mutants = {
         ('SharedShutDownOnce',), [
         ("    /\\ ShutApi({q \\in orphans : q \\in registered} \\cup {q \\in leftBehind : q \\in registered /\\ q \\notin ApiShuts})\n",
          "    /\\ ShutApi({q \\in orphans : q \\in registered})\n")]),
+    # A registry closed while a retry with another provider is still initializing, whose initialize() then fails, leaves
+    # the provider the retry replaced running: the close interrupts the retry before its release, and the API's
+    # shutdown reaches no provider a slot does not hold.
+    'a registry close during a retry with another provider leaves the replaced one running': (
+        ('SharedShutDownOnce',), [
+        ("    /\\ leftBehind' = IF bound[d] \\notin {None, p} THEN leftBehind \\cup {bound[d]} ELSE leftBehind\n",
+         "    /\\ leftBehind' = leftBehind\n")]),
     # An owner's timed-out swap records no orphan, as a non-owner's: when the new provider fails, nothing shuts the
     # previous one down.
     'an owner\'s timed-out swap records no orphan': (

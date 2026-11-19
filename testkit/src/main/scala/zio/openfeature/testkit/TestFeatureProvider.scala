@@ -21,7 +21,7 @@ import dev.openfeature.sdk.exceptions._
 import zio.test.TestAspect
 import scala.jdk.CollectionConverters._
 import java.util.concurrent.{ConcurrentHashMap, CopyOnWriteArrayList, CountDownLatch}
-import java.util.concurrent.atomic.AtomicReference
+import java.util.concurrent.atomic.{AtomicLong, AtomicReference}
 
 /** A test provider that implements OpenFeature's FeatureProvider interface.
   *
@@ -50,6 +50,21 @@ final class TestFeatureProvider private (
   import TestFeatureProvider.{BehaviorConfig, ErrorMode}
 
   private[testkit] val behaviorRef: AtomicReference[BehaviorConfig] = new AtomicReference(BehaviorConfig())
+
+  // The state of the random-failure draws: a splitmix64 sequence, seeded from ZIO's Random each time the failure
+  // probability is set. Concurrent evaluations each take one step of the same sequence, without a lock.
+  private val failureDraws = new AtomicLong(0L)
+
+  private def reseedFailureDraws: UIO[Unit] = Random.nextLong.flatMap(seed => ZIO.succeed(failureDraws.set(seed)))
+
+  // The next draw in [0, 1).
+  private def nextFailureDraw(): Double = {
+    val z0 = failureDraws.addAndGet(0x9e3779b97f4a7c15L)
+    val z1 = (z0 ^ (z0 >>> 30)) * 0xbf58476d1ce4e5b9L
+    val z2 = (z1 ^ (z1 >>> 27)) * 0x94d049bb133111ebL
+    val z3 = z2 ^ (z2 >>> 31)
+    (z3 >>> 11).toDouble / (1L << 53).toDouble
+  }
 
   // The status override of each instance this provider is attached to, in the order they were built.
   private[testkit] val overrides: AtomicReference[List[ProviderStatus => IO[Refusal, Unit]]] =
@@ -108,7 +123,7 @@ final class TestFeatureProvider private (
     }
     if (
       config.failureProbability > 0.0 &&
-      java.util.concurrent.ThreadLocalRandom.current().nextDouble() < config.failureProbability
+      nextFailureDraw() < config.failureProbability
     )
       throw new GeneralError("Simulated: random failure")
   }
@@ -477,9 +492,13 @@ final class TestFeatureProvider private (
 
   /** Set the probability (0.0 to 1.0) that each evaluation fails randomly. Values outside the range — including NaN —
     * are clamped to [0.0, 1.0]; NaN is treated as 0.0 to avoid silently disabling failure injection.
+    *
+    * Draws are seeded from ZIO's `Random` when the probability is set, so under zio-test a failing run replays with the
+    * same test seed; with concurrent evaluations the same set of draws is replayed, not their assignment to calls.
     */
   def setFailureProbability(p: Double): UIO[Unit] =
-    ZIO.succeed(behaviorRef.updateAndGet(_.copy(failureProbability = TestFeatureProvider.clampProbability(p)))).unit
+    reseedFailureDraws *>
+      ZIO.succeed(behaviorRef.updateAndGet(_.copy(failureProbability = TestFeatureProvider.clampProbability(p)))).unit
 
   /** Reset all behavior controls to defaults. */
   def clearBehavior: UIO[Unit] =
@@ -556,20 +575,27 @@ object TestFeatureProvider {
 
   /** Aspect that makes evaluations fail randomly with the given probability, clamped to [0.0, 1.0] exactly as
     * `setFailureProbability` clamps it (NaN is 0.0).
+    *
+    * Draws are seeded from ZIO's `Random` before the test, so a failing run replays with the same test seed; with
+    * concurrent evaluations the same set of draws is replayed, not their assignment to calls.
     */
   def withFailureProbability(p: Double): TestAspect[Nothing, TestFeatureProvider, Nothing, Any] = {
     val clamped = clampProbability(p)
-    behaviorAspect(_.copy(failureProbability = clamped))
+    behaviorAspect(_.copy(failureProbability = clamped), reseed = true)
   }
 
   /** Applies `modify` for the test and afterwards restores the config it found — not the defaults — so a test-level
-    * aspect nested in a suite-level one leaves the suite's settings in place.
+    * aspect nested in a suite-level one leaves the suite's settings in place. `reseed` seeds the random-failure draws
+    * first; they are not restored, since setting a probability again reseeds them.
     */
   private def behaviorAspect(
-    modify: BehaviorConfig => BehaviorConfig
+    modify: BehaviorConfig => BehaviorConfig,
+    reseed: Boolean = false
   ): TestAspect[Nothing, TestFeatureProvider, Nothing, Any] =
     TestAspect.aroundWith(
-      ZIO.serviceWith[TestFeatureProvider](tp => tp.behaviorRef.getAndUpdate(c => modify(c)))
+      ZIO.serviceWithZIO[TestFeatureProvider](tp =>
+        tp.reseedFailureDraws.when(reseed) *> ZIO.succeed(tp.behaviorRef.getAndUpdate(c => modify(c)))
+      )
     )(previous => ZIO.serviceWith[TestFeatureProvider](_.behaviorRef.set(previous)))
 
   // Flag overrides — TestAspects

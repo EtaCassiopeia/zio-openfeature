@@ -173,6 +173,8 @@ final class FaultyProvider[+P <: FeatureProvider] private (val delegate: P, name
 
   private val scripts  = new ConcurrentHashMap[Op, AtomicReference[Chunk[Fault]]]()
   private val recorded = new ConcurrentLinkedQueue[Call]()
+  // What each `Fault.Emit` returned, until `awaitScriptedEmissions` waits on it.
+  private val scriptedEmissions = new ConcurrentLinkedQueue[dev.openfeature.sdk.Awaitable]()
   // A call takes its tickets when it enters, so a release or shutdown() between the entry (what awaitEntered sees) and
   // the call reaching its hang still lets it through. `release` opens both gates; `shutdown()` only the second.
   private val released           = new Gate
@@ -206,6 +208,21 @@ final class FaultyProvider[+P <: FeatureProvider] private (val delegate: P, name
     ZIO.attemptBlockingInterrupt {
       entryLock.synchronized {
         while (entries.getOrElse(op, 0) < n) entryLock.wait()
+      }
+    }.orDie
+
+  /** Returns once the SDK has taken every emission a `Fault.Emit` has made so far: the SDK applies two emissions a
+    * provider made without awaiting the first in either order, so an event emitted after this one comes after them.
+    * Emissions scripted after the call starts are not covered.
+    */
+  private[openfeature] def awaitScriptedEmissions: UIO[Unit] =
+    ZIO.attemptBlocking {
+      // Each emission leaves the queue only once taken, so a wait given up on leaves it there for the next.
+      var next = scriptedEmissions.peek()
+      while (next != null) {
+        next.await()
+        scriptedEmissions.remove(next)
+        next = scriptedEmissions.peek()
       }
     }.orDie
 
@@ -249,9 +266,10 @@ final class FaultyProvider[+P <: FeatureProvider] private (val delegate: P, name
       case Fault.Throw(error)             => throw error
       case Fault.Delay(duration, andThen) =>
         Thread.sleep(duration.toMillis); applyFault(op, andThen, entry, shaped, body)
-      case Fault.HangUntilReleased            => hang(onShutdown = false, entry); body
-      case Fault.HangUntilShutdown            => hang(onShutdown = true, entry); body
-      case Fault.Emit(event, details, after)  => emit(event, details); applyFault(op, after, entry, shaped, body)
+      case Fault.HangUntilReleased           => hang(onShutdown = false, entry); body
+      case Fault.HangUntilShutdown           => hang(onShutdown = true, entry); body
+      case Fault.Emit(event, details, after) =>
+        scriptedEmissions.add(emit(event, details)); applyFault(op, after, entry, shaped, body)
       case shape if shaped.isDefinedAt(shape) => shaped(shape)
       case other                              => throw new IllegalStateException(s"$other does not apply to $op")
     }

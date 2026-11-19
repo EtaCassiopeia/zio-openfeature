@@ -120,6 +120,34 @@ object WrapperEventChannelSpec extends ZIOSpecDefault {
     },
     test("a CircuitBreakerProvider whose attach failed does not detach the wrapper that owns the delegate") {
       failedAttachKeepsOwner(d => CircuitBreakerProvider(d))
-    }
+    },
+    test("a faulty provider's scripted emissions are awaited until the SDK has taken them") {
+      ZIO.scoped {
+        for {
+          inner <- zio.openfeature.testkit.FaultyProvider.scoped(Map("flag" -> true), name = "inner")
+          held  <- ZIO.acquireRelease(ZIO.succeed(new java.util.concurrent.CountDownLatch(1)))(l =>
+            ZIO.succeed(l.countDown())
+          )
+          _ <- ZIO.succeed(EventProviderBridge.attach(inner, (_, _) => { held.await(); () }))
+          _ <- inner.script(
+            zio.openfeature.testkit.Op.EvaluateBoolean,
+            zio.openfeature.testkit.Fault.Emit(ProviderEvent.PROVIDER_STALE, ProviderEventDetails.builder().build())
+          )
+          _ <- ZIO.attemptBlocking(inner.getBooleanEvaluation("flag", false, new ImmutableContext())).orDie
+          // The SDK's await ignores interrupts: disconnected, the timeout returns while the wait stays parked.
+          waiting <- inner.awaitScriptedEmissions.disconnect.timeout(300.millis)
+          _       <- ZIO.succeed(held.countDown())
+          taken   <- inner.awaitScriptedEmissions.disconnect.timeout(5.seconds)
+        } yield assertTrue(waiting.isEmpty, taken.isDefined)
+      }
+    } @@ TestAspect.withLiveClock,
+    test("a faulty provider with no scripted emissions does not wait for any") {
+      ZIO.scoped {
+        zio.openfeature.testkit.FaultyProvider
+          .scoped(Map("flag" -> true), name = "inner")
+          .flatMap(_.awaitScriptedEmissions.disconnect.timeout(1.second))
+          .map(done => assertTrue(done.isDefined))
+      }
+    } @@ TestAspect.withLiveClock
   ) @@ TestAspect.sequential @@ TestAspect.timeout(60.seconds) @@ Quiescence.aspect
 }

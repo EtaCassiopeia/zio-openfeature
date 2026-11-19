@@ -228,24 +228,15 @@ object Runner {
             from <- nextId.get
             ns = Spec.number(newSpec0, from)
             _ <- nextId.set(Spec.maxId(ns) + 1)
-            _ <-
-              if (Spec.nameThrowsBeforeInit(ns))
-                ZIO.succeed {
-                  Stats.hit("swap.skippedNameThrows")
-                  trace.append(s"swap to ${Spec.show(ns)} skipped (name read throws)\n")
-                }.unit
-              else {
-                val nb = Harness.build(ns)
-                for {
-                  _ <- ZIO.succeed(trace.append(s"swap to ${Spec.show(ns)}\n"))
-                  r <- ad.setProvider(nb.provider).sandbox.either
-                  _ <- ZIO.when(r.isLeft)(fail(s"setProvider failed: $r"))
-                  _ <- ref.set(World(w.global, w.client, List(StackState.initial(ns)), nb, w.built :: w.retired))
-                  _ <- last.set(nb)
-                  // The replaced stack is shut down: each of its leaves exactly once, and none answers afterwards.
-                  _ <- awaitShutdown(w.built).flatMap(ZIO.foreach(_)(fail))
-                } yield ()
-              }
+            _ <- ZIO.succeed(if (Spec.wrapsMulti(ns)) Stats.hit("swap.wrapsMulti"))
+            nb = Harness.build(ns)
+            _ <- ZIO.succeed(trace.append(s"swap to ${Spec.show(ns)}\n"))
+            r <- ad.setProvider(nb.provider).sandbox.either
+            _ <- ZIO.when(r.isLeft)(fail(s"setProvider failed: $r"))
+            _ <- ref.set(World(w.global, w.client, List(StackState.initial(ns)), nb, w.built :: w.retired))
+            _ <- last.set(nb)
+            // The replaced stack is shut down: each of its leaves exactly once, and none answers afterwards.
+            _ <- awaitShutdown(w.built).flatMap(ZIO.foreach(_)(fail))
           } yield ()
       }
       w <- ref.get

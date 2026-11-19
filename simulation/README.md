@@ -15,6 +15,5 @@ Test-only, unpublished, Scala 3. Not in the root aggregate; run with `sbt simula
 
 Scale with `ZOF_PBT_SCALE`, pin with `ZOF_PBT_SEED`; the sequential spec prints both at the start.
 
-Swaps to a stack whose name read throws before init (a Cache or Breaker over an uninitialized Multi) are skipped and
-counted as `swap.skippedNameThrows`, because a swap to one currently dies. Remove the skip in `Runner.scala`
-(`Spec.nameThrowsBeforeInit`) once a swap reads the name safely.
+A swap to a Cache or Breaker over a Multi, whose name is unknown before it initializes, is exercised like any other and
+counted as `swap.wrapsMulti` (`crun.swap.wrapsMulti` in the concurrent spec).

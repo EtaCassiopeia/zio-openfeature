@@ -83,17 +83,16 @@ object ConcurrentSimulationSpec extends ZIOSpecDefault {
               from <- nextId.get
               ns = Spec.number(s, from)
               _ <- nextId.set(Spec.maxId(ns) + 1)
-              _ <- ZIO.unless(Spec.nameThrowsBeforeInit(ns)) {
-                val nb = Harness.build(ns)
-                ad.setProvider(nb.provider).sandbox.either.flatMap {
-                  case Left(c)  => report(s"setProvider to ${Spec.show(ns)} failed: ${c.prettyPrint.take(400)}")
-                  case Right(_) =>
-                    for {
-                      old <- current.getAndSet(nb)
-                      _   <- retired.update(old :: _)
-                      _ <- Runner.awaitShutdown(old).flatMap(ZIO.foreachDiscard(_)(p => report(s"replaced stack: $p")))
-                    } yield ()
-                }
+              _ <- ZIO.succeed(if (Spec.wrapsMulti(ns)) Stats.hit("crun.swap.wrapsMulti"))
+              nb = Harness.build(ns)
+              _ <- ad.setProvider(nb.provider).sandbox.either.flatMap {
+                case Left(c)  => report(s"setProvider to ${Spec.show(ns)} failed: ${c.prettyPrint.take(400)}")
+                case Right(_) =>
+                  for {
+                    old <- current.getAndSet(nb)
+                    _   <- retired.update(old :: _)
+                    _   <- Runner.awaitShutdown(old).flatMap(ZIO.foreachDiscard(_)(p => report(s"replaced stack: $p")))
+                  } yield ()
               }
               _ <- ZIO.yieldNow
             } yield ()

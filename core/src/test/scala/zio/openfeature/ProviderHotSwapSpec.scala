@@ -1516,6 +1516,42 @@ object ProviderHotSwapSpec extends ZIOSpecDefault {
         } yield assertTrue(timedOut.isLeft, failed.isLeft, settled, isStillInitializing(refused), during == 1)
       }
     } @@ TestAspect.withLiveClock,
+    test("a failed swap records its orphan before the entry's watcher can settle it") {
+      // The watched registration's initialize() has already failed, so the watcher settles the entry as soon as it
+      // exists; a slow OrphanRecorded point shows whether the point comes before the entry or after it.
+      val points = new java.util.concurrent.ConcurrentLinkedQueue[String]()
+      val a      = new Counting("A", blocking = false)
+      val c      = new FailingCounting("C")
+      ZIO.scoped {
+        for {
+          b <- ZIO.acquireRelease(ZIO.succeed(new Counting("B", blocking = true)))(p =>
+            ZIO.succeed(p.release.countDown())
+          )
+          probe = new zio.openfeature.internal.LifecycleProbe {
+            def at(p: zio.openfeature.internal.LifecycleProbe.Point): UIO[Unit] = p match {
+              case zio.openfeature.internal.LifecycleProbe.Point.OrphanRecorded =>
+                ZIO.succeedBlocking { Thread.sleep(200); points.add("OrphanRecorded"); () }
+              case zio.openfeature.internal.LifecycleProbe.Point.OrphanResolved(previous, watch) =>
+                val unwrap = zio.openfeature.internal.ManagedProvider.unwrap _
+                ZIO.succeed {
+                  if ((unwrap(previous) eq b) && (unwrap(watch) eq c)) points.add("OrphanResolved(B, C)"); ()
+                }
+              case _ => ZIO.unit
+            }
+          }
+          ff       <- buildHeld(a, probe, owns = true)
+          timedOut <- ff.setProvider(b).either
+          failed   <- ff.setProvider(c).either
+          settled  <- awaitTrue(b.shutdowns.get() >= 1)
+          seen = points.toArray.toList.map(_.toString)
+        } yield assertTrue(
+          timedOut.isLeft,
+          failed.isLeft,
+          settled,
+          seen == List("OrphanRecorded", "OrphanRecorded", "OrphanResolved(B, C)")
+        )
+      }
+    } @@ TestAspect.withLiveClock,
     test("a failed swap that never bound its provider leaves a still-initializing previous provider NotReady") {
       ZIO.scoped {
         val api    = OpenFeatureAPI.createIsolated()

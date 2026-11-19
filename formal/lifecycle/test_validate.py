@@ -51,5 +51,33 @@ class ToolError(unittest.TestCase):
         self.assertIn("1 tool error", result.stdout)
 
 
+class DroppedDeliveries(unittest.TestCase):
+    """A delivery the swap's gate drops is carried on the swap's SwapReconcile label, by kind."""
+
+    def swap(self, provider):
+        rec = [
+            {"seq": 0, "point": "Begin", "provider": "p0", "providerInstance": "a0"},
+            {"seq": 1, "point": "SwapStart", "provider": "p1", "providerInstance": "a1"},
+            {"seq": 2, "point": "SdkBind"},
+            {"seq": 3, "point": "DeliverEvent", "arg": "PROVIDER_STALE", "provider": provider},
+            {"seq": 4, "point": "GateDown"},
+            {"seq": 5, "point": "SwapReconcile"},
+            {"seq": 6, "point": "SwapDone"},
+        ]
+        return next(a for a in trace_labels.labels(rec) if a["action"] == "SwapReconcile")
+
+    def test_a_delivery_from_the_bound_provider_under_the_gate_is_dropped(self):
+        self.assertEqual(self.swap("p1")["dropped"], ["STALE"])
+
+    def test_a_delivery_from_another_provider_is_not(self):
+        self.assertEqual(self.swap("p0")["dropped"], [])
+
+    def test_validation_bounds_the_events_by_the_dropped_ones_too(self):
+        path = os.path.join(here, "traces", "accept", "recorded-emit-dropped-under-the-gate-read-by-the-reconcile.ndjson")
+        actions = trace_labels.labels(trace_labels.read(path))
+        self.assertEqual(sum(len(a["dropped"]) for a in actions), 2)
+        self.assertFalse(any(a["action"] == "Deliver" for a in actions))
+
+
 if __name__ == "__main__":
     unittest.main()

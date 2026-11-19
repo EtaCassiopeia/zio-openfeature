@@ -18,7 +18,9 @@ The mapping (formal/lifecycle/README.md, "Trace validation"):
   SwapReconcile                      -> SwapReconcile, carrying `status`: the last StatusWritten before the swap's
                                         SwapDone point, which is the status the swap ends on ("" when it wrote none, or
                                         when an event was delivered between SwapReconcile and SwapDone: the model's
-                                        step does not include a write that comes after it)
+                                        step does not include a write that comes after it), and `dropped`: the kinds
+                                        of the bound provider's events delivered while the swap's gate was up, which
+                                        the gate dropped and the reconcile may still read from the SDK's state
   SwapRollback                       -> SwapRollback, or SwapRollbackUnbound when the swap
                                         recorded no SdkBind (its registration was refused), carrying `seenBefore`:
                                         whether the swap's provider instance appeared on any record before the
@@ -127,6 +129,7 @@ def labels(records):
     reconcile = None  # the swap's SwapReconcile label, which closes its status
     swap_status = ""  # the last status written since the swap started
     late_delivery = False  # an event was delivered between the swap's SwapReconcile and SwapDone
+    dropped = []  # kinds of the bound provider's events the swap's gate dropped, which its SwapReconcile may read
     open_delivers = []  # Deliver labels outside a swap that no status write has been attributed to yet
     in_shutdown = False
     shut_down = False
@@ -138,7 +141,7 @@ def labels(records):
     def act(label, **fields):
         entry = {"action": label, "event": "", "state": "", "ok": False, "shuts": -1, "threw": 0, "returned": 0,
                  "owner": owner, "provider": "", "watch": "", "pending": pending,
-                 "pinInits": pin_inits, "status": "", "seenBefore": False}
+                 "pinInits": pin_inits, "status": "", "seenBefore": False, "dropped": []}
         entry.update(fields)
         if label != "Deliver":
             open_delivers.clear()
@@ -226,6 +229,7 @@ def labels(records):
             in_swap, swap_outcome, rollback, bound_new, failed = True, None, None, False, False
             swap_prev, swap_new = bound, who(r, "providerInstance")
             gate_down, reconcile, swap_status, late_delivery = False, None, "", False
+            dropped = []
             swap_seen = bool(swap_new) and any(
                 e.get("providerInstance") == r.get("providerInstance") for e in records[:k])
             continue
@@ -260,7 +264,7 @@ def labels(records):
                 if failed and swap_outcome is None:
                     swap_outcome = "SwapFailNoRollback"
                     act("SwapFailNoRollback")
-                reconcile = act("SwapReconcile")
+                reconcile = act("SwapReconcile", dropped=list(dropped))
             # A failed swap settles an earlier swap's orphan before it ends; the model's OrphanResolved takes no lock.
             elif point == resolved:
                 act("OrphanResolved", provider=who(r, "providerInstance"), watch=who(r, "watchInstance"))
@@ -271,8 +275,12 @@ def labels(records):
             elif point == "DeliverEvent":
                 if reconcile is not None:
                     late_delivery = True
-                elif gate_down and not shut_down and r.get("provider") and r.get("provider") == provider_names.get(bound):
+                elif shut_down or not r.get("provider") or r.get("provider") != provider_names.get(bound):
+                    pass
+                elif gate_down:
                     act("Deliver", event=arg.replace("PROVIDER_", ""))
+                else:
+                    dropped.append(arg.replace("PROVIDER_", ""))
             elif point == "SwapDone":
                 in_swap = False
                 if reconcile is not None and not late_delivery:

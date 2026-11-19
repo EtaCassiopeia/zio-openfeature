@@ -191,7 +191,7 @@ sees every event you emit.
 |:--------|:-------|
 | `setErrorMode(mode)` | every evaluation fails with `mode`: `FlagNotFound`, `ParseError`, `TypeMismatch`, `ProviderNotReady` or `General` |
 | `setFailing(true)` | same as `setErrorMode(ErrorMode.General)`; `setFailing(false)` clears it |
-| `setFailureProbability(p)` | each evaluation fails with probability `p` (clamped to 0-1) |
+| `setFailureProbability(p)` | each evaluation fails with probability `p` (clamped to 0-1), seeded from the test's `Random`, so a run replays with the same seed |
 | `setDelay(d)` | each evaluation sleeps `d` first, on the real clock. The 1 second evaluation timeout runs on ZIO's clock, so to test it add `@@ TestAspect.withLiveClock`: under the default `TestClock` it never fires, and the read succeeds after the delay |
 | `clearErrorMode`, `clearDelay`, `clearBehavior` | undo the above |
 

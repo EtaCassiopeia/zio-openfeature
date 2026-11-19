@@ -169,8 +169,42 @@ object BehaviorControlsSpec extends ZIOSpecDefault {
           total <- FeatureFlags.resolveOrDefault[Boolean]("flag", default = false)
         } yield assertTrue(total.errorCode.contains(ErrorCode.General))
       }
-    ) @@ TestFeatureProvider.withErrorMode(TestFeatureProvider.ErrorMode.General)).provide(testLayer)
+    ) @@ TestFeatureProvider.withErrorMode(TestFeatureProvider.ErrorMode.General)).provide(testLayer),
+    // Random failures draw from a sequence seeded from ZIO's Random when the probability is set, so the test seed
+    // decides which evaluations fail.
+    suite("seeded random failures")(
+      test("random failures replay under the same test seed") {
+        for {
+          first  <- failurePattern(42L)
+          second <- failurePattern(42L)
+        } yield assertTrue(first == second, first.contains(true), first.contains(false))
+      },
+      test("a different test seed gives a different failure pattern") {
+        for {
+          a <- failurePattern(42L)
+          b <- failurePattern(43L)
+        } yield assertTrue(a != b)
+      },
+      test("withFailureProbability is seeded the same way") {
+        for {
+          viaAspect  <- ZIO.replicateZIO(Draws)(FeatureFlags.boolean("flag", default = false).either.map(_.isLeft))
+          imperative <- failurePattern(42L)
+        } yield assertTrue(viaAspect.toList == imperative)
+      } @@ TestFeatureProvider.withFailureProbability(0.5) @@ TestAspect.setSeed(42L)
+    ).provide(testLayer)
   ) @@ TestAspect.withLiveClock
+
+  private val Draws = 64
+
+  // Which of `Draws` sequential evaluations fail on a fresh provider, with the test seed set to `seed` just before the
+  // failure probability is.
+  private def failurePattern(seed: Long): Task[List[Boolean]] =
+    (for {
+      tp      <- ZIO.service[TestFeatureProvider]
+      _       <- TestRandom.setSeed(seed)
+      _       <- tp.setFailureProbability(0.5)
+      pattern <- ZIO.replicateZIO(Draws)(FeatureFlags.boolean("flag", default = false).either.map(_.isLeft))
+    } yield pattern.toList).provideLayer(testLayer)
 
   // Runs after the inner aspect has restored its state and before the outer one restores its own.
   private val outerErrorModeStillGeneral: URIO[TestFeatureProvider, Unit] =

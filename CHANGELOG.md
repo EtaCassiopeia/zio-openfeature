@@ -84,14 +84,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   so it left that provider to the registry, which never reached it. The registry now shuts down, at its close, the
   provider a client's failed swap replaced unless it is already shut down (#918).
 
-## [2.2.0] — 2026-11-05
-
 ### Changed
 
+- **`TestFeatureProvider`'s random failures replay under the same test seed.** `setFailureProbability` and
+  `withFailureProbability` seed their draws from ZIO's `Random`, so a failing test replays with the same zio-test seed;
+  they drew from an unseeded generator before (#956).
 - **Wrapper-stack fault property no longer races its own scripted events** (#939, test-only). `WrapperStackFaultSpec`
   emits its `ERROR` only once the SDK has taken every event the evaluation script emitted
   (`FaultyProvider.awaitScriptedEmissions`), so a script's `READY` still in flight can no longer overtake it. Two more
   CI shapes join its pinned cases.
+
+## [2.2.0] — 2026-11-05
+
+### Changed
+
 - **`CachingProvider` with `contextKeys` keeps the targeting key in the cache key.** With `contextKeys` set, it used to
   be left out unless listed, so every user shared one cached answer per flag: in a 50% rollout, every user got the first
   user's answer until the entry expired, with nothing logged. **Behaviour change for anyone using `withContextKeys`

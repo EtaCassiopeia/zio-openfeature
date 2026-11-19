@@ -1,0 +1,21 @@
+# Deliberate nondeterminism in the main sources of published modules, checked by .github/scripts/check-determinism.sh.
+#
+# One entry per (file, token): `<repo-relative path> | <token> | <one-line reason>`. A new use of a token in a file not
+# listed for it fails the check, and an entry whose file no longer uses its token fails as stale.
+
+core/src/main/scala/zio/openfeature/internal/OrderedEmitter.scala | Executors. | one daemon thread keeps provider events in emission order
+core/src/main/scala/zio/openfeature/internal/OrderedEmitter.scala | new Thread( | that event thread's daemon factory
+core/src/main/scala/zio/openfeature/internal/ProviderRegistration.scala | System.nanoTime | wall-clock deadline by contract (bounded under a frozen TestClock); waits on the SDK's READY write on its own thread
+core/src/main/scala/zio/openfeature/internal/ProviderRegistration.scala | LockSupport.parkNanos | backoff of that same blocking wait for the SDK's write
+extras/src/main/scala/zio/openfeature/extras/CircuitBreaker.scala | System.nanoTime | Ticker.system, the production side of the injectable time seam
+ofrep/src/main/scala/zio/openfeature/ofrep/OFREPProvider.scala | Executors. | daemon cached pool replacing the contrib provider's non-daemon fixed pool, which blocks JVM exit
+ofrep/src/main/scala/zio/openfeature/ofrep/OFREPProvider.scala | new Thread( | that pool's daemon factory
+optimizely/src/main/scala/zio/openfeature/optimizely/OptimizelyProvider.scala | Executors. | the Optimizely SDK's event-processor executor (daemon)
+optimizely/src/main/scala/zio/openfeature/optimizely/OptimizelyProvider.scala | new Thread( | that executor's daemon factory
+optimizely/src/main/scala/zio/openfeature/optimizely/OptimizelyFeatureProvider.scala | Executors. | datafile staleness watchdog scheduler
+optimizely/src/main/scala/zio/openfeature/optimizely/OptimizelyFeatureProvider.scala | new Thread( | that scheduler's daemon factory
+optimizely/src/main/scala/zio/openfeature/optimizely/OptimizelyFeatureProvider.scala | System.nanoTime | datafile staleness is measured monotonically on the SDK's threads
+testkit/src/main/scala/zio/openfeature/testkit/FaultyProvider.scala | Thread.sleep | Fault.Delay is the fault: a slow synchronous provider call on the SDK's thread
+testkit/src/main/scala/zio/openfeature/testkit/FaultyProvider.scala | Instant.now | call-log timestamp, diagnostic only
+testkit/src/main/scala/zio/openfeature/testkit/TestFeatureProvider.scala | Thread.sleep | setDelay is documented as real-clock (docs/testkit.md)
+testkit/src/main/scala/zio/openfeature/testkit/TestFeatureProvider.scala | UUID.randomUUID | unique per-test domain names, not a decision input

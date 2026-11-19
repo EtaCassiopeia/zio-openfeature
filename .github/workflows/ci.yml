@@ -47,6 +47,12 @@ jobs:
           fi
           grep -qF "Scala ${s3}+ and ${s213}+" docs/getting-started.md || {
             echo "docs/getting-started.md does not state the build's Scala versions (${s3}, ${s213})"; exit 1; }
+      # Main sources of published modules may read the wall clock, sleep or start threads only where the allowlist
+      # (.github/determinism-allowlist.txt) says why. The fixture test runs first, so a broken checker cannot pass.
+      - name: Test the determinism check
+        run: bash .github/scripts/test-check-determinism.sh
+      - name: Check main sources for unlisted wall-clock, thread and random use
+        run: bash .github/scripts/check-determinism.sh
       - name: Set up JDK 21
         uses: actions/setup-java@v6
         with:

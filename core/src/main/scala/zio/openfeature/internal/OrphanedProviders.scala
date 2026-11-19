@@ -28,10 +28,11 @@ import zio._
   *     `initialize()` that ignores the SDK's interrupt and succeeds after that gets it shut down by the SDK as well,
   *     which its wrapper turns into a no-op.
   *
-  * A foreign previous provider a slot the library can see held when the entry was recorded, the default one or an
-  * instance's, is left alone in all of these: the user registered it there, and its shutdown is the SDK's, with the API
-  * or when that slot lets go of it. If that slot's replacement then fails, nothing shuts it down, as for any provider
-  * the SDK replaces with one that fails.
+  * A previous provider a slot the library can see held when the entry was recorded, or holds when it settles, the
+  * default one or an instance's, is left alone in all of these: a sibling instance serves the library's wrapper from
+  * that slot, or the user registered the provider there, and its shutdown is the SDK's, with the API or when that slot
+  * lets go of it. If that slot's replacement then fails, nothing shuts it down, as for any provider the SDK replaces
+  * with one that fails.
   *
   * Only an instance that owns its API records entries: a provider of a shared API may serve sibling clients.
   */
@@ -147,12 +148,11 @@ final private[openfeature] class OrphanedProviders(api: OpenFeatureAPI, probe: L
       }
       .unit
 
+  // A slot that holds it keeps its registration, which the SDK shuts down when that slot lets go of it or with the API:
+  // a wrapper an instance on another slot serves, or one the user registered. Only the library binds a wrapper, and
+  // only in the slot of an instance built on this API, so for one these are every slot that can hold it.
   private def heldByVisibleSlot(previous: Bound): Boolean =
-    previous match {
-      case Bound.Foreign(provider) =>
-        ProviderStateAccess.boundIn(api, null, provider) || ApiInstances.boundInAnySlot(api, provider)
-      case Bound.Managed(_) => false
-    }
+    ProviderStateAccess.boundIn(api, null, previous.sdk) || ApiInstances.boundInAnySlot(api, previous.sdk)
 
   // What the SDK's own `shutDownOld` does: release it from the global registry, shut it down and detach its events,
   // which also lets it be registered again. The wrapper reaches the provider's `shutdown()` once per cycle.

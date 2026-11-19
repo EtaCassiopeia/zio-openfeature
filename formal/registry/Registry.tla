@@ -145,9 +145,9 @@ Live(i) == phase[i] \in {"building", "open"}
 \* p waits on the initialize() a timed-out swap left running: the SDK shuts it down if that call succeeds.
 Waiting(p) == replaced[p] \in pending
 
-\* A provider the user registered that a slot the library can see holds: the default one or an instance's
-\* (OrphanedProviders.heldByVisibleSlot).
-HeldVisibly(p) == p \in userOwned /\ (bound[Default] = p \/ Visible(p))
+\* A provider a slot the library can see holds, the default one or an instance's: one the user registered there, or
+\* the library's wrapper a sibling serves (OrphanedProviders.heldByVisibleSlot).
+HeldVisibly(p) == bound[Default] = p \/ Visible(p)
 
 ---------------------------------------------------------------------------
 \* The registry: getClient(d) / defaultClient.  The semaphore guards the map of promises, never a build: the first
@@ -409,11 +409,10 @@ SwapFail(i) ==
 \* (runSwap's timeout branch), status Error, and no rollback. The previous provider q is held only by that call, and
 \* the SDK shuts it down if the call succeeds (`replaced`). An instance that owns its API records q in its orphan list
 \* (recordOrphan), which shuts q down if the call fails or the instance closes first, unless a slot the library can
-\* see held q, one the user registered, when it was recorded: that slot's, and the SDK's, to shut down. A registry
-\* client records nothing; FeatureFlagRegistry.setProvider keeps q for the registry's close (`leftBehind`), which
-\* releases it if it is still running then. Outside the model (README): a non-owner on an API an instance owns, whose
-\* close releases nothing; an owner's q that another slot still holds, which its orphan list would shut down under
-\* that slot; and a swap's provider another slot shares.
+\* see held q when it was recorded, one the user registered or a sibling's wrapper: that slot's, and the SDK's, to shut
+\* down. A registry client records nothing; FeatureFlagRegistry.setProvider keeps q for the registry's close
+\* (`leftBehind`), which releases it if it is still running then. Outside the model (README): a non-owner on an API an
+\* instance owns, whose close releases nothing; and a swap's provider another slot shares.
 SwapTimeout(i) ==
     LET d == domainOf[i]
         p == bound[d]
@@ -424,7 +423,6 @@ SwapTimeout(i) ==
     /\ owner = i \/ owner = None
     /\ SlotsOf(p) = {d}
     /\ replaced[q] = None
-    /\ owner = i /\ q \notin userOwned => SlotsOf(q) = {}
     /\ swapping' = None
     /\ prior' = [prior EXCEPT ![i] = None]
     /\ pending' = pending \cup {p}
@@ -437,15 +435,16 @@ SwapTimeout(i) ==
                     failedOn, deciding, builtOn, abandoned >>
 
 \* The initialize() of p, a timed-out swap's provider, settles (ok: it returned). On success the SDK shuts down each
-\* provider waiting on it that no slot holds (shutDownOld); an orphan of the library's own the SDK skipped, because a
-\* slot holds it, the orphan list shuts down after waiting for the SDK. On failure the SDK shuts nothing down, and the
-\* orphan list shuts each of its orphans down, unless a slot the library can see holds one the user registered by now.
+\* provider waiting on it that no slot holds (shutDownOld); the orphan list leaves one the SDK skipped because a slot
+\* the library can see holds it. On failure the SDK shuts nothing down, and the orphan list shuts each of its orphans
+\* down, unless a slot the library can see holds one by now.
 \* A provider the user registered that nothing holds any more is the user's (`abandoned`); a registry client's wrapper
 \* waits for the registry's close (`leftBehind`).
 InitSettle(p, ok) ==
     LET waiting == {q \in Providers : replaced[q] = p}
         sdk == IF ok THEN {q \in waiting : SlotsOf(q) = {} /\ q \in registered} ELSE {}
-        lib == IF ok THEN {q \in waiting \cap orphans : q \notin userOwned /\ q \notin sdk /\ q \in registered}
+        lib == IF ok THEN {q \in waiting \cap orphans : q \notin userOwned /\ q \notin sdk /\ q \in registered /\
+                                                        ~HeldVisibly(q)}
                ELSE {q \in waiting \cap orphans : q \in registered /\ ~HeldVisibly(q)}
         ab == IF ok THEN {} ELSE {q \in waiting \ lib : q \in userOwned /\ SlotsOf(q) = {}}
         \* A shutdown of a provider a slot still holds leaves its registration in place, so the invariants see it.

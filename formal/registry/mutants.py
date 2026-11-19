@@ -138,6 +138,12 @@ mutants = {
          "               ELSE {q \\in waiting \\cap orphans : q \\in registered}\n"),
         ("    /\\ orphans' = IF owner = i /\\ ~HeldVisibly(q) THEN orphans \\cup {q} ELSE orphans\n",
          "    /\\ orphans' = IF owner = i THEN orphans \\cup {q} ELSE orphans\n")]),
+    # The orphan list counts only a provider of the user's as held by a slot: an owner's timed-out swap off its wrapper
+    # shuts it down under the sibling that still serves it, whether the new provider then fails or initializes.
+    'an orphan a sibling\'s slot holds is shut down': (
+        ('RegisteredNotShutDown',), [
+        ("HeldVisibly(p) == bound[Default] = p \\/ Visible(p)\n",
+         "HeldVisibly(p) == p \\in userOwned /\\ (bound[Default] = p \\/ Visible(p))\n")]),
 }
 
 

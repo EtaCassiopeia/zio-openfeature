@@ -828,8 +828,72 @@ object ProviderOwnershipShutdownSpec extends ZIOSpecDefault {
     }
   )
 
+  // The owner on `ownerDomain` and a sibling on `siblingDomain` both bind `provider`'s wrapper; the owner swaps to
+  // `incoming`, whose initialize() outlasts the swap's wait and is then released.
+  private def ownerSwapsOffShared(
+    siblingDomain: Option[String],
+    ownerDomain: Option[String],
+    incoming: Gated
+  ) = {
+    val api          = OpenFeatureAPI.createIsolated()
+    val provider     = new Gated(open = true)
+    def siblingHolds = ManagedProvider
+      .existing(provider)
+      .exists(w => siblingDomain.fold(api.getProvider())(api.getProvider(_)) eq w)
+    ZIO.scoped {
+      for {
+        sibling <- syncBuild(api, provider, siblingDomain, 5.seconds)
+        owner   <- syncBuild(api, provider, ownerDomain, 300.millis, owns = true)
+        shared = siblingHolds
+        swap    <- owner.setProvider(incoming).exit
+        _       <- ZIO.succeed(incoming.gate.countDown())
+        settled <- orphansSettled(owner)
+        count   <- shutdownsAfterSettling(provider)
+        status  <- sibling.providerStatus
+        held = siblingHolds
+      } yield assertTrue(shared, swap.isFailure, settled, count == 0, held, status == ProviderStatus.Ready)
+    }
+  }
+
+  // The same swap with no sibling: nothing else holds the wrapper, so it is still shut down, once.
+  private def ownerSwapsOffUnshared(incoming: Gated) = {
+    val api      = OpenFeatureAPI.createIsolated()
+    val provider = new Gated(open = true)
+    ZIO.scoped {
+      for {
+        owner   <- syncBuild(api, provider, Some("d"), 300.millis, owns = true)
+        swap    <- owner.setProvider(incoming).exit
+        _       <- ZIO.succeed(incoming.gate.countDown())
+        settled <- orphansSettled(owner)
+        count   <- shutdownsAfterSettling(provider)
+      } yield assertTrue(swap.isFailure, settled, count == 1)
+    }
+  }
+
+  private val ownerSwapOffShared = suite("an owner's timed-out swap off the wrapper it was built with")(
+    test("with no sibling, shuts it down once when the new provider then fails") {
+      ownerSwapsOffUnshared(new Gated(failure = Some("boom")))
+    },
+    test("with no sibling, shuts it down once when the new provider then initializes") {
+      ownerSwapsOffUnshared(new Gated())
+    },
+    test("leaves it when the new provider then fails, the sibling on the default slot") {
+      ownerSwapsOffShared(None, Some("d"), new Gated(failure = Some("boom")))
+    },
+    test("leaves it when the new provider then initializes, the sibling on the default slot") {
+      ownerSwapsOffShared(None, Some("d"), new Gated())
+    },
+    test("leaves it when the new provider then fails, the owner on the default slot") {
+      ownerSwapsOffShared(Some("a"), None, new Gated(failure = Some("boom")))
+    },
+    test("leaves it when the new provider then initializes, the owner on the default slot") {
+      ownerSwapsOffShared(Some("a"), None, new Gated())
+    }
+  )
+
   def spec =
     suite("ProviderOwnershipShutdownSpec")(
+      ownerSwapOffShared,
       sharedApi,
       userRegistered,
       otherDomain,

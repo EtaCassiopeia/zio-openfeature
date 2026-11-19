@@ -38,6 +38,15 @@ The mapping (formal/registry/trace-map.md):
   FailedRegistration in a swap     -> SwapFailMark, the first; a later one is the rollback's decision, whose FailDecided
                                       gives SwapFail its `shut`
   SwapDone point, after a mark     -> SwapFail, with `shut`, or -1 when the library did not decide (the SDK did)
+  SwapTimeout in a swap            -> SwapTimeout, carrying `recorded`: 1 when the instance's OrphanRecorded follows
+                                      (an instance that owns its API records the provider the swap replaced). Not
+                                      covered for a swap to a provider the user bound, which no wrapper reports on.
+                                      The swap's SwapDone point then ends it, with no outcome
+  InitOutcome of a timed-out
+    swap's provider                -> InitSettle, carrying the provider and `ok`; one recorded before the swap's
+                                      SwapTimeout is taken right after it. The orphan list's OrphanResolved and
+                                      OrphanDropped, and the SDK's or the library's shutdown that follows, are part of it;
+                                      after the owner's close they are part of OwnerClose (OrphanedProviders.resolveAll)
   FailedRegistration otherwise     -> FailMark; FailDecided -> FailDecide, carrying `shut`
   ShutdownDone, ScopeClose         -> CloseInstance of an instance that does not own the API (once, and not for one
                                       whose failed build was closed by its FailDecide)
@@ -61,14 +70,16 @@ AfterClose; an owner's close before every other instance still on the API ended 
 owner's RetireSiblings), UnretiredSibling; a second RegistryInsert for a domain whose client completed (open or
 closed: the registry keeps its promise), SecondInsert. No behaviour takes these labels, so the run is rejected. The shutdowns after the API's own
 shutdown are counted apart into End's `late`: one the model ran may land there.
-Everything else (the lifecycle points of each instance, Watchdog, InitOutcome, ...) is part of one of these steps.
+Everything else (the lifecycle points of each instance, Watchdog, any other InitOutcome, ...) is part of one of these
+steps.
 Instances are named i1, i2, ... by binding, providers p1, p2, ... by first appearance, domains default, d1, ...
 """
 import json
 import sys
 
 # The points that are steps of the model: none may follow its instance's close, or the API's.
-STEPS = ("BuildBind", "SdkBind", "SwapStart", "FailedRegistration", "FailDecided", "RegistryInsert", "RegistryComplete")
+STEPS = ("BuildBind", "SdkBind", "SwapStart", "SwapTimeout", "FailedRegistration", "FailDecided", "RegistryInsert",
+         "RegistryComplete")
 
 
 def labels(records):
@@ -118,6 +129,7 @@ def labels(records):
     built_on = set()  # the domains an instance was built on
     owner = None
     retiring = False
+    pending = set()  # the providers whose initialize() a timed-out swap left running
     # The checked part ends at an API shutdown the model has no action for; after the owner's (OwnerClose) or the
     # registry's (RegistryClose), only the shutdowns it runs are counted.
     stopped = owner_closed = registry_closed = False
@@ -170,8 +182,18 @@ def labels(records):
             if point in STEPS or (point == "ApplySignal" and r.get("arg", "").startswith("SwapSucceeded")):
                 after_close(r)
             continue
-        if point == "SwapTimeout":
-            return "a timed-out swap"
+        if point == "InitOutcome":
+            p = providers.get(r.get("providerInstance"))
+            if p in pending:
+                # A timed-out swap's provider settled: the SDK's shutDownOld, or the orphan list's shutdown, follows.
+                emit("InitSettle", provider=p, ok=r.get("arg") == "true")
+                pending.discard(p)
+                continue
+            # The outcome of a swap's provider that the swap's timeout has not yet seen: settled once it does.
+            for t in inst.values():
+                w = t.swap
+                if w is not None and w["bound"] and not w["done"] and w["provider"] == p:
+                    w["outcome"] = r.get("arg") == "true"
         if point == "UserRetryInit":
             return "a retry of a failed registration"
         if point == "UserApiShutdown":
@@ -273,6 +295,19 @@ def labels(records):
             s.swap["bound"] = True
             s.swap["prior"] = s.swap["was"] = s.provider
             s.provider = p
+        elif s.swap is not None and point == "SwapTimeout" and s.swap["bound"] and not s.swap["done"]:
+            p = s.swap["provider"]
+            if p in user_slots:
+                return "a timed-out swap to a provider the user registered"
+            emit("SwapTimeout", instance=m, recorded=0)
+            s.swap["timeout"] = out[-1]
+            s.swap["done"] = True
+            if "outcome" in s.swap:
+                emit("InitSettle", provider=p, ok=s.swap["outcome"])
+            else:
+                pending.add(p)
+        elif s.swap is not None and point == "OrphanRecorded" and "timeout" in s.swap:
+            s.swap["timeout"]["recorded"] = 1
         elif s.swap is not None and point == "ApplySignal" and r.get("arg", "").startswith("SwapSucceeded"):
             emit("SwapDone", instance=m)
             s.swap["done"] = True

@@ -58,14 +58,23 @@ VARIABLES
     failedOn,    \* each instance: the provider a failure under it marked (failedRegistration), or None
     deciding,    \* instances that marked a failure and have not yet decided about the shutdown
     prior,       \* each instance: the provider its swap in flight replaced, or None
-    swappedOff,  \* ghost: providers a swap that succeeded moved off a slot
+    swappedOff,  \* ghost: providers a swap that succeeded, or timed out, moved off a slot
     builtOn,     \* each instance: the provider its build bound, or None
-    replaced     \* each provider: the provider whose registration replaced it in a slot after a failed registry build,
-                 \* or None; the SDK shuts it down once that one's initialize() succeeds (shutDownOld)
+    replaced,    \* each provider: the provider whose registration replaced it in a slot after a failed registry build,
+                 \* or in a swap that timed out, or None; the SDK shuts it down once that one's initialize() succeeds
+                 \* (shutDownOld)
+    pending,     \* providers whose initialize(), started by a swap that timed out, is still running
+    orphans,     \* the providers the owner's orphan list will shut down unless the SDK does: replaced in a swap of the
+                 \* owner's that timed out, and held then by no slot the library can see (OrphanedProviders)
+    leftBehind,  \* the library's wrappers a registry client's timed-out swap replaced: the registry releases each one
+                 \* still running at its close, after the API's shutdown (FeatureFlagRegistry.releaseLeftBehind)
+    abandoned    \* ghost: providers the user registered that the SDK let go when the provider replacing them failed to
+                 \* initialize, with no slot holding them: theirs to shut down, as for any provider the SDK replaces
 
 vars == << phase, domainOf, owner, apiOpen, lock, swapping, swaps, bound, registered, userOwned, shuts, by, everBound,
-           failedOn, deciding, prior, swappedOff, builtOn, replaced >>
+           failedOn, deciding, prior, swappedOff, builtOn, replaced, pending, orphans, leftBehind, abandoned >>
 libVars == << phase, domainOf, owner, apiOpen, lock, swapping, swaps >>
+timeoutVars == << pending, orphans, leftBehind, abandoned >>
 
 TypeInv ==
     /\ phase \in [Instances -> Phases]
@@ -87,6 +96,10 @@ TypeInv ==
     /\ everBound \subseteq Providers
     /\ builtOn \in [Instances -> Providers \cup {None}]
     /\ replaced \in [Providers -> Providers \cup {None}]
+    /\ pending \subseteq Providers
+    /\ orphans \subseteq Providers
+    /\ leftBehind \subseteq Providers
+    /\ abandoned \subseteq Providers
 
 Init ==
     /\ phase = [i \in Instances |-> "absent"]
@@ -108,6 +121,10 @@ Init ==
     /\ swappedOff = {}
     /\ builtOn = [i \in Instances |-> None]
     /\ replaced = [p \in Providers |-> None]
+    /\ pending = {}
+    /\ orphans = {}
+    /\ leftBehind = {}
+    /\ abandoned = {}
 
 \* The slots that hold p.
 SlotsOf(p) == {d \in Domains : bound[d] = p}
@@ -124,6 +141,13 @@ Visible(p) == \E j \in Instances : domainOf[j] # None /\ bound[domainOf[j]] = p
 \* The provider the registry builds domain d's client with: the domain's own, or the default slot's (the registry's
 \* fallback to its default provider, which the default slot binds).
 Live(i) == phase[i] \in {"building", "open"}
+
+\* p waits on the initialize() a timed-out swap left running: the SDK shuts it down if that call succeeds.
+Waiting(p) == replaced[p] \in pending
+
+\* A provider the user registered that a slot the library can see holds: the default one or an instance's
+\* (OrphanedProviders.heldByVisibleSlot).
+HeldVisibly(p) == p \in userOwned /\ (bound[Default] = p \/ Visible(p))
 
 ---------------------------------------------------------------------------
 \* The registry: getClient(d) / defaultClient.  The semaphore guards the map of promises, never a build: the first
@@ -151,6 +175,7 @@ Check(i, d) ==
     /\ domainOf' = [domainOf EXCEPT ![i] = d]
     /\ UNCHANGED << owner, apiOpen, swapping, swaps, bound, registered, userOwned, shuts, by, everBound, failedOn, deciding, prior,
                     swappedOff, builtOn, replaced >>
+    /\ UNCHANGED timeoutVars
 
 \* ... inserts its promise, releases the semaphore and runs the build.  The build registers the domain's provider in
 \* the slot: the SDK reuses the state manager of a provider that is registered already (the instance holds the same
@@ -166,6 +191,11 @@ Create(i, p, own) ==
     /\ phase[i] = "checking"
     /\ lock = i
     /\ own => owner = None
+    \* A registry client's timed-out swap is the registry topology's: no instance owns that API (SwapTimeout).
+    /\ own => leftBehind = {}
+    \* A provider whose initialize() a timed-out swap left running, or one waiting on that call: outside the model
+    \* (README).
+    /\ p \notin pending /\ ~Waiting(p)
     /\ lock' = None
     /\ \/ bound[d] \in {None, p}
        \/ /\ \E j \in Instances : domainOf[j] = d /\ phase[j] = "evicted"
@@ -184,6 +214,7 @@ Create(i, p, own) ==
     /\ builtOn' = [builtOn EXCEPT ![i] = p]
     /\ replaced' = IF bound[d] \notin {None, p} THEN [replaced EXCEPT ![bound[d]] = p] ELSE replaced
     /\ UNCHANGED << domainOf, apiOpen, swapping, swaps, userOwned, failedOn, deciding, prior >>
+    /\ UNCHANGED timeoutVars
 
 \* The build ends and the promise is completed under the semaphore (taken and released in this step); the instance is
 \* open.  Its provider initialized, so the SDK shuts down each provider it replaced in the slot that no slot holds any
@@ -204,6 +235,7 @@ Complete(i) ==
     /\ replaced' = [q \in Providers |-> IF q \in old THEN None ELSE replaced[q]]
     /\ UNCHANGED << domainOf, owner, apiOpen, lock, swapping, swaps, bound, everBound, failedOn, deciding, prior, swappedOff,
                     builtOn >>
+    /\ UNCHANGED timeoutVars
 
 \* A registry build fails (its wait for readiness): the promise is settled with the error, and evicted in a step of
 \* its own (Evict), so callers retry.  Its provider is left running and in its slot, unmarked, for a retry to
@@ -223,6 +255,7 @@ BuildFail(i) ==
     /\ replaced' = [q \in Providers |-> IF replaced[q] = builtOn[i] THEN None ELSE replaced[q]]
     /\ UNCHANGED << domainOf, owner, apiOpen, lock, swapping, swaps, bound, registered, userOwned, shuts, by, everBound,
                     failedOn, deciding, prior, swappedOff, builtOn >>
+    /\ UNCHANGED timeoutVars
 
 \* The failed build's promise is removed under the semaphore (runBuild's lock.withPermit(remove *> promise.fail)): the
 \* domain has no instance, and the next getClient builds another.
@@ -232,6 +265,7 @@ Evict(i) ==
     /\ phase' = [phase EXCEPT ![i] = "evicted"]
     /\ UNCHANGED << domainOf, owner, apiOpen, lock, swapping, swaps, bound, registered, userOwned, shuts, by, everBound,
                     failedOn, deciding, prior, swappedOff, builtOn, replaced >>
+    /\ UNCHANGED timeoutVars
 
 ---------------------------------------------------------------------------
 \* What a failure under instance i does to its provider p (FeatureFlagsLive.shutDownFailedRegistration): the library
@@ -266,6 +300,7 @@ ReleaseReplaced(i) ==
     /\ replaced' = [replaced EXCEPT ![q] = None]
     /\ UNCHANGED << phase, domainOf, owner, apiOpen, lock, swapping, swaps, bound, userOwned, everBound, failedOn, deciding,
                     prior, swappedOff, builtOn >>
+    /\ UNCHANGED timeoutVars
 
 \* A swap at the registry grain.  The SDK binds the new provider before its initialize() runs, so a sibling may reuse its
 \* registration from then on.  A swap is refused when a sibling's initialize() of p has started by the time it binds; one
@@ -280,6 +315,10 @@ SwapStart(i, p) ==
     /\ p # bound[d]
     /\ i \notin deciding
     /\ p \in userOwned => bound[Default] = p \/ Visible(p)
+    \* A swap to a provider still initializing after a timed-out swap, or to one waiting on that call, is refused until
+    \* that call settles (refuseSwap); a swap off one is outside the model (README).
+    /\ p \notin pending /\ ~Waiting(p)
+    /\ bound[d] \notin pending
     /\ swapping' = i
     /\ swaps' = swaps + 1
     /\ prior' = [prior EXCEPT ![i] = bound[d]]
@@ -290,6 +329,7 @@ SwapStart(i, p) ==
     /\ failedOn' = [failedOn EXCEPT ![i] = None]
     /\ swappedOff' = swappedOff \ {p}
     /\ UNCHANGED << phase, domainOf, owner, apiOpen, lock, userOwned, deciding, builtOn, replaced >>
+    /\ UNCHANGED timeoutVars
 
 \* It initialized: the SDK shuts the old provider down only when no slot holds it any more (shutDownOld's guard); one
 \* another slot still holds keeps its state manager.
@@ -309,6 +349,7 @@ SwapDone(i) ==
     /\ failedOn' = [failedOn EXCEPT ![i] = None]
     /\ swappedOff' = swappedOff \cup {old}
     /\ UNCHANGED << phase, domainOf, owner, apiOpen, lock, swaps, bound, everBound, deciding, builtOn, replaced >>
+    /\ UNCHANGED timeoutVars
 
 \* A sibling's binding of the swap's provider shares its registration, and its initialize() started first: the swap's
 \* SDK task finds the call under way, returns at once and shuts the provider the swap replaced down when no slot holds
@@ -328,6 +369,7 @@ SwapOldShut(i) ==
     /\ by' = [by EXCEPT ![old] = "sdk"]
     /\ UNCHANGED << phase, domainOf, owner, apiOpen, lock, swapping, swaps, bound, everBound, failedOn, deciding, prior,
                     swappedOff, builtOn, replaced >>
+    /\ UNCHANGED timeoutVars
 
 \* The new provider failed to initialize: the instance counts as failed on it for its siblings from here on.
 SwapFailMark(i) ==
@@ -336,6 +378,7 @@ SwapFailMark(i) ==
     /\ failedOn' = [failedOn EXCEPT ![i] = bound[domainOf[i]]]
     /\ UNCHANGED << phase, domainOf, owner, apiOpen, lock, swapping, swaps, bound, registered, userOwned, shuts, by, everBound,
                     deciding, prior, swappedOff, builtOn, replaced >>
+    /\ UNCHANGED timeoutVars
 
 \* The rollback registers the old provider again, which its slot held until the swap.  The SDK shuts the failed provider
 \* down when no slot holds it any more.  When another slot does the SDK leaves it, and the library decides.
@@ -360,20 +403,83 @@ SwapFail(i) ==
     /\ by' = [q \in Providers |-> IF q = p /\ shut THEN (IF others = {} THEN "sdk" ELSE "library")
                                   ELSE IF q = old /\ old \notin registered THEN "none" ELSE by[q]]
     /\ UNCHANGED << phase, domainOf, owner, apiOpen, lock, swaps, everBound, failedOn, deciding, swappedOff, builtOn, replaced >>
+    /\ UNCHANGED timeoutVars
+
+\* The new provider did not initialize within initTimeout: the swap ends with it bound and its initialize() still running
+\* (runSwap's timeout branch), status Error, and no rollback. The previous provider q is held only by that call, and
+\* the SDK shuts it down if the call succeeds (`replaced`). An instance that owns its API records q in its orphan list
+\* (recordOrphan), which shuts q down if the call fails or the instance closes first, unless a slot the library can
+\* see held q, one the user registered, when it was recorded: that slot's, and the SDK's, to shut down. A registry
+\* client records nothing; FeatureFlagRegistry.setProvider keeps q for the registry's close (`leftBehind`), which
+\* releases it if it is still running then. Outside the model (README): a non-owner on an API an instance owns, whose
+\* close releases nothing; an owner's q that another slot still holds, which its orphan list would shut down under
+\* that slot; and a swap's provider another slot shares.
+SwapTimeout(i) ==
+    LET d == domainOf[i]
+        p == bound[d]
+        q == prior[i]
+    IN
+    /\ swapping = i
+    /\ failedOn[i] # p
+    /\ owner = i \/ owner = None
+    /\ SlotsOf(p) = {d}
+    /\ replaced[q] = None
+    /\ owner = i /\ q \notin userOwned => SlotsOf(q) = {}
+    /\ swapping' = None
+    /\ prior' = [prior EXCEPT ![i] = None]
+    /\ pending' = pending \cup {p}
+    /\ replaced' = [replaced EXCEPT ![q] = p]
+    /\ orphans' = IF owner = i /\ ~HeldVisibly(q) THEN orphans \cup {q} ELSE orphans
+    /\ leftBehind' = IF owner # i /\ q \notin userOwned THEN leftBehind \cup {q} ELSE leftBehind
+    \* It moved off q, as a swap that succeeded does: a slot that still holds q keeps it for the API's shutdown.
+    /\ swappedOff' = swappedOff \cup {q}
+    /\ UNCHANGED << phase, domainOf, owner, apiOpen, lock, swaps, bound, registered, userOwned, shuts, by, everBound,
+                    failedOn, deciding, builtOn, abandoned >>
+
+\* The initialize() of p, a timed-out swap's provider, settles (ok: it returned). On success the SDK shuts down each
+\* provider waiting on it that no slot holds (shutDownOld); an orphan of the library's own the SDK skipped, because a
+\* slot holds it, the orphan list shuts down after waiting for the SDK. On failure the SDK shuts nothing down, and the
+\* orphan list shuts each of its orphans down, unless a slot the library can see holds one the user registered by now.
+\* A provider the user registered that nothing holds any more is the user's (`abandoned`); a registry client's wrapper
+\* waits for the registry's close (`leftBehind`).
+InitSettle(p, ok) ==
+    LET waiting == {q \in Providers : replaced[q] = p}
+        sdk == IF ok THEN {q \in waiting : SlotsOf(q) = {} /\ q \in registered} ELSE {}
+        lib == IF ok THEN {q \in waiting \cap orphans : q \notin userOwned /\ q \notin sdk /\ q \in registered}
+               ELSE {q \in waiting \cap orphans : q \in registered /\ ~HeldVisibly(q)}
+        ab == IF ok THEN {} ELSE {q \in waiting \ lib : q \in userOwned /\ SlotsOf(q) = {}}
+        \* A shutdown of a provider a slot still holds leaves its registration in place, so the invariants see it.
+        ended == sdk \cup ab \cup {q \in lib : SlotsOf(q) = {}}
+    IN
+    /\ apiOpen
+    /\ p \in pending
+    /\ pending' = pending \ {p}
+    /\ registered' = registered \ ended
+    /\ userOwned' = userOwned \ ended
+    /\ shuts' = [q \in Providers |-> IF q \in sdk \cup lib THEN shuts[q] + 1 ELSE shuts[q]]
+    /\ by' = [q \in Providers |-> IF q \in sdk THEN "sdk" ELSE IF q \in lib THEN "library" ELSE by[q]]
+    /\ replaced' = [q \in Providers |-> IF q \in waiting THEN None ELSE replaced[q]]
+    /\ orphans' = orphans \ waiting
+    /\ abandoned' = abandoned \cup ab
+    /\ UNCHANGED << phase, domainOf, owner, apiOpen, lock, swapping, swaps, bound, everBound, failedOn, deciding, prior,
+                    swappedOff, builtOn, leftBehind >>
 
 ---------------------------------------------------------------------------
 \* The user binds a provider of their own directly with the API, and the SDK holds it: an instance built on it later
-\* holds it as Bound.Foreign.
+\* holds it as Bound.Foreign.  Or binds again one of theirs that only a timed-out swap's pending initialize() holds, in
+\* a slot the library can see: an orphan list then leaves it to that slot.
 UserBind(d, p) ==
     /\ apiOpen
     /\ bound[d] = None
-    /\ p \notin everBound
+    /\ \/ p \notin everBound
+       \/ p \in userOwned /\ SlotsOf(p) = {} /\ (d = Default \/ \E j \in Instances : domainOf[j] = d)
     /\ bound' = [bound EXCEPT ![d] = p]
     /\ registered' = registered \cup {p}
     /\ userOwned' = userOwned \cup {p}
     /\ everBound' = everBound \cup {p}
     /\ Register(p)
     /\ UNCHANGED << libVars, failedOn, deciding, prior, swappedOff, builtOn, replaced >>
+    /\ UNCHANGED timeoutVars
 
 \* A failure marks itself before it looks at its siblings, in its own step, so two failures may interleave here: a
 \* build's wait that timed out or a provider that failed, where the slot keeps p; or an async build's init deadline, once
@@ -387,10 +493,13 @@ FailMark(i) ==
     /\ swapping # i
     /\ failedOn[i] # bound[domainOf[i]]
     /\ bound[domainOf[i]] \in registered
+    \* A timed-out swap's provider has no init deadline of its own here.
+    /\ bound[domainOf[i]] \notin pending
     /\ failedOn' = [failedOn EXCEPT ![i] = bound[domainOf[i]]]
     /\ deciding' = deciding \cup {i}
     /\ UNCHANGED << phase, domainOf, owner, apiOpen, lock, swapping, swaps, bound, registered, userOwned, shuts, by,
                     everBound, prior, swappedOff, builtOn, replaced >>
+    /\ UNCHANGED timeoutVars
 
 \* The decision: a build's failure then closes its scope.
 FailDecide(i) ==
@@ -399,6 +508,7 @@ FailDecide(i) ==
     /\ phase' = IF phase[i] = "building" THEN [phase EXCEPT ![i] = "closed"] ELSE phase
     /\ ShutFailed(i, bound[domainOf[i]])
     /\ UNCHANGED << domainOf, owner, apiOpen, lock, swapping, swaps, bound, userOwned, everBound, failedOn, prior, swappedOff, builtOn, replaced >>
+    /\ UNCHANGED timeoutVars
 
 ---------------------------------------------------------------------------
 \* Closing.
@@ -413,6 +523,7 @@ CloseInstance(i) ==
     /\ phase' = [phase EXCEPT ![i] = "closed"]
     /\ UNCHANGED << domainOf, owner, apiOpen, lock, swapping, swaps, bound, registered, userOwned, shuts, by, everBound,
                     failedOn, deciding, prior, swappedOff, builtOn, replaced >>
+    /\ UNCHANGED timeoutVars
 
 \* What tearing the API down does, by its owner, an instance or the registry: every instance on the API retires
 \* (ApiInstances.retireSiblings, retireAll), a build in flight included, then the API shuts every registered provider
@@ -423,18 +534,23 @@ CloseInstance(i) ==
 \* registry's interrupted build releases nothing: outside the model (README).
 RetireAll == phase' = [i \in Instances |-> IF Live(i) THEN "closed" ELSE phase[i]]
 
-\* The providers the API's shutdown ends.
+\* The providers the API's shutdown ends.  One waiting on a timed-out swap's initialize() counts too: the model takes
+\* that call's success, as for a retry's.
 ApiShuts == {p \in registered : SlotsOf(p) # {} \/ replaced[p] # None}
 
-ShutApi ==
+\* The API's shutdown, and `rel`, the providers the library shuts down with it: the owner's orphans, the registry's
+\* left-behind wrappers.  A wrapper the SDK's shutdown reaches too absorbs the second call, so each counts once.
+ShutApi(rel) ==
     /\ apiOpen' = FALSE
     /\ bound' = [d \in Domains |-> None]
     /\ registered' = {}
     /\ userOwned' = {}
-    /\ shuts' = [p \in Providers |-> shuts[p] + (IF p \in ApiShuts THEN 1 ELSE 0)]
-    /\ by' = [p \in Providers |-> IF p \in ApiShuts THEN "sdk" ELSE by[p]]
+    /\ shuts' = [p \in Providers |-> shuts[p] + (IF p \in ApiShuts \cup rel THEN 1 ELSE 0)]
+    /\ by' = [p \in Providers |-> IF p \in rel THEN "library" ELSE IF p \in ApiShuts THEN "sdk" ELSE by[p]]
 
-\* The owner's shutdown or scope close: the others retire first, then its own teardown takes the API down.
+\* The owner's shutdown or scope close: the others retire first, then its own teardown takes the API down, and then
+\* settles its orphan list (OrphanedProviders.resolveAll): each orphan still running is shut down, as no slot holds it
+\* any more.
 OwnerClose ==
     /\ apiOpen
     /\ owner # None
@@ -443,14 +559,16 @@ OwnerClose ==
     /\ deciding = {}
     /\ lock = None
     /\ RetireAll
-    /\ ShutApi
+    /\ ShutApi({q \in orphans : q \in registered})
     /\ owner' = None
     /\ UNCHANGED << domainOf, lock, swapping, swaps, everBound, failedOn, deciding, prior, swappedOff, builtOn, replaced >>
+    /\ UNCHANGED timeoutVars
 
 \* The registry's finalizer: it owns its API but is no instance (no instance owns it), so its close is the API's.
 \* Its clients' scopes close before it, each a CloseInstance; it then retires every instance on the API
 \* (ApiInstances.retireAll) and shuts the API down (boundedApiShutdown).  Each retirement takes the instance's swap
-\* lock, so a swap in flight settles first.
+\* lock, so a swap in flight settles first.  After the API's shutdown it releases each wrapper a client's timed-out swap
+\* left behind that is still running (releaseLeftBehind): one whose replacement failed, which nothing else reaches.
 RegistryClose ==
     /\ apiOpen
     /\ owner = None
@@ -458,8 +576,9 @@ RegistryClose ==
     /\ deciding = {}
     /\ lock = None
     /\ RetireAll
-    /\ ShutApi
+    /\ ShutApi({q \in leftBehind : q \in registered /\ q \notin ApiShuts})
     /\ UNCHANGED << domainOf, owner, lock, swapping, swaps, everBound, failedOn, deciding, prior, swappedOff, builtOn, replaced >>
+    /\ UNCHANGED timeoutVars
 
 Next ==
     \/ \E i \in Instances, d \in Domains : Lookup(i, d)
@@ -474,6 +593,8 @@ Next ==
     \/ \E i \in Instances : SwapOldShut(i)
     \/ \E i \in Instances : SwapFailMark(i)
     \/ \E i \in Instances : SwapFail(i)
+    \/ \E i \in Instances : SwapTimeout(i)
+    \/ \E p \in Providers, ok \in BOOLEAN : InitSettle(p, ok)
     \/ \E d \in Domains, p \in Providers : UserBind(d, p)
     \/ \E i \in Instances : FailMark(i)
     \/ \E i \in Instances : FailDecide(i)
@@ -493,10 +614,11 @@ OneOwner ==
     /\ Cardinality({i \in Instances : owner = i}) <= 1
     /\ owner # None => apiOpen /\ Live(owner)
 
-\* No provider is shut down twice, and once the API is gone every provider that was bound was shut down exactly once.
+\* No provider is shut down twice, and once the API is gone every provider that was bound was shut down exactly once,
+\* but one of the user's the SDK let go when its replacement failed.
 SharedShutDownOnce ==
     /\ \A p \in Providers : shuts[p] <= 1
-    /\ ~apiOpen => \A p \in everBound : shuts[p] = 1
+    /\ ~apiOpen => \A p \in everBound \ abandoned : shuts[p] = 1
 
 \* A registered provider is never shut down while the API is open: its state manager is the API's.
 RegisteredNotShutDown ==

@@ -6,7 +6,8 @@
    points every instance records, tagged with the instance). The model folds the SDK into the library's actions, so
    every action is a step a point records, or the test's own UserBind: each is enabled only when it is the trace's next
    label, and advances the cursor. A failure's decision is checked against the model's: whether the library shuts the
-   provider down; a failed registry retry's release of the provider it replaced too. The last label, End, carries how many times each provider's shutdown() ran, which `total` counts in
+   provider down; a failed registry retry's release of the provider it replaced too; and whether a timed-out swap
+   recorded the provider it replaced as an orphan. The last label, End, carries how many times each provider's shutdown() ran, which `total` counts in
    the model across registrations. The trace is accepted when some behaviour reaches its end: TLC reports
    `TraceNotDone` violated, which validate.py reads as acceptance. *)
 EXTENDS Registry, Json, Sequences
@@ -67,6 +68,10 @@ SwapDecided(n) ==
    too: ReleaseReplaced's own. *)
 ReleaseDecided(n) == LET q == builtOn[n] IN Agrees(q, LibraryShuts(n, q), Step.shut)
 
+(* Whether a timed-out swap recorded the provider it replaced in its orphan list (`recorded`, 1 when it did): only an
+   instance that owns its API does, as the model's SwapTimeout. *)
+OrphanDecided(n) == (Step.recorded = 1) = (owner = n)
+
 (* What is checked is over, and each provider's shutdown() ran as often as the run counted. One the model ran may land
    after the API's own shutdown ended what is checked (the SDK runs a replaced provider's on its executor), where the
    run counts it among `late`, with the API's own shutdowns. *)
@@ -89,6 +94,8 @@ TraceStep ==
     \/ Lib("SwapOldShut", SwapOldShut(Step.instance))
     \/ Lib("SwapFailMark", SwapFailMark(Step.instance))
     \/ Lib("SwapFail", SwapDecided(Step.instance) /\ SwapFail(Step.instance))
+    \/ Lib("SwapTimeout", OrphanDecided(Step.instance) /\ SwapTimeout(Step.instance))
+    \/ Lib("InitSettle", InitSettle(Step.provider, Step.ok))
     \/ Lib("UserBind", UserBind(Step.domain, Step.provider))
     \/ LibA("FailMark", TFailMark(Step.instance))
     \/ LibA("FailDecide", TFailDecide(Step.instance))

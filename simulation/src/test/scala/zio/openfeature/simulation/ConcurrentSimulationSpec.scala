@@ -16,6 +16,8 @@ import zio.test.{Spec => _, _}
   */
 object ConcurrentSimulationSpec extends ZIOSpecDefault {
 
+  private val name = "ConcurrentSimulationSpec"
+
   final case class Plan(
     spec: Spec,
     home: Map[String, Kind],
@@ -154,8 +156,16 @@ object ConcurrentSimulationSpec extends ZIOSpecDefault {
   }
 
   def spec = suite("ConcurrentSimulation")(
+    test("replays every regression corpus entry") {
+      Corpus.replay[Plan]("concurrent")(run).map(failures => assertTrue(failures.isEmpty) ?? failures.mkString("\n"))
+    },
     test("evaluations, hooks, swaps and shutdowns keep their invariants under concurrency") {
-      check(genPlan)(plan => run(plan).either.map(r => assertTrue(r == Right(()))))
+      check(genPlan) { plan =>
+        run(plan).either.flatMap { r =>
+          val json = PlanCodec.write(plan)
+          ZIO.when(r.isLeft)(Corpus.record(name, json)).as(assertTrue(r == Right(())) ?? s"corpus entry ($name): $json")
+        }
+      }
     } @@ PropertyBudget(40) @@ TestAspect.after(Console.printLine(Stats.render).orDie)
-  ) @@ TestAspect.withLiveClock @@ PropertyBudget.timeout(10.minutes)
+  ) @@ TestAspect.sequential @@ TestAspect.withLiveClock @@ PropertyBudget.timeout(10.minutes)
 }

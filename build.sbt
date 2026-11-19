@@ -677,6 +677,8 @@ lazy val simulation = (project in file("simulation"))
     ),
     Test / fork := true,
     Test / javaOptions += "-XX:+EnableDynamicAgentLoading",
+    // Where a failing run writes its plan, for CI to upload (javaOptions apply because the tests fork).
+    Test / javaOptions += s"-Dzof.simulation.failures=${(target.value / "simulation-failures").getAbsolutePath}",
     Test / unmanagedSourceDirectories += (LocalRootProject / baseDirectory).value / "test-support" / "src" / "test" / "scala"
   )
 

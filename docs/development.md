@@ -133,7 +133,8 @@ with the model after one of the orders its two actions can take effect in, and w
 created must have been shut down exactly once. Each such test carries the shared `PropertyBudget(n)` aspect: pull requests run
 its base count with zio-test's fixed seed, and the nightly `Property tests` workflow runs every one at 10× with a fresh
 seed, printed in the job summary. Replay a nightly failure with the same scale and seed, then check the shrunk case in
-as an explicit example (seeds are not stable across zio-test versions):
+as an explicit example (seeds are not stable across zio-test versions; a simulation failure goes into the
+[regression corpus](#extra-checks) instead):
 
 ```sh
 ZOF_PBT_SCALE=10 ZOF_PBT_SEED=<seed> sbt "core/testOnly -- -tags property"
@@ -155,6 +156,15 @@ printed seed:
 ```sh
 ZOF_PBT_SCALE=10 ZOF_PBT_SEED=<seed> sbt simulation/test
 ```
+
+A seed does not survive a zio-test upgrade, so a failure is also kept as its plan. The failing test prints a
+`corpus entry (...)` line holding the shrunk plan as one line of JSON, and CI uploads it as the `simulation-failures`
+artifact (`SequentialSimulationSpec.json` or `ConcurrentSimulationSpec.json`). Save that line as
+`simulation/src/test/resources/regressions/<sequential|concurrent>/<yyyy-mm-dd>-<what>.json`. Both specs replay that
+directory before their generated cases, on every pull request, and the replay fails if the directory is empty. An entry
+holds no seed, so it survives zio-test upgrades. A concurrent plan is not replayed exactly (the SDK's threads run
+outside ZIO's scheduler), so when a concurrent failure reproduces as a sequential plan, keep the sequential one. See
+`simulation/src/test/resources/regressions/README.md`.
 
 **Deterministic interleavings.** Random timing finds lifecycle races slowly and cannot replay them, so
 `LifecycleInterleavingSpec` (testkit) enumerates them instead. The lifecycle code calls a probe at named points of the

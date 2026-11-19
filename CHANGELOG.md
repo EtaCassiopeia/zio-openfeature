@@ -14,6 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `initTimeout`, the replaced provider was shut down under the sibling, whether the new provider then failed or
   finished initializing. Its shutdown is now left to the SDK, with the API or when the sibling's slot swaps it out
   for a provider that initializes (#964).
+- **A domain client's timed-out swap whose new provider then fails no longer leaves the provider it replaced running
+  after the API's owner closes.** An instance that shares its API, or a registry client swapped through its own
+  `setProvider`, now leaves that provider to the API's owner, whose close shuts it down once and releases it from the
+  API, so another API can take it (#965).
 - **Installing again a provider whose earlier `shutdown()` outlasts the three-second wait fails instead of leaving it
   closed.** The swap used to proceed. The old `shutdown()` then returned and closed the provider it had just
   initialized again, while the status read `Ready` and every evaluation failed. `setProvider` now fails with

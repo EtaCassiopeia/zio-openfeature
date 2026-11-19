@@ -76,7 +76,11 @@ private[openfeature] object FeatureFlagsFactories {
       swapLock.withPermit(
         ZIO.suspendSucceed(ZIO.foreachDiscard(Option(self.get()))(_.markClosed)) *>
           probe.at(LifecycleProbe.Point.ScopeClose) *>
-          ZIO.when(ownsApi)(ProviderRegistration.boundedApiShutdown(api) *> orphans.resolveAll).unit
+          ZIO
+            .when(ownsApi)(
+              ProviderRegistration.boundedApiShutdown(api) *> orphans.resolveAll *> ApiInstances.releaseLeftBehind(api)
+            )
+            .unit
       )
 
   /** Warn when the slot this build binds already holds another provider: the SDK shuts that one down once the new one

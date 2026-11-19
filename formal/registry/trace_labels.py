@@ -130,6 +130,7 @@ def labels(records):
     owner = None
     retiring = False
     pending = set()  # the providers whose initialize() a timed-out swap left running
+    waits_on = {}  # each of those: the provider its swap replaced, which waits on that initialize()
     # The checked part ends at an API shutdown the model has no action for; after the owner's (OwnerClose) or the
     # registry's (RegistryClose), only the shutdowns it runs are counted.
     stopped = owner_closed = registry_closed = False
@@ -299,6 +300,8 @@ def labels(records):
             p = s.swap["provider"]
             if p in user_slots:
                 return "a timed-out swap to a provider the user registered"
+            if any(q in pending and w == s.swap["was"] for q, w in waits_on.items()):
+                return "a timed-out swap off a provider another timed-out swap left waiting"
             emit("SwapTimeout", instance=m, recorded=0)
             s.swap["timeout"] = out[-1]
             s.swap["done"] = True
@@ -306,6 +309,7 @@ def labels(records):
                 emit("InitSettle", provider=p, ok=s.swap["outcome"])
             else:
                 pending.add(p)
+                waits_on[p] = s.swap["was"]
         elif s.swap is not None and point == "OrphanRecorded" and "timeout" in s.swap:
             s.swap["timeout"]["recorded"] = 1
         elif s.swap is not None and point == "ApplySignal" and r.get("arg", "").startswith("SwapSucceeded"):

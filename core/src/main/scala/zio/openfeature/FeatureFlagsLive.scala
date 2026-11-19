@@ -363,7 +363,10 @@ final private[openfeature] class FeatureFlagsLive(
         e,
         s"failed to re-register previous provider '$oldName'; evaluations may still route to the failed provider " +
           "until a later setProvider succeeds"
-      ) *> cleanupUnboundFailedProvider(incoming)
+      ) *> cleanupUnboundFailedProvider(incoming) *>
+        // No slot holds the previous provider now, and the SDK shuts it down only if the failed one initialized: an
+        // instance that shares its API leaves it to the API's owner.
+        ZIO.succeed(if (!ownsApi) oldProvider.managed.foreach(ApiInstances.leaveBehind(api, _)))
 
     restoreSdkRegistration(oldProvider, incoming).foldZIO(
       unrestored,
@@ -389,11 +392,13 @@ final private[openfeature] class FeatureFlagsLive(
             )
         // A concurrent sibling swap already won the slot (see restoreSdkRegistration): leave status Error and log a
         // breadcrumb, don't fight the winner.
+        // No slot of this instance holds the previous provider then either: one that shares its API leaves it to the
+        // API's owner, as when the re-registration fails.
         case None =>
           ZIO.logInfo(
             "setProvider rollback: slot no longer bound to the failed provider (concurrent swap?); " +
               s"leaving status Error for '$oldName'"
-          )
+          ) *> ZIO.succeed(if (!ownsApi) oldProvider.managed.foreach(ApiInstances.leaveBehind(api, _)))
       }
     )
   }
@@ -435,9 +440,6 @@ final private[openfeature] class FeatureFlagsLive(
   // The registration that failed under this instance, until the next swap starts. Set before a failure looks at its
   // siblings, so of two instances failing together at least one sees the other out and does the shutdown.
   private val failedRegistration = new java.util.concurrent.atomic.AtomicReference[Option[OFFeatureProvider]](None)
-
-  /** The provider the instance has installed: its wrapper, when the library registered one. */
-  private[openfeature] def installedProvider: OFFeatureProvider = lifecycle.snapshot.installed
 
   /** Whether this instance is live, has not failed on `provider`, and its slot holds it. A domain not bound yet reads
     * the default slot, as the SDK resolves it.
@@ -885,8 +887,9 @@ final private[openfeature] class FeatureFlagsLive(
   }
 
   /** After a timed-out swap or rollback the SDK holds `previous` only in `incoming`'s pending initialization, and shuts
-    * it down only if that succeeds; [[orphans]] covers the other outcomes. A non-owning instance leaves it alone, as it
-    * leaves every provider of its shared API: another client may be serving it.
+    * it down only if that succeeds; [[orphans]] covers the other outcomes. A non-owning instance does not settle it, as
+    * it settles no provider of its shared API: another client may be serving it. It leaves a wrapper of the library's
+    * to the API's owner instead, whose close shuts it down if nothing else has by then ([[ApiInstances.leaveBehind]]).
     */
   private def recordOrphan(
     previous: Bound,
@@ -894,30 +897,31 @@ final private[openfeature] class FeatureFlagsLive(
     incomingName: String,
     incoming: Option[ProviderRegistration.Registration]
   ): UIO[Unit] =
-    ZIO
-      .when(ownsApi) {
-        incoming match {
-          case Some(registration) if registration.provider ne previous.sdk =>
-            // The probe point comes before the entry is published: its watcher can settle it at once, when the watched
-            // initialize() has already ended, and a recording must not show that settle before the entry.
-            lifecycle.run(LifecycleInput.OrphanRecorded(previous.sdk, incomingName)) *>
-              probe.at(Point.OrphanRecorded) *>
-              orphans.record(
-                previous,
-                previousName,
-                incomingName,
-                registration,
-                lifecycle.run(LifecycleInput.OrphanSettled(previous.sdk)).unit
-              )
-          case Some(_) => ZIO.unit
-          case None    =>
-            ZIO.logWarning(
-              s"setProvider: '$incomingName' was never registered; '$previousName' is not tracked and is not shut " +
-                "down by this instance"
+    incoming match {
+      case Some(registration) if registration.provider ne previous.sdk =>
+        if (!ownsApi) ZIO.succeed(previous.managed.foreach(ApiInstances.leaveBehind(api, _)))
+        else
+          // The probe point comes before the entry is published: its watcher can settle it at once, when the watched
+          // initialize() has already ended, and a recording must not show that settle before the entry.
+          lifecycle.run(LifecycleInput.OrphanRecorded(previous.sdk, incomingName)) *>
+            probe.at(Point.OrphanRecorded) *>
+            orphans.record(
+              previous,
+              previousName,
+              incomingName,
+              registration,
+              lifecycle.run(LifecycleInput.OrphanSettled(previous.sdk)).unit
             )
-        }
-      }
-      .unit
+      case Some(_) => ZIO.unit
+      case None    =>
+        ZIO
+          .logWarning(
+            s"setProvider: '$incomingName' was never registered; '$previousName' is not tracked and is not shut " +
+              "down by this instance"
+          )
+          .when(ownsApi)
+          .unit
+    }
 
   /** `fromAcquireAsync`'s swap: point the registered switchable [[ManagedProvider]] at `next`, an already-initialized
     * provider, without going through the SDK — so status never leaves `Ready` and the SDK never refuses an evaluation.
@@ -1030,7 +1034,9 @@ final private[openfeature] class FeatureFlagsLive(
         // registry falls back to one shared default provider) and double-shut a provider the API still has registered.
         // A non-owning `shutdown` therefore releases only this instance's own state (status/hooks/contexts/event hub,
         // torn down above); retire such clients via whatever owns the API (e.g. the registry).
-        ZIO.when(tearDownApi)(ProviderRegistration.boundedApiShutdown(api) *> orphans.resolveAll) *>
+        ZIO.when(tearDownApi)(
+          ProviderRegistration.boundedApiShutdown(api) *> orphans.resolveAll *> ApiInstances.releaseLeftBehind(api)
+        ) *>
         probe.at(Point.ShutdownDone) *>
         applySignal(Signal.ShutdownCompleted).unit).uninterruptible
     )

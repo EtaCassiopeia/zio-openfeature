@@ -101,6 +101,50 @@ object ApiSharingSpec extends ZIOSpecDefault {
         status == ProviderStatus.NotReady,
         read == Left(FeatureFlagError.ProviderNotReady(ProviderStatus.NotReady))
       )
+    },
+    test(
+      "a non-owner's timed-out swap whose new provider then fails: the owner's close shuts the replaced one down and frees it"
+    ) {
+      val api    = OpenFeatureAPI.createIsolated()
+      val shutA  = new java.util.concurrent.atomic.AtomicInteger(0)
+      val gate   = new java.util.concurrent.CountDownLatch(1)
+      val failed = new java.util.concurrent.CountDownLatch(1)
+      val first  = new Named("A") { override def shutdown(): Unit = { shutA.incrementAndGet(); () } }
+      // Starts only after the swap has timed out, and then fails.
+      val slow = new Named("Slow") {
+        override def initialize(ctx: OFEvaluationContext): Unit = {
+          gate.await()
+          failed.countDown()
+          throw new RuntimeException("Slow failed to start")
+        }
+      }
+      for {
+        swap <- ZIO.scoped {
+          for {
+            _        <- owner(api, new Named("owner"))
+            nonOwner <- FeatureFlags.build(
+              first,
+              domain = Some("d1"),
+              version = None,
+              initialHooks = Nil,
+              statusRef = None,
+              addShutdownFinalizer = false,
+              apiOverride = Some(api),
+              initTimeout = 300.millis
+            )
+            swap <- nonOwner.setProvider(slow).either
+            _    <- ZIO.succeed(gate.countDown())
+            _    <- ZIO.attemptBlocking(failed.await()).orDie
+            // Slow's initialize() has failed, so the SDK never shuts A down.
+            _ <- ZIO.sleep(300.millis)
+          } yield swap
+        }
+        _     <- ZIO.succeed(shutA.get()).repeatUntil(_ >= 1).timeout(3.seconds)
+        _     <- ZIO.sleep(300.millis)
+        after <- ZIO.succeed(shutA.get())
+        // Released from the closed API too, so another API can take it.
+        reused <- ZIO.scoped(owner(OpenFeatureAPI.createIsolated(), first)).either
+      } yield assertTrue(swap.isLeft, after == 1, reused.isRight)
     }
   ) @@ withLiveClock @@ TestAspect.sequential
 }

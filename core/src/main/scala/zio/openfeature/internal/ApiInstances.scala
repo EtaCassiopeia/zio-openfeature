@@ -2,7 +2,7 @@ package zio.openfeature.internal
 
 import zio._
 import zio.openfeature.FeatureFlagsLive
-import dev.openfeature.sdk.{FeatureProvider, OpenFeatureAPI, ProviderStateAccess}
+import dev.openfeature.sdk.{EventProviderAccess, FeatureProvider, OpenFeatureAPI, ProviderStateAccess}
 import scala.jdk.CollectionConverters._
 
 /** Every instance built on each `OpenFeatureAPI`, so the one that tears an API down can retire the others: their
@@ -60,6 +60,48 @@ private[openfeature] object ApiInstances {
     val known = synchronized(Option(slots.get(api)).getOrElse(Set.empty[Option[String]]))
     known.exists(domain => ProviderStateAccess.boundIn(api, domain.orNull, provider))
   }
+
+  // The library's wrappers that a timed-out swap of an instance not owning `api` replaced, each with the count of
+  // `initialize()` calls it had started then. Strong values: nothing else may hold such a wrapper. A wrapper still
+  // attached to its API keeps that key reachable until the owner's close drains the entry; an API nothing in the
+  // library owns is never drained, and stays with its user, as everything registered with it does.
+  private val leftBehind = new java.util.WeakHashMap[OpenFeatureAPI, List[(ManagedProvider, Long)]]()
+
+  /** Keep `wrapper` for the close of `api`'s owner: a timed-out swap of an instance that does not own `api` replaced
+    * it, and only that swap's pending `initialize()` holds it. The SDK shuts it down if that call returns; if it
+    * throws, nothing else reaches it, as no slot holds it and the instance leaves every provider of `api` to its owner.
+    */
+  def leaveBehind(api: OpenFeatureAPI, wrapper: ManagedProvider): Unit = synchronized {
+    val kept =
+      Option(leftBehind.get(api)).getOrElse(Nil).filterNot { case (w, _) => (w eq wrapper) || w.shutDownInCycle }
+    val _ = leftBehind.put(api, (wrapper, wrapper.initsStarted) :: kept)
+  }
+
+  /** At the close of `api`'s owner, after the API's shutdown: shut down each wrapper a non-owner's timed-out swap left
+    * behind that is still running in the cycle it was left in. One the SDK or the API's shutdown reached is shut down
+    * in its cycle; one initialized again since, on this API or another, serves there and is left alone.
+    */
+  def releaseLeftBehind(api: OpenFeatureAPI): UIO[Unit] =
+    ZIO
+      .succeed(synchronized(Option(leftBehind.remove(api)).getOrElse(Nil)))
+      .flatMap(ZIO.foreachDiscard(_) {
+        case (wrapper, started) if !wrapper.shutDownInCycle && wrapper.initsStarted == started =>
+          // As the SDK's own `shutDownOld`: released from the API too, so another API can register it.
+          ProviderRegistration.boundedProviderShutdown(wrapper, "API close (provider a timed-out swap left behind)") *>
+            ZIO
+              .attemptBlocking {
+                EventProviderAccess.deregisterGlobalProvider(api, wrapper)
+                EventProviderAccess.detach(wrapper)
+              }
+              .catchAllCause(c =>
+                ZIO.logWarningCause(
+                  "API close: releasing a provider a timed-out swap left behind from the OpenFeature API failed; " +
+                    "registering it again may fail with 'already attached'",
+                  c
+                )
+              )
+        case _ => ZIO.unit
+      })
 
   /** Retire every instance on `api` but `except` (the one tearing it down, or `null` before it exists). */
   def retireSiblings(api: OpenFeatureAPI, except: FeatureFlagsLive): UIO[Unit] =

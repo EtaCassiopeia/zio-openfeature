@@ -2,13 +2,7 @@ package zio.openfeature
 
 import dev.openfeature.sdk.{FeatureProvider => OFFeatureProvider, OpenFeatureAPI}
 import zio._
-import zio.openfeature.internal.{
-  ApiInstances,
-  FeatureFlagsFactories,
-  LifecycleProbe,
-  ManagedProvider,
-  ProviderRegistration
-}
+import zio.openfeature.internal.{ApiInstances, FeatureFlagsFactories, LifecycleProbe, ProviderRegistration}
 
 trait FeatureFlagRegistry {
 
@@ -100,7 +94,7 @@ object FeatureFlagRegistry {
         // The registry owns its API: its clients go NotReady with it rather than serve the SDK's No-op answers.
         _ <- ZIO.addFinalizer(
           probe(None).at(LifecycleProbe.Point.ApiShutdown) *> ApiInstances.retireAll(api) *>
-            ProviderRegistration.boundedApiShutdown(api) *> registry.releaseLeftBehind
+            ProviderRegistration.boundedApiShutdown(api) *> ApiInstances.releaseLeftBehind(api)
         )
       } yield registry
     }
@@ -159,29 +153,10 @@ final private class FeatureFlagRegistryLive(
       // same provider is harmless).
       _ <- existing match {
         case Some(promise) =>
-          promise.await.flatMap { client =>
-            val before = client.installedProvider
-            client.setProvider(provider).tapError(_ => ZIO.succeed(leftBehind.add(before)))
-          }
+          promise.await.flatMap(_.setProvider(provider))
         case None => ZIO.unit
       }
     } yield ()
-
-  // The providers a client's failed swap replaced. One whose swap timed out is held only by the new provider's pending
-  // initialization, and the SDK shuts it down only if that succeeds; the client shares the registry's API, so it leaves
-  // it to the registry. A rolled-back one is installed again, and the API's shutdown reaches it.
-  private val leftBehind = new java.util.concurrent.ConcurrentLinkedQueue[OFFeatureProvider]()
-
-  /** At the registry's close, after the API's shutdown: shut down each library wrapper a failed swap left behind that
-    * is not shut down in its current cycle. Neither the SDK nor the API's shutdown reaches one whose replacement never
-    * initialized. A provider registered outside the library is the SDK's, and is left alone.
-    */
-  private[openfeature] def releaseLeftBehind: UIO[Unit] =
-    ZIO.foreachDiscard(Iterator.continually(leftBehind.poll()).takeWhile(_ != null).toList) {
-      case wrapper: ManagedProvider if !wrapper.shutDownInCycle =>
-        ProviderRegistration.boundedProviderShutdown(wrapper, "registry close (provider a failed swap left behind)")
-      case _ => ZIO.unit
-    }
 
   override def addZioApiHook(hook: FeatureHook): UIO[Unit] =
     lock.withPermit {

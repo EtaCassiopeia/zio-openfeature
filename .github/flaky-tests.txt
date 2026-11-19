@@ -2,4 +2,3 @@
 # each with the issue tracking it. Listed ones are still reported, but do not fail the run. Remove an entry when its
 # issue is fixed. One per line: `<suite class>` or `<suite class>::<test name>`, then `# <tracking issue>`; an entry
 # without a tracking note does not count as tracked.
-zio.openfeature.ProviderStatusBridgeSpec::lazy-metadata provider: a READY stamped with another name does not name it, even while it initializes  # #860: no READY under the provider's own name in 1 of 5 nightly runs; not reproduced locally in 600 runs. The test now reports where it is stuck. Remove once a run shows the cause.

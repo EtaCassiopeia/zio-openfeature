@@ -123,16 +123,21 @@ final private[openfeature] class EventBridge(
     EventBridge.attributable(Option(details.getProviderName), providerNameRef.get())
 
   /** Settle a `Pending` name once the status is `Ready`: the SDK's state for the slot was READY, which a provider's own
-    * emission can also make it while its `initialize()` runs, so a wrapper still initializing keeps `Pending`, and the
-    * READY the SDK sends when that call returns settles it. The installed provider's own metadata decides, so an event
-    * cannot write another provider's name whatever it is stamped with.
+    * emission can also make it before or while its `initialize()` runs, so a wrapper that has not finished one keeps
+    * `Pending`, and the READY the SDK sends when that call returns settles it. The installed provider's own metadata
+    * decides, so an event cannot write another provider's name whatever it is stamped with.
     */
   private[openfeature] def settlePendingName: UIO[Unit] =
     ZIO.suspendSucceed {
       val record = lifecycle.snapshot
-      val settle = record.status == ProviderStatus.Ready && record.name == ProviderName.Pending &&
-        !Bound.ofRegistered(record.installed).initializing
-      ZIO.when(settle)(readName(record.installed)).unit
+      // Unread, the SDK's state counts as NOT_READY: the name waits for the READY that ends an initialize().
+      val slot =
+        scala.util.Try(client.getProviderState).toOption.flatMap(Option(_)).getOrElse(JavaProviderState.NOT_READY)
+      ZIO
+        .when(EventBridge.settlesName(record.status, record.name, Bound.ofRegistered(record.installed), slot))(
+          readName(record.installed)
+        )
+        .unit
     }
 
   /** Record `provider`'s name now that it has initialized. A throw from the provider leaves the name `Pending`: it says
@@ -471,6 +476,16 @@ final private[openfeature] class EventBridge(
 }
 
 private[openfeature] object EventBridge {
+
+  /** Whether a `Pending` name is read from the installed provider now: `Ready`, and the provider can have a name
+    * ([[Bound.nameReadable]]). A READY can reach the bridge before the SDK has entered `initialize()`; the name read
+    * then would be none, for good. Unless no `initialize()` is coming: the SDK runs one only while the slot's state is
+    * `NOT_READY`, so a wrapper never initialized whose slot `slotState` has moved on (the provider's own READY, emitted
+    * before the SDK's task ran) is read now, as it was before.
+    */
+  def settlesName(status: ProviderStatus, name: ProviderName, installed: Bound, slotState: JavaProviderState): Boolean =
+    status == ProviderStatus.Ready && name == ProviderName.Pending &&
+      (installed.nameReadable || (installed.neverInitialized && slotState != JavaProviderState.NOT_READY))
 
   /** Whether an event the SDK stamped with `stamped` can be the installed provider's, named `installed`. */
   def attributable(stamped: Option[String], installed: ProviderName): Boolean =

@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A provider that only names itself in `initialize()` no longer loses its name to a READY that arrives before the
+  SDK has started initializing it.** A READY that reached an async build before the SDK's thread entered the
+  provider's `initialize()` read the name too early, found none, and kept it: every later event under the provider's
+  real name was then dropped, and the instance never published a READY under it. The name is now read only once an
+  `initialize()` has ended (#860).
 - **An owning instance's timed-out swap no longer shuts down a provider a sibling instance still serves.** When the
   owner swapped off a provider another instance on the same API was also built with, and the swap outlasted
   `initTimeout`, the replaced provider was shut down under the sibling, whether the new provider then failed or

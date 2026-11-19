@@ -339,9 +339,8 @@ final private class FeatureFlagRegistryLive(
 
   /** Wait for the freshly registered provider to become usable, failing typed on error states or timeout.
     *
-    * Deliberately polls with blocking-pool sleeps instead of `ZIO.sleep`/`Schedule`: registry construction must work
-    * inside zio-test suites where the TestClock is frozen, exactly like the previous blocking `setProviderAndWait` did.
-    * The loop is bounded by the default init timeout.
+    * Polls on the live clock rather than the environment's: registry construction must stay bounded inside zio-test
+    * suites whose TestClock is frozen. The loop is bounded by the init timeout.
     */
   private def awaitReady(client: FeatureFlags): IO[FeatureFlagError, Unit] = {
     val pollMillis = FeatureFlagRegistry.AwaitReadyPollInterval.toMillis
@@ -370,7 +369,7 @@ final private class FeatureFlagRegistryLive(
             )
           )
         case None =>
-          ZIO.attemptBlocking(Thread.sleep(pollMillis)).orDie *> loop(remaining - 1)
+          ZIO.withClock(Clock.ClockLive)(ZIO.sleep(FeatureFlagRegistry.AwaitReadyPollInterval)) *> loop(remaining - 1)
       }
 
     loop(maxPolls)

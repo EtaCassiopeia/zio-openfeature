@@ -14,15 +14,16 @@ python3 mutants.py tla2tools.jar
 ```
 
 `Registry.cfg` has two instances, three domains (the default slot and two more, so a build can reuse a provider from a
-slot that is neither its own nor the default), two providers and two swaps: 59999
-distinct states, under a second. CI runs it, and the mutants, in the `tlc` job of `formal.yml` on every pull request
+slot that is neither its own nor the default), two providers and two swaps: 123288
+distinct states, a few seconds. CI runs it, and the mutants, in the `tlc` job of `formal.yml` on every pull request
 that touches the model or the code it maps. `-deadlock` turns off TLC's deadlock check, as for the lifecycle model: a
 registry whose clients have all closed, or an API torn down, has no action enabled and is not an error.
 
 ## Composition with the lifecycle model
 
 The model is coarse on purpose. Each instance's swap protocol (the gate, the outcome, the rollback, the orphans, the
-bridge) is abstracted to a phase, `absent`, `checking`, `building`, `open` or `closed`, and a swap to its steps
+bridge) is abstracted to a phase, `absent`, `checking`, `building`, `open` or `closed` (and, for a registry build that
+failed, `failed`, then `evicted`), and a swap to its steps
 (`SwapStart`, then `SwapDone`, or `SwapFailMark` and `SwapFail`). That protocol is checked for one instance by `formal/lifecycle`, whose
 per-instance invariants hold for each instance here by that check; this model adds what one instance cannot show: the
 API's single owner, the SDK's one state manager per provider across slots, and the registry's one promise per domain.
@@ -33,10 +34,13 @@ second instance.
 
 | Action | Code |
 |:--|:--|
-| `Lookup(i, d)` | `FeatureFlagRegistryLive.memoizedClient`: the promise for `d` is in `clients` (or `defaultRef`), so the caller awaits it. The registry keeps a client's promise until the registry closes, so a client shut down on its own is what later callers get |
-| `Check(i, d)` | `memoizedClient`: `lock.withPermit`, no promise for `d`: insert one. The semaphore is held from the lookup to the insert, which is what makes two callers of one domain one build. The insert and the fork of the build are one uninterruptible section, so no step ends between `Check` and `Create`: an interrupt of the caller lands while it waits for the semaphore, before `Check`, or on the promise, after `Create`, and is a stutter in both places |
-| `Create(i, p, own)` | the build, outside the semaphore: `buildClient` picks the domain's provider (`providers(d)`, or the default provider), `ProviderRegistration.register` binds it to the slot. The SDK reuses the state manager of a provider it has registered (`ProviderRepository.isStateManagerRegistered`), so a second domain holds the same wrapper, still `Bound.Managed` and guarded by `ApiInstances.heldByAnother`; only a provider the user registered, in the target or default slot, is `Bound.Foreign` (`Bound.of`, `ProviderStateAccess.boundIn`). `own`: `FeatureFlagsLive.ownsApi`, true for the sole-owner factories, false for a registry client (`addShutdownFinalizer = false`) and for a layer on a shared API |
-| `Complete(i)` | `runBuild`: `lock.withPermit(... promise.succeed(client))` |
+| `Lookup(i, d)` | `FeatureFlagRegistryLive.memoizedClient`: the promise for `d` is in `clients` (or `defaultRef`), so the caller awaits it. The registry keeps a client's promise until the registry closes, so a client shut down on its own is what later callers get; a failed build's until `Evict` |
+| `Check(i, d)` | `memoizedClient`: `lock.withPermit`, no promise for `d` (none yet, or a failed build's evicted: a retry, which is another instance): insert one. The semaphore is held from the lookup to the insert, which is what makes two callers of one domain one build. The insert and the fork of the build are one uninterruptible section, so no step ends between `Check` and `Create`: an interrupt of the caller lands while it waits for the semaphore, before `Check`, or on the promise, after `Create`, and is a stutter in both places |
+| `Create(i, p, own)` | the build, outside the semaphore: `buildClient` picks the domain's provider (`providers(d)`, or the default provider), `ProviderRegistration.register` binds it to the slot. The SDK reuses the state manager of a provider it has registered (`ProviderRepository.isStateManagerRegistered`), so a second domain holds the same wrapper, still `Bound.Managed` and guarded by `ApiInstances.heldByAnother`; only a provider the user registered, in the target or default slot, is `Bound.Foreign` (`Bound.of`, `ProviderStateAccess.boundIn`). `own`: `FeatureFlagsLive.ownsApi`, true for the sole-owner factories, false for a registry client (`addShutdownFinalizer = false`) and for a layer on a shared API. A retry finds the slot holding the failed build's provider, left running for it: the same provider is initialized again first (`ProviderRegistration.retryFailedInitialization`) and bound as before; another one replaces it in the slot (`replaced`), and the replaced one keeps its registration until the SDK or the library ends it |
+| `Complete(i)` | `runBuild`: `lock.withPermit(... promise.succeed(client))`. Its provider initialized, so the SDK's `shutDownOld` shuts down a provider it replaced in the slot that no slot holds any more |
+| `BuildFail(i)` | `buildClient`: `awaitReady` failed; `releaseReplacedFailure` ran first (`ReleaseReplaced`, its guard here), then the failed client is kept in `lastFailed` and its child scope closes. Its provider is left running and in its slot, unmarked, so a retry can initialize it again |
+| `Evict(i)` | `runBuild`'s typed-failure branch: `lock.withPermit(remove *> promise.fail(err))` |
+| `ReleaseReplaced(i)` | `releaseReplacedFailure`: a retry with another provider failed too, so the domain's previous failed client (`lastFailed`) runs `shutDownFailedBuild` on its own provider, which the retry replaced, deciding as a failed build does (`LibraryShuts`). The SDK would shut it down only on the replacing provider's success |
 | `SwapStart(i, p)` | `FeatureFlagsLive.setProvider`, or `FeatureFlagRegistry.setProvider(d, p)` on the domain's client; one swap at a time here, as each instance's swap lock and the registry's one client per domain make concurrent swaps independent. The SDK binds `p` before its `initialize()` runs, so a sibling built on `p` from here shares the attempt. A swap that reaches its binding after a sibling's `initialize()` of `p` has started is refused (`ProviderRegistration.StillInitializing`), and one whose SDK task the sibling's task overtakes still shares it |
 | `SwapDone(i)` | the swap succeeded. The SDK's `shutDownOld` shuts the replaced provider down only when no slot holds its state manager any more; one another slot still holds keeps it |
 | `SwapOldShut(i)` | a sibling's binding of the swap's provider shares its registration and its `initialize()` started first: the swap's SDK task finds the call under way, returns at once, and shuts the replaced provider down (`shutDownOld`) when no slot holds it, before the swap's outcome. A rollback then registers it again, as a new registration. Only before the outcome: one after a rollback would shut down a provider the rollback had just registered again |
@@ -47,7 +51,7 @@ second instance.
 | `FailDecide(i)` | the rest of it: `LibraryShuts` is `Bound.Managed` and not `ApiInstances.heldByAnother`, whose `serves` skips an instance that failed on the provider. A build's failure then closes its scope; a retry is another instance here |
 | `CloseInstance(i)` | a non-owner's `shutdown` or scope close: `FeatureFlagsLive.teardown(tearDownApi = false)`, its own state only (the long comment there) |
 | `OwnerClose` | the owner's `shutdown` or scope close: `ApiInstances.retireSiblings` (every other instance on the API retires, `FeatureFlagsLive.retire`), then `ProviderRegistration.boundedApiShutdown`, the SDK's `shutdown`, which shuts every registered provider down once |
-| `RegistryClose` | the registry's layer finalizer, which owns the API with no instance in the owner's role: `ApiInstances.retireAll(api) *> boundedApiShutdown(api)`; every live client, a building one included, is retired, then the API's shutdown shuts every registered provider down once |
+| `RegistryClose` | the registry's layer finalizer, which owns the API with no instance in the owner's role: `ApiInstances.retireAll(api) *> boundedApiShutdown(api)`; every live client, a building one included, is retired, then the API's shutdown shuts every provider its slots hold down once. A provider a retry replaced is no longer in a slot: the SDK's shutdown skips it, so one nobody released leaks (`SharedShutDownOnce`). While the retry has not settled, its provider's `initialize()` task outlives the API's shutdown and shuts the replaced one down on success (`ApiShuts`) |
 
 ## The variables and the code
 
@@ -68,6 +72,8 @@ second instance.
 | `deciding` | ghost: the instances between marking a failure and deciding about the shutdown |
 | `prior[i]` | the provider `i`'s swap in flight replaced: what `runSwap` keeps for the rollback |
 | `swappedOff` | ghost: the providers a successful swap moved off a slot |
+| `builtOn[i]` | the provider `i`'s build bound (`buildClient`'s `provider`) |
+| `replaced[q]` | the provider whose binding after a failed registry build replaced `q` in its slot, until its build settles or `q` is released: the SDK's `shutDownOld` of `q` pending on its `initialize()` |
 
 ## What it checks
 
@@ -80,10 +86,11 @@ second instance.
 | `UserProviderNeverShutByLibrary` | no failure path shuts down a provider the user registered and the API still holds |
 | `LiveSiblingKeepsProvider` | a failure under one instance never shuts down a wrapper a live sibling that has not failed on it is bound to |
 | `FailedWrapperNotAbandoned` | failures do not each defer to the other: a wrapper every holder has failed on and decided about has been shut down, unless a swap may still return to it or a successful one moved off it, where the slot keeps it for the API's owner |
-| `OneInstancePerDomain` | at most one promise per domain, ever: concurrent `getClient` calls on one domain yield one client |
+| `OneInstancePerDomain` | at most one promise per domain at a time (an evicted one is gone): concurrent `getClient` calls on one domain yield one client |
 | `ClosedNonOwnerKeepsSlot` | the slot of a closed non-owner keeps its provider until the owner closes the API |
 | `ClosedApiServesNone` | once the API is gone, no instance is live: an owner's or the registry's close retires them all |
 | `SiblingsUnaffected` (an action property) | a non-owner's close changes no slot and no sibling's phase |
+| `OnlyFailedBuildsEvicted` (an action property) | only a failed build's promise is evicted: a client a caller got, or a build still running, keeps its promise |
 
 ## Mutants
 
@@ -104,13 +111,16 @@ them one at a time: a mutant usually breaks several, and in one run TLC reports 
 | The registry closes without retiring its clients | `ClosedApiServesNone` |
 | The registry's close shuts every provider ever bound, a double shutdown | `SharedShutDownOnce` |
 | The registry closes during a swap | `SharedShutDownOnce` |
+| A live client's promise is evicted | `OnlyFailedBuildsEvicted` |
+| A failed retry with another provider leaves the provider it replaced running (`releaseReplacedFailure` dropped) | `SharedShutDownOnce` |
 
 ## What is outside the model
 
 - **The per-instance swap protocol**: `formal/lifecycle`. A swap here is start and outcome; its gate, its timeout, its
   rollback's own registration and the orphans are there.
-- **A retry of a failed build.** The registry evicts the promise and the caller retries; here a failed instance stays
-  closed and its domain is not built again.
+- **A registry close during a retry with another provider whose initialization then fails.** The interrupted build
+  releases nothing, the API's shutdown skips the provider the retry replaced (no slot holds it), and the SDK shuts it
+  down only on the retry's success. The model takes the success (`ApiShuts`).
 - **A timed-out swap's orphans.** They are the lifecycle model's, for one instance owning its API. A foreign previous
   provider a slot the library can see held when it was replaced is left alone (`OrphanedProviders`); one no such slot
   held is shut down, as nothing else would.
@@ -122,8 +132,8 @@ them one at a time: a mutant usually breaks several, and in one run TLC reports 
 - **`fromAcquireAsync`.** Its switch is not an SDK registration (`docs/design/lifecycle.md`); on a shared API it is an
   instance like any other here.
 - **Time**, as in the lifecycle model.
-- **What the recorded runs cannot reach** (see Trace validation): a registry's retry after a failed build, a timed-out
-  swap, two shared-API layers on one domain, and a provider the user bound under a domain no instance is on.
+- **What the recorded runs cannot reach** (see Trace validation): a registry's retry after a failure's decision closed
+  its build, a timed-out swap, two shared-API layers on one domain, and a provider the user bound under a domain no instance is on.
 
 ## Trace validation
 

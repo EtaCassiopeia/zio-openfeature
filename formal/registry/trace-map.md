@@ -13,7 +13,10 @@ labels; its docstring gives the exact rules. `FFF` is `internal/FeatureFlagsFact
 | `Lookup(i, d)` | `FeatureFlagRegistryLive.memoizedClient`, the promise found | none: a stutter, on the memoized `getClient` path |
 | `Check(i, d)` | `memoizedClient`, the promise inserted under the lock; for a layer on a shared API, the build itself | `RegistryInsert(domain)`, bookkeeping only: the labeler takes `Check` at the binding, which nothing on another domain can tell apart |
 | `Create(i, p, own)` | `FFF.build` (`registerThenAwait`) and `FFF.buildAsync` (`ProviderRegistration.bind`); the registry's `buildClient` builds async | `BuildBind(provider, domain, owns, async)` |
-| `Complete(i)` | the registry's `runBuild`, `promise.succeed`; an async build outside a registry returns once bound; a sync build once its wait returns | `RegistryComplete(domain)`; `BuildBind` with `async`; none for a sync build, which is completed before its first step that needs it open |
+| `Complete(i)` | the registry's `runBuild`, `promise.succeed`; an async build outside a registry returns once bound; a sync build once its wait returns. After a retry with another provider, the SDK's `shutDownOld` of the provider it replaced | `RegistryComplete(domain)`; `BuildBind` with `async`; none for a sync build, which is completed before its first step that needs it open. The replaced provider's `ProviderShutDown` (an SDK thread) is counted into `End` |
+| `BuildFail(i)` | the registry's `buildClient`: `awaitReady` failed, `releaseReplacedFailure` ran, the failed client is stored in `lastFailed`, and its child scope closes | the client's `ScopeClose` while its build runs; or, without one, the domain's next `RegistryInsert` |
+| `Evict(i)` | `runBuild`'s typed-failure branch, `lock.withPermit(remove *> promise.fail(err))` | none: taken at the domain's next `RegistryInsert`, the retry that found no promise |
+| `ReleaseReplaced(i)` | `releaseReplacedFailure`: the domain's previous failed client, of another provider, runs `shutDownFailedBuild` on that provider (`shutDownFailedRegistration`) | `FailedRegistration` and `FailDecided(provider, shut)` naming the previous attempt's provider under the domain's tag; `shut` is checked against `LibraryShuts` |
 | `SwapStart(i, p)` | `FeatureFlagsLive.runSwap`, its registration returned; `FeatureFlagRegistry.setProvider` on a domain's client | `SwapStart` (the provider) and `SdkBind` (the step) |
 | `SwapDone(i)` | `runSwap`, the success outcome; the SDK's `shutDownOld` of the replaced provider | `ApplySignal(SwapSucceeded)`; the shutdown counted into `End` |
 | `SwapOldShut(i)` | the SDK's `shutDownOld` of the swap's replaced provider, run at once by a swap whose SDK task found a sibling's `initialize()` of the new provider under way (`FeatureProviderStateManager.initialize`'s `isInitialized` check); a rollback then registers the old provider again | `ProviderShutDown` of the swap's old provider before its outcome, while a sibling holds the swap's provider; still counted into `End` |
@@ -37,7 +40,8 @@ run counted, over all its registrations (`total`). A failure on a registration t
 already, and absorbs another shutdown) marks nothing and decides nothing (`absorbed`). `preconditions.py` deletes each
 guard the check rests on and requires its reject fixture to be accepted then. The labeler rejects on its own a step from
 an instance that has closed or after the API closed, an owner's close before the others' retirement ended, and a second
-promise for a domain whose client is still open.
+promise for a domain whose client completed. Each registry build attempt is its own model instance: a retry's
+`RegistryInsert` evicts the previous attempt (`BuildFail`, `Evict`), and its `BuildBind` is a new `Check` and `Create`.
 
 ## Runs the model does not cover
 
@@ -46,7 +50,8 @@ promise for a domain whose client is still open.
 | Reason | What happened | Why the model leaves it out |
 |:--|:--|:--|
 | a timed-out swap | `SwapTimeout` | its orphans are the lifecycle model's |
-| a registry retry after a failed build | a second `RegistryInsert` for a domain | a failed instance stays closed here, and its domain is not built again |
+| a registry retry after a failure under its build | a second `RegistryInsert` for a domain whose build a failure's decision (`FailDecide`) closed | that instance is closed, not evicted, here |
+| a failure's decision interrupted by the registry's close | `ApiShutdown` between a `FailedRegistration` and its `FailDecided`, a release's included | `RegistryClose` waits for every decision here |
 | a retry of a failed registration | the test reinitializes a slot's failed provider (`UserRetryInit`) | the same retry, by hand |
 | two shared-API layers on one domain | a second `BuildBind` on a domain outside a registry | one instance per domain (`OneInstancePerDomain`) |
 | a provider the user bound under a domain no instance is on | `UserBind` of a provider, then a build or swap of it elsewhere, while no instance's slot, nor the default one, holds it | the library cannot see that slot (`Create`, `SwapStart`) |

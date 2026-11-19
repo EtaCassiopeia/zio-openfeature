@@ -20,8 +20,16 @@ TRACE = "RegistryTrace.tla"
 # (the guard, the text it is deleted from, that text without it, the fixture it rules out, the file)
 guards = [
     ("Create: one owner", "    /\\ own => owner = None\n", "", "two-owners"),
-    ("Create: the slot holds no other provider", "    /\\ bound[d] \\in {None, p}\n", "",
-     "build-binds-over-a-user-provider"),
+    ("Create: the slot holds no other provider, unless a failed registry build left it",
+     "    /\\ \\/ bound[d] \\in {None, p}\n"
+     "       \\/ /\\ \\E j \\in Instances : domainOf[j] = d /\\ phase[j] = \"evicted\"\n"
+     "          /\\ \\A j \\in Instances \\ {i} : domainOf[j] = d => phase[j] = \"evicted\"\n"
+     "          /\\ bound[d] \\notin userOwned\n", "", "build-binds-over-a-user-provider"),
+    ("BuildFail: the provider it replaced released first",
+     "    /\\ ~\\E q \\in Providers : /\\ replaced[q] = builtOn[i]\n"
+     "                            /\\ q \\in registered\n"
+     "                            /\\ q \\notin userOwned\n"
+     "                            /\\ SlotsOf(q) = {}\n", "", "registry-retry-fails-too-and-leaves-the-first-running"),
     ("SwapDone: no failure marked", "    /\\ swapping = i\n    /\\ failedOn[i] # bound[d]\n", "    /\\ swapping = i\n",
      "succeeds-after-its-failure"),
     ("UserBind: an empty slot", "    /\\ bound[d] = None\n    /\\ p \\notin everBound\n",

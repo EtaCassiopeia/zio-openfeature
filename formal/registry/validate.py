@@ -21,7 +21,7 @@ sys.path.insert(0, os.path.dirname(here))
 import tracecheck  # noqa: E402
 from trace_labels import labels, read  # noqa: E402
 
-ACTIONS = ("Check", "Create", "Complete", "SwapStart", "SwapDone", "SwapOldShut", "SwapFailMark", "SwapFail", "UserBind", "FailMark",
+ACTIONS = ("Check", "Create", "Complete", "BuildFail", "Evict", "ReleaseReplaced", "SwapStart", "SwapDone", "SwapOldShut", "SwapFailMark", "SwapFail", "UserBind", "FailMark",
            "FailDecide", "CloseInstance", "OwnerClose", "RegistryClose")
 
 

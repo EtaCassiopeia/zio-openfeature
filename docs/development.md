@@ -148,8 +148,11 @@ stacks (`CachingProvider`, `CircuitBreakerProvider`, `DeferredProvider` and mult
 providers) and runs random command sequences against them: evaluations, swaps between stacks, flag and fault changes,
 provider events and shutdown. `SequentialSimulationSpec` checks every answer, hook stage and shutdown against a pure
 reference model. `ConcurrentSimulationSpec` races evaluation workers against a swapper and a mutator and checks
-invariants only (no defects, hook totals, no answer a leaf gave after a swap away from it began, every provider shut
-down). It runs under a seeded schedule probe: at every `LifecycleProbe` and `EvaluationProbe` point a
+invariants (no defects, hook totals, no answer a leaf gave after a swap away from it began, every provider shut
+down). It also records a history of evaluations, flag writes and swaps on one logical clock and checks each successful
+value against it (`History.scala`): the answering leaf belonged to a stack installed during the evaluation, a live
+read returned a value the leaf held during it, and a cache hit is no older than the last completed invalidation that
+reached that cache synchronously. Coverage counts `history.checked` and `history.cachedFloored`. It runs under a seeded schedule probe: at every `LifecycleProbe` and `EvaluationProbe` point a
 `SchedulePerturber` passes, yields or sleeps briefly, decided from the plan's `scheduleSeed`, so rare interleavings
 become common and the seed replays the schedule along with the plan (most failures recur, though not all, since the
 SDK's threads run outside ZIO's scheduler). Its failure prints the schedule seed and the tail of the decision log, and

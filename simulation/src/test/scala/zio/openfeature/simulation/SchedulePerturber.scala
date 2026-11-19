@@ -24,7 +24,7 @@ final class SchedulePerturber(seed: Long, onLifecycle: LifecycleProbe.Point => U
   import SchedulePerturber._
 
   private val hits  = new ConcurrentHashMap[String, AtomicLong]()
-  private val tick  = new AtomicLong(0L)
+  private val clock = new AtomicLong(0L)
   private val slept = new AtomicLong(0L)
   private val log   = new ConcurrentLinkedQueue[String]()
 
@@ -43,7 +43,7 @@ final class SchedulePerturber(seed: Long, onLifecycle: LifecycleProbe.Point => U
     }
   }
 
-  private def record(entry: String): Unit = log.add(s"t${tick.incrementAndGet()} $entry"): Unit
+  private def record(entry: String): Unit = log.add(s"t${tick()} $entry"): Unit
 
   private def perturb(name: String): UIO[Unit] =
     ZIO.suspendSucceed {
@@ -58,6 +58,11 @@ final class SchedulePerturber(seed: Long, onLifecycle: LifecycleProbe.Point => U
           ZIO.sleep(Duration.fromNanos(us * 1000)).withClock(Clock.ClockLive)
       }
     }
+
+  /** Advances the run's logical clock and returns the new tick. The decision log and the concurrent spec's recorded
+    * history share this one timeline.
+    */
+  def tick(): Long = clock.incrementAndGet()
 
   /** Stamps a harness event into the decision log. */
   def note(event: String): UIO[Unit] = ZIO.succeed(record(event))

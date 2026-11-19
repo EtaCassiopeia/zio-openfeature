@@ -10,6 +10,8 @@ object Stats {
 
   def hit(name: String): Unit = counters.computeIfAbsent(name, _ => new LongAdder).increment()
 
+  def add(name: String, n: Long): Unit = counters.computeIfAbsent(name, _ => new LongAdder).add(n)
+
   /** Registers counters at 0 without hitting them, so one never reached still shows as `=0`. */
   def declare(names: Iterable[String]): Unit = names.foreach(n => counters.computeIfAbsent(n, _ => new LongAdder): Unit)
 

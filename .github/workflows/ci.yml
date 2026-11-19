@@ -238,6 +238,14 @@ jobs:
       # run it at 10x. It is not aggregated, so `+test` does not reach it.
       - name: Run the simulation
         run: sbt "simulation/test"
+      - name: Keep the failing simulation plans
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: simulation-failures
+          path: simulation/target/simulation-failures/
+          retention-days: 14
+          if-no-files-found: ignore
 
   # Conformance runs the vendored OpenFeature gherkin suite via Cucumber. It is Scala 3 only and not aggregated by
   # root (so `++2.13.x test` doesn't try to compile it), hence its own job on the primary JDK / default Scala.

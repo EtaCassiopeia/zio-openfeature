@@ -4,7 +4,8 @@ name: Property tests
 # runs with its sample count multiplied by ZOF_PBT_SCALE and a fresh random seed. PR CI runs the same tests at their
 # base counts and zio-test's fixed seed. Not a PR gate. The seed is printed in the job summary: replay a failure with
 # `ZOF_PBT_SCALE=10 ZOF_PBT_SEED=<seed> sbt "<module>/testOnly -- -tags property"`, then check the shrunk case in as an
-# explicit regression example (seeds are not stable across zio-test versions).
+# explicit regression example (seeds are not stable across zio-test versions). A simulation failure needs no seed: its
+# shrunk plan is uploaded as the `simulation-failures` artifact; drop it into simulation/src/test/resources/regressions/.
 
 on:
   schedule:
@@ -68,3 +69,11 @@ jobs:
           ZOF_PBT_SCALE: ${{ steps.budget.outputs.scale }}
           ZOF_PBT_SEED: ${{ steps.budget.outputs.seed }}
         run: sbt "${{ matrix.module }}/testOnly -- -tags property"
+      - name: Keep the failing simulation plans
+        if: failure() && matrix.module == 'simulation'
+        uses: actions/upload-artifact@v7
+        with:
+          name: simulation-failures
+          path: simulation/target/simulation-failures/
+          retention-days: 14
+          if-no-files-found: ignore

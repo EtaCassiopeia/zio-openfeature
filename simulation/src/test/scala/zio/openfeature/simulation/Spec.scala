@@ -55,22 +55,24 @@ object Spec {
     case Multi(_, cs) => cs.map(maxId).maxOption.getOrElse(-1)
   }
 
-  /** A Cache or Breaker whose name read reaches an uninitialized Multi (through Widen, which forwards `getMetadata`)
-    * throws, and a swap to it dies with a defect instead of a typed failure. That is a known open bug, so swaps to such
-    * a stack are skipped and runs keep exploring; remove the skip once a swap reads the name safely.
+  /** A Cache or Breaker whose name read reaches a Multi, whose name is unknown before init (through Widen or Deferred,
+    * which forward `getMetadata`). A coverage tag: a swap to such a stack reads the name of a provider that has not
+    * initialized yet, which must not fail the swap.
     */
-  def nameThrowsBeforeInit(spec: Spec): Boolean = {
+  def wrapsMulti(spec: Spec): Boolean = {
     def reachesMulti(s: Spec): Boolean = s match {
       case _: Multi     => true
       case Cache(_, in) => reachesMulti(in)
       case b: Breaker   => reachesMulti(b.inner)
       case Widen(in)    => reachesMulti(in)
+      case Deferred(in) => reachesMulti(in)
       case _            => false
     }
     spec match {
       case Cache(_, in) => reachesMulti(in)
       case b: Breaker   => reachesMulti(b.inner)
-      case Widen(in)    => nameThrowsBeforeInit(in)
+      case Widen(in)    => wrapsMulti(in)
+      case Deferred(in) => wrapsMulti(in)
       case _            => false
     }
   }

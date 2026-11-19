@@ -1,0 +1,25 @@
+{"seq":0,"point":"BuildBind","arg":"","provider":"gated","providerInstance":"567b4f3c","domain":"b","owns":"false","async":"false","instance":"b2"}
+{"seq":1,"point":"InitEntered","arg":"","instance":"b1"}
+{"seq":2,"point":"BuildBind","arg":"","provider":"gated","providerInstance":"567b4f3c","domain":"a","owns":"false","async":"false","instance":"b1"}
+{"seq":3,"point":"InitOutcome","arg":"false","provider":"gated","providerInstance":"567b4f3c","instance":"b1"}
+{"seq":4,"point":"InitReturned","arg":"","instance":"b1"}
+{"seq":5,"point":"DeliverEvent","arg":"PROVIDER_READY","provider":"gated","instance":"b1"}
+{"seq":6,"point":"ApplySignal","arg":"EventReady","instance":"b1"}
+{"seq":7,"point":"ApplySignal","arg":"EventError(false)","instance":"b2"}
+{"seq":8,"point":"StatusWritten","arg":"Error","instance":"b2"}
+{"seq":9,"point":"StatusWritten","arg":"Error","instance":"b1"}
+{"seq":10,"point":"DeliverEvent","arg":"PROVIDER_READY","provider":"gated","instance":"b2"}
+{"seq":11,"point":"ApplySignal","arg":"EventReady","instance":"b2"}
+{"seq":12,"point":"DeliverEvent","arg":"PROVIDER_ERROR","provider":"gated","instance":"b2"}
+{"seq":13,"point":"ApplySignal","arg":"EventError(false)","instance":"b2"}
+{"seq":14,"point":"DeliverEvent","arg":"PROVIDER_ERROR","provider":"gated","instance":"b1"}
+{"seq":15,"point":"ApplySignal","arg":"EventError(false)","instance":"b1"}
+{"seq":16,"point":"FailedRegistration","arg":"","provider":"gated","providerInstance":"567b4f3c","instance":"b2"}
+{"seq":17,"point":"ApplySignal","arg":"EventError(false)","instance":"b1"}
+{"seq":18,"point":"FailDecided","arg":"false","provider":"gated","providerInstance":"567b4f3c","instance":"b2"}
+{"seq":19,"point":"FailedRegistration","arg":"","provider":"gated","providerInstance":"567b4f3c","instance":"b1"}
+{"seq":20,"point":"FailDecided","arg":"true","provider":"gated","providerInstance":"567b4f3c","instance":"b1"}
+{"seq":21,"point":"ScopeClose","arg":"","instance":"b2"}
+{"seq":22,"point":"ProviderShutDown","arg":"21","provider":"gated","providerInstance":"567b4f3c","caller":"zio-default-blocking-3","instance":"b1"}
+{"seq":23,"point":"ShutdownReturned","arg":"21 true","instance":"b1"}
+{"seq":24,"point":"ScopeClose","arg":"","instance":"b1"}

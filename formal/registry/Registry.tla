@@ -194,7 +194,7 @@ ShutFailed(i, p) ==
 \* A swap at the registry grain.  The SDK binds the new provider before its initialize() runs, so a sibling may reuse its
 \* registration from then on.  A swap is refused when a sibling's initialize() of p has started by the time it binds; one
 \* whose SDK task the sibling's task overtakes still shares that call, and then the SDK may shut the provider it replaces
-\* down sooner than here, where it stays registered until the swap's outcome.
+\* down before the swap's outcome (SwapOldShut).
 SwapStart(i, p) ==
     LET d == domainOf[i] IN
     /\ apiOpen
@@ -233,6 +233,25 @@ SwapDone(i) ==
     /\ failedOn' = [failedOn EXCEPT ![i] = None]
     /\ swappedOff' = swappedOff \cup {old}
     /\ UNCHANGED << phase, domainOf, owner, apiOpen, lock, swaps, bound, everBound, deciding >>
+
+\* A sibling's binding of the swap's provider shares its registration, and its initialize() started first: the swap's
+\* SDK task finds the call under way, returns at once and shuts the provider the swap replaced down when no slot holds
+\* it (shutDownOld), before the swap's outcome.  A rollback then registers that provider again, as a new registration.
+SwapOldShut(i) ==
+    LET d == domainOf[i]
+        old == prior[i]
+    IN
+    /\ swapping = i
+    /\ old # None
+    /\ old \in registered
+    /\ SlotsOf(old) = {}
+    /\ \E e \in Domains \ {d} : bound[e] = bound[d]
+    /\ registered' = registered \ {old}
+    /\ userOwned' = userOwned \ {old}
+    /\ shuts' = [shuts EXCEPT ![old] = @ + 1]
+    /\ by' = [by EXCEPT ![old] = "sdk"]
+    /\ UNCHANGED << phase, domainOf, owner, apiOpen, lock, swapping, swaps, bound, everBound, failedOn, deciding, prior,
+                    swappedOff >>
 
 \* The new provider failed to initialize: the instance counts as failed on it for its siblings from here on.
 SwapFailMark(i) ==
@@ -366,6 +385,7 @@ Next ==
     \/ \E i \in Instances : Complete(i)
     \/ \E i \in Instances, p \in Providers : SwapStart(i, p)
     \/ \E i \in Instances : SwapDone(i)
+    \/ \E i \in Instances : SwapOldShut(i)
     \/ \E i \in Instances : SwapFailMark(i)
     \/ \E i \in Instances : SwapFail(i)
     \/ \E d \in Domains, p \in Providers : UserBind(d, p)

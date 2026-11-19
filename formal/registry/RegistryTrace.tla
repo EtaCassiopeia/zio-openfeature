@@ -79,6 +79,7 @@ TraceStep ==
     \/ Lib("Complete", Complete(Step.instance))
     \/ Lib("SwapStart", SwapStart(Step.instance, Step.provider))
     \/ Lib("SwapDone", SwapDone(Step.instance))
+    \/ Lib("SwapOldShut", SwapOldShut(Step.instance))
     \/ Lib("SwapFailMark", SwapFailMark(Step.instance))
     \/ Lib("SwapFail", SwapDecided(Step.instance) /\ SwapFail(Step.instance))
     \/ Lib("UserBind", UserBind(Step.domain, Step.provider))

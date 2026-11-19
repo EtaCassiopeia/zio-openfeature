@@ -19,6 +19,10 @@ The mapping (formal/registry/trace-map.md):
   SdkBind in a swap                -> SwapStart, carrying the SwapStart point's provider. A swap without one was refused
                                       before it bound, and changed nothing
   ApplySignal(SwapSucceeded)       -> SwapDone
+  ProviderShutDown of a swap's old
+    provider before its outcome,
+    while a sibling holds the
+    swap's provider                -> SwapOldShut (once per swap; the shutdown is still counted)
   FailedRegistration in a swap     -> SwapFailMark, the first; a later one is the rollback's decision, whose FailDecided
                                       gives SwapFail its `shut`
   SwapDone point, after a mark     -> SwapFail, with `shut`, or -1 when the library did not decide (the SDK did)
@@ -90,6 +94,7 @@ def labels(records):
             self.phase = "absent"  # absent, building, open, closed
             self.failing = False  # a failure marked and not yet decided
             self.swap = None
+            self.provider = None  # the provider its slot holds
 
     inst = {tag: Inst() for tag in tags}
     inserts = {}
@@ -122,6 +127,15 @@ def labels(records):
             p = prov(r)
             counts = late if stopped else shut_count
             counts[p] = counts.get(p, 0) + 1
+            # The SDK shut a swap's old provider down before the swap's outcome: a sibling's binding of the swap's
+            # provider shares its registration and started its initialize() first (the model's SwapOldShut).
+            if not stopped and not owner_closed and not registry_closed:
+                for m, t in inst.items():
+                    w = t.swap
+                    if (w is not None and w["bound"] and not w["done"] and w.get("prior") == p
+                            and any(o is not t and o.provider == w["provider"] for o in inst.values())):
+                        emit("SwapOldShut", instance=tags[m])
+                        w["prior"] = None
             continue
         if point == "ShutdownDone" and n in inst:
             torn_down.add(n)
@@ -175,6 +189,7 @@ def labels(records):
             if p not in user_slots:
                 library.add(p)
             s.domain, s.owns, s.async_ = d, r.get("owns") == "true", r.get("async") == "true"
+            s.provider = p
             s.phase = "building"
             if s.owns:
                 owner = n
@@ -202,6 +217,8 @@ def labels(records):
                 library.add(p)
             emit("SwapStart", instance=tags[n], provider=p)
             s.swap["bound"] = True
+            s.swap["prior"] = s.swap["was"] = s.provider
+            s.provider = p
         elif s.swap is not None and point == "ApplySignal" and r.get("arg", "").startswith("SwapSucceeded"):
             emit("SwapDone", instance=tags[n])
             s.swap["done"] = True
@@ -221,6 +238,7 @@ def labels(records):
                 if not s.swap["marked"]:
                     return "a swap whose registration was superseded"
                 emit("SwapFail", instance=tags[n], shut=s.swap["shut"])
+                s.provider = s.swap["was"]
             s.swap = None
         elif point == "FailedRegistration":
             if s.phase == "building" and s.owns:

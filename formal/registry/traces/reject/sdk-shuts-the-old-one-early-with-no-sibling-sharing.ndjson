@@ -1,0 +1,36 @@
+{"seq":0,"point":"BuildBind","arg":"","provider":"gated","providerInstance":"5b8bc191","domain":"a","owns":"false","async":"false","instance":"b1"}
+{"seq":1,"point":"InitEntered","arg":"","instance":"b1"}
+{"seq":2,"point":"InitOutcome","arg":"true","provider":"gated","providerInstance":"5b8bc191","instance":"b1"}
+{"seq":3,"point":"InitReturned","arg":"","instance":"b1"}
+{"seq":4,"point":"DeliverEvent","arg":"PROVIDER_READY","provider":"gated","instance":"b1"}
+{"seq":5,"point":"ApplySignal","arg":"EventReady","instance":"b1"}
+{"seq":6,"point":"SwapStart","arg":"","provider":"gated","providerInstance":"27ff5d1b","instance":"b1"}
+{"seq":7,"point":"ApplySignal","arg":"SwapStarted","instance":"b1"}
+{"seq":8,"point":"SwapBind","arg":"","instance":"b1"}
+{"seq":9,"point":"SdkBind","arg":"","instance":"b1"}
+{"seq":10,"point":"InitEntered","arg":"","instance":"b1"}
+{"seq":11,"point":"ProviderShutDown","arg":"13","provider":"gated","providerInstance":"5b8bc191","caller":"openfeature-provider-thread-1","instance":"b1"}
+{"seq":12,"point":"ShutdownReturned","arg":"13 true","instance":"b1"}
+{"seq":13,"point":"InitOutcome","arg":"false","provider":"gated","providerInstance":"27ff5d1b","instance":"b1"}
+{"seq":14,"point":"InitReturned","arg":"","instance":"b1"}
+{"seq":15,"point":"FailedRegistration","arg":"","provider":"gated","providerInstance":"27ff5d1b","instance":"b1"}
+{"seq":16,"point":"DeliverEvent","arg":"PROVIDER_ERROR","provider":"gated","instance":"b1"}
+{"seq":17,"point":"ApplySignal","arg":"EventError(false)","instance":"b1"}
+{"seq":18,"point":"ApplySignal","arg":"SwapFailed","instance":"b1"}
+{"seq":19,"point":"StatusWritten","arg":"Error","instance":"b1"}
+{"seq":20,"point":"SwapRollback","arg":"","instance":"b1"}
+{"seq":21,"point":"RollbackBind","arg":"","instance":"b1"}
+{"seq":22,"point":"InitEntered","arg":"","instance":"b1"}
+{"seq":23,"point":"InitOutcome","arg":"true","provider":"gated","providerInstance":"5b8bc191","instance":"b1"}
+{"seq":24,"point":"InitReturned","arg":"","instance":"b1"}
+{"seq":25,"point":"DeliverEvent","arg":"PROVIDER_READY","provider":"gated","instance":"b1"}
+{"seq":26,"point":"ApplySignal","arg":"RollbackSucceeded(Ready)","instance":"b1"}
+{"seq":27,"point":"ApplySignal","arg":"EventReady","instance":"b1"}
+{"seq":28,"point":"StatusWritten","arg":"Ready","instance":"b1"}
+{"seq":29,"point":"GateDown","arg":"","instance":"b1"}
+{"seq":30,"point":"ProviderShutDown","arg":"14","provider":"gated","providerInstance":"27ff5d1b","caller":"openfeature-provider-thread-2","instance":"b1"}
+{"seq":31,"point":"ShutdownReturned","arg":"14 true","instance":"b1"}
+{"seq":32,"point":"SwapReconcile","arg":"","instance":"b1"}
+{"seq":33,"point":"ApplySignal","arg":"EventReady","instance":"b1"}
+{"seq":34,"point":"SwapDone","arg":"","instance":"b1"}
+{"seq":35,"point":"ScopeClose","arg":"","instance":"b1"}

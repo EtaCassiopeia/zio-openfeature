@@ -17,41 +17,41 @@ mutants = {
         ('ClosedNonOwnerKeepsSlot', 'SiblingsUnaffected'), [
         ("    /\\ phase' = [phase EXCEPT ![i] = \"closed\"]\n"
          "    /\\ UNCHANGED << domainOf, owner, apiOpen, lock, swapping, swaps, bound, registered, userOwned, shuts, by, everBound,\n"
-         "                    failedOn, deciding, prior, swappedOff >>",
+         "                    failedOn, deciding, prior, swappedOff, builtOn, replaced >>",
          "    /\\ phase' = [phase EXCEPT ![i] = \"closed\"]\n"
          "    /\\ bound' = [d \\in Domains |-> None]\n"
          "    /\\ registered' = {}\n"
          "    /\\ userOwned' = {}\n"
          "    /\\ shuts' = [p \\in Providers |-> shuts[p] + (IF p \\in registered THEN 1 ELSE 0)]\n"
          "    /\\ by' = [p \\in Providers |-> IF p \\in registered THEN \"sdk\" ELSE by[p]]\n"
-         "    /\\ UNCHANGED << domainOf, owner, apiOpen, lock, swapping, swaps, everBound, failedOn, deciding, prior, swappedOff >>")]),
+         "    /\\ UNCHANGED << domainOf, owner, apiOpen, lock, swapping, swaps, everBound, failedOn, deciding, prior, swappedOff, builtOn, replaced >>")]),
     # A domain client shuts its own provider down when it closes: a sibling sharing it loses it, and the owner shuts
     # it down again.
     'a domain client shuts its provider down directly': (
         ('RegisteredNotShutDown', 'ForeignNeverShutByLibrary', 'SharedShutDownOnce'), [
         ("    /\\ phase' = [phase EXCEPT ![i] = \"closed\"]\n"
          "    /\\ UNCHANGED << domainOf, owner, apiOpen, lock, swapping, swaps, bound, registered, userOwned, shuts, by, everBound,\n"
-         "                    failedOn, deciding, prior, swappedOff >>",
+         "                    failedOn, deciding, prior, swappedOff, builtOn, replaced >>",
          "    /\\ phase' = [phase EXCEPT ![i] = \"closed\"]\n"
          "    /\\ shuts' = [shuts EXCEPT ![bound[domainOf[i]]] = @ + 1]\n"
          "    /\\ by' = [by EXCEPT ![bound[domainOf[i]]] = \"library\"]\n"
-         "    /\\ UNCHANGED << domainOf, owner, apiOpen, lock, swapping, swaps, bound, registered, userOwned, everBound, failedOn, deciding, prior, swappedOff >>")]),
+         "    /\\ UNCHANGED << domainOf, owner, apiOpen, lock, swapping, swaps, bound, registered, userOwned, everBound, failedOn, deciding, prior, swappedOff, builtOn, replaced >>")]),
     # A non-owner's close retires its siblings, as only the owner's may.
     'a non-owner retires its siblings': (
         ('SiblingsUnaffected',), [
         ("    /\\ phase' = [phase EXCEPT ![i] = \"closed\"]\n"
          "    /\\ UNCHANGED << domainOf, owner, apiOpen, lock, swapping, swaps, bound, registered, userOwned, shuts, by, everBound,\n"
-         "                    failedOn, deciding, prior, swappedOff >>",
+         "                    failedOn, deciding, prior, swappedOff, builtOn, replaced >>",
          "    /\\ phase' = [j \\in Instances |-> IF phase[j] = \"open\" THEN \"closed\" ELSE phase[j]]\n"
          "    /\\ UNCHANGED << domainOf, owner, apiOpen, lock, swapping, swaps, bound, registered, userOwned, shuts, by, everBound,\n"
-         "                    failedOn, deciding, prior, swappedOff >>")]),
+         "                    failedOn, deciding, prior, swappedOff, builtOn, replaced >>")]),
     # getClient looks the domain up and inserts its promise without the semaphore: two callers build two clients.
     'getClient without the semaphore': (
         ('OneInstancePerDomain',), [
         ("    /\\ lock = None\n"
-         "    /\\ ~\\E j \\in Instances : phase[j] # \"absent\" /\\ domainOf[j] = d\n"
+         "    /\\ ~\\E j \\in Instances : phase[j] \\notin {\"absent\", \"evicted\"} /\\ domainOf[j] = d\n"
          "    /\\ lock' = i\n",
-         "    /\\ ~\\E j \\in Instances : phase[j] \\notin {\"absent\", \"checking\"} /\\ domainOf[j] = d\n"
+         "    /\\ ~\\E j \\in Instances : phase[j] \\notin {\"absent\", \"evicted\", \"checking\"} /\\ domainOf[j] = d\n"
          "    /\\ lock' = lock\n"),
         ("    /\\ phase[i] = \"checking\"\n    /\\ lock = i\n    /\\ own => owner = None\n    /\\ lock' = None\n",
          "    /\\ phase[i] = \"checking\"\n    /\\ own => owner = None\n    /\\ lock' = lock\n")]),
@@ -102,6 +102,22 @@ mutants = {
     'the registry closes during a swap': (
         ('SharedShutDownOnce',), [
         ("    /\\ owner = None\n    /\\ swapping = None\n", "    /\\ owner = None\n")]),
+    # A live client's promise is evicted (a client a caller got, or a build still running, removed from the map): the
+    # next getClient builds a second client for the domain.
+    'a live client\'s promise is evicted': (
+        ('OnlyFailedBuildsEvicted',), [
+        ("Evict(i) ==\n    /\\ phase[i] = \"failed\"\n",
+         "Evict(i) ==\n    /\\ phase[i] \\in {\"failed\", \"open\"}\n")]),
+    # A retry with another provider fails too and leaves the failed provider it replaced running: no slot holds it any
+    # more, so the API's shutdown skips it and nothing shuts it down.
+    'a failed retry leaves the provider it replaced running': (
+        ('SharedShutDownOnce',), [
+        ("    \\/ \\E i \\in Instances : ReleaseReplaced(i)\n", ""),
+        ("    /\\ ~\\E q \\in Providers : /\\ replaced[q] = builtOn[i]\n"
+         "                            /\\ q \\in registered\n"
+         "                            /\\ q \\notin userOwned\n"
+         "                            /\\ SlotsOf(q) = {}\n", "")]),
+
 }
 
 

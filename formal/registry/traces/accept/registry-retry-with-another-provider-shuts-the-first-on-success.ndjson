@@ -1,0 +1,36 @@
+{"seq":0,"point":"RegistryInsert","arg":"","domain":"d","instance":"domain:d"}
+{"seq":1,"point":"BuildBind","arg":"","provider":"First","providerInstance":"7f5a8328","domain":"d","owns":"false","async":"true","instance":"domain:d"}
+{"seq":2,"point":"InitEntered","arg":"","instance":"domain:d"}
+{"seq":3,"point":"InitOutcome","arg":"false","provider":"First","providerInstance":"7f5a8328","instance":"domain:d"}
+{"seq":4,"point":"InitReturned","arg":"","instance":"domain:d"}
+{"seq":5,"point":"DeliverEvent","arg":"PROVIDER_ERROR","provider":"First","instance":"domain:d"}
+{"seq":6,"point":"ApplySignal","arg":"EventError(false)","instance":"domain:d"}
+{"seq":7,"point":"StatusWritten","arg":"Error","instance":"domain:d"}
+{"seq":8,"point":"ScopeClose","arg":"","instance":"domain:d"}
+{"seq":9,"point":"RegistryInsert","arg":"","domain":"d","instance":"domain:d"}
+{"seq":10,"point":"BuildBind","arg":"","provider":"Second","providerInstance":"27a8617a","domain":"d","owns":"false","async":"true","instance":"domain:d"}
+{"seq":11,"point":"InitEntered","arg":"","instance":"domain:d"}
+{"seq":12,"point":"InitOutcome","arg":"true","provider":"Second","providerInstance":"27a8617a","instance":"domain:d"}
+{"seq":13,"point":"InitReturned","arg":"","instance":"domain:d"}
+{"seq":14,"point":"DeliverEvent","arg":"PROVIDER_READY","provider":"Second","instance":"domain:d"}
+{"seq":15,"point":"ApplySignal","arg":"EventReady","instance":"domain:d"}
+{"seq":16,"point":"StatusWritten","arg":"Ready","instance":"domain:d"}
+{"seq":17,"point":"ProviderShutDown","arg":"45","provider":"First","providerInstance":"7f5a8328","caller":"openfeature-provider-thread-2","instance":"domain:d"}
+{"seq":18,"point":"ShutdownReturned","arg":"45 true","instance":"domain:d"}
+{"seq":19,"point":"RegistryComplete","arg":"","domain":"d","instance":"domain:d"}
+{"seq":20,"point":"ScopeClose","arg":"","instance":"domain:d"}
+{"seq":21,"point":"ApiShutdown","arg":"","instance":"default"}
+{"seq":22,"point":"ShutdownStart","arg":"","instance":"domain:d"}
+{"seq":23,"point":"ApplySignal","arg":"ShutdownStarted","instance":"domain:d"}
+{"seq":24,"point":"StatusWritten","arg":"ShuttingDown","instance":"domain:d"}
+{"seq":25,"point":"ShutdownStart","arg":"","instance":"domain:d"}
+{"seq":26,"point":"ApplySignal","arg":"ShutdownStarted","instance":"domain:d"}
+{"seq":27,"point":"ShutdownDone","arg":"","instance":"domain:d"}
+{"seq":28,"point":"ApplySignal","arg":"ShutdownCompleted","instance":"domain:d"}
+{"seq":29,"point":"StatusWritten","arg":"NotReady","instance":"domain:d"}
+{"seq":30,"point":"StatusWritten","arg":"ShuttingDown","instance":"domain:d"}
+{"seq":31,"point":"ShutdownDone","arg":"","instance":"domain:d"}
+{"seq":32,"point":"ApplySignal","arg":"ShutdownCompleted","instance":"domain:d"}
+{"seq":33,"point":"StatusWritten","arg":"NotReady","instance":"domain:d"}
+{"seq":34,"point":"ProviderShutDown","arg":"48","provider":"Second","providerInstance":"27a8617a","caller":"openfeature-provider-thread-1","instance":"domain:d"}
+{"seq":35,"point":"ShutdownReturned","arg":"48 true","instance":"domain:d"}

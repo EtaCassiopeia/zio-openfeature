@@ -1,0 +1,21 @@
+{"seq":0,"point":"RegistryInsert","arg":"","domain":"bad","instance":"domain:bad"}
+{"seq":1,"point":"ScopeClose","arg":"","instance":"domain:bad"}
+{"seq":2,"point":"RegistryInsert","arg":"","domain":"bad","instance":"domain:bad"}
+{"seq":3,"point":"BuildBind","arg":"","provider":"Good","providerInstance":"2c876109","domain":"bad","owns":"false","async":"true","instance":"domain:bad"}
+{"seq":4,"point":"InitEntered","arg":"","instance":"domain:bad"}
+{"seq":5,"point":"InitOutcome","arg":"true","provider":"Good","providerInstance":"2c876109","instance":"domain:bad"}
+{"seq":6,"point":"InitReturned","arg":"","instance":"domain:bad"}
+{"seq":7,"point":"DeliverEvent","arg":"PROVIDER_READY","provider":"Good","instance":"domain:bad"}
+{"seq":8,"point":"ApplySignal","arg":"EventReady","instance":"domain:bad"}
+{"seq":9,"point":"StatusWritten","arg":"Ready","instance":"domain:bad"}
+{"seq":10,"point":"RegistryComplete","arg":"","domain":"bad","instance":"domain:bad"}
+{"seq":11,"point":"ScopeClose","arg":"","instance":"domain:bad"}
+{"seq":12,"point":"ApiShutdown","arg":"","instance":"default"}
+{"seq":13,"point":"ShutdownStart","arg":"","instance":"domain:bad"}
+{"seq":14,"point":"ApplySignal","arg":"ShutdownStarted","instance":"domain:bad"}
+{"seq":15,"point":"StatusWritten","arg":"ShuttingDown","instance":"domain:bad"}
+{"seq":16,"point":"ShutdownDone","arg":"","instance":"domain:bad"}
+{"seq":17,"point":"ApplySignal","arg":"ShutdownCompleted","instance":"domain:bad"}
+{"seq":18,"point":"StatusWritten","arg":"NotReady","instance":"domain:bad"}
+{"seq":19,"point":"ProviderShutDown","arg":"51","provider":"Good","providerInstance":"2c876109","caller":"openfeature-provider-thread-2","instance":"domain:bad"}
+{"seq":20,"point":"ShutdownReturned","arg":"51 true","instance":"domain:bad"}

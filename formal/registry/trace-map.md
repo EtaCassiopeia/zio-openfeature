@@ -3,7 +3,9 @@
 Each action of `Registry.tla`, the code that takes it, and the `LifecycleProbe.Point` a run records for it. Every
 instance on the API records into one sequence, each line tagged with its instance (`TraceProbe.forInstance`); a
 provider's wrapper records with the probe of the instance that wrapped it first. Points are recorded right after the
-step's effect, and a failure's decision right after it read its siblings. `trace_labels.py` turns the points into
+step's effect, except `FailedRegistration` and `FailDecided`: a failure's mark and its decision's read of the siblings
+are recorded with their effect as one step (`LifecycleProbe.step`, which the recorder runs under one lock for the whole
+run), so a mark and a sibling's read of it are recorded in the order they happened. `trace_labels.py` turns the points into
 labels; its docstring gives the exact rules. `FFF` is `internal/FeatureFlagsFactories.scala`.
 
 | Action | Code | Probe point |
@@ -14,6 +16,7 @@ labels; its docstring gives the exact rules. `FFF` is `internal/FeatureFlagsFact
 | `Complete(i)` | the registry's `runBuild`, `promise.succeed`; an async build outside a registry returns once bound; a sync build once its wait returns | `RegistryComplete(domain)`; `BuildBind` with `async`; none for a sync build, which is completed before its first step that needs it open |
 | `SwapStart(i, p)` | `FeatureFlagsLive.runSwap`, its registration returned; `FeatureFlagRegistry.setProvider` on a domain's client | `SwapStart` (the provider) and `SdkBind` (the step) |
 | `SwapDone(i)` | `runSwap`, the success outcome; the SDK's `shutDownOld` of the replaced provider | `ApplySignal(SwapSucceeded)`; the shutdown counted into `End` |
+| `SwapOldShut(i)` | the SDK's `shutDownOld` of the swap's replaced provider, run at once by a swap whose SDK task found a sibling's `initialize()` of the new provider under way (`FeatureProviderStateManager.initialize`'s `isInitialized` check); a rollback then registers the old provider again | `ProviderShutDown` of the swap's old provider before its outcome, while a sibling holds the swap's provider; still counted into `End` |
 | `SwapFailMark(i)` | `runSwap`'s failure branch, `failedRegistration` set | `FailedRegistration(provider)`, the first in the swap |
 | `SwapFail(i)` | `rollBack`, then `decideFailedSwap`, or `cleanupUnboundFailedProvider` when the rollback failed too | the swap's `SwapDone` point; `FailedRegistration` and `FailDecided(provider, shut)` after `SwapRollback` give the library's decision, checked against the model's |
 | `UserBind(d, p)` | the test's own `api.setProvider` | `UserBind`, written by the test (`RegistryRecording.environment`) |

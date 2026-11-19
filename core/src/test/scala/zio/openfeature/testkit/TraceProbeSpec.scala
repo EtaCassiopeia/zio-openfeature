@@ -2,7 +2,7 @@ package zio.openfeature.testkit
 
 import java.nio.file.{Files, Path}
 
-import dev.openfeature.sdk.NoOpProvider
+import dev.openfeature.sdk.{FeatureProvider => OFFeatureProvider, NoOpProvider}
 import zio._
 import zio.openfeature.internal.LifecycleProbe.Point
 import zio.openfeature.internal.ManagedProvider
@@ -139,6 +139,29 @@ object TraceProbeSpec extends ZIOSpecDefault {
     },
     test("a point that names no provider writes no identity") {
       points(Point.SwapDone).map(lines => assertTrue(field(lines.head, "provider").isEmpty))
-    }
+    },
+    test("two instances' steps are recorded in the order their effects happened") {
+      // Each instance marks itself and then reads the other's mark, as two failures together do. A read that saw the
+      // other's mark must be recorded after it, and one that did not, before it.
+      type Flag = java.util.concurrent.atomic.AtomicBoolean
+      val (p1, p2) = (new NoOpProvider(), new NoOpProvider())
+      def fail(probe: zio.openfeature.internal.LifecycleProbe, own: OFFeatureProvider, mine: Flag, other: Flag) =
+        probe.step(ZIO.succeed(mine.set(true)))(_ => Point.FailedRegistration(own)) *>
+          probe.step(ZIO.succeed(other.get()))(seen => Point.FailDecided(own, seen))
+      recorded { trace =>
+        val (m1, m2) = (new Flag(false), new Flag(false))
+        fail(trace.forInstance("b1"), p1, m1, m2).zipPar(fail(trace.forInstance("b2"), p2, m2, m1)).unit
+      }.map { lines =>
+        def at(instance: String, point: String) =
+          lines.indexWhere(l => field(l, "instance").contains(instance) && field(l, "point").contains(point))
+        def ordered(me: String, other: String) = {
+          val decided = lines(at(me, "FailDecided"))
+          val seen    = field(decided, "arg").contains("true")
+          if (seen) at(other, "FailedRegistration") < at(me, "FailDecided")
+          else at(me, "FailDecided") < at(other, "FailedRegistration")
+        }
+        assertTrue(lines.size == 4, ordered("b1", "b2"), ordered("b2", "b1"))
+      }
+    } @@ TestAspect.nonFlaky(200)
   )
 }

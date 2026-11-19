@@ -52,6 +52,9 @@ private[openfeature] object RegistryRecording {
         val tagged = run.next
         new LifecycleProbe {
           def at(point: LifecycleProbe.Point): UIO[Unit] = tagged.at(point) *> probe.at(point)
+          // Recorded as one step under the run's permit; the test's probe runs once it is released.
+          override def step[A](effect: UIO[A])(point: A => LifecycleProbe.Point): UIO[A] =
+            tagged.step(effect)(point).tap(a => probe.at(point(a)))
         }
     }
 

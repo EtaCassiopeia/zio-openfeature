@@ -461,33 +461,40 @@ final private[openfeature] class FeatureFlagsLive(
     label: String,
     timeout: Duration = ProviderRegistration.DefaultShutdownTimeout
   ): UIO[Boolean] =
-    ZIO.succeed(failedRegistration.set(Some(registration.sdk))) *>
-      probe.at(Point.FailedRegistration(registration.sdk)) *> ZIO.suspendSucceed {
-        // A provider's metadata may throw, and this runs on a path already reporting a failure.
-        def nameOf(provider: OFFeatureProvider): UIO[String] =
-          ZIO.attempt(ProviderNames.of(provider)).orElseSucceed(FeatureFlags.UnknownProviderName)
-        // Recorded right after the siblings are read, before acting on it.
-        def decided(shut: Boolean) = probe.at(Point.FailDecided(registration.sdk, shut))
+    markFailed(registration.sdk) *> ZIO.suspendSucceed {
+      // A provider's metadata may throw, and this runs on a path already reporting a failure.
+      def nameOf(provider: OFFeatureProvider): UIO[String] =
+        ZIO.attempt(ProviderNames.of(provider)).orElseSucceed(FeatureFlags.UnknownProviderName)
+      // The siblings are read and the decision recorded as one step, before acting on it.
+      val decide = probe.step(ZIO.succeed(registration match {
+        case Bound.Foreign(_)                                                         => false
+        case Bound.Managed(wrapper) if ApiInstances.heldByAnother(api, this, wrapper) => false
+        case Bound.Managed(_)                                                         => true
+      }))(shut => Point.FailDecided(registration.sdk, shut))
+      decide.flatMap { shut =>
         registration match {
           case Bound.Foreign(provider) =>
-            decided(shut = false) *>
-              nameOf(provider)
-                .flatMap(name =>
-                  ZIO.logWarning(
-                    s"$label: leaving provider '$name' running: it is registered with the API outside this instance, " +
-                      "so its shutdown is the SDK's, when its slot lets go of it or the API shuts down"
-                  )
+            nameOf(provider)
+              .flatMap(name =>
+                ZIO.logWarning(
+                  s"$label: leaving provider '$name' running: it is registered with the API outside this instance, " +
+                    "so its shutdown is the SDK's, when its slot lets go of it or the API shuts down"
                 )
-                .as(false)
-          case Bound.Managed(wrapper) if ApiInstances.heldByAnother(api, this, wrapper) =>
-            decided(shut = false) *>
-              nameOf(wrapper)
-                .flatMap(name => ZIO.logDebug(s"$label: another instance is bound to '$name'; leaving it"))
-                .as(false)
+              )
+              .as(false)
+          case Bound.Managed(wrapper) if !shut =>
+            nameOf(wrapper)
+              .flatMap(name => ZIO.logDebug(s"$label: another instance is bound to '$name'; leaving it"))
+              .as(false)
           case Bound.Managed(wrapper) =>
-            decided(shut = true) *> ProviderRegistration.boundedProviderShutdown(wrapper, label, timeout).as(true)
+            ProviderRegistration.boundedProviderShutdown(wrapper, label, timeout).as(true)
         }
       }
+    }
+
+  // Marks this instance failed on `provider` for its siblings, and records it as one step with the mark.
+  private def markFailed(provider: OFFeatureProvider): UIO[Unit] =
+    probe.step(ZIO.succeed(failedRegistration.set(Some(provider))))(_ => Point.FailedRegistration(provider))
 
   /** Release the registration this instance was built with, whose initialization failed, once its caller knows nothing
     * else will: the async build hands the instance out before its provider is ready, so the build's own failure path
@@ -710,8 +717,7 @@ final private[openfeature] class FeatureFlagsLive(
               recordOrphan(oldProvider, oldName, newName, registration.toOption)
           case failure =>
             ZIO.when(registration.isRight && !wasSuperseded(failure))(
-              ZIO.succeed(failedRegistration.set(Some(incoming.sdk))) *> probe
-                .at(Point.FailedRegistration(incoming.sdk))
+              markFailed(incoming.sdk)
             ) *>
               failedBeforeBinding(oldProvider.sdk, previousName, before).flatMap { handled =>
                 if (handled) ZIO.unit

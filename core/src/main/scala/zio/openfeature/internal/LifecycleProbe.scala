@@ -18,6 +18,12 @@ import zio.openfeature.ProviderStatus
   */
 private[openfeature] trait LifecycleProbe {
   def at(point: LifecycleProbe.Point): UIO[Unit]
+
+  /** Runs `effect` and records the point it yields, as one step: a recorder that takes a lock here records the point in
+    * the order the effects happened, though several instances run them at once. Production and test probes that do not
+    * record just run the effect, then `at`.
+    */
+  def step[A](effect: UIO[A])(point: A => LifecycleProbe.Point): UIO[A] = effect.tap(a => at(point(a)))
 }
 
 private[openfeature] object LifecycleProbe {

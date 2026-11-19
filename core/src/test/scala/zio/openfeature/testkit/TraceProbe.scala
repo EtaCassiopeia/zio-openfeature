@@ -20,9 +20,15 @@ import scala.jdk.CollectionConverters._
 final class TraceProbe private () extends LifecycleProbe {
   private val seq     = new AtomicLong(0)
   private val records = new ConcurrentLinkedQueue[(Long, String)]()
+  // Held across a step's effect and its record, by every instance's probe of this run, so the steps' records come in
+  // the order their effects happened: a mark and a sibling's read of it cannot be recorded the other way round.
+  private val permit = Unsafe.unsafe(implicit u => Semaphore.unsafe.make(1))
 
   def at(point: Point): UIO[Unit] =
     ZIO.succeed(record(point.name, TraceProbe.argument(point), TraceProbe.identityFields(point)))
+
+  override def step[A](effect: UIO[A])(point: A => Point): UIO[A] =
+    permit.withPermit(effect.tap(a => at(point(a))))
 
   /** The probe of one of several instances on one API: its points go into this run's sequence, each line tagged
     * `"instance": tag`. A provider's wrapper records with the probe of the instance that first wrapped it.
@@ -33,6 +39,8 @@ final class TraceProbe private () extends LifecycleProbe {
         ZIO.succeed(
           record(point.name, TraceProbe.argument(point), TraceProbe.identityFields(point) :+ ("instance" -> tag))
         )
+      override def step[A](effect: UIO[A])(point: A => Point): UIO[A] =
+        permit.withPermit(effect.tap(a => at(point(a))))
     }
 
   /** A step the test itself takes on the API, outside the library, recorded once it has happened: `UserBind`, binding
@@ -141,6 +149,10 @@ object TraceProbe {
     case Some(t) =>
       new LifecycleProbe {
         def at(point: Point): UIO[Unit] = t.at(point) *> probe.at(point)
+        // The test's probe runs once the step is recorded and the permit released, so one that holds a fiber there
+        // does not hold up the other instances' steps.
+        override def step[A](effect: UIO[A])(point: A => Point): UIO[A] =
+          t.step(effect)(point).tap(a => probe.at(point(a)))
       }
   }
 

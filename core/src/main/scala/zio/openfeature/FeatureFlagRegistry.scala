@@ -1,8 +1,14 @@
 package zio.openfeature
 
-import dev.openfeature.sdk.{FeatureProvider => OFFeatureProvider, OpenFeatureAPI}
+import dev.openfeature.sdk.{FeatureProvider => OFFeatureProvider, OpenFeatureAPI, ProviderStateAccess}
 import zio._
-import zio.openfeature.internal.{ApiInstances, FeatureFlagsFactories, LifecycleProbe, ProviderRegistration}
+import zio.openfeature.internal.{
+  ApiInstances,
+  FeatureFlagsFactories,
+  LifecycleProbe,
+  ManagedProvider,
+  ProviderRegistration
+}
 
 trait FeatureFlagRegistry {
 
@@ -258,6 +264,17 @@ final private class FeatureFlagRegistryLive(
       _ <- ProviderRegistration
         .retryFailedInitialization(api, domain, provider, config.initTimeout)
         .mapError(t => FeatureFlagError.ProviderInitializationFailed(t))
+      // A retry with another provider replaces the domain's last failed provider in its slot, and only the retry's
+      // initialize() holds it then: the SDK shuts it down if that call returns, and the release below runs if the
+      // build fails. A registry close interrupts the build before either, so it is left for the close as well: the
+      // library's wrapper only, when the slot holds it, as a provider registered outside the library stays the SDK's.
+      _ <- ZIO.succeed(Option(lastFailed.get(domain)).foreach { case (previous, _) =>
+        if (!(previous eq provider))
+          ManagedProvider
+            .existing(previous)
+            .filter(ProviderStateAccess.boundIn(api, domain.orNull, _))
+            .foreach(ApiInstances.leaveBehind(api, _))
+      })
       child  <- scope.fork
       client <- child
         .extend[Any](
@@ -292,7 +309,8 @@ final private class FeatureFlagRegistryLive(
 
   // The provider and client of each domain's last failed build. A failed provider is left running, so that a later
   // `getClient` can initialize it again: a provider that owns its client cannot come back from a shutdown. The SDK
-  // shuts it down once another provider in that slot initializes; when that one fails too, nothing else would.
+  // shuts it down once another provider in that slot initializes; when that one fails too, `releaseReplacedFailure`
+  // does, or the registry's close when it interrupts that build first.
   private val lastFailed =
     new java.util.concurrent.ConcurrentHashMap[Option[String], (OFFeatureProvider, FeatureFlagsLive)]()
 

@@ -66,9 +66,9 @@ VARIABLES
     pending,     \* providers whose initialize(), started by a swap that timed out, is still running
     orphans,     \* the providers the owner's orphan list will shut down unless the SDK does: replaced in a swap of the
                  \* owner's that timed out, and held then by no slot the library can see (OrphanedProviders)
-    leftBehind,  \* the library's wrappers a timed-out swap of an instance not owning the API replaced: the API's
-                 \* owner, an instance or the registry, releases each one still running at its close, after the API's
-                 \* shutdown (ApiInstances.releaseLeftBehind)
+    leftBehind,  \* the library's wrappers a timed-out swap of an instance not owning the API, or a registry retry
+                 \* with another provider, replaced: the API's owner, an instance or the registry, releases each one
+                 \* still running at its close, after the API's shutdown (ApiInstances.releaseLeftBehind)
     abandoned    \* ghost: providers the user registered that the SDK let go when the provider replacing them failed to
                  \* initialize, with no slot holding them: theirs to shut down, as for any provider the SDK replaces
 
@@ -186,7 +186,8 @@ Check(i, d) ==
 \* A retry after a failed registry build finds the slot holding the failed build's provider q, which the registry left
 \* running so a retry can initialize it again (ProviderRegistration.retryFailedInitialization).  A retry with another
 \* provider replaces q in the slot; q keeps its registration, which the SDK ends once p's initialize() succeeds
-\* (shutDownOld, in Complete), and which the library ends when p fails too (ReleaseReplaced).
+\* (shutDownOld, in Complete), and which the library ends when p fails too (ReleaseReplaced).  The registry also
+\* leaves q's wrapper for its close (`leftBehind`, ApiInstances.leaveBehind): a close interrupts the build first.
 Create(i, p, own) ==
     LET d == domainOf[i] IN
     /\ phase[i] = "checking"
@@ -212,8 +213,9 @@ Create(i, p, own) ==
     /\ swappedOff' = swappedOff \ {p}
     /\ builtOn' = [builtOn EXCEPT ![i] = p]
     /\ replaced' = IF bound[d] \notin {None, p} THEN [replaced EXCEPT ![bound[d]] = p] ELSE replaced
+    /\ leftBehind' = IF bound[d] \notin {None, p} THEN leftBehind \cup {bound[d]} ELSE leftBehind
     /\ UNCHANGED << domainOf, apiOpen, swapping, swaps, userOwned, failedOn, deciding, prior >>
-    /\ UNCHANGED timeoutVars
+    /\ UNCHANGED << pending, orphans, abandoned >>
 
 \* The build ends and the promise is completed under the semaphore (taken and released in this step); the instance is
 \* open.  Its provider initialized, so the SDK shuts down each provider it replaced in the slot that no slot holds any
@@ -525,15 +527,15 @@ CloseInstance(i) ==
 \* What tearing the API down does, by its owner, an instance or the registry: every instance on the API retires
 \* (ApiInstances.retireSiblings, retireAll), a build in flight included, then the API shuts every registered provider
 \* down, once each (the SDK's shutdown), and the API is gone.  The SDK shuts down the providers its slots hold: one a
-\* failed registry build's retry replaced is no longer the SDK's, and is left running unless released.  Unless the retry
-\* has not settled (`replaced` still names its provider): that provider's initialize() task outlives the API's shutdown
-\* on the SDK's executor and shuts the replaced one down on success (shutDownOld).  On failure nothing does, and the
-\* registry's interrupted build releases nothing: outside the model (README).
+\* failed registry build's retry replaced is no longer the SDK's, and is left running unless released: the registry's
+\* close releases it (`leftBehind`), as the retry's interrupted build releases nothing.  If that retry's initialize()
+\* then returns, its task, which outlives the API's shutdown on the SDK's executor, shuts the provider down too
+\* (shutDownOld); the wrapper absorbs the second call.
 RetireAll == phase' = [i \in Instances |-> IF Live(i) THEN "closed" ELSE phase[i]]
 
 \* The providers the API's shutdown ends.  One waiting on a timed-out swap's initialize() counts too: the model takes
-\* that call's success, as for a retry's.
-ApiShuts == {p \in registered : SlotsOf(p) # {} \/ replaced[p] # None}
+\* that call's success.
+ApiShuts == {p \in registered : SlotsOf(p) # {} \/ Waiting(p)}
 
 \* The API's shutdown, and `rel`, the providers the library shuts down with it: the owner's orphans, the registry's
 \* left-behind wrappers.  A wrapper the SDK's shutdown reaches too absorbs the second call, so each counts once.

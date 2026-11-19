@@ -31,3 +31,5 @@
 {"seq":34,"point":"StatusWritten","arg":"NotReady","instance":"domain:d"}
 {"seq":35,"point":"ProviderShutDown","arg":"49","provider":"Second","providerInstance":"18b4086e","caller":"openfeature-provider-thread-2","instance":"domain:d"}
 {"seq":36,"point":"ShutdownReturned","arg":"49 true","instance":"domain:d"}
+{"seq":37,"point":"ProviderShutDown","arg":"50","provider":"First","providerInstance":"37d1a830","caller":"zio-default-blocking-1","instance":"domain:d"}
+{"seq":38,"point":"ShutdownReturned","arg":"50 true","instance":"domain:d"}

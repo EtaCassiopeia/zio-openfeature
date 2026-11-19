@@ -18,6 +18,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   after the API's owner closes.** An instance that shares its API, or a registry client swapped through its own
   `setProvider`, now leaves that provider to the API's owner, whose close shuts it down once and releases it from the
   API, so another API can take it (#965).
+- **A registry closed while a `getClient` retry with another provider is still initializing shuts down the provider
+  that retry replaced.** The close interrupted the retry before it could release the earlier failed provider, and the
+  SDK shuts a replaced provider down only when its replacement initializes; if the replacement then failed, the first
+  provider kept running after the registry closed. It is now shut down once and released from the API (#962).
 - **Installing again a provider whose earlier `shutdown()` outlasts the three-second wait fails instead of leaving it
   closed.** The swap used to proceed. The old `shutdown()` then returned and closed the provider it had just
   initialized again, while the status read `Ready` and every evaluation failed. `setProvider` now fails with

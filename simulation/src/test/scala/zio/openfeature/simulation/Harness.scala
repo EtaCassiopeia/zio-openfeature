@@ -15,44 +15,81 @@ final case class Outcome(value: Option[String], reason: String, variant: Option[
 }
 
 /** A built stack: the provider to install, and handles on its leaves and caches by id. */
-final case class Built(provider: OFFeatureProvider, leaves: Map[Int, SimLeaf], caches: Map[Int, CachingProvider])
+final case class Built(
+  spec: Spec,
+  provider: OFFeatureProvider,
+  leaves: Map[Int, SimLeaf],
+  caches: Map[Int, CachingProvider]
+)
 
 object Harness {
 
-  val breakerConfig: Int => CircuitBreakerProviderConfig = t =>
+  /** The core evaluation timeout the sequential simulation installs with. */
+  val CoreTimeout: Duration = 1.second
+
+  /** A breaker's evaluation timeout, by how many breakers wrap it: each is 10 ms shorter than the one around it, so a
+    * stalled call times out at its innermost breaker first, and every breaker times out before the core. Less its id in
+    * microseconds, so the timers of different breakers never share a deadline.
+    */
+  def breakerTimeout(breakersAbove: Int, id: Int): Duration =
+    (500 - 10 * breakersAbove).millis.minus((id % 1000).micros)
+
+  /** The timeout that ends a call stalled at leaf `leaf` of `spec`: its innermost breaker's, else the core's. */
+  def stallBound(spec: Spec, leaf: Int): (Duration, Boolean) =
+    Spec.breakersAbove(spec, leaf).getOrElse(Nil) match {
+      case Nil => (CoreTimeout, true)
+      case bs  => (breakerTimeout(bs.size - 1, bs.last), false)
+    }
+
+  def breakerConfig(threshold: Int, timeout: Duration): CircuitBreakerProviderConfig =
     CircuitBreakerProviderConfig.default
-      .withFailureThreshold(t)
+      .withFailureThreshold(threshold)
       .withResetTimeout(Duration.Infinity)
-      .withEvaluationTimeout(Duration.Infinity)
+      .withEvaluationTimeout(timeout)
       .withStalePolicy(StalePolicy.Ignore)
       .withStateCheckInterval(Duration.Infinity)
 
-  def build(spec: Spec): Built = {
-    var leaves                         = Map.empty[Int, SimLeaf]
-    var caches                         = Map.empty[Int, CachingProvider]
-    def go(s: Spec): OFFeatureProvider = s match {
-      case Spec.Leaf(id, init) =>
-        val l = new SimLeaf(s"L$id")
-        init.foreach { case (k, v) => l.flags.put(k, v) }
-        leaves += id -> l
-        l
-      case Spec.Cache(id, in) =>
-        val c = CachingProvider(go(in), CachingConfig.default.withTtl(Duration.Infinity))
-        caches += id -> c
-        c
-      case Spec.Breaker(_, t, _, in) => CircuitBreakerProvider(go(in), breakerConfig(t))
-      case Spec.Deferred(in)         =>
-        val inner = go(in)
-        DeferredProvider("deferred")(() => inner)
-      case Spec.Widen(in)     => IntegerWideningLongProvider(go(in))
-      case Spec.Multi(fs, cs) =>
-        FeatureFlags.multiProvider(
-          cs.map(go),
-          if (fs) MultiProviderStrategy.FirstSuccessful else MultiProviderStrategy.FirstMatch
-        )
+  /** Build the live stack for `spec`. With `timed`, each breaker has its [[breakerTimeout]], on the caller's clock;
+    * otherwise none. Built outside the test's fiber supervision, so a call blocked in a leaf on a breaker's runtime
+    * does not keep `TestClock.adjust` waiting for it.
+    */
+  def build(spec: Spec, timed: Boolean): UIO[Built] = zio.SimulationSupervision.unsupervised {
+    ZIO.suspendSucceed {
+      var leaves                                                  = Map.empty[Int, SimLeaf]
+      var caches                                                  = Map.empty[Int, CachingProvider]
+      def go(s: Spec, breakersAbove: Int): UIO[OFFeatureProvider] = s match {
+        case l: Spec.Leaf =>
+          ZIO.succeed {
+            val leaf = new SimLeaf(s"L${l.id}", l.init, l.shutdown)
+            l.initial.foreach { case (k, v) => leaf.flags.put(k, v) }
+            leaves += l.id -> leaf
+            leaf
+          }
+        case Spec.Cache(id, in) =>
+          go(in, breakersAbove).map { inner =>
+            val c = CachingProvider(inner, CachingConfig.default.withTtl(Duration.Infinity))
+            caches += id -> c
+            c
+          }
+        case Spec.Breaker(id, t, _, in) =>
+          val timeout = if (timed) breakerTimeout(breakersAbove, id) else Duration.Infinity
+          go(in, breakersAbove + 1).flatMap(inner =>
+            CircuitBreakerProvider.make(inner, breakerConfig(t, timeout)).orDie
+          )
+        case Spec.Deferred(in)  => go(in, breakersAbove).map(inner => DeferredProvider("deferred")(() => inner))
+        case Spec.Widen(in)     => go(in, breakersAbove).map(IntegerWideningLongProvider(_))
+        case Spec.Multi(fs, cs) =>
+          ZIO
+            .foreach(cs)(go(_, breakersAbove))
+            .map(ps =>
+              FeatureFlags.multiProvider(
+                ps,
+                if (fs) MultiProviderStrategy.FirstSuccessful else MultiProviderStrategy.FirstMatch
+              )
+            )
+      }
+      go(spec, 0).map(p => Built(spec, p, leaves, caches))
     }
-    val p = go(spec)
-    Built(p, leaves, caches)
   }
 
   /** A FeatureFlags on a private API and domain, owning `provider`. */
@@ -62,7 +99,8 @@ object Harness {
         provider,
         FeatureFlagsConfig.default
           .withDomain(s"sim-${java.util.UUID.randomUUID()}")
-          .withApiOwnership(ApiOwnership.Owned),
+          .withApiOwnership(ApiOwnership.Owned)
+          .withEvaluationTimeout(CoreTimeout),
         statusRef = None,
         apiOverride = Some(OpenFeatureAPI.createIsolated())
       )
@@ -151,6 +189,7 @@ object Harness {
 
   /** The library-level outcome of a provider-level result for a kind. */
   def lift(kind: Kind, r: PResult): Outcome = r match {
+    case PResult.Stalled(_)             => coreTimeout
     case PResult.Ok(v, reason, variant) =>
       val value = kind match {
         case Kind.KTier => v.toUpperCase
@@ -159,6 +198,15 @@ object Harness {
       Outcome(Some(value), reason, Some(variant), None)
     case PResult.Ret(c) => Outcome(None, "ERROR", None, Some(c))
     case PResult.Thr(c) => Outcome(None, "ERROR", None, Some(c))
+  }
+
+  /** What a read reports when the core's evaluation timeout ends it. */
+  val coreTimeout: Outcome = Outcome(None, "ERROR", None, Some("GENERAL"))
+
+  /** Provider calls the core has walked away from (timed out) that have not returned yet. */
+  def abandonedCalls(ff: FeatureFlags): Int = ff match {
+    case live: FeatureFlagsLive => live.abandonedCallCount
+    case _                      => 0
   }
 
   def overrideOutcome(kind: Kind, s: Stored): Outcome =

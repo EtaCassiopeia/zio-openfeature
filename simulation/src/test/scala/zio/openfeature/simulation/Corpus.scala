@@ -53,7 +53,7 @@ object Corpus {
   /** Runs every entry of a corpus directory through `run`; the result lists the failing entries with their traces (and
     * a directory that cannot be loaded), so an empty list means every entry passed.
     */
-  def replay[A: PlanCodec](dir: String)(run: A => ZIO[Any, String, Unit]): UIO[List[String]] =
+  def replay[R, A: PlanCodec](dir: String)(run: A => ZIO[R, String, Unit]): URIO[R, List[String]] =
     load(dir) match {
       case Left(e)        => ZIO.succeed(List(e))
       case Right(entries) =>
@@ -61,7 +61,8 @@ object Corpus {
           .foreach(entries) { case (name, text) =>
             PlanCodec.read[A](text) match {
               case Left(e)     => ZIO.succeed(Some(s"$name: cannot decode: $e"))
-              case Right(plan) => run(plan).either.map(_.left.toOption.map(t => s"$name:\n$t"))
+              case Right(plan) =>
+                Stats.replaying.locally(true)(run(plan)).either.map(_.left.toOption.map(t => s"$name:\n$t"))
             }
           }
           .map(_.flatten)

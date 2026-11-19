@@ -8,7 +8,15 @@ object PResult {
   final case class Ok(value: String, reason: String, variant: String) extends PResult
   final case class Ret(code: String)                                  extends PResult
   final case class Thr(code: String)                                  extends PResult
+
+  /** Model-only: leaf `leaf` stalled past the bound and no breaker below the root timed it out, so the caller's own
+    * evaluation timeout ends the call.
+    */
+  final case class Stalled(leaf: Int) extends PResult
 }
+
+/** A stall one evaluation hit: the leaf, and whether it lasts past its bound. */
+final case class StallMark(leaf: Int, pastBound: Boolean)
 
 /** How a leaf's configuration-change event reaches a cache above it. */
 sealed trait Reach extends Product with Serializable
@@ -28,8 +36,16 @@ final case class StackState(
   // caches whose entries may have been cleared by an event still in flight
   uncertain: Set[Int],
   breakerFailures: Map[Int, Int],
-  breakerOpen: Set[Int]
-)
+  breakerOpen: Set[Int],
+  // Per evaluation, reset before each: the stall it hit, and the leaf whose call the caller abandoned (it throws once
+  // released).
+  stalled: Option[StallMark] = None,
+  abandoned: Option[Int] = None
+) {
+
+  /** The state with the per-evaluation fields cleared. */
+  def settled: StackState = copy(stalled = None, abandoned = None)
+}
 
 object StackState {
   def initial(spec: Spec): StackState =
@@ -60,30 +76,37 @@ object Model {
     case Stored.Echo     => ctx
   }
 
-  private def leafAnswer(st: StackState, id: Int, wire: Wire, key: String, fp: String): PResult =
-    st.leafFaults.get(id) match {
-      case Some(LeafFault.ThrowGeneral)  => PResult.Thr("GENERAL")
-      case Some(LeafFault.ThrowNotFound) => PResult.Thr("FLAG_NOT_FOUND")
-      case Some(LeafFault.ReturnGeneral) => PResult.Ret("GENERAL")
-      case None                          =>
-        st.leafFlags.getOrElse(id, Map.empty).get(key) match {
-          case None         => PResult.Ret("FLAG_NOT_FOUND")
-          case Some(stored) =>
-            val matches = (wire, stored) match {
-              case (Wire.Bool, _: Stored.SBool) | (Wire.Str, _: Stored.SStr) | (Wire.Str, Stored.Echo) |
-                  (Wire.Int, _: Stored.SInt) | (Wire.Long, _: Stored.SLong) | (Wire.Dbl, _: Stored.SDbl) |
-                  (Wire.Obj, _: Stored.SObj) =>
-                true
-              case _ => false
-            }
-            if (!matches) PResult.Ret("TYPE_MISMATCH")
-            else
-              PResult.Ok(
-                renderStored(stored, fp),
-                if (stored == Stored.Echo) "TARGETING_MATCH" else "STATIC",
-                s"L$id:$key"
-              )
+  private def leafAnswer(st: StackState, id: Int, wire: Wire, key: String, fp: String): (PResult, StackState) =
+    if (st.abandoned.contains(id)) PResult.Thr("GENERAL") -> st.copy(abandoned = None)
+    else
+      st.leafFaults.get(id) match {
+        case Some(LeafFault.Stall(past)) =>
+          val s2 = st.copy(leafFaults = st.leafFaults - id, stalled = Some(StallMark(id, past)))
+          if (past) PResult.Stalled(id) -> s2 else served(s2, id, wire, key, fp) -> s2
+        case Some(LeafFault.ThrowGeneral)  => PResult.Thr("GENERAL")        -> st
+        case Some(LeafFault.ThrowNotFound) => PResult.Thr("FLAG_NOT_FOUND") -> st
+        case Some(LeafFault.ReturnGeneral) => PResult.Ret("GENERAL")        -> st
+        case None                          => served(st, id, wire, key, fp) -> st
+      }
+
+  private def served(st: StackState, id: Int, wire: Wire, key: String, fp: String): PResult =
+    st.leafFlags.getOrElse(id, Map.empty).get(key) match {
+      case None         => PResult.Ret("FLAG_NOT_FOUND")
+      case Some(stored) =>
+        val matches = (wire, stored) match {
+          case (Wire.Bool, _: Stored.SBool) | (Wire.Str, _: Stored.SStr) | (Wire.Str, Stored.Echo) |
+              (Wire.Int, _: Stored.SInt) | (Wire.Long, _: Stored.SLong) | (Wire.Dbl, _: Stored.SDbl) |
+              (Wire.Obj, _: Stored.SObj) =>
+            true
+          case _ => false
         }
+        if (!matches) PResult.Ret("TYPE_MISMATCH")
+        else
+          PResult.Ok(
+            renderStored(stored, fp),
+            if (stored == Stored.Echo) "TARGETING_MATCH" else "STATIC",
+            s"L$id:$key"
+          )
     }
 
   /** Evaluate `spec` for (wire, key, fingerprint). `longFitsInt` is whether a long read's default fits an Int. Returns
@@ -97,7 +120,7 @@ object Model {
     longFitsInt: Boolean,
     st: StackState
   ): List[(PResult, StackState)] = spec match {
-    case Spec.Leaf(id, _) => List(leafAnswer(st, id, wire, key, fp) -> st)
+    case l: Spec.Leaf => List(leafAnswer(st, l.id, wire, key, fp))
 
     case Spec.Cache(id, inner) =>
       val ck                                               = (key, wire, fp)
@@ -113,8 +136,10 @@ object Model {
       entry match {
         case Some(ok) =>
           val hit = List((ok.copy(reason = "CACHED"): PResult) -> st)
+          // A miss shows only that this entry is gone. Not that every other one is: an entry stored after the
+          // event was emitted may have been stored after the cache was cleared too, so it stays uncertain.
           if (st.uncertain.contains(id))
-            hit ++ miss(st.copy(cacheEntries = st.cacheEntries.updated(id, Map.empty)))
+            hit ++ miss(st.copy(cacheEntries = st.cacheEntries.updated(id, st.cacheEntries(id) - ck)))
           else hit
         case None => miss(st)
       }
@@ -135,6 +160,8 @@ object Model {
             case PResult.Ret(_)                         => r                      -> failure
             case PResult.Thr(c) if appCodes.contains(c) => r                      -> reset
             case PResult.Thr(_)                         => PResult.Thr("GENERAL") -> failure
+            // Its evaluation timeout fired: a failure, thrown as GENERAL.
+            case _: PResult.Stalled => PResult.Thr("GENERAL") -> failure
           }
         }
 
@@ -155,7 +182,7 @@ object Model {
         case c :: rest =>
           eval(c, wire, key, fp, longFitsInt, s).flatMap { case (r, s2) =>
             r match {
-              case _: PResult.Ok                                                 => List(r -> s2)
+              case _: PResult.Ok | _: PResult.Stalled                            => List(r -> s2)
               case _ if firstSuccessful                                          => loop(rest, s2)
               case PResult.Ret("FLAG_NOT_FOUND") | PResult.Thr("FLAG_NOT_FOUND") => loop(rest, s2)
               case other                                                         => List(other -> s2)
@@ -169,7 +196,7 @@ object Model {
   def reach(spec: Spec): Map[Int, Map[Int, Reach]] = {
     // reach from the node `s` down to every leaf, as seen from directly above `s`
     def down(s: Spec): Map[Int, Reach] = s match {
-      case Spec.Leaf(id, _)  => Map(id -> Reach.Sync)
+      case l: Spec.Leaf      => Map(l.id -> Reach.Sync)
       case Spec.Cache(_, in) => down(in).map { case (l, r) => l -> worse(r, Reach.Async) }
       case b: Spec.Breaker   => down(b.inner).map { case (l, r) => l -> worse(r, Reach.Async) }
       case Spec.Deferred(in) => down(in).map { case (l, _) => l -> Reach.Never }

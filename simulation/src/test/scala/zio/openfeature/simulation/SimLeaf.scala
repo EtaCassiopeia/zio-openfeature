@@ -14,7 +14,7 @@ import dev.openfeature.sdk.{
 }
 import dev.openfeature.sdk.exceptions.{FlagNotFoundError, GeneralError}
 
-import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.{ConcurrentHashMap, CountDownLatch}
 import java.util.concurrent.atomic.{AtomicBoolean, AtomicInteger, AtomicReference}
 import scala.jdk.CollectionConverters._
 
@@ -36,6 +36,58 @@ object LeafFault {
   case object ThrowGeneral  extends LeafFault
   case object ThrowNotFound extends LeafFault
   case object ReturnGeneral extends LeafFault
+
+  /** One-shot: the next call that reaches the leaf blocks on its [[StallGate]] until the runner releases it, and the
+    * fault then clears. The runner moves the clock to just past (`pastBound`) or just short of the innermost evaluation
+    * timeout above the leaf before it releases the call.
+    */
+  final case class Stall(pastBound: Boolean) extends LeafFault
+}
+
+/** How a leaf's `initialize()` misbehaves. Given only to the leaves of a stack a swap installs. */
+sealed trait InitFault extends Product with Serializable
+object InitFault {
+
+  /** Every `initialize()` throws at once. */
+  case object Fails extends InitFault
+
+  /** The first `initialize()` blocks until the runner releases it, then succeeds; later ones succeed at once. */
+  case object StallThenOk extends InitFault
+
+  /** The first `initialize()` blocks until the runner releases it, then throws; later ones throw at once. */
+  case object StallThenFail extends InitFault
+}
+
+/** How a leaf's `shutdown()` misbehaves. */
+sealed trait ShutdownFault extends Product with Serializable
+object ShutdownFault {
+
+  /** `shutdown()` counts itself and shuts the leaf down, then throws. */
+  case object Throws extends ShutdownFault
+}
+
+/** A latch a stalled call waits on: `entered` once a call is blocked on it, `exited` once that call has returned or
+  * thrown. `release(abandon = true)` makes the call throw, as a call whose caller timed out and walked away.
+  */
+final class StallGate {
+  private val enteredLatch            = new CountDownLatch(1)
+  private val exitedLatch             = new CountDownLatch(1)
+  private val released                = new CountDownLatch(1)
+  @volatile private var abandonCall   = false
+  def entered: Boolean                = enteredLatch.getCount == 0
+  def exited: Boolean                 = exitedLatch.getCount == 0
+  def release(abandon: Boolean): Unit = { abandonCall = abandon; released.countDown() }
+
+  /** Blocks until released, honouring interrupts (a circuit breaker's timeout interrupts the call); `true` when the
+    * call should go on to answer.
+    */
+  def await(): Boolean =
+    try {
+      enteredLatch.countDown()
+      released.await()
+      !abandonCall
+    } catch { case _: InterruptedException => false }
+    finally exitedLatch.countDown()
 }
 
 /** The wire getter a read goes through. */
@@ -53,7 +105,11 @@ object Wire {
   * a reference model can predict it exactly. Every answer carries the variant `"<name>:<key>"`, so the model can tell
   * which leaf answered. It counts what it is asked, so the model can check that wrappers call it when they should.
   */
-final class SimLeaf(val name: String) extends EventProvider {
+final class SimLeaf(
+  val name: String,
+  initFault: Option[InitFault] = None,
+  shutdownFault: Option[ShutdownFault] = None
+) extends EventProvider {
 
   val flags: ConcurrentHashMap[String, Stored]  = new ConcurrentHashMap()
   val fault: AtomicReference[Option[LeafFault]] = new AtomicReference(None)
@@ -71,8 +127,23 @@ final class SimLeaf(val name: String) extends EventProvider {
   @scala.annotation.nowarn("msg=deprecated")
   override def getState: ProviderState = state.get()
 
+  /** The gate a stalling `initialize()` waits on. */
+  val initGate: StallGate = new StallGate
+
+  /** The gate the next stalled evaluation waits on; replaced each time a stall fault is set. */
+  val stallGate: AtomicReference[StallGate] = new AtomicReference(new StallGate)
+
   override def initialize(context: OFEvaluationContext): Unit = {
-    inits.incrementAndGet(): Unit
+    val n = inits.incrementAndGet()
+    initFault match {
+      case Some(InitFault.Fails)                   => throw new GeneralError(s"$name: initialize fails")
+      case Some(InitFault.StallThenOk) if n == 1   => initGate.await(): Unit
+      case Some(InitFault.StallThenFail) if n == 1 =>
+        initGate.await(): Unit
+        throw new GeneralError(s"$name: initialize fails after a stall")
+      case Some(InitFault.StallThenFail) => throw new GeneralError(s"$name: initialize fails")
+      case _                             => ()
+    }
     state.set(ProviderState.READY)
   }
 
@@ -80,6 +151,7 @@ final class SimLeaf(val name: String) extends EventProvider {
     shutdowns.incrementAndGet(): Unit
     state.set(ProviderState.NOT_READY)
     super.shutdown()
+    if (shutdownFault.contains(ShutdownFault.Throws)) throw new IllegalStateException(s"$name: shutdown throws")
   }
 
   override def track(eventName: String, context: OFEvaluationContext, details: TrackingEventDetails): Unit =
@@ -107,19 +179,22 @@ final class SimLeaf(val name: String) extends EventProvider {
   private def answer[T](wire: Wire, key: String, default: T, ctx: OFEvaluationContext): ProviderEvaluation[T] = {
     calls.incrementAndGet(): Unit
     if (shutdowns.get() > 0) callsAfterShutdown.incrementAndGet(): Unit
+    def serve(): ProviderEvaluation[T] =
+      Option(flags.get(key)) match {
+        case None         => error(default, OFErrorCode.FLAG_NOT_FOUND)
+        case Some(stored) =>
+          SimLeaf.serve(wire, stored, ctx) match {
+            case Some((v, reason)) => ok(v.asInstanceOf[T], key, reason)
+            case None              => error(default, OFErrorCode.TYPE_MISMATCH)
+          }
+      }
     fault.get() match {
       case Some(LeafFault.ThrowGeneral)  => throw new GeneralError(s"$name: general")
       case Some(LeafFault.ThrowNotFound) => throw new FlagNotFoundError(s"$name: not found")
       case Some(LeafFault.ReturnGeneral) => error(default, OFErrorCode.GENERAL)
-      case None                          =>
-        Option(flags.get(key)) match {
-          case None         => error(default, OFErrorCode.FLAG_NOT_FOUND)
-          case Some(stored) =>
-            SimLeaf.serve(wire, stored, ctx) match {
-              case Some((v, reason)) => ok(v.asInstanceOf[T], key, reason)
-              case None              => error(default, OFErrorCode.TYPE_MISMATCH)
-            }
-        }
+      case f @ Some(_: LeafFault.Stall) if fault.compareAndSet(f, None) =>
+        if (stallGate.get().await()) serve() else throw new GeneralError(s"$name: stalled call abandoned")
+      case _ => serve()
     }
   }
 

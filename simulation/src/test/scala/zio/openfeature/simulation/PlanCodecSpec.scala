@@ -16,7 +16,7 @@ object PlanCodecSpec extends ZIOSpecDefault {
   private val goldenJson: String =
     """{"cmds":[{"SetFault":{"fault":"ThrowGeneral","leaf":1}},""" +
       """{"Eval":{"invocation":{"attrs":{"a":"1"},"tk":"u1"},"key":"k0","kind":{"KLong":{"default":5000000001}},"scoped":null}}],""" +
-      """"spec":{"Cache":{"id":-1,"inner":{"Multi":{"children":[{"Leaf":{"id":-1,"initial":{"echo":"Echo","k0":{"SDbl":{"v":"0.5"}}}}}],"firstSuccessful":true}}}}}"""
+      """"spec":{"Cache":{"id":-1,"inner":{"Multi":{"children":[{"Leaf":{"id":-1,"init":null,"initial":{"echo":"Echo","k0":{"SDbl":{"v":"0.5"}}},"shutdown":null}}],"firstSuccessful":true}}}}}"""
 
   private def failure[A: PlanCodec](text: String): String = PlanCodec.read[A](text).left.getOrElse("decoded")
 
@@ -48,6 +48,21 @@ object PlanCodecSpec extends ZIOSpecDefault {
     test("a missing Option field reads as None") {
       val text = """{"key":"k0","kind":"KStr","invocation":{"attrs":{}}}"""
       assertTrue(PlanCodec.read[Cmd.Eval](text) == Right(Cmd.Eval("k0", Kind.KStr, Ctx(None, Map.empty), None)))
+    },
+    test("a leaf written before it had lifecycle faults reads as one without them") {
+      assertTrue(
+        PlanCodec.read[Spec]("""{"Leaf":{"id":2,"initial":{}}}""") == Right(Spec.Leaf(2, Map.empty, None, None))
+      )
+    },
+    test("lifecycle and stall faults read back as themselves") {
+      val leaf  = Spec.Leaf(1, Map.empty, Some(InitFault.StallThenFail), Some(ShutdownFault.Throws))
+      val fault = Cmd.SetFault(0, Some(LeafFault.Stall(pastBound = true)))
+      assertTrue(
+        PlanCodec.write[Spec](leaf) == """{"Leaf":{"id":1,"init":"StallThenFail","initial":{},"shutdown":"Throws"}}""",
+        PlanCodec.read[Spec](PlanCodec.write[Spec](leaf)) == Right(leaf),
+        PlanCodec.write[Cmd](fault) == """{"SetFault":{"fault":{"Stall":{"pastBound":true}},"leaf":0}}""",
+        PlanCodec.read[Cmd](PlanCodec.write[Cmd](fault)) == Right(fault)
+      )
     }
   )
 }

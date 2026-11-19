@@ -16,6 +16,8 @@ import zio.test.{Spec => _, _}
   *   - each successful value is one its leaf held during the evaluation, or for a cache hit no older than the last
   *     completed invalidation that reached that cache synchronously;
   *   - an evaluation answered by a leaf after a swap away from it raised its gate is never a success;
+  *   - a swap to a stack whose `initialize()` fails fails with a typed error and rolls back: the failed stack's leaves
+  *     are shut down exactly once and never answer; the previous stack serves again;
   *   - each replaced stack's leaves are shut down exactly once, and so are the last stack's when the scope closes;
   *   - no fiber or thread outlives the run (LeakCheck).
   *
@@ -41,9 +43,9 @@ object ConcurrentSimulationSpec extends ZIOSpecDefault {
       // Drawn first and never shrunk, so shrinking the rest of the plan keeps the schedule that failed.
       scheduleSeed <- Gen.long.noShrink
       home         <- SequentialSimulationSpec.genHomeKinds
-      spec         <- Gens.genSpec(3, home)
+      spec         <- Gens.genSpec(3, home, Gens.leafFaults(Gens.noInitFault))
       workers      <- Gen.listOfBounded(2, 4)(Gen.listOfBounded(5, 30)(Gens.genEval(home)))
-      swaps        <- Gen.listOfBounded(0, 3)(Gens.genSpec(2, home))
+      swaps        <- Gen.listOfBounded(0, 3)(Gens.genSpec(2, home, Gens.leafFaults(swapInitFault)))
       muts         <- Gen.listOfBounded(0, 15)(
         Gens.genCmd(7, Nil, home).map {
           case c: Cmd.SetFlag  => c
@@ -53,29 +55,46 @@ object ConcurrentSimulationSpec extends ZIOSpecDefault {
       )
     } yield Plan(spec, home, workers, swaps, muts, scheduleSeed)
 
+  /** Only a failing `initialize()`: this spec runs on the live clock and has no one to release a stall. */
+  val swapInitFault: Gen[Any, Option[InitFault]] =
+    Gen.weighted(Gen.const(None) -> 5.0, Gen.const(Some(InitFault.Fails)) -> 1.0)
+
+  /** The faults the generated cases must reach. */
+  val faultKeys: List[String] = List("crun.init.fails", "crun.swap.rolledBack", "crun.shutdown.throws")
+
   private val evalBound = 10.seconds
 
   def run(plan: Plan): ZIO[Any, String, Unit] = {
     val spec0 = Spec.number(plan.spec)
-    val built = Harness.build(spec0)
     for {
+      built    <- Harness.build(spec0, timed = false)
       baseline <- LeakCheck.snapshot
       current  <- Ref.make(built)
       retired  <- Ref.make(List.empty[Built])
       problems <- Ref.make(Chunk.empty[String])
       evals    <- Ref.make(0)
       history  <- Ref.make(Chunk.empty[Op])
+      restored <- Ref.make(Set.empty[String])
       report = (p: String) => problems.update(_ :+ p)
       // A swap raises its gate before it binds the new provider: from then on the current stack's leaves are retiring.
+      // A failed swap that binds the previous stack again makes it current once more: its leaves serve again. A cache in
+      // that stack may still hold an answer a leaf gave while it was retiring; serving it from then on is correct.
       perturber = new SchedulePerturber(
         plan.scheduleSeed,
         {
-          case LifecycleProbe.Point.SwapBind => current.get.map(_.leaves.values.foreach(_.retiring.set(true)))
-          case _                             => ZIO.unit
+          case LifecycleProbe.Point.SwapBind     => current.get.map(_.leaves.values.foreach(_.retiring.set(true)))
+          case LifecycleProbe.Point.RollbackBind =>
+            current.get.flatMap { b =>
+              b.leaves.values.foreach(_.retiring.set(false))
+              restored.update(_ ++ b.leaves.values.map(_.name))
+            }
+          case _ => ZIO.unit
         }
       )
       _ <- ZIO.succeed(
-        Stats.declare(SchedulePerturber.declaredCounters ++ List("history.checked", "history.cachedFloored"))
+        Stats.declare(
+          SchedulePerturber.declaredCounters ++ List("history.checked", "history.cachedFloored") ++ faultKeys
+        )
       )
       _ <- ZIO.scoped {
         for {
@@ -92,7 +111,7 @@ object ConcurrentSimulationSpec extends ZIOSpecDefault {
               val eff = Harness.read(ff, key, kind, inv.toEvaluationContext)
               // The context the leaf sees: this spec never sets a global or client context.
               val fp =
-                Ctx.rendered(Runner.mergedFor(Runner.World(Ctx.empty, Ctx.empty, Nil, built, Nil), None, scoped, inv))
+                Ctx.rendered(Runner.mergedFor(Ctx.empty, Ctx.empty, None, scoped, inv))
               for {
                 t0   <- ZIO.succeed(perturber.tick())
                 exit <- scoped.fold(eff)(c => ff.withContext(c.toEvaluationContext)(eff)).timeout(evalBound).exit
@@ -103,9 +122,13 @@ object ConcurrentSimulationSpec extends ZIOSpecDefault {
                   case Exit.Failure(c)       => report(s"eval $key:$kind failed: ${c.prettyPrint.take(400)}")
                   case Exit.Success(Some(o)) =>
                     ZIO.when(o.isSuccess)(history.update(_ :+ Op.Eval(key, kind, fp, t0, t1, o))) *>
-                      ZIO.when(o.isSuccess && o.variant.exists(_.endsWith(SimLeaf.LateSuffix)))(
-                        report(s"eval $key:$kind got $o, answered after a swap away from its leaf had started")
-                      )
+                      restored.get.flatMap { back =>
+                        val late = o.variant.filter(_.endsWith(SimLeaf.LateSuffix))
+                        val kept = late.exists(v => o.reason == "CACHED" && back.contains(v.takeWhile(_ != ':')))
+                        ZIO.when(o.isSuccess && late.nonEmpty && !kept)(
+                          report(s"eval $key:$kind got $o, answered after a swap away from its leaf had started")
+                        )
+                      }
                 }
               } yield ()
             }
@@ -116,15 +139,30 @@ object ConcurrentSimulationSpec extends ZIOSpecDefault {
               ns = Spec.number(s, from)
               _ <- nextId.set(Spec.maxId(ns) + 1)
               _ <- ZIO.succeed(if (Spec.wrapsMulti(ns)) Stats.hit("crun.swap.wrapsMulti"))
-              nb = Harness.build(ns)
+              _ <- ZIO.foreachDiscard(Spec.leaves(ns).flatMap(_.shutdown))(_ => Stats.generated("crun.shutdown.throws"))
+              nb <- Harness.build(ns, timed = false)
+              fails = Spec.initOutcome(ns) == InitOutcome.Fails
+              _  <- ZIO.when(fails)(Stats.generated("crun.init.fails"))
               _  <- perturber.note(s"swap to ${Spec.show(ns)} starts")
               t0 <- ZIO.succeed(perturber.tick())
               r  <- ad.setProvider(nb.provider).sandbox.either
               t1 <- ZIO.succeed(perturber.tick())
               _  <- r match {
+                // Rolled back: the previous stack stays current. The failed one is retired, so it must never answer.
+                case Left(c)
+                    if fails && c.defects.isEmpty &&
+                      c.failureOption.exists(_.isInstanceOf[FeatureFlagError.ProviderInitializationFailed]) =>
+                  for {
+                    _ <- perturber.note(s"swap to ${Spec.show(ns)} rolled back")
+                    _ <- Stats.generated("crun.swap.rolledBack")
+                    _ <- retired.update(nb :: _)
+                    _ <- Runner.awaitShutdown(nb).flatMap(ZIO.foreachDiscard(_)(p => report(s"failed stack: $p")))
+                  } yield ()
                 case Left(c) =>
                   perturber.note(s"swap to ${Spec.show(ns)} failed") *>
                     report(s"setProvider to ${Spec.show(ns)} failed: ${c.prettyPrint.take(400)}")
+                case Right(_) if fails =>
+                  report(s"setProvider to ${Spec.show(ns)}, whose initialize() fails, succeeded")
                 case Right(_) =>
                   for {
                     _   <- history.update(_ :+ Op.Swap(ns, t0, t1))
@@ -214,7 +252,9 @@ object ConcurrentSimulationSpec extends ZIOSpecDefault {
 
   def spec = suite("ConcurrentSimulation")(
     test("replays every regression corpus entry") {
-      Corpus.replay[Plan]("concurrent")(run).map(failures => assertTrue(failures.isEmpty) ?? failures.mkString("\n"))
+      Corpus
+        .replay[Any, Plan]("concurrent")(run)
+        .map(failures => assertTrue(failures.isEmpty) ?? failures.mkString("\n"))
     },
     test("evaluations, hooks, swaps and shutdowns keep their invariants under concurrency") {
       check(genPlan) { plan =>
@@ -223,6 +263,13 @@ object ConcurrentSimulationSpec extends ZIOSpecDefault {
           ZIO.when(r.isLeft)(Corpus.record(name, json)).as(assertTrue(r == Right(())) ?? s"corpus entry ($name): $json")
         }
       }
-    } @@ PropertyBudget(40) @@ TestAspect.after(Console.printLine(Stats.render).orDie)
+    } @@ PropertyBudget(40) @@ TestAspect.after(Console.printLine(Stats.render).orDie),
+    // Last, after the generated cases: deterministic under the PR seed; retune the weights if an upgrade moves it.
+    test("the generated cases reach every lifecycle fault") {
+      val counts = faultKeys.map(k => k -> Stats.get(k))
+      Console.printLine(s"lifecycle faults: ${counts.map { case (k, n) => s"$k=$n" }.mkString(" ")}").orDie.as {
+        assertTrue(counts.forall(_._2 > 0)) ?? counts.filter(_._2 == 0).map(_._1).mkString("never reached: ", ", ", "")
+      }
+    }
   ) @@ TestAspect.sequential @@ TestAspect.withLiveClock @@ PropertyBudget.timeout(10.minutes)
 }

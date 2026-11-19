@@ -6,7 +6,14 @@ import zio.test._
 /** A provider stack: wrappers over leaves. Ids are assigned by [[Spec.number]], in traversal order. */
 sealed trait Spec extends Product with Serializable
 object Spec {
-  final case class Leaf(id: Int, initial: Map[String, Stored])                        extends Spec
+
+  /** `init` and `shutdown` are the leaf's lifecycle faults; `None` when it starts and stops cleanly. */
+  final case class Leaf(
+    id: Int,
+    initial: Map[String, Stored],
+    init: Option[InitFault] = None,
+    shutdown: Option[ShutdownFault] = None
+  ) extends Spec
   final case class Cache(id: Int, inner: Spec)                                        extends Spec
   final case class Breaker(id: Int, threshold: Int, staleOpens: Boolean, inner: Spec) extends Spec
   final case class Deferred(inner: Spec)                                              extends Spec
@@ -18,7 +25,7 @@ object Spec {
     var next              = from
     def fresh(): Int      = { val n = next; next += 1; n }
     def go(s: Spec): Spec = s match {
-      case Leaf(_, init)         => Leaf(fresh(), init)
+      case l: Leaf               => l.copy(id = fresh())
       case Cache(_, in)          => val id = fresh(); Cache(id, go(in))
       case Breaker(_, t, so, in) => val id = fresh(); Breaker(id, t, so, go(in))
       case Deferred(in)          => Deferred(go(in))
@@ -55,6 +62,27 @@ object Spec {
     case Multi(_, cs) => cs.map(maxId).maxOption.getOrElse(-1)
   }
 
+  /** How a stack's `initialize()` goes, from its leaves' init faults: a wrapper initializes what it wraps and fails
+    * when that fails, and a multi-provider initializes every child and then fails if any did. So a stack stalls iff a
+    * leaf stalls, and fails iff a leaf fails.
+    */
+  def initOutcome(spec: Spec): InitOutcome = {
+    val faults = leaves(spec).flatMap(_.init)
+    val fails  = faults.exists(f => f == InitFault.Fails || f == InitFault.StallThenFail)
+    val stalls = faults.exists(f => f == InitFault.StallThenOk || f == InitFault.StallThenFail)
+    if (stalls) InitOutcome.Stalls(thenFail = fails) else if (fails) InitOutcome.Fails else InitOutcome.Ok
+  }
+
+  /** The breakers on the way from the root down to leaf `id`, outermost first. */
+  def breakersAbove(spec: Spec, id: Int): Option[List[Int]] = spec match {
+    case l: Leaf      => if (l.id == id) Some(Nil) else None
+    case Cache(_, in) => breakersAbove(in, id)
+    case b: Breaker   => breakersAbove(b.inner, id).map(b.id :: _)
+    case Deferred(in) => breakersAbove(in, id)
+    case Widen(in)    => breakersAbove(in, id)
+    case Multi(_, cs) => cs.view.flatMap(breakersAbove(_, id)).headOption
+  }
+
   /** A Cache or Breaker whose name read reaches a Multi, whose name is unknown before init (through Widen or Deferred,
     * which forward `getMetadata`). A coverage tag: a swap to such a stack reads the name of a provider that has not
     * initialized yet, which must not fail the swap.
@@ -78,13 +106,23 @@ object Spec {
   }
 
   def show(spec: Spec): String = spec match {
-    case Leaf(id, init)         => s"L$id${init.keys.toList.sorted.mkString("{", ",", "}")}"
+    case Leaf(id, init, i, sd) =>
+      s"L$id${init.keys.toList.sorted.mkString("{", ",", "}")}" + i.fold("")(f => s"[init=$f]") +
+        sd.fold("")(f => s"[shutdown=$f]")
     case Cache(id, in)          => s"Cache$id(${show(in)})"
     case Breaker(id, t, so, in) => s"Breaker$id[t=$t${if (so) ",staleOpens" else ""}](${show(in)})"
     case Deferred(in)           => s"Deferred(${show(in)})"
     case Widen(in)              => s"Widen(${show(in)})"
     case Multi(fs, cs) => s"Multi[${if (fs) "firstSuccessful" else "firstMatch"}](${cs.map(show).mkString(", ")})"
   }
+}
+
+/** How a stack's `initialize()` goes. */
+sealed trait InitOutcome extends Product with Serializable
+object InitOutcome {
+  case object Ok                             extends InitOutcome
+  case object Fails                          extends InitOutcome
+  final case class Stalls(thenFail: Boolean) extends InitOutcome
 }
 
 /** A flag type the simulation reads with. `wire` is the getter it goes through. */
@@ -177,21 +215,44 @@ object Gens {
       .setOfBounded(0, 4)(Gen.elements(keys: _*))
       .flatMap(ks => Gen.collectAll(ks.toList.map(k => genStoredFor(home, k).map(k -> _))).map(_.toMap))
 
-  def genSpec(depth: Int, home: Map[String, Kind] = Map.empty): Gen[Any, Spec] =
-    if (depth <= 0) genInitial(home).map(Spec.Leaf(-1, _))
-    else
+  /** A leaf's lifecycle faults. */
+  type LeafFaults = Gen[Any, (Option[InitFault], Option[ShutdownFault])]
+
+  val noLeafFaults: LeafFaults = Gen.const((None, None))
+
+  /** A throwing shutdown on about one leaf in ten, and an init fault drawn from `init`. */
+  def leafFaults(init: Gen[Any, Option[InitFault]]): LeafFaults =
+    init <*> Gen.weighted(Gen.const(None) -> 9.0, Gen.const(Some(ShutdownFault.Throws)) -> 1.0)
+
+  val noInitFault: Gen[Any, Option[InitFault]] = Gen.const(None)
+
+  /** For the leaves of a swap target: about a third of targets carry an init fault. */
+  val swapInitFault: Gen[Any, Option[InitFault]] = Gen.weighted(
+    Gen.const(None)                          -> 15.0,
+    Gen.const(Some(InitFault.Fails))         -> 1.0,
+    Gen.const(Some(InitFault.StallThenOk))   -> 1.0,
+    Gen.const(Some(InitFault.StallThenFail)) -> 1.0
+  )
+
+  def genSpec(depth: Int, home: Map[String, Kind] = Map.empty, faults: LeafFaults = noLeafFaults): Gen[Any, Spec] = {
+    val leaf = (genInitial(home) <*> faults).map { case (i, (init, sd)) => Spec.Leaf(-1, i, init, sd): Spec }
+    if (depth <= 0) leaf
+    else {
+      val inner = genSpec(depth - 1, home, faults)
       Gen.weighted(
-        genInitial(home).map(i => Spec.Leaf(-1, i): Spec)     -> 3.0,
-        genSpec(depth - 1, home).map(Spec.Cache(-1, _): Spec) -> 2.0,
-        (Gen.int(1, 3) <*> Gen.boolean <*> genSpec(depth - 1, home)).map { case (t, so, in) =>
+        leaf                               -> 3.0,
+        inner.map(Spec.Cache(-1, _): Spec) -> 2.0,
+        (Gen.int(1, 3) <*> Gen.boolean <*> inner).map { case (t, so, in) =>
           Spec.Breaker(-1, t, so, in): Spec
-        }                                                    -> 2.0,
-        genSpec(depth - 1, home).map(Spec.Deferred(_): Spec) -> 1.0,
-        genSpec(depth - 1, home).map(Spec.Widen(_): Spec)    -> 1.0,
-        (Gen.boolean <*> Gen.listOfBounded(1, 3)(genSpec(depth - 1, home))).map { case (fs, cs) =>
+        }                                 -> 2.0,
+        inner.map(Spec.Deferred(_): Spec) -> 1.0,
+        inner.map(Spec.Widen(_): Spec)    -> 1.0,
+        (Gen.boolean <*> Gen.listOfBounded(1, 3)(inner)).map { case (fs, cs) =>
           Spec.Multi(fs, cs): Spec
         } -> 2.0
       )
+    }
+  }
 
   val genAttrKey: Gen[Any, String] =
     Gen.weighted(Gen.const("a") -> 3.0, Gen.const("b") -> 3.0, Gen.const("targetingKey") -> 1.0)
@@ -242,8 +303,19 @@ object Gens {
       )
     } yield Cmd.Tx(overrides.toMap, ctx, cache, evals)
 
-  def genCmd(maxLeaf: Int, cacheIds: List[Int], homeKinds: Map[String, Kind]): Gen[Any, Cmd] = {
-    val leaf = Gen.int(0, maxLeaf max 0)
+  /** `swapInit` draws the init faults of a swap target's leaves; `stalls` lets `SetFault` set a stall. */
+  def genCmd(
+    maxLeaf: Int,
+    cacheIds: List[Int],
+    homeKinds: Map[String, Kind],
+    swapInit: Gen[Any, Option[InitFault]] = noInitFault,
+    stalls: Boolean = false
+  ): Gen[Any, Cmd] = {
+    val leaf   = Gen.int(0, maxLeaf max 0)
+    val faults = Gen.elements[LeafFault](LeafFault.ThrowGeneral, LeafFault.ThrowNotFound, LeafFault.ReturnGeneral)
+    val fault  =
+      if (stalls) Gen.weighted(faults -> 3.0, Gen.boolean.map(LeafFault.Stall(_): LeafFault) -> 2.0)
+      else faults
     Gen.weighted(
       genEval(homeKinds)           -> 10.0,
       genCtx.map(Cmd.SetGlobal(_)) -> 1.0,
@@ -254,12 +326,12 @@ object Gens {
           Cmd.SetFlag(l, k, v, n)
         } -> 3.0,
       (leaf <*> Gen.weighted(
-        Gen.const(None)                                                                                     -> 2.0,
-        Gen.elements(LeafFault.ThrowGeneral, LeafFault.ThrowNotFound, LeafFault.ReturnGeneral).map(Some(_)) -> 1.0
+        Gen.const(None)    -> 2.0,
+        fault.map(Some(_)) -> 1.0
       )).map { case (l, f) => Cmd.SetFault(l, f) }                                                             -> 1.5,
       (if (cacheIds.isEmpty) Gen.const(Cmd.Track("t")) else Gen.elements(cacheIds: _*).map(Cmd.Invalidate(_))) -> 0.5,
       Gen.elements("t1", "t2").map(Cmd.Track(_))                                                               -> 0.5,
-      genSpec(2, homeKinds).map(Cmd.Swap(_))                                                                   -> 0.3
+      genSpec(2, homeKinds, leafFaults(swapInit)).map(Cmd.Swap(_))                                             -> 0.6
     )
   }
 }

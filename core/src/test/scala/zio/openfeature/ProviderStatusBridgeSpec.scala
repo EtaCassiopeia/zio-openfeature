@@ -3,10 +3,18 @@ package zio.openfeature
 import zio._
 import zio.test._
 import zio.stream.SubscriptionRef
-import zio.openfeature.internal.{ProviderEvaluations, ProviderStatusMachine}
+import zio.openfeature.internal.{
+  Bound,
+  EventBridge,
+  ManagedProvider,
+  ProviderEvaluations,
+  ProviderName,
+  ProviderStatusMachine
+}
 import dev.openfeature.sdk.{
   ErrorCode => OFErrorCode,
   EvaluationContext => OFEvaluationContext,
+  ImmutableContext,
   EventDetails,
   FeatureProvider,
   Metadata,
@@ -202,7 +210,62 @@ object ProviderStatusBridgeSpec extends ZIOSpecDefault {
     b.build().asInstanceOf[EventDetails]
   }
 
+  // When a READY settles a pending name: read from the provider itself, once it can have one.
+  private def settles(installed: Bound, slot: ProviderState = ProviderState.NOT_READY): Boolean =
+    EventBridge.settlesName(ProviderStatus.Ready, ProviderName.Pending, installed, slot)
+
+  private val nameSettling = suite("when a READY settles a pending name")(
+    test("not before the wrapper's first initialize() ends: the SDK may not have entered it yet") {
+      val wrapper = ManagedProvider(new LateMetadataProvider)
+      assertTrue(!settles(Bound.Managed(wrapper)))
+    },
+    test("before any initialize() when the SDK's state moved on: no initialize() is coming, so now") {
+      // The provider's own READY, emitted before the SDK's task ran, makes the SDK skip initialize().
+      val wrapper = ManagedProvider(new LateMetadataProvider)
+      assertTrue(
+        settles(Bound.Managed(wrapper), ProviderState.READY),
+        settles(Bound.Managed(wrapper), ProviderState.STALE)
+      )
+    },
+    test("not while an initialize() runs") {
+      val provider = new LateMetadataProvider
+      val wrapper  = ManagedProvider(provider)
+      for {
+        running <- ZIO.attemptBlocking(wrapper.initialize(new ImmutableContext())).fork
+        _       <- Live.live(ZIO.succeed(provider.entered).repeatUntil(identity).timeout(10.seconds))
+        during = settles(Bound.Managed(wrapper))
+        _ <- ZIO.succeed(provider.finishInitializing())
+        _ <- running.join
+        after = settles(Bound.Managed(wrapper))
+      } yield assertTrue(!during, after)
+    },
+    test("once an initialize() has ended, by throwing too") {
+      val wrapper = ManagedProvider(new InertProvider("thrower") {
+        override def initialize(ctx: OFEvaluationContext): Unit = throw new RuntimeException("boom")
+      })
+      for {
+        _ <- ZIO.attemptBlocking(wrapper.initialize(new ImmutableContext())).exit
+      } yield assertTrue(settles(Bound.Managed(wrapper)), wrapper.initsEnded == 1L)
+    },
+    test("for a provider registered outside the library, as before: the SDK owns its lifecycle") {
+      assertTrue(settles(Bound.Foreign(new LateMetadataProvider)))
+    },
+    test("only a Ready status and a Pending name") {
+      val wrapper = ManagedProvider(new InertProvider("x") {
+        override def initialize(ctx: OFEvaluationContext): Unit = ()
+      })
+      wrapper.initialize(new ImmutableContext())
+      val installed = Bound.Managed(wrapper)
+      assertTrue(
+        EventBridge.settlesName(ProviderStatus.Ready, ProviderName.Pending, installed, ProviderState.READY),
+        !EventBridge.settlesName(ProviderStatus.Error, ProviderName.Pending, installed, ProviderState.READY),
+        !EventBridge.settlesName(ProviderStatus.Ready, ProviderName.Named("x"), installed, ProviderState.READY)
+      )
+    }
+  ) @@ TestAspect.withLiveClock
+
   def spec = suite("ProviderStatusBridgeSpec")(
+    nameSettling,
     suite("a provider with no name")(namelessShapes.map { case (shape, metadata) =>
       lateEventsFromTheReplacedProvider(shape, metadata)
     }: _*),

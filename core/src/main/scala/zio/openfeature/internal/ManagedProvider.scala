@@ -54,6 +54,7 @@ final private[openfeature] class ManagedProvider private (
 
   private val inFlight  = new ConcurrentHashMap[String, AtomicInteger]()
   private val started   = new java.util.concurrent.atomic.AtomicLong(0L)
+  private val ended     = new java.util.concurrent.atomic.AtomicLong(0L)
   private val lastError = new AtomicReference[String](null)
   private val attached  = new AtomicBoolean(false)
   private val cycleLock = new Object
@@ -104,6 +105,9 @@ final private[openfeature] class ManagedProvider private (
 
   /** How many `initialize()` calls have started, over every domain, since construction. */
   def initsStarted: Long = started.get()
+
+  /** How many `initialize()` calls have ended, returned or thrown, over every domain, since construction. */
+  def initsEnded: Long = ended.get()
 
   /** How many `initialize()` calls are running over every domain. */
   def initsInFlightAnywhere: Int = inFlight.values().stream().mapToInt(_.get()).sum()
@@ -240,6 +244,8 @@ final private[openfeature] class ManagedProvider private (
     // dropped finds the outcome already recorded.
     try at(LifecycleProbe.Point.InitOutcome(target, ok = failure.isEmpty))
     finally {
+      // Before the in-flight count drops, so no reader sees a call neither running nor ended.
+      ended.incrementAndGet()
       inFlight.get(k).decrementAndGet()
       failure match {
         case None    => current.outcome.complete(())

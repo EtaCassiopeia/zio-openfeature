@@ -15,6 +15,16 @@ sealed abstract private[openfeature] class Bound {
     * the SDK owns: `false`, as before the library registered wrappers.
     */
   def initializing: Boolean = managed.exists(_.initsInFlightAnywhere > 0)
+
+  /** Whether the provider's name can be read now: for a wrapper, once an `initialize()` has ended and none runs. Before
+    * the first one ends the SDK may not have entered it yet, and a provider that names itself in `initialize()` has no
+    * name then. A foreign provider's name is read at once, as before the library registered wrappers. In-flight first:
+    * a call ends before its count drops, so one read here is either still running or already ended.
+    */
+  def nameReadable: Boolean = managed.forall(m => m.initsInFlightAnywhere == 0 && m.initsEnded > 0)
+
+  /** Whether no `initialize()` of the wrapper has started yet. */
+  def neverInitialized: Boolean = managed.exists(_.initsStarted == 0)
 }
 
 private[openfeature] object Bound {

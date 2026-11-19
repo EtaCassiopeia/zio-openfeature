@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **An owning instance's timed-out swap no longer shuts down a provider a sibling instance still serves.** When the
+  owner swapped off a provider another instance on the same API was also built with, and the swap outlasted
+  `initTimeout`, the replaced provider was shut down under the sibling, whether the new provider then failed or
+  finished initializing. Its shutdown is now left to the SDK, with the API or when the sibling's slot swaps it out
+  for a provider that initializes (#964).
 - **Installing again a provider whose earlier `shutdown()` outlasts the three-second wait fails instead of leaving it
   closed.** The swap used to proceed. The old `shutdown()` then returned and closed the provider it had just
   initialized again, while the status read `Ready` and every evaluation failed. `setProvider` now fails with

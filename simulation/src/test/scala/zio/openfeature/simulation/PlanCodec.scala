@@ -179,6 +179,8 @@ object PlanCodec {
   // The plan types. Recursive (`Spec` holds `Spec`s): each is a lazy given, so derivation finds itself.
   given PlanCodec[Stored]                        = derived
   given PlanCodec[LeafFault]                     = derived
+  given PlanCodec[InitFault]                     = derived
+  given PlanCodec[ShutdownFault]                 = derived
   given PlanCodec[Kind]                          = derived
   given PlanCodec[Ctx]                           = derived
   given PlanCodec[Spec]                          = derived

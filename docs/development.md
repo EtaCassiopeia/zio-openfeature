@@ -152,7 +152,9 @@ invariants (no defects, hook totals, no answer a leaf gave after a swap away fro
 down). It also records a history of evaluations, flag writes and swaps on one logical clock and checks each successful
 value against it (`History.scala`): the answering leaf belonged to a stack installed during the evaluation, a live
 read returned a value the leaf held during it, and a cache hit is no older than the last completed invalidation that
-reached that cache synchronously. Coverage counts `history.checked` and `history.cachedFloored`. It runs under a seeded schedule probe: at every `LifecycleProbe` and `EvaluationProbe` point a
+reached that cache synchronously. Coverage counts `history.checked` and `history.cachedFloored`. Leaves also fail slowly: an evaluation stalls just short of or just past the timeout that ends it, a swap target's
+`initialize()` fails or stalls first, and a `shutdown()` throws; the sequential spec times stalls on the `TestClock`,
+and checks that a swap whose stack fails to initialize is rolled back to the previous stack, which then serves again. It runs under a seeded schedule probe: at every `LifecycleProbe` and `EvaluationProbe` point a
 `SchedulePerturber` passes, yields or sleeps briefly, decided from the plan's `scheduleSeed`, so rare interleavings
 become common and the seed replays the schedule along with the plan (most failures recur, though not all, since the
 SDK's threads run outside ZIO's scheduler). Its failure prints the schedule seed and the tail of the decision log, and

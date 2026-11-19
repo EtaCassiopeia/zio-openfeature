@@ -795,6 +795,107 @@ object ProviderOwnershipShutdownSpec extends ZIOSpecDefault {
     }
   )
 
+  // Its initialize() reports when it has ended, after the gate opens.
+  private class Reporting(failure: Option[String]) extends Gated(failure) {
+    val ended                                               = new CountDownLatch(1)
+    override def initialize(ctx: OFEvaluationContext): Unit =
+      try super.initialize(ctx)
+      finally ended.countDown()
+  }
+
+  private def ended(providers: Reporting*): UIO[Unit] =
+    ZIO.foreachDiscard(providers)(p => ZIO.attemptBlocking(p.ended.await(5, TimeUnit.SECONDS)).orDie)
+
+  private val nonOwnerSwapTimeout = suite("a non-owner's timed-out swap on an API an instance owns")(
+    test("the owner's close shuts the replaced provider down once when the new one then fails") {
+      val api      = OpenFeatureAPI.createIsolated()
+      val provider = new Gated(open = true)
+      val incoming = new Reporting(Some("boom"))
+      for {
+        run <- ZIO.scoped {
+          for {
+            _        <- syncBuild(api, new Gated(open = true), None, 5.seconds, owns = true)
+            nonOwner <- syncBuild(api, provider, Some("d"), 300.millis)
+            swap     <- nonOwner.setProvider(incoming).exit
+            _        <- ZIO.succeed(incoming.gate.countDown())
+            _        <- ended(incoming)
+            before   <- shutdownsAfterSettling(provider)
+          } yield (swap.isFailure, before)
+        }
+        closed <- shutdownsAfterSettling(provider)
+        _      <- Live.live(ZIO.sleep(300.millis))
+        after  <- ZIO.succeed(provider.shutdowns.get())
+        (failed, before) = run
+      } yield assertTrue(failed, before == 0, closed == 1, after == 1)
+    },
+    test("the owner's close shuts down a wrapper both swapped off, once, when both new providers then fail") {
+      val api      = OpenFeatureAPI.createIsolated()
+      val provider = new Gated(open = true)
+      val forOwner = new Reporting(Some("boom"))
+      val forOther = new Reporting(Some("boom"))
+      for {
+        run <- ZIO.scoped {
+          for {
+            owner     <- syncBuild(api, provider, None, 300.millis, owns = true)
+            nonOwner  <- syncBuild(api, provider, Some("d"), 300.millis)
+            ownerSwap <- owner.setProvider(forOwner).exit
+            otherSwap <- nonOwner.setProvider(forOther).exit
+            // Bound, so the swap timed out rather than being refused.
+            bound = ManagedProvider.existing(forOther).exists(w => api.getProvider("d") eq w)
+            _      <- ZIO.succeed { forOwner.gate.countDown(); forOther.gate.countDown() }
+            _      <- ended(forOwner, forOther)
+            before <- shutdownsAfterSettling(provider)
+          } yield (ownerSwap.isFailure && otherSwap.isFailure && bound, before)
+        }
+        closed <- shutdownsAfterSettling(provider)
+        _      <- Live.live(ZIO.sleep(300.millis))
+        after  <- ZIO.succeed(provider.shutdowns.get())
+        (failed, before) = run
+      } yield assertTrue(failed, before == 0, closed == 1, after == 1)
+    },
+    test(
+      "the SDK shuts the replaced provider down when the new one initializes, and the owner's close does not again"
+    ) {
+      val api      = OpenFeatureAPI.createIsolated()
+      val provider = new Gated(open = true)
+      val incoming = new Reporting(None)
+      for {
+        run <- ZIO.scoped {
+          for {
+            _        <- syncBuild(api, new Gated(open = true), None, 5.seconds, owns = true)
+            nonOwner <- syncBuild(api, provider, Some("d"), 300.millis)
+            swap     <- nonOwner.setProvider(incoming).exit
+            _        <- ZIO.succeed(incoming.gate.countDown())
+            _        <- ended(incoming)
+            before   <- Live.live(ZIO.succeed(provider.shutdowns.get()).repeatUntil(_ > 0).timeout(5.seconds))
+          } yield (swap.isFailure, before.contains(1))
+        }
+        _     <- Live.live(ZIO.sleep(300.millis))
+        after <- ZIO.succeed(provider.shutdowns.get())
+        (failed, sdkShut) = run
+      } yield assertTrue(failed, sdkShut, after == 1)
+    },
+    test("a failed swap whose rollback fails too leaves the previous provider to the owner's close, once") {
+      val api      = OpenFeatureAPI.createIsolated()
+      val old      = new FailsWhenReinitialized
+      val incoming = new Gated(failure = Some("boom"), open = true)
+      for {
+        run <- ZIO.scoped {
+          for {
+            _        <- syncBuild(api, new Gated(open = true), None, 5.seconds, owns = true)
+            nonOwner <- syncBuild(api, old, Some("d"), 5.seconds)
+            swap     <- nonOwner.setProvider(incoming).exit
+            before   <- shutdownsAfterSettling(old)
+          } yield (swap.isFailure, before)
+        }
+        closed <- shutdownsAfterSettling(old)
+        _      <- Live.live(ZIO.sleep(300.millis))
+        after  <- ZIO.succeed(old.shutdowns.get())
+        (failed, before) = run
+      } yield assertTrue(failed, before == 0, closed == 1, after == 1)
+    }
+  )
+
   private val sharedApi = suite("an instance that shares its API")(
     test("shut down on its own, leaves the API and the provider a sibling is bound to") {
       val api      = OpenFeatureAPI.createIsolated()
@@ -894,6 +995,7 @@ object ProviderOwnershipShutdownSpec extends ZIOSpecDefault {
   def spec =
     suite("ProviderOwnershipShutdownSpec")(
       ownerSwapOffShared,
+      nonOwnerSwapTimeout,
       sharedApi,
       userRegistered,
       otherDomain,

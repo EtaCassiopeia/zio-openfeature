@@ -125,6 +125,12 @@ mutants = {
         ('SharedShutDownOnce',), [
         ("    /\\ ShutApi({q \\in leftBehind : q \\in registered /\\ q \\notin ApiShuts})\n",
          "    /\\ ShutApi({})\n")]),
+    # A non-owner's timed-out swap on an API an instance owns whose new provider then fails leaves the provider it
+    # replaced running: the owner's close does not release it (ApiInstances.releaseLeftBehind dropped from its close).
+    'a non-owner\'s timed-out swap leaves the provider it replaced running': (
+        ('SharedShutDownOnce',), [
+        ("    /\\ ShutApi({q \\in orphans : q \\in registered} \\cup {q \\in leftBehind : q \\in registered /\\ q \\notin ApiShuts})\n",
+         "    /\\ ShutApi({q \\in orphans : q \\in registered})\n")]),
     # An owner's timed-out swap records no orphan, as a non-owner's: when the new provider fails, nothing shuts the
     # previous one down.
     'an owner\'s timed-out swap records no orphan': (

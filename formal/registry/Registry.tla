@@ -66,8 +66,9 @@ VARIABLES
     pending,     \* providers whose initialize(), started by a swap that timed out, is still running
     orphans,     \* the providers the owner's orphan list will shut down unless the SDK does: replaced in a swap of the
                  \* owner's that timed out, and held then by no slot the library can see (OrphanedProviders)
-    leftBehind,  \* the library's wrappers a registry client's timed-out swap replaced: the registry releases each one
-                 \* still running at its close, after the API's shutdown (FeatureFlagRegistry.releaseLeftBehind)
+    leftBehind,  \* the library's wrappers a timed-out swap of an instance not owning the API replaced: the API's
+                 \* owner, an instance or the registry, releases each one still running at its close, after the API's
+                 \* shutdown (ApiInstances.releaseLeftBehind)
     abandoned    \* ghost: providers the user registered that the SDK let go when the provider replacing them failed to
                  \* initialize, with no slot holding them: theirs to shut down, as for any provider the SDK replaces
 
@@ -191,8 +192,6 @@ Create(i, p, own) ==
     /\ phase[i] = "checking"
     /\ lock = i
     /\ own => owner = None
-    \* A registry client's timed-out swap is the registry topology's: no instance owns that API (SwapTimeout).
-    /\ own => leftBehind = {}
     \* A provider whose initialize() a timed-out swap left running, or one waiting on that call: outside the model
     \* (README).
     /\ p \notin pending /\ ~Waiting(p)
@@ -410,9 +409,9 @@ SwapFail(i) ==
 \* the SDK shuts it down if the call succeeds (`replaced`). An instance that owns its API records q in its orphan list
 \* (recordOrphan), which shuts q down if the call fails or the instance closes first, unless a slot the library can
 \* see held q when it was recorded, one the user registered or a sibling's wrapper: that slot's, and the SDK's, to shut
-\* down. A registry client records nothing; FeatureFlagRegistry.setProvider keeps q for the registry's close
-\* (`leftBehind`), which releases it if it is still running then. Outside the model (README): a non-owner on an API an
-\* instance owns, whose close releases nothing; and a swap's provider another slot shares.
+\* down. An instance that does not own its API, a registry client or not, records nothing and leaves q, the library's
+\* wrapper, to the API's owner (ApiInstances.leaveBehind): its close releases q if it is still running then
+\* (`leftBehind`). Outside the model (README): a swap's provider another slot shares.
 SwapTimeout(i) ==
     LET d == domainOf[i]
         p == bound[d]
@@ -420,7 +419,6 @@ SwapTimeout(i) ==
     IN
     /\ swapping = i
     /\ failedOn[i] # p
-    /\ owner = i \/ owner = None
     /\ SlotsOf(p) = {d}
     /\ replaced[q] = None
     /\ swapping' = None
@@ -438,8 +436,8 @@ SwapTimeout(i) ==
 \* provider waiting on it that no slot holds (shutDownOld); the orphan list leaves one the SDK skipped because a slot
 \* the library can see holds it. On failure the SDK shuts nothing down, and the orphan list shuts each of its orphans
 \* down, unless a slot the library can see holds one by now.
-\* A provider the user registered that nothing holds any more is the user's (`abandoned`); a registry client's wrapper
-\* waits for the registry's close (`leftBehind`).
+\* A provider the user registered that nothing holds any more is the user's (`abandoned`); a non-owner's wrapper waits
+\* for the close of the API's owner (`leftBehind`).
 InitSettle(p, ok) ==
     LET waiting == {q \in Providers : replaced[q] = p}
         sdk == IF ok THEN {q \in waiting : SlotsOf(q) = {} /\ q \in registered} ELSE {}
@@ -549,7 +547,8 @@ ShutApi(rel) ==
 
 \* The owner's shutdown or scope close: the others retire first, then its own teardown takes the API down, and then
 \* settles its orphan list (OrphanedProviders.resolveAll): each orphan still running is shut down, as no slot holds it
-\* any more.
+\* any more. Last it releases each wrapper a non-owner's timed-out swap left behind that is still running
+\* (ApiInstances.releaseLeftBehind): one whose replacement failed, which nothing else reaches.
 OwnerClose ==
     /\ apiOpen
     /\ owner # None
@@ -558,7 +557,7 @@ OwnerClose ==
     /\ deciding = {}
     /\ lock = None
     /\ RetireAll
-    /\ ShutApi({q \in orphans : q \in registered})
+    /\ ShutApi({q \in orphans : q \in registered} \cup {q \in leftBehind : q \in registered /\ q \notin ApiShuts})
     /\ owner' = None
     /\ UNCHANGED << domainOf, lock, swapping, swaps, everBound, failedOn, deciding, prior, swappedOff, builtOn, replaced >>
     /\ UNCHANGED timeoutVars
@@ -567,7 +566,8 @@ OwnerClose ==
 \* Its clients' scopes close before it, each a CloseInstance; it then retires every instance on the API
 \* (ApiInstances.retireAll) and shuts the API down (boundedApiShutdown).  Each retirement takes the instance's swap
 \* lock, so a swap in flight settles first.  After the API's shutdown it releases each wrapper a client's timed-out swap
-\* left behind that is still running (releaseLeftBehind): one whose replacement failed, which nothing else reaches.
+\* left behind that is still running (ApiInstances.releaseLeftBehind): one whose replacement failed, which nothing else
+\* reaches.
 RegistryClose ==
     /\ apiOpen
     /\ owner = None

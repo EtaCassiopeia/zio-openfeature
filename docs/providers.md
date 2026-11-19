@@ -309,14 +309,17 @@ evaluations keep going. To initialize a provider again, install a new instance.
   shuts the old provider down. If it fails instead, the status stays `Error` and the old provider, which the SDK no
   longer holds, is shut down; call `setProvider` again to recover. If it has not finished when the instance shuts down
   or its scope closes, the old provider is shut down then. Only an instance that
-  [owns its API](#who-shuts-down-the-api) does this: on a shared API the old provider is left to the API's owner.
+  [owns its API](#who-shuts-down-the-api) does this. On a shared API the old provider is left to the API's owner: when
+  the owner closes the API, an owning instance or the registry, it shuts the old provider down if nothing has by then.
+  An API you shut down yourself does not.
   Until the new provider has settled, `setProvider` refuses the old provider with `ProviderInitializationFailed`:
   installing it again then would get it shut down later, while it serves. On a shared API the refusal lasts until the
   new provider's `initialize()` returns, after which the SDK shuts the old provider down, whatever the slot holds by
   then. After a rollback that timed out, the failed provider is left to the SDK the same way: it shuts the provider
   down once the restored provider's `initialize()` returns, an instance that owns its API does so if that call fails or
-  the scope closes first, and the provider is refused until then. On a shared API, if that call fails, nothing shuts the
-  failed provider down: it stays with the API's owner, and `setProvider` of it fails, so install a new instance. Between that return and the SDK's shutdown, which runs
+  the scope closes first, and the provider is refused until then. On a shared API, if that call fails, the failed
+  provider stays with the API's owner, whose close shuts it down, and `setProvider` of it fails, so install a new
+  instance. Between that return and the SDK's shutdown, which runs
   on the SDK's own executor, `setProvider` of the replaced provider waits for the shutdown, for up to three seconds. It
   waits the same way after a swap or rollback that did not time out. Three seconds is also how long installing again a
   provider another slot of a shared API still serves takes: the SDK does not shut that one down, and the swap then

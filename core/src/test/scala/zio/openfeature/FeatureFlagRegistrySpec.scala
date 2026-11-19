@@ -593,6 +593,47 @@ object FeatureFlagRegistrySpec extends ZIOSpecDefault {
         after <- ZIO.succeed(shutA.get())
       } yield assertTrue(swap.isLeft, closed == 1, after == 1)
     } @@ TestAspect.withLiveClock,
+    test(
+      "a timed-out swap made through the client itself whose provider then fails: the registry's close shuts the replaced one down"
+    ) {
+      val shutA  = new java.util.concurrent.atomic.AtomicInteger(0)
+      val gate   = new java.util.concurrent.CountDownLatch(1)
+      val failed = new java.util.concurrent.CountDownLatch(1)
+      val first  = new SimpleProvider("A", Map.empty) {
+        override def shutdown(): Unit = { shutA.incrementAndGet(); () }
+      }
+      // Starts only after the swap has timed out, and then fails.
+      val slow = new SimpleProvider("Slow", Map.empty) {
+        override def initialize(ctx: OFEvaluationContext): Unit = {
+          gate.await()
+          failed.countDown()
+          throw new RuntimeException("Slow failed to start")
+        }
+      }
+      for {
+        swap <- ZIO.scoped {
+          for {
+            registry <- FeatureFlagRegistry
+              .fromProvider(
+                new SimpleProvider("Default", Map.empty),
+                FeatureFlagsConfig.default.withInitTimeout(300.millis)
+              )
+              .build
+              .map(_.get[FeatureFlagRegistry])
+            _      <- registry.setProvider("d", first)
+            client <- registry.getClient("d")
+            swap   <- client.asInstanceOf[FeatureFlagsAdmin].setProvider(slow).either
+            _      <- ZIO.succeed(gate.countDown())
+            _      <- ZIO.attemptBlocking(failed.await(5, java.util.concurrent.TimeUnit.SECONDS)).orDie
+            // Slow's initialize() has failed, so the SDK never shuts A down.
+            _ <- Live.live(ZIO.sleep(300.millis))
+          } yield swap
+        }
+        closed <- awaitCount(shutA, 1)
+        _      <- Live.live(ZIO.sleep(300.millis))
+        after  <- ZIO.succeed(shutA.get())
+      } yield assertTrue(swap.isLeft, closed == 1, after == 1)
+    } @@ TestAspect.withLiveClock,
     test("a chain a getClient retry initialized again moves its status on a member's event") {
       val failed = new java.util.concurrent.atomic.AtomicBoolean(false)
       val steady = new dev.openfeature.sdk.SdkPackageChild("steady")

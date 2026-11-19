@@ -22,14 +22,14 @@ labels; its docstring gives the exact rules. `FFF` is `internal/FeatureFlagsFact
 | `SwapOldShut(i)` | the SDK's `shutDownOld` of the swap's replaced provider, run at once by a swap whose SDK task found a sibling's `initialize()` of the new provider under way (`FeatureProviderStateManager.initialize`'s `isInitialized` check); a rollback then registers the old provider again | `ProviderShutDown` of the swap's old provider before its outcome, while a sibling holds the swap's provider; still counted into `End` |
 | `SwapFailMark(i)` | `runSwap`'s failure branch, `failedRegistration` set | `FailedRegistration(provider)`, the first in the swap |
 | `SwapFail(i)` | `rollBack`, then `decideFailedSwap`, or `cleanupUnboundFailedProvider` when the rollback failed too | the swap's `SwapDone` point; `FailedRegistration` and `FailDecided(provider, shut)` after `SwapRollback` give the library's decision, checked against the model's |
-| `SwapTimeout(i)` | `runSwap`'s timeout branch; `recordOrphan` for an instance that owns its API; `FeatureFlagRegistry.setProvider`'s `leftBehind` for a registry client | `SwapTimeout`; `OrphanRecorded` after it gives `recorded`, checked against the model (only the owner records); the swap's `SwapDone` point ends it |
+| `SwapTimeout(i)` | `runSwap`'s timeout branch; `recordOrphan`: `OrphanedProviders.record` for an instance that owns its API, `ApiInstances.leaveBehind` (`leftBehind`) for one that does not | `SwapTimeout`; `OrphanRecorded` after it gives `recorded`, checked against the model (only the owner records); the swap's `SwapDone` point ends it |
 | `InitSettle(p, ok)` | the timed-out swap's provider's `initialize()` returns or throws; the SDK's `shutDownOld`, or `OrphanedProviders.settle` | `InitOutcome(provider, ok)` of that provider; `OrphanResolved` and `OrphanDropped` are part of it, and the shutdowns that follow are counted into `End` |
 | `UserBind(d, p)` | the test's own `api.setProvider` | `UserBind`, written by the test (`RegistryRecording.environment`) |
 | `FailMark(i)` | `shutDownFailedRegistration`, `failedRegistration` set: a failed build (`FFF.build`'s `failedBuild`), the init watchdog (`escalateInitTimeout`) | `FailedRegistration(provider)` |
 | `FailDecide(i)` | the rest of it: `Bound.Foreign`, `ApiInstances.heldByAnother`, or the shutdown; a failed build's scope then closes | `FailDecided(provider, shut)`, checked against `LibraryShuts` |
 | `CloseInstance(i)` | a non-owner's `shutdown` (`teardown(tearDownApi = false)`) or scope close (`scopeFinalizer`) | `ShutdownDone`, `ScopeClose` |
-| `OwnerClose` | the owner's `shutdown` or scope close: `ApiInstances.retireSiblings`, then the API's shutdown, then `OrphanedProviders.resolveAll` | `RetireSiblings`, then the owner's `ShutdownStart` or `ScopeClose`; the others' teardowns in between are their retirement |
-| `RegistryClose` | the registry's layer finalizer: `ApiInstances.retireAll`, then the API's shutdown, then `releaseLeftBehind` | `ApiShutdown`, taken at the end of the run: every client still open is retired first (`UnretiredSibling`), and the shutdowns after it are counted |
+| `OwnerClose` | the owner's `shutdown` or scope close: `ApiInstances.retireSiblings`, then the API's shutdown, then `OrphanedProviders.resolveAll`, then `ApiInstances.releaseLeftBehind` | `RetireSiblings`, then the owner's `ShutdownStart` or `ScopeClose`; the others' teardowns in between are their retirement |
+| `RegistryClose` | the registry's layer finalizer: `ApiInstances.retireAll`, then the API's shutdown, then `ApiInstances.releaseLeftBehind` | `ApiShutdown`, taken at the end of the run: every client still open is retired first (`UnretiredSibling`), and the shutdowns after it are counted |
 | (the outcome) | each provider's `shutdown()` calls | `ProviderShutDown`, counted per provider into `End` |
 
 One step ends what is checked, since the model has no action for it: the test's own `api.shutdown()`
@@ -53,6 +53,7 @@ promise for a domain whose client completed. Each registry build attempt is its 
 | Reason | What happened | Why the model leaves it out |
 |:--|:--|:--|
 | a timed-out swap to a provider the user registered | `SwapTimeout` of a swap to a provider the test bound itself | no wrapper reports its `InitOutcome`, the settle the model takes |
+| a timed-out swap off a provider another timed-out swap left waiting | a second `SwapTimeout` off the provider a first one replaced, before that one's `InitOutcome` | a provider waits on one `initialize()` here (`SwapTimeout`: `replaced[q] = None`) |
 | a registry retry after a failure under its build | a second `RegistryInsert` for a domain whose build a failure's decision (`FailDecide`) closed | that instance is closed, not evicted, here |
 | a failure's decision interrupted by the registry's close | `ApiShutdown` between a `FailedRegistration` and its `FailDecided`, a release's included | `RegistryClose` waits for every decision here |
 | a retry of a failed registration | the test reinitializes a slot's failed provider (`UserRetryInit`) | the same retry, by hand |

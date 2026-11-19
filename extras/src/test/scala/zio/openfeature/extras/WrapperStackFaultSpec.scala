@@ -189,9 +189,9 @@ object WrapperStackFaultSpec extends ZIOSpecDefault {
       //
       // The SDK applies two events a provider emits without awaiting the first in either order, and no wrapper can put
       // them back: the wrappers keep the order of what they receive, not of what the provider meant. Each event here is
-      // therefore emitted only once the SDK has taken the one before it. The script's own emissions are not awaited:
-      // they come at least the evaluation timeout before this ERROR, which in practice, not by guarantee, applies them
-      // first.
+      // therefore emitted only once the SDK has taken every one before it, the script's own emissions included (after
+      // the release, so a parked emission has been made).
+      _     <- inner.awaitScriptedEmissions
       _     <- emitAndWait(inner, OFProviderEvent.PROVIDER_ERROR)
       erred <-
         if (!c.layers.forall(forwardsEvents)) ZIO.succeed(true)
@@ -224,7 +224,8 @@ object WrapperStackFaultSpec extends ZIOSpecDefault {
     if (found.isEmpty) "" else (s"case: $c" +: found).mkString("\n")
 
   // Cases the property shrank to when an ERROR failed to reach the status in CI: an init STALE, then an evaluation that
-  // emits STALE without awaiting it and parks until the breaker times it out.
+  // emits STALE without awaiting it and parks until the breaker times it out; or an evaluation that emits READY without
+  // awaiting it and returns at once, so the READY may still be in flight when the ERROR is emitted.
   private val shrunkCases = List(List(Layer.Cache, Layer.Breaker), List(Layer.Breaker, Layer.Cache, Layer.Breaker)).map {
     layers =>
       Case(
@@ -234,7 +235,16 @@ object WrapperStackFaultSpec extends ZIOSpecDefault {
         Fault.Succeed,
         calls = 1
       )
-  }
+  } ++ List(
+    Case(
+      List(Layer.Cache, Layer.Breaker),
+      event(OFProviderEvent.PROVIDER_STALE),
+      List(event(OFProviderEvent.PROVIDER_READY)),
+      Fault.Throw(new StackOverflowError("shutdown overflow")),
+      calls = 1
+    ),
+    Case(List(Layer.Cache, Layer.Breaker), Fault.Succeed, List(event(OFProviderEvent.PROVIDER_READY)), Fault.Succeed, 1)
+  )
 
   def spec = suite("WrapperStackFaultSpec")(
     test("faults in the innermost provider never escape a generated wrapper stack") {

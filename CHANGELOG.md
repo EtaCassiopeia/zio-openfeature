@@ -88,6 +88,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Wrapper-stack fault property no longer races its own scripted events** (#939, test-only). `WrapperStackFaultSpec`
+  emits its `ERROR` only once the SDK has taken every event the evaluation script emitted
+  (`FaultyProvider.awaitScriptedEmissions`), so a script's `READY` still in flight can no longer overtake it. Two more
+  CI shapes join its pinned cases.
 - **`CachingProvider` with `contextKeys` keeps the targeting key in the cache key.** With `contextKeys` set, it used to
   be left out unless listed, so every user shared one cached answer per flag: in a 50% rollout, every user got the first
   user's answer until the entry expired, with nothing logged. **Behaviour change for anyone using `withContextKeys`

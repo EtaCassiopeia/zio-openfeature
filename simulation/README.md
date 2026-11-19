@@ -10,7 +10,8 @@ Test-only, unpublished, Scala 3. Not in the root aggregate; run with `sbt simula
 | `Model.scala` | Pure reference model: what each provider-level call should produce |
 | `Harness.scala`, `Runner.scala` | Run a command list against the live stack and the model; fail with a trace at the first divergence |
 | `SequentialSimulationSpec` | Every result must equal the model |
-| `ConcurrentSimulationSpec` | Evaluation workers racing a swapper and a mutator; invariants only (no defects, hook totals, ...) |
+| `ConcurrentSimulationSpec` | Evaluation workers racing a swapper and a mutator; invariants (no defects, hook totals, ...), and each value against the recorded history |
+| `History.scala`, `HistorySpec` | The recorded history of a concurrent run (evaluations, flag writes, swaps on one logical clock) and the checker that explains each successful value from it |
 | `PlanCodec.scala`, `Corpus.scala` | JSON codec for plans (derived from the case classes), and the loader and recorder of the regression corpus |
 | `Stats.scala` | Coverage counters printed per run, so a generator that stops reaching a path shows up |
 

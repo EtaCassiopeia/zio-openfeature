@@ -11,6 +11,7 @@ import zio.openfeature.internal.{
   FallbackLogLimiter,
   FeatureFlagsState,
   HookPipeline,
+  InitDeadline,
   LifecycleEffect,
   LifecycleInput,
   LifecycleProbe,
@@ -71,7 +72,9 @@ final private[openfeature] class FeatureFlagsLive(
   // Named lifecycle points a test can hold a fiber at; a no-op in production.
   probe: LifecycleProbe = LifecycleProbe.none,
   // Named evaluation points a test can hold a fiber at; a no-op in production.
-  evaluationProbe: EvaluationProbe = EvaluationProbe.none
+  evaluationProbe: EvaluationProbe = EvaluationProbe.none,
+  // Arms the bound on a swap's, and a rollback's, wait for initialize(): a JDK timer in production.
+  initDeadline: InitDeadline = InitDeadline.default
 ) extends FeatureFlags
     with FeatureFlagsAdmin {
 
@@ -373,7 +376,7 @@ final private[openfeature] class FeatureFlagsLive(
       {
         case Some(restored) =>
           restored
-            .settle(initTimeout)
+            .settle(initTimeout, initDeadline)
             .foldZIO(
               {
                 case e if stillHolds(e) =>
@@ -699,7 +702,7 @@ final private[openfeature] class FeatureFlagsLive(
         .either
       settled <- ZIO
         .fromEither(registration)
-        .flatMap(_.settle(initTimeout))
+        .flatMap(_.settle(initTimeout, initDeadline))
         .mapError(e => FeatureFlagError.ProviderInitializationFailed(e))
         .tapError {
           // A timed-out swap is NOT rolled back. The new provider's `initialize()` is still running on the SDK's

@@ -164,12 +164,12 @@ final class CircuitBreakerProvider private (
   private val runtime: Runtime[Any]
 ) extends EventProvider {
 
-  // No name while the wrapped provider has no metadata, as a MultiProvider before it has initialized: null, which the
-  // library reads as a name still to come, rather than a throw.
+  // No name while the wrapped provider has none, as a MultiProvider before it has initialized, or a wrapper around one:
+  // null, which the library reads as a name still to come, rather than a throw or a name built around "null".
   @scala.annotation.nowarn("msg=deprecated")
   override def getMetadata: Metadata = new Metadata {
     override def getName: String =
-      Option(underlying.getMetadata).map(m => s"CircuitBreakerProvider(${m.getName})").orNull
+      Option(underlying.getMetadata).flatMap(m => Option(m.getName)).map(n => s"CircuitBreakerProvider($n)").orNull
   }
 
   @scala.annotation.nowarn("msg=deprecated")

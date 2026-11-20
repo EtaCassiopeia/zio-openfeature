@@ -75,6 +75,25 @@ object WrappedMultiProviderNameSpec extends ZIOSpecDefault {
         names = List(breaker(p1), cache(p2)).map(w => scala.util.Try(w.getMetadata.getName))
       } yield assertTrue(names.forall(_ == scala.util.Success(null)))
     },
+    test("stacked wrappers around a multiProvider have no name before it initializes either") {
+      for {
+        p1 <- multi("m1")
+        p2 <- multi("m2")
+        p3 <- multi("m3")
+        names = List(breaker(cache(p1)), cache(cache(p2)), cache(breaker(p3))).map(w =>
+          scala.util.Try(w.getMetadata.getName)
+        )
+      } yield assertTrue(names.forall(_ == scala.util.Success(null)))
+    },
+    test("a build on stacked wrappers around a multiProvider settles the stack's full name") {
+      ZIO.scoped {
+        for {
+          p    <- multi("m")
+          env  <- FeatureFlags.fromProvider(breaker(cache(p)), config).build
+          name <- env.get[FeatureFlags].providerMetadata.map(_.name)
+        } yield assertTrue(name == "CircuitBreakerProvider(CachingProvider(multiprovider))")
+      }
+    },
     test("a registry's setProvider installs a breaker around a multiProvider in a live client") {
       ZIO.scoped {
         for {

@@ -15,6 +15,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   provider's name. Every READY, ERROR, STALE and configuration change from the chain then went out under its real
   name and was dropped as another provider's, so the status never followed it. A wrapper now has no name while the
   provider it wraps has none, at any depth. Introduced in 2.2.1 (#984).
+- **A provider's `StackOverflowError` from `initialize()` fails the build instead of killing it.** An overflow that
+  came after the build had started waiting on `initialize()` reached the build's fiber as a fatal error, and the build
+  died with a defect rather than failing with a `GeneralError`. `DeferredProvider` also no longer replaces its
+  delegate's initialization error with a failure of the `shutdown()` that cleans the delegate up: it rethrows the
+  initialization error, with the shutdown failure attached as suppressed (#985).
 
 ## [2.2.1] — 2026-11-19
 

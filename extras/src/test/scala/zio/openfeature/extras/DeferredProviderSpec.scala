@@ -150,6 +150,26 @@ object DeferredProviderSpec extends ZIOSpecDefault {
         st  <- ZIO.succeed(dp.getState)
       } yield assertTrue(res.isLeft, sd == 1, st == ProviderState.NOT_READY)
     },
+    test("a delegate whose shutdown also fails after a failed initialize still fails with the initialize error") {
+      // Caught by hand: a StackOverflowError would be fatal inside ZIO.attempt or Try.
+      def initializeThrown(shutdownError: Throwable): Throwable = {
+        val delegate = new RecordingProvider(true) {
+          override def initialize(c: OFEvaluationContext): Unit = throw new RuntimeException("init boom")
+          override def shutdown(): Unit                         = throw shutdownError
+        }
+        try { DeferredProvider("d")(() => delegate).initialize(ctx); null }
+        catch { case t: Throwable => t }
+      }
+      for {
+        overflow <- ZIO.succeed(initializeThrown(new StackOverflowError("shutdown overflow")))
+        failure  <- ZIO.succeed(initializeThrown(new IllegalStateException("shutdown failed")))
+      } yield assertTrue(
+        overflow.getMessage == "init boom",
+        overflow.getSuppressed.map(_.getMessage).toList == List("shutdown overflow"),
+        failure.getMessage == "init boom",
+        failure.getSuppressed.map(_.getMessage).toList == List("shutdown failed")
+      )
+    },
     // AC5: works through fromProviderAsync; initialize runs off the caller thread (on the SDK executor)
     test("works through fromProviderAsync and constructs off the caller thread") {
       val delegate = new RecordingProvider(true)

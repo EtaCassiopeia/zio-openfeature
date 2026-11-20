@@ -255,13 +255,24 @@ object WrapperStackFaultSpec extends ZIOSpecDefault {
     Case(List(Layer.Multi, Layer.Cache, Layer.Breaker), Fault.Succeed, List(Fault.Succeed), Fault.Succeed, 1)
   )
 
+  // A failed init whose delegate cleanup overflows: the build fails with the init error rather than dying.
+  private val shrunkBuildCases = List(
+    Case(
+      List(Layer.Deferred),
+      Fault.Throw(new GeneralError("init failed")),
+      List(Fault.Succeed),
+      Fault.Throw(new StackOverflowError("shutdown overflow")),
+      calls = 1
+    )
+  )
+
   def spec = suite("WrapperStackFaultSpec")(
     test("faults in the innermost provider never escape a generated wrapper stack") {
       check(genCase)(c => runCase(c).map(found => assertTrue(report(c, found) == "")))
     } @@ PropertyBudget(8) @@ TestAspect.shrinks(10) @@ PropertyBudget.timeout(5.minutes),
     test("the cases the property once shrank to still pass") {
       ZIO
-        .foreach(shrunkCases)(c => runCase(c).map(report(c, _)))
+        .foreach(shrunkCases ++ shrunkBuildCases)(c => runCase(c).map(report(c, _)))
         .map(reports => assertTrue(reports.mkString == ""))
     }
   ) @@ TestAspect.sequential @@ TestAspect.withLiveClock @@ Quiescence.aspect

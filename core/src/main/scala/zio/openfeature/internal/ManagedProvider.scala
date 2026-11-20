@@ -248,8 +248,9 @@ final private[openfeature] class ManagedProvider private (
       ended.incrementAndGet()
       inFlight.get(k).decrementAndGet()
       failure match {
-        case None    => current.outcome.complete(())
-        case Some(e) => current.outcome.completeExceptionally(e)
+        case None => current.outcome.complete(())
+        // A StackOverflowError is carried: a fiber that reads the outcome would die on it, not fail.
+        case Some(e) => current.outcome.completeExceptionally(ProviderCalls.carry(e))
       }
       at(LifecycleProbe.Point.InitReturned)
     }
@@ -302,7 +303,7 @@ final private[openfeature] class ManagedProvider private (
   private def key(domain: Option[String]): String = domain.getOrElse("")
 
   private def awaitStage(f: CompletableFuture[Unit]): Task[Unit] =
-    ZIO.fromCompletableFuture(f.thenApply[Unit](_ => ()))
+    ZIO.fromCompletableFuture(f.thenApply[Unit](_ => ())).mapError(ProviderCalls.unwrap)
 
   @scala.annotation.nowarn("msg=deprecated")
   override def getMetadata: Metadata = current.get().getMetadata

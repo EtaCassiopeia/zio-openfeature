@@ -23,6 +23,14 @@ private[openfeature] object ProviderCalls {
     try f
     catch { case e: StackOverflowError => throw new ProviderStackOverflow(e) }
 
+  /** `t`, or a [[ProviderStackOverflow]] carrying it: for a provider's failure recorded in a future that a fiber reads,
+    * which would otherwise die on it.
+    */
+  def carry(t: Throwable): Throwable = t match {
+    case e: StackOverflowError => new ProviderStackOverflow(e)
+    case other                 => other
+  }
+
   /** The `StackOverflowError` a [[ProviderStackOverflow]] carries, or `t` itself. */
   def unwrap(t: Throwable): Throwable = t match {
     case overflow: ProviderStackOverflow => overflow.error

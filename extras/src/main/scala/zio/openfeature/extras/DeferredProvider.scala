@@ -76,16 +76,22 @@ final class DeferredProvider(name: String)(construct: () => FeatureProvider) ext
       catch {
         case t: Throwable =>
           stateRef.set(State.Shutdown)
-          delegate.shutdown()
-          throw t
+          throw shutDownAfter(delegate, t)
       }
       // Publish the delegate — unless shutdown() raced in during construction, in which case the state is already
       // Shutdown and we must tear the freshly built delegate down so its background threads don't leak.
-      if (!stateRef.compareAndSet(State.Constructing, State.Active(delegate))) {
-        delegate.shutdown()
-        throw shutDownError
-      }
+      if (!stateRef.compareAndSet(State.Constructing, State.Active(delegate)))
+        throw shutDownAfter(delegate, shutDownError)
     } else if (stateRef.get() == State.Shutdown) throw shutDownError
+
+  /** Shut `delegate` down best-effort and return `cause`, the error `initialize()` throws: a failure of the delegate's
+    * `shutdown()` is attached to it as suppressed rather than replacing it.
+    */
+  private def shutDownAfter(delegate: FeatureProvider, cause: Throwable): Throwable = {
+    try delegate.shutdown()
+    catch { case e: Throwable => if (e ne cause) cause.addSuppressed(e) }
+    cause
+  }
 
   private def shutDownError =
     new dev.openfeature.sdk.exceptions.FatalError(s"DeferredProvider '$name' was shut down or failed to start")

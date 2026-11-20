@@ -100,9 +100,11 @@ private[openfeature] object ProviderRegistration {
     def initOutcome: Task[Unit] =
       bound match {
         case Bound.Managed(_) =>
-          ZIO.fromCompletableFuture(
-            armed.fold(CompletableFuture.completedFuture(()))(_.attempt.outcome).thenApply[Unit](_ => ())
-          )
+          ZIO
+            .fromCompletableFuture(
+              armed.fold(CompletableFuture.completedFuture(()))(_.attempt.outcome).thenApply[Unit](_ => ())
+            )
+            .mapError(ProviderCalls.unwrap)
         // Read from the SDK, as for no library-registered provider; slowly, since only an orphan's watcher waits on it.
         case Bound.Foreign(_) =>
           ZIO
@@ -181,6 +183,7 @@ private[openfeature] object ProviderRegistration {
           }
           ZIO.fromCompletableFuture(outcome.orTimeout(timeout.toMillis, TimeUnit.MILLISECONDS))
         }
+        .mapError(ProviderCalls.unwrap)
         .mapError {
           case _: TimeoutException => new TimeoutException(s"Provider initialization exceeded $timeout")
           case other               => initFailure(other)

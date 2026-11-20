@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.2.1] — 2026-11-19
+
 ### Fixed
 
 - **A provider that only names itself in `initialize()` no longer loses its name to a READY that arrives before the
@@ -2645,7 +2647,8 @@ promotes `[Unreleased]` to the new version section when a release tag is cut.
 
 Internal refactors that don't change behaviour or surface area don't need a CHANGELOG entry. When in doubt: write one.
 
-[Unreleased]: https://github.com/EtaCassiopeia/zio-openfeature/compare/v2.2.0...HEAD
+[Unreleased]: https://github.com/EtaCassiopeia/zio-openfeature/compare/v2.2.1...HEAD
+[2.2.1]: https://github.com/EtaCassiopeia/zio-openfeature/compare/v2.2.0...v2.2.1
 [2.2.0]: https://github.com/EtaCassiopeia/zio-openfeature/compare/v2.1.0...v2.2.0
 [2.1.0]: https://github.com/EtaCassiopeia/zio-openfeature/compare/v2.0.0...v2.1.0
 [2.0.0]: https://github.com/EtaCassiopeia/zio-openfeature/compare/v1.2.1...v2.0.0

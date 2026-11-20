@@ -79,5 +79,16 @@ class DroppedDeliveries(unittest.TestCase):
         self.assertFalse(any(a["action"] == "Deliver" for a in actions))
 
 
+
+class ActionCounts(unittest.TestCase):
+    def test_counts_each_action_once_per_run_and_ignores_runs_not_modelled(self):
+        results = [
+            ("a", [{"action": "SwapStart"}, {"action": "SwapStart"}, {"action": "ScopeClose"}], "accepted", "", None),
+            ("b", [{"action": "ScopeClose"}], "accepted", "", None),
+            ("c", None, None, "not modelled", None),
+        ]
+        self.assertEqual(validate.action_counts(results), {"ScopeClose": 2, "SwapStart": 1})
+
+
 if __name__ == "__main__":
     unittest.main()

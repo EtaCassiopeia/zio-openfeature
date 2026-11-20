@@ -15,7 +15,8 @@ name: Formal model
 # mutants; on every run, the runs fromAcquireAsync's test suites record are checked against it, and must take every
 # action of the model between them.
 # Trace validation checks that runs of the library are behaviours of the model: the checker's own fixtures, and the runs
-# the lifecycle test suites record (recorded-traces), on every pull request, on main, nightly and on demand. The replay
+# the lifecycle test suites and the concurrent simulation record (recorded-traces), on every pull request, on main,
+# nightly (the simulation ten times over, from a rotating seed) and on demand. The replay
 # checks the other direction: behaviours generated from the model are replayed against the lifecycle's pure step
 # (formal/lifecycle/replay-map.md), 2000 from a fixed seed on every run and 20000 from a rotating seed nightly. The
 # registry model's behaviours are generated the same way, per topology, ahead of a replay through the real code.
@@ -63,6 +64,14 @@ on:
       - 'core/src/test/scala/zio/openfeature/FeatureFlagRegistrySpec.scala'
       - 'testkit/src/test/scala/zio/openfeature/testkit/RegistryFaultSpec.scala'
       - 'testkit/src/test/scala/zio/openfeature/testkit/BoundDomainSpec.scala'
+      - 'simulation/src/test/scala/zio/openfeature/simulation/ConcurrentSimulationSpec.scala'
+      - 'simulation/src/test/scala/zio/openfeature/simulation/SchedulePerturber.scala'
+      - 'simulation/src/test/scala/zio/openfeature/simulation/Harness.scala'
+      - 'simulation/src/test/scala/zio/openfeature/simulation/SimulationTrace.scala'
+      - 'simulation/src/test/scala/zio/openfeature/simulation/SimLeaf.scala'
+      - 'simulation/src/test/scala/zio/openfeature/simulation/Spec.scala'
+      - 'simulation/src/test/scala/zio/openfeature/simulation/Runner.scala'
+      - 'simulation/src/test/scala/zio/openfeature/simulation/PlanCodec.scala'
   push:
     branches: [main]
     paths:
@@ -106,6 +115,14 @@ on:
       - 'core/src/test/scala/zio/openfeature/FeatureFlagRegistrySpec.scala'
       - 'testkit/src/test/scala/zio/openfeature/testkit/RegistryFaultSpec.scala'
       - 'testkit/src/test/scala/zio/openfeature/testkit/BoundDomainSpec.scala'
+      - 'simulation/src/test/scala/zio/openfeature/simulation/ConcurrentSimulationSpec.scala'
+      - 'simulation/src/test/scala/zio/openfeature/simulation/SchedulePerturber.scala'
+      - 'simulation/src/test/scala/zio/openfeature/simulation/Harness.scala'
+      - 'simulation/src/test/scala/zio/openfeature/simulation/SimulationTrace.scala'
+      - 'simulation/src/test/scala/zio/openfeature/simulation/SimLeaf.scala'
+      - 'simulation/src/test/scala/zio/openfeature/simulation/Spec.scala'
+      - 'simulation/src/test/scala/zio/openfeature/simulation/Runner.scala'
+      - 'simulation/src/test/scala/zio/openfeature/simulation/PlanCodec.scala'
   schedule:
     - cron: '17 3 * * *'
   workflow_dispatch:
@@ -417,6 +434,23 @@ jobs:
         env:
           TRACE_TIMEOUT_SECS: '900'
         run: python3 validate.py ../../tla2tools.jar ../../CommunityModules-deps.jar "${GITHUB_WORKSPACE}/traces"
+      # The concurrent simulation's runs, each under its seeded schedule perturbation: the base budget on pull requests
+      # and main, ten times it from a rotating seed nightly. Each trace is written beside its plan (.plan.json), which
+      # replays a rejected run through the simulation's regression corpus.
+      - name: Record the concurrent simulation's runs
+        env:
+          ZOF_TRACE: '1'
+          ZOF_TRACE_DIR: ${{ github.workspace }}/traces/simulation
+          ZOF_PBT_SCALE: ${{ github.event_name == 'schedule' && '10' || '' }}
+          ZOF_PBT_SEED: ${{ github.event_name == 'schedule' && github.run_id || '' }}
+        run: sbt "simulation/testOnly zio.openfeature.simulation.ConcurrentSimulationSpec"
+      # Also when a simulation case failed: a failed run's trace is evidence too.
+      - name: Check every simulation run is a behaviour of the model
+        if: success() || failure()
+        working-directory: formal/lifecycle
+        env:
+          TRACE_TIMEOUT_SECS: '900'
+        run: python3 validate.py ../../tla2tools.jar ../../CommunityModules-deps.jar --actions "${GITHUB_WORKSPACE}/traces/simulation"
       - name: Keep the recorded runs
         if: failure()
         uses: actions/upload-artifact@v7

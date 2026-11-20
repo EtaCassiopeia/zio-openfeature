@@ -73,8 +73,8 @@ fall in: a ShutdownDone or ScopeClose label carries `shuts`, how many providers'
 `threw`, how many of those calls threw, and `returned`, how many returned at all (the rest outlived the bound); the
 model's TearDown may shut down no more providers, and no more of each behaviour, than the run counted (the SDK's
 executor can run a queued shutdown inside the teardown that the model placed before it, so the run may count more).
-Every label carries `owner`: an OrphanRecorded point marks the instance as owning its API, the topology whose teardown
-the counts constrain. Shutdown points outside a teardown (the SDK's shutDownOld, an orphan's settle, a rollback's
+Every label carries `owner`: the build's BuildBind with `owns` true, or an OrphanRecorded point, marks the instance as
+owning its API, the topology whose teardown the counts constrain. Shutdown points outside a teardown (the SDK's shutDownOld, an orphan's settle, a rollback's
 cleanup) stay free. A run recorded before the wrapper had these
 points carries `shuts = -1`, and the check does not constrain its teardowns.
 """
@@ -113,9 +113,11 @@ def labels(records):
         for key in ("providerInstance", "watchInstance"):
             who(r, key)
     recorded = any(r["point"] == "ProviderShutDown" for r in records)
-    # Only an instance that owns its API records an orphan, so one marks the run's instance as the owner; the model
-    # then takes the owning topology, whose teardown the counts constrain.
-    owner = any(r["point"] == "OrphanRecorded" for r in records)
+    # The run's instance owns its API when its build says so (`owns` on the BuildBind before Begin), or when it records
+    # an orphan, which only an owner does; the model then takes the owning topology, whose teardown the counts
+    # constrain. Without either, the model may take either topology.
+    owner = any(r["point"] == "OrphanRecorded" for r in records) or any(
+        r["point"] == "BuildBind" and r.get("owns") == "true" for r in records[:begin])
     teardown = None
     in_swap = False
     swap_outcome = None

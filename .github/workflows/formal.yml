@@ -17,7 +17,8 @@ name: Formal model
 # Trace validation checks that runs of the library are behaviours of the model: the checker's own fixtures, and the runs
 # the lifecycle test suites record (recorded-traces), on every pull request, on main, nightly and on demand. The replay
 # checks the other direction: behaviours generated from the model are replayed against the lifecycle's pure step
-# (formal/lifecycle/replay-map.md), 2000 from a fixed seed on every run and 20000 from a rotating seed nightly.
+# (formal/lifecycle/replay-map.md), 2000 from a fixed seed on every run and 20000 from a rotating seed nightly. The
+# registry model's behaviours are generated the same way, per topology, ahead of a replay through the real code.
 on:
   pull_request:
     types: [opened, synchronize, reopened, edited]
@@ -356,6 +357,29 @@ jobs:
         with:
           name: caching-behaviours
           path: caching-behaviours/
+          retention-days: 14
+      # The registry: behaviours of formal/registry, restricted to steps a replay through the real code can drive, in
+      # each of its two topologies (one registry, or instances on one shared API). Generated and checked for shape and
+      # for every action; nothing replays them yet.
+      - name: Check the registry generator's action discovery and by-design table
+        working-directory: formal/registry
+        run: python3 -m unittest test_generate
+      - name: Generate behaviours of the registry model
+        working-directory: formal/registry
+        env:
+          NUM: ${{ github.event_name == 'schedule' && '20000' || '2000' }}
+          SEED: ${{ github.event_name == 'schedule' && github.run_id || '7' }}
+        run: |
+          echo "seed ${SEED}, ${NUM} behaviours per topology"
+          for topology in registry shared; do
+            python3 generate.py ../../tla2tools.jar ../../CommunityModules-deps.jar "${GITHUB_WORKSPACE}/registry-behaviours/${topology}" --topology "${topology}" --num "${NUM}" --depth 30 --seed "${SEED}"
+          done
+      - name: Keep the registry's behaviours
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: registry-behaviours
+          path: registry-behaviours/
           retention-days: 14
 
   # Every run the lifecycle test suites record is a behaviour of the model, on pull requests too, so a change the model

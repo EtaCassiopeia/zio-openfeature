@@ -1,0 +1,16 @@
+CONSTANTS
+    Instances = {{instances}}
+    Domains = {{domains}}
+    Default = default
+    Providers = {p1, p2, p3}
+    MaxSwaps = 2
+    None = None
+    OutDir = "{out}"
+    Depth = {depth}
+    CloseFrom = {close_from}
+    Topology = "{topology}"
+    DefaultProvider = p1
+    AllowTimeouts = FALSE
+SPECIFICATION GSpec
+INVARIANT ThenEnabled LockProgresses
+ACTION_CONSTRAINT Export

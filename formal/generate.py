@@ -33,10 +33,27 @@ def read(model_dir, name):
         return f.read()
 
 
+def constants_of(module):
+    """The names a module declares as constants: a `CONSTANT(S)` keyword followed by names, on its line or on the
+    indented lines below it."""
+    names = set()
+    for head, body in re.findall(r"^CONSTANTS?\b([^\n]*)\n((?:[ \t]+[^\n]*\n)*)", module, re.M):
+        text = re.sub(r"\\\*[^\n]*", "", head + "\n" + body)
+        names.update(re.findall(r"\b([A-Za-z_][A-Za-z0-9_]*)\b", text))
+    return names
+
+
+def next_actions(module, operator):
+    """The action names that `operator` disjoins in `module`: its capitalised names, but for the module's constants
+    (a quantifier's bound set, `\\E i \\in Instances`) and TLA+'s own `BOOLEAN`."""
+    block = re.search(rf"^{re.escape(operator)} ==\n(.*?)\n\n", module, re.S | re.M).group(1)
+    names = set(re.findall(r"\b([A-Z][A-Za-z0-9]+)\b", re.sub(r'"[^"]*"', "", block)))
+    return names - constants_of(module) - {"BOOLEAN", "All"}
+
+
 def discover_next(model_dir, file, operator):
     """The action names that `operator` disjoins."""
-    block = re.search(rf"^{re.escape(operator)} ==\n(.*?)\n\n", read(model_dir, file), re.S | re.M).group(1)
-    return set(re.findall(r"\b([A-Z][A-Za-z0-9]+)\b", re.sub(r'"[^"]*"', "", block))) - {"BOOLEAN", "All"}
+    return next_actions(read(model_dir, file), operator)
 
 
 def discover_pluscal(model_dir, file):

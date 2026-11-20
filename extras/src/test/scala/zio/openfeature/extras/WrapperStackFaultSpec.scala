@@ -243,7 +243,16 @@ object WrapperStackFaultSpec extends ZIOSpecDefault {
       Fault.Throw(new StackOverflowError("shutdown overflow")),
       calls = 1
     ),
-    Case(List(Layer.Cache, Layer.Breaker), Fault.Succeed, List(event(OFProviderEvent.PROVIDER_READY)), Fault.Succeed, 1)
+    Case(
+      List(Layer.Cache, Layer.Breaker),
+      Fault.Succeed,
+      List(event(OFProviderEvent.PROVIDER_READY)),
+      Fault.Succeed,
+      1
+    ),
+    // Two wrappers over a chain, which has no name until it initializes: the outer one must not settle a name early.
+    Case(List(Layer.Multi, Layer.Cache, Layer.Cache), Fault.Succeed, List(Fault.Succeed), Fault.Succeed, 1),
+    Case(List(Layer.Multi, Layer.Cache, Layer.Breaker), Fault.Succeed, List(Fault.Succeed), Fault.Succeed, 1)
   )
 
   def spec = suite("WrapperStackFaultSpec")(

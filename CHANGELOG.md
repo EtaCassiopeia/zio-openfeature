@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Two extras wrappers over a multi-provider chain no longer drop every event the chain emits.** In a stack such as
+  `CircuitBreakerProvider(CachingProvider(FeatureFlags.multiProvider(...)))`, the outer wrapper read the inner one's
+  missing name as `"CachingProvider(null)"` before the chain had initialized, and the library settled that as the
+  provider's name. Every READY, ERROR, STALE and configuration change from the chain then went out under its real
+  name and was dropped as another provider's, so the status never followed it. A wrapper now has no name while the
+  provider it wraps has none, at any depth. Introduced in 2.2.1 (#984).
+
 ## [2.2.1] — 2026-11-19
 
 ### Fixed

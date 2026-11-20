@@ -191,13 +191,13 @@ sees every event you emit.
 |:--------|:-------|
 | `setErrorMode(mode)` | every evaluation fails with `mode`: `FlagNotFound`, `ParseError`, `TypeMismatch`, `ProviderNotReady` or `General` |
 | `setFailing(true)` | same as `setErrorMode(ErrorMode.General)`; `setFailing(false)` clears it |
-| `setFailureProbability(p)` | each evaluation fails with probability `p` (clamped to 0-1), seeded from the test's `Random`, so a run replays with the same seed |
+| `setFailureProbability(p)` | each evaluation fails with probability `p` (clamped to 0-1), seeded from the test's `Random`, so a run replays with the same seed. Concurrent evaluations replay the same draws, but not which call gets which |
 | `setDelay(d)` | each evaluation sleeps `d` first, on the real clock. The 1 second evaluation timeout runs on ZIO's clock, so to test it add `@@ TestAspect.withLiveClock`: under the default `TestClock` it never fires, and the read succeeds after the delay |
 | `clearErrorMode`, `clearDelay`, `clearBehavior` | undo the above |
 
 Each control has a test aspect that sets it before the test and restores what it found afterwards, so aspects nest:
-`TestFeatureProvider.withErrorMode(mode)`, `withFailures`, `withFailureProbability(p)` and `withDelay(d)`. They need
-`TestFeatureProvider` in the environment. An error mode applies to every key; to make one key missing, leave it unset.
+`TestFeatureProvider.withErrorMode(mode)`, `withFailures`, `withFailureProbability(p)` (seeded the same way) and
+`withDelay(d)`. They need `TestFeatureProvider` in the environment. An error mode applies to every key; to make one key missing, leave it unset.
 
 To make the provider itself misbehave (a hung `initialize()`, a failure on the first call only), see
 [fault injection](testing-providers.md#inject-faults-into-a-provider).

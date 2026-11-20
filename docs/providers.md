@@ -163,6 +163,8 @@ The strategy decides when the chain moves on:
   although another member could answer. A member that sends no events (not an `EventProvider`, such as a
   `DeferredProvider`) counts as `Ready` once the chain has initialized. This also holds once a failed initialization
   of the chain has been retried, for example by a registry's next `getClient`.
+- Shutting the chain down shuts down every member. If a member's `shutdown()` throws, the chain's `shutdown()` fails
+  with that error once all of them have run.
 - The chain takes over its members' event channels, as the SDK does for a registered provider. A member whose channel
   something else already holds (it is also registered with an API, sits in another chain, or appears twice in this
   one) keeps it, and counts in this chain as a member that sends no events.
@@ -219,6 +221,11 @@ chains checks; any `FeatureProvider => Task[Unit]` is one.
 
 The check runs before `initialize()` and without global or ambient context, so initialize inside `acquire` a provider
 that only answers afterwards.
+
+A timeout or layer release does not wait for a blocking `acquire` or `verify`. That attempt keeps its provider and
+`Scope` until the call returns, then shuts the provider down and closes the `Scope`, possibly after the next attempt
+has started or `onConstructionError` has run. An attempt suspended in an asynchronous call is interrupted instead, and
+its provider is shut down before either happens.
 
 The snippet's `compose` is passed with `AcquireConfig.withCompose`: it asks the real provider first and falls back only
 when it lacks the flag, where the default falls back on any error.

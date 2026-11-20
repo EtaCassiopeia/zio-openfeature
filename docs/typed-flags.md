@@ -129,6 +129,10 @@ core builds it from the instance.
     On the `Float` wire a value beyond `Float` range is `TYPE_MISMATCH`, not `Infinity`; a custom `FlagType` on that
     wire receives the `Double` for such a value, and a `Float` for every other.
 
+    `Int` and `Long` read a provider's number exactly, including a `BigDecimal`, `BigInteger` or `BigInt`: a whole
+    number in range decodes, and anything else fails with `TypeMismatch` rather than rounding. `Double` rejects a finite
+    number too large for a `Double`.
+
     `FlagType.from` takes a decoder and an encoder, and the flag is stored as an **object**. Values inside an object
     flag pass through the SDK, so numbers arrive as `Double` and `null` fields are dropped: decode numbers through
     `FlagType[Int]` or `FlagType[Long]`, and model optional fields as `Option`. The encoder matters even if you never

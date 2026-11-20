@@ -42,7 +42,7 @@ TFailMark(n) ==
     THEN FailMark(n) /\ UNCHANGED absorbed
     ELSE /\ apiOpen
          /\ phase[n] \in {"building", "open"}
-         /\ swapping # n
+         /\ n \notin swapping
          /\ bound[domainOf[n]] # None
          /\ failedOn[n] # bound[domainOf[n]]
          /\ absorbed' = absorbed \cup {n}

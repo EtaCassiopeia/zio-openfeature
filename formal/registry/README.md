@@ -42,7 +42,7 @@ second instance.
 | `BuildFail(i)` | `buildClient`: `awaitReady` failed; `releaseReplacedFailure` ran first (`ReleaseReplaced`, its guard here), then the failed client is kept in `lastFailed` and its child scope closes. Its provider is left running and in its slot, unmarked, so a retry can initialize it again |
 | `Evict(i)` | `runBuild`'s typed-failure branch: `lock.withPermit(remove *> promise.fail(err))` |
 | `ReleaseReplaced(i)` | `releaseReplacedFailure`: a retry with another provider failed too, so the domain's previous failed client (`lastFailed`) runs `shutDownFailedBuild` on its own provider, which the retry replaced, deciding as a failed build does (`LibraryShuts`). The SDK would shut it down only on the replacing provider's success. The registry's close releases it too (`leftBehind`), so this step only makes the release prompt, which no property checks: no mutant drops it |
-| `SwapStart(i, p)` | `FeatureFlagsLive.setProvider`, or `FeatureFlagRegistry.setProvider(d, p)` on the domain's client; one swap at a time here, as each instance's swap lock and the registry's one client per domain make concurrent swaps independent. The SDK binds `p` before its `initialize()` runs, so a sibling built on `p` from here shares the attempt. A swap that reaches its binding after a sibling's `initialize()` of `p` has started is refused (`ProviderRegistration.StillInitializing`), and one whose SDK task the sibling's task overtakes still shares it |
+| `SwapStart(i, p)` | `FeatureFlagsLive.setProvider`, or `FeatureFlagRegistry.setProvider(d, p)` on the domain's client; one swap per instance, as each instance holds its own swap lock: swaps of different instances, and so of different domains of a registry, overlap. The SDK binds `p` before its `initialize()` runs, so a sibling built on `p` from here shares the attempt. A swap that reaches its binding after a sibling's `initialize()` of `p` has started is refused (`ProviderRegistration.StillInitializing`), and one whose SDK task the sibling's task overtakes still shares it |
 | `SwapDone(i)` | the swap succeeded. The SDK's `shutDownOld` shuts the replaced provider down only when no slot holds its state manager any more; one another slot still holds keeps it |
 | `SwapOldShut(i)` | a sibling's binding of the swap's provider shares its registration and its `initialize()` started first: the swap's SDK task finds the call under way, returns at once, and shuts the replaced provider down (`shutDownOld`) when no slot holds it, before the swap's outcome. A rollback then registers it again, as a new registration. Only before the outcome: one after a rollback would shut down a provider the rollback had just registered again |
 | `SwapFailMark(i)` | `runSwap`, the failure branch, setting `failedRegistration`: the instance no longer counts as using `p` (a timed-out swap is not marked: `SwapTimeout`) |
@@ -65,7 +65,7 @@ second instance.
 | `owner` | the instance with `ownsApi`; `None` once it tore the API down, or when none owns it (the registry: see `OwnerClose`) |
 | `apiOpen` | the API has not been shut down |
 | `lock` | the registry's `Semaphore(1)`: who holds it |
-| `swapping` | the instance whose `setProvider` is in flight |
+| `swapping` | the instances whose `setProvider` is in flight. Each instance holds its own swap lock, so swaps on different instances of one API overlap; one instance's swaps never do |
 | `bound[d]` | the SDK slot: `api.getProvider(d)` |
 | `registered` | the providers with a state manager: `ProviderRepository.isStateManagerRegistered`. One exception: a wrapper a failure shut down leaves it, though the SDK keeps its manager in the slot, because the wrapper absorbs the SDK's later `shutdown()`. So here it means a registration with a shutdown still to come, and `ForeignNeverShutByLibrary` says nothing about these paths: the two invariants below do |
 | `shuts[p]`, `by[p]` | ghosts: how many times `p`'s `shutdown()` ran in its current registration, and whether the SDK or the library ran it last. A provider registered again after a shutdown is a new registration, and its count starts over, as `shuts` does at `SdkBind` in the lifecycle model |
@@ -98,6 +98,8 @@ second instance.
 | `ClosedApiServesNone` | once the API is gone, no instance is live: an owner's or the registry's close retires them all |
 | `SiblingsUnaffected` (an action property) | a non-owner's close changes no slot and no sibling's phase |
 | `OnlyFailedBuildsEvicted` (an action property) | only a failed build's promise is evicted: a client a caller got, or a build still running, keeps its promise |
+
+`Registry.cfg` (two instances, two providers, two swaps) and `Concurrent.cfg` (the same with a third provider, about 900k states) check them all on every run of the `tlc` job. Swaps of different instances overlap in both: the model once allowed one swap per API, and recorded runs of instances swapping at once were rejected until it allowed one per instance.
 
 ## Mutants
 

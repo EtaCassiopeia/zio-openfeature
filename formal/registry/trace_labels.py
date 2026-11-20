@@ -169,12 +169,17 @@ def labels(records):
             counts[p] = counts.get(p, 0) + 1
             # The SDK shut a swap's old provider down before the swap's outcome: a sibling's binding of the swap's
             # provider shares its registration and started its initialize() first (the model's SwapOldShut).
+            # One shutdown is one SwapOldShut, however many swaps in flight moved off p: two instances swapping off a
+            # provider they share both see it shut down, and the model's SwapDone of the other then finds it no longer
+            # registered.
             if not stopped and not owner_closed and not registry_closed:
-                for m, t in inst.items():
-                    w = t.swap
-                    if (w is not None and w["bound"] and not w["done"] and w.get("prior") == p
-                            and any(o is not t and o.provider == w["provider"] for o in inst.values())):
-                        emit("SwapOldShut", instance=m)
+                swaps_off = [(m, t.swap) for m, t in inst.items()
+                             if t.swap is not None and t.swap["bound"] and not t.swap["done"]
+                             and t.swap.get("prior") == p
+                             and any(o is not t and o.provider == t.swap["provider"] for o in inst.values())]
+                if swaps_off:
+                    emit("SwapOldShut", instance=swaps_off[0][0])
+                    for _, w in swaps_off:
                         w["prior"] = None
             continue
         if point == "ShutdownDone" and n is not None:

@@ -102,13 +102,13 @@ object ConcurrentSimulationSpec extends ZIOSpecDefault {
       // Recorded first, then perturbed: the perturber's delay comes after the point is recorded, and never runs under
       // the recorder's permit, so recording takes no interleaving away.
       trace <- TraceProbe.make
-      _ <- ZIO.scoped {
+      _     <- ZIO.scoped {
         for {
           pair <- Harness
             .installProbed(built.provider, TraceProbe.alongside(perturber.lifecycle, trace), perturber.evaluation)
             .mapError(e => s"install failed for ${Spec.show(spec0)}: $e")
           (ff, ad) = pair
-          _ <- ZIO.foreachDiscard(trace)(_.begin(built.provider))
+          _      <- ZIO.foreachDiscard(trace)(_.begin(built.provider))
           hook   <- RecordingHook.make()
           _      <- ff.addHook(hook)
           nextId <- Ref.make(Spec.maxId(spec0) + 1)

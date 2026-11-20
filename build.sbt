@@ -209,7 +209,7 @@ lazy val commonSettings = Seq(
     "dev.zio" %% "zio-test-sbt" % zioVersion % Test
   ),
   // Each module's last release, per `RELEASING.md`. check-mima-filters.sh reads the version from this line.
-  mimaPreviousArtifacts := Set(organization.value %% moduleName.value % "2.2.0"),
+  mimaPreviousArtifacts := Set(organization.value %% moduleName.value % "2.2.1"),
   // TASTy only exists for the Scala 3 artifacts.
   tastyMiMaPreviousArtifacts := { if (scalaBinaryVersion.value == "3") mimaPreviousArtifacts.value else Set.empty },
   checkPublishedPins         := checkPublishedPinsTask.value,
@@ -306,24 +306,7 @@ lazy val core = (project in file("core"))
     ),
     // The lifecycle replay (LifecycleReplaySpec) reads the model's behaviours from this property; the forked test JVM
     // does not inherit the build JVM's properties, so it is passed on.
-    Test / javaOptions ++= sys.props.get("zof.lifecycle.behaviours").map("-Dzof.lifecycle.behaviours=" + _).toList,
-    // The lifecycle probe's points carry the provider they concern since 2.2.0; the probe is internal test tooling.
-    // The registry and the factories take that probe too: `FeatureFlagRegistryLive` is a private class and
-    // `FeatureFlagsFactories` a private[openfeature] object, so no caller outside the library can see either signature.
-    tastyMiMaConfig ~= (_.withMoreProblemFilters(
-      java.util.Arrays.asList(
-        ProblemMatcher.make("zio.openfeature.internal.LifecycleProbe.Point.*"),
-        ProblemMatcher.make("zio.openfeature.FeatureFlagRegistryLive.<init>"), // non-public: private[openfeature]
-        ProblemMatcher.make("zio.openfeature.internal.FeatureFlagsFactories.fromProvider"),
-        // non-public: private[openfeature]; takes the instance's swap lock since 2.2.0
-        ProblemMatcher.make("zio.openfeature.internal.EventBridge.<init>*"),
-        // non-public: private[openfeature] lifecycle inputs; admission also reads whether a shutdown() still runs
-        ProblemMatcher.make("zio.openfeature.internal.LifecycleInput.Admit.*"),
-        ProblemMatcher.make("zio.openfeature.internal.LifecycleInput.SdkShutDownAwaited.*"),
-        // non-public: private[openfeature] test-only collector, now a per-test collector the aspect opens
-        ProblemMatcher.make("zio.openfeature.internal.Quiescence.observed")
-      )
-    ))
+    Test / javaOptions ++= sys.props.get("zof.lifecycle.behaviours").map("-Dzof.lifecycle.behaviours=" + _).toList
   )
 
 // Extras module - built-in providers (HOCON, env vars, caching wrapper)

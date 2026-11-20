@@ -102,7 +102,7 @@ mutants = {
     # on a dead API, and its rollback binds a provider nothing will shut down.
     'the registry closes during a swap': (
         ('SharedShutDownOnce',), [
-        ("    /\\ owner = None\n    /\\ swapping = None\n", "    /\\ owner = None\n")]),
+        ("    /\\ owner = None\n    /\\ swapping = {}\n", "    /\\ owner = None\n")]),
     # A live client's promise is evicted (a client a caller got, or a build still running, removed from the map): the
     # next getClient builds a second client for the domain.
     'a live client\'s promise is evicted': (

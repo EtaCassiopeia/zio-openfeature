@@ -1,0 +1,11 @@
+{"seq":0,"point":"BuildBind","arg":"","provider":"q","providerInstance":"Q","domain":"a","owns":"true","async":"false","instance":"b1"}
+{"seq":1,"point":"BuildBind","arg":"","provider":"q","providerInstance":"Q","domain":"b","owns":"false","async":"false","instance":"b2"}
+{"seq":2,"point":"SwapStart","arg":"","provider":"n","providerInstance":"N","instance":"b1"}
+{"seq":3,"point":"SdkBind","arg":"","instance":"b1"}
+{"seq":4,"point":"SwapStart","arg":"","provider":"n","providerInstance":"N","instance":"b2"}
+{"seq":5,"point":"SdkBind","arg":"","instance":"b2"}
+{"seq":6,"point":"ProviderShutDown","arg":"1","provider":"q","providerInstance":"Q","caller":"t","instance":"b1"}
+{"seq":7,"point":"ApplySignal","arg":"SwapSucceeded(Ready)","instance":"b1"}
+{"seq":8,"point":"SwapDone","arg":"","instance":"b1"}
+{"seq":9,"point":"ApplySignal","arg":"SwapSucceeded(Ready)","instance":"b2"}
+{"seq":10,"point":"SwapDone","arg":"","instance":"b2"}

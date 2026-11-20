@@ -44,8 +44,8 @@ VARIABLES
     owner,       \* the instance that owns the API, or None: its shutdown tears the API down
     apiOpen,     \* the API has not been torn down
     lock,        \* the registry's semaphore: the instance holding it, or None
-    swapping,    \* the instance with a swap in flight, or None (one at a time: each holds its own lock, and the
-                 \* registry's setProvider swaps the one client of the domain)
+    swapping,    \* the instances with a swap in flight: each instance holds its own swap lock, so swaps on
+                 \* different instances of one API may overlap
     swaps,       \* how many swaps started
     \* The SDK
     bound,       \* each slot's provider, or None
@@ -83,7 +83,7 @@ TypeInv ==
     /\ owner \in Instances \cup {None}
     /\ apiOpen \in BOOLEAN
     /\ lock \in Instances \cup {None}
-    /\ swapping \in Instances \cup {None}
+    /\ swapping \subseteq Instances
     /\ swaps \in 0..MaxSwaps
     /\ bound \in [Domains -> Providers \cup {None}]
     /\ registered \subseteq Providers
@@ -108,7 +108,7 @@ Init ==
     /\ owner = None
     /\ apiOpen = TRUE
     /\ lock = None
-    /\ swapping = None
+    /\ swapping = {}
     /\ swaps = 0
     /\ bound = [d \in Domains |-> None]
     /\ registered = {}
@@ -311,7 +311,7 @@ SwapStart(i, p) ==
     LET d == domainOf[i] IN
     /\ apiOpen
     /\ phase[i] = "open"
-    /\ swapping = None
+    /\ i \notin swapping
     /\ swaps < MaxSwaps
     /\ p # bound[d]
     /\ i \notin deciding
@@ -320,7 +320,7 @@ SwapStart(i, p) ==
     \* that call settles (refuseSwap); a swap off one is outside the model (README).
     /\ p \notin pending /\ ~Waiting(p)
     /\ bound[d] \notin pending
-    /\ swapping' = i
+    /\ swapping' = swapping \cup {i}
     /\ swaps' = swaps + 1
     /\ prior' = [prior EXCEPT ![i] = bound[d]]
     /\ bound' = [bound EXCEPT ![d] = p]
@@ -338,9 +338,9 @@ SwapDone(i) ==
     LET d == domainOf[i]
         old == prior[i]
     IN
-    /\ swapping = i
+    /\ i \in swapping
     /\ failedOn[i] # bound[d]
-    /\ swapping' = None
+    /\ swapping' = swapping \ {i}
     /\ prior' = [prior EXCEPT ![i] = None]
     /\ registered' = registered \ (IF SlotsOf(old) = {} THEN {old} ELSE {})
     /\ userOwned' = userOwned \ (IF SlotsOf(old) = {} THEN {old} ELSE {})
@@ -359,7 +359,7 @@ SwapOldShut(i) ==
     LET d == domainOf[i]
         old == prior[i]
     IN
-    /\ swapping = i
+    /\ i \in swapping
     /\ old # None
     /\ old \in registered
     /\ SlotsOf(old) = {}
@@ -374,7 +374,7 @@ SwapOldShut(i) ==
 
 \* The new provider failed to initialize: the instance counts as failed on it for its siblings from here on.
 SwapFailMark(i) ==
-    /\ swapping = i
+    /\ i \in swapping
     /\ failedOn[i] # bound[domainOf[i]]
     /\ failedOn' = [failedOn EXCEPT ![i] = bound[domainOf[i]]]
     /\ UNCHANGED << phase, domainOf, owner, apiOpen, lock, swapping, swaps, bound, registered, userOwned, shuts, by, everBound,
@@ -391,9 +391,9 @@ SwapFail(i) ==
         shut == IF others = {} THEN p \in registered
                 ELSE p \in registered /\ LibraryShuts(i, p)
     IN
-    /\ swapping = i
+    /\ i \in swapping
     /\ failedOn[i] = p
-    /\ swapping' = None
+    /\ swapping' = swapping \ {i}
     /\ prior' = [prior EXCEPT ![i] = None]
     /\ bound' = [bound EXCEPT ![d] = old]
     /\ registered' = (registered \ (IF shut THEN {p} ELSE {})) \cup {old}
@@ -419,11 +419,11 @@ SwapTimeout(i) ==
         p == bound[d]
         q == prior[i]
     IN
-    /\ swapping = i
+    /\ i \in swapping
     /\ failedOn[i] # p
     /\ SlotsOf(p) = {d}
     /\ replaced[q] = None
-    /\ swapping' = None
+    /\ swapping' = swapping \ {i}
     /\ prior' = [prior EXCEPT ![i] = None]
     /\ pending' = pending \cup {p}
     /\ replaced' = [replaced EXCEPT ![q] = p]
@@ -489,7 +489,7 @@ FailMark(i) ==
     /\ apiOpen
     /\ phase[i] \in {"building", "open"}
     /\ phase[i] = "building" => owner # i
-    /\ swapping # i
+    /\ i \notin swapping
     /\ failedOn[i] # bound[domainOf[i]]
     /\ bound[domainOf[i]] \in registered
     \* A timed-out swap's provider has no init deadline of its own here.
@@ -517,7 +517,7 @@ FailDecide(i) ==
 CloseInstance(i) ==
     /\ phase[i] = "open"
     /\ owner # i
-    /\ swapping # i
+    /\ i \notin swapping
     /\ i \notin deciding
     /\ phase' = [phase EXCEPT ![i] = "closed"]
     /\ UNCHANGED << domainOf, owner, apiOpen, lock, swapping, swaps, bound, registered, userOwned, shuts, by, everBound,
@@ -555,7 +555,7 @@ OwnerClose ==
     /\ apiOpen
     /\ owner # None
     /\ phase[owner] = "open"
-    /\ swapping = None
+    /\ swapping = {}
     /\ deciding = {}
     /\ lock = None
     /\ RetireAll
@@ -573,7 +573,7 @@ OwnerClose ==
 RegistryClose ==
     /\ apiOpen
     /\ owner = None
-    /\ swapping = None
+    /\ swapping = {}
     /\ deciding = {}
     /\ lock = None
     /\ RetireAll
@@ -647,7 +647,7 @@ FailedWrapperNotAbandoned ==
         LET holders == {i \in Instances : phase[i] \in {"building", "open", "closed", "failed", "evicted"}
                                            /\ bound[domainOf[i]] = p}
         IN (holders # {} /\ \A j \in Instances : prior[j] # p)
-           => \E i \in holders : failedOn[i] # p \/ i \in deciding \/ swapping = i
+           => \E i \in holders : failedOn[i] # p \/ i \in deciding \/ i \in swapping
 
 \* Concurrent getClient calls on one domain yield one instance: at most one promise per domain, ever.
 OneInstancePerDomain ==

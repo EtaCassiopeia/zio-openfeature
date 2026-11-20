@@ -20,6 +20,9 @@ TRACE = "RegistryTrace.tla"
 # (the guard, the text it is deleted from, that text without it, the fixture it rules out, the file)
 guards = [
     ("Create: one owner", "    /\\ own => owner = None\n", "", "two-owners"),
+    # Each instance holds its own swap lock: its swaps never overlap, though different instances' may.
+    ("SwapStart: one swap per instance", '    /\\ phase[i] = "open"\n    /\\ i \\notin swapping\n',
+     '    /\\ phase[i] = "open"\n', "one-instance-two-swaps-at-once"),
     ("Create: the slot holds no other provider, unless a failed registry build left it",
      "    /\\ \\/ bound[d] \\in {None, p}\n"
      "       \\/ /\\ \\E j \\in Instances : domainOf[j] = d /\\ phase[j] = \"evicted\"\n"
@@ -30,7 +33,7 @@ guards = [
      "                            /\\ q \\in registered\n"
      "                            /\\ q \\notin userOwned\n"
      "                            /\\ SlotsOf(q) = {}\n", "", "registry-retry-fails-too-and-releases-the-first-only-at-close"),
-    ("SwapDone: no failure marked", "    /\\ swapping = i\n    /\\ failedOn[i] # bound[d]\n", "    /\\ swapping = i\n",
+    ("SwapDone: no failure marked", "    /\\ i \\in swapping\n    /\\ failedOn[i] # bound[d]\n", "    /\\ i \\in swapping\n",
      "succeeds-after-its-failure"),
     ("UserBind: an empty slot", "    /\\ bound[d] = None\n    /\\ \\/ p \\notin everBound\n",
      "    /\\ \\/ p \\notin everBound\n",
@@ -44,8 +47,8 @@ guards = [
      "    /\\ bound[domainOf[i]] \\in registered\n", "failure-marked-twice"),
     # Anchored on the owner's phase: RegistryClose has the same deciding and lock guards.
     ("OwnerClose: no failure deciding",
-     '    /\\ phase[owner] = "open"\n    /\\ swapping = None\n    /\\ deciding = {}\n',
-     '    /\\ phase[owner] = "open"\n    /\\ swapping = None\n', "owner-closes-while-a-failure-decides"),
+     '    /\\ phase[owner] = "open"\n    /\\ swapping = {}\n    /\\ deciding = {}\n',
+     '    /\\ phase[owner] = "open"\n    /\\ swapping = {}\n', "owner-closes-while-a-failure-decides"),
     ("FailDecide: the model's decision", "         /\\ Agrees(p, LibraryShuts(n, p), Step.shut)\n", "",
      "failure-defers-to-nobody", TRACE),
     ("SwapFail: the model's decision", 'Lib("SwapFail", SwapDecided(Step.instance) /\\ SwapFail(Step.instance))',

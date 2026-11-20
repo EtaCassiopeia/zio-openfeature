@@ -191,6 +191,49 @@ the check rests on lets its reject fixture through. A run the model does not cov
 the skips per spec and reason (`trace-map.md` lists them). CI runs all of it in the `registry-traces` job of
 `formal.yml`.
 
+## Generated behaviours
+
+`Generate.tla` walks the model at random for a replay through the real code, the other direction of the trace
+check: each step labelled by the ghost `act`, every state written as one line of ndjson. It restricts `Next` to what
+one replay can drive, so every behaviour it writes is still a behaviour of the model:
+
+- **One topology per behaviour.** `registry` is one `FeatureFlagRegistry`: its API is private, so no instance owns it,
+  no user binds a provider and there is no owner close; its default slot is built from the provider the registry was
+  constructed with. `shared` is instances built on one shared API: no promise map, so no `Lookup`, `BuildFail`,
+  `Evict`, `ReleaseReplaced` or `RegistryClose`. `FailMark`, a failure under a shared API's build, and the
+  `FailDecide` after it, are the shared topology's.
+- **One `initialize()` per provider at a time.** No build or swap binds a provider whose call is in flight, and only a
+  call the instance started can fail under it. A provider whose call already returned starts none, so it cannot fail.
+  The ghosts `inFlight` and `ready` track this.
+- **No timed-out swap** while `AllowTimeouts` is false: the replay cannot yet fire a swap's deadline, and without one no
+  `initialize()` is left to settle (`InitSettle`).
+- **Steps the code takes in one go stay adjacent** (the ghost `then`). A failed build is evicted next, and a release
+  of the provider a retry replaced is followed by that retry's failed build: there is no probe point between them for
+  a replay to stop at. A `Check` is likewise followed by its `Create`, and is taken only when `Create`'s guards admit
+  a provider for that slot. Otherwise the semaphore would stay held for good, with nothing left to complete, fail or
+  close: the registry builds its default slot from one provider, which a swap may have mid-`initialize()`. The
+  invariants `ThenEnabled` (the step held to can be taken) and `LockProgresses` (a held semaphore is released by the
+  next step) check this as TLC walks.
+- **Closes come last**, from level `CloseFrom`. Then `Done` repeats, so every behaviour has `Depth` states.
+
+The ghost `total` counts each provider's shutdowns over all its registrations, with `RegistryTrace.tla`'s `Counted`
+rule (`shuts` restarts when a provider registers again), for the replay to compare with the code's own count.
+
+```sh
+python3 generate.py tla2tools.jar CommunityModules-deps.jar behaviours/registry --topology registry --num 2000 --depth 30
+python3 generate.py tla2tools.jar CommunityModules-deps.jar behaviours/shared --topology shared --num 2000 --depth 30
+python3 -m unittest test_generate
+```
+
+`generate.py` (the driver is `formal/generate.py`) fails when a behaviour is missing or short, when an action of
+`Next` has no label in `Generate.tla`, or when an action is never generated, except those its topology leaves out by
+design (`by_design`), each only while its reason still holds in `Generate.tla`, `Generate.cfg.in` and `Registry.tla`.
+It then checks the shape of what TLC wrote, from the model's own variables rather than the ghosts that drive the
+restrictions (`check_shape`): `total` counts every shutdown, each adjacent pair above is adjacent, no `Lookup`
+repeats, the registry's default slot is built from its one provider, and no action the topology leaves out occurs. CI generates
+2000 behaviours per topology from a fixed seed on every run, and 20000 from a rotating seed nightly, in the `traces`
+job of `formal.yml`.
+
 ## When its code changes
 
 `code-paths` lists the code this model describes. A pull request that changes one of those files without changing this

@@ -306,7 +306,18 @@ lazy val core = (project in file("core"))
     ),
     // The lifecycle replay (LifecycleReplaySpec) reads the model's behaviours from this property; the forked test JVM
     // does not inherit the build JVM's properties, so it is passed on.
-    Test / javaOptions ++= sys.props.get("zof.lifecycle.behaviours").map("-Dzof.lifecycle.behaviours=" + _).toList
+    Test / javaOptions ++= sys.props.get("zof.lifecycle.behaviours").map("-Dzof.lifecycle.behaviours=" + _).toList,
+    // A registration's wait for initialize() is armed through an InitDeadline, so a test can time a swap
+    // out when it chooses; production passes the default, the JDK timer it always used.
+    tastyMiMaConfig ~= (_.withMoreProblemFilters(
+      java.util.Arrays.asList(
+        ProblemMatcher.make("zio.openfeature.internal.FeatureFlagsFactories.build"),
+        ProblemMatcher.make("zio.openfeature.internal.ProviderRegistration.registerAndAwait"),
+        ProblemMatcher.make("zio.openfeature.internal.ProviderRegistration.registerThenAwait"),
+        ProblemMatcher.make("zio.openfeature.internal.ProviderRegistration.Registration.settle"),
+        ProblemMatcher.make("zio.openfeature.FeatureFlagsLive.<init>") // non-public: private[openfeature]
+      )
+    ))
   )
 
 // Extras module - built-in providers (HOCON, env vars, caching wrapper)

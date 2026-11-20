@@ -1,6 +1,6 @@
 package zio.openfeature.internal
 
-import java.util.concurrent.{CompletableFuture, TimeUnit, TimeoutException}
+import java.util.concurrent.{CompletableFuture, TimeoutException}
 
 import dev.openfeature.sdk.{
   ErrorCode,
@@ -151,14 +151,15 @@ private[openfeature] object ProviderRegistration {
       *
       * The wait is one future that completes with the outcome, fails when the SDK shuts the registration down because a
       * later one replaced it, and times out by itself. Nothing in it needs interrupting, so it keeps its deadline
-      * inside the swap's uninterruptible region, and the caller's own interrupt cannot cut it short there.
+      * inside the swap's uninterruptible region, and the caller's own interrupt cannot cut it short there. `deadline`
+      * arms the timeout on that future: a JDK timer by default, or a test's own.
       */
-    def settle(timeout: Duration): Task[Settled] =
+    def settle(timeout: Duration, deadline: InitDeadline = InitDeadline.default): Task[Settled] =
       reused match {
         case Some(state) => ZIO.attempt(checkBound()).as(fromReused(state))
         case None        =>
           bound match {
-            case Bound.Managed(m) => settleManaged(m, armed.getOrElse(m.arm()), timeout)
+            case Bound.Managed(m) => settleManaged(m, armed.getOrElse(m.arm()), timeout, deadline)
             case Bound.Foreign(_) => settleForeign(timeout)
           }
       }
@@ -166,7 +167,8 @@ private[openfeature] object ProviderRegistration {
     private def settleManaged(
       provider: ManagedProvider,
       armed: ManagedProvider.Armed,
-      timeout: Duration
+      timeout: Duration,
+      deadline: InitDeadline
     ): Task[Settled] = {
       val startedAt = java.lang.System.nanoTime()
       ZIO
@@ -181,7 +183,7 @@ private[openfeature] object ProviderRegistration {
           armed.shutDown.thenRun { () =>
             if (!isBound) outcome.completeExceptionally(new RegistrationSuperseded): Unit
           }
-          ZIO.fromCompletableFuture(outcome.orTimeout(timeout.toMillis, TimeUnit.MILLISECONDS))
+          ZIO.fromCompletableFuture(deadline.arm(outcome, provider, timeout))
         }
         .mapError(ProviderCalls.unwrap)
         .mapError {
@@ -308,9 +310,10 @@ private[openfeature] object ProviderRegistration {
     api: OpenFeatureAPI,
     domain: Option[String],
     provider: Bound,
-    timeout: Duration
+    timeout: Duration,
+    deadline: InitDeadline = InitDeadline.default
   ): Task[Settled] =
-    registerThenAwait(api, domain, provider, timeout)(ZIO.unit)
+    registerThenAwait(api, domain, provider, timeout, deadline)(ZIO.unit)
 
   /** [[registerAndAwait]], running `afterRegister` once the slot binds `provider` and before the wait. The build uses
     * it to attach its event bridge to a slot that already holds the new provider.
@@ -319,9 +322,10 @@ private[openfeature] object ProviderRegistration {
     api: OpenFeatureAPI,
     domain: Option[String],
     provider: Bound,
-    timeout: Duration
+    timeout: Duration,
+    deadline: InitDeadline = InitDeadline.default
   )(afterRegister: ZIO[R, Throwable, Unit]): ZIO[R, Throwable, Settled] =
-    register(api, domain, provider).flatMap(r => afterRegister *> r.settle(timeout))
+    register(api, domain, provider).flatMap(r => afterRegister *> r.settle(timeout, deadline))
 
   private def fromReused(state: ProviderState): Settled = state match {
     case ProviderState.READY => Settled.Ready

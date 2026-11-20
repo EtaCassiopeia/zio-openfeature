@@ -124,7 +124,8 @@ private[openfeature] object FeatureFlagsFactories {
     orphans: OrphanedProviders,
     probe: LifecycleProbe,
     swapLock: Semaphore,
-    evaluationProbe: EvaluationProbe = EvaluationProbe.none
+    evaluationProbe: EvaluationProbe = EvaluationProbe.none,
+    initDeadline: InitDeadline = InitDeadline.default
   ): ZIO[Scope, Throwable, FeatureFlagsLive] =
     for {
       client <- ZIO.attempt(api.getClient(domain.orNull, version.orNull))
@@ -158,7 +159,8 @@ private[openfeature] object FeatureFlagsFactories {
         maxAbandonedCalls,
         orphans = orphans,
         probe = probe,
-        evaluationProbe = evaluationProbe
+        evaluationProbe = evaluationProbe,
+        initDeadline = initDeadline
       )
       _ <- Quiescence.register(ff.endState)
     } yield ff
@@ -222,7 +224,8 @@ private[openfeature] object FeatureFlagsFactories {
     fallbackLogging: FallbackLogging = FallbackLogging.Default,
     maxAbandonedCalls: Int = DefaultMaxAbandonedCalls,
     probe: LifecycleProbe = LifecycleProbe.none,
-    evaluationProbe: EvaluationProbe = EvaluationProbe.none
+    evaluationProbe: EvaluationProbe = EvaluationProbe.none,
+    initDeadline: InitDeadline = InitDeadline.default
   ): ZIO[Scope, Throwable, FeatureFlagsLive] =
     for {
       api <- ZIO.succeed(apiOverride.getOrElse(OpenFeatureAPI.getInstance()))
@@ -258,7 +261,8 @@ private[openfeature] object FeatureFlagsFactories {
         orphans,
         probe,
         swapLock,
-        evaluationProbe
+        evaluationProbe,
+        initDeadline
       )
       // Known to the instance that later tears this API down, which then retires this one; and the slot checked
       // before it is bound.
@@ -284,7 +288,7 @@ private[openfeature] object FeatureFlagsFactories {
             ProviderRegistration.failedProviderShutdownTimeout(initTimeout)
           )
       settled <- ProviderRegistration
-        .registerThenAwait(api, domain, bound, initTimeout)(
+        .registerThenAwait(api, domain, bound, initTimeout, initDeadline)(
           probe.at(LifecycleProbe.Point.BuildBind(managed, domain, addShutdownFinalizer, async = false)) *>
             ZIO.unless(early)(ff.startEventBridge).unit
         )

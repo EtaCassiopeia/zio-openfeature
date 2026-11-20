@@ -37,10 +37,8 @@ object MyApp extends ZIOAppDefault:
 //   MyApp.program.provide(TestFeatureProvider.layer(Map("my-feature" -> true)))
 ```
 
-`booleanOrDefault` never fails; `boolean` fails with a `FeatureFlagError`, for gates that must fail closed.
+Use `boolean` for gates that must fail closed: it fails with a `FeatureFlagError`.
 
-**[Documentation](https://etacassiopeia.github.io/zio-openfeature/)**: modules, requirements, typed flags, providers,
-testing, and [spec compliance](https://etacassiopeia.github.io/zio-openfeature/spec-compliance/) with the supported
-OpenFeature spec and SDK versions. Apache 2.0.
-
-Upgrading from 1.x? See the [upgrade guide](https://etacassiopeia.github.io/zio-openfeature/upgrading/).
+**[Documentation](https://etacassiopeia.github.io/zio-openfeature/)**: typed flags, providers, testing,
+[spec compliance](https://etacassiopeia.github.io/zio-openfeature/spec-compliance/) and the
+[1.x upgrade guide](https://etacassiopeia.github.io/zio-openfeature/upgrading/). Apache 2.0.

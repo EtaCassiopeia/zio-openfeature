@@ -205,19 +205,19 @@ one replay can drive, so every behaviour it writes is still a behaviour of the m
   `Evict`, `ReleaseReplaced` or `RegistryClose`. `FailMark`, a failure under a shared API's build, and the
   `FailDecide` after it, are the shared topology's.
 - **One `initialize()` per provider at a time.** No build or swap binds a provider whose call is in flight, and only a
-  call the instance started can fail under it. A binding starts no call for a provider already `ready`, nor for one
-  another slot binds, whose registration the SDK reuses; a registry retry on the slot that holds its own failed
-  provider initializes it again (`StartsCall`). The ghosts `inFlight` and `ready` track this.
-- **Only bindings the code and the model agree on** (`BindOk`): a build or swap binds a provider that is `ready`, one
-  no slot binds whose last registration did not fail, or (a registry retry) the failed provider its slot holds. Not
-  one another slot binds that is not ready: the SDK reuses that registration, failed or absorbed by the library's
-  wrapper, which `registered` abstracts. Not one in the ghost `failed`, a provider whose last registration failed (a
-  late `initialize()` too) or that the library shut down: the code refuses one left attached (#1013). Nor a wrapper a
-  timed-out swap left behind or orphaned that no slot holds, still attached for the same reason. And nothing (a build,
-  a swap, the user, or a second swap off it) binds a provider whose shutdown the SDK has queued, one a swap in flight,
-  a timed-out swap or a retry's binding replaced: the SDK decides that shutdown at the binding, where the model decides
-  when the swap or the late call ends (#1014). Last, no swap moves off a provider in `failed` onto one another slot
-  shares: the SDK does not shut the failed one down in that binding, as `SwapOldShut` has it (#1013).
+  call the instance started can fail under it. A binding starts a call when no slot holds the provider, which leaves
+  the SDK no registration of it to reuse, and for a registry retry on the slot that holds its own failed provider
+  (`StartsCall`); a binding of one another slot holds reuses that registration, whatever its state. `ready` is a
+  registration a slot still holds whose `initialize()` returned. No build starts a call on a provider a swap in flight
+  binds either: the code's swap ended on the registration it found. The ghosts `inFlight` and `ready` track this.
+- **Any provider binds again**, whatever ended its last registration: the library resets the stale attachment of its
+  wrapper as it binds it (`ProviderStateAccess.bindReclaiming`). What `BindOk` still leaves out is where the model
+  abstracts the SDK: a provider another slot holds whose shutdown the library's wrapper absorbed (that registration is
+  reused, which `registered` does not follow); a build onto a registration another slot holds that is not ready (the
+  build reads its ERROR); and anything (a build, a swap, the user, or a second swap off it) binding a provider whose
+  shutdown the SDK has queued, one a swap in flight, a timed-out swap or a retry's binding replaced: the SDK decides
+  that shutdown at the binding, where the model decides when the swap or the late call ends (#1014). For the same
+  absorption, a failure's decision that may shut a provider down waits while a swap in flight would roll back to it.
 - **Timed-out swaps** (`AllowTimeouts` is true): the replay fires the swap's deadline through `ScriptedInitDeadline`,
   and settles the late `initialize()` when the behaviour takes `InitSettle`.
 - **Steps the code takes in one go stay adjacent** (the ghost `then`). A failed build is evicted next, and a release
@@ -281,8 +281,9 @@ compared field makes a behaviour fail.
   (the shapes of #728/#800). Trace validation and `SharedApiSwapRaceSpec` cover them.
 - **`FailMark` on an open instance** (an async build's init deadline): the model does not track whether a provider ever
   became ready, so a deadline may fire on any open instance there.
-- **The bindings `BindOk` and the queued-shutdown restrictions leave out**, above. Each has an issue (#1013, #1014),
-  and its fix lifts the restriction.
+- **The SDK's queued shutdown** of a provider bound again before the swap that queued it ends (#1014), and the
+  registrations a library-absorbed wrapper leaves for the SDK to reuse, above: the model's `registered` does not
+  follow either.
 
 ## When its code changes
 

@@ -338,17 +338,13 @@ final private[openfeature] class FeatureFlagsLive(
       // this rare topology, deliberately not reconciled here.
       if (bound ne newProvider.sdk) ZIO.none
       else {
-        val register = ProviderRegistration.register(api, domain, oldProvider).tap(_ => probe.at(Point.RollbackBind))
-        register.catchSome { case _: IllegalStateException =>
-          // The "already attached" state a failed swap leaves an EventProvider in: its state manager was evicted from
-          // the slot but its `attach` CAS was never reset, so re-registration throws. Detach and retry once; any
-          // further failure propagates. This is precise for the case that matters — the ISE fires here only for an
-          // old provider still bound to ANOTHER domain when its reused READY manager skips attach entirely (so the
-          // detach is never called on a still-attached shared provider). The SDK's other ISE ("cannot set provider
-          // while repository is shutting down") also lands here, but it throws before any rebind, and the detach is
-          // moot then because the whole API is being torn down; the retry rethrows it and it propagates to cleanup.
-          ZIO.attemptBlocking(EventProviderAccess.detach(oldProvider.sdk)) *> register
-        }.asSome
+        // A failed swap leaves the old provider attached to its evicted registration. The library's wrapper is reset
+        // by the binding (ProviderStateAccess.bindReclaiming); a provider of the user's, bound as it is, is reset here,
+        // and only on the SDK's "already attached" refusal: any other failure propagates.
+        ProviderRegistration
+          .register(api, domain, oldProvider, reclaimForeign = true)
+          .tap(_ => probe.at(Point.RollbackBind))
+          .asSome
       }
     }
 
@@ -437,8 +433,13 @@ final private[openfeature] class FeatureFlagsLive(
       .flatMap { bound =>
         ZIO.when(bound ne incoming.sdk)(failedOnRollback(incoming).flatMap { shutDown =>
           ZIO.when(shutDown)(
+            // Detached as well, as OrphanedProviders and ApiInstances.releaseLeftBehind do: nothing binds it again
+            // otherwise, and a later binding of it would find it still attached.
             ZIO
-              .attemptBlocking(EventProviderAccess.deregisterGlobalProvider(api, incoming.sdk))
+              .attemptBlocking {
+                EventProviderAccess.deregisterGlobalProvider(api, incoming.sdk)
+                EventProviderAccess.detach(incoming.sdk)
+              }
               .tapErrorCause(c =>
                 ZIO.logWarningCause("setProvider (rollback failed): deregistering its events failed", c)
               )
@@ -462,6 +463,15 @@ final private[openfeature] class FeatureFlagsLive(
   private[openfeature] def serves(provider: OFFeatureProvider): Boolean = {
     val record = lifecycle.snapshot
     !record.closed && !record.shutDown && !failedRegistration.get().exists(_ eq provider) && slotHolds(provider)
+  }
+
+  /** Whether a registration of this instance that replaced `provider` is still initializing, so the SDK's shutdown of
+    * `provider` is queued: a swap's or rollback's, or a timed-out one's not yet settled.
+    */
+  private[openfeature] def queuesShutdownOf(provider: OFFeatureProvider): Boolean = {
+    val record = lifecycle.snapshot
+    record.replaced.exists { case (holder, previous) => (previous eq provider) && holder.initializing } ||
+    record.orphans.exists(_._1 eq provider)
   }
 
   /** Whether this instance's slot holds `provider`, whatever state the instance is in. */

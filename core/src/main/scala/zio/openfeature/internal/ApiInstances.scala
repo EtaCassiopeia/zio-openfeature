@@ -49,6 +49,12 @@ private[openfeature] object ApiInstances {
   def boundElsewhere(api: OpenFeatureAPI, self: FeatureFlagsLive, provider: FeatureProvider): Boolean =
     on(api).exists(instance => (instance ne self) && instance.slotHolds(provider))
 
+  /** Whether the SDK has a shutdown of `provider` queued on `api`: a live instance's swap or rollback replaced it with
+    * a registration still initializing.
+    */
+  def shutdownQueued(api: OpenFeatureAPI, provider: FeatureProvider): Boolean =
+    on(api).exists(_.queuesShutdownOf(provider))
+
   /** Whether an instance was ever built on `domain` of `api`. */
   def knowsSlot(api: OpenFeatureAPI, domain: String): Boolean =
     synchronized(Option(slots.get(api)).exists(_.contains(Some(domain))))

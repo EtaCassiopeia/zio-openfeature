@@ -20,6 +20,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   died with a defect rather than failing with a `GeneralError`. `DeferredProvider` also no longer replaces its
   delegate's initialization error with a failure of the `shutdown()` that cleans the delegate up: it rethrows the
   initialization error, with the shutdown failure attached as suppressed (#985).
+- **A provider whose last registration ended without a successful replacement can be bound again.** Building a new
+  instance on the provider a closed instance used, swapping back to a provider whose registry build was replaced by
+  another failure, or binding one a user's own binding replaced all failed with `IllegalStateException: Provider ...
+  is already attached.`: the SDK resets a provider's attachment only when its replacement initializes, and the
+  library reuses one wrapper per provider. The library now resets that stale attachment as it binds its wrapper, under
+  the API's lock and only for that refusal, as a rollback already did. It still refuses a provider whose shutdown the
+  SDK has queued, behind a swap whose replacement is still initializing, until that call returns. A provider you
+  registered with the API yourself keeps the SDK's plain binding, except in a rollback (#1013).
 
 ## [2.2.1] — 2026-11-19
 

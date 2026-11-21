@@ -35,6 +35,50 @@ object ProviderStateAccess {
     }
   }
 
+  /** Bind `provider` in `domain`'s slot (the default slot when `domain` is null), as `setProvider` does, resetting a
+    * stale attachment on the way. The SDK clears a provider's attachment only when the registration that replaced it
+    * initializes (`shutDownOld`'s detach); one whose registration ended otherwise (replaced by another failure, by a
+    * user's binding, or with its API's shutdown) stays attached to that dead registration, and the SDK, which attaches
+    * a provider only when no slot of this API holds it, then refuses it as already attached. Only that refusal is
+    * reclaimed, by detaching and binding once more: any other `IllegalStateException` (the provider live in another
+    * API, the API shutting down) propagates untouched, as does a second refusal.
+    *
+    * `mayReclaim` runs first, under the lock, and refuses the reset by throwing: a dead registration may still have
+    * work queued on the provider (its `initialize()`, or the SDK's shutdown of it once its replacement initializes),
+    * which would reach the provider once bound again.
+    *
+    * Under the API's write lock, which `setProvider` takes too (reentrant), so no other registration comes between the
+    * refused call and the retry. The refused call bound nothing: it recorded this API's claim on the provider, which
+    * the retry finds already made.
+    */
+  def bindReclaiming(api: OpenFeatureAPI, domain: String, provider: FeatureProvider, mayReclaim: () => Unit): Unit = {
+    val held = api.lock.writeLockAutoCloseable()
+    try bindOrReclaim(api, domain, provider, mayReclaim)
+    finally held.close()
+  }
+
+  /** Whether `e` is the SDK's refusal of a provider still attached to an earlier registration. */
+  def alreadyAttached(e: Throwable): Boolean =
+    e.isInstanceOf[IllegalStateException] && Option(e.getMessage).exists(_.endsWith("is already attached."))
+
+  // The binding, and on the SDK's refusal of a provider still attached to a registration that ended, the reset and one
+  // more binding. Runs under the API's write lock.
+  private def bindOrReclaim(
+    api: OpenFeatureAPI,
+    domain: String,
+    provider: FeatureProvider,
+    mayReclaim: () => Unit
+  ): Unit = {
+    def bind(): Unit = if (domain == null) api.setProvider(provider) else api.setProvider(domain, provider)
+    try bind()
+    catch {
+      case e: IllegalStateException if alreadyAttached(e) =>
+        mayReclaim()
+        EventProviderAccess.detach(provider)
+        bind()
+    }
+  }
+
   /** Whether `domain`'s slot (the default slot when `domain` is null) holds this exact `provider`. */
   def boundIn(api: OpenFeatureAPI, domain: String, provider: FeatureProvider): Boolean =
     api.getFeatureProviderStateManager(domain).getProvider eq provider

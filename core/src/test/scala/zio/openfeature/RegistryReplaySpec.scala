@@ -563,11 +563,13 @@ object RegistryReplaySpec extends ZIOSpecDefault {
         } yield put(i, _.copy(swap = None, started = None))
 
       case "InitSettle" =>
-        // Settle the timed-out swap's call, then wait for the code to act on it: the orphan lists settle and the
-        // shutdowns land, before a next step that reads them (a swap back to a provider that call held).
+        // Settle the timed-out swap's call, then wait for the code to act on it: the orphan lists settle, each
+        // instance's lifecycle drops its entry for the call (a swap back to the provider it replaced is refused until
+        // then, held by a visible slot or not), and the shutdowns land, before a next step that reads them.
         val p       = provider(act.str("p")); val ok = act.bool("ok")
         val orphans = strs(next.field("orphans"))
         val totals  = next.fun("total").map { case (q, n) => q -> next.asNum(n) }
+        val waiting = strs(next.field("pending")).nonEmpty
         ZIO
           .attemptBlocking(p.settle(ok))
           .orDie
@@ -575,7 +577,8 @@ object RegistryReplaySpec extends ZIOSpecDefault {
             ZIO.unless(done)(ZIO.fail(s"InitSettle(${p.name}): no initialize() running to settle"))
           ) *> check(
           insts.values.flatMap(_.handle).flatMap(_.replayOrphans.map(nameOf)).toSet == orphans &&
-            totals.forall { case (q, n) => provider(q).shutdowns.get() >= n } && !p.initializing,
+            totals.forall { case (q, n) => provider(q).shutdowns.get() >= n } && !p.initializing &&
+            (waiting || insts.values.flatMap(_.handle).forall(_.lifecycleSnapshot.orphans.isEmpty)),
           s"InitSettle(${p.name}) settling"
         ).as(insts)
 

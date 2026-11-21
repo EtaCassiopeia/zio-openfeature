@@ -108,6 +108,9 @@ final private[openfeature] class FeatureFlagsLive(
   /** Abandoned provider calls still running — for tests. */
   private[openfeature] def abandonedCallCount: Int = evaluator.abandonedCallCount
 
+  /** The lifecycle record as of its last step, for a test that checks the model's invariants against it. */
+  private[openfeature] def lifecycleSnapshot: LifecycleState = lifecycle.snapshot
+
   /** This instance's end state, for a test's end-state check: no abandoned call still counted; once closed or shut
     * down, the bridge detached, no orphan left, and a wrapper shut down in its cycle with its lane stopped; once shut
     * down, the status `NotReady`. On a live instance the orphans are checked only while no swap or shutdown holds the

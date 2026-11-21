@@ -264,6 +264,30 @@ checker's self-test.
 interrupting a provider-event primary (the interrupt has no lifecycle step to land in), and releasing hangs beside a
 primary whose provider does not hang.
 
+## Checked on the live record
+
+The concurrent simulation (`ConcurrentSimulationSpec`) also checks the model's safety invariants against the running
+instance's own record, `LifecycleState`, read through `FeatureFlagsLive.lifecycleSnapshot` (`ModelInvariants` in the
+simulation module). Every lifecycle step publishes one whole record, so a read is always the state between two steps,
+whichever thread reads it. The checks run at every lifecycle probe point the simulation's perturber sees and after
+every command; a violation fails the run with its plan and schedule seed. This needs no trace that maps onto the model,
+so a run the trace check skips is still checked here.
+
+| Invariant | On the live record | Where |
+|:--|:--|:--|
+| `GateDownWhenIdle` | `lock != Swap => !gate` | always |
+| `OneLockHolder` | `(lock == Swap) == swap.isDefined` | always |
+| `FinalNotReady` | `shutDown => status == (if lock == Shutdown then ShuttingDown else NotReady)` | always |
+| `BoundNotShutDown` | while neither shut down nor closed and no sequence holds the lock, the installed wrapper is not shut down in its cycle. Not under the shutdown lock, because the code tears down before it sets `shutDown`, which the model's `ShutdownDone` does in one action; not under the swap lock, because `installed` is then already the incoming provider, which the model's `bound` is not until the SDK binds it | while the lock is free |
+| `NotReadyDuringSwap` | with a swap in flight, the status is `NotReady`: the code keeps no swap phase, so only on the swap's own fiber at `SwapBind`, `SdkBind`, `SwapTimeout`, and the `ApplySignal` of its outcome (`SwapSucceeded` or `SwapFailed`), just before that outcome is applied | at those points |
+| `StatusFollowsSdk` | not checked: the SDK slot and the record cannot be read together, and "no undelivered event" is not observable | trace validation and replay |
+| `OutcomeFollowsSettled` | not observable: the code keeps no `settled` | trace validation and replay |
+| `ShutDownAtMostOnce`, `TearDownOnce`, `ClosedCleanly` | the simulation's end checks (each leaf shut down exactly once, the end state) | end of run |
+
+`codemutants.py` puts a bug into the code for each of `GateDownWhenIdle`, `OneLockHolder`, `BoundNotShutDown` and
+`NotReadyDuringSwap`, and requires the simulation to fail naming that invariant; it recompiles core per mutant, so CI runs it on main and on demand. `FinalNotReady`'s bug, a late
+event moving a shut-down instance's status, needs a mid-run shutdown, which the concurrent simulation does not make.
+
 ## Trace validation
 
 The model is only worth what it says about the code, so runs of the code are checked against it. With `ZOF_TRACE=1`,

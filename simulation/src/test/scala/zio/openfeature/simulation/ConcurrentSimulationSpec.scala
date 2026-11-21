@@ -19,7 +19,9 @@ import zio.test.{Spec => _, _}
   *   - a swap to a stack whose `initialize()` fails fails with a typed error and rolls back: the failed stack's leaves
   *     are shut down exactly once and never answer; the previous stack serves again;
   *   - each replaced stack's leaves are shut down exactly once, and so are the last stack's when the scope closes;
-  *   - no fiber or thread outlives the run (LeakCheck).
+  *   - no fiber or thread outlives the run (LeakCheck);
+  *   - the lifecycle model's safety invariants hold on the live record at every lifecycle probe point and after every
+  *     command ([[ModelInvariants]]).
   *
   * With `ZOF_TRACE=1` every plan's run, passed or failed, is also recorded for the lifecycle model's trace check
   * (`formal/lifecycle/validate.py`), with the plan beside it ([[SimulationTrace]]).
@@ -79,24 +81,27 @@ object ConcurrentSimulationSpec extends ZIOSpecDefault {
       history  <- Ref.make(Chunk.empty[Op])
       restored <- Ref.make(Set.empty[String])
       report = (p: String) => problems.update(_ :+ p)
+      watch  = new ModelInvariants.Watch
       // A swap raises its gate before it binds the new provider: from then on the current stack's leaves are retiring.
       // A failed swap that binds the previous stack again makes it current once more: its leaves serve again. A cache in
       // that stack may still hold an answer a leaf gave while it was retiring; serving it from then on is correct.
       perturber = new SchedulePerturber(
         plan.scheduleSeed,
-        {
-          case LifecycleProbe.Point.SwapBind     => current.get.map(_.leaves.values.foreach(_.retiring.set(true)))
-          case LifecycleProbe.Point.RollbackBind =>
-            current.get.flatMap { b =>
-              b.leaves.values.foreach(_.retiring.set(false))
-              restored.update(_ ++ b.leaves.values.map(_.name))
-            }
-          case _ => ZIO.unit
-        }
+        point =>
+          watch.check(point.name, Some(point)) *> (point match {
+            case LifecycleProbe.Point.SwapBind     => current.get.map(_.leaves.values.foreach(_.retiring.set(true)))
+            case LifecycleProbe.Point.RollbackBind =>
+              current.get.flatMap { b =>
+                b.leaves.values.foreach(_.retiring.set(false))
+                restored.update(_ ++ b.leaves.values.map(_.name))
+              }
+            case _ => ZIO.unit
+          })
       )
       _ <- ZIO.succeed(
         Stats.declare(
-          SchedulePerturber.declaredCounters ++ List("history.checked", "history.cachedFloored") ++ faultKeys
+          SchedulePerturber.declaredCounters ++ List("invariant.checked", "history.checked", "history.cachedFloored") ++
+            faultKeys
         )
       )
       // Recorded first, then perturbed: the perturber's delay comes after the point is recorded, and never runs under
@@ -107,7 +112,9 @@ object ConcurrentSimulationSpec extends ZIOSpecDefault {
           pair <- Harness
             .installProbed(built.provider, TraceProbe.alongside(perturber.lifecycle, trace), perturber.evaluation)
             .mapError(e => s"install failed for ${Spec.show(spec0)}: $e")
-          (ff, ad) = pair
+          ff = pair
+          ad = pair
+          _      <- watch.attach(pair)
           _      <- ZIO.foreachDiscard(trace)(_.begin(built.provider))
           hook   <- RecordingHook.make()
           _      <- ff.addHook(hook)
@@ -123,6 +130,7 @@ object ConcurrentSimulationSpec extends ZIOSpecDefault {
                 t0   <- ZIO.succeed(perturber.tick())
                 exit <- scoped.fold(eff)(c => ff.withContext(c.toEvaluationContext)(eff)).timeout(evalBound).exit
                 t1   <- ZIO.succeed(perturber.tick())
+                _    <- watch.check(s"after eval $key", None)
                 _    <- evals.update(_ + 1)
                 _    <- exit match {
                   case Exit.Success(None)    => report(s"eval $key:$kind did not complete within $evalBound")
@@ -179,6 +187,7 @@ object ConcurrentSimulationSpec extends ZIOSpecDefault {
                     _   <- Runner.awaitShutdown(old).flatMap(ZIO.foreachDiscard(_)(p => report(s"replaced stack: $p")))
                   } yield ()
               }
+              _ <- watch.check(s"after swap to ${Spec.show(ns)}", None)
               _ <- ZIO.yieldNow
             } yield ()
           }
@@ -214,7 +223,7 @@ object ConcurrentSimulationSpec extends ZIOSpecDefault {
                   perturber.note(s"setFault ${leaf.name} ${f.getOrElse("-")}") *> ZIO.succeed(leaf.fault.set(f))
                 case _ => ZIO.unit
               }
-            } *> ZIO.yieldNow
+            } *> watch.check("after mutation", None) *> ZIO.yieldNow
           }
 
           _     <- ZIO.collectAllParDiscard(swapper :: mutator :: plan.workers.map(worker))
@@ -232,6 +241,7 @@ object ConcurrentSimulationSpec extends ZIOSpecDefault {
       }
       // Once the scope has closed, so its teardown is recorded too; before the verdict, so a failed run is written.
       _   <- ZIO.foreachDiscard(trace)(SimulationTrace.write(_, plan))
+      _   <- ZIO.foreachDiscard(watch.violations.take(5))(v => report(s"model invariant: $v"))
       ops <- history.get
       checked = History.check(spec0, ops)
       _ <- ZIO.succeed {

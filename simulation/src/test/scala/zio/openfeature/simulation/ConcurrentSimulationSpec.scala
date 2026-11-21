@@ -3,7 +3,7 @@ package zio.openfeature.simulation
 import zio._
 import zio.openfeature._
 import zio.openfeature.internal.LifecycleProbe
-import zio.openfeature.testkit.{HookCall, RecordingHook}
+import zio.openfeature.testkit.{HookCall, RecordingHook, TraceProbe}
 import zio.openfeature.testsupport.{LeakCheck, PropertyBudget}
 import zio.test.{Spec => _, _}
 
@@ -20,6 +20,9 @@ import zio.test.{Spec => _, _}
   *     are shut down exactly once and never answer; the previous stack serves again;
   *   - each replaced stack's leaves are shut down exactly once, and so are the last stack's when the scope closes;
   *   - no fiber or thread outlives the run (LeakCheck).
+  *
+  * With `ZOF_TRACE=1` every plan's run, passed or failed, is also recorded for the lifecycle model's trace check
+  * (`formal/lifecycle/validate.py`), with the plan beside it ([[SimulationTrace]]).
   *
   * Each run goes through a [[SchedulePerturber]] seeded by the plan's `scheduleSeed`: at every lifecycle and evaluation
   * probe point it passes, yields or sleeps briefly, which makes rare interleavings common. A failure prints the
@@ -96,12 +99,16 @@ object ConcurrentSimulationSpec extends ZIOSpecDefault {
           SchedulePerturber.declaredCounters ++ List("history.checked", "history.cachedFloored") ++ faultKeys
         )
       )
-      _ <- ZIO.scoped {
+      // Recorded first, then perturbed: the perturber's delay comes after the point is recorded, and never runs under
+      // the recorder's permit, so recording takes no interleaving away.
+      trace <- TraceProbe.make
+      _     <- ZIO.scoped {
         for {
           pair <- Harness
-            .installProbed(built.provider, perturber.lifecycle, perturber.evaluation)
+            .installProbed(built.provider, TraceProbe.alongside(perturber.lifecycle, trace), perturber.evaluation)
             .mapError(e => s"install failed for ${Spec.show(spec0)}: $e")
           (ff, ad) = pair
+          _      <- ZIO.foreachDiscard(trace)(_.begin(built.provider))
           hook   <- RecordingHook.make()
           _      <- ff.addHook(hook)
           nextId <- Ref.make(Spec.maxId(spec0) + 1)
@@ -223,6 +230,8 @@ object ConcurrentSimulationSpec extends ZIOSpecDefault {
           )
         } yield ()
       }
+      // Once the scope has closed, so its teardown is recorded too; before the verdict, so a failed run is written.
+      _   <- ZIO.foreachDiscard(trace)(SimulationTrace.write(_, plan))
       ops <- history.get
       checked = History.check(spec0, ops)
       _ <- ZIO.succeed {

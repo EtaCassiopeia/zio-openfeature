@@ -2,6 +2,7 @@
 
 Usage: python3 validate.py <tla2tools.jar> <CommunityModules-deps.jar> <trace dir or files...>
        python3 validate.py <tla2tools.jar> <CommunityModules-deps.jar> --selftest traces
+       python3 validate.py <tla2tools.jar> <CommunityModules-deps.jar> --actions <trace dir or files...>
 
 `--selftest` checks the checker: every trace under `traces/accept` must be accepted and every one under
 `traces/reject` rejected (hand-written runs the model forbids, and a run recorded with shutdown's lock removed).
@@ -10,9 +11,12 @@ Each trace (ndjson of probe points) is turned into model action labels (trace_la
 TraceValidation.tla for a behaviour of Lifecycle that takes those library steps in that order. Exits non-zero when a
 trace is rejected, when TLC fails (a tool error: it could not run, or its output says neither way), when no trace was
 checked, or when a trace cannot be read; prints a summary. A trace TLC cannot decide
-within TRACE_TIMEOUT_SECS (default 300) is reported as undecided and does not fail the run. The driver (the TLC call,
+within TRACE_TIMEOUT_SECS (default 300) is reported as undecided and does not fail the run. `--actions` also prints how
+many of the checked runs take each model action, so a run source that stops reaching an action shows; it changes
+nothing in the verdict. The driver (the TLC call,
 the verdicts, the summary and the selftest) is formal/tracecheck.py, which the acquire model's validator shares.
 """
+import collections
 import os
 import sys
 
@@ -66,6 +70,17 @@ def run(tla_jar, cm_jar, paths):
     return [r[:4] for r in tracecheck.run(paths, lambda p: labels(read(p)), lambda a: check(tla_jar, cm_jar, a))]
 
 
+def action_counts(results):
+    """How many runs take each model action at least once, over the runs that were labelled (a run the model does not
+    cover has none)."""
+    counts = collections.Counter()
+    for result in results:
+        actions = result[1]
+        if actions:
+            counts.update({a["action"] for a in actions})
+    return counts
+
+
 def main():
     tla_jar, cm_jar = os.path.abspath(sys.argv[1]), os.path.abspath(sys.argv[2])
 
@@ -77,7 +92,14 @@ def main():
 
     if sys.argv[3] == "--selftest":
         sys.exit(tracecheck.selftest(sys.argv[4], label, checked))
-    sys.exit(tracecheck.report(tracecheck.run(collect(sys.argv[3:]), label, checked)))
+    with_actions = sys.argv[3] == "--actions"
+    results = tracecheck.run(collect(sys.argv[4:] if with_actions else sys.argv[3:]), label, checked)
+    status = tracecheck.report(results)
+    if with_actions:
+        print("runs taking each action:")
+        for action, runs in sorted(action_counts(results).items(), key=lambda kv: (-kv[1], kv[0])):
+            print(f"  {action:24} {runs}")
+    sys.exit(status)
 
 
 if __name__ == "__main__":

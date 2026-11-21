@@ -273,6 +273,12 @@ core's tests, which testkit's tests depend on; `ZOF_TRACE_DIR` sets the director
 records only when it builds one instance through `FeatureFlagsFactories`, which takes the probe: runs that build
 through a public factory (`fromProvider`, `fromAcquireAsync`), whose build fails, or that build a second instance on
 the same API record nothing.
+The concurrent simulation (`ConcurrentSimulationSpec`, in the simulation module) records too: every plan's run, under
+its seeded schedule perturbation, written as `concurrent-<schedule seed>-<id>.ndjson` with the plan beside it
+(`.plan.json`), which replays a rejected run through the simulation's regression corpus. Its runs reach swaps,
+rollbacks, events racing swaps and throwing shutdowns at scope close, many times over; they do not reach a timed-out
+swap, an orphan, `Watchdog` or an explicit shutdown, which the suites above do. `validate.py --actions` prints how many
+runs take each action, so a source that stops reaching one shows.
 `trace_labels.py` turns a run into the library actions above, with what the run recorded about each: a delivered
 event's type, whether a swap or its rollback ended `STALE`, whether the rollback succeeded. `TraceValidation.tla` then
 lets TLC search for a behaviour of `Lifecycle` that takes exactly those library steps in that order, with the SDK's
@@ -289,8 +295,9 @@ older recording leaves both free. Its `ProviderShutDown` and `ShutdownReturned(o
 are counted on the teardown they fall in (how many providers the teardown shut down, how many of those calls threw,
 how many returned at all), and `TearDown` may shut down no more providers, and no more of each behaviour, than the
 run counted (the SDK's executor can run a queued shutdown inside the teardown that the model placed before it, when
-the watcher's bound elapsed, so the run may count one more); an `OrphanRecorded` point marks the run's instance as
-owning its API, the topology whose teardown the counts constrain; the shutdown
+the watcher's bound elapsed, so the run may count one more); the build's `BuildBind` with `owns` true, or an `OrphanRecorded`
+point, marks the run's instance as owning its API, the topology whose teardown the counts constrain (an owned run that
+records no orphan is checked against the owning topology too: `reject/owned-scope-close-shuts-nothing`); the shutdown
 points outside a teardown that are not the SDK's queued shutdown (an orphan's settle, a rollback's cleanup) stay free. A run is accepted when such a behaviour
 exists. The check is of the order of the library's steps and what was recorded about them, and of the status
 two kinds of step leave: `StatusWritten` (recorded by `EventBridge` once per transition it writes, with the new status; `SwapStart`'s `NotReady` goes through the swap's own step and records none)

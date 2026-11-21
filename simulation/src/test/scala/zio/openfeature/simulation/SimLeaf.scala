@@ -115,8 +115,11 @@ final class SimLeaf(
   val fault: AtomicReference[Option[LeafFault]] = new AtomicReference(None)
   val calls: AtomicInteger                      = new AtomicInteger(0)
   val inits: AtomicInteger                      = new AtomicInteger(0)
-  val shutdowns: AtomicInteger                  = new AtomicInteger(0)
-  val tracked: AtomicInteger                    = new AtomicInteger(0)
+  // The `initialize()` calls running now, and how many times one entered while another was still running.
+  val initsInFlight: AtomicInteger   = new AtomicInteger(0)
+  val concurrentInits: AtomicInteger = new AtomicInteger(0)
+  val shutdowns: AtomicInteger       = new AtomicInteger(0)
+  val tracked: AtomicInteger         = new AtomicInteger(0)
   // Calls that arrived after this leaf was shut down: a replaced or closed provider answering.
   val callsAfterShutdown: AtomicInteger             = new AtomicInteger(0)
   private val state: AtomicReference[ProviderState] = new AtomicReference(ProviderState.NOT_READY)
@@ -135,6 +138,12 @@ final class SimLeaf(
 
   override def initialize(context: OFEvaluationContext): Unit = {
     val n = inits.incrementAndGet()
+    if (initsInFlight.incrementAndGet() > 1) concurrentInits.incrementAndGet(): Unit
+    try initializeOnce(n)
+    finally initsInFlight.decrementAndGet(): Unit
+  }
+
+  private def initializeOnce(n: Int): Unit = {
     initFault match {
       case Some(InitFault.Fails)                   => throw new GeneralError(s"$name: initialize fails")
       case Some(InitFault.StallThenOk) if n == 1   => initGate.await(): Unit

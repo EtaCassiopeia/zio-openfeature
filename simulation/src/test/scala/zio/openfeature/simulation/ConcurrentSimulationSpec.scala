@@ -1,9 +1,10 @@
 package zio.openfeature.simulation
 
+import dev.openfeature.sdk.{FeatureProvider => OFFeatureProvider}
 import zio._
 import zio.openfeature._
-import zio.openfeature.internal.LifecycleProbe
-import zio.openfeature.testkit.{HookCall, RecordingHook, TraceProbe}
+import zio.openfeature.internal.{LifecycleProbe, ManagedProvider}
+import zio.openfeature.testkit.{HookCall, RecordingHook, ScriptedInitDeadline, TraceProbe}
 import zio.openfeature.testsupport.{LeakCheck, PropertyBudget}
 import zio.test.{Spec => _, _}
 
@@ -18,10 +19,16 @@ import zio.test.{Spec => _, _}
   *   - an evaluation answered by a leaf after a swap away from it raised its gate is never a success;
   *   - a swap to a stack whose `initialize()` fails fails with a typed error and rolls back: the failed stack's leaves
   *     are shut down exactly once and never answer; the previous stack serves again;
-  *   - each replaced stack's leaves are shut down exactly once, and so are the last stack's when the scope closes;
+  *   - each replaced stack's leaves are shut down exactly once, and so are the last stack's when the scope closes; a
+  *     stack a rollback lands on after its own `initialize()` failed is registered again, so each of its leaves is shut
+  *     down at least once and at most once per `initialize()` call instead;
   *   - a shutdown issued mid-run (`shutdownAfterSwap`), during a swap or after the last one, waits for a swap in flight
   *     and leaves the status NotReady for good; every later swap is refused without its provider being touched, and
   *     every evaluation that starts after the shutdown returned fails; each stack is still shut down exactly once;
+  *   - a swap whose stack stalls in `initialize()` times out when the run fires its deadline
+  *     ([[ScriptedInitDeadline]]), with no rollback: its stack stays bound, and the stack it replaced is not shut down
+  *     before the stalled call settles, which the plan releases at a chosen point (`releases`); a later swap that fails
+  *     over a stack still initializing is not rolled back either; no leaf runs two `initialize()` calls at once;
   *   - no fiber or thread outlives the run (LeakCheck);
   *   - the lifecycle model's safety invariants hold on the live record at every lifecycle probe point and after every
   *     command ([[ModelInvariants]]).
@@ -46,7 +53,27 @@ object ConcurrentSimulationSpec extends ZIOSpecDefault {
     scheduleSeed: Long,
     // A shutdown issued mid-run: once the swap at this index has bound its provider, so while it is in flight, or once
     // every swap has returned when the index is past the last. None: the instance shuts down only when its scope closes.
-    shutdownAfterSwap: Option[Int]
+    shutdownAfterSwap: Option[Int],
+    // For each swap, when the run lets its stalled initialize() go, if the swap timed out on it. None: at the end.
+    releases: Option[List[ConcurrentSimulationSpec.Release]]
+  )
+
+  /** When the run lets a timed-out swap's stalled `initialize()` go: once that many more swaps have run (0: right after
+    * its own), once every fiber has joined, or once the scope has closed.
+    */
+  sealed trait Release extends Product with Serializable
+  object Release {
+    final case class AfterSwaps(n: Int) extends Release
+    case object AtEnd                   extends Release
+    case object AfterClose              extends Release
+  }
+
+  /** Kept for a swap after the next one often, so a later swap meets a stack still initializing. */
+  val genRelease: Gen[Any, Release] = Gen.weighted(
+    Gen.const(Release.AfterSwaps(0)) -> 2.0,
+    Gen.const(Release.AfterSwaps(1)) -> 3.0,
+    Gen.const(Release.AtEnd)         -> 2.0,
+    Gen.const(Release.AfterClose)    -> 1.0
   )
 
   val genPlan: Gen[Any, Plan] =
@@ -66,11 +93,39 @@ object ConcurrentSimulationSpec extends ZIOSpecDefault {
       )
       // Drawn over the swaps there are, and one past them: most mid-run shutdowns then land during a swap.
       shutdownAfterSwap <- Gen.weighted(Gen.const(None) -> 2.0, Gen.int(0, swaps.size).map(Some(_)) -> 1.0)
-    } yield Plan(spec, home, workers, swaps, muts, scheduleSeed, shutdownAfterSwap)
+      releases          <- Gen.listOfN(swaps.size)(genRelease)
+    } yield Plan(spec, home, workers, swaps, muts, scheduleSeed, shutdownAfterSwap, Some(releases))
 
-  /** Only a failing `initialize()`: this spec runs on the live clock and has no one to release a stall. */
+  /** A failing `initialize()`, or one that stalls until the run releases it, past a deadline the run fires. */
   val swapInitFault: Gen[Any, Option[InitFault]] =
-    Gen.weighted(Gen.const(None) -> 5.0, Gen.const(Some(InitFault.Fails)) -> 1.0)
+    Gen.weighted(
+      Gen.const(None)                          -> 4.0,
+      Gen.const(Some(InitFault.Fails))         -> 1.5,
+      Gen.const(Some(InitFault.StallThenOk))   -> 1.0,
+      Gen.const(Some(InitFault.StallThenFail)) -> 0.6
+    )
+
+  /** A timed-out swap's stack, still initializing, the stack it replaced, which waits for it to settle, and when the
+    * run lets its stalled `initialize()` go.
+    */
+  final case class Pending(stack: Built, replaced: Built, release: Release)
+
+  private def stalling(b: Built): List[SimLeaf] =
+    Spec.leaves(b.spec).collect {
+      case l if l.init.exists(f => f == InitFault.StallThenOk || f == InitFault.StallThenFail) => b.leaves(l.id)
+    }
+
+  private def isBound(sdk: OFFeatureProvider, b: Built): Boolean =
+    (sdk eq b.provider) || ManagedProvider
+      .existing(b.provider)
+      .exists(m => ManagedProvider.existing(sdk).exists(_ eq m))
+
+  private def initializing(b: Built): Boolean = ManagedProvider.existing(b.provider).exists(_.initsInFlightAnywhere > 0)
+
+  private def isTimeout(c: Cause[Any]): Boolean = c.failureOption.exists {
+    case FeatureFlagError.ProviderInitializationFailed(_: java.util.concurrent.TimeoutException) => true
+    case _                                                                                       => false
+  }
 
   /** The faults the generated cases must reach. */
   val faultKeys: List[String] = List(
@@ -78,7 +133,12 @@ object ConcurrentSimulationSpec extends ZIOSpecDefault {
     "crun.swap.rolledBack",
     "crun.shutdown.throws",
     "crun.shutdown.midRun",
-    "crun.shutdown.duringSwap"
+    "crun.shutdown.duringSwap",
+    "crun.swap.timedOut",
+    "crun.swap.failedOverInitializing",
+    "crun.release.afterSwap",
+    "crun.release.atEnd",
+    "crun.release.afterClose"
   )
 
   private val evalBound = 10.seconds
@@ -100,6 +160,20 @@ object ConcurrentSimulationSpec extends ZIOSpecDefault {
       trigger  <- Promise.make[Nothing, Unit]
       inFlight <- Ref.make(false)
       unused   <- Ref.make(List.empty[Built])
+      pending  <- Ref.make(List.empty[Pending])
+      everPending = new java.util.concurrent.atomic.AtomicReference(List.empty[Built])
+      // The leaf shutdowns of each stack once its own initialize() returned (a stalled one's once released): a
+      // multi-provider whose initialize() fails shuts its members down itself, before anything the library does.
+      settledShuts <- Ref.make(List.empty[(Built, Map[Int, Int])])
+      // Stacks a failed swap rolled back onto while their own initialize() had failed: such a rollback registers the
+      // stack again, and a registration that initializes it again (a wrapper may not) fails again and is shut down.
+      failedRollbacks <- Ref.make(List.empty[Built])
+      // A rollback did not restore the previous stack: the failed one stays routed, status Error, until a swap succeeds.
+      // Only a successful setProvider is promised to recover that state, so the run makes no other swap until then.
+      degraded <- Ref.make(false)
+      // Times a swap's wait for initialize() out when the run fires it, never by itself: the instance keeps the default
+      // init timeout, so no healthy swap races a short one.
+      deadline = new ScriptedInitDeadline
       // Every evaluation's start tick and outcome, and every successful swap's start tick, judged against the mid-run
       // shutdown once every fiber has joined, when its ticks are final.
       evalLog <- Ref.make(Chunk.empty[(String, Long, Outcome)])
@@ -109,6 +183,7 @@ object ConcurrentSimulationSpec extends ZIOSpecDefault {
       // A swap raises its gate before it binds the new provider: from then on the current stack's leaves are retiring.
       // A failed swap that binds the previous stack again makes it current once more: its leaves serve again. A cache in
       // that stack may still hold an answer a leaf gave while it was retiring; serving it from then on is correct.
+      rollbackBinds <- Ref.make(0)
       perturber = new SchedulePerturber(
         plan.scheduleSeed,
         point =>
@@ -120,7 +195,7 @@ object ConcurrentSimulationSpec extends ZIOSpecDefault {
                   .flatMap(n => ZIO.when(plan.shutdownAfterSwap.contains(n - 1))(trigger.succeed(())))
                   .unit
             case LifecycleProbe.Point.RollbackBind =>
-              current.get.flatMap { b =>
+              rollbackBinds.update(_ + 1) *> current.get.flatMap { b =>
                 b.leaves.values.foreach(_.retiring.set(false))
                 restored.update(_ ++ b.leaves.values.map(_.name))
               }
@@ -133,13 +208,51 @@ object ConcurrentSimulationSpec extends ZIOSpecDefault {
             faultKeys
         )
       )
+      // Lets a timed-out swap's stalled initialize() go, and waits until the wrapper has seen it return. The stack that
+      // swap replaced is shut down only once that call settles: until then it must not be, unless the instance was
+      // shut down or closed meanwhile (`closed`), which shuts it down itself.
+      release = (p: Pending, closed: Boolean) =>
+        for {
+          base <- settledShuts.get.map(_.collectFirst { case (b, m) if b eq p.replaced => m }.getOrElse(Map.empty))
+          early = p.replaced.leaves.toList.collect {
+            case (id, l) if l.shutdowns.get() != base.getOrElse(id, 0) => l.name
+          }
+          // Read after the counts: a shutdown that started meanwhile shut the replaced stack down itself.
+          sa <- shutAt.get
+          _  <- ZIO.foreachDiscard(early)(n =>
+            ZIO.when(!closed && sa.isEmpty)(
+              report(s"$n was shut down before the timed-out swap to ${Spec.show(p.stack.spec)} settled")
+            )
+          )
+          _ <- perturber.note(s"release the stalled initialize() of ${Spec.show(p.stack.spec)}")
+          _ <- ZIO.succeed(stalling(p.stack).foreach(_.initGate.release(abandon = false)))
+          _ <- pending.update(_.filterNot(_ eq p))
+          _ <- Stats.generated(p.release match {
+            case Release.AfterSwaps(_) => "crun.release.afterSwap"
+            case Release.AtEnd         => "crun.release.atEnd"
+            case Release.AfterClose    => "crun.release.afterClose"
+          })
+          _ <- (ZIO.sleep(5.millis) *> ZIO.succeed(
+            initializing(p.stack) || stalling(p.stack).exists(l => l.initGate.entered && !l.initGate.exited)
+          ))
+            .repeatUntil(!_)
+            .timeout(5.seconds)
+            .flatMap(r => ZIO.when(r.isEmpty)(report(s"${Spec.show(p.stack.spec)}: initialize() did not return")))
+            .withClock(Clock.ClockLive)
+          _ <- settledShuts.update((p.stack, p.stack.leaves.map { case (id, l) => id -> l.shutdowns.get() }) :: _)
+        } yield ()
       // Recorded first, then perturbed: the perturber's delay comes after the point is recorded, and never runs under
       // the recorder's permit, so recording takes no interleaving away.
       trace <- TraceProbe.make
       _     <- ZIO.scoped {
         for {
           pair <- Harness
-            .installProbed(built.provider, TraceProbe.alongside(perturber.lifecycle, trace), perturber.evaluation)
+            .installProbed(
+              built.provider,
+              TraceProbe.alongside(perturber.lifecycle, trace),
+              perturber.evaluation,
+              deadline
+            )
             .mapError(e => s"install failed for ${Spec.show(spec0)}: $e")
           ff = pair
           ad = pair
@@ -178,7 +291,7 @@ object ConcurrentSimulationSpec extends ZIOSpecDefault {
               } yield ()
             }
 
-          swapper = ZIO.foreachDiscard(plan.swaps) { s =>
+          swapOnce = (s: Spec, index: Int) =>
             for {
               from <- nextId.get
               ns = Spec.number(s, from)
@@ -186,12 +299,36 @@ object ConcurrentSimulationSpec extends ZIOSpecDefault {
               _ <- ZIO.succeed(if (Spec.wrapsMulti(ns)) Stats.hit("crun.swap.wrapsMulti"))
               _ <- ZIO.foreachDiscard(Spec.leaves(ns).flatMap(_.shutdown))(_ => Stats.generated("crun.shutdown.throws"))
               nb <- Harness.build(ns, timed = false)
-              fails = Spec.initOutcome(ns) == InitOutcome.Fails
-              _  <- ZIO.when(fails)(Stats.generated("crun.init.fails"))
-              _  <- perturber.note(s"swap to ${Spec.show(ns)} starts")
-              t0 <- ZIO.succeed(perturber.tick())
-              _  <- inFlight.set(true)
-              r  <- ad.setProvider(nb.provider).sandbox.either
+              outcome = Spec.initOutcome(ns)
+              fails   = outcome == InitOutcome.Fails
+              stalls  = outcome.isInstanceOf[InitOutcome.Stalls]
+              when    = plan.releases.flatMap(_.lift(index)).getOrElse(Release.AtEnd)
+              _   <- ZIO.when(fails)(Stats.generated("crun.init.fails"))
+              cur <- current.get
+              // The installed stack is a timed-out swap's that is still initializing: a failed swap has nothing to roll
+              // back to, since initializing it again would run a second initialize() while the first is running.
+              prevInitializing <- pending.get.map(_.exists(_.stack eq cur))
+              rb0              <- rollbackBinds.get
+              _                <- perturber.note(s"swap to ${Spec.show(ns)} starts")
+              t0               <- ZIO.succeed(perturber.tick())
+              _                <- inFlight.set(true)
+              sw               <- ad.setProvider(nb.provider).sandbox.either.fork
+              // A stalling stack's initialize() never returns by itself: once the swap's wait for it is armed, time that
+              // wait out. A swap refused or failed before it arms one is left to end by itself.
+              _ <- ZIO.when(stalls)(
+                (ZIO.sleep(2.millis) *> sw.poll.map(done =>
+                  done.isDefined ||
+                    (deadline.armed.contains(nb.provider) && stalling(nb).forall(_.initGate.entered))
+                ))
+                  .repeatUntil(identity)
+                  .timeout(10.seconds)
+                  .withClock(Clock.ClockLive) *> ZIO.succeed(deadline.fire(nb.provider))
+              )
+              r <- sw.join
+              // Its initialize() has returned unless it stalls: what it shut down of itself is its own doing.
+              _ <- ZIO.unless(stalls)(
+                settledShuts.update((nb, nb.leaves.map { case (id, l) => id -> l.shutdowns.get() }) :: _)
+              )
               _  <- inFlight.set(false)
               t1 <- ZIO.succeed(perturber.tick())
               _  <- ZIO.when(r.isRight)(swapLog.update(_ :+ ((Spec.show(ns), t0))))
@@ -206,33 +343,118 @@ object ConcurrentSimulationSpec extends ZIOSpecDefault {
                     _ <- ZIO.succeed(Stats.hit("crun.swap.refusedAfterShutdown"))
                     _ <- unused.update(nb :: _)
                   } yield ()
+                // Timed out: no rollback. The new stack stays bound and settles later; the one it replaced waits for it.
+                case Left(c) if stalls && isTimeout(c) && c.defects.isEmpty =>
+                  for {
+                    _   <- perturber.note(s"swap to ${Spec.show(ns)} timed out")
+                    _   <- Stats.generated("crun.swap.timedOut")
+                    _   <- history.update(_ :+ Op.Swap(ns, t0, t1))
+                    old <- current.getAndSet(nb)
+                    _   <- retired.update(old :: _)
+                    _   <- pending.update(_ :+ Pending(nb, old, when))
+                    _   <- ZIO.succeed(everPending.updateAndGet(nb :: _))
+                  } yield ()
+                case Left(c) if isTimeout(c) =>
+                  report(s"setProvider to ${Spec.show(ns)}, whose initialize() does not stall, timed out")
+                // Failed while the installed stack still initializes: that stack is replaced, not restored.
+                case Left(c)
+                    if fails && prevInitializing && c.defects.isEmpty &&
+                      c.failureOption.exists(_.isInstanceOf[FeatureFlagError.ProviderInitializationFailed]) =>
+                  for {
+                    _   <- perturber.note(s"swap to ${Spec.show(ns)} failed over a stack still initializing")
+                    rb1 <- rollbackBinds.get
+                    _   <- ZIO.when(rb1 != rb0)(
+                      report(s"setProvider to ${Spec.show(ns)} rolled back onto a stack still initializing")
+                    )
+                    _   <- Stats.generated("crun.swap.failedOverInitializing")
+                    _   <- history.update(_ :+ Op.Swap(ns, t0, t1))
+                    old <- current.getAndSet(nb)
+                    _   <- retired.update(old :: _)
+                  } yield ()
                 // Rolled back: the previous stack stays current. The failed one is retired, so it must never answer.
                 case Left(c)
                     if fails && c.defects.isEmpty &&
                       c.failureOption.exists(_.isInstanceOf[FeatureFlagError.ProviderInitializationFailed]) =>
                   for {
                     _ <- perturber.note(s"swap to ${Spec.show(ns)} rolled back")
+                    ontoFailed = Spec.initOutcome(cur.spec).match {
+                      case InitOutcome.Fails | InitOutcome.Stalls(true) => true
+                      case _                                            => false
+                    } && !prevInitializing
+                    _ <- ZIO.when(ontoFailed)(
+                      failedRollbacks.update(cur :: _) *> ZIO.succeed(Stats.hit("crun.swap.rolledBackOntoFailed"))
+                    )
+                    _ <- ZIO.succeed(stalling(nb).foreach(_.initGate.release(abandon = false)))
                     _ <- Stats.generated("crun.swap.rolledBack")
-                    _ <- retired.update(nb :: _)
-                    _ <- Runner.awaitShutdown(nb).flatMap(ZIO.foreachDiscard(_)(p => report(s"failed stack: $p")))
+                    // A rollback onto a stack whose initialize() failed may fail to restore it: the SDK slot then
+                    // still binds the failed stack, which serves with status Error until a later swap succeeds.
+                    routed = isBound(ad.sdkBound, nb)
+                    _ <-
+                      if (ontoFailed && routed)
+                        for {
+                          _ <- perturber.note(s"rollback to ${Spec.show(cur.spec)} not restored")
+                          _ <- ZIO.succeed(Stats.hit("crun.swap.rollbackUnrestored"))
+                          _ <- ZIO.foreachDiscard(nb.leaves.values.toList)(l =>
+                            ZIO.when(l.shutdowns.get() != 0)(
+                              report(s"${l.name} was shut down while its stack stays routed after a failed rollback")
+                            )
+                          )
+                          _   <- history.update(_ :+ Op.Swap(ns, t0, t1))
+                          _   <- ZIO.succeed(cur.leaves.values.foreach(_.retiring.set(true)))
+                          old <- current.getAndSet(nb)
+                          _   <- retired.update(old :: _)
+                          _   <- degraded.set(true)
+                        } yield ()
+                      else
+                        ZIO.when(routed)(
+                          report(s"setProvider to ${Spec.show(ns)} rolled back, but the SDK still routes to it")
+                        ) *>
+                          retired.update(nb :: _) *>
+                          Runner.awaitShutdown(nb).flatMap(ZIO.foreachDiscard(_)(p => report(s"failed stack: $p")))
                   } yield ()
                 case Left(c) =>
                   perturber.note(s"swap to ${Spec.show(ns)} failed") *>
                     report(s"setProvider to ${Spec.show(ns)} failed: ${c.prettyPrint.take(400)}")
-                case Right(_) if fails =>
-                  report(s"setProvider to ${Spec.show(ns)}, whose initialize() fails, succeeded")
+                case Right(_) if fails || stalls =>
+                  report(s"setProvider to ${Spec.show(ns)}, whose initialize() fails or stalls, succeeded")
                 case Right(_) =>
                   for {
+                    _   <- degraded.set(false)
                     _   <- history.update(_ :+ Op.Swap(ns, t0, t1))
                     _   <- perturber.note(s"swap to ${Spec.show(ns)} returned")
                     old <- current.getAndSet(nb)
                     _   <- retired.update(old :: _)
-                    _   <- Runner.awaitShutdown(old).flatMap(ZIO.foreachDiscard(_)(p => report(s"replaced stack: $p")))
+                    // A replaced stack still initializing (a timed-out swap's) may be shut down only once that call
+                    // returns, as a DeferredProvider defers it; the end of the run checks it was, exactly once.
+                    stillOn <- pending.get.map(_.exists(_.stack eq old))
+                    _       <- ZIO.unless(stillOn)(
+                      Runner.awaitShutdown(old).flatMap(ZIO.foreachDiscard(_)(p => report(s"replaced stack: $p")))
+                    )
                   } yield ()
               }
               _ <- watch.check(s"after swap to ${Spec.show(ns)}", None)
+              // The stalled initialize() calls whose turn has come settle now; AfterSwaps(n) counts the swaps that
+              // returned after its own.
+              ps        <- pending.get
+              closedNow <- shutAt.get.map(_.isDefined)
+              _         <- ZIO.foreachDiscard(ps) { p =>
+                p.release match {
+                  case Release.AfterSwaps(n) if n <= 0 => release(p, closedNow)
+                  case Release.AfterSwaps(n)           =>
+                    pending.update(_.map(q => if (q eq p) q.copy(release = Release.AfterSwaps(n - 1)) else q))
+                  case _ => ZIO.unit
+                }
+              }
               _ <- ZIO.yieldNow
             } yield ()
+
+          swapper = ZIO.foreachDiscard(plan.swaps.zipWithIndex) { case (s, index) =>
+            degraded.get.flatMap { d =>
+              if (d && Spec.initOutcome(s) != InitOutcome.Ok)
+                perturber.note(s"swap to ${Spec.show(s)} skipped: a rollback was not restored") *>
+                  ZIO.succeed(Stats.hit("crun.swap.skippedWhileUnrestored"))
+              else swapOnce(s, index)
+            }
           }
 
           mutator = ZIO.foreachDiscard(plan.muts) { m =>
@@ -290,6 +512,10 @@ object ConcurrentSimulationSpec extends ZIOSpecDefault {
           _ <- ZIO.collectAllParDiscard(
             (swapper *> swapperDone.succeed(())) :: shutdowner :: mutator :: plan.workers.map(worker)
           )
+          // The rest settle once every fiber has joined, but those held until the scope has closed.
+          late <- pending.get
+          sd   <- shutAt.get
+          _    <- ZIO.foreachDiscard(late.filterNot(_.release == Release.AfterClose))(release(_, sd.isDefined))
           // Once shut down, NotReady for good, whatever settled afterwards. An evaluation or a swap that started after the
           // shutdown returned is refused: the evaluation as not ready, the swap by failing.
           sa <- shutAt.get
@@ -321,6 +547,9 @@ object ConcurrentSimulationSpec extends ZIOSpecDefault {
           )
         } yield ()
       }
+      // Still stalled when the scope closed: the close shut the stacks they replaced down; let them go now.
+      left <- pending.get
+      _    <- ZIO.foreachDiscard(left)(release(_, true))
       // Once the scope has closed, so its teardown is recorded too; before the verdict, so a failed run is written.
       _   <- ZIO.foreachDiscard(trace)(SimulationTrace.write(_, plan))
       _   <- ZIO.foreachDiscard(watch.violations.take(5))(v => report(s"model invariant: $v"))
@@ -330,14 +559,36 @@ object ConcurrentSimulationSpec extends ZIOSpecDefault {
         Stats.add("history.checked", checked.checked)
         Stats.add("history.cachedFloored", checked.cachedFloored)
       }
-      _    <- ZIO.foreachDiscard(checked.violations.take(5))(v => report(v.render))
-      _    <- ZIO.when(checked.violations.size > 5)(report(s"history: ${checked.violations.size - 5} more violations"))
-      last <- current.get
-      _    <- Runner.awaitShutdown(last).flatMap(ZIO.foreachDiscard(_)(p => report(s"after scope close: $p")))
-      olds <- retired.get
-      _    <- ZIO.foreachDiscard((last :: olds).flatMap(_.leaves.values))(l =>
-        ZIO.when(l.shutdowns.get() != 1)(report(s"${l.name} shut down ${l.shutdowns.get()} times"))
-      )
+      _     <- ZIO.foreachDiscard(checked.violations.take(5))(v => report(v.render))
+      _     <- ZIO.when(checked.violations.size > 5)(report(s"history: ${checked.violations.size - 5} more violations"))
+      last  <- current.get
+      _     <- Runner.awaitShutdown(last).flatMap(ZIO.foreachDiscard(_)(p => report(s"after scope close: $p")))
+      olds  <- retired.get
+      again <- failedRollbacks.get
+      // A stack that was pending may be shut down only once its stalled call returned, after the run let it go: wait.
+      _ <- ZIO.foreachDiscard(everPending.get()) { b =>
+        (ZIO.sleep(20.millis) *> ZIO.succeed(b.leaves.values.forall(_.shutdowns.get() >= 1)))
+          .repeatUntil(identity)
+          .timeout(5.seconds)
+          .withClock(Clock.ClockLive)
+      }
+      _ <- ZIO.foreachDiscard(last :: olds) { b =>
+        // Once. A stack rolled back onto after its initialize() failed is registered again, and the shutdown of a
+        // registration whose rollback failed is not settled yet: at least once, and at most once per initialize().
+        val reregistered = again.exists(_ eq b)
+        val n            = (l: SimLeaf) => l.shutdowns.get()
+        ZIO.foreachDiscard(b.leaves.values)(l =>
+          ZIO.when(if (reregistered) n(l) < 1 || n(l) > (l.inits.get() max 1) else n(l) != 1)(
+            report(
+              s"${l.name} shut down ${l.shutdowns.get()} times, initialized ${l.inits.get()} times" +
+                (if (reregistered) " (rolled back onto after its initialize() failed)" else "")
+            )
+          ) *>
+            ZIO.when(l.concurrentInits.get() > 0)(
+              report(s"${l.name}: initialize() ran while another call was running")
+            )
+        )
+      }
       // A stack a refused swap never installed: the library must not have touched it. The test then releases it.
       never <- unused.get
       _     <- ZIO.foreachDiscard(never.flatMap(_.leaves.values))(l =>
@@ -354,7 +605,7 @@ object ConcurrentSimulationSpec extends ZIOSpecDefault {
         ZIO.fail(
           ((s"stack ${Spec.show(spec0)} swaps ${plan.swaps.map(s => Spec.show(Spec.number(s))).mkString(", ")}" +
             plan.shutdownAfterSwap.fold("")(k => s" shutdown after swap $k")) +: ps)
-            .mkString("\n") + "\n" + perturber.render(150)
+            .mkString("\n") + "\nharness events:\n" + perturber.events + "\n" + perturber.render(150)
         )
       )
     } yield ()

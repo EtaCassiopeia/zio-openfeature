@@ -186,6 +186,11 @@ def labels(records):
         point, arg = r["point"], r.get("arg", "")
         if point == "Watchdog":
             return None
+        # A provider whose name is read only once it has initialized (a multi-provider's) is "unknown" at SwapStart;
+        # its InitOutcome names it, and its events name it so too.
+        if (point == "InitOutcome" and who(r, "providerInstance") and r.get("provider") not in (None, "", "unknown")
+                and provider_names.get(who(r, "providerInstance")) in (None, "", "unknown")):
+            provider_names[who(r, "providerInstance")] = r["provider"]
         claiming = resolved == "OrphanDropped" and point == "OrphanResolved"
         if claiming and not (closed or in_shutdown) and who(r, "providerInstance"):
             claims.append([who(r, "providerInstance"), who(r, "watchInstance"), False])

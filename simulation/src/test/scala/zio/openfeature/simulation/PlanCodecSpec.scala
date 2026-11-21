@@ -49,6 +49,22 @@ object PlanCodecSpec extends ZIOSpecDefault {
       val text = """{"key":"k0","kind":"KStr","invocation":{"attrs":{}}}"""
       assertTrue(PlanCodec.read[Cmd.Eval](text) == Right(Cmd.Eval("k0", Kind.KStr, Ctx(None, Map.empty), None)))
     },
+    test("a concurrent plan written before it had a mid-run shutdown reads as one without it") {
+      val text =
+        """{"home":{},"muts":[],"scheduleSeed":7,"spec":{"Leaf":{"id":0,"initial":{}}},"swaps":[],"workers":[]}"""
+      assertTrue(
+        PlanCodec.read[ConcurrentSimulationSpec.Plan](text) ==
+          Right(ConcurrentSimulationSpec.Plan(Spec.Leaf(0, Map.empty, None, None), Map.empty, Nil, Nil, Nil, 7L, None))
+      )
+    },
+    test("a mid-run shutdown is written as the swap index it follows") {
+      val plan =
+        ConcurrentSimulationSpec.Plan(Spec.Leaf(0, Map.empty, None, None), Map.empty, Nil, Nil, Nil, 7L, Some(1))
+      assertTrue(
+        PlanCodec.write(plan).contains(""""shutdownAfterSwap":1"""),
+        PlanCodec.read[ConcurrentSimulationSpec.Plan](PlanCodec.write(plan)) == Right(plan)
+      )
+    },
     test("a leaf written before it had lifecycle faults reads as one without them") {
       assertTrue(
         PlanCodec.read[Spec]("""{"Leaf":{"id":2,"initial":{}}}""") == Right(Spec.Leaf(2, Map.empty, None, None))

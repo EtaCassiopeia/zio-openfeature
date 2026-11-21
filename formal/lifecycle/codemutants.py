@@ -10,8 +10,11 @@ simulation must fail, and its output must name the invariant (`model invariant: 
 bug as well is fine, this one must too. The source is restored after every mutant, whatever happens. Each mutant
 recompiles core, so this runs on main and on demand, not on pull requests.
 
-Not here: FinalNotReady. Its bug, a late event moving a shut-down instance's status, needs a shutdown in the middle of a
-run, which the concurrent simulation does not make.
+Not here: FinalNotReady's bug, a late event moving a shut-down instance's status. The simulation does shut instances down
+mid-run, but a shutdown stops the event bridge before it tears down (its `stopped` flag drops even a handler the SDK is
+already running), and between the shutdown's start and that, ShuttingDown is sticky, so no event moves the status after it:
+re-planting that bug left the simulation green at five times its budget, over 57 mid-run shutdowns. The guard is pinned by
+the core shutdown specs and by the model's own mutants instead.
 """
 import os
 import subprocess

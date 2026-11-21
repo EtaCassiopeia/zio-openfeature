@@ -217,6 +217,8 @@ object ProviderReclaimSpec extends ZIOSpecDefault {
           _     <- eventually("p1's late initialize() returning")(
             !ManagedProvider.existing(p1).exists(_.initsInFlightAnywhere > 0)
           )
+          // The owner refuses p2 until it has settled the timed-out swap's entry for p1's call.
+          _ <- eventually("the owner settling p1's call")(owner.lifecycleSnapshot.orphans.isEmpty)
           before = p1.shutdowns.get()
           back <- owner.setProvider(p2).either
           shut <- eventually("p1's shutdown")(p1.shutdowns.get() >= 1).either
@@ -241,6 +243,7 @@ object ProviderReclaimSpec extends ZIOSpecDefault {
           early <- ZIO.scoped(onApi(api, a, Some("d2"), owns = false, dl)).either
           _     <- ZIO.succeed(p.gate.countDown())
           _     <- eventually("a's queued shutdown")(a.shutdowns.get() == 1)
+          _     <- eventually("the owner settling p's call")(owner.lifecycleSnapshot.orphans.isEmpty)
           later <- ZIO.scoped(onApi(api, a, Some("d2"), owns = false, dl).flatMap(_.providerStatus)).either
         } yield assertTrue(
           timed.isLeft,

@@ -64,25 +64,21 @@ class ByDesign(unittest.TestCase):
         return registry.by_design(topology, generate_tla or self.generate_tla, cfg or self.cfg,
                                   registry_tla or self.registry_tla)
 
-    def test_the_registry_topology_leaves_out_the_shared_api_steps_and_the_timeouts(self):
+    def test_the_registry_topology_leaves_out_the_shared_api_steps(self):
         self.assertEqual(self.table("registry"), {
             "UserBind": ("only a shared API binds a user's provider", True),
             "OwnerClose": ("a registry's API has no owning instance", True),
             "FailMark": ("only a shared API's build has an init deadline the replay drives", True),
             "FailDecide": ("it follows only FailMark", True),
-            "SwapTimeout": ("AllowTimeouts is FALSE", True),
-            "InitSettle": ("AllowTimeouts is FALSE: only a timed-out swap leaves an initialize() to settle", True),
         })
 
-    def test_the_shared_topology_leaves_out_the_registry_steps_and_the_timeouts(self):
+    def test_the_shared_topology_leaves_out_the_registry_steps(self):
         self.assertEqual(self.table("shared"), {
             "Lookup": ("a shared API has no registry promise map", True),
             "BuildFail": ("a shared API has no registry promise map", True),
             "Evict": ("a shared API has no registry promise map", True),
             "ReleaseReplaced": ("a shared API has no registry promise map", True),
             "RegistryClose": ("a shared API has no registry", True),
-            "SwapTimeout": ("AllowTimeouts is FALSE", True),
-            "InitSettle": ("AllowTimeouts is FALSE: only a timed-out swap leaves an initialize() to settle", True),
         })
 
     # Each topology guard as Generate.tla writes it, and the actions it keeps out of the other topology.
@@ -124,12 +120,12 @@ class ByDesign(unittest.TestCase):
         self.assertNotEqual(changed, self.registry_tla)
         self.assertEqual(self.table("registry", registry_tla=changed)["FailDecide"], ("it follows only FailMark", False))
 
-    def test_allowing_timeouts_makes_them_required(self):
-        allowed = self.cfg.replace("AllowTimeouts = FALSE", "AllowTimeouts = TRUE")
-        self.assertNotEqual(allowed, self.cfg)
-        table = self.table("shared", cfg=allowed)
-        self.assertEqual(table["SwapTimeout"], ("AllowTimeouts is FALSE", False))
-        self.assertEqual(table["InitSettle"][1], False)
+    def test_timeouts_are_generated_in_both_topologies(self):
+        self.assertIn("AllowTimeouts = TRUE", self.cfg)
+        for topology in ("registry", "shared"):
+            table = self.table(topology)
+            self.assertNotIn("SwapTimeout", table)
+            self.assertNotIn("InitSettle", table)
 
     def test_an_unknown_topology_is_refused(self):
         with self.assertRaises(SystemExit):

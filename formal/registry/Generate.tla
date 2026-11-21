@@ -25,8 +25,8 @@
 (*    ready (BindOk), but a registry retry on the slot holding its failed  *)
 (*    provider: the SDK reuses that registration, failed or absorbed by    *)
 (*    the library's wrapper, which `registered` abstracts (README).  Nor  *)
-(*    one whose last registration failed (`failed`): the code refuses a    *)
-(*    provider its failed registration left attached.  Nor one whose       *)
+(*    one whose last registration failed, or the library shut down        *)
+(*    (`failed`): the code refuses a provider left attached.  Nor one whose *)
 (*    shutdown the SDK has queued: one a retry's binding replaced, or one  *)
 (*    a swap in flight replaced, neither by a                              *)
 (*    build, a swap or the user, nor by a second swap off that provider    *)
@@ -113,6 +113,8 @@ Fresh(i) == Prov(i) \in inFlight
 BindOk(name, d, p) ==
     /\ ~\E j \in swapping : prior[j] = p
     /\ replaced[p] = None
+    \* A wrapper a timed-out swap left behind or orphaned, that no slot holds, is still attached.
+    /\ ~(p \in leftBehind \cup orphans /\ SlotsOf(p) = {})
     /\ \/ p \in ready
        \/ SlotsOf(p) = {} /\ p \notin failed
        \/ name = "Create" /\ Reg /\ d # None /\ bound[d] = p
@@ -195,6 +197,11 @@ Work ==
             /\ p \notin inFlight
             /\ BindOk("SwapStart", domainOf[i], p)
             /\ ~\E j \in swapping : domainOf[i] # None /\ prior[j] = bound[domainOf[i]]
+            \* Nor off a provider whose shutdown a timed-out swap queued: the SDK runs it when that call returns.
+            /\ domainOf[i] # None /\ bound[domainOf[i]] # None => replaced[bound[domainOf[i]]] = None
+            \* Nor off a provider whose registration failed onto one another slot shares: the SDK does not shut the
+            \* failed one down in that binding, as SwapOldShut has it.
+            /\ domainOf[i] # None /\ bound[domainOf[i]] \in failed => ~\E e \in Domains \ {domainOf[i]} : bound[e] = p
             /\ SwapStart(i, p) /\ act' = [name |-> "SwapStart", i |-> i, p |-> p]
     \/ then = None /\ \E i \in Instances : SwapDone(i) /\ act' = [name |-> "SwapDone", i |-> i]
     \/ \E i \in Instances : Free("SwapOldShut", i) /\ SwapOldShut(i) /\ act' = [name |-> "SwapOldShut", i |-> i]
@@ -209,6 +216,7 @@ Work ==
        /\ Shared
        /\ \E d \in Domains, p \in Providers :
             /\ ~\E j \in swapping : prior[j] = p
+            /\ replaced[p] = None
             /\ UserBind(d, p) /\ act' = [name |-> "UserBind", d |-> d, p |-> p]
     \/ /\ then = None
        /\ Shared /\ \E i \in Instances : phase[i] = "building" /\ Fresh(i) /\ FailMark(i) /\ act' = [name |-> "FailMark", i |-> i]
@@ -249,8 +257,11 @@ Ghosts ==
                              \* that call's success).
                              ELSE IF act'.name = "SwapFail" THEN {prior[act'.i]}
                              ELSE {})) \cap registered'
-    /\ failed' = IF act'.name \in {"BuildFail", "SwapFailMark", "FailMark"} THEN failed \cup {q}
-                 ELSE failed \ ready'
+    \* A provider the library shut down (a failed registration's, an orphan's, a left-behind wrapper's) stays attached too.
+    /\ failed' = (IF act'.name \in {"BuildFail", "SwapFailMark", "FailMark"} THEN failed \cup {q}
+                  ELSE IF act'.name = "InitSettle" /\ ~act'.ok THEN failed \cup {act'.p}
+                  ELSE failed \ ready')
+                 \cup {r \in Providers : shuts'[r] > shuts[r] /\ by'[r] = "library"}
     /\ total' = [p \in Providers |-> total[p] + (IF shuts'[p] > shuts[p] THEN shuts'[p] - shuts[p] ELSE 0)]
     /\ then' = CASE act'.name = "Check" -> [name |-> "Create", i |-> act'.i]
                  [] act'.name = "BuildFail" -> [name |-> "Evict", i |-> act'.i]

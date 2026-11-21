@@ -117,6 +117,9 @@ final private[openfeature] class FeatureFlagsLive(
   /** Whether this instance owns its API, and the provider a failure under it marked, for a model replay. */
   private[openfeature] def replayView: (Boolean, Option[OFFeatureProvider]) = (ownsApi, failedRegistration.get())
 
+  /** The previous providers this instance's orphan list will shut down unless the SDK does, for a model replay. */
+  private[openfeature] def replayOrphans: List[OFFeatureProvider] = orphans.pendingShutdowns
+
   /** This instance's end state, for a test's end-state check: no abandoned call still counted; once closed or shut
     * down, the bridge detached, no orphan left, and a wrapper shut down in its cycle with its lane stopped; once shut
     * down, the status `NotReady`. On a live instance the orphans are checked only while no swap or shutdown holds the

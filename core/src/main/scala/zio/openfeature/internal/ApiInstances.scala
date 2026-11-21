@@ -77,6 +77,15 @@ private[openfeature] object ApiInstances {
     val _ = leftBehind.put(api, (wrapper, wrapper.initsStarted) :: kept)
   }
 
+  /** The wrappers left behind on `api` that its owner's close would release now (still running in the cycle they were
+    * left in), for a model replay.
+    */
+  def leftBehindRunning(api: OpenFeatureAPI): List[ManagedProvider] = synchronized {
+    Option(leftBehind.get(api)).getOrElse(Nil).collect {
+      case (wrapper, started) if !wrapper.shutDownInCycle && wrapper.initsStarted == started => wrapper
+    }
+  }
+
   /** At the close of `api`'s owner, after the API's shutdown: shut down each wrapper a non-owner's timed-out swap left
     * behind that is still running in the cycle it was left in. One the SDK or the API's shutdown reached is shut down
     * in its cycle; one initialized again since, on this API or another, serves there and is left alone.

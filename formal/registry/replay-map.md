@@ -21,6 +21,8 @@ Topologies:
 | `ReleaseReplaced(i)` | settles the retry's `initialize()` failing | `FailDecided` from the previous failed client's `shutDownFailedBuild` |
 | `SwapStart(i, p)` | forks `registry.setProvider(d, p)` for a domain's client, `FeatureFlagsLive.setProvider(p)` otherwise | `SdkBind`, or `p`'s `initialize()` starting, or the swap ending |
 | `SwapDone(i)` | settles `p`'s `initialize()` ok, if one runs | the swap succeeding |
+| `SwapTimeout(i)` | fires the swap's deadline (`ScriptedInitDeadline.fire`) once its wait for `initialize()` is armed; the call keeps running | the swap failing with the deadline's `TimeoutException` |
+| `InitSettle(p, ok)` | settles the timed-out swap's still-running `initialize()` of `p` with `ok` | nothing more: the comparison after it waits for the shutdowns that follow |
 | `SwapOldShut(i)` | nothing: the SDK runs it in the binding | the replaced provider's `shutdown()` count reaching the model's |
 | `SwapFailMark(i)` | arms a hold at `FailedRegistration`, settles `p`'s `initialize()` failing | the hold reached |
 | `SwapFail(i)` | releases the hold, and lets the rollback's re-`initialize()` of the previous provider return (the model takes its success) | the swap failing |
@@ -33,7 +35,7 @@ Topologies:
 | `Init`, `Done` | nothing | nothing |
 
 Any other action fails the behaviour. At a binding's outcome (`Complete`, `BuildFail`, `SwapDone`, `SwapFailMark`,
-`FailMark`), the replay checks that the binding started exactly the `initialize()` calls the model says it did: one when
+`FailMark`, `SwapTimeout`), the replay checks that the binding started exactly the `initialize()` calls the model says it did: one when
 the provider's call is in the ghost `inFlight` after the binding and was not before, none otherwise.
 
 ## Compared at settled states
@@ -44,11 +46,11 @@ state, the comparison must hold once more 50 ms later, so a late shutdown shows.
 
 | Variable | The code's side |
 |:--|:--|
-| `bound` | each slot's provider, `api.getProvider(d)`, unwrapped to the scripted provider behind the library's wrapper; `NoOpProvider` is `None`. The SDK answers an unbound domain with the default slot's provider and keeps no public record of which domains are bound, so a domain that resolves to the default's provider reads as unbound when the model has it so. That blind spot runs
-both ways: a bug that binds a domain to the default's own provider, or one that never binds a domain the model binds
-to it, goes unseen here, and shows only in `total` |
+| `bound` | each slot's provider, `api.getProvider(d)`, unwrapped to the scripted provider behind the library's wrapper; `NoOpProvider` is `None`. The SDK answers an unbound domain with the default slot's provider and keeps no public record of which domains are bound, so a domain that resolves to the default's provider reads as unbound when the model has it so. That blind spot runs both ways: a bug that binds a domain to the default's own provider, or one that never binds a domain the model binds to it, goes unseen here, and shows only in `total` |
 | `total` | each scripted provider's `shutdown()` count, against the ghost `total` (cumulative shutdowns over all registrations) |
-| `inFlight` | the scripted providers with an `initialize()` running that the replay has not settled |
+| `inFlight`, with `pending` | the scripted providers with an `initialize()` running that the replay has not settled: the model's `inFlight` and, once a swap timed out, `pending` |
+| `orphans` | the previous providers the instances' orphan lists will shut down unless the SDK does (`FeatureFlagsLive.replayOrphans`, entries not `heldWhenRecorded`) |
+| `leftBehind` (API open) | what the close would release now (`ShutApi`'s `rel`): the model's entries still registered, held by no slot and waiting on no pending call, against `ApiInstances.leftBehindRunning` (the wrappers still in the cycle they were left in) minus those a slot holds. The model keeps every entry it made, and the code only those still in their cycle, so a provider shut down and bound again since counts in neither |
 | `owner` (shared, API open) | the set of instances whose `replayView` says they own the API, once the owner's build has handed it out |
 | `failedOn` (open instances) | `FeatureFlagsLive.replayView`'s failed registration |
 | `phase` | for each instance the replay holds: closed (its lifecycle closed or shut down) exactly when the model has it `closed` |
@@ -60,6 +62,4 @@ Skipped:
 - `registered` and `userOwned` deliberately differ from the SDK's for wrappers the library absorbed.
 - `replaced` shows in `total`.
 - `everBound`, `swappedOff`, `abandoned` and `builtOn` are ghosts or known to the replay.
-- `pending` and `orphans` stay empty with no timed-out swap.
-- `leftBehind` (a registry retry with another provider adds the provider it replaced) shows in `total`, at the
-  registry's close.
+- `abandoned` shows in `total`: the user's providers nothing shuts down.

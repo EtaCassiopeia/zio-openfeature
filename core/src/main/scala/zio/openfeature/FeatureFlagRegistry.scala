@@ -5,6 +5,7 @@ import zio._
 import zio.openfeature.internal.{
   ApiInstances,
   FeatureFlagsFactories,
+  InitDeadline,
   LifecycleProbe,
   ManagedProvider,
   ProviderRegistration
@@ -74,7 +75,8 @@ object FeatureFlagRegistry {
   private[openfeature] def fromProvider(
     defaultProvider: OFFeatureProvider,
     config: FeatureFlagsConfig,
-    probe: Option[String] => LifecycleProbe
+    probe: Option[String] => LifecycleProbe,
+    initDeadline: InitDeadline = InitDeadline.default
   ): ZLayer[Any, Throwable, FeatureFlagRegistry] =
     ZLayer.scoped {
       for {
@@ -95,7 +97,8 @@ object FeatureFlagRegistry {
           lock,
           zioApiHooksRef,
           config,
-          probe
+          probe,
+          initDeadline
         )
         // The registry owns its API: its clients go NotReady with it rather than serve the SDK's No-op answers.
         _ <- ZIO.addFinalizer(
@@ -129,7 +132,8 @@ final private class FeatureFlagRegistryLive(
   lock: Semaphore,
   zioApiHooksRef: Ref[List[FeatureHook]],
   config: FeatureFlagsConfig,
-  probe: Option[String] => LifecycleProbe
+  probe: Option[String] => LifecycleProbe,
+  initDeadline: InitDeadline = InitDeadline.default
 ) extends FeatureFlagRegistry {
 
   /** The registry's private API and the domains holding a promise (`None`: the default client), for a model replay. */
@@ -295,7 +299,8 @@ final private class FeatureFlagRegistryLive(
             contextSource = config.contextSource,
             fallbackLogging = config.fallbackLogging,
             maxAbandonedCalls = config.maxAbandonedCalls,
-            probe = probe(domain)
+            probe = probe(domain),
+            initDeadline = initDeadline
           )
         )
         .mapError(t => FeatureFlagError.ProviderInitializationFailed(t))

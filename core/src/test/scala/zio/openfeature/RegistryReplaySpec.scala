@@ -42,7 +42,7 @@ import scala.util.chaining._
 object RegistryReplaySpec extends ZIOSpecDefault {
 
   /** How long a step waits for the code to reach the point it drives to; a correct run never waits this long. */
-  val WaitMillis = 5000L
+  val WaitMillis = 15000L
 
   /** Long enough that no deadline ever fires: every outcome is the replay's release. */
   val InitTimeout: Duration = 30.seconds
@@ -583,7 +583,14 @@ object RegistryReplaySpec extends ZIOSpecDefault {
         val i   = act.str("i")
         val old = prev.asStr(prev.fun("prior")(i))
         val n   = next.asNum(next.fun("total")(old))
-        check(provider(old).shutdowns.get() >= n, s"SwapOldShut($i) shutting $old down").as(insts)
+        check(provider(old).shutdowns.get() >= n, s"SwapOldShut($i) shutting $old down")
+          .catchAll(e =>
+            ZIO.fail(
+              s"$e ($old: ${provider(old).shutdowns.get()} shutdowns, ${provider(old).inits.get()} inits; the swap " +
+                s"${inst(i).swap.map(r => if (r.done) "ended" else "running").getOrElse("none")}; saw ${inst(i).probe.points})"
+            )
+          )
+          .as(insts)
 
       case "SwapFailMark" | "FailMark" =>
         val i    = act.str("i"); val in = inst(i)

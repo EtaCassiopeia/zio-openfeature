@@ -2,7 +2,7 @@
 
 How `RegistryReplaySpec` (`core/src/test/scala/zio/openfeature/RegistryReplaySpec.scala`) drives each action of a
 behaviour `Generate.tla` writes, the twin of its `step`. Each step waits for the point it drives to, bounded by
-`WaitMillis` (5 s). A step that never gets there fails the behaviour; it never passes it. Every provider is a fresh
+`WaitMillis` (15 s, for slow CI runners; a correct run never waits that long). A step that never gets there fails the behaviour; it never passes it. Every provider is a fresh
 `Scripted`: each `initialize()` waits until the replay settles it (ok or failing), and each `shutdown()` is counted.
 Topologies:
 

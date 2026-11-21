@@ -72,6 +72,7 @@ on:
       - 'simulation/src/test/scala/zio/openfeature/simulation/Spec.scala'
       - 'simulation/src/test/scala/zio/openfeature/simulation/Runner.scala'
       - 'simulation/src/test/scala/zio/openfeature/simulation/PlanCodec.scala'
+      - 'simulation/src/test/scala/zio/openfeature/simulation/ModelInvariants.scala'
   push:
     branches: [main]
     paths:
@@ -123,6 +124,7 @@ on:
       - 'simulation/src/test/scala/zio/openfeature/simulation/Spec.scala'
       - 'simulation/src/test/scala/zio/openfeature/simulation/Runner.scala'
       - 'simulation/src/test/scala/zio/openfeature/simulation/PlanCodec.scala'
+      - 'simulation/src/test/scala/zio/openfeature/simulation/ModelInvariants.scala'
   schedule:
     - cron: '17 3 * * *'
   workflow_dispatch:
@@ -282,7 +284,8 @@ jobs:
 
   traces:
     runs-on: ubuntu-latest
-    # On main it also runs the cache's code mutants, each an extras recompile.
+    # On main it also runs the cache's code mutants, each an extras recompile, and last the lifecycle's, each a core
+    # recompile and a simulation run.
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v7
@@ -400,6 +403,11 @@ jobs:
           name: registry-behaviours
           path: registry-behaviours/
           retention-days: 14
+      # Each lifecycle bug the simulation's live invariant checks must catch, put into core (a recompile each), so on
+      # main and by hand only (formal/lifecycle/README.md, "Checked on the live record").
+      - name: Check each code mutant of the lifecycle turns the simulation's invariant checks red
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        run: python3 formal/lifecycle/codemutants.py
 
   # Every run the lifecycle test suites record is a behaviour of the model, on pull requests too, so a change the model
   # rejects fails before it merges. A job of its own, so it runs alongside the others; it finishes within the longest of

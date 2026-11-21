@@ -114,7 +114,7 @@ object Harness {
     provider: OFFeatureProvider,
     lifecycle: LifecycleProbe,
     evaluation: EvaluationProbe
-  ): ZIO[Scope, Throwable, (FeatureFlags, FeatureFlagsAdmin)] =
+  ): ZIO[Scope, Throwable, FeatureFlagsLive] =
     FeatureFlagsFactories
       .build(
         provider,
@@ -127,7 +127,6 @@ object Harness {
         probe = lifecycle,
         evaluationProbe = evaluation
       )
-      .map(ff => (ff, ff))
 
   private def reasonName(r: ResolutionReason): String = r match {
     case ResolutionReason.Static         => "STATIC"

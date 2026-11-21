@@ -37,19 +37,29 @@ import zio._
 private[openfeature] object ProviderRegistration {
 
   /** The slot was rebound to another provider while this registration waited (a concurrent sibling swap). Not an
-    * `IllegalStateException`: the swap rollback treats that one as the SDK's "already attached" signal.
+    * `IllegalStateException`, which a binding reads as the SDK's "already attached" refusal of a stale attachment.
     */
   final class RegistrationSuperseded
       extends RuntimeException("Provider registration was superseded by a concurrent registration")
 
   /** A swap reached its binding with another registration's `initialize()` of this provider already running. Binding
     * would have the SDK treat that call as this one's and shut the swap's previous provider down at once. Not an
-    * `IllegalStateException`: the swap rollback treats that one as the SDK's "already attached" signal.
+    * `IllegalStateException`, which a binding reads as the SDK's "already attached" refusal of a stale attachment.
     */
   final class StillInitializing(provider: OFFeatureProvider)
       extends RuntimeException(
         s"'${ProviderNames.of(provider)}' is still initializing from another registration and cannot be installed " +
           "until that initialize() returns"
+      )
+
+  /** A binding found the SDK's shutdown of this provider queued: a registration that replaced it is still initializing,
+    * and the SDK shuts the provider down once that call returns. Not an `IllegalStateException`, which a binding reads
+    * as the SDK's "already attached" refusal of a stale attachment.
+    */
+  final class ShutdownQueued(provider: OFFeatureProvider)
+      extends RuntimeException(
+        s"'${ProviderNames.of(provider)}' cannot be installed again until the registration that replaced it, still " +
+          "initializing, returns: the SDK shuts it down then"
       )
 
   /** How a registration settled: the provider's `initialize()` returned, and the SDK reports it in this state. Never
@@ -261,14 +271,15 @@ private[openfeature] object ProviderRegistration {
     api: OpenFeatureAPI,
     domain: Option[String],
     bound: Bound,
-    shareInFlight: Boolean = true
+    shareInFlight: Boolean = true,
+    reclaimForeign: Boolean = false
   ): Task[Registration] =
     ZIO.attemptBlocking {
       val armed = bound.managed.map(_.arm())
       // A slot that already holds it binds nothing, so nothing is shut down: another instance on this slot installed it.
       if (!shareInFlight && armed.exists(_.attempt.entered) && !holdsAlready(api, domain, bound))
         throw new StillInitializing(bound.sdk)
-      bind(api, domain, bound)
+      bind(api, domain, bound, reclaimForeign)
       val state  = domain.fold(api.getClient())(d => api.getClient(d)).getProviderState
       val reader = ProviderStateAccess.stateReader(api, domain.orNull, bound.sdk)
       // The SDK's state for the registration, read through its manager; without one the slot was rebound already.
@@ -283,13 +294,32 @@ private[openfeature] object ProviderRegistration {
     }
 
   /** Bind `bound` to `domain`'s slot, unless it holds that registration already. Throws what the SDK's binding throws.
+    * `reclaimForeign` resets a stale attachment of the user's own provider too: a rollback restoring the registration
+    * it replaced.
     */
-  def bind(api: OpenFeatureAPI, domain: Option[String], bound: Bound): Unit =
+  def bind(api: OpenFeatureAPI, domain: Option[String], bound: Bound, reclaimForeign: Boolean = false): Unit =
     if (!holdsAlready(api, domain, bound))
-      domain match {
-        case Some(d) => api.setProvider(d, bound.sdk)
-        case None    => api.setProvider(bound.sdk)
+      bound match {
+        // The library's wrapper outlives each registration of it: one whose last registration ended without a
+        // successful replacement is still attached to it, and is reclaimed here, unless that registration still has
+        // work queued on the wrapper.
+        case Bound.Managed(wrapper) =>
+          ProviderStateAccess.bindReclaiming(api, domain.orNull, bound.sdk, () => refuseReclaim(api, wrapper))
+        case Bound.Foreign(_) if reclaimForeign =>
+          ProviderStateAccess.bindReclaiming(api, domain.orNull, bound.sdk, () => ())
+        // The user's own provider: the SDK's binding, as the user would make it.
+        case Bound.Foreign(_) =>
+          domain match {
+            case Some(d) => api.setProvider(d, bound.sdk)
+            case None    => api.setProvider(bound.sdk)
+          }
       }
+
+  // A dead registration's `initialize()` still running would run alongside the one this binding starts; the SDK's
+  // shutdown of a wrapper, queued until the registration that replaced it initializes, would close it once bound.
+  private def refuseReclaim(api: OpenFeatureAPI, wrapper: ManagedProvider): Unit =
+    if (wrapper.initsInFlightAnywhere > 0) throw new StillInitializing(wrapper)
+    else if (ApiInstances.shutdownQueued(api, wrapper)) throw new ShutdownQueued(wrapper)
 
   /** Whether `domain`'s slot already holds this registration, so binding it again adds nothing. It would add a task on
     * the SDK's executor, with the registration as both new and old: run after a swap rebinds the slot, that task shuts

@@ -318,7 +318,9 @@ lazy val core = (project in file("core"))
         ProblemMatcher.make("zio.openfeature.FeatureFlagsLive.<init>"), // non-public: private[openfeature]
         ProblemMatcher.make("zio.openfeature.internal.FeatureFlagsFactories.buildAsync"),
         ProblemMatcher.make("zio.openfeature.FeatureFlagRegistry.fromProvider"), // non-public: private[openfeature]
-        ProblemMatcher.make("zio.openfeature.FeatureFlagRegistryLive.<init>")    // non-public: private[openfeature]
+        ProblemMatcher.make("zio.openfeature.FeatureFlagRegistryLive.<init>"),   // non-public: private[openfeature]
+        ProblemMatcher.make("zio.openfeature.internal.ProviderRegistration.bind"),
+        ProblemMatcher.make("zio.openfeature.internal.ProviderRegistration.register")
       )
     ))
   )

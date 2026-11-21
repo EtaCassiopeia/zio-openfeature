@@ -140,6 +140,10 @@ object RegistryReplaySpec extends ZIOSpecDefault {
     def done: Boolean = ended.get()
   }
 
+  // How an instance's swap ended, when it has: a refusal names its reason.
+  private def ended(in: Inst): UIO[Option[Either[String, Unit]]] =
+    in.swap.filter(_.done).fold[UIO[Option[Either[String, Unit]]]](ZIO.none)(_.fiber.join.asSome)
+
   /** What a behaviour's steps forked, armed or opened, so cleanup reaches what a step that failed left behind. */
   final class Leftovers {
     val holds  = new ConcurrentLinkedQueue[Hold]()
@@ -365,12 +369,24 @@ object RegistryReplaySpec extends ZIOSpecDefault {
       if (strs(next.field("inFlight")).contains(p.name) && !strs(prev.field("inFlight")).contains(p.name)) 1 else 0
     def started(p: Scripted): Option[(Scripted, Int, Int)] = Some((p, p.inits.get(), startsCall(p)))
     // At the binding's outcome: the code started exactly the calls the model says it did.
+    // A call the SDK queued may not have entered yet on a loaded machine: fewer is waited for, more fails at once.
     def calls(i: String): IO[String, Unit] =
       ZIO.foreachDiscard(inst(i).started) { case (p, before, expected) =>
-        val got = p.inits.get() - before
-        ZIO.unless(got == expected)(
-          ZIO.fail(s"${act.name}($i): ${p.name}'s binding started $got initialize() calls, the model $expected")
-        )
+        val deadline = java.lang.System.nanoTime() + WaitMillis * 1000000L
+        def got      = p.inits.get() - before
+        ZIO
+          .succeed(got)
+          .repeat(
+            Schedule.spaced(5.millis) *> Schedule.recurWhile[Int](n =>
+              n < expected && java.lang.System.nanoTime() < deadline
+            )
+          )
+          .withClock(Clock.ClockLive)
+          .flatMap(n =>
+            ZIO.unless(n == expected)(
+              ZIO.fail(s"${act.name}($i): ${p.name}'s binding started $n initialize() calls, the model $expected")
+            )
+          )
       }
     def getClient(d: Option[String]): UIO[Outcome] = {
       val r = env.registry.getOrElse(sys.error("getClient outside the registry topology"))
@@ -563,11 +579,15 @@ object RegistryReplaySpec extends ZIOSpecDefault {
         } yield put(i, _.copy(swap = None, started = None))
 
       case "InitSettle" =>
-        // Settle the timed-out swap's call, then wait for the code to act on it: the orphan lists settle and the
-        // shutdowns land, before a next step that reads them (a swap back to a provider that call held).
+        // Settle the timed-out swap's call, then wait for the code to act on it: the orphan lists settle, each
+        // instance's lifecycle drops its entry for the call (a swap back to the provider it replaced is refused until
+        // then, held by a visible slot or not), and the shutdowns land, before a next step that reads them.
         val p       = provider(act.str("p")); val ok = act.bool("ok")
         val orphans = strs(next.field("orphans"))
         val totals  = next.fun("total").map { case (q, n) => q -> next.asNum(n) }
+        val waiting = strs(next.field("pending")).nonEmpty
+        // The wrapper counts the call out just after it returns; a swap onto it is refused until then.
+        val running = strs(next.field("inFlight")).contains(p.name)
         ZIO
           .attemptBlocking(p.settle(ok))
           .orDie
@@ -575,7 +595,9 @@ object RegistryReplaySpec extends ZIOSpecDefault {
             ZIO.unless(done)(ZIO.fail(s"InitSettle(${p.name}): no initialize() running to settle"))
           ) *> check(
           insts.values.flatMap(_.handle).flatMap(_.replayOrphans.map(nameOf)).toSet == orphans &&
-            totals.forall { case (q, n) => provider(q).shutdowns.get() >= n } && !p.initializing,
+            totals.forall { case (q, n) => provider(q).shutdowns.get() >= n } && !p.initializing &&
+            (running || ManagedProvider.existing(p).forall(_.initsInFlightAnywhere == 0)) &&
+            (waiting || insts.values.flatMap(_.handle).forall(_.lifecycleSnapshot.orphans.isEmpty)),
           s"InitSettle(${p.name}) settling"
         ).as(insts)
 
@@ -585,9 +607,12 @@ object RegistryReplaySpec extends ZIOSpecDefault {
         val n   = next.asNum(next.fun("total")(old))
         check(provider(old).shutdowns.get() >= n, s"SwapOldShut($i) shutting $old down")
           .catchAll(e =>
-            ZIO.fail(
-              s"$e ($old: ${provider(old).shutdowns.get()} shutdowns, ${provider(old).inits.get()} inits; the swap " +
-                s"${inst(i).swap.map(r => if (r.done) "ended" else "running").getOrElse("none")}; saw ${inst(i).probe.points})"
+            ended(inst(i)).flatMap(out =>
+              ZIO.fail(
+                s"$e ($old: ${provider(old).shutdowns.get()} shutdowns, ${provider(old).inits.get()} inits; the swap " +
+                  s"${inst(i).swap.map(r => if (r.done) "ended" else "running").getOrElse("none")} $out; saw " +
+                  s"${inst(i).probe.points})"
+              )
             )
           )
           .as(insts)
@@ -599,7 +624,13 @@ object RegistryReplaySpec extends ZIOSpecDefault {
         ZIO
           .attemptBlocking(p.settle(false))
           .orDie
-          .flatMap(ok => ZIO.unless(ok)(ZIO.fail(s"${act.name}($i): no initialize() of ${p.name} to fail"))) *>
+          .flatMap(ok =>
+            ZIO.unless(ok)(
+              ended(in).flatMap(out =>
+                ZIO.fail(s"${act.name}($i): no initialize() of ${p.name} to fail (the swap returned $out)")
+              )
+            )
+          ) *>
           check(hold.reached.getCount == 0, s"${act.name}($i) reaching FailedRegistration")
             .catchAll { e =>
               val r = in.swap.orElse(in.build).map(r => if (r.done) "ended" else "running")

@@ -2,12 +2,13 @@ package dev.openfeature.sdk
 
 import dev.openfeature.sdk.internal.{AutoCloseableReentrantReadWriteLock, TriConsumer}
 
-/** Access to package-private SDK members needed for hot-swap rollback and event forwarding.
+/** Access to package-private SDK members needed to rebind a provider and to forward events.
   *
-  * When `setProvider`'s registration of the new provider fails because the new provider's `initialize()` throws, the
-  * SDK has already evicted the old provider's state manager from the domain/default slot but left the old
-  * `EventProvider` `attach`ed. Re-registering the old provider then throws `IllegalStateException: already attached`
-  * unless its attach state is first reset via the package-private `detach()`. This shim exposes that member.
+  * The SDK resets an `EventProvider`'s attachment only when the registration that replaced it initializes. One whose
+  * registration ended otherwise (a failed swap evicted it, another failure or a user's binding replaced it, or its API
+  * shut down) stays attached, and binding it again throws `IllegalStateException: ... is already attached.` unless its
+  * attach state is first reset via the package-private `detach()`. This shim exposes that member, which
+  * `ProviderStateAccess.bindReclaiming` and the release paths use.
   *
   * Compile-time checked rather than reflective: an SDK upgrade that changes these signatures fails compilation here
   * instead of surfacing as a runtime reflection error. Same package-shim pattern as `extras`' `EventProviderBridge`

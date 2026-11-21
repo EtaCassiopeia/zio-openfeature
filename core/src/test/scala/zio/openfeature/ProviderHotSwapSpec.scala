@@ -206,14 +206,19 @@ object ProviderHotSwapSpec extends ZIOSpecDefault {
     }
   }
 
-  /** Attaches the wrapper the swap registers for `provider` to something else. The SDK then refuses to register it, and
+  /** Has another API claim the wrapper the swap registers for `provider`. The SDK then refuses to register it, and
     * throws before it binds anything, so a swap to `provider` gets past its own checks and fails at its registration.
-    * Attaching `provider` itself would refuse the swap earlier, when its wrapper is made.
+    * Claiming `provider` itself would refuse the swap earlier, when its wrapper is made. Not a stale attachment, which
+    * the library resets as it binds.
     */
-  private def attachedElsewhere(provider: dev.openfeature.sdk.FeatureProvider): UIO[Unit] =
-    ZIO.succeed(
-      dev.openfeature.sdk.EventProviderAccess.attach(zio.openfeature.internal.ManagedProvider(provider), (_, _) => ())
-    )
+  private def claimedElsewhere(provider: dev.openfeature.sdk.FeatureProvider): URIO[Scope, Unit] = {
+    val wrapper = zio.openfeature.internal.ManagedProvider(provider)
+    ZIO
+      .acquireRelease(ZIO.succeed(dev.openfeature.sdk.ClaimedElsewhere.claim(wrapper)))(other =>
+        ZIO.succeed(dev.openfeature.sdk.ClaimedElsewhere.release(other, wrapper))
+      )
+      .unit
+  }
 
   private def await(latch: java.util.concurrent.CountDownLatch): UIO[Boolean] =
     ZIO.succeedBlocking(latch.await(10, java.util.concurrent.TimeUnit.SECONDS))
@@ -1373,7 +1378,7 @@ object ProviderHotSwapSpec extends ZIOSpecDefault {
       }
     } @@ TestAspect.withLiveClock,
     test(
-      "on a shared API, a restored provider that throws after its rollback timed out leaves the failed provider up, not installable again"
+      "on a shared API, a restored provider that throws after its rollback timed out leaves the failed provider up, and installable again"
     ) {
       ZIO.scoped {
         val reinit = new java.util.concurrent.CountDownLatch(1)
@@ -1395,7 +1400,8 @@ object ProviderHotSwapSpec extends ZIOSpecDefault {
           _      <- ZIO.sleep(200.millis)
           shut = f.shutdowns.get()
           again <- ff.setProvider(f).either
-        } yield assertTrue(failed.isLeft, ended, shut == 0, again.isLeft, f.inits.get() == 1)
+          // Its failed registration left its wrapper attached; the binding resets that, so the swap initializes it again.
+        } yield assertTrue(failed.isLeft, ended, shut == 0, again.isRight, f.inits.get() == 2)
       }
     } @@ TestAspect.withLiveClock,
     test("a rollback still hanging when the scope closes gets the failed provider shut down, with no watcher left") {
@@ -1573,7 +1579,7 @@ object ProviderHotSwapSpec extends ZIOSpecDefault {
           )
           started <- awaitTrue(a.inits.get() == 1)
           // Attached elsewhere already: the SDK's registration throws before it binds B, so the slot keeps A.
-          _      <- attachedElsewhere(b)
+          _      <- claimedElsewhere(b)
           failed <- ff.setProvider(b).either
           status <- ff.providerStatus
           eval   <- ff.boolean("flag", default = false).either
@@ -1608,7 +1614,7 @@ object ProviderHotSwapSpec extends ZIOSpecDefault {
           built <- buildExposed(a, initTimeout = 300.millis)
           (ff, api, domain) = built
           timedOut <- ff.setProvider(b).either
-          _        <- attachedElsewhere(c)
+          _        <- claimedElsewhere(c)
           refused  <- ff.setProvider(c).either
           status   <- ff.providerStatus
           meta     <- ff.providerMetadata
@@ -1645,7 +1651,7 @@ object ProviderHotSwapSpec extends ZIOSpecDefault {
             .repeat(Schedule.spaced(20.millis) && Schedule.recurWhile[ProviderStatus](_ != ProviderStatus.Error))
             .timeout(5.seconds)
             .map(_.isDefined)
-          _      <- attachedElsewhere(b)
+          _      <- claimedElsewhere(b)
           failed <- ff.setProvider(b).either
           status <- ff.providerStatus
           // Never ready, so the watchdog still makes it Fatal at initTimeout.
@@ -1679,7 +1685,7 @@ object ProviderHotSwapSpec extends ZIOSpecDefault {
             initTimeout = 300.millis,
             probe = holdAt(zio.openfeature.internal.LifecycleProbe.Point.SwapRollback, held, release)
           )
-          _    <- attachedElsewhere(b)
+          _    <- claimedElsewhere(b)
           swap <- ff.setProvider(b).either.fork
           // Held with its gate up past the watchdog's deadline, which the gate drops.
           reached <- held.await.timeout(5.seconds)

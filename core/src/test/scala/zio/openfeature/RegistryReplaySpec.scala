@@ -164,7 +164,7 @@ object RegistryReplaySpec extends ZIOSpecDefault {
   )
 
   /** The environment one behaviour runs in: a registry over its private API, or one shared API. */
-  final case class Env(
+  final private case class Env(
     topology: String,
     providers: Map[String, Scripted],
     api: OpenFeatureAPI,
@@ -535,7 +535,7 @@ object RegistryReplaySpec extends ZIOSpecDefault {
               val r = in.swap.orElse(in.build).map(r => if (r.done) "ended" else "running")
               in.swap
                 .filter(_.done)
-                .fold(ZIO.none)(r => r.fiber.join.asSome)
+                .fold[UIO[Option[Either[String, Unit]]]](ZIO.none)(r => r.fiber.join.asSome)
                 .flatMap(out =>
                   ZIO.fail(
                     s"$e (${p.name}: ${p.inits.get()} inits, initializing=${p.initializing}; step $r $out; saw ${in.probe.points})"

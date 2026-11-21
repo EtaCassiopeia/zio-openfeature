@@ -4,7 +4,7 @@ import dev.openfeature.sdk.{FeatureProvider => OFFeatureProvider, OpenFeatureAPI
 import zio._
 import zio.openfeature._
 import zio.openfeature.extras._
-import zio.openfeature.internal.{EvaluationProbe, FeatureFlagsFactories, LifecycleProbe}
+import zio.openfeature.internal.{EvaluationProbe, FeatureFlagsFactories, InitDeadline, LifecycleProbe}
 import zio.openfeature.testkit.HookCall
 
 /** What an evaluation produced, normalized so the model can predict it. */
@@ -113,7 +113,8 @@ object Harness {
   def installProbed(
     provider: OFFeatureProvider,
     lifecycle: LifecycleProbe,
-    evaluation: EvaluationProbe
+    evaluation: EvaluationProbe,
+    initDeadline: InitDeadline = InitDeadline.default
   ): ZIO[Scope, Throwable, FeatureFlagsLive] =
     FeatureFlagsFactories
       .build(
@@ -125,7 +126,8 @@ object Harness {
         addShutdownFinalizer = true,
         apiOverride = Some(OpenFeatureAPI.createIsolated()),
         probe = lifecycle,
-        evaluationProbe = evaluation
+        evaluationProbe = evaluation,
+        initDeadline = initDeadline
       )
 
   private def reasonName(r: ResolutionReason): String = r match {

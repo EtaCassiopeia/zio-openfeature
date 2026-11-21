@@ -67,6 +67,9 @@ final class SchedulePerturber(seed: Long, onLifecycle: LifecycleProbe.Point => U
   /** Stamps a harness event into the decision log. */
   def note(event: String): UIO[Unit] = ZIO.succeed(record(event))
 
+  /** The harness's own events (swaps, releases, shutdowns), which the tail of a long log may have dropped. */
+  def events: String = log.asScala.filterNot(_.contains(" -> ")).mkString("\n")
+
   /** The seed, the pass rate and the last `last` log entries, for a failure message. */
   def render(last: Int): String = {
     val all = log.asScala.toVector

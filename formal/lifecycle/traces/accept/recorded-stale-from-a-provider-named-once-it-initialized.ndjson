@@ -1,0 +1,32 @@
+{"seq":0,"point":"BuildBind","arg":"","provider":"L0","providerInstance":"7a13303e","domain":"sim-a6afbecb-8fc8-4977-ac13-171a1b58002b","owns":"true","async":"false"}
+{"seq":1,"point":"InitEntered","arg":""}
+{"seq":2,"point":"InitOutcome","arg":"true","provider":"L0","providerInstance":"7a13303e"}
+{"seq":3,"point":"InitReturned","arg":""}
+{"seq":4,"point":"DeliverEvent","arg":"PROVIDER_READY","provider":"L0"}
+{"seq":5,"point":"ApplySignal","arg":"EventReady"}
+{"seq":6,"point":"StatusWritten","arg":"Ready"}
+{"seq":7,"point":"Begin","arg":"","provider":"L0","providerInstance":"7a13303e","pins":"inits"}
+{"seq":8,"point":"SwapStart","arg":"","provider":"unknown","providerInstance":"4b26fc9c"}
+{"seq":9,"point":"ApplySignal","arg":"SwapStarted"}
+{"seq":10,"point":"SwapBind","arg":""}
+{"seq":11,"point":"SdkBind","arg":""}
+{"seq":12,"point":"InitEntered","arg":""}
+{"seq":13,"point":"InitOutcome","arg":"true","provider":"CircuitBreakerProvider(multiprovider)","providerInstance":"4b26fc9c"}
+{"seq":14,"point":"InitReturned","arg":""}
+{"seq":15,"point":"DeliverEvent","arg":"PROVIDER_READY","provider":"CircuitBreakerProvider(multiprovider)"}
+{"seq":16,"point":"ApplySignal","arg":"EventReady"}
+{"seq":17,"point":"ApplySignal","arg":"SwapSucceeded(Ready)"}
+{"seq":18,"point":"ProviderShutDown","arg":"1599","provider":"L0","providerInstance":"7a13303e","caller":"openfeature-provider-thread-2"}
+{"seq":19,"point":"DeliverEvent","arg":"PROVIDER_STALE","provider":"CircuitBreakerProvider(multiprovider)"}
+{"seq":20,"point":"ShutdownReturned","arg":"1599 true"}
+{"seq":21,"point":"StatusWritten","arg":"Ready"}
+{"seq":22,"point":"GateDown","arg":""}
+{"seq":23,"point":"SwapReconcile","arg":""}
+{"seq":24,"point":"ApplySignal","arg":"EventStale"}
+{"seq":25,"point":"ApplySignal","arg":"EventStale"}
+{"seq":26,"point":"StatusWritten","arg":"Stale"}
+{"seq":27,"point":"SwapDone","arg":""}
+{"seq":28,"point":"RetireSiblings","arg":""}
+{"seq":29,"point":"ScopeClose","arg":""}
+{"seq":30,"point":"ProviderShutDown","arg":"1601","provider":"CircuitBreakerProvider(multiprovider)","providerInstance":"4b26fc9c","caller":"openfeature-provider-thread-1"}
+{"seq":31,"point":"ShutdownReturned","arg":"1601 true"}

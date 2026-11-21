@@ -282,7 +282,7 @@ so a run the trace check skips is still checked here.
 | `NotReadyDuringSwap` | with a swap in flight, the status is `NotReady`: the code keeps no swap phase, so only on the swap's own fiber at `SwapBind`, `SdkBind`, `SwapTimeout`, and the `ApplySignal` of its outcome (`SwapSucceeded` or `SwapFailed`), just before that outcome is applied | at those points |
 | `StatusFollowsSdk` | not checked: the SDK slot and the record cannot be read together, and "no undelivered event" is not observable | trace validation and replay |
 | `OutcomeFollowsSettled` | not observable: the code keeps no `settled` | trace validation and replay |
-| `ShutDownAtMostOnce`, `TearDownOnce`, `ClosedCleanly` | the simulation's end checks (each leaf shut down exactly once, the end state) | end of run |
+| `ShutDownAtMostOnce`, `TearDownOnce`, `ClosedCleanly` | the simulation's end checks (each leaf shut down exactly once, the end state; a stack a rollback registered again after its `initialize()` failed, at least once and at most once per `initialize()`) | end of run |
 
 `codemutants.py` puts a bug into the code for each of `GateDownWhenIdle`, `OneLockHolder`, `BoundNotShutDown` and
 `NotReadyDuringSwap`, and requires the simulation to fail naming that invariant; it recompiles core per mutant, so CI
@@ -304,10 +304,13 @@ the same API record nothing.
 The concurrent simulation (`ConcurrentSimulationSpec`, in the simulation module) records too: every plan's run, under
 its seeded schedule perturbation, written as `concurrent-<schedule seed>-<id>.ndjson` with the plan beside it
 (`.plan.json`), which replays a rejected run through the simulation's regression corpus. Its runs reach swaps,
-rollbacks, events racing swaps and throwing shutdowns at scope close, many times over; they do not reach a timed-out
-swap, an orphan, `Watchdog` or an explicit shutdown, which the suites above do. `validate.py --actions` prints how many
+rollbacks, events racing swaps, throwing shutdowns at scope close, explicit shutdowns mid-run, and timed-out swaps
+whose stalled `initialize()` settles later (`SwapTimeout`, `OrphanResolved`, `SwapFailNoRollback`), many times over;
+they do not reach `Watchdog`, which the suites above do. `validate.py --actions` prints how many
 runs take each action, so a source that stops reaching one shows.
-`trace_labels.py` turns a run into the library actions above, with what the run recorded about each: a delivered
+`trace_labels.py` turns a run into the library actions above, with what the run recorded about each (a provider
+named only once it has initialized, such as a multi-provider, is `unknown` at `SwapStart`; its `InitOutcome` names it,
+fixture `accept/recorded-stale-from-a-provider-named-once-it-initialized`): a delivered
 event's type, whether a swap or its rollback ended `STALE`, whether the rollback succeeded. `TraceValidation.tla` then
 lets TLC search for a behaviour of `Lifecycle` that takes exactly those library steps in that order, with the SDK's
 steps (an `initialize()` returning or throwing, a provider emitting) free, except the two kinds a run records. The

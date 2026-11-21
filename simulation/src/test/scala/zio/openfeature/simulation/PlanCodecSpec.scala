@@ -54,14 +54,34 @@ object PlanCodecSpec extends ZIOSpecDefault {
         """{"home":{},"muts":[],"scheduleSeed":7,"spec":{"Leaf":{"id":0,"initial":{}}},"swaps":[],"workers":[]}"""
       assertTrue(
         PlanCodec.read[ConcurrentSimulationSpec.Plan](text) ==
-          Right(ConcurrentSimulationSpec.Plan(Spec.Leaf(0, Map.empty, None, None), Map.empty, Nil, Nil, Nil, 7L, None))
+          Right(
+            ConcurrentSimulationSpec.Plan(Spec.Leaf(0, Map.empty, None, None), Map.empty, Nil, Nil, Nil, 7L, None, None)
+          )
       )
     },
     test("a mid-run shutdown is written as the swap index it follows") {
       val plan =
-        ConcurrentSimulationSpec.Plan(Spec.Leaf(0, Map.empty, None, None), Map.empty, Nil, Nil, Nil, 7L, Some(1))
+        ConcurrentSimulationSpec.Plan(Spec.Leaf(0, Map.empty, None, None), Map.empty, Nil, Nil, Nil, 7L, Some(1), None)
       assertTrue(
         PlanCodec.write(plan).contains(""""shutdownAfterSwap":1"""),
+        PlanCodec.read[ConcurrentSimulationSpec.Plan](PlanCodec.write(plan)) == Right(plan)
+      )
+    },
+    test("each swap's release of a stalled initialize() is written by its kind") {
+      import ConcurrentSimulationSpec.Release
+      val releases = List(Release.AfterSwaps(1), Release.AtEnd, Release.AfterClose)
+      val plan     = ConcurrentSimulationSpec.Plan(
+        Spec.Leaf(0, Map.empty, None, None),
+        Map.empty,
+        Nil,
+        Nil,
+        Nil,
+        7L,
+        None,
+        Some(releases)
+      )
+      assertTrue(
+        PlanCodec.write(plan).contains(""""releases":[{"AfterSwaps":{"n":1}},"AtEnd","AfterClose"]"""),
         PlanCodec.read[ConcurrentSimulationSpec.Plan](PlanCodec.write(plan)) == Right(plan)
       )
     },

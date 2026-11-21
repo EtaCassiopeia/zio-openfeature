@@ -17,12 +17,32 @@
 (*  - One initialize() call per provider at a time (`inFlight`): no build  *)
 (*    or swap binds a provider whose call is in flight, and only a call    *)
 (*    the instance started can fail or time out under it.  A binding of a  *)
-(*    provider already `ready` starts no call, so it cannot fail.          *)
+(*    provider already `ready`, or of one another slot binds (the SDK      *)
+(*    reuses that registration, whatever its state), starts no call, so it *)
+(*    cannot fail; a registry retry on the slot that holds its failed      *)
+(*    provider initializes that provider again (StartsCall).               *)
+(*  - No build or swap binds a provider another slot binds that is not     *)
+(*    ready (BindOk), but a registry retry on the slot holding its failed  *)
+(*    provider: the SDK reuses that registration, failed or absorbed by    *)
+(*    the library's wrapper, which `registered` abstracts (README).  Nor  *)
+(*    one whose last registration failed (`failed`): the code refuses a    *)
+(*    provider its failed registration left attached.  Nor one whose       *)
+(*    shutdown the SDK has queued: one a retry's binding replaced, or one  *)
+(*    a swap in flight replaced, neither by a                              *)
+(*    build, a swap or the user, nor by a second swap off that provider    *)
+(*    (whose rollback would bind it again).  The SDK decides at the        *)
+(*    binding, where the model decides at SwapDone.                        *)
+(*  - A registry retry on a provider already ready completes at once: the  *)
+(*    SDK starts no initialize(), and shuts the provider it replaced down  *)
+(*    in the binding (Complete is held next).                              *)
 (*  - No swap times out unless AllowTimeouts: the replay cannot fire a     *)
 (*    swap's deadline yet, and without a timeout no initialize() is left   *)
 (*    to settle late (InitSettle).                                         *)
 (*  - Steps the code takes in one go, with no probe point between them,    *)
 (*    stay adjacent (`then`): a failed registry build is evicted next, and *)
+(*    a swap whose provider another slot shares, already initialized, is   *)
+(*    followed by the SDK's shutdown of the provider it replaced when no    *)
+(*    slot holds that one (SwapOldShut, which the SDK runs in the binding); *)
 (*    a release of the provider a retry replaced is followed by that       *)
 (*    retry's failed build (releaseReplacedFailure runs inside it).  So a  *)
 (*    build fails only with the semaphore free, for its eviction to take   *)
@@ -67,9 +87,10 @@ VARIABLES
     ready,     \* providers whose initialize() returned in their current registration
     inFlight,  \* providers with an initialize() call a build or swap started that has not settled
     total,     \* each provider: how many times its shutdown() ran, over all its registrations
-    then       \* the step the code takes next with no probe point before it, or None
+    then,      \* the step the code takes next with no probe point before it, or None
+    failed     \* providers whose last registration failed to initialize: the code leaves such a one attached
 
-GVars == << vars, act, ready, inFlight, total, then >>
+GVars == << vars, act, ready, inFlight, total, then, failed >>
 
 Reg == Topology = "registry"
 Shared == Topology = "shared"
@@ -81,9 +102,28 @@ GInit ==
     /\ inFlight = {}
     /\ total = [q \in Providers |-> 0]
     /\ then = None
+    /\ failed = {}
 
 Prov(i) == IF domainOf[i] = None THEN None ELSE bound[domainOf[i]]
 Fresh(i) == Prov(i) \in inFlight
+
+\* Whether a build (Create) or a swap may bind p on slot d: a provider ready already, one no slot binds whose last
+\* registration did not fail, or for a registry retry the failed provider the slot holds; never one whose shutdown the
+\* SDK has queued (a swap in flight replaced it, or a retry's binding did).
+BindOk(name, d, p) ==
+    /\ ~\E j \in swapping : prior[j] = p
+    /\ replaced[p] = None
+    /\ \/ p \in ready
+       \/ SlotsOf(p) = {} /\ p \notin failed
+       \/ name = "Create" /\ Reg /\ d # None /\ bound[d] = p
+
+\* Whether binding p for instance i (a build or a swap) starts an initialize() call: not for a provider ready already, nor
+\* for one another slot binds, whose registration the SDK reuses; a registry retry on the slot holding its failed
+\* provider initializes it again (ProviderRegistration.retryFailedInitialization).
+StartsCall(name, i, p) ==
+    /\ p \notin ready
+    /\ \/ SlotsOf(p) = {}
+       \/ name = "Create" /\ bound[domainOf[i]] = p
 
 \* Held to `then`: only that step may run.
 Free(name, i) == then = None \/ then = [name |-> name, i |-> i]
@@ -110,6 +150,7 @@ CreateStep(i, p, own) ==
     /\ (Reg => ~own)
     /\ (Reg /\ domainOf[i] = Default => p = DefaultProvider)
     /\ p \notin inFlight
+    /\ BindOk("Create", domainOf[i], p)
     /\ Create(i, p, own)
 
 \* A Check takes the semaphore only when a Create can follow it, which then does at once: one that could not would hold
@@ -118,6 +159,7 @@ CreateStep(i, p, own) ==
 CanCreateOn(d) ==
     \E p \in Providers \ inFlight :
         /\ Reg /\ d = Default => p = DefaultProvider
+        /\ BindOk("Create", d, p)
         /\ p \notin pending /\ ~Waiting(p)
         /\ \/ bound[d] \in {None, p}
            \/ /\ \E j \in Instances : domainOf[j] = d /\ phase[j] = "evicted"
@@ -135,7 +177,7 @@ Work ==
             CanCreateOn(d) /\ Check(i, d) /\ act' = [name |-> "Check", i |-> i, d |-> d]
     \/ \E i \in Instances, p \in Providers, own \in BOOLEAN :
          CreateStep(i, p, own) /\ act' = [name |-> "Create", i |-> i, p |-> p, own |-> own]
-    \/ then = None /\ \E i \in Instances : Complete(i) /\ act' = [name |-> "Complete", i |-> i]
+    \/ \E i \in Instances : Free("Complete", i) /\ Complete(i) /\ act' = [name |-> "Complete", i |-> i]
     \/ /\ Reg
        /\ \E i \in Instances :
             /\ Free("BuildFail", i)
@@ -150,9 +192,12 @@ Work ==
             /\ ReleaseReplaced(i) /\ act' = [name |-> "ReleaseReplaced", i |-> i]
     \/ /\ then = None
        /\ \E i \in Instances, p \in Providers :
-            p \notin inFlight /\ SwapStart(i, p) /\ act' = [name |-> "SwapStart", i |-> i, p |-> p]
+            /\ p \notin inFlight
+            /\ BindOk("SwapStart", domainOf[i], p)
+            /\ ~\E j \in swapping : domainOf[i] # None /\ prior[j] = bound[domainOf[i]]
+            /\ SwapStart(i, p) /\ act' = [name |-> "SwapStart", i |-> i, p |-> p]
     \/ then = None /\ \E i \in Instances : SwapDone(i) /\ act' = [name |-> "SwapDone", i |-> i]
-    \/ then = None /\ \E i \in Instances : SwapOldShut(i) /\ act' = [name |-> "SwapOldShut", i |-> i]
+    \/ \E i \in Instances : Free("SwapOldShut", i) /\ SwapOldShut(i) /\ act' = [name |-> "SwapOldShut", i |-> i]
     \/ then = None /\ \E i \in Instances : Fresh(i) /\ SwapFailMark(i) /\ act' = [name |-> "SwapFailMark", i |-> i]
     \/ then = None /\ \E i \in Instances : SwapFail(i) /\ act' = [name |-> "SwapFail", i |-> i]
     \/ /\ then = None
@@ -161,7 +206,10 @@ Work ==
     \/ /\ then = None
        /\ \E p \in Providers, ok \in BOOLEAN : InitSettle(p, ok) /\ act' = [name |-> "InitSettle", p |-> p, ok |-> ok]
     \/ /\ then = None
-       /\ Shared /\ \E d \in Domains, p \in Providers : UserBind(d, p) /\ act' = [name |-> "UserBind", d |-> d, p |-> p]
+       /\ Shared
+       /\ \E d \in Domains, p \in Providers :
+            /\ ~\E j \in swapping : prior[j] = p
+            /\ UserBind(d, p) /\ act' = [name |-> "UserBind", d |-> d, p |-> p]
     \/ /\ then = None
        /\ Shared /\ \E i \in Instances : phase[i] = "building" /\ Fresh(i) /\ FailMark(i) /\ act' = [name |-> "FailMark", i |-> i]
     \/ then = None /\ \E i \in Instances : FailDecide(i) /\ act' = [name |-> "FailDecide", i |-> i]
@@ -174,6 +222,16 @@ Closing ==
        \/ Shared /\ OwnerClose /\ act' = [name |-> "OwnerClose"]
        \/ Reg /\ RegistryClose /\ act' = [name |-> "RegistryClose"]
 
+\* The swap of i that just started shares a registration already initialized in another slot, and no slot holds the
+\* provider it replaced: the SDK shuts that one down as part of the binding, before anything else (SwapOldShut).
+EarlyShut(i) ==
+    LET d == domainOf[i]
+        old == bound[d]
+    IN /\ old # None
+       /\ old \in registered
+       /\ \A e \in Domains \ {d} : bound[e] # old
+       /\ \E e \in Domains \ {d} : bound[e] = act'.p
+
 Starts == {"Create", "SwapStart"}
 Outcomes == {"Complete", "BuildFail", "SwapDone", "SwapFailMark", "SwapTimeout", "FailMark"}
 Successes == {"Complete", "SwapDone"}
@@ -181,16 +239,24 @@ Successes == {"Complete", "SwapDone"}
 Ghosts ==
     LET q == IF act'.name \in Outcomes THEN Prov(act'.i) ELSE None
     IN
-    /\ inFlight' = IF act'.name \in Starts /\ act'.p \notin ready THEN inFlight \cup {act'.p}
+    /\ inFlight' = IF act'.name \in Starts /\ StartsCall(act'.name, act'.i, act'.p) THEN inFlight \cup {act'.p}
                    ELSE IF act'.name \in Outcomes THEN inFlight \ {q}
                    ELSE inFlight
     /\ ready' = (ready \cup (IF act'.name \in Successes THEN {q}
                              ELSE IF act'.name = "InitSettle" THEN (IF act'.ok THEN {act'.p} ELSE {})
                              ELSE IF act'.name = "UserBind" THEN {act'.p}
+                             \* The rollback registers the previous provider again, which initializes (the model takes
+                             \* that call's success).
+                             ELSE IF act'.name = "SwapFail" THEN {prior[act'.i]}
                              ELSE {})) \cap registered'
+    /\ failed' = IF act'.name \in {"BuildFail", "SwapFailMark", "FailMark"} THEN failed \cup {q}
+                 ELSE failed \ ready'
     /\ total' = [p \in Providers |-> total[p] + (IF shuts'[p] > shuts[p] THEN shuts'[p] - shuts[p] ELSE 0)]
     /\ then' = CASE act'.name = "Check" -> [name |-> "Create", i |-> act'.i]
                  [] act'.name = "BuildFail" -> [name |-> "Evict", i |-> act'.i]
+                 [] act'.name = "SwapStart" /\ EarlyShut(act'.i) -> [name |-> "SwapOldShut", i |-> act'.i]
+                 [] act'.name = "Create" /\ act'.p \in ready /\ bound[domainOf[act'.i]] \notin {None, act'.p} ->
+                        [name |-> "Complete", i |-> act'.i]
                  [] act'.name = "ReleaseReplaced" /\ Retry(act'.i) # {} ->
                         [name |-> "BuildFail", i |-> CHOOSE j \in Retry(act'.i) : TRUE]
                  [] OTHER -> None

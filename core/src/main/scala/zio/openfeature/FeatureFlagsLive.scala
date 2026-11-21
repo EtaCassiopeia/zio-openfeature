@@ -114,6 +114,9 @@ final private[openfeature] class FeatureFlagsLive(
   /** The provider the SDK routes this instance's evaluations to: the one its slot binds now. */
   private[openfeature] def sdkBound: OFFeatureProvider = domain.fold(api.getProvider())(d => api.getProvider(d))
 
+  /** Whether this instance owns its API, and the provider a failure under it marked, for a model replay. */
+  private[openfeature] def replayView: (Boolean, Option[OFFeatureProvider]) = (ownsApi, failedRegistration.get())
+
   /** This instance's end state, for a test's end-state check: no abandoned call still counted; once closed or shut
     * down, the bridge detached, no orphan left, and a wrapper shut down in its cycle with its lane stopped; once shut
     * down, the status `NotReady`. On a live instance the orphans are checked only while no swap or shutdown holds the

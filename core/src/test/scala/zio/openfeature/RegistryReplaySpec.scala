@@ -586,6 +586,8 @@ object RegistryReplaySpec extends ZIOSpecDefault {
         val orphans = strs(next.field("orphans"))
         val totals  = next.fun("total").map { case (q, n) => q -> next.asNum(n) }
         val waiting = strs(next.field("pending")).nonEmpty
+        // The wrapper counts the call out just after it returns; a swap onto it is refused until then.
+        val running = strs(next.field("inFlight")).contains(p.name)
         ZIO
           .attemptBlocking(p.settle(ok))
           .orDie
@@ -594,6 +596,7 @@ object RegistryReplaySpec extends ZIOSpecDefault {
           ) *> check(
           insts.values.flatMap(_.handle).flatMap(_.replayOrphans.map(nameOf)).toSet == orphans &&
             totals.forall { case (q, n) => provider(q).shutdowns.get() >= n } && !p.initializing &&
+            (running || ManagedProvider.existing(p).forall(_.initsInFlightAnywhere == 0)) &&
             (waiting || insts.values.flatMap(_.handle).forall(_.lifecycleSnapshot.orphans.isEmpty)),
           s"InitSettle(${p.name}) settling"
         ).as(insts)

@@ -152,7 +152,11 @@ invariants (no defects, hook totals, no answer a leaf gave after a swap away fro
 down). It also records a history of evaluations, flag writes and swaps on one logical clock and checks each successful
 value against it (`History.scala`): the answering leaf belonged to a stack installed during the evaluation, a live
 read returned a value the leaf held during it, and a cache hit is no older than the last completed invalidation that
-reached that cache synchronously. Coverage counts `history.checked` and `history.cachedFloored`. Leaves also fail slowly: an evaluation stalls just short of or just past the timeout that ends it, a swap target's
+reached that cache synchronously. Coverage counts `history.checked` and `history.cachedFloored`. Some plans also shut
+the instance down mid-run, during a swap or after the last one (`shutdownAfterSwap`), while the workers, swapper and
+mutator carry on: the shutdown must wait for the swap in flight and leave the status `NotReady` for good, every later
+swap must be refused without its provider being touched, and an evaluation that starts after the shutdown returned
+must fail (`crun.shutdown.midRun`, `crun.shutdown.duringSwap`). Leaves also fail slowly: an evaluation stalls just short of or just past the timeout that ends it, a swap target's
 `initialize()` fails or stalls first, and a `shutdown()` throws; the sequential spec times stalls on the `TestClock`,
 and checks that a swap whose stack fails to initialize is rolled back to the previous stack, which then serves again. It runs under a seeded schedule probe: at every `LifecycleProbe` and `EvaluationProbe` point a
 `SchedulePerturber` passes, yields or sleeps briefly, decided from the plan's `scheduleSeed`, so rare interleavings

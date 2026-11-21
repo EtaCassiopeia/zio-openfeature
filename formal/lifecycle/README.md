@@ -285,8 +285,12 @@ so a run the trace check skips is still checked here.
 | `ShutDownAtMostOnce`, `TearDownOnce`, `ClosedCleanly` | the simulation's end checks (each leaf shut down exactly once, the end state) | end of run |
 
 `codemutants.py` puts a bug into the code for each of `GateDownWhenIdle`, `OneLockHolder`, `BoundNotShutDown` and
-`NotReadyDuringSwap`, and requires the simulation to fail naming that invariant; it recompiles core per mutant, so CI runs it on main and on demand. `FinalNotReady`'s bug, a late
-event moving a shut-down instance's status, needs a mid-run shutdown, which the concurrent simulation does not make.
+`NotReadyDuringSwap`, and requires the simulation to fail naming that invariant; it recompiles core per mutant, so CI
+runs it on main and on demand. `FinalNotReady` is checked on every run, including those with a mid-run shutdown
+(`shutdownAfterSwap`), but its bug, a late event moving a shut-down instance's status, cannot be reached there: a
+shutdown stops the event bridge before it tears down, and ShuttingDown is sticky until then, so no event moves the
+status after it. With a mid-run shutdown, the
+live checks do catch a shutdown that does not wait for a swap in flight (`OneLockHolder` and `GateDownWhenIdle`).
 
 ## Trace validation
 

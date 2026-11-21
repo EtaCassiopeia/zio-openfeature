@@ -124,8 +124,8 @@ private[openfeature] object FeatureFlagsFactories {
     orphans: OrphanedProviders,
     probe: LifecycleProbe,
     swapLock: Semaphore,
-    evaluationProbe: EvaluationProbe = EvaluationProbe.none,
-    initDeadline: InitDeadline = InitDeadline.default
+    evaluationProbe: EvaluationProbe,
+    initDeadline: InitDeadline
   ): ZIO[Scope, Throwable, FeatureFlagsLive] =
     for {
       client <- ZIO.attempt(api.getClient(domain.orNull, version.orNull))
@@ -425,7 +425,8 @@ private[openfeature] object FeatureFlagsFactories {
     contextSource: ContextSource = ContextSource.empty,
     fallbackLogging: FallbackLogging = FallbackLogging.Default,
     maxAbandonedCalls: Int = DefaultMaxAbandonedCalls,
-    probe: LifecycleProbe = LifecycleProbe.none
+    probe: LifecycleProbe = LifecycleProbe.none,
+    initDeadline: InitDeadline = InitDeadline.default
   ): ZIO[Scope, Throwable, FeatureFlagsLive] =
     for {
       api <- ZIO.succeed(apiOverride.getOrElse(OpenFeatureAPI.getInstance()))
@@ -459,7 +460,9 @@ private[openfeature] object FeatureFlagsFactories {
         unreadableNameIsUnknown = false,
         orphans,
         probe,
-        swapLock
+        swapLock,
+        EvaluationProbe.none,
+        initDeadline
       )
       // Known to the instance that later tears this API down, which then retires this one; and the slot checked
       // before it is bound.

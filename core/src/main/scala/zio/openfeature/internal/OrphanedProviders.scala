@@ -42,6 +42,11 @@ final private[openfeature] class OrphanedProviders(api: OpenFeatureAPI, probe: L
   // An entry leaves the list once it is settled, so a settle still in progress can be waited for.
   private val entries = new AtomicReference[List[Entry]](Nil)
 
+  /** The previous providers the entries will shut down unless the SDK does (no slot the library could see held them
+    * when recorded), for a model replay.
+    */
+  def pendingShutdowns: List[OFFeatureProvider] = entries.get().filterNot(_.heldWhenRecorded).map(_.previous.sdk)
+
   // Completed by `resolveAll`: cuts short a settle's wait for the SDK's own shutdown, which runs uninterruptibly.
   private val closing = new java.util.concurrent.CompletableFuture[AnyRef]()
 

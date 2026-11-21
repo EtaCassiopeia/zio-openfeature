@@ -10,7 +10,7 @@ CONSTANTS
     CloseFrom = {close_from}
     Topology = "{topology}"
     DefaultProvider = p1
-    AllowTimeouts = FALSE
+    AllowTimeouts = TRUE
 SPECIFICATION GSpec
 INVARIANT ThenEnabled LockProgresses
 ACTION_CONSTRAINT Export

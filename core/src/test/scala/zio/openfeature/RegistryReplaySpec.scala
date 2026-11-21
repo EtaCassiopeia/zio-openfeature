@@ -10,7 +10,14 @@ import dev.openfeature.sdk.{
 }
 import dev.openfeature.sdk.exceptions.GeneralError
 import zio._
-import zio.openfeature.internal.{FeatureFlagsFactories, LifecycleProbe, ManagedProvider, ProviderEvaluations}
+import zio.openfeature.internal.{
+  ApiInstances,
+  FeatureFlagsFactories,
+  LifecycleProbe,
+  ManagedProvider,
+  ProviderEvaluations
+}
+import zio.openfeature.testkit.ScriptedInitDeadline
 import zio.openfeature.testsupport.ModelBehaviours
 import zio.openfeature.testsupport.ModelBehaviours.{Behaviour, Json, ModelState}
 import zio.test._
@@ -35,7 +42,7 @@ import scala.util.chaining._
 object RegistryReplaySpec extends ZIOSpecDefault {
 
   /** How long a step waits for the code to reach the point it drives to; a correct run never waits this long. */
-  val WaitMillis = 5000L
+  val WaitMillis = 15000L
 
   /** Long enough that no deadline ever fires: every outcome is the replay's release. */
   val InitTimeout: Duration = 30.seconds
@@ -172,6 +179,8 @@ object RegistryReplaySpec extends ZIOSpecDefault {
     registryScope: Option[Scope.Closeable],
     domainProbes: Map[Option[String], ReplayProbe],
     leftovers: Leftovers = new Leftovers,
+    // Times a swap's wait for initialize() out when the replay takes SwapTimeout, never by itself.
+    deadline: ScriptedInitDeadline = new ScriptedInitDeadline,
     // The provider the registry's map holds for each domain: a domain it holds none for builds from the default.
     registryMap: AtomicReference[Map[String, String]] = new AtomicReference(Map.empty)
   ) {
@@ -186,7 +195,9 @@ object RegistryReplaySpec extends ZIOSpecDefault {
     owner: Set[String],
     failedOn: Map[String, String],
     closed: Map[String, Boolean],
-    promised: Set[String]
+    promised: Set[String],
+    orphans: Set[String],
+    leftBehind: Set[String]
   )
 
   /** A distortion of the code's view, which a planted bug uses to show a comparison can fail. */
@@ -222,7 +233,9 @@ object RegistryReplaySpec extends ZIOSpecDefault {
         owner = handles.collect { case (i, h) if h.replayView._1 => i }.toSet,
         failedOn = handles.map { case (i, h) => i -> h.replayView._2.fold("None")(nameOf) },
         closed = handles.map { case (i, h) => i -> (h.lifecycleSnapshot.closed || h.lifecycleSnapshot.shutDown) },
-        promised = promised.map(_.getOrElse("default"))
+        promised = promised.map(_.getOrElse("default")),
+        orphans = handles.values.flatMap(_.replayOrphans.map(nameOf)).toSet,
+        leftBehind = ApiInstances.leftBehindRunning(env.api).map(nameOf).toSet
       )
     }
 
@@ -246,7 +259,21 @@ object RegistryReplaySpec extends ZIOSpecDefault {
     val closedNow = code.closed.collect { case (i, c) if Set("open", "closed").contains(phase(i)) => i -> c }
     diff("bound", bound, code.bound) ++
       diff("total", total, code.total) ++
-      diff("inFlight", strs(model.field("inFlight")), code.inFlight) ++
+      // A timed-out swap's initialize() still runs: in `pending`, no longer in `inFlight`.
+      // The API's shutdown ends the calls still running, which the model's ghost keeps.
+      (if (open) diff("inFlight", strs(model.field("inFlight")) ++ strs(model.field("pending")), code.inFlight)
+       else Nil) ++
+      diff("orphans", strs(model.field("orphans")), code.orphans) ++
+      // The wrappers the close would release now (`ShutApi`'s `rel`): left behind, still registered, held by no slot
+      // and waiting on no pending initialize(). The model keeps every entry it made, the code only those still in their
+      // cycle; a wrapper a slot holds, or one waiting on a call, the close leaves to the SDK.
+      (if (open) {
+         val pending = strs(model.field("pending"))
+         val waiting = model.fun("replaced").collect { case (q, r) if pending.contains(model.asStr(r)) => q }.toSet
+         val slotted = bound.values.toSet
+         val release = (strs(model.field("leftBehind")) intersect strs(model.field("registered"))) -- slotted -- waiting
+         diff("leftBehind", release, code.leftBehind -- code.bound.values -- waiting)
+       } else Nil) ++
       // The owner is known once its build has handed the instance out.
       (if (!registry && open && (model.str("owner") == "None" || code.closed.contains(model.str("owner"))))
          diff("owner", Set(model.str("owner")).filter(_ != "None"), code.owner)
@@ -280,18 +307,20 @@ object RegistryReplaySpec extends ZIOSpecDefault {
 
   private def makeEnv(topology: String): ZIO[Any, Throwable, Env] = {
     val providers = List("p1", "p2", "p3").map(n => n -> new Scripted(n)).toMap
+    val deadline  = new ScriptedInitDeadline
     if (topology == "registry") {
       val probes = domains.map(domainOf).map(_ -> new ReplayProbe).toMap
       for {
         scope <- Scope.make
         reg   <- FeatureFlagRegistry
-          .fromProvider(providers("p1"), FeatureFlagsConfig.default.withInitTimeout(InitTimeout), probes(_))
+          .fromProvider(providers("p1"), FeatureFlagsConfig.default.withInitTimeout(InitTimeout), probes(_), deadline)
           .build
           .provideEnvironment(ZEnvironment(scope: Scope))
           .map(_.get[FeatureFlagRegistry].asInstanceOf[FeatureFlagRegistryLive])
         api <- reg.replayView.map(_._1)
-      } yield Env(topology, providers, api, Some(reg), Some(scope), probes)
-    } else ZIO.succeed(Env(topology, providers, OpenFeatureAPI.createIsolated(), None, None, Map.empty))
+      } yield Env(topology, providers, api, Some(reg), Some(scope), probes, deadline = deadline)
+    } else
+      ZIO.succeed(Env(topology, providers, OpenFeatureAPI.createIsolated(), None, None, Map.empty, deadline = deadline))
   }
 
   /** Lets every call and hold go, interrupts what is left and closes everything, so nothing leaks into the next run. */
@@ -422,7 +451,8 @@ object RegistryReplaySpec extends ZIOSpecDefault {
                   addShutdownFinalizer = own,
                   apiOverride = Some(env.api),
                   initTimeout = InitTimeout,
-                  probe = in.probe
+                  probe = in.probe,
+                  initDeadline = env.deadline
                 )
               )
               .either
@@ -516,11 +546,51 @@ object RegistryReplaySpec extends ZIOSpecDefault {
           case Left(e)  => ZIO.fail(s"SwapDone($i): the swap failed: $e")
         }
 
+      case "SwapTimeout" =>
+        // Fire the swap's deadline once its wait for initialize() is armed: the call keeps running, for InitSettle.
+        val i = act.str("i"); val p = provider(boundOf(i)); val in = inst(i)
+        for {
+          _ <- check(
+            env.deadline.armed.contains(p) || in.swap.exists(_.done),
+            s"SwapTimeout($i) arming ${p.name}'s wait"
+          )
+          _ <- ZIO.unless(env.deadline.fire(p))(ZIO.fail(s"SwapTimeout($i): ${p.name}'s wait was not open"))
+          r <- joined(s"SwapTimeout($i)", in.swap.get)
+          _ <- r match {
+            case Left(e) if e.contains("TimeoutException") => calls(i)
+            case other                                     => ZIO.fail(s"SwapTimeout($i): the swap ended $other")
+          }
+        } yield put(i, _.copy(swap = None, started = None))
+
+      case "InitSettle" =>
+        // Settle the timed-out swap's call, then wait for the code to act on it: the orphan lists settle and the
+        // shutdowns land, before a next step that reads them (a swap back to a provider that call held).
+        val p       = provider(act.str("p")); val ok = act.bool("ok")
+        val orphans = strs(next.field("orphans"))
+        val totals  = next.fun("total").map { case (q, n) => q -> next.asNum(n) }
+        ZIO
+          .attemptBlocking(p.settle(ok))
+          .orDie
+          .flatMap(done =>
+            ZIO.unless(done)(ZIO.fail(s"InitSettle(${p.name}): no initialize() running to settle"))
+          ) *> check(
+          insts.values.flatMap(_.handle).flatMap(_.replayOrphans.map(nameOf)).toSet == orphans &&
+            totals.forall { case (q, n) => provider(q).shutdowns.get() >= n } && !p.initializing,
+          s"InitSettle(${p.name}) settling"
+        ).as(insts)
+
       case "SwapOldShut" =>
         val i   = act.str("i")
         val old = prev.asStr(prev.fun("prior")(i))
         val n   = next.asNum(next.fun("total")(old))
-        check(provider(old).shutdowns.get() >= n, s"SwapOldShut($i) shutting $old down").as(insts)
+        check(provider(old).shutdowns.get() >= n, s"SwapOldShut($i) shutting $old down")
+          .catchAll(e =>
+            ZIO.fail(
+              s"$e ($old: ${provider(old).shutdowns.get()} shutdowns, ${provider(old).inits.get()} inits; the swap " +
+                s"${inst(i).swap.map(r => if (r.done) "ended" else "running").getOrElse("none")}; saw ${inst(i).probe.points})"
+            )
+          )
+          .as(insts)
 
       case "SwapFailMark" | "FailMark" =>
         val i    = act.str("i"); val in = inst(i)
@@ -722,7 +792,9 @@ object RegistryReplaySpec extends ZIOSpecDefault {
           ("registry", "inFlight", v => v.copy(inFlight = v.inFlight + "p2")),
           ("shared", "owner", v => v.copy(owner = Set("i3"))),
           ("shared", "phase", v => v.copy(closed = v.closed.map { case (i, c) => i -> !c })),
-          ("shared", "failedOn", v => v.copy(failedOn = v.failedOn.map { case (i, _) => i -> "p3" }))
+          ("shared", "failedOn", v => v.copy(failedOn = v.failedOn.map { case (i, _) => i -> "p3" })),
+          ("shared", "orphans", v => v.copy(orphans = Set.empty)),
+          ("registry", "leftBehind", v => v.copy(leftBehind = Set.empty))
         )
         ZIO
           .foreach(plants) { case (t, field, plant) =>

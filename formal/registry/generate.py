@@ -57,11 +57,6 @@ def _writers(registry_tla, change):
 
 def by_design(topology, generate_tla, generate_cfg, registry_tla):
     """The actions `topology` never takes on purpose, each with why and whether that still holds."""
-    no_timeouts = re.search(r"^\s*AllowTimeouts = FALSE\s*$", generate_cfg, re.M) is not None
-    timeouts = {
-        "SwapTimeout": ("AllowTimeouts is FALSE", no_timeouts),
-        "InitSettle": ("AllowTimeouts is FALSE: only a timed-out swap leaves an initialize() to settle", no_timeouts),
-    }
     if topology == "registry":
         fail_mark_shared = _guarded(generate_tla, "Shared", "FailMark")
         return {
@@ -71,7 +66,6 @@ def by_design(topology, generate_tla, generate_cfg, registry_tla):
             # FailDecide takes an instance out of `deciding`, which only FailMark puts it in.
             "FailDecide": ("it follows only FailMark",
                            fail_mark_shared and _writers(registry_tla, "deciding' = deciding \\cup") == {"FailMark"}),
-            **timeouts,
         }
     if topology == "shared":
         no_map = "a shared API has no registry promise map"
@@ -81,7 +75,6 @@ def by_design(topology, generate_tla, generate_cfg, registry_tla):
             "Evict": (no_map, _guarded(generate_tla, "Reg", "Evict")),
             "ReleaseReplaced": (no_map, _guarded(generate_tla, "Reg", "ReleaseReplaced")),
             "RegistryClose": ("a shared API has no registry", _guarded(generate_tla, "Reg", "RegistryClose")),
-            **timeouts,
         }
     sys.exit(f"--topology: expected one of {sorted(TOPOLOGIES)}, got {topology!r}")
 

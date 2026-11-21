@@ -211,12 +211,15 @@ one replay can drive, so every behaviour it writes is still a behaviour of the m
 - **Only bindings the code and the model agree on** (`BindOk`): a build or swap binds a provider that is `ready`, one
   no slot binds whose last registration did not fail, or (a registry retry) the failed provider its slot holds. Not
   one another slot binds that is not ready: the SDK reuses that registration, failed or absorbed by the library's
-  wrapper, which `registered` abstracts. Not one whose last registration failed (the ghost `failed`): the code refuses
-  a provider its failed registration left attached (#1013). And nothing (a build, a swap, the user, or a second swap
-  off it) binds a provider whose shutdown the SDK has queued, one a swap in flight or a retry's binding replaced: the
-  SDK decides that shutdown at the binding, where the model decides at `SwapDone` (#1014).
-- **No timed-out swap** while `AllowTimeouts` is false: the replay cannot yet fire a swap's deadline, and without one no
-  `initialize()` is left to settle (`InitSettle`).
+  wrapper, which `registered` abstracts. Not one in the ghost `failed`, a provider whose last registration failed (a
+  late `initialize()` too) or that the library shut down: the code refuses one left attached (#1013). Nor a wrapper a
+  timed-out swap left behind or orphaned that no slot holds, still attached for the same reason. And nothing (a build,
+  a swap, the user, or a second swap off it) binds a provider whose shutdown the SDK has queued, one a swap in flight,
+  a timed-out swap or a retry's binding replaced: the SDK decides that shutdown at the binding, where the model decides
+  when the swap or the late call ends (#1014). Last, no swap moves off a provider in `failed` onto one another slot
+  shares: the SDK does not shut the failed one down in that binding, as `SwapOldShut` has it (#1013).
+- **Timed-out swaps** (`AllowTimeouts` is true): the replay fires the swap's deadline through `ScriptedInitDeadline`,
+  and settles the late `initialize()` when the behaviour takes `InitSettle`.
 - **Steps the code takes in one go stay adjacent** (the ghost `then`). A failed build is evicted next, and a release
   of the provider a retry replaced is followed by that retry's failed build: there is no probe point between them for
   a replay to stop at. A swap whose provider another slot shares, already initialized, is followed by the SDK's
@@ -254,8 +257,10 @@ job of `formal.yml`.
 state (no swap, decision or semaphore in flight, no step held to). Each behaviour gets fresh scripted providers: every
 `initialize()` waits for the replay to settle it, ok or failing, and every `shutdown()` is counted. Every split the
 model makes inside one code path is a hold at an existing probe point (`RegistryInsert`, `FailedRegistration`), so no
-production probe point was added. Two read-only seams give it the state it compares: `FeatureFlagsLive.replayView`
-and the registry's `replayView`. [`replay-map.md`](replay-map.md) maps each action to the step that drives it, and
+production probe point was added. A swap's deadline is fired through the injected `InitDeadline`
+(`ScriptedInitDeadline`), which the registry and every build take; production passes the default JDK timer.
+Read-only seams give it the state it compares: `FeatureFlagsLive.replayView` and `replayOrphans`, the registry's
+`replayView`, and `ApiInstances.leftBehindRunning`. [`replay-map.md`](replay-map.md) maps each action to the step that drives it, and
 lists the variables compared and skipped.
 
 ```sh
@@ -274,8 +279,8 @@ compared field makes a behaviour fail.
 
 - **Shared `initialize()` calls:** a build joining a swap's call in flight, or a failure on a provider already ready
   (the shapes of #728/#800). Trace validation and `SharedApiSwapRaceSpec` cover them.
-- **`FailMark` on an open instance** (an async build's init deadline) and **timed-out swaps** (`SwapTimeout`,
-  `InitSettle`), until the replay fires an injected deadline.
+- **`FailMark` on an open instance** (an async build's init deadline): the model does not track whether a provider ever
+  became ready, so a deadline may fire on any open instance there.
 - **The bindings `BindOk` and the queued-shutdown restrictions leave out**, above. Each has an issue (#1013, #1014),
   and its fix lifts the restriction.
 

@@ -2,8 +2,8 @@
 # Enforce RELEASING.md's binary compatibility policy on the MiMa and TASTy-MiMa filters in build.sbt.
 #
 # A minor or patch release may only excuse a break in a symbol nothing outside the library can use. Each filter target
-# (`ProblemFilters.exclude[...]("...")` or `ProblemMatcher.make(..., "...")`, its target possibly wrapped onto the next
-# line by scalafmt) passes when:
+# (`ProblemFilters.exclude[...]("...")` or `ProblemMatcher.make(..., "...")`, which scalafmt may wrap before `.exclude[`
+# / `.make(` or after the opening parenthesis) passes when:
 #   - it is under an `internal` package (`.internal.` in the target), or
 #   - it is marked `// non-public: private[<pkg>]`: the symbol is `private[...]` in Scala source, which Scala 2.13 still
 #     emits as public bytecode (the reviewer checks the marker against the source), or
@@ -12,6 +12,8 @@
 # A marker is a comment at the end of a one-line filter, or on a line of its own: then it marks every filter below it
 # up to the first line that is neither a filter nor a comment (one marker for a group of filters on the same symbol).
 # A filter scalafmt wrapped takes the second form.
+# Any other mention of `ProblemFilters` or `ProblemMatcher` (outside an import) is a usage error, so a filter in a shape
+# this parse does not know fails instead of going unchecked.
 # Any other filter is a break of the public API, allowed only on the way to a major release: when the highest `v*` tag
 # has a higher major than the `mimaPreviousArtifacts` baseline (a `v3.0.0-RC1` tag unlocks breaking filters for 3.0).
 #
@@ -98,16 +100,27 @@ classify() {
 }
 
 has_target() { case "${1%%//*}" in *'"'*'"'*) return 0 ;; *) return 1 ;; esac; }
+is_filter() { case "${1%%//*}" in *ProblemFilters.exclude\[* | *ProblemMatcher.make\(*) return 0 ;; *) return 1 ;; esac; }
+mentions_filter_api() {
+  printf '%s' "${1%%//*}" | grep -Eq '(^|[^A-Za-z0-9_])(ProblemMatcher|ProblemFilters)([^A-Za-z0-9_]|$)'
+}
 
 lineno=0
 marker=""   # a marker comment on its own line, applying to the filters below it
-pending=""  # a filter whose target scalafmt wrapped onto a later line
+pending=""  # a filter scalafmt wrapped: its call or its target is on a later line
 pending_at=0
 while IFS= read -r line || [ -n "$line" ]; do
   lineno=$((lineno + 1))
   if [ -n "$pending" ]; then
-    pending="$pending ${line#"${line%%[![:space:]]*}"}"
+    next="${line#"${line%%[![:space:]]*}"}"
+    # A receiver wrapped before its call joins it without a space: `ProblemMatcher` + `.make(` is `ProblemMatcher.make(`.
+    case "$next" in
+      .*) pending="$pending$next" ;;
+      *) pending="$pending $next" ;;
+    esac
     if has_target "$pending"; then
+      is_filter "$pending" ||
+        die "$BUILD_FILE:$pending_at: a ProblemMatcher/ProblemFilters expression that is not a recognised filter"
       classify "$pending_at" "$pending" "$marker"
       pending=""
     elif [ $((lineno - pending_at)) -gt 3 ]; then
@@ -123,15 +136,30 @@ while IFS= read -r line || [ -n "$line" ]; do
       ;;
     //*) continue ;;
   esac
-  case "${line%%//*}" in
-    *ProblemFilters.exclude\[* | *ProblemMatcher.make\(*)
-      if has_target "$line"; then classify "$lineno" "$trimmed" "$marker"; else
-        pending="$trimmed"
-        pending_at=$lineno
-      fi
+  code="${trimmed%%//*}"
+  case "${code%"${code##*[![:space:]]}"}" in
+    ProblemMatcher | ProblemFilters)
+      # A receiver scalafmt left on its own line: its call is on the next. The group marker still covers it.
+      pending="$trimmed"
+      pending_at=$lineno
+      continue
       ;;
-    *) marker="" ;;
   esac
+  if is_filter "$line"; then
+    if has_target "$line"; then classify "$lineno" "$trimmed" "$marker"; else
+      pending="$trimmed"
+      pending_at=$lineno
+    fi
+  else
+    case "$trimmed" in
+      import\ *) ;;
+      *)
+        ! mentions_filter_api "$line" ||
+          die "$BUILD_FILE:$lineno: mentions ProblemMatcher/ProblemFilters in a shape this check does not read as a filter"
+        ;;
+    esac
+    marker=""
+  fi
 done < "$BUILD_FILE"
 [ -z "$pending" ] || die "$BUILD_FILE:$pending_at: a filter whose quoted target was not found"
 

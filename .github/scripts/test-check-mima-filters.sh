@@ -96,6 +96,32 @@ expect wrapped-target-with-marker-line 0 v1.2.1 \
   '          ProblemKind.MissingTermMember,' \
   '          "zio.openfeature.extras.CircuitBreaker.trip"' \
   '        )'
+# scalafmt can also wrap before `.make(` / `.exclude[`, leaving the receiver on a line of its own.
+expect wrapped-receiver-public-tasty-filter-fails 1 v1.2.1 \
+  '        ProblemMatcher' \
+  '          .make(ProblemKind.MissingTermMember, "zio.openfeature.FeatureFlags.build"),'
+expect wrapped-receiver-public-mima-filter-fails 1 v1.2.1 \
+  '        ProblemFilters' \
+  '          .exclude[DirectMissingMethodProblem]("zio.openfeature.FeatureFlags.build"),'
+expect wrapped-receiver-internal-filter-passes 0 v1.2.1 \
+  '        ProblemMatcher' \
+  '          .make(ProblemKind.MissingTermMember, "zio.openfeature.internal.ProviderRegistration.registerAndAwait"),'
+expect wrapped-receiver-under-marker-line-passes 0 v1.2.1 \
+  '        // non-public: private[openfeature]' \
+  '        ProblemMatcher' \
+  '          .make(ProblemKind.MissingTermMember, "zio.openfeature.FeatureFlagsLive.<init>")'
+expect wrapped-receiver-among-one-line-filters-fails 1 v1.2.1 \
+  '        ProblemMatcher.make("zio.openfeature.internal.X.y"),' \
+  '        ProblemMatcher' \
+  '          .make(ProblemKind.MissingTermMember, "zio.openfeature.FeatureFlags.build"),'
+expect unrecognised-filter-api-mention-is-an-error 2 v1.2.1 \
+  'val fs = ProblemFilters'
+expect import-and-withMoreProblemFilters-are-not-mentions 0 v1.2.1 \
+  'import tastymima.intf.ProblemMatcher' \
+  'import com.typesafe.tools.mima.core.ProblemFilters' \
+  '    tastyMiMaConfig ~= (_.withMoreProblemFilters(' \
+  '        ProblemMatcher.make("zio.openfeature.internal.X.y"),' \
+  '    ))'
 expect wrapped-target-never-found 2 v1.2.1 \
   'ProblemFilters.exclude[Problem](' \
   ')' \

@@ -205,13 +205,24 @@ one replay can drive, so every behaviour it writes is still a behaviour of the m
   `Evict`, `ReleaseReplaced` or `RegistryClose`. `FailMark`, a failure under a shared API's build, and the
   `FailDecide` after it, are the shared topology's.
 - **One `initialize()` per provider at a time.** No build or swap binds a provider whose call is in flight, and only a
-  call the instance started can fail under it. A provider whose call already returned starts none, so it cannot fail.
-  The ghosts `inFlight` and `ready` track this.
+  call the instance started can fail under it. A binding starts no call for a provider already `ready`, nor for one
+  another slot binds, whose registration the SDK reuses; a registry retry on the slot that holds its own failed
+  provider initializes it again (`StartsCall`). The ghosts `inFlight` and `ready` track this.
+- **Only bindings the code and the model agree on** (`BindOk`): a build or swap binds a provider that is `ready`, one
+  no slot binds whose last registration did not fail, or (a registry retry) the failed provider its slot holds. Not
+  one another slot binds that is not ready: the SDK reuses that registration, failed or absorbed by the library's
+  wrapper, which `registered` abstracts. Not one whose last registration failed (the ghost `failed`): the code refuses
+  a provider its failed registration left attached (#1013). And nothing (a build, a swap, the user, or a second swap
+  off it) binds a provider whose shutdown the SDK has queued, one a swap in flight or a retry's binding replaced: the
+  SDK decides that shutdown at the binding, where the model decides at `SwapDone` (#1014).
 - **No timed-out swap** while `AllowTimeouts` is false: the replay cannot yet fire a swap's deadline, and without one no
   `initialize()` is left to settle (`InitSettle`).
 - **Steps the code takes in one go stay adjacent** (the ghost `then`). A failed build is evicted next, and a release
   of the provider a retry replaced is followed by that retry's failed build: there is no probe point between them for
-  a replay to stop at. A `Check` is likewise followed by its `Create`, and is taken only when `Create`'s guards admit
+  a replay to stop at. A swap whose provider another slot shares, already initialized, is followed by the SDK's
+  shutdown of the provider it replaced (`SwapOldShut`), which the SDK runs in the binding; a registry retry on a
+  provider already ready is completed at once, the SDK shutting the provider it replaced down in the binding. A
+  `Check` is likewise followed by its `Create`, and is taken only when `Create`'s guards admit
   a provider for that slot. Otherwise the semaphore would stay held for good, with nothing left to complete, fail or
   close: the registry builds its default slot from one provider, which a swap may have mid-`initialize()`. The
   invariants `ThenEnabled` (the step held to can be taken) and `LockProgresses` (a held semaphore is released by the
@@ -235,6 +246,38 @@ restrictions (`check_shape`): `total` counts every shutdown, each adjacent pair 
 repeats, the registry's default slot is built from its one provider, and no action the topology leaves out occurs. CI generates
 2000 behaviours per topology from a fixed seed on every run, and 20000 from a rotating seed nightly, in the `traces`
 job of `formal.yml`.
+
+## Replay
+
+`core/src/test/scala/zio/openfeature/RegistryReplaySpec.scala` drives each generated behaviour through the real
+`FeatureFlagRegistry`, `FeatureFlagsLive` and SDK, and compares the code's state with the model's at every settled
+state (no swap, decision or semaphore in flight, no step held to). Each behaviour gets fresh scripted providers: every
+`initialize()` waits for the replay to settle it, ok or failing, and every `shutdown()` is counted. Every split the
+model makes inside one code path is a hold at an existing probe point (`RegistryInsert`, `FailedRegistration`), so no
+production probe point was added. Two read-only seams give it the state it compares: `FeatureFlagsLive.replayView`
+and the registry's `replayView`. [`replay-map.md`](replay-map.md) maps each action to the step that drives it, and
+lists the variables compared and skipped.
+
+```sh
+ZOF_REGISTRY_BEHAVIOURS=behaviours/registry,behaviours/shared sbt "core/testOnly zio.openfeature.RegistryReplaySpec"
+```
+
+A behaviour's topology is the nearest path segment naming it (`registry` or `shared`). Without behaviours the
+generated suite is ignored, unless `ZOF_REGISTRY_BEHAVIOURS_REQUIRED` is set, as CI does. `ZOF_REGISTRY_MISMATCHES=<file>`
+writes every mismatch, where the failure shows ten. `ZOF_REGISTRY_BEHAVIOURS_MAX` replays at most that many per
+location. The replay runs about 8 behaviours a second, so CI replays all 2000 per topology on a pull request (about nine
+minutes), and 5000 of the nightly 20000. The replay's own checks run on every build: a behaviour per
+topology (`core/src/test/resources/registry-replay`) replays clean, an unknown action fails, and a planted bug per
+compared field makes a behaviour fail.
+
+### Outside the replay
+
+- **Shared `initialize()` calls:** a build joining a swap's call in flight, or a failure on a provider already ready
+  (the shapes of #728/#800). Trace validation and `SharedApiSwapRaceSpec` cover them.
+- **`FailMark` on an open instance** (an async build's init deadline) and **timed-out swaps** (`SwapTimeout`,
+  `InitSettle`), until the replay fires an injected deadline.
+- **The bindings `BindOk` and the queued-shutdown restrictions leave out**, above. Each has an issue (#1013, #1014),
+  and its fix lifts the restriction.
 
 ## When its code changes
 

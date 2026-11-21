@@ -60,6 +60,8 @@ on:
       - 'testkit/src/test/scala/zio/openfeature/testkit/ProviderNameSpec.scala'
       - 'extras/src/main/scala/zio/openfeature/extras/CachingProvider.scala'
       - 'core/src/test/scala/zio/openfeature/RegistryRecording.scala'
+      - 'core/src/test/scala/zio/openfeature/RegistryReplaySpec.scala'
+      - 'core/src/test/resources/registry-replay/**'
       - 'core/src/test/scala/zio/openfeature/ProviderOwnershipShutdownSpec.scala'
       - 'core/src/test/scala/zio/openfeature/FeatureFlagRegistrySpec.scala'
       - 'testkit/src/test/scala/zio/openfeature/testkit/RegistryFaultSpec.scala'
@@ -112,6 +114,8 @@ on:
       - 'testkit/src/test/scala/zio/openfeature/testkit/ProviderNameSpec.scala'
       - 'extras/src/main/scala/zio/openfeature/extras/CachingProvider.scala'
       - 'core/src/test/scala/zio/openfeature/RegistryRecording.scala'
+      - 'core/src/test/scala/zio/openfeature/RegistryReplaySpec.scala'
+      - 'core/src/test/resources/registry-replay/**'
       - 'core/src/test/scala/zio/openfeature/ProviderOwnershipShutdownSpec.scala'
       - 'core/src/test/scala/zio/openfeature/FeatureFlagRegistrySpec.scala'
       - 'testkit/src/test/scala/zio/openfeature/testkit/RegistryFaultSpec.scala'
@@ -381,8 +385,8 @@ jobs:
           path: caching-behaviours/
           retention-days: 14
       # The registry: behaviours of formal/registry, restricted to steps a replay through the real code can drive, in
-      # each of its two topologies (one registry, or instances on one shared API). Generated and checked for shape and
-      # for every action; nothing replays them yet.
+      # each of its two topologies (one registry, or instances on one shared API). Generated, checked for shape and for
+      # every action, then replayed through the real registry, its instances and the SDK.
       - name: Check the registry generator's action discovery and by-design table
         working-directory: formal/registry
         run: python3 -m unittest test_generate
@@ -396,6 +400,13 @@ jobs:
           for topology in registry shared; do
             python3 generate.py ../../tla2tools.jar ../../CommunityModules-deps.jar "${GITHUB_WORKSPACE}/registry-behaviours/${topology}" --topology "${topology}" --num "${NUM}" --depth 30 --seed "${SEED}"
           done
+      - name: Replay the registry's behaviours through the real code
+        env:
+          ZOF_REGISTRY_BEHAVIOURS: ${{ github.workspace }}/registry-behaviours/registry,${{ github.workspace }}/registry-behaviours/shared
+          ZOF_REGISTRY_BEHAVIOURS_REQUIRED: '1'
+          # About 8 behaviours a second: 2000 per topology replay in about nine minutes; nightly, 5000 of the 20000.
+          ZOF_REGISTRY_BEHAVIOURS_MAX: ${{ github.event_name == 'schedule' && '5000' || '2000' }}
+        run: sbt "core/testOnly zio.openfeature.RegistryReplaySpec"
       - name: Keep the registry's behaviours
         if: failure()
         uses: actions/upload-artifact@v7

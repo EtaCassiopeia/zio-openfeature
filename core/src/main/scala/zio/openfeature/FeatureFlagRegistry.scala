@@ -132,6 +132,10 @@ final private class FeatureFlagRegistryLive(
   probe: Option[String] => LifecycleProbe
 ) extends FeatureFlagRegistry {
 
+  /** The registry's private API and the domains holding a promise (`None`: the default client), for a model replay. */
+  private[openfeature] def replayView: UIO[(OpenFeatureAPI, Set[Option[String]])] =
+    clients.get.zipWith(defaultRef.get)((cs, d) => (api, cs.keySet.map(Option(_)) ++ d.map(_ => None).toSet))
+
   override def getClient(domain: String): IO[FeatureFlagError, FeatureFlags] =
     memoizedClient(
       Some(domain),

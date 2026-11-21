@@ -87,7 +87,7 @@ class ByDesign(unittest.TestCase):
 
     # Each topology guard as Generate.tla writes it, and the actions it keeps out of the other topology.
     GUARDS = [
-        ("registry", "Shared /\\ \\E d \\in Domains, p \\in Providers : UserBind", "UserBind"),
+        ("registry", "/\\ Shared\n       /\\ \\E d \\in Domains, p \\in Providers :\n            /\\ ~\\E j \\in swapping", "UserBind"),
         ("registry", "Shared /\\ OwnerClose", "OwnerClose"),
         ("registry", "Shared /\\ \\E i \\in Instances : phase[i] = \"building\" /\\ Fresh(i) /\\ FailMark", "FailMark"),
         ("shared", "/\\ Reg\n       /\\ \\E i \\in Instances, d \\in Domains :\n            /\\ act # [name |-> \"Lookup\"",

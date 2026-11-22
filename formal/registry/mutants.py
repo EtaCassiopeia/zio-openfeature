@@ -142,6 +142,14 @@ mutants = {
          "               ELSE {q \\in waiting \\cap orphans : q \\in registered}\n"),
         ("    /\\ orphans' = IF owner = i /\\ ~HeldVisibly(q) THEN orphans \\cup {q} ELSE orphans\n",
          "    /\\ orphans' = IF owner = i THEN orphans \\cup {q} ELSE orphans\n")]),
+    # A build binds a provider whose initialize() a timed-out build left running and no slot holds (the binding's refusal
+    # dropped): the SDK registers it anew and calls initialize() again alongside the running call.
+    'a build binds a provider still initializing that no slot holds': (
+        ('OneInitializeAtATime',), [
+        ("    /\\ p \\notin pending /\\ ~Waiting(p)\n    /\\ lock' = None\n    /\\ \\/ bound[d] \\in {None, p}\n",
+         "    /\\ (p \\in pending => SlotsOf(p) = {}) /\\ ~Waiting(p)\n    /\\ lock' = None\n    /\\ \\/ bound[d] \\in {None, p}\n")],
+        # A build that timed out, a retry replacing it, and a third build on its provider: three instances.
+        {'Instances': '{i1, i2, i3}', 'MaxSwaps': '0'}),
     # The orphan list counts only a provider of the user's as held by a slot: an owner's timed-out swap off its wrapper
     # shuts it down under the sibling that still serves it, whether the new provider then fails or initializes.
     'an orphan a sibling\'s slot holds is shut down': (
@@ -160,10 +168,15 @@ def mutate(name, edits):
     return mutated
 
 
-def only(prop):
-    """The configuration with `prop` as its one invariant or property."""
+def only(prop, constants=None):
+    """The configuration with `prop` as its one invariant or property, and `constants` overriding the configuration's."""
     section = 'PROPERTIES' if prop in cfg.split('PROPERTIES')[1] else 'INVARIANTS'
-    return f"{cfg.split('INVARIANTS')[0]}{section}\n    {prop}\n"
+    head = cfg.split('INVARIANTS')[0]
+    for name, value in (constants or {}).items():
+        head, n = re.subn(rf'^(\s*{name} = ).*$', lambda m: m.group(1) + value, head, flags=re.M)
+        if n != 1:
+            sys.exit(f'{name} is not a constant of the configuration; update mutants.py')
+    return f"{head}{section}\n    {prop}\n"
 
 
 def tlc(mutated, config):
@@ -179,10 +192,10 @@ if len(sys.argv) != 2:
     sys.exit(__doc__)
 jar = os.path.abspath(sys.argv[1])
 missed = []
-for name, (props, edits) in mutants.items():
+for name, (props, edits, *constants) in mutants.items():
     mutated = mutate(name, edits)
     for prop in props:
-        out = tlc(mutated, only(prop))
+        out = tlc(mutated, only(prop, *constants))
         if re.search(r'(?:Invariant|Action property|Temporal propert\w+)\b.* (?:is|was|were) violated', out):
             print(f'{name}: caught by {prop}')
         else:

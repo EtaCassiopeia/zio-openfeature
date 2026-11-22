@@ -20,7 +20,8 @@ shared = load("model_generate", os.path.join(os.path.dirname(here), "generate.py
 registry = load("registry_generate", os.path.join(here, "generate.py"))
 
 REGISTRY_ACTIONS = {
-    "BuildFail", "Check", "CloseInstance", "Complete", "Create", "Evict", "FailDecide", "FailMark", "InitSettle",
+    "BuildFail", "BuildTimeout", "Check", "CloseInstance", "Complete", "Create", "CreateRefused", "Evict", "FailDecide",
+    "FailMark", "InitSettle",
     "Lookup", "OwnerClose", "RegistryClose", "ReleaseReplaced", "SwapDone", "SwapFail", "SwapFailMark", "SwapOldShut",
     "SwapStart", "SwapTimeout", "UserBind",
 }
@@ -28,7 +29,7 @@ REGISTRY_ACTIONS = {
 
 class DiscoverNext(unittest.TestCase):
 
-    def test_the_registry_next_yields_its_twenty_actions_and_none_of_its_constants(self):
+    def test_the_registry_next_yields_its_twenty_two_actions_and_none_of_its_constants(self):
         self.assertEqual(shared.discover_next(here, "Registry.tla", "Next"), REGISTRY_ACTIONS)
 
     def test_the_lifecycle_next_is_unchanged(self):
@@ -70,6 +71,8 @@ class ByDesign(unittest.TestCase):
             "OwnerClose": ("a registry's API has no owning instance", True),
             "FailMark": ("only a shared API's build has an init deadline the replay drives", True),
             "FailDecide": ("it follows only FailMark", True),
+            "BuildTimeout": ("the replay does not cut a registry build's wait for readiness short", True),
+            "CreateRefused": ("it needs a provider BuildTimeout left initializing", True),
         })
 
     def test_the_shared_topology_leaves_out_the_registry_steps(self):
@@ -79,6 +82,8 @@ class ByDesign(unittest.TestCase):
             "Evict": ("a shared API has no registry promise map", True),
             "ReleaseReplaced": ("a shared API has no registry promise map", True),
             "RegistryClose": ("a shared API has no registry", True),
+            "BuildTimeout": ("a shared API has no registry promise map", True),
+            "CreateRefused": ("a shared API has no registry promise map", True),
         })
 
     # Each topology guard as Generate.tla writes it, and the actions it keeps out of the other topology.
@@ -92,6 +97,9 @@ class ByDesign(unittest.TestCase):
         ("shared", "/\\ Reg\n       /\\ \\E i \\in Instances : Free(\"Evict\", i)", "Evict"),
         ("shared", "/\\ Reg\n       /\\ \\E i \\in Instances :\n            /\\ \\A j \\in Retry(i)", "ReleaseReplaced"),
         ("shared", "Reg /\\ RegistryClose", "RegistryClose"),
+        ("shared", "/\\ Reg\n       /\\ \\E i \\in Instances, p \\in Providers :\n            Free(\"Create\", i) /\\ CreateRefused",
+         "CreateRefused"),
+        ("shared", "/\\ Reg\n       /\\ BuildTimeouts", "BuildTimeout"),
     ]
 
     def test_each_action_whose_topology_guard_is_dropped_becomes_required(self):
@@ -119,6 +127,13 @@ class ByDesign(unittest.TestCase):
         changed = self.registry_tla.replace("SwapFailMark(i) ==\n", "SwapFailMark(i) ==\n    /\\ deciding' = deciding \\cup {i}\n", 1)
         self.assertNotEqual(changed, self.registry_tla)
         self.assertEqual(self.table("registry", registry_tla=changed)["FailDecide"], ("it follows only FailMark", False))
+
+    def test_build_timeouts_become_required_once_they_are_generated(self):
+        allowed = self.generate_tla.replace("BuildTimeouts == FALSE", "BuildTimeouts == TRUE")
+        self.assertNotEqual(allowed, self.generate_tla)
+        table = self.table("registry", generate_tla=allowed)
+        self.assertFalse(table["BuildTimeout"][1])
+        self.assertFalse(table["CreateRefused"][1])
 
     def test_timeouts_are_generated_in_both_topologies(self):
         self.assertIn("AllowTimeouts = TRUE", self.cfg)
@@ -181,6 +196,16 @@ class CheckShape(unittest.TestCase):
         behaviour = [INIT, state({"name": "BuildFail", "i": "i1"}), state({"name": "Lookup", "i": "i2", "d": "d1"})]
         self.assertEqual(registry.check_shape(behaviour, "registry", set()),
                          ["state 2: Lookup right after BuildFail, not Evict of i1"])
+
+    def test_a_refused_build_takes_the_place_of_its_create_and_is_evicted_next(self):
+        checked = dict(state({"name": "Check", "i": "i1", "d": "d1"}), then={"name": "Create", "i": "i1"})
+        refused = dict(state({"name": "CreateRefused", "i": "i1", "p": "p2"}), then={"name": "Evict", "i": "i1"})
+        self.assertEqual(registry.check_shape([INIT, checked, refused, state({"name": "Evict", "i": "i1"})],
+                                              "registry", set()), [])
+        self.assertEqual(registry.check_shape([INIT, checked, refused, state({"name": "Lookup", "i": "i2", "d": "d1"})],
+                                              "registry", set()),
+                         ["state 3: Lookup where Evict of i1 is held to",
+                          "state 3: Lookup right after CreateRefused, not Evict of i1"])
 
     def test_a_release_not_followed_by_its_retry_failing_is_reported(self):
         retrying = dict(INIT, phase={"i1": "evicted", "i2": "building"}, domainOf={"i1": "d1", "i2": "d1"},

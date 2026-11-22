@@ -38,8 +38,10 @@ second instance.
 | `Lookup(i, d)` | `FeatureFlagRegistryLive.memoizedClient`: the promise for `d` is in `clients` (or `defaultRef`), so the caller awaits it. The registry keeps a client's promise until the registry closes, so a client shut down on its own is what later callers get; a failed build's until `Evict` |
 | `Check(i, d)` | `memoizedClient`: `lock.withPermit`, no promise for `d` (none yet, or a failed build's evicted: a retry, which is another instance): insert one. The semaphore is held from the lookup to the insert, which is what makes two callers of one domain one build. The insert and the fork of the build are one uninterruptible section, so no step ends between `Check` and `Create`: an interrupt of the caller lands while it waits for the semaphore, before `Check`, or on the promise, after `Create`, and is a stutter in both places |
 | `Create(i, p, own)` | the build, outside the semaphore: `buildClient` picks the domain's provider (`providers(d)`, or the default provider), `ProviderRegistration.register` binds it to the slot. The SDK reuses the state manager of a provider it has registered (`ProviderRepository.isStateManagerRegistered`), so a second domain holds the same wrapper, still `Bound.Managed` and guarded by `ApiInstances.heldByAnother`; only a provider the user registered, in the target or default slot, is `Bound.Foreign` (`Bound.of`, `ProviderStateAccess.boundIn`). `own`: `FeatureFlagsLive.ownsApi`, true for the sole-owner factories, false for a registry client (`addShutdownFinalizer = false`) and for a layer on a shared API. A retry finds the slot holding the failed build's provider, left running for it: the same provider is initialized again first (`ProviderRegistration.retryFailedInitialization`) and bound as before; another one replaces it in the slot (`replaced`), and the replaced one keeps its registration until the SDK or the library ends it |
+| `CreateRefused(i, p)` | the build's binding refused before it binds (`ProviderRegistration.bind`'s `refuseUnheld`, under the API's lock): `p`'s `initialize()` from a timed-out build or swap still runs (`pending`) and no slot holds it, so the SDK would start a second call. The build fails with `ProviderInitializationFailed(StillInitializing)` and nothing bound, and a registry evicts its promise; a binding into a slot that shares the running call is outside the model |
 | `Complete(i)` | `runBuild`: `lock.withPermit(... promise.succeed(client))`. Its provider initialized, so the SDK's `shutDownOld` shuts down a provider it replaced in the slot that no slot holds any more |
 | `BuildFail(i)` | `buildClient`: `awaitReady` failed; `releaseReplacedFailure` ran first (`ReleaseReplaced`, its guard here), then the failed client is kept in `lastFailed` and its child scope closes. Its provider is left running and in its slot, unmarked, so a retry can initialize it again |
+| `BuildTimeout(i, shut)` | a registry build whose provider is still initializing at `initTimeout`: the async build's watchdog marks the client Fatal and shuts the provider down (`shut`, `escalateInitTimeout`), or `awaitReady` runs out first and shuts nothing. The build fails, its provider left in its slot, and its `initialize()` keeps running (`pending`) |
 | `Evict(i)` | `runBuild`'s typed-failure branch: `lock.withPermit(remove *> promise.fail(err))` |
 | `ReleaseReplaced(i)` | `releaseReplacedFailure`: a retry with another provider failed too, so the domain's previous failed client (`lastFailed`) runs `shutDownFailedBuild` on its own provider, which the retry replaced, deciding as a failed build does (`LibraryShuts`). The SDK would shut it down only on the replacing provider's success. The registry's close releases it too (`leftBehind`), so this step only makes the release prompt, which no property checks: no mutant drops it |
 | `SwapStart(i, p)` | `FeatureFlagsLive.setProvider`, or `FeatureFlagRegistry.setProvider(d, p)` on the domain's client; one swap per instance, as each instance holds its own swap lock: swaps of different instances, and so of different domains of a registry, overlap. The SDK binds `p` before its `initialize()` runs, so a sibling built on `p` from here shares the attempt. A swap that reaches its binding after a sibling's `initialize()` of `p` has started is refused (`ProviderRegistration.StillInitializing`), and one whose SDK task the sibling's task overtakes still shares it |
@@ -98,8 +100,9 @@ second instance.
 | `ClosedApiServesNone` | once the API is gone, no instance is live: an owner's or the registry's close retires them all |
 | `SiblingsUnaffected` (an action property) | a non-owner's close changes no slot and no sibling's phase |
 | `OnlyFailedBuildsEvicted` (an action property) | only a failed build's promise is evicted: a client a caller got, or a build still running, keeps its promise |
+| `OneInitializeAtATime` (an action property) | no provider whose `initialize()` still runs is registered anew: the SDK starts a call for a new registration only, so no binding starts a second call alongside the running one |
 
-`Registry.cfg` (two instances, two providers, two swaps) and `Concurrent.cfg` (the same with a third provider, about 900k states) check them all on every run of the `tlc` job. Swaps of different instances overlap in both: the model once allowed one swap per API, and recorded runs of instances swapping at once were rejected until it allowed one per instance.
+`Registry.cfg` (two instances, two providers, two swaps) and `Concurrent.cfg` (the same with a third provider, about 900k states) check them all on every run of the `tlc` job. `Builds.cfg` adds a third instance and no swaps (about 470k states): a build that timed out, the retry that replaced it and a third build on its provider, the shape `OneInitializeAtATime` is for, which two instances cannot reach. It leaves out `FailedWrapperNotAbandoned`, which fails at three instances on a shape unrelated to builds (two builds on one provider, one failing under a deadline while the other's build fails and is evicted, then a retry with another provider): #1026. Swaps of different instances overlap in both: the model once allowed one swap per API, and recorded runs of instances swapping at once were rejected until it allowed one per instance.
 
 ## Mutants
 
@@ -126,6 +129,7 @@ them one at a time: a mutant usually breaks several, and in one run TLC reports 
 | A non-owner's timed-out swap on an API an instance owns whose provider then fails leaves the provider it replaced running (`releaseLeftBehind` dropped from the owner's close) | `SharedShutDownOnce` |
 | An owner's timed-out swap records no orphan | `SharedShutDownOnce` |
 | The orphan list shuts down a provider of the user's that a slot the library can see holds | `UserProviderNeverShutByLibrary`, `RegisteredNotShutDown` |
+| A build binds a provider still initializing that no slot holds (`refuseUnheld` dropped), at `Builds.cfg`'s three instances | `OneInitializeAtATime` |
 
 ## What is outside the model
 
@@ -135,9 +139,12 @@ them one at a time: a mutant usually breaks several, and in one run TLC reports 
 - **Around a timed-out swap.** `SwapTimeout` and `InitSettle` cover what the recorded runs do: an owner's timed-out
   swap off its own wrapper or off a provider the user registered, settled by a failure or by the owner's close, and a
   non-owner's, a registry client's or not, released at the close of the API's owner. Left out, each by a guard:
-  - *A swap's provider another slot shares, and a build or swap of a provider still initializing or waiting on that
-    call* (`SwapTimeout`, `Create`, `SwapStart`): the SDK shares one `initialize()` across those slots, which the
-    abstraction to `pending` does not follow; `setProvider` refuses most of them anyway.
+  - *A swap's provider another slot shares, and a build or swap of a provider still initializing that a slot holds, or
+    waiting on that call* (`SwapTimeout`, `Create`, `SwapStart`): the SDK shares one `initialize()` across those slots,
+    which the abstraction to `pending` does not follow; `setProvider` refuses most of them anyway. A build of one no
+    slot holds is refused (`CreateRefused`).
+  - *A registry build's timeout on a provider another instance was built on, swapped to or failed on* (`BuildTimeout`):
+    the model does not track readiness, so it could not tell that provider's call from one already returned.
   - *A second timed-out swap off a provider a first one left waiting*, from another slot (`SwapTimeout`:
     `replaced[q] = None`): the provider then waits on two `initialize()` calls, where `replaced` holds one.
   - *A swap off a timed-out swap's provider while it initializes*, and an init deadline on it (`SwapStart`,
@@ -201,7 +208,9 @@ it (`<run>.plan.json`) for the simulation's corpus (`regressions/shared/`). So i
 one or two `initialize()` calls, so a later `getClient` retries the same provider, or every one, so a retry builds the
 replacement the run names, while workers race `getClient` before each evaluation and a swapper swaps each client (`regressions/registry/`).
 The job records both at the base budget on pull requests and main and at ten times it nightly, and checks them without
-`--reached`: the suites above take every action.
+`--reached`: the suites above take every action. A registry run with a stalled build is not modelled when the
+watchdog failed that build and a retry follows ("a registry retry after a failure under its build"), about a third of
+the registry simulation's runs.
 
 ```sh
 ZOF_TRACE=1 ZOF_TRACE_DIR=$PWD/traces/simulation sbt "simulation/testOnly zio.openfeature.simulation.SharedApiSimulationSpec \
@@ -236,15 +245,17 @@ A user-bound instance makes no swap and no instance shares its stack: a swap off
 SDK's own shutdown of it, which can land after the owner's teardown already shut it down (#1019), and a provider a slot
 the library can see holds cannot be bound under a second domain. Instances on one stack swap one at a time (#1014).
 The registry simulation checks `OneInstancePerDomain`, `OnlyFailedBuildsEvicted`, `RegisteredNotShutDown` and
-`SharedShutDownOnce` (a provider a retry replaced included) on its own state. Each domain's stacks are its own, and a
-failing `initialize()` fails at once: a provider in two slots (#1014) and a retry of a provider an earlier
-`initialize()` still runs on (#1017) are kept out.
+`SharedShutDownOnce` (a provider a retry replaced included) on its own state, and `OneInitializeAtATime`: no leaf ever
+runs two `initialize()` calls at once (`SimLeaf.concurrentInits`). One kind of domain stalls its first build past the
+init timeout, short in such a run, so the watchdog fails it with the call still running; once the replacement the
+run names serves, no slot holds the stalled leaf, and a build of it on another domain must be refused before it binds.
+Each domain's stacks are its own: a provider in two slots (#1014) is kept out.
 
 `simmutants.py` puts back each bug these checks exist for and requires the simulation to name the invariant: the
 owner's close not retiring its siblings (`ClosedApiServesNone`), a non-owner's close shutting its slot's provider down
 (`ForeignNeverShutByLibrary` or `RegisteredNotShutDown`), and one emptying its slot (`ClosedNonOwnerKeepsSlot`), in the
-shared-API simulation; and the registry evicting a client whose build succeeded (`OnlyFailedBuildsEvicted`), in the registry
-simulation. Each is a core recompile, so it runs on main and on demand. A retry with another provider not leaving the
+shared-API simulation; and the registry evicting a client whose build succeeded (`OnlyFailedBuildsEvicted`), and a
+build binding a provider still initializing that no slot holds (`OneInitializeAtATime`), in the registry simulation. Each is a core recompile, so it runs on main and on demand. A retry with another provider not leaving the
 failed one for the registry's close matters only when the registry closes while that retry still builds, which needs a
 stalled `initialize()`: the replay's `retry-left-behind-released` target catches it instead. Dropping the orphan list's sibling check needs a timed-out swap,
 which these plans do not have; the replay's targets catch it (`codemutants.py`).
@@ -278,6 +289,10 @@ one replay can drive, so every behaviour it writes is still a behaviour of the m
   shutdown the SDK has queued, one a swap in flight, a timed-out swap or a retry's binding replaced: the SDK decides
   that shutdown at the binding, where the model decides when the swap or the late call ends (#1014). For the same
   absorption, a failure's decision that may shut a provider down waits while a swap in flight would roll back to it.
+- **No registry build times out** (`BuildTimeouts` is false): its wait runs on the live clock for the registry's
+  init timeout, which the replay does not cut short. So no provider is left initializing with no slot holding it, and
+  no build is refused: `BuildTimeout` and `CreateRefused` are by design absent, checked by `Builds.cfg` and driven by
+  the registry simulation instead.
 - **Timed-out swaps** (`AllowTimeouts` is true): the replay fires the swap's deadline through `ScriptedInitDeadline`,
   and settles the late `initialize()` when the behaviour takes `InitSettle`.
 - **Steps the code takes in one go stay adjacent** (the ghost `then`). A failed build is evicted next, and a release

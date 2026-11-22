@@ -18,7 +18,9 @@ trait FeatureFlagRegistry {
     *
     * Provider initialization happens at most once per domain (concurrent callers share the same build) and does not
     * block clients of other domains. A failed initialization surfaces as
-    * `FeatureFlagError.ProviderInitializationFailed` and is not cached — a subsequent call retries.
+    * `FeatureFlagError.ProviderInitializationFailed` and is not cached — a subsequent call retries. So does a build on
+    * a provider whose earlier `initialize()`, from a timed-out build or swap, still runs while no slot holds it: it is
+    * refused before it binds, and a call after that `initialize()` returns builds it.
     */
   def getClient(domain: String): IO[FeatureFlagError, FeatureFlags]
 

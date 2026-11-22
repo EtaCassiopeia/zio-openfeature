@@ -281,12 +281,16 @@ private[openfeature] object FeatureFlagsFactories {
       // handlers are removed so a failed build leaves none behind. The status records the failure first: the wait ends
       // when `initialize()` throws, before the provider's own ERROR, or the SDK's, reaches the bridge.
       failedBuild = (failure: Throwable) =>
-        ff.markInitFailed(fatal = failure.isInstanceOf[FatalError]) *> ff.stopEventBridge *>
-          ff.shutDownFailedRegistration(
-            bound,
-            "build (failed initialization)",
-            ProviderRegistration.failedProviderShutdownTimeout(initTimeout)
-          )
+        ff.markInitFailed(fatal = failure.isInstanceOf[FatalError]) *> ff.stopEventBridge *> (failure match {
+          // Refused before it bound: the registration still initializing the provider decides its shutdown.
+          case _: ProviderRegistration.StillInitializing | _: ProviderRegistration.ShutdownQueued => ZIO.unit
+          case _                                                                                  =>
+            ff.shutDownFailedRegistration(
+              bound,
+              "build (failed initialization)",
+              ProviderRegistration.failedProviderShutdownTimeout(initTimeout)
+            )
+        })
       settled <- ProviderRegistration
         .registerThenAwait(api, domain, bound, initTimeout, initDeadline)(
           probe.at(LifecycleProbe.Point.BuildBind(managed, domain, addShutdownFinalizer, async = false)) *>

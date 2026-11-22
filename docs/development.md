@@ -177,7 +177,10 @@ swap outcome, both closes, a shared stack and a user-bound one (`rsim.*`). `Regi
 `FeatureFlagRegistry` the same way: workers race `getClient` before each evaluation while builds fail and are retried,
 with the same provider or with a replacement the run names, and a swapper swaps each client. It checks that every
 `getClient(d)` that succeeds returns one instance, that a domain that got a client keeps its promise, each domain's
-answers, the slot and shutdown checks above, and that no client serves once the registry closed (`reg.*`). Each generated-case
+answers, the slot and shutdown checks above, that no leaf runs two `initialize()` calls at once, and that no client
+serves once the registry closed (`reg.*`). One kind of domain stalls its first build past the init timeout: once the
+replacement the run names serves, a build of the stalled leaf on another domain must be refused while its call still
+runs (`reg.build.refused`). Each generated-case
 test carries `PropertyBudget`, so pull requests run the base count and the nightly runs them at 10×. Replay with the
 printed seed:
 

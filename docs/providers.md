@@ -339,7 +339,11 @@ evaluations keep going. To initialize a provider again, install a new instance.
   close. A provider whose earlier `initialize()` has
   not returned (the one an async start was built with, one a timed-out swap or rollback installed, or one another
   instance is initializing under a different slot) is refused the same way, however many swaps have happened since,
-  until that call returns, and the provider this slot holds stays in place. If `setProvider` is called while the
+  until that call returns, and the provider this slot holds stays in place. So is a build on one whose earlier
+  `initialize()`, from a timed-out swap or registry build, still runs while no slot holds it any more: the build fails
+  at once ("still initializing"; `ProviderInitializationFailed` from a registry's `getClient`), binds nothing and
+  shuts nothing down, and the next attempt after that call returns builds it.
+  A build into a slot that already holds the provider shares the running call instead. If `setProvider` is called while the
   timed-out provider, or the provider an async start was built with, is still initializing and the new provider's
   `initialize()` throws, there is nothing to roll back to: that provider never served and is not initialized a second
   time. The new provider stays registered with status `Error`, that provider is shut down (by an instance that owns

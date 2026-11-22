@@ -43,17 +43,24 @@ object ProviderStateAccess {
     * reclaimed, by detaching and binding once more: any other `IllegalStateException` (the provider live in another
     * API, the API shutting down) propagates untouched, as does a second refusal.
     *
-    * `mayReclaim` runs first, under the lock, and refuses the reset by throwing: a dead registration may still have
-    * work queued on the provider (its `initialize()`, or the SDK's shutdown of it once its replacement initializes),
-    * which would reach the provider once bound again.
+    * `mayBind` runs first, under the lock, and refuses the binding by throwing, before anything is bound. `mayReclaim`
+    * runs on the refusal, before the reset, and refuses the reset by throwing: a dead registration may still have work
+    * queued on the provider (its `initialize()`, or the SDK's shutdown of it once its replacement initializes), which
+    * would reach the provider once bound again.
     *
     * Under the API's write lock, which `setProvider` takes too (reentrant), so no other registration comes between the
     * refused call and the retry. The refused call bound nothing: it recorded this API's claim on the provider, which
     * the retry finds already made.
     */
-  def bindReclaiming(api: OpenFeatureAPI, domain: String, provider: FeatureProvider, mayReclaim: () => Unit): Unit = {
+  def bindReclaiming(
+    api: OpenFeatureAPI,
+    domain: String,
+    provider: FeatureProvider,
+    mayReclaim: () => Unit,
+    mayBind: () => Unit = () => ()
+  ): Unit = {
     val held = api.lock.writeLockAutoCloseable()
-    try bindOrReclaim(api, domain, provider, mayReclaim)
+    try { mayBind(); bindOrReclaim(api, domain, provider, mayReclaim) }
     finally held.close()
   }
 

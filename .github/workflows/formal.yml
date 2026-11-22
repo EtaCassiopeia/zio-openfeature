@@ -196,13 +196,14 @@ jobs:
           TLC_CONFIG: ${{ github.event_name == 'pull_request' && 'LifecyclePR.cfg' || 'Lifecycle.cfg' }}
         run: java -XX:+UseParallelGC -cp ../../tla2tools.jar tlc2.TLC -workers auto -deadlock -config "$TLC_CONFIG" Lifecycle.tla
       # The registry and shared-API model (formal/registry): the ownership rules of one API with several instances,
-      # and the bugs they exclude as mutants. Seconds each (Concurrent.cfg, with a third provider, under a minute), so on
-      # every pull request.
+      # and the bugs they exclude as mutants. Seconds each (Concurrent.cfg, with a third provider, under a minute;
+      # Builds.cfg, with a third instance and no swaps, seconds), so on every pull request.
       - name: Check the registry model
         working-directory: formal/registry
         run: |
           java -XX:+UseParallelGC -cp ../../tla2tools.jar tlc2.TLC -workers auto -deadlock -config Registry.cfg Registry.tla
           java -XX:+UseParallelGC -cp ../../tla2tools.jar tlc2.TLC -workers auto -deadlock -config Concurrent.cfg Registry.tla
+          java -XX:+UseParallelGC -cp ../../tla2tools.jar tlc2.TLC -workers auto -deadlock -config Builds.cfg Registry.tla
           python3 mutants.py ../../tla2tools.jar
 
   # The checks on small bounds, a few minutes each, apart from the long run above so neither holds up the other.

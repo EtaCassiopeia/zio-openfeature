@@ -193,8 +193,8 @@ Create(i, p, own) ==
     /\ phase[i] = "checking"
     /\ lock = i
     /\ own => owner = None
-    \* A provider whose initialize() a timed-out swap left running, or one waiting on that call: outside the model
-    \* (README).
+    \* A provider whose initialize() a timed-out swap or build left running: refused when no slot holds it
+    \* (CreateRefused), and a binding that shares that call is outside the model (README), as is one waiting on it.
     /\ p \notin pending /\ ~Waiting(p)
     /\ lock' = None
     /\ \/ bound[d] \in {None, p}
@@ -216,6 +216,21 @@ Create(i, p, own) ==
     /\ leftBehind' = IF bound[d] \notin {None, p} THEN leftBehind \cup {bound[d]} ELSE leftBehind
     /\ UNCHANGED << domainOf, apiOpen, swapping, swaps, userOwned, failedOn, deciding, prior >>
     /\ UNCHANGED << pending, orphans, abandoned >>
+
+\* A build on a provider whose initialize() a timed-out swap or build left running, held by no slot: the SDK would give
+\* it a new registration and call initialize() again alongside the running one, so the binding is refused, under the
+\* API's lock, before anything is bound (ProviderRegistration.refuseUnheld: StillInitializing).  The build fails with
+\* nothing bound; a registry evicts its promise (Evict), and the next getClient retries.
+CreateRefused(i, p) ==
+    /\ phase[i] = "checking"
+    /\ lock = i
+    /\ p \in pending
+    /\ SlotsOf(p) = {}
+    /\ lock' = None
+    /\ phase' = [phase EXCEPT ![i] = "failed"]
+    /\ UNCHANGED << domainOf, owner, apiOpen, swapping, swaps, bound, registered, userOwned, shuts, by, everBound, failedOn,
+                    deciding, prior, swappedOff, builtOn, replaced >>
+    /\ UNCHANGED timeoutVars
 
 \* The build ends and the promise is completed under the semaphore (taken and released in this step); the instance is
 \* open.  Its provider initialized, so the SDK shuts down each provider it replaced in the slot that no slot holds any
@@ -302,6 +317,33 @@ ReleaseReplaced(i) ==
     /\ UNCHANGED << phase, domainOf, owner, apiOpen, lock, swapping, swaps, bound, userOwned, everBound, failedOn, deciding,
                     prior, swappedOff, builtOn >>
     /\ UNCHANGED timeoutVars
+
+\* A registry build's provider is still initializing at the init timeout: the async build's watchdog marks the client
+\* Fatal and shuts the provider down as a failure does (`shut`, LibraryShuts), or the wait for readiness runs out
+\* first and shuts nothing; either way the build fails, its provider left in its slot, and the call keeps running
+\* (`pending`) until InitSettle.  A retry with another provider then replaces it in the slot, and no slot holds it while
+\* its call still runs.  Only the library's wrapper, held by this build's slot alone, and one no provider it replaced
+\* waits on: the SDK's queued shutdown of such a provider is outside the model, as for SwapTimeout.
+BuildTimeout(i, shut) ==
+    LET p == builtOn[i] IN
+    /\ phase[i] = "building"
+    /\ owner # i
+    /\ failedOn[i] = None
+    /\ i \notin deciding
+    /\ p \notin pending
+    /\ p \notin userOwned
+    /\ SlotsOf(p) = {domainOf[i]}
+    /\ ~\E q \in Providers : replaced[q] = p
+    \* The call is this build's: no other instance was built on p, swapped to it or failed on it, which the model would
+    \* need readiness to tell apart from a call still running.
+    /\ \A j \in Instances \ {i} : builtOn[j] # p /\ prior[j] # p /\ failedOn[j] # p
+    /\ p \notin swappedOff
+    /\ phase' = [phase EXCEPT ![i] = "failed"]
+    /\ pending' = pending \cup {p}
+    /\ IF shut THEN ShutFailed(i, p) ELSE UNCHANGED << shuts, by, registered >>
+    /\ UNCHANGED << domainOf, owner, apiOpen, lock, swapping, swaps, bound, userOwned, everBound, failedOn, deciding,
+                    prior, swappedOff, builtOn, replaced >>
+    /\ UNCHANGED << orphans, leftBehind, abandoned >>
 
 \* A swap at the registry grain.  The SDK binds the new provider before its initialize() runs, so a sibling may reuse its
 \* registration from then on.  A swap is refused when a sibling's initialize() of p has started by the time it binds; one
@@ -585,8 +627,10 @@ Next ==
     \/ \E i \in Instances, d \in Domains : Lookup(i, d)
     \/ \E i \in Instances, d \in Domains : Check(i, d)
     \/ \E i \in Instances, p \in Providers, own \in BOOLEAN : Create(i, p, own)
+    \/ \E i \in Instances, p \in Providers : CreateRefused(i, p)
     \/ \E i \in Instances : Complete(i)
     \/ \E i \in Instances : BuildFail(i)
+    \/ \E i \in Instances, shut \in BOOLEAN : BuildTimeout(i, shut)
     \/ \E i \in Instances : Evict(i)
     \/ \E i \in Instances : ReleaseReplaced(i)
     \/ \E i \in Instances, p \in Providers : SwapStart(i, p)
@@ -656,6 +700,11 @@ OneInstancePerDomain ==
 \* Only a failed build's promise is evicted: a client a caller got keeps its promise, and a build still running too.
 OnlyFailedBuildsEvicted ==
     [][\A i \in Instances : phase'[i] = "evicted" /\ phase[i] # "evicted" => phase[i] = "failed"]_vars
+
+\* No binding starts a second initialize() of a provider whose call still runs: the SDK calls initialize() for a new
+\* registration only, and a provider still initializing is never registered anew.
+OneInitializeAtATime ==
+    [][\A p \in pending : p \in registered' => p \in registered]_vars
 
 \* Once the API is gone no instance serves: every one built on it, or building, was retired with it.
 ClosedApiServesNone ==

@@ -69,7 +69,8 @@ either, so that `shutdown()` is abandoned rather than awaited: the sync build wa
 (capped at 15 seconds), and the async `Error` event is published before it starts. A provider the async watchdog shut
 down stays registered with the Java SDK, but the library's wrapper does not call its `shutdown()` a second time. A
 provider you registered with the API yourself and the library reused is not shut down here: the SDK calls its
-`shutdown()` once, when the API shuts down or the provider is replaced.
+`shutdown()` when the API shuts down or the provider is replaced, and can call it twice when the two race (see
+[Sharing the SDK](#sharing-the-sdk)).
 
 Use sync when serving a default is worse than not starting: a wrong SDK key then stops the app. Use async to start
 fast and gate traffic on [readiness](lifecycle.md#wait-until-the-provider-is-ready), or use a
@@ -123,6 +124,10 @@ One API has one default slot and one slot per domain, so instances on it are not
   through the library instead. A domain-scoped provider a slot the library can see holds cannot be bound to a second
   domain at all: the build fails with the SDK's error. For a provider reused as it is, a build that fails on it, or an
   init deadline that passes, leaves it running in its slot, for the API's shutdown or its next successful replacement.
+  Make its `shutdown()` safe to call twice. When a swap moves one slot off it while another domain slot still holds it,
+  the SDK decides on its executor, after the swap, whether to shut it down. If the API shuts down first (an owner's
+  close, a registry's close), that late decision finds the provider no longer registered and shuts it down a second
+  time (OpenFeature Java SDK 1.23.0). Providers the library wraps absorb the second call.
   The one case the library does shut it down: an instance that owns the API swapped it out, the swap timed out and the
   new provider then failed, and no slot the library can see held it, so nothing else would have.
 

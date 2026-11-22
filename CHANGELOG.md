@@ -35,6 +35,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   once with a retryable `ProviderInitializationFailed` ("still initializing"), binding nothing, and a registry's next
   `getClient` builds it once that call has returned. A refused build also no longer shuts the provider down: it was
   never bound, and the registration still initializing it decides (#1017).
+- **The docs no longer promise a single `shutdown()` for a provider you registered yourself.** When a swap moves one
+  slot off such a provider while another domain slot still holds it, and the API then shuts down before the SDK has
+  decided about it on its executor, the OpenFeature Java SDK (1.23.0) shuts it down a second time. Make its
+  `shutdown()` safe to call twice. Providers the library wraps are unaffected (#1019).
 
 ## [2.2.1] — 2026-11-19
 

@@ -31,8 +31,8 @@ Topologies:
 | `FailDecide(i)` | releases the hold | a building instance's build failing |
 | `UserBind(d, p)` | `api.setProviderAndWait(d, p)`, settling `p`'s `initialize()` ok if one runs | the call returning |
 | `CloseInstance(i)` | closes the instance's scope (shared), or `shutdown` (a registry client) | the close returning |
-| `OwnerClose` | closes the owner's scope | the close returning |
-| `RegistryClose` | closes the registry's scope | the close returning |
+| `OwnerClose` | waits for the SDK's executor to finish its queued work (`drainSdk`), then closes the owner's scope | the close returning |
+| `RegistryClose` | `drainSdk`, then closes the registry's scope | the close returning |
 | `Init`, `Done` | nothing | nothing |
 
 Any other action fails the behaviour. At a binding's outcome (`Complete`, `BuildFail`, `SwapDone`, `SwapFailMark`,
@@ -64,3 +64,7 @@ Skipped:
 - `replaced` shows in `total`.
 - `everBound`, `swappedOff`, `abandoned` and `builtOn` are ghosts or known to the replay.
 - `abandoned` shows in `total`: the user's providers nothing shuts down.
+
+The drain before a close lets every task the SDK's executor took run, but the `initialize()` calls the behaviour still
+holds. A swap's `shutDownOld` that runs after the API's shutdown shuts a provider another slot held down a second time:
+an SDK race (`SdkLateShutdownCanarySpec`), which the model, counting the SDK's intended single shutdown, leaves out.

@@ -581,6 +581,10 @@ ApiShuts == {p \in registered : SlotsOf(p) # {} \/ Waiting(p)}
 
 \* The API's shutdown, and `rel`, the providers the library shuts down with it: the owner's orphans, the registry's
 \* left-behind wrappers.  A wrapper the SDK's shutdown reaches too absorbs the second call, so each counts once.
+\* Counted once on purpose, the SDK's intended behaviour: a swap's shutDownOld still queued on the SDK's executor
+\* when the API shuts down finds the replaced registration unregistered (ProviderRepository's prepareShutdown clears
+\* the domain slots) and shuts its provider down again, which a provider the user bound sees as a second shutdown().
+\* The replay lets the SDK's queued work run before a close, so it compares the library, not that race.
 ShutApi(rel) ==
     /\ apiOpen' = FALSE
     /\ bound' = [d \in Domains |-> None]

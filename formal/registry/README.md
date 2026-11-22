@@ -150,6 +150,12 @@ them one at a time: a mutant usually breaks several, and in one run TLC reports 
   - *A swap off a timed-out swap's provider while it initializes*, and an init deadline on it (`SwapStart`,
     `FailMark`): the lifecycle model's (`SwapFailNoRollback`).
   - *The user binding a waiting provider of theirs under a domain no instance is on* (`UserBind`): as below.
+- **The SDK's late shutdown decision** (#1019). A swap off a provider another domain slot still holds queues the SDK's
+  `shutDownOld` on its executor; run after the API's shutdown has cleared the domain slots, it shuts that provider
+  down a second time. The library's wrapper absorbs it, a provider the user bound does not. The model counts the
+  SDK's intended single shutdown (`ShutApi`), and the replay waits for the SDK's executor before `OwnerClose` and
+  `RegistryClose` (`drainSdk`, `replay-map.md`). `SdkLateShutdownCanarySpec` pins the SDK's behaviour, so an SDK that
+  fixes it turns that spec red, and the drain and the caveat in `docs/providers.md` can go.
 - **A provider the user bound under a domain no instance is on.** The library cannot see that slot, so it wraps the
   provider and initializes it again (`Bound.of`, `docs/providers.md`), and a failure shuts it down. `Create` and
   `SwapStart` exclude it. Upstream `OpenFeatureAPI` has no accessor for a provider's domains.
@@ -242,7 +248,8 @@ SDK's executor (`openfeature-provider-thread-*`) or the library, the rule the la
 | `OnlyFailedBuildsEvicted` | registry simulation: once a `getClient(d)` succeeded, the registry holds a promise for `d` while it is open (`replayView`), at each domain's probe points and after every command; that a failed build's promise is evicted shows as the retry that rebuilds it | the close itself, which clears every promise |
 
 A user-bound instance makes no swap and no instance shares its stack: a swap off a provider the user bound queues the
-SDK's own shutdown of it, which can land after the owner's teardown already shut it down (#1019), and a provider a slot
+SDK's own shutdown of it, which can land after the owner's teardown already shut it down (the SDK's race above, #1019),
+and a provider a slot
 the library can see holds cannot be bound under a second domain. Instances on one stack swap one at a time (#1014).
 The registry simulation checks `OneInstancePerDomain`, `OnlyFailedBuildsEvicted`, `RegisteredNotShutDown` and
 `SharedShutDownOnce` (a provider a retry replaced included) on its own state, and `OneInitializeAtATime`: no leaf ever

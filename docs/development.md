@@ -169,8 +169,11 @@ may be built on another's provider (instances on one provider swap one at a time
 swaps while a closer shuts non-owners and maybe the owner down mid-run. Each instance's answers are checked against its own history (the writes, and its own
 evaluations and swaps), with the close windows: no success once its own close, or the owner's, has returned. While the
 API is open, no stack a slot holds is shut down, read from the API's slot rather than the test's view
-(`RegisteredNotShutDown`), and no leaf is ever shut down twice (`SharedShutDownOnce`); the reach test requires every
-swap outcome, both closes and a shared stack (`rsim.*`). All three
+(`RegisteredNotShutDown`), and no leaf is ever shut down twice (`SharedShutDownOnce`). The rest of the registry model's
+invariants are checked on the same live state at every probe point and after every command (`RegistryInvariants`,
+`formal/registry/README.md`, "Checked on live state"), with some instances on a provider the user bound to the API
+first, and each shutdown attributed to the SDK or the library by the thread it ran on. The reach test requires every
+swap outcome, both closes, a shared stack and a user-bound one (`rsim.*`). All three
 tests carry `PropertyBudget`, so pull requests run the base count and the nightly runs them at 10×. Replay with the
 printed seed:
 

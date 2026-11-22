@@ -1,13 +1,13 @@
 package zio.openfeature.simulation
 
-import dev.openfeature.sdk.{OpenFeatureAPI, FeatureProvider => OFFeatureProvider}
+import dev.openfeature.sdk.{NoOpProvider, OpenFeatureAPI, FeatureProvider => OFFeatureProvider}
 import zio._
 import zio.openfeature._
 import zio.openfeature.internal.{FeatureFlagsFactories, LifecycleProbe, ManagedProvider}
 import zio.openfeature.testsupport.{LeakCheck, PropertyBudget}
 import zio.test.{Spec => _, _}
 
-import java.util.concurrent.atomic.{AtomicBoolean, AtomicLong}
+import java.util.concurrent.atomic.{AtomicBoolean, AtomicInteger, AtomicLong, AtomicReference}
 
 import scala.jdk.CollectionConverters._
 
@@ -19,7 +19,8 @@ import scala.jdk.CollectionConverters._
   *   - every evaluation completes (bounded) with a value or a default plus an error code, never a defect;
   *   - each instance's successful answers against its own history ([[History]]): the global writes, and its own
   *     evaluations and swaps. An answer from a leaf after a swap away from it raised its gate is never a success, for
-  *     the instance that swapped: a sibling still serving that stack answers from it correctly;
+  *     the instance that swapped, unless a sibling's stack still holds that leaf: the sibling answers from it
+  *     correctly, and the mark is the leaf's, not the instance's;
   *   - after an instance's own close returns, no evaluation it invokes from then on succeeds, and after the owner's
   *     close returns the same holds for every instance; a non-owner's close changes nothing in its siblings' checks;
   *   - a swap is refused (`ProviderNotReady`) only once the instance's close, or the owner's, has started, and always
@@ -40,8 +41,19 @@ object SharedApiSimulationSpec extends ZIOSpecDefault {
 
   private val name = "SharedApiSimulationSpec"
 
-  /** An instance: built on `shareOf`'s provider object if set (an earlier instance), else on its own `stack`. */
-  final case class Inst(shareOf: Option[Int], stack: Spec, swaps: List[Spec], workers: List[List[Cmd.Eval]])
+  /** An instance: built on `shareOf`'s provider object if set (an earlier instance), else on its own `stack`. With
+    * `userBound`, the user binds that stack under the instance's domain first, and the build reuses it as it is (the
+    * SDK owns it). A user-bound instance makes no swap and no instance shares it: a swap off a provider the user bound
+    * queues the SDK's own shutdown of it, which can land after the owner's teardown already shut it down, an open gap
+    * kept out of the plans; and a provider a slot the library can see holds cannot be bound under a second domain.
+    */
+  final case class Inst(
+    shareOf: Option[Int],
+    stack: Spec,
+    swaps: List[Spec],
+    workers: List[List[Cmd.Eval]],
+    userBound: Option[Spec] = None
+  )
 
   /** `closes`: the non-owners (by index) closed mid-run, in order; then the owner, if `ownerCloses`. */
   final case class Plan(
@@ -63,16 +75,20 @@ object SharedApiSimulationSpec extends ZIOSpecDefault {
       scheduleSeed <- Gen.long.noShrink
       home         <- SequentialSimulationSpec.genHomeKinds
       n            <- Gen.int(2, 3)
-      insts        <- Gen.collectAll((0 until n).toList.map { k =>
-        for {
-          share <-
-            if (k == 0) Gen.const(None)
-            else Gen.weighted(Gen.const(None) -> 2.0, Gen.int(0, k - 1).map(Some(_)) -> 1.0)
-          stack   <- Gens.genSpec(2, home, Gens.leafFaults(Gens.noInitFault))
-          swaps   <- Gen.listOfBounded(0, 2)(Gens.genSpec(2, home, Gens.leafFaults(swapInitFault)))
-          workers <- Gen.listOfBounded(1, 2)(Gen.listOfBounded(3, 15)(Gens.genEval(home)))
-        } yield Inst(share, stack, swaps, workers)
-      })
+      insts        <- Gen
+        .collectAll((0 until n).toList.map { k =>
+          for {
+            share <-
+              if (k == 0) Gen.const(None)
+              else Gen.weighted(Gen.const(None) -> 2.0, Gen.int(0, k - 1).map(Some(_)) -> 1.0)
+            stack   <- Gens.genSpec(2, home, Gens.leafFaults(Gens.noInitFault))
+            swaps   <- Gen.listOfBounded(0, 2)(Gens.genSpec(2, home, Gens.leafFaults(swapInitFault)))
+            workers <- Gen.listOfBounded(1, 2)(Gen.listOfBounded(3, 15)(Gens.genEval(home)))
+            user    <-
+              if (share.nonEmpty) Gen.const(false) else Gen.weighted(Gen.const(false) -> 3.0, Gen.const(true) -> 1.0)
+          } yield Inst(share, stack, swaps, workers, Option.when(user)(stack))
+        })
+        .map(userBoundAlone)
       closes      <- Gen.collectAll((1 until n).toList.map(k => Gen.boolean.map(Option.when(_)(k)))).map(_.flatten)
       ownerCloses <- Gen.weighted(Gen.const(false) -> 3.0, Gen.const(true) -> 1.0)
       muts        <- Gen.listOfBounded(0, 10)(
@@ -83,6 +99,16 @@ object SharedApiSimulationSpec extends ZIOSpecDefault {
       )
     } yield Plan(home, insts, closes, ownerCloses, muts, scheduleSeed)
 
+  /** A user-bound instance makes no swap, and an instance that would share its stack builds on its own instead. */
+  def userBoundAlone(insts: List[Inst]): List[Inst] = {
+    val user = insts.zipWithIndex.collect { case (i, k) if i.userBound.nonEmpty && i.shareOf.isEmpty => k }.toSet
+    insts.map {
+      case i if i.userBound.nonEmpty && i.shareOf.isEmpty => i.copy(swaps = Nil)
+      case i if i.shareOf.exists(user)                    => i.copy(shareOf = None)
+      case i                                              => i.copy(userBound = None)
+    }
+  }
+
   /** The counters the generated cases must reach. */
   val reachKeys: List[String] = List(
     "rsim.swap.ok",
@@ -91,7 +117,11 @@ object SharedApiSimulationSpec extends ZIOSpecDefault {
     "rsim.close",
     "rsim.ownerClose",
     "rsim.shared",
-    "rsim.evalAfterClose"
+    "rsim.evalAfterClose",
+    "rsim.userBound",
+    "rsim.siblingsChecked",
+    "rsim.invariant.checked",
+    "rsim.slot.held"
   )
 
   private val evalBound = 10.seconds
@@ -106,9 +136,13 @@ object SharedApiSimulationSpec extends ZIOSpecDefault {
     val restored: Ref[Set[String]],
     val retired: Ref[Set[String]],
     val closing: AtomicBoolean,
-    val closedAt: AtomicLong
+    val closedAt: AtomicLong,
+    val userBound: Boolean
   ) {
-    def domain: String = s"d$k"
+    // Bumped as each swap starts and as it returns, so odd while one is in flight: a sibling is quiet across a close
+    // when every read of it, before and after, saw one even value.
+    val swapSeq: AtomicInteger = new AtomicInteger(0)
+    def domain: String         = s"d$k"
   }
 
   private def isBound(sdk: OFFeatureProvider, b: Built): Boolean =
@@ -127,15 +161,16 @@ object SharedApiSimulationSpec extends ZIOSpecDefault {
         nextId.modify { from =>
           val ns = Spec.number(s, from); (ns, Spec.maxId(ns) + 1)
         }
-      builts <- ZIO.foldLeft(plan.insts.zipWithIndex)(Vector.empty[Built]) { case (acc, (i, k)) =>
+      insts = userBoundAlone(plan.insts)
+      builts <- ZIO.foldLeft(insts.zipWithIndex)(Vector.empty[Built]) { case (acc, (i, k)) =>
         i.shareOf.filter(j => j >= 0 && j < k) match {
           case Some(j) => ZIO.succeed(acc :+ acc(j))
-          case None    => number(i.stack).flatMap(Harness.build(_, timed = false)).map(acc :+ _)
+          case None    => number(i.userBound.getOrElse(i.stack)).flatMap(Harness.build(_, timed = false)).map(acc :+ _)
         }
       }
       lives <- ZIO.foreach(builts.zipWithIndex.toList) { case (b, k) =>
         (Ref.make(b) <*> Ref.make(Set.empty[String]) <*> Ref.make(Set.empty[String])).map { case (c, r, t) =>
-          new Live(k, b, c, r, t, new AtomicBoolean(false), new AtomicLong(Long.MaxValue))
+          new Live(k, b, c, r, t, new AtomicBoolean(false), new AtomicLong(Long.MaxValue), insts(k).userBound.nonEmpty)
         }
       }
       // Instances built on one stack swap one at a time. A swap off a provider no other slot holds makes the SDK queue
@@ -176,15 +211,69 @@ object SharedApiSimulationSpec extends ZIOSpecDefault {
               report(s"SharedShutDownOnce ($where): ${l.name} shut down ${l.shutdowns.get()} times")
             )
           )
+      // The registry model's invariants on live state (RegistryInvariants), once every instance is built: each
+      // violation is kept with where it was first seen, and reported at the end.
+      instances = new AtomicReference(Vector.empty[FeatureFlagsLive])
+      apiGone   = new AtomicBoolean(false)
+      found     = new java.util.concurrent.ConcurrentHashMap[String, String]()
+      leavesOf  = (b: Built) =>
+        b.leaves.values.toList
+          .sortBy(_.name)
+          .map(l => RegistryInvariants.Leaf(l.name, l.shutdownThreads.asScala.toList))
+      userStacks = lives.filter(_.userBound).map(_.initial)
+      // A slot as the API holds it, read again after its leaves so a swap that moved it meanwhile reads as Unknown.
+      slotOf = (l: Live, ff: FeatureFlagsLive) => {
+        val held = api.getProvider(l.domain)
+        if (held.isInstanceOf[NoOpProvider]) RegistryInvariants.Slot.Empty
+        else
+          stacks.asScala.find(isBound(held, _)) match {
+            case Some(b) if Spec.initOutcome(b.spec) != InitOutcome.Fails =>
+              val view = RegistryInvariants.Slot.Held(leavesOf(b), ff.replayView._2.exists(isBound(_, b)))
+              if (api.getProvider(l.domain) eq held) view else RegistryInvariants.Slot.Unknown
+            case _ => RegistryInvariants.Slot.Unknown
+          }
+      }
+      registryInvariants = (where: String) =>
+        ZIO.suspendSucceed {
+          val ffs = instances.get()
+          // Read before the instances: the owner's close returning meanwhile must not make their earlier status late.
+          val gone = apiGone.get()
+          ZIO.when(ffs.size == lives.size) {
+            ZIO
+              .foreach(lives) { l =>
+                val ff = ffs(l.k)
+                ff.providerStatus.map { status =>
+                  RegistryInvariants.Instance(
+                    l.k,
+                    ff.replayView._1,
+                    live = !l.closing.get(),
+                    closed = l.closedAt.get() != Long.MaxValue,
+                    slotOf(l, ff),
+                    status
+                  )
+                }
+              }
+              .map { is =>
+                val state = RegistryInvariants.State(apiOpen.get(), gone, is, userStacks.flatMap(leavesOf))
+                RegistryInvariants.always(state).foreach(v => found.putIfAbsent(v, where): Unit)
+                Stats.hit("rsim.invariant.checked")
+                if (is.exists(_.slot.isInstanceOf[RegistryInvariants.Slot.Held])) Stats.hit("rsim.slot.held")
+              }
+          }
+        }
+      checks = (where: String) => registeredNotShutDown(where) *> registryInvariants(where)
       // A swap raises its gate before it binds the new provider: from then on the leaves of the stack it leaves are
       // retiring for that instance (`retired`), which a late answer of that instance is judged against. A sibling still
-      // serving the stack is not: its answers from those leaves carry the late mark, but they are not late for it.
+      // serving the stack is not, and its answers from those leaves are not late for it.
       callback = (l: Live) =>
         (p: LifecycleProbe.Point) =>
           (p match {
             case LifecycleProbe.Point.SwapBind =>
-              l.current.get.flatMap { b =>
-                b.leaves.values.foreach(_.retiring.set(true))
+              // The late mark is on the leaf, and the gate is the instance's: a leaf another instance's stack still holds
+              // is not marked (instances on one stack swap one at a time, so that instance's stack is current here).
+              (l.current.get <*> ZIO.foreach(lives.filter(_.k != l.k))(_.current.get)).flatMap { case (b, others) =>
+                val held = others.flatMap(_.leaves.values).toSet
+                b.leaves.values.filterNot(held.contains).foreach(_.retiring.set(true))
                 l.retired.update(_ ++ b.leaves.values.map(_.name))
               }
             case LifecycleProbe.Point.RollbackBind =>
@@ -194,14 +283,20 @@ object SharedApiSimulationSpec extends ZIOSpecDefault {
                   .update(_ -- b.leaves.values.map(_.name)) *> l.restored.update(_ ++ b.leaves.values.map(_.name))
               }
             case _ => ZIO.unit
-          }) *> registeredNotShutDown(s"i${l.k} at ${p.name}") *> sharedShutDownOnce(s"i${l.k} at ${p.name}")
+          }) *> checks(s"i${l.k} at ${p.name}") *> sharedShutDownOnce(s"i${l.k} at ${p.name}")
       perturber = new SchedulePerturber(plan.scheduleSeed, _ => ZIO.unit)
       _ <- ZIO.succeed(Stats.declare(SchedulePerturber.declaredCounters ++ reachKeys))
       _ <- RegistryRecording.recorded("simulation-shared", Some(PlanCodec.write(plan))) {
         ZIO.scoped {
           for {
             ffs <- ZIO.foreach(lives) { l =>
-              RegistryRecording
+              ZIO.when(l.userBound)(
+                ZIO
+                  .attemptBlocking(api.setProviderAndWait(l.domain, l.initial.provider))
+                  .mapError(e => s"the user's bind of i${l.k}'s stack failed: $e") *>
+                  RegistryRecording.environment("UserBind", Some(l.domain), Some(l.initial.provider)) *>
+                  Stats.generated("rsim.userBound")
+              ) *> RegistryRecording
                 .instanceProbe(new LifecycleProbe {
                   def at(p: LifecycleProbe.Point): UIO[Unit] = callback(l)(p) *> perturber.lifecycle.at(p)
                 })
@@ -221,6 +316,7 @@ object SharedApiSimulationSpec extends ZIOSpecDefault {
                 .mapError(e => s"install i${l.k} failed: $e")
             }
             byK = ffs.toVector
+            _ <- ZIO.succeed(instances.set(byK))
 
             worker = (l: Live, cmds: List[Cmd.Eval]) =>
               ZIO.foreachDiscard(cmds) { case Cmd.Eval(key, kind, inv, scoped) =>
@@ -253,7 +349,7 @@ object SharedApiSimulationSpec extends ZIOSpecDefault {
                           )
                         }
                   }
-                  _ <- registeredNotShutDown(s"after an evaluation of i${l.k}")
+                  _ <- checks(s"after an evaluation of i${l.k}")
                 } yield ()
               }
 
@@ -266,7 +362,9 @@ object SharedApiSimulationSpec extends ZIOSpecDefault {
                   fails = Spec.initOutcome(ns) == InitOutcome.Fails
                   _  <- perturber.note(s"i${l.k} swap to ${Spec.show(ns)} starts")
                   t0 <- ZIO.succeed(perturber.tick())
+                  _  <- ZIO.succeed(l.swapSeq.incrementAndGet())
                   r  <- lockOf(l).withPermit(byK(l.k).setProvider(nb.provider)).sandbox.either
+                  _  <- ZIO.succeed(l.swapSeq.incrementAndGet())
                   t1 <- ZIO.succeed(perturber.tick())
                   // Invoked once this instance's close, or the owner's, had returned: it must have been refused.
                   closed = t0 > l.closedAt.get()
@@ -294,7 +392,7 @@ object SharedApiSimulationSpec extends ZIOSpecDefault {
                       Stats.generated("rsim.swap.ok") *> bound.update(nb :: _) *>
                         history.update(_ :+ (l.k -> Op.Swap(ns, t0, t1))) *> l.current.set(nb)
                   }
-                  _ <- registeredNotShutDown(s"after i${l.k}'s swap to ${Spec.show(ns)}")
+                  _ <- checks(s"after i${l.k}'s swap to ${Spec.show(ns)}")
                   _ <- ZIO.yieldNow
                 } yield ()
               }
@@ -319,16 +417,46 @@ object SharedApiSimulationSpec extends ZIOSpecDefault {
                       }
                     t1 <- ZIO.succeed(perturber.tick())
                     _  <- history.update(_ :+ (-1 -> Op.Write(id, key, value, invalidated, t0, t1)))
-                    _  <- registeredNotShutDown("after a flag change")
+                    _  <- checks("after a flag change")
                   } yield ()
                 } *> ZIO.yieldNow
               case _ => ZIO.unit
             }
 
+            // Each instance's slot provider and status, between two reads of its swap sequence.
+            sample = ZIO.foreach(lives) { j =>
+              val seq0 = j.swapSeq.get()
+              val held = api.getProvider(j.domain): AnyRef
+              byK(j.k).providerStatus.map(st => (j.k, (held, st, seq0, j.swapSeq.get())))
+            }
             close = (l: Live) =>
-              perturber.note(s"i${l.k} shutdown") *> ZIO.succeed(l.closing.set(true)) *> byK(l.k).shutdown *>
-                ZIO.succeed(l.closedAt.set(perturber.tick())) *> Stats.generated("rsim.close") *>
-                registeredNotShutDown(s"after i${l.k}'s close")
+              for {
+                _      <- perturber.note(s"i${l.k} shutdown")
+                before <- sample
+                _      <- ZIO.succeed(l.closing.set(true))
+                _      <- byK(l.k).shutdown
+                _      <- ZIO.succeed(l.closedAt.set(perturber.tick()))
+                after  <- sample
+                _      <- Stats.generated("rsim.close")
+                // SiblingsUnaffected: a non-owner's close moves no quiet sibling.
+                _ <- ZIO.when(l.k != 0 && apiOpen.get()) {
+                  val quiet = before
+                    .zip(after)
+                    .collect {
+                      case ((k, (_, _, a, b)), (_, (_, _, c, e))) if a % 2 == 0 && a == b && b == c && c == e => k
+                    }
+                    .toSet
+                  val view = (xs: List[(Int, (AnyRef, ProviderStatus, Int, Int))]) =>
+                    xs.map { case (k, (p, st, _, _)) => k -> (p, st) }.toMap
+                  ZIO.succeed {
+                    RegistryInvariants
+                      .siblingsUnaffected(l.k, quiet, view(before), view(after))
+                      .foreach(v => found.putIfAbsent(v, s"i${l.k}'s close"): Unit)
+                    if (quiet.exists(_ != l.k)) Stats.hit("rsim.siblingsChecked")
+                  }
+                }
+                _ <- checks(s"after i${l.k}'s close")
+              } yield ()
 
             closer =
               ZIO.foreachDiscard(plan.closes.filter(k => k > 0 && k < lives.size).distinct)(k =>
@@ -340,19 +468,25 @@ object SharedApiSimulationSpec extends ZIOSpecDefault {
                     lives.foreach(_.closing.set(true))
                   } *> close(lives.head) *>
                     ZIO.succeed(lives.foreach(_.closedAt.compareAndSet(Long.MaxValue, perturber.tick()))) *>
+                    ZIO.succeed(apiGone.set(true)) *> checks("after the owner's close") *>
                     Stats.generated("rsim.ownerClose")
                 )
 
             _ <- ZIO.collectAllParDiscard(
-              closer :: mutator :: lives.zip(plan.insts).flatMap { case (l, i) =>
+              closer :: mutator :: lives.zip(insts).flatMap { case (l, i) =>
                 swapper(l, i.swaps) :: i.workers.map(worker(l, _))
               }
             )
-            _ <- registeredNotShutDown("at the end, before the scope closes")
+            _ <- checks("at the end, before the scope closes")
+            // The scope's close tears the API down with the owner's finalizer: from here it is not open.
+            _ <- ZIO.succeed(apiOpen.set(false))
           } yield ()
         }
       }
-      _   <- ZIO.succeed(apiOpen.set(false))
+      _ <- ZIO.succeed(apiOpen.set(false))
+      _ <- ZIO.foreachDiscard(found.asScala.toList.sortBy(_._1).take(5)) { case (v, where) =>
+        report(s"registry invariant: $v (at $where)")
+      }
       ops <- history.get
       _   <- ZIO.foreachDiscard(lives) { l =>
         val mine    = ops.collect { case (k, op) if k == l.k || k == -1 => op }
@@ -377,14 +511,17 @@ object SharedApiSimulationSpec extends ZIOSpecDefault {
       })
       leaks <- LeakCheck.awaitNoLeaks(baseline, 5.seconds).withClock(Clock.ClockLive)
       _     <- ZIO.foreachDiscard(leaks)(l => report(s"leak: $l"))
-      _     <- ZIO.when(plan.insts.exists(_.shareOf.nonEmpty))(Stats.generated("rsim.shared"))
+      _     <- ZIO.when(insts.exists(_.shareOf.nonEmpty))(Stats.generated("rsim.shared"))
       _     <- ZIO.succeed(Stats.hit("rsim"))
       ps    <- problems.get
       _     <- ZIO.when(ps.nonEmpty)(
         ZIO.fail(
-          (s"instances ${plan.insts.zipWithIndex
+          (s"instances ${insts.zipWithIndex
               .map { case (i, k) =>
-                s"i$k " + i.shareOf.fold(Spec.show(i.stack))(j => s"on i$j's stack")
+                s"i$k " + i.shareOf
+                  .fold(Spec.show(i.userBound.getOrElse(i.stack)) + i.userBound.fold("")(_ => " (user-bound)"))(j =>
+                    s"on i$j's stack"
+                  )
               }
               .mkString(", ")}" +: ps.take(10)).mkString("\n") +
             (if (ps.size > 10) s"\n${ps.size - 10} more problems" else "") +

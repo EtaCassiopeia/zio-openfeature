@@ -68,6 +68,7 @@ on:
       - 'testkit/src/test/scala/zio/openfeature/testkit/BoundDomainSpec.scala'
       - 'simulation/src/test/scala/zio/openfeature/simulation/ConcurrentSimulationSpec.scala'
       - 'simulation/src/test/scala/zio/openfeature/simulation/SharedApiSimulationSpec.scala'
+      - 'simulation/src/test/scala/zio/openfeature/simulation/RegistryInvariants.scala'
       - 'simulation/src/test/scala/zio/openfeature/simulation/History.scala'
       - 'simulation/src/test/resources/regressions/shared/**'
       - 'simulation/src/test/scala/zio/openfeature/simulation/SchedulePerturber.scala'
@@ -125,6 +126,7 @@ on:
       - 'testkit/src/test/scala/zio/openfeature/testkit/BoundDomainSpec.scala'
       - 'simulation/src/test/scala/zio/openfeature/simulation/ConcurrentSimulationSpec.scala'
       - 'simulation/src/test/scala/zio/openfeature/simulation/SharedApiSimulationSpec.scala'
+      - 'simulation/src/test/scala/zio/openfeature/simulation/RegistryInvariants.scala'
       - 'simulation/src/test/scala/zio/openfeature/simulation/History.scala'
       - 'simulation/src/test/resources/regressions/shared/**'
       - 'simulation/src/test/scala/zio/openfeature/simulation/SchedulePerturber.scala'
@@ -530,12 +532,13 @@ jobs:
           path: traces/
           retention-days: 14
 
-  # The runs of several instances on one API that the ownership and registry suites record, checked against the
-  # registry model, with the checker's own fixtures and its guards (formal/registry/README.md). A few minutes, so on
-  # every pull request.
+  # The runs of several instances on one API that the ownership and registry suites record, and the shared-API
+  # simulation's, checked against the registry model, with the checker's own fixtures and its guards
+  # (formal/registry/README.md). A few minutes, so on every pull request; on main it also puts back each bug the
+  # simulation's live checks exist for, a core recompile and a simulation run each.
   registry-traces:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
       - name: Set up JDK 21
@@ -582,6 +585,11 @@ jobs:
         if: success() || failure()
         working-directory: formal/registry
         run: python3 validate.py ../../tla2tools.jar ../../CommunityModules-deps.jar "${GITHUB_WORKSPACE}/traces/simulation/registry"
+      # Each registry bug the live invariant checks exist for, put back in core: a recompile and a simulation run each, so
+      # on main and by hand only.
+      - name: Check each code mutant turns the shared-API simulation red with its invariant named
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        run: python3 formal/registry/simmutants.py
       - name: Keep the recorded runs
         if: failure()
         uses: actions/upload-artifact@v7

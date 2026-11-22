@@ -5,6 +5,7 @@ import java.util.concurrent.{CompletableFuture, TimeoutException}
 import dev.openfeature.sdk.{
   ErrorCode,
   EvaluationContext => OFEvaluationContext,
+  EventProviderAccess,
   FeatureProvider => OFFeatureProvider,
   NoOpProvider,
   OpenFeatureAPI,
@@ -263,9 +264,10 @@ private[openfeature] object ProviderRegistration {
   /** Bind `provider` to `domain`'s slot, unless it holds it already, and classify the registration. Not interruptible:
     * it mutates SDK state.
     *
-    * With `shareInFlight` false, a registration whose provider another binding's `initialize()` has already entered
-    * fails with [[StillInitializing]] and binds nothing. A swap needs that: its previous provider is shut down once the
-    * SDK sees the new one initialized, and the SDK takes a call in flight elsewhere for that.
+    * A registration of the library's wrapper whose `initialize()` still runs while no slot of the API holds it fails
+    * with [[StillInitializing]] and binds nothing (see [[bind]]). With `shareInFlight` false, so does one whose call
+    * another slot shares: a swap needs that, since its previous provider is shut down once the SDK sees the new one
+    * initialized, and the SDK takes a call in flight elsewhere for that.
     */
   def register(
     api: OpenFeatureAPI,
@@ -296,6 +298,10 @@ private[openfeature] object ProviderRegistration {
   /** Bind `bound` to `domain`'s slot, unless it holds that registration already. Throws what the SDK's binding throws.
     * `reclaimForeign` resets a stale attachment of the user's own provider too: a rollback restoring the registration
     * it replaced.
+    *
+    * The library's wrapper is refused with [[StillInitializing]], under the API's lock and before it binds, while an
+    * `initialize()` of it runs and no slot of the API holds it: the SDK would give it a new registration and call
+    * `initialize()` again alongside the one running. A slot that holds it shares the running call instead.
     */
   def bind(api: OpenFeatureAPI, domain: Option[String], bound: Bound, reclaimForeign: Boolean = false): Unit =
     if (!holdsAlready(api, domain, bound))
@@ -304,7 +310,13 @@ private[openfeature] object ProviderRegistration {
         // successful replacement is still attached to it, and is reclaimed here, unless that registration still has
         // work queued on the wrapper.
         case Bound.Managed(wrapper) =>
-          ProviderStateAccess.bindReclaiming(api, domain.orNull, bound.sdk, () => refuseReclaim(api, wrapper))
+          ProviderStateAccess.bindReclaiming(
+            api,
+            domain.orNull,
+            bound.sdk,
+            () => refuseReclaim(api, wrapper),
+            () => refuseUnheld(api, wrapper)
+          )
         case Bound.Foreign(_) if reclaimForeign =>
           ProviderStateAccess.bindReclaiming(api, domain.orNull, bound.sdk, () => ())
         // The user's own provider: the SDK's binding, as the user would make it.
@@ -314,6 +326,15 @@ private[openfeature] object ProviderRegistration {
             case None    => api.setProvider(bound.sdk)
           }
       }
+
+  // The SDK reuses a registration only from a slot that holds the provider; for an unheld one it starts a new call. The
+  // slots the library can see are checked first; a wrapper still attached is held by a slot it cannot see, which shares
+  // the call, or by a dead registration, which the reclaim then refuses.
+  private def refuseUnheld(api: OpenFeatureAPI, wrapper: ManagedProvider): Unit =
+    if (
+      wrapper.initsInFlightAnywhere > 0 && !ProviderStateAccess.boundIn(api, null, wrapper) &&
+      !ApiInstances.boundInAnySlot(api, wrapper) && !EventProviderAccess.attached(wrapper)
+    ) throw new StillInitializing(wrapper)
 
   // A dead registration's `initialize()` still running would run alongside the one this binding starts; the SDK's
   // shutdown of a wrapper, queued until the registration that replaced it initializes, would close it once bound.

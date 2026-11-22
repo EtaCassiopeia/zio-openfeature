@@ -59,6 +59,8 @@ def by_design(topology, generate_tla, generate_cfg, registry_tla):
     """The actions `topology` never takes on purpose, each with why and whether that still holds."""
     if topology == "registry":
         fail_mark_shared = _guarded(generate_tla, "Shared", "FailMark")
+        no_build_timeouts = (_guarded(generate_tla, "BuildTimeouts", "BuildTimeout")
+                             and re.search(r"^BuildTimeouts == FALSE$", generate_tla, re.M) is not None)
         return {
             "UserBind": ("only a shared API binds a user's provider", _guarded(generate_tla, "Shared", "UserBind")),
             "OwnerClose": ("a registry's API has no owning instance", _guarded(generate_tla, "Shared", "OwnerClose")),
@@ -66,6 +68,11 @@ def by_design(topology, generate_tla, generate_cfg, registry_tla):
             # FailDecide takes an instance out of `deciding`, which only FailMark puts it in.
             "FailDecide": ("it follows only FailMark",
                            fail_mark_shared and _writers(registry_tla, "deciding' = deciding \\cup") == {"FailMark"}),
+            "BuildTimeout": ("the replay does not cut a registry build's wait for readiness short",
+                             no_build_timeouts),
+            # Only a timed-out build leaves a provider initializing with no slot holding it: a timed-out swap's stays in
+            # its slot, which no build or swap moves off it.
+            "CreateRefused": ("it needs a provider BuildTimeout left initializing", no_build_timeouts),
         }
     if topology == "shared":
         no_map = "a shared API has no registry promise map"
@@ -75,6 +82,8 @@ def by_design(topology, generate_tla, generate_cfg, registry_tla):
             "Evict": (no_map, _guarded(generate_tla, "Reg", "Evict")),
             "ReleaseReplaced": (no_map, _guarded(generate_tla, "Reg", "ReleaseReplaced")),
             "RegistryClose": ("a shared API has no registry", _guarded(generate_tla, "Reg", "RegistryClose")),
+            "BuildTimeout": (no_map, _guarded(generate_tla, "Reg", "BuildTimeout")),
+            "CreateRefused": (no_map, _guarded(generate_tla, "Reg", "CreateRefused")),
         }
     sys.exit(f"--topology: expected one of {sorted(TOPOLOGIES)}, got {topology!r}")
 
@@ -84,7 +93,7 @@ def check_shape(behaviour, topology, absent, default_provider="p1"):
 
     TLC checks Generate.tla's invariants as it walks; this checks what a replay relies on in what it wrote: the ghost
     `total` counts every shutdown, a failed build is evicted next, a release is followed by the retry's failed build,
-    a Check by its Create, no Lookup repeats, the registry's default slot is built from `default_provider`, and no
+    a Check by its Create (or the build's refusal), no Lookup repeats, the registry's default slot is built from `default_provider`, and no
     action `absent` from the topology occurs."""
     problems = []
     for k in range(1, len(behaviour)):
@@ -96,10 +105,10 @@ def check_shape(behaviour, topology, absent, default_provider="p1"):
             if count != before["total"][p] + max(grew, 0):
                 problems.append(f"state {k}: total[{p}] is {count}, not {before['total'][p] + max(grew, 0)}")
         held = before["then"]
-        if isinstance(held, dict) and (name, act.get("i")) != (held["name"], held["i"]):
+        if isinstance(held, dict) and (_held_as(name), act.get("i")) != (held["name"], held["i"]):
             problems.append(f"state {k}: {name} where {held['name']} of {held['i']} is held to")
         follows = _follower(behaviour, k - 1)
-        if follows and (name, act.get("i")) != follows:
+        if follows and (_held_as(name), act.get("i")) != follows:
             problems.append(f"state {k}: {name} right after {before['act']['name']}, not {follows[0]} of {follows[1]}")
         if name in absent:
             problems.append(f"state {k}: {name}, which the {topology} topology leaves out")
@@ -123,13 +132,18 @@ def _retry(state, i):
     return None
 
 
+def _held_as(name):
+    """The step `name` takes the place of: a build refused before it binds is the Create its Check is held to."""
+    return "Create" if name == "CreateRefused" else name
+
+
 def _follower(behaviour, k):
     """The step that must come right after state k, the instance it is of, from the model's own variables rather than
     the `then` ghost (so a generator that stops holding to it is caught), or None."""
     act = behaviour[k]["act"]
     if act["name"] == "Check":
         return "Create", act["i"]
-    if act["name"] == "BuildFail":
+    if act["name"] in ("BuildFail", "BuildTimeout", "CreateRefused"):
         return "Evict", act["i"]
     if act["name"] == "ReleaseReplaced" and k >= 1:
         retry = _retry(behaviour[k - 1], act["i"])

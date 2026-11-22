@@ -3,3 +3,4 @@
 core/src/main/scala/zio/openfeature/FeatureFlagRegistry.scala
 core/src/main/scala/zio/openfeature/FeatureFlagsLive.scala
 core/src/main/scala/zio/openfeature/internal/ApiInstances.scala
+core/src/main/scala/zio/openfeature/internal/ProviderRegistration.scala

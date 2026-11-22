@@ -656,6 +656,56 @@ object FeatureFlagRegistrySpec extends ZIOSpecDefault {
           after  <- client.providerStatus.repeatUntil(_ == ProviderStatus.Stale).timeout(5.seconds)
         } yield assertTrue(first.isLeft, before == ProviderStatus.Ready, after.contains(ProviderStatus.Stale))
       }
-    } @@ TestAspect.withLiveClock
+    } @@ TestAspect.withLiveClock,
+    test("a registry client refused while its provider still initializes elsewhere is built on the next getClient") {
+      val p = new EvictedInitBuildSpec.Gated("p", fails = false)
+      val r = new EvictedInitBuildSpec.Gated("r", fails = false)
+      r.gate.countDown()
+      def eventually(what: String)(cond: => Boolean): Task[Unit] =
+        ZIO
+          .succeed(cond)
+          .repeatUntil(identity)
+          .timeout(10.seconds)
+          .flatMap(res => ZIO.fail(new RuntimeException(s"$what did not happen")).unless(res.isDefined).unit)
+      ZIO.scoped {
+        for {
+          registry <- FeatureFlagRegistry
+            .fromProvider(
+              new SimpleProvider("Default", Map.empty),
+              FeatureFlagsConfig.default.withInitTimeout(1.second)
+            )
+            .build
+            .map(_.get[FeatureFlagRegistry])
+          _ <- registry.setProvider("d1", p)
+          // p's build times out with its initialize() still running; the retry with r replaces it in the slot, and the
+          // SDK shuts p down once r initializes, which releases the wrapper's attachment.
+          timedOut <- registry.getClient("d1").either
+          _        <- registry.setProvider("d1", r)
+          _        <- registry.getClient("d1")
+          _        <- eventually("p's shutdown releasing its attachment")(
+            p.shutdowns.get() >= 1 &&
+              !zio.openfeature.internal.ManagedProvider.existing(p).exists(EvictedInitBuildSpec.attached)
+          )
+          _       <- registry.setProvider("d2", p)
+          refused <- registry.getClient("d2").either
+          seen = p.inits.get()
+          _      <- ZIO.succeed(p.gate.countDown())
+          _      <- eventually("p's call returning")(p.running.get() == 0)
+          client <- registry.getClient("d2")
+          status <- client.providerStatus
+        } yield assertTrue(
+          timedOut.isLeft,
+          refused match {
+            case Left(FeatureFlagError.ProviderInitializationFailed(e)) =>
+              e.isInstanceOf[zio.openfeature.internal.ProviderRegistration.StillInitializing]
+            case _ => false
+          },
+          seen == 1,
+          p.inits.get() == 2,
+          p.overlap.get() == 1,
+          status == ProviderStatus.Ready
+        )
+      }
+    } @@ TestAspect.withLiveClock @@ TestAspect.timeout(2.minutes)
   ) @@ RegistryRecording.eachTest("registry")
 }

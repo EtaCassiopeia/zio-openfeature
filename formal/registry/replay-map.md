@@ -18,6 +18,7 @@ Topologies:
 | `Complete(i)` | settles `p`'s `initialize()` ok, if one runs | the build returning its instance |
 | `BuildFail(i)` | settles `p`'s `initialize()` failing, unless the `ReleaseReplaced` before it did | the failed client's `ScopeClose`, or the build ending |
 | `Evict(i)` | nothing | `getClient` failing |
+| `BuildTimeout(i, shut)`, `CreateRefused(i, p)` | not generated (`BuildTimeouts` is false): the replay cannot cut a registry build's wait for readiness short; `Builds.cfg` and the registry simulation cover them | |
 | `ReleaseReplaced(i)` | settles the retry's `initialize()` failing | `FailDecided` from the previous failed client's `shutDownFailedBuild` |
 | `SwapStart(i, p)` | forks `registry.setProvider(d, p)` for a domain's client, `FeatureFlagsLive.setProvider(p)` otherwise | `SdkBind`, or `p`'s `initialize()` starting, or the swap ending |
 | `SwapDone(i)` | settles `p`'s `initialize()` ok, if one runs | the swap succeeding |

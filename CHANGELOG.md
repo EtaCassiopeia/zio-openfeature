@@ -28,6 +28,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the API's lock and only for that refusal, as a rollback already did. It still refuses a provider whose shutdown the
   SDK has queued, behind a swap whose replacement is still initializing, until that call returns. A provider you
   registered with the API yourself keeps the SDK's plain binding, except in a rollback (#1013).
+- **A build no longer runs a second `initialize()` of a provider whose earlier one is still running.** When a swap or
+  a registry build timed out with the provider's `initialize()` still running, and no slot held the provider any more
+  (a later swap failed, or a registry retry with another provider replaced it), building on it again, in another
+  domain or another instance, made the SDK start a second `initialize()` alongside the first. The build now fails at
+  once with a retryable `ProviderInitializationFailed` ("still initializing"), binding nothing, and a registry's next
+  `getClient` builds it once that call has returned. A refused build also no longer shuts the provider down: it was
+  never bound, and the registration still initializing it decides (#1017).
 
 ## [2.2.1] — 2026-11-19
 

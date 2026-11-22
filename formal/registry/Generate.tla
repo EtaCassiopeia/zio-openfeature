@@ -38,6 +38,11 @@
 (*  - No swap times out unless AllowTimeouts: the replay cannot fire a     *)
 (*    swap's deadline yet, and without a timeout no initialize() is left   *)
 (*    to settle late (InitSettle).                                         *)
+(*  - No registry build times out (BuildTimeouts): its wait for readiness  *)
+(*    runs on the live clock for the registry's init timeout, which the    *)
+(*    replay does not cut short.  So no provider is left initializing      *)
+(*    with no slot holding it, and no build is refused (CreateRefused):    *)
+(*    Builds.cfg checks both, and the registry simulation drives them.     *)
 (*  - Steps the code takes in one go, with no probe point between them,    *)
 (*    stay adjacent (`then`): a failed registry build is evicted next, and *)
 (*    a swap whose provider another slot shares, already initialized, is   *)
@@ -90,6 +95,9 @@ VARIABLES
     then       \* the step the code takes next with no probe point before it, or None
 
 GVars == << vars, act, ready, inFlight, total, then >>
+
+\* A registry build's wait for readiness never times out here (see the header).
+BuildTimeouts == FALSE
 
 Reg == Topology = "registry"
 Shared == Topology = "shared"
@@ -162,14 +170,16 @@ CreateStep(i, p, own) ==
 \* the semaphore for good, leaving nothing to complete, fail or close.  These are Create's guards that read the
 \* provider and the slot, which a Check leaves as they are.
 CanCreateOn(d) ==
-    \E p \in Providers \ inFlight :
-        /\ Reg /\ d = Default => p = DefaultProvider
-        /\ BindOk("Create", d, p)
-        /\ p \notin pending /\ ~Waiting(p)
-        /\ \/ bound[d] \in {None, p}
-           \/ /\ \E j \in Instances : domainOf[j] = d /\ phase[j] = "evicted"
-              /\ bound[d] \notin userOwned
-        /\ p \in userOwned => bound[d] = p \/ HeldVisibly(p)
+    \/ \E p \in Providers \ inFlight :
+          /\ Reg /\ d = Default => p = DefaultProvider
+          /\ BindOk("Create", d, p)
+          /\ p \notin pending /\ ~Waiting(p)
+          /\ \/ bound[d] \in {None, p}
+             \/ /\ \E j \in Instances : domainOf[j] = d /\ phase[j] = "evicted"
+                /\ bound[d] \notin userOwned
+          /\ p \in userOwned => bound[d] = p \/ HeldVisibly(p)
+    \* Or a build refused on a provider still initializing that no slot holds (CreateRefused).
+    \/ Reg /\ \E p \in pending : SlotsOf(p) = {}
 
 Work ==
     \/ /\ then = None
@@ -182,12 +192,21 @@ Work ==
             CanCreateOn(d) /\ Check(i, d) /\ act' = [name |-> "Check", i |-> i, d |-> d]
     \/ \E i \in Instances, p \in Providers, own \in BOOLEAN :
          CreateStep(i, p, own) /\ act' = [name |-> "Create", i |-> i, p |-> p, own |-> own]
+    \/ /\ Reg
+       /\ \E i \in Instances, p \in Providers :
+            Free("Create", i) /\ CreateRefused(i, p) /\ act' = [name |-> "CreateRefused", i |-> i, p |-> p]
     \/ \E i \in Instances : Free("Complete", i) /\ Complete(i) /\ act' = [name |-> "Complete", i |-> i]
     \/ /\ Reg
        /\ \E i \in Instances :
             /\ Free("BuildFail", i)
             /\ CanFail(i)
             /\ BuildFail(i) /\ act' = [name |-> "BuildFail", i |-> i]
+    \/ /\ Reg
+       /\ BuildTimeouts
+       /\ \E i \in Instances, shut \in BOOLEAN :
+            /\ Free("BuildTimeout", i)
+            /\ CanFail(i)
+            /\ BuildTimeout(i, shut) /\ act' = [name |-> "BuildTimeout", i |-> i, shut |-> shut]
     \/ /\ Reg
        /\ \E i \in Instances : Free("Evict", i) /\ Evict(i) /\ act' = [name |-> "Evict", i |-> i]
     \/ /\ then = None
@@ -249,7 +268,7 @@ EarlyShut(i) ==
        /\ \E e \in Domains \ {d} : bound[e] = act'.p
 
 Starts == {"Create", "SwapStart"}
-Outcomes == {"Complete", "BuildFail", "SwapDone", "SwapFailMark", "SwapTimeout", "FailMark"}
+Outcomes == {"Complete", "BuildFail", "BuildTimeout", "SwapDone", "SwapFailMark", "SwapTimeout", "FailMark"}
 Successes == {"Complete", "SwapDone"}
 
 Ghosts ==
@@ -270,7 +289,7 @@ Ghosts ==
                              ELSE {})) \cap registered' \cap {r \in Providers : \E e \in Domains : bound'[e] = r}
     /\ total' = [p \in Providers |-> total[p] + (IF shuts'[p] > shuts[p] THEN shuts'[p] - shuts[p] ELSE 0)]
     /\ then' = CASE act'.name = "Check" -> [name |-> "Create", i |-> act'.i]
-                 [] act'.name = "BuildFail" -> [name |-> "Evict", i |-> act'.i]
+                 [] act'.name \in {"BuildFail", "BuildTimeout", "CreateRefused"} -> [name |-> "Evict", i |-> act'.i]
                  [] act'.name = "SwapStart" /\ EarlyShut(act'.i) -> [name |-> "SwapOldShut", i |-> act'.i]
                  [] act'.name = "Create" /\ act'.p \in ready /\ bound[domainOf[act'.i]] \notin {None, act'.p} ->
                         [name |-> "Complete", i |-> act'.i]

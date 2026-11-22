@@ -47,6 +47,26 @@ object EventProviderAccess {
     case _                 => ()
   }
 
+  /** Whether the SDK holds `provider` attached to a registration: the SDK attaches a provider when it binds one no slot
+    * of the API holds, and detaches it when its replacement initializes, so a provider a slot holds is attached. Read
+    * by attaching and detaching at once, the only way the SDK offers: call it under the API's write lock, which the SDK
+    * takes to attach. A provider that does not extend `EventProvider` is never attached.
+    */
+  def attached(provider: FeatureProvider): Boolean = provider match {
+    case ep: EventProvider =>
+      try {
+        ep.attach(
+          new TriConsumer[EventProvider, ProviderEvent, ProviderEventDetails] {
+            override def accept(p: EventProvider, event: ProviderEvent, details: ProviderEventDetails): Unit = ()
+          },
+          new AutoCloseableReentrantReadWriteLock()
+        )
+        ep.detach()
+        false
+      } catch { case _: IllegalStateException => true }
+    case _ => false
+  }
+
   /** Release a provider from the SDK's global provider registry (spec 1.8.4) — used only in the rollback-failure
     * cleanup path, mirroring what `ProviderRepository.shutDownOld` would have done on a successful rollback.
     */

@@ -31,6 +31,11 @@ object PlanCodecSpec extends ZIOSpecDefault {
         assertTrue(PlanCodec.read[ConcurrentSimulationSpec.Plan](PlanCodec.write(plan)) == Right(plan))
       }
     } @@ PropertyBudget(200),
+    test("a shared-API plan reads back as itself") {
+      check(SharedApiSimulationSpec.genPlan) { plan =>
+        assertTrue(PlanCodec.read[SharedApiSimulationSpec.Plan](PlanCodec.write(plan)) == Right(plan))
+      }
+    },
     test("a plan is written as the checked-in text, and the text reads as the plan") {
       assertTrue(PlanCodec.write(golden) == goldenJson, PlanCodec.read[SeqPlan](goldenJson) == Right(golden))
     },

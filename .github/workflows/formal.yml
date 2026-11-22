@@ -67,6 +67,9 @@ on:
       - 'testkit/src/test/scala/zio/openfeature/testkit/RegistryFaultSpec.scala'
       - 'testkit/src/test/scala/zio/openfeature/testkit/BoundDomainSpec.scala'
       - 'simulation/src/test/scala/zio/openfeature/simulation/ConcurrentSimulationSpec.scala'
+      - 'simulation/src/test/scala/zio/openfeature/simulation/SharedApiSimulationSpec.scala'
+      - 'simulation/src/test/scala/zio/openfeature/simulation/History.scala'
+      - 'simulation/src/test/resources/regressions/shared/**'
       - 'simulation/src/test/scala/zio/openfeature/simulation/SchedulePerturber.scala'
       - 'simulation/src/test/scala/zio/openfeature/simulation/Harness.scala'
       - 'simulation/src/test/scala/zio/openfeature/simulation/SimulationTrace.scala'
@@ -121,6 +124,9 @@ on:
       - 'testkit/src/test/scala/zio/openfeature/testkit/RegistryFaultSpec.scala'
       - 'testkit/src/test/scala/zio/openfeature/testkit/BoundDomainSpec.scala'
       - 'simulation/src/test/scala/zio/openfeature/simulation/ConcurrentSimulationSpec.scala'
+      - 'simulation/src/test/scala/zio/openfeature/simulation/SharedApiSimulationSpec.scala'
+      - 'simulation/src/test/scala/zio/openfeature/simulation/History.scala'
+      - 'simulation/src/test/resources/regressions/shared/**'
       - 'simulation/src/test/scala/zio/openfeature/simulation/SchedulePerturber.scala'
       - 'simulation/src/test/scala/zio/openfeature/simulation/Harness.scala'
       - 'simulation/src/test/scala/zio/openfeature/simulation/SimulationTrace.scala'
@@ -559,6 +565,23 @@ jobs:
       - name: Check every recorded run is a behaviour of the model, and that the runs take every action but Lookup
         working-directory: formal/registry
         run: python3 validate.py ../../tla2tools.jar ../../CommunityModules-deps.jar "${GITHUB_WORKSPACE}/traces/registry" --reached
+      # The shared-API simulation's runs, each under its seeded schedule perturbation: the base budget on pull requests and
+      # main, ten times it from a rotating seed nightly. Each trace is written beside its plan (.plan.json), which replays
+      # a rejected run through the simulation's regression corpus (regressions/shared/). It does not take every action:
+      # the suites above do.
+      - name: Record the shared-API simulation's runs
+        if: success() || failure()
+        env:
+          ZOF_TRACE: '1'
+          ZOF_TRACE_DIR: ${{ github.workspace }}/traces/simulation
+          ZOF_PBT_SCALE: ${{ github.event_name == 'schedule' && '10' || '' }}
+          ZOF_PBT_SEED: ${{ github.event_name == 'schedule' && github.run_id || '' }}
+        run: sbt "simulation/testOnly zio.openfeature.simulation.SharedApiSimulationSpec"
+      # Also when a simulation case failed: a failed run's trace is evidence too.
+      - name: Check every shared-API simulation run is a behaviour of the model
+        if: success() || failure()
+        working-directory: formal/registry
+        run: python3 validate.py ../../tla2tools.jar ../../CommunityModules-deps.jar "${GITHUB_WORKSPACE}/traces/simulation/registry"
       - name: Keep the recorded runs
         if: failure()
         uses: actions/upload-artifact@v7

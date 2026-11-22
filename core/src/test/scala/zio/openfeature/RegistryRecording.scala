@@ -44,6 +44,33 @@ private[openfeature] object RegistryRecording {
         }
     }
 
+  /** Record `body` as one run named `<name>-<id>`, as [[eachTest]] records one test: for a property whose every case
+    * builds several instances on one API, so each case is its own run. `plan`, when given, is written beside the trace
+    * as `<name>-<id>.plan.json`, so a run the model rejects can be replayed.
+    */
+  def recorded[R, E, A](name: String, plan: Option[String] = None)(body: ZIO[R, E, A]): ZIO[R, E, A] =
+    TraceProbe.make.flatMap {
+      case None    => body
+      case Some(t) =>
+        val run = s"$name-${java.util.UUID.randomUUID().toString.take(8)}"
+        current
+          .locally(Some(new Run(t)))(body)
+          .ensuring(
+            settled(t) *> ZIO.when(t.size > 0)(t.write(run, directory) *> ZIO.foreachDiscard(plan)(beside(run, _)))
+          )
+    }
+
+  private def beside(run: String, plan: String): UIO[Unit] =
+    ZIO
+      .attemptBlocking {
+        java.nio.file.Files.createDirectories(directory)
+        java.nio.file.Files.write(
+          directory.resolve(s"$run.plan.json"),
+          plan.getBytes(java.nio.charset.StandardCharsets.UTF_8)
+        ): Unit
+      }
+      .catchAllCause(c => ZIO.logWarningCause(s"could not write the plan of the registry trace '$run'", c))
+
   /** The probe of the next instance the test builds, alongside `probe`. */
   def instanceProbe(probe: LifecycleProbe = LifecycleProbe.none): UIO[LifecycleProbe] =
     current.get.map {

@@ -193,6 +193,18 @@ the check rests on lets its reject fixture through. A run the model does not cov
 the skips per spec and reason (`trace-map.md` lists them). CI runs all of it in the `registry-traces` job of
 `formal.yml`.
 
+The shared-API simulation (`simulation/.../SharedApiSimulationSpec`) is recorded too: two or three instances on one API
+under the schedule perturber, the first owning it, one maybe built on another's provider, with swaps, failed swaps,
+non-owner and owner closes. Each generated plan is one run (`RegistryRecording.recorded`), written with its plan beside
+it (`<run>.plan.json`) for the simulation's corpus (`regressions/shared/`). The job records it at the base budget on
+pull requests and main and at ten times it nightly, and checks it without `--reached`: the suites above take every
+action.
+
+```sh
+ZOF_TRACE=1 ZOF_TRACE_DIR=$PWD/traces/simulation sbt "simulation/testOnly zio.openfeature.simulation.SharedApiSimulationSpec"
+python3 validate.py tla2tools.jar CommunityModules-deps.jar traces/simulation/registry
+```
+
 ## Generated behaviours
 
 `Generate.tla` walks the model at random for a replay through the real code, the other direction of the trace

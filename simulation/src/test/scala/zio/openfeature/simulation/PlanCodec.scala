@@ -177,18 +177,20 @@ object PlanCodec {
     }
 
   // The plan types. Recursive (`Spec` holds `Spec`s): each is a lazy given, so derivation finds itself.
-  given PlanCodec[Stored]                                   = derived
-  given PlanCodec[LeafFault]                                = derived
-  given PlanCodec[InitFault]                                = derived
-  given PlanCodec[ShutdownFault]                            = derived
-  given PlanCodec[Kind]                                     = derived
-  given PlanCodec[Ctx]                                      = derived
-  given PlanCodec[Spec]                                     = derived
-  given PlanCodec[Cmd.Eval]                                 = derived
-  given PlanCodec[Cmd]                                      = derived
-  given PlanCodec[SeqPlan]                                  = derived
-  given PlanCodec[ConcurrentSimulationSpec.Release]         = derived
-  given PlanCodec[ConcurrentSimulationSpec.Plan]            = derived
-  given sharedInst: PlanCodec[SharedApiSimulationSpec.Inst] = derived
-  given sharedPlan: PlanCodec[SharedApiSimulationSpec.Plan] = derived
+  given PlanCodec[Stored]                                    = derived
+  given PlanCodec[LeafFault]                                 = derived
+  given PlanCodec[InitFault]                                 = derived
+  given PlanCodec[ShutdownFault]                             = derived
+  given PlanCodec[Kind]                                      = derived
+  given PlanCodec[Ctx]                                       = derived
+  given PlanCodec[Spec]                                      = derived
+  given PlanCodec[Cmd.Eval]                                  = derived
+  given PlanCodec[Cmd]                                       = derived
+  given PlanCodec[SeqPlan]                                   = derived
+  given PlanCodec[ConcurrentSimulationSpec.Release]          = derived
+  given PlanCodec[ConcurrentSimulationSpec.Plan]             = derived
+  given sharedInst: PlanCodec[SharedApiSimulationSpec.Inst]  = derived
+  given sharedPlan: PlanCodec[SharedApiSimulationSpec.Plan]  = derived
+  given registryDom: PlanCodec[RegistrySimulationSpec.Dom]   = derived
+  given registryPlan: PlanCodec[RegistrySimulationSpec.Plan] = derived
 }

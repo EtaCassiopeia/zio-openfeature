@@ -31,6 +31,15 @@ object PlanCodecSpec extends ZIOSpecDefault {
         assertTrue(PlanCodec.read[ConcurrentSimulationSpec.Plan](PlanCodec.write(plan)) == Right(plan))
       }
     } @@ PropertyBudget(200),
+    test("a registry plan reads back as itself") {
+      check(RegistrySimulationSpec.genPlan) { plan =>
+        assertTrue(PlanCodec.read[RegistrySimulationSpec.Plan](PlanCodec.write(plan)) == Right(plan))
+      }
+    } @@ PropertyBudget(200),
+    test("a leaf that fails only its first initialize() calls reads back as itself") {
+      val leaf: Spec = Spec.Leaf(3, Map.empty, Some(InitFault.FailsFirst(2)))
+      assertTrue(PlanCodec.read[Spec](PlanCodec.write(leaf)) == Right(leaf))
+    },
     test("a shared-API plan reads back as itself") {
       check(SharedApiSimulationSpec.genPlan) { plan =>
         assertTrue(PlanCodec.read[SharedApiSimulationSpec.Plan](PlanCodec.write(plan)) == Right(plan))

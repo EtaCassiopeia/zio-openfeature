@@ -56,6 +56,9 @@ object InitFault {
 
   /** The first `initialize()` blocks until the runner releases it, then throws; later ones throw at once. */
   case object StallThenFail extends InitFault
+
+  /** The first `n` calls to `initialize()` throw at once; later ones succeed. */
+  final case class FailsFirst(n: Int) extends InitFault
 }
 
 /** How a leaf's `shutdown()` misbehaves. */
@@ -153,8 +156,9 @@ final class SimLeaf(
       case Some(InitFault.StallThenFail) if n == 1 =>
         initGate.await(): Unit
         throw new GeneralError(s"$name: initialize fails after a stall")
-      case Some(InitFault.StallThenFail) => throw new GeneralError(s"$name: initialize fails")
-      case _                             => ()
+      case Some(InitFault.StallThenFail)           => throw new GeneralError(s"$name: initialize fails")
+      case Some(InitFault.FailsFirst(k)) if n <= k => throw new GeneralError(s"$name: initialize fails ($n of $k)")
+      case _                                       => ()
     }
     state.set(ProviderState.READY)
   }

@@ -275,6 +275,25 @@ minutes), and 5000 of the nightly 20000. The replay's own checks run on every bu
 topology (`core/src/test/resources/registry-replay`) replays clean, an unknown action fails, and a planted bug per
 compared field makes a behaviour fail.
 
+### Targets and code mutants
+
+Random walks reach the three leaks TLC found only by luck. `Targets.tla` states each as "this step never happens" on
+`GSpec`. `targets.py` writes TLC's counterexample to each, a labelled behaviour of a few states, to
+[`mbt-regressions/<topology>/`](mbt-regressions/README.md), which every replay reads after the generated set.
+`codemutants.py` undoes each leak's fix in core and requires the replay to turn red, among all the behaviours and among
+the targets alone. It runs on push and on demand: each mutant is a recompile and a replay of the targets and 150
+generated behaviours per location, since a mismatch waits out the replay's deadline and a mutant mismatches up to a
+quarter of the set.
+
+```sh
+python3 targets.py tla2tools.jar CommunityModules-deps.jar mbt-regressions
+python3 codemutants.py behaviours/registry,behaviours/shared,formal/registry/mbt-regressions/registry,formal/registry/mbt-regressions/shared
+```
+
+A counterexample from checking `Registry.tla` has no `act` labels to replay. Its shape becomes a statement in
+`Targets.tla` instead, and `targets.py` fails by name when `GSpec` cannot reach it
+([`mbt-regressions/README.md`](mbt-regressions/README.md)).
+
 ### Outside the replay
 
 - **Shared `initialize()` calls:** a build joining a swap's call in flight, or a failure on a provider already ready

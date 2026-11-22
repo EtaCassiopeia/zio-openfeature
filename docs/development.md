@@ -163,7 +163,14 @@ and checks that a swap whose stack fails to initialize is rolled back to the pre
 become common and the seed replays the schedule along with the plan (most failures recur, though not all, since the
 SDK's threads run outside ZIO's scheduler). Its failure prints the schedule seed and the tail of the decision log, and
 the coverage line counts every probe point (`probe.<point>`), showing `=0` for one never reached. A failure prints the command trace up to the
-first divergence, and each run prints coverage counters, so a generator that stops reaching a path shows up. Both
+first divergence, and each run prints coverage counters, so a generator that stops reaching a path shows up.
+`SharedApiSimulationSpec` runs two or three instances on one API under the same perturber: the first owns the API, one
+may be built on another's provider (instances on one provider swap one at a time), and each has its own workers and
+swaps while a closer shuts non-owners and maybe the owner down mid-run. Each instance's answers are checked against its own history (the writes, and its own
+evaluations and swaps), with the close windows: no success once its own close, or the owner's, has returned. While the
+API is open, no stack a slot holds is shut down, read from the API's slot rather than the test's view
+(`RegisteredNotShutDown`), and no leaf is ever shut down twice (`SharedShutDownOnce`); the reach test requires every
+swap outcome, both closes and a shared stack (`rsim.*`). All three
 tests carry `PropertyBudget`, so pull requests run the base count and the nightly runs them at 10×. Replay with the
 printed seed:
 
@@ -173,8 +180,8 @@ ZOF_PBT_SCALE=10 ZOF_PBT_SEED=<seed> sbt simulation/test
 
 A seed does not survive a zio-test upgrade, so a failure is also kept as its plan. The failing test prints a
 `corpus entry (...)` line holding the shrunk plan as one line of JSON, and CI uploads it as the `simulation-failures`
-artifact (`SequentialSimulationSpec.json` or `ConcurrentSimulationSpec.json`). Save that line as
-`simulation/src/test/resources/regressions/<sequential|concurrent>/<yyyy-mm-dd>-<what>.json`. Both specs replay that
+artifact (`<SpecName>.json`). Save that line as
+`simulation/src/test/resources/regressions/<sequential|concurrent|shared>/<yyyy-mm-dd>-<what>.json`. Each spec replays its
 directory before their generated cases, on every pull request, and the replay fails if the directory is empty. An entry
 holds no zio-test seed, so it survives zio-test upgrades; a concurrent entry carries its `scheduleSeed`. A concurrent plan is not replayed exactly (the SDK's threads run
 outside ZIO's scheduler), so when a concurrent failure reproduces as a sequential plan, keep the sequential one. See

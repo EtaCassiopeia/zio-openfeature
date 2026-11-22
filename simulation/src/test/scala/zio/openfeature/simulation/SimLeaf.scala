@@ -119,7 +119,10 @@ final class SimLeaf(
   val initsInFlight: AtomicInteger   = new AtomicInteger(0)
   val concurrentInits: AtomicInteger = new AtomicInteger(0)
   val shutdowns: AtomicInteger       = new AtomicInteger(0)
-  val tracked: AtomicInteger         = new AtomicInteger(0)
+  // The thread each shutdown() ran on: the SDK's executor ("openfeature-provider-thread-") or the library's.
+  val shutdownThreads: java.util.concurrent.ConcurrentLinkedQueue[String] =
+    new java.util.concurrent.ConcurrentLinkedQueue()
+  val tracked: AtomicInteger = new AtomicInteger(0)
   // Calls that arrived after this leaf was shut down: a replaced or closed provider answering.
   val callsAfterShutdown: AtomicInteger             = new AtomicInteger(0)
   private val state: AtomicReference[ProviderState] = new AtomicReference(ProviderState.NOT_READY)
@@ -157,6 +160,7 @@ final class SimLeaf(
   }
 
   override def shutdown(): Unit = {
+    shutdownThreads.add(Thread.currentThread().getName): Unit
     shutdowns.incrementAndGet(): Unit
     state.set(ProviderState.NOT_READY)
     super.shutdown()

@@ -205,6 +205,43 @@ ZOF_TRACE=1 ZOF_TRACE_DIR=$PWD/traces/simulation sbt "simulation/testOnly zio.op
 python3 validate.py tla2tools.jar CommunityModules-deps.jar traces/simulation/registry
 ```
 
+### Checked on live state
+
+The shared-API simulation also checks the model's invariants on the live state of the instances it drives, after every
+command and at every lifecycle probe point (`RegistryInvariants` in the simulation module, each predicate unit-tested
+on hand-built state in `RegistryInvariantsSpec`). Some plans bind an instance's stack with the API themselves first
+(`userBound`), so the build reuses it as it is. A shutdown's author, the model's `by[p]`, is the thread it ran on: the
+SDK's executor (`openfeature-provider-thread-*`) or the library, the rule the labelers use.
+
+| Invariant | Checked as | Or why not here |
+|---|---|---|
+| `OneOwner` | at most one instance owns the API, and while it is open its owner is live | |
+| `SharedShutDownOnce` | no leaf shut down twice at any probe point; every stack a slot ever held shut down exactly once at the end (the spec's own check) | |
+| `RegisteredNotShutDown` | while the API is open, the stack each slot holds, read from the API, has no leaf shut down (the spec's own check) | |
+| `ForeignNeverShutByLibrary` | while the API is open, no stack a slot holds has a library shutdown | |
+| `UserProviderNeverShutByLibrary` | no stack the user bound has a library shutdown, ever | the documented exception, an owner's timed-out swap off it whose provider then failed, needs a stalled `initialize()`, which the shared-API plans do not have |
+| `LiveSiblingKeepsProvider` | a live instance's slot stack, unless its last failure marked it (`replayView`), has no library shutdown | |
+| `FailedWrapperNotAbandoned` | | covered at the end by `SharedShutDownOnce`: a wrapper left running is a stack not shut down once |
+| `OneInstancePerDomain` | | registry topology only: one instance per domain here by construction |
+| `ClosedNonOwnerKeepsSlot` | while the API is open, a closed non-owner's slot still holds a provider of the run | |
+| `ClosedApiServesNone` | once the owner's close returned, every instance reports `NotReady` or `ShuttingDown` (a retired instance passes through it as its own scope closes) | |
+| `SiblingsUnaffected` | across a non-owner's close, each sibling with no swap in flight or started keeps its slot's provider, by identity, and is not retired to `NotReady` | |
+| `OnlyFailedBuildsEvicted` | | registry topology only |
+
+A user-bound instance makes no swap and no instance shares its stack: a swap off a provider the user bound queues the
+SDK's own shutdown of it, which can land after the owner's teardown already shut it down (#1019), and a provider a slot
+the library can see holds cannot be bound under a second domain. Instances on one stack swap one at a time (#1014).
+
+`simmutants.py` puts back each bug these checks exist for and requires the simulation to name the invariant: the
+owner's close not retiring its siblings (`ClosedApiServesNone`), a non-owner's close shutting its slot's provider down
+(`ForeignNeverShutByLibrary` or `RegisteredNotShutDown`), and one emptying its slot (`ClosedNonOwnerKeepsSlot`). Each
+is a core recompile, so it runs on main and on demand. Dropping the orphan list's sibling check needs a timed-out swap,
+which these plans do not have; the replay's targets catch it (`codemutants.py`).
+
+```sh
+python3 simmutants.py
+```
+
 ## Generated behaviours
 
 `Generate.tla` walks the model at random for a replay through the real code, the other direction of the trace

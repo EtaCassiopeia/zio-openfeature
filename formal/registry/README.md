@@ -196,12 +196,16 @@ the skips per spec and reason (`trace-map.md` lists them). CI runs all of it in 
 The shared-API simulation (`simulation/.../SharedApiSimulationSpec`) is recorded too: two or three instances on one API
 under the schedule perturber, the first owning it, one maybe built on another's provider, with swaps, failed swaps,
 non-owner and owner closes. Each generated plan is one run (`RegistryRecording.recorded`), written with its plan beside
-it (`<run>.plan.json`) for the simulation's corpus (`regressions/shared/`). The job records it at the base budget on
-pull requests and main and at ten times it nightly, and checks it without `--reached`: the suites above take every
-action.
+it (`<run>.plan.json`) for the simulation's corpus (`regressions/shared/`). So is the registry simulation
+(`RegistrySimulationSpec`), the other topology: one `FeatureFlagRegistry` whose domains' providers fail their first
+one or two `initialize()` calls, so a later `getClient` retries the same provider, or every one, so a retry builds the
+replacement the run names, while workers race `getClient` before each evaluation and a swapper swaps each client (`regressions/registry/`).
+The job records both at the base budget on pull requests and main and at ten times it nightly, and checks them without
+`--reached`: the suites above take every action.
 
 ```sh
-ZOF_TRACE=1 ZOF_TRACE_DIR=$PWD/traces/simulation sbt "simulation/testOnly zio.openfeature.simulation.SharedApiSimulationSpec"
+ZOF_TRACE=1 ZOF_TRACE_DIR=$PWD/traces/simulation sbt "simulation/testOnly zio.openfeature.simulation.SharedApiSimulationSpec \
+  zio.openfeature.simulation.RegistrySimulationSpec"
 python3 validate.py tla2tools.jar CommunityModules-deps.jar traces/simulation/registry
 ```
 
@@ -222,20 +226,27 @@ SDK's executor (`openfeature-provider-thread-*`) or the library, the rule the la
 | `UserProviderNeverShutByLibrary` | no stack the user bound has a library shutdown, ever | the documented exception, an owner's timed-out swap off it whose provider then failed, needs a stalled `initialize()`, which the shared-API plans do not have |
 | `LiveSiblingKeepsProvider` | a live instance's slot stack, unless its last failure marked it (`replayView`), has no library shutdown | |
 | `FailedWrapperNotAbandoned` | | covered at the end by `SharedShutDownOnce`: a wrapper left running is a stack not shut down once |
-| `OneInstancePerDomain` | | registry topology only: one instance per domain here by construction |
+| `OneInstancePerDomain` | registry simulation: every `getClient(d)` that succeeds returns the same instance (`eq`) | one instance per domain by construction in the shared-API simulation |
 | `ClosedNonOwnerKeepsSlot` | while the API is open, a closed non-owner's slot still holds a provider of the run | |
 | `ClosedApiServesNone` | once the owner's close returned, every instance reports `NotReady` or `ShuttingDown` (a retired instance passes through it as its own scope closes) | |
 | `SiblingsUnaffected` | across a non-owner's close, each sibling with no swap in flight or started keeps its slot's provider, by identity, and is not retired to `NotReady` | |
-| `OnlyFailedBuildsEvicted` | | registry topology only |
+| `OnlyFailedBuildsEvicted` | registry simulation: once a `getClient(d)` succeeded, the registry holds a promise for `d` while it is open (`replayView`), at each domain's probe points and after every command; that a failed build's promise is evicted shows as the retry that rebuilds it | the close itself, which clears every promise |
 
 A user-bound instance makes no swap and no instance shares its stack: a swap off a provider the user bound queues the
 SDK's own shutdown of it, which can land after the owner's teardown already shut it down (#1019), and a provider a slot
 the library can see holds cannot be bound under a second domain. Instances on one stack swap one at a time (#1014).
+The registry simulation checks `OneInstancePerDomain`, `OnlyFailedBuildsEvicted`, `RegisteredNotShutDown` and
+`SharedShutDownOnce` (a provider a retry replaced included) on its own state. Each domain's stacks are its own, and a
+failing `initialize()` fails at once: a provider in two slots (#1014) and a retry of a provider an earlier
+`initialize()` still runs on (#1017) are kept out.
 
 `simmutants.py` puts back each bug these checks exist for and requires the simulation to name the invariant: the
 owner's close not retiring its siblings (`ClosedApiServesNone`), a non-owner's close shutting its slot's provider down
-(`ForeignNeverShutByLibrary` or `RegisteredNotShutDown`), and one emptying its slot (`ClosedNonOwnerKeepsSlot`). Each
-is a core recompile, so it runs on main and on demand. Dropping the orphan list's sibling check needs a timed-out swap,
+(`ForeignNeverShutByLibrary` or `RegisteredNotShutDown`), and one emptying its slot (`ClosedNonOwnerKeepsSlot`), in the
+shared-API simulation; and the registry evicting a client whose build succeeded (`OnlyFailedBuildsEvicted`), in the registry
+simulation. Each is a core recompile, so it runs on main and on demand. A retry with another provider not leaving the
+failed one for the registry's close matters only when the registry closes while that retry still builds, which needs a
+stalled `initialize()`: the replay's `retry-left-behind-released` target catches it instead. Dropping the orphan list's sibling check needs a timed-out swap,
 which these plans do not have; the replay's targets catch it (`codemutants.py`).
 
 ```sh

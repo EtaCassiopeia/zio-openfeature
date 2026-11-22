@@ -173,8 +173,12 @@ API is open, no stack a slot holds is shut down, read from the API's slot rather
 invariants are checked on the same live state at every probe point and after every command (`RegistryInvariants`,
 `formal/registry/README.md`, "Checked on live state"), with some instances on a provider the user bound to the API
 first, and each shutdown attributed to the SDK or the library by the thread it ran on. The reach test requires every
-swap outcome, both closes, a shared stack and a user-bound one (`rsim.*`). All three
-tests carry `PropertyBudget`, so pull requests run the base count and the nightly runs them at 10×. Replay with the
+swap outcome, both closes, a shared stack and a user-bound one (`rsim.*`). `RegistrySimulationSpec` drives one
+`FeatureFlagRegistry` the same way: workers race `getClient` before each evaluation while builds fail and are retried,
+with the same provider or with a replacement the run names, and a swapper swaps each client. It checks that every
+`getClient(d)` that succeeds returns one instance, that a domain that got a client keeps its promise, each domain's
+answers, the slot and shutdown checks above, and that no client serves once the registry closed (`reg.*`). Each generated-case
+test carries `PropertyBudget`, so pull requests run the base count and the nightly runs them at 10×. Replay with the
 printed seed:
 
 ```sh
@@ -184,7 +188,7 @@ ZOF_PBT_SCALE=10 ZOF_PBT_SEED=<seed> sbt simulation/test
 A seed does not survive a zio-test upgrade, so a failure is also kept as its plan. The failing test prints a
 `corpus entry (...)` line holding the shrunk plan as one line of JSON, and CI uploads it as the `simulation-failures`
 artifact (`<SpecName>.json`). Save that line as
-`simulation/src/test/resources/regressions/<sequential|concurrent|shared>/<yyyy-mm-dd>-<what>.json`. Each spec replays its
+`simulation/src/test/resources/regressions/<sequential|concurrent|shared|registry>/<yyyy-mm-dd>-<what>.json`. Each spec replays its
 directory before their generated cases, on every pull request, and the replay fails if the directory is empty. An entry
 holds no zio-test seed, so it survives zio-test upgrades; a concurrent entry carries its `scheduleSeed`. A concurrent plan is not replayed exactly (the SDK's threads run
 outside ZIO's scheduler), so when a concurrent failure reproduces as a sequential plan, keep the sequential one. See

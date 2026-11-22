@@ -64,7 +64,8 @@ object Spec {
 
   /** How a stack's `initialize()` goes, from its leaves' init faults: a wrapper initializes what it wraps and fails
     * when that fails, and a multi-provider initializes every child and then fails if any did. So a stack stalls iff a
-    * leaf stalls, and fails iff a leaf fails.
+    * leaf stalls, and fails iff a leaf fails. A leaf that fails only its first calls (`FailsFirst`) counts as one that
+    * initializes: its stack comes up once retried.
     */
   def initOutcome(spec: Spec): InitOutcome = {
     val faults = leaves(spec).flatMap(_.init)

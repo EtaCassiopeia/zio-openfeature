@@ -98,7 +98,11 @@ object History {
   def check(initial: Spec, ops: Chunk[Op]): Report = {
     val swaps  = ops.collect { case s: Op.Swap => s }.sortBy(_.invokeAt).toVector
     val stacks = (Op.Swap(initial, 0L, 0L) +: swaps).toVector
-    val owner  = stacks.zipWithIndex.flatMap { case (s, j) => Spec.leaves(s.spec).map(_.id -> j) }.toMap
+    // Each leaf to every interval its stack was installed in: a stack swapped back to is installed again, leaf ids and
+    // all.
+    val owner = stacks.zipWithIndex
+      .flatMap { case (s, j) => Spec.leaves(s.spec).map(_.id -> j) }
+      .groupMap(_._1)(_._2)
     val info   = stacks.flatMap(s => leafInfo(s.spec)).toMap
     val writes = ops.collect { case w: Op.Write => w }.sortBy(_.invokeAt).toList
     val evals  = ops.collect { case e: Op.Eval if e.outcome.isSuccess => e }.toList
@@ -146,20 +150,22 @@ object History {
             false
           )
         case Some((l, k)) =>
-          val j    = owner(l)
-          val next = stacks.lift(j + 1)
-          if (stacks(j).invokeAt > c || next.exists(_.completeAt < i))
+          // Installed during the evaluation: some interval of the leaf's stack, from its install to the next one's
+          // completion, overlaps it.
+          def installedIn(j: Int) = !(stacks(j).invokeAt > c || stacks.lift(j + 1).exists(_.completeAt < i))
+          val js                  = owner(l)
+          if (!js.exists(installedIn)) {
             (
               violation(
                 s"the answering leaf L$l belongs to a stack not installed during the evaluation",
                 i,
                 Set.empty,
                 None,
-                (if (j > 0) List(stacks(j)) else Nil) ++ next.toList
+                js.flatMap(j => (if (j > 0) List(stacks(j)) else Nil) ++ stacks.lift(j + 1).toList).toList
               ),
               false
             )
-          else if (e.outcome.reason != "CACHED") {
+          } else if (e.outcome.reason != "CACHED") {
             val allowed = rendered(e, held(l, k, i, c))
             val bad     = !ok(allowed)
             (

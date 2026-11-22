@@ -81,6 +81,19 @@ object HistorySpec extends ZIOSpecDefault {
       )
       assertTrue(vs.map(_.eval.invokeAt) == List(3L))
     },
+    test("a stack installed in two intervals answers in either, and not in between") {
+      val s0    = Spec.number(Spec.Leaf(-1, Map("k" -> a)))
+      val other = Spec.number(Spec.Leaf(-1, Map("k" -> b)), Spec.maxId(s0) + 1)
+      val vs    = violations(
+        s0,
+        Op.Swap(other, 2, 3),
+        Op.Swap(s0, 6, 7),
+        eval(s0, "a", "STATIC", 1, 2),
+        eval(s0, "a", "STATIC", 4, 5),
+        eval(s0, "a", "STATIC", 8, 9)
+      )
+      assertTrue(vs.map(_.eval.invokeAt) == List(4L))
+    },
     test("a rejected emit does not count as an invalidation") {
       // The second change's emit was rejected, so the floor is still the first change: its value stays allowed.
       assertTrue(

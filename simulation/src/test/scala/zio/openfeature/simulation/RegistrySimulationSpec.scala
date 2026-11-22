@@ -37,12 +37,12 @@ import scala.jdk.CollectionConverters._
   *
   * A fourth kind of domain stalls its first build: a leaf whose first `initialize()` blocks, so the build fails at the
   * init timeout (short in such a run) with that call still running, the async build's watchdog having shut the leaf
-  * down, and the run names a replacement as for a stack that always fails. Once the replacement serves, no slot holds the stalled leaf
-  * and its call still runs: a build of it on another domain must be refused before it binds, starting no second call,
-  * and the run then lets the stalled call return.
+  * down, and the run names a replacement as for a stack that always fails. Once the replacement serves, no slot holds
+  * the stalled leaf and its call still runs: a build of it on another domain must be refused before it binds, starting
+  * no second call, and the run then lets the stalled call return.
   *
-  * Each domain's stacks are its own: a provider bound in two slots is an open gap between the SDK and the library,
-  * kept out of the plans as `Generate.tla` keeps it out.
+  * Each domain's stacks are its own: a provider bound in two slots is an open gap between the SDK and the library, kept
+  * out of the plans as `Generate.tla` keeps it out.
   *
   * With `ZOF_TRACE=1` each plan's run is recorded for the registry model's trace check, with the plan beside it
   * (`regressions/registry/`).
@@ -71,7 +71,7 @@ object RegistrySimulationSpec extends ZIOSpecDefault {
 
   private def genDom(home: Map[String, Kind]): Gen[Any, Dom] =
     for {
-      kind <- Gen.weighted(Gen.const(0) -> 2.0, Gen.const(1) -> 2.0, Gen.const(2) -> 1.0, Gen.const(3) -> 1.0)
+      kind  <- Gen.weighted(Gen.const(0) -> 2.0, Gen.const(1) -> 2.0, Gen.const(2) -> 1.0, Gen.const(3) -> 1.0)
       stack <- kind match {
         case 0 => Gens.genSpec(2, home, Gens.leafFaults(Gens.noInitFault))
         case 1 =>
@@ -237,7 +237,7 @@ object RegistrySimulationSpec extends ZIOSpecDefault {
       releaseStall = (l: Live) => ZIO.succeed(l.first.leaves.values.foreach(_.initGate.release(abandon = false)))
       // Every domain's, at the end of the run's commands.
       releaseStalls = ZIO.foreachDiscard(lives)(releaseStall)
-      callback = (l: Live) =>
+      callback      = (l: Live) =>
         (p: LifecycleProbe.Point) =>
           (p match {
             case LifecycleProbe.Point.SwapBind =>
@@ -303,7 +303,8 @@ object RegistrySimulationSpec extends ZIOSpecDefault {
                           report(s"OneInstancePerDomain: two getClient(${l.domain}) calls returned different instances")
                         ) *> l.client.succeed(c).as(c)
                       }
-                  case Left(_: FeatureFlagError.ProviderInitializationFailed) if java.lang.System.nanoTime() < deadline =>
+                  case Left(_: FeatureFlagError.ProviderInitializationFailed)
+                      if java.lang.System.nanoTime() < deadline =>
                     ZIO.when(l.first.leaves.values.exists(f => f.initGate.entered && !f.initGate.exited))(
                       Stats.generated("reg.build.stalled")
                     ) *> Stats.generated("reg.build.failed") *> l.failedOnce.succeed(()) *>
@@ -350,7 +351,9 @@ object RegistrySimulationSpec extends ZIOSpecDefault {
             // Once a stalled build's replacement serves, no slot holds the stalled leaf, and its initialize() still
             // runs: a build of it on another domain is refused before it binds, and starts no second call.
             borrow = (l: Live) =>
-              ZIO.when(stalls(l.first.spec) && l.first.leaves.values.exists(f => f.initGate.entered && !f.initGate.exited)) {
+              ZIO.when(
+                stalls(l.first.spec) && l.first.leaves.values.exists(f => f.initGate.entered && !f.initGate.exited)
+              ) {
                 val other = s"${l.domain}x"
                 for {
                   _ <- reg.setProvider(other, l.first.provider).mapError(e => s"$other: setProvider: $e")
@@ -360,7 +363,9 @@ object RegistrySimulationSpec extends ZIOSpecDefault {
                   r     <- reg.getClient(other).either
                   _     <- letGo.interrupt
                   _     <- r match {
-                    case Left(FeatureFlagError.ProviderInitializationFailed(_: ProviderRegistration.StillInitializing)) =>
+                    case Left(
+                          FeatureFlagError.ProviderInitializationFailed(_: ProviderRegistration.StillInitializing)
+                        ) =>
                       Stats.generated("reg.build.refused")
                     case ended =>
                       report(s"a build of ${l.domain}'s stalled stack, held by no slot, ended $ended, not refused")

@@ -792,6 +792,9 @@ object RegistryReplaySpec extends ZIOSpecDefault {
             ZIO.attemptBlocking(java.nio.file.Files.write(Paths.get(out), found.map(_.toString).asJava)).orDie
           )
           _ <- ZIO.logWarning(s"registry replay: ${files.size} behaviours, ${found.size} mismatches ${byField(found)}")
+          // The checked-in targets on their own too: codemutants.py requires each mutant caught by both.
+          targeted = found.filter(_.behaviour.contains("mbt-regressions"))
+          _ <- ZIO.logWarning(s"registry replay targeted: ${targeted.size} mismatches ${byField(targeted)}")
         } yield assertTrue(files.nonEmpty, found.isEmpty) ?? found.take(10).mkString("\n")
       }
     ) @@ (if (location.isEmpty && !required) TestAspect.ignore else TestAspect.identity),

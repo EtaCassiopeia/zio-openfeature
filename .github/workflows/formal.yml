@@ -402,11 +402,16 @@ jobs:
           done
       - name: Replay the registry's behaviours through the real code
         env:
-          ZOF_REGISTRY_BEHAVIOURS: ${{ github.workspace }}/registry-behaviours/registry,${{ github.workspace }}/registry-behaviours/shared
+          # The generated behaviours of each topology, then the targeted ones (formal/registry/mbt-regressions).
+          ZOF_REGISTRY_BEHAVIOURS: ${{ github.workspace }}/registry-behaviours/registry,${{ github.workspace }}/registry-behaviours/shared,${{ github.workspace }}/formal/registry/mbt-regressions/registry,${{ github.workspace }}/formal/registry/mbt-regressions/shared
           ZOF_REGISTRY_BEHAVIOURS_REQUIRED: '1'
           # About 8 behaviours a second: 2000 per topology replay in about nine minutes; nightly, 5000 of the 20000.
           ZOF_REGISTRY_BEHAVIOURS_MAX: ${{ github.event_name == 'schedule' && '5000' || '2000' }}
         run: sbt "core/testOnly zio.openfeature.RegistryReplaySpec"
+      # Each leak fix undone in core: a recompile and a replay of the PR-sized set each, so on main and by hand only.
+      - name: Check each code mutant of the registry turns the replay red
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        run: python3 formal/registry/codemutants.py "${GITHUB_WORKSPACE}/registry-behaviours/registry,${GITHUB_WORKSPACE}/registry-behaviours/shared,${GITHUB_WORKSPACE}/formal/registry/mbt-regressions/registry,${GITHUB_WORKSPACE}/formal/registry/mbt-regressions/shared"
       - name: Keep the registry's behaviours
         if: failure()
         uses: actions/upload-artifact@v7

@@ -26,12 +26,13 @@
 (*    registration, which `registered` abstracts (README).  No build binds *)
 (*    one another slot holds that is not ready, but a registry retry on    *)
 (*    the slot holding its failed provider: the build reads that           *)
-(*    registration's ERROR.  Nor one whose shutdown the SDK has queued:    *)
-(*    one a retry's binding replaced, or one a swap in flight replaced,    *)
-(*    neither by a                                                         *)
-(*    build, a swap or the user, nor by a second swap off that provider    *)
-(*    (whose rollback would bind it again).  The SDK decides at the        *)
-(*    binding, where the model decides at SwapDone.                        *)
+(*    registration's ERROR.  Nor one a retry's binding replaced: the SDK  *)
+(*    has its shutdown queued, which no instance's record shows.           *)
+(*  - No build refused for a provider a swap in flight is moving off       *)
+(*    (CreateRefused only of a pending one): the replay drives no refusal. *)
+(*    Nor a build that starts a call on one (a registry retry on the slot  *)
+(*    still holding it): the code's rollback then skips a provider whose   *)
+(*    initialize() is in flight, the lifecycle model's SwapFailNoRollback. *)
 (*  - A registry retry on a provider already ready completes at once: the  *)
 (*    SDK starts no initialize(), and shuts the provider it replaced down  *)
 (*    in the binding (Complete is held next).                              *)
@@ -59,7 +60,8 @@
 (*    DefaultProvider only, which a swap may have in flight).             *)
 (*    LockProgresses and ThenEnabled check that the semaphore is always   *)
 (*    released by the next step.                                          *)
-(*  - The same Lookup twice in a row would change no variable: a stutter,  *)
+(*  - The same Lookup, or SwapRefused, twice in a row would change no     *)
+(*    variable: a stutter,                                                 *)
 (*    which Trace drops, leaving the behaviour short.  It is not taken.    *)
 (*  - Closes are held back to the levels from CloseFrom on; once nothing   *)
 (*    can happen, `Done` repeats, counting, so every behaviour reaches     *)
@@ -117,9 +119,9 @@ Fresh(i) == Prov(i) \in inFlight
 \* its last registration: the library resets a stale attachment as it binds its wrapper. Not one a slot holds whose
 \* shutdown the library's wrapper absorbed, whose registration the SDK reuses (`registered` abstracts it). A build binds
 \* one another slot holds only once it is ready, or for a registry retry the failed provider its slot holds. Never one
-\* whose shutdown the SDK has queued (a swap in flight replaced it, or a retry's binding did).
+\* a retry's binding replaced: the SDK has its shutdown queued, which the library cannot see. (One a swap in flight is
+\* moving off, held by no slot, or one a timed-out swap left waiting, Registry.tla's own guards refuse.)
 BindOk(name, d, p) ==
-    /\ ~\E j \in swapping : prior[j] = p
     /\ replaced[p] = None
     /\ SlotsOf(p) # {} => p \in registered
     /\ name = "Create" =>
@@ -165,6 +167,7 @@ CreateStep(i, p, own) ==
     /\ p \notin inFlight
     /\ BindOk("Create", domainOf[i], p)
     /\ Create(i, p, own)
+    /\ ~(StartsCall("Create", i, p) /\ \E j \in swapping : prior[j] = p)
 
 \* A Check takes the semaphore only when a Create can follow it, which then does at once: one that could not would hold
 \* the semaphore for good, leaving nothing to complete, fail or close.  These are Create's guards that read the
@@ -173,7 +176,8 @@ CanCreateOn(d) ==
     \/ \E p \in Providers \ inFlight :
           /\ Reg /\ d = Default => p = DefaultProvider
           /\ BindOk("Create", d, p)
-          /\ p \notin pending /\ ~Waiting(p)
+          /\ p \notin pending /\ ~Waiting(p) /\ ~SwappedOffUnheld(p)
+          /\ ~(bound[d] = p /\ p \notin ready /\ \E j \in swapping : prior[j] = p)
           /\ \/ bound[d] \in {None, p}
              \/ /\ \E j \in Instances : domainOf[j] = d /\ phase[j] = "evicted"
                 /\ bound[d] \notin userOwned
@@ -194,7 +198,7 @@ Work ==
          CreateStep(i, p, own) /\ act' = [name |-> "Create", i |-> i, p |-> p, own |-> own]
     \/ /\ Reg
        /\ \E i \in Instances, p \in Providers :
-            Free("Create", i) /\ CreateRefused(i, p) /\ act' = [name |-> "CreateRefused", i |-> i, p |-> p]
+            Free("Create", i) /\ p \in pending /\ CreateRefused(i, p) /\ act' = [name |-> "CreateRefused", i |-> i, p |-> p]
     \/ \E i \in Instances : Free("Complete", i) /\ Complete(i) /\ act' = [name |-> "Complete", i |-> i]
     \/ /\ Reg
        /\ \E i \in Instances :
@@ -218,10 +222,21 @@ Work ==
        /\ \E i \in Instances, p \in Providers :
             /\ p \notin inFlight
             /\ BindOk("SwapStart", domainOf[i], p)
-            /\ ~\E j \in swapping : domainOf[i] # None /\ prior[j] = bound[domainOf[i]]
-            \* Nor off a provider whose shutdown a timed-out swap queued: the SDK runs it when that call returns.
-            /\ domainOf[i] # None /\ bound[domainOf[i]] # None => replaced[bound[domainOf[i]]] = None
             /\ SwapStart(i, p) /\ act' = [name |-> "SwapStart", i |-> i, p |-> p]
+    \* A swap the claim refuses, for the replay to check the refusal; one of a provider in flight is refused earlier, as
+    \* still initializing, and BindOk's restriction holds for it as for a swap that binds. Only while the claiming swap
+    \* waits on its call: one that reused a registration already initialized has returned in the code, its claim
+    \* released, though the model keeps it swapping until SwapDone.
+    \/ /\ then = None
+       /\ \E i \in Instances, p \in Providers :
+            /\ p \notin inFlight
+            /\ BindOk("SwapStart", domainOf[i], p)
+            /\ act # [name |-> "SwapRefused", i |-> i, p |-> p]
+            /\ SwapRefused(i, p)
+            /\ \/ \E j \in swapping : Prov(j) \in inFlight /\ prior[j] = p /\ SlotsOf(p) = {}
+               \/ \E j \in swapping : Prov(j) \in inFlight /\ prior[j] = Prov(i)
+               \/ Waiting(Prov(i))
+            /\ act' = [name |-> "SwapRefused", i |-> i, p |-> p]
     \/ then = None /\ \E i \in Instances : SwapDone(i) /\ act' = [name |-> "SwapDone", i |-> i]
     \* Only in the binding that shares the registration: the SDK's early shutdown runs there or not at all, since no
     \* binding joins a call in flight here.
@@ -237,9 +252,10 @@ Work ==
     \/ /\ then = None
        /\ Shared
        /\ \E d \in Domains, p \in Providers :
-            /\ ~\E j \in swapping : prior[j] = p
-            /\ replaced[p] = None
-            /\ UserBind(d, p) /\ act' = [name |-> "UserBind", d |-> d, p |-> p]
+            /\ UserBind(d, p)
+            \* Not one a timed-out swap left waiting: if that call returns, the SDK shuts it down under the new
+            \* binding, which the model does not follow (unsupported).
+            /\ replaced[p] = None /\ act' = [name |-> "UserBind", d |-> d, p |-> p]
     \/ /\ then = None
        /\ Shared /\ \E i \in Instances : phase[i] = "building" /\ Fresh(i) /\ FailMark(i) /\ act' = [name |-> "FailMark", i |-> i]
     \* Not while a swap in flight would roll back to the provider this decision may shut down: the rollback reuses the

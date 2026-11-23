@@ -112,8 +112,8 @@ def check_shape(behaviour, topology, absent, default_provider="p1"):
             problems.append(f"state {k}: {name} right after {before['act']['name']}, not {follows[0]} of {follows[1]}")
         if name in absent:
             problems.append(f"state {k}: {name}, which the {topology} topology leaves out")
-        if name == "Lookup" and before["act"] == act:
-            problems.append(f"state {k}: the same Lookup twice in a row")
+        if name in ("Lookup", "SwapRefused") and before["act"] == act:
+            problems.append(f"state {k}: the same {name} twice in a row")
         if topology == "registry" and name == "Create" and after["domainOf"][act["i"]] == "default" \
                 and act["p"] != default_provider:
             problems.append(f"state {k}: the registry's default slot built from {act['p']}")

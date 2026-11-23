@@ -38,6 +38,9 @@ guards = [
     ("UserBind: an empty slot", "    /\\ bound[d] = None\n    /\\ \\/ p \\notin everBound\n",
      "    /\\ \\/ p \\notin everBound\n",
      "user-binds-a-held-slot"),
+    # A swap claims the provider it moves off: a second swap off it from another slot is refused.
+    ("SwapStart: no swap off a provider another swap in flight is moving off",
+     "    /\\ ~\\E j \\in swapping : prior[j] = bound[d]\n", "", "two-swaps-off-a-shared-provider-at-once"),
     ("InitSettle: the orphan list shuts down an orphan its failed replacement leaves",
      "    /\\ shuts' = [q \\in Providers |-> IF q \\in sdk \\cup lib THEN shuts[q] + 1 ELSE shuts[q]]\n",
      "    /\\ shuts' = [q \\in Providers |-> IF q \\in sdk THEN shuts[q] + 1 ELSE shuts[q]]\n",

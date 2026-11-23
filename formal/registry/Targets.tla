@@ -33,4 +33,9 @@ OwnerNeverOrphansASiblingsWrapper ==
 OwnerCloseNeverReleasesLeftBehind ==
     [][~(/\ act'.name = "OwnerClose"
          /\ \E q \in leftBehind : q \in registered /\ q \notin ApiShuts)]_GVars
+\* Shared topology: two instances serve one wrapper in two slots, and the second swaps off it while the first's swap off
+\* it is in flight. The SDK queued its shutdown at the first swap's binding, keyed by its state manager, so the library
+\* refuses the second swap before anything changes (FeatureFlagsLive.runSwap, ApiInstances.claimSwapOff: ShutdownQueued).
+NoSwapIsRefusedAsQueued ==
+    [][act'.name # "SwapRefused"]_GVars
 =============================================================================

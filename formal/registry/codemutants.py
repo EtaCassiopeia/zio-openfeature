@@ -37,6 +37,10 @@ MUTANTS = [
      os.path.join(MAIN, "internal", "FeatureFlagsFactories.scala"), {"total"},
      "ProviderRegistration.boundedApiShutdown(api) *> orphans.resolveAll *> ApiInstances.releaseLeftBehind(api)",
      "ProviderRegistration.boundedApiShutdown(api) *> orphans.resolveAll"),
+    ("a swap claims nothing it moves off: a second swap off that provider, or a swap to it while no slot holds it, "
+     "goes ahead under the SDK's queued shutdown", os.path.join(MAIN, "FeatureFlagsLive.scala"), {"step", "total"},
+     "case None if !ApiInstances.claimSwapOff(api, this, domain, off) =>",
+     "case None if false =>"),
 ]
 
 

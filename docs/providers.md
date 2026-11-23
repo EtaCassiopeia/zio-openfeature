@@ -109,6 +109,17 @@ One API has one default slot and one slot per domain, so instances on it are not
 - **An owner's shutdown or scope close tears the API down** for every instance on it. The others then report
   `NotReady`, as after their own `shutdown`: typed reads fail with `ProviderNotReady`, and `*OrDefault` reads serve
   the default. A `FeatureFlagRegistry` does the same to its clients when its scope closes.
+- **Two instances swapping off one provider.** The SDK queues the shutdown of the provider a swap replaces when the
+  swap binds, keyed by that provider's registration, and runs it once the new provider has initialized. While one
+  instance's swap moves its slot off a provider, another instance's swap off the same provider from another slot fails
+  with `ProviderInitializationFailed` (a `ShutdownQueued` cause), and so does a swap off one a timed-out swap's late
+  `initialize()` still holds: the second swap would queue the shutdown again, or bind it back under a new registration
+  that the first shutdown then closes while it serves. So does a swap to such a provider, or a build on it, while no
+  slot holds it. Nothing changes; retry once the other swap, or that late `initialize()`, has ended. Binding such a
+  provider again with the API yourself (`api.setProvider`) is unsupported: if that swap's provider then initializes,
+  the SDK shuts yours down while your slot serves it. A swap that has returned may still have that decision waiting on the SDK's executor, which the library
+  cannot see: a provider you registered yourself, swapped off one slot and then another in quick succession, can see
+  a second `shutdown()`, so make it safe to call twice. Providers the library wraps absorb it.
 - **What is per instance and what is shared.** `setGlobalContext` and `addZioApiHook` belong to this instance
   (`addZioApiHook` is API level in the hook order, not shared across instances). `addApiHook` and `clearApiHooks` act
   on the shared Java API.

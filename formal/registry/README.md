@@ -45,13 +45,14 @@ second instance.
 | `Evict(i)` | `runBuild`'s typed-failure branch: `lock.withPermit(remove *> promise.fail(err))` |
 | `ReleaseReplaced(i)` | `releaseReplacedFailure`: a retry with another provider failed too, so the domain's previous failed client (`lastFailed`) runs `shutDownFailedBuild` on its own provider, which the retry replaced, deciding as a failed build does (`LibraryShuts`). The SDK would shut it down only on the replacing provider's success. The registry's close releases it too (`leftBehind`), so this step only makes the release prompt, which no property checks: no mutant drops it |
 | `SwapStart(i, p)` | `FeatureFlagsLive.setProvider`, or `FeatureFlagRegistry.setProvider(d, p)` on the domain's client; one swap per instance, as each instance holds its own swap lock: swaps of different instances, and so of different domains of a registry, overlap. The SDK binds `p` before its `initialize()` runs, so a sibling built on `p` from here shares the attempt. A swap that reaches its binding after a sibling's `initialize()` of `p` has started is refused (`ProviderRegistration.StillInitializing`), and one whose SDK task the sibling's task overtakes still shares it |
+| `SwapRefused(i, p)` | `FeatureFlagsLive.runSwap`'s claim check, before anything changes: the swap fails with `ShutdownQueued` and nothing moves. See *The SDK's queued shutdown* below |
 | `SwapDone(i)` | the swap succeeded. The SDK's `shutDownOld` shuts the replaced provider down only when no slot holds its state manager any more; one another slot still holds keeps it |
 | `SwapOldShut(i)` | a sibling's binding of the swap's provider shares its registration and its `initialize()` started first: the swap's SDK task finds the call under way, returns at once, and shuts the replaced provider down (`shutDownOld`) when no slot holds it, before the swap's outcome. A rollback then registers it again, as a new registration. Only before the outcome: one after a rollback would shut down a provider the rollback had just registered again |
 | `SwapFailMark(i)` | `runSwap`, the failure branch, setting `failedRegistration`: the instance no longer counts as using `p` (a timed-out swap is not marked: `SwapTimeout`) |
 | `SwapFail(i)` | the swap's rollback: the slot gets its provider back. With no other slot on `p` the SDK shuts it down (`formal/lifecycle` has which of the two does); with one, the SDK skips it and `rollBack`, through `ApiInstances.boundElsewhere`, decides as a failed build does. A rollback that fails too (`cleanupUnboundFailedProvider`) makes the same decision and is not a separate action |
 | `SwapTimeout(i)` | `runSwap`'s timeout branch: no rollback, the new provider stays bound with its `initialize()` running (`pending`), status `Error`. The previous provider `q` is held only by that call, whose success makes the SDK shut it down (`shutDownOld`, `replaced`). An instance that owns its API records `q` (`recordOrphan`, `OrphanedProviders.record`); the orphan list will shut it down (`orphans`) unless a slot the library can see held it when it was recorded (`heldWhenRecorded`): one the user registered, or the library's wrapper a sibling serves. An instance that does not own its API, a registry client or not, records nothing and leaves `q`, the library's wrapper, to the API's owner (`ApiInstances.leaveBehind`, `leftBehind`), whose close releases it if it is still running then. A later build or swap of either provider is refused until the call settles (`refuseSwap`; `Waiting` here) |
 | `InitSettle(p, ok)` | the timed-out swap's provider's `initialize()` settles, and `OrphanedProviders.settle` with it. Returned: the SDK shuts down each provider waiting on it that no slot holds; an orphan of the library's wrapper the SDK skipped, the orphan list shuts down after its wait, unless a slot the library can see holds it (`heldByVisibleSlot`), which is the only reason the SDK skips one here. Threw: the orphan list shuts each orphan down unless a slot the library can see holds one by now (`heldByVisibleSlot`); a user's provider nothing holds is theirs (`abandoned`, `docs/providers.md`); a non-owner's wrapper waits for the close of the API's owner, an instance or the registry (`leftBehind`) |
-| `UserBind(d, p)` | the user's own `api.setProvider`, outside the library: an instance built on that provider later holds it as `Bound.Foreign`. Also of one of theirs that only a timed-out swap's pending `initialize()` holds, in a slot the library can see: the orphan list then leaves it |
+| `UserBind(d, p)` | the user's own `api.setProvider`, outside the library: an instance built on that provider later holds it as `Bound.Foreign`. Also of one of theirs that only a timed-out swap's pending `initialize()` holds, in a slot the library can see: the orphan list then leaves it. If that call then returns, the SDK's queued shutdown closes it under the new binding, which the model does not follow (unsupported, *The SDK's queued shutdown*) |
 | `FailMark(i)` | the start of `FeatureFlagsLive.shutDownFailedRegistration`, setting `failedRegistration`: from a build's `failedBuild` (`FeatureFlagsFactories`), after a wait that timed out or a provider that failed, or an async build's init deadline (`escalateInitTimeout`), where the instance stays open, `Fatal`. That the provider never became ready is the lifecycle model's `everReady`, so a deadline may fire on any open instance. An owner's failed build goes through `OwnerClose`, on its scope close |
 | `FailDecide(i)` | the rest of it: `LibraryShuts` is `Bound.Managed` and not `ApiInstances.heldByAnother`, whose `serves` skips an instance that failed on the provider. A build's failure then closes its scope; a retry is another instance here |
 | `CloseInstance(i)` | a non-owner's `shutdown` or scope close: `FeatureFlagsLive.teardown(tearDownApi = false)`, its own state only (the long comment there) |
@@ -131,6 +132,30 @@ them one at a time: a mutant usually breaks several, and in one run TLC reports 
 | The orphan list shuts down a provider of the user's that a slot the library can see holds | `UserProviderNeverShutByLibrary`, `RegisteredNotShutDown` |
 | A build binds a provider still initializing that no slot holds (`refuseUnheld` dropped), at `Builds.cfg`'s three instances | `OneInitializeAtATime` |
 
+## The SDK's queued shutdown
+
+The SDK decides the shutdown of the provider a swap replaces at the end of the swap, as `SwapDone` does, but by the
+provider's **state manager**, not by the provider. A swap captures the slot's old manager as it binds, and once the new
+provider initializes it shuts that provider down if the manager is no longer registered (`ProviderRepository`'s
+`shutDownOld` and `isStateManagerRegistered`, SDK 1.23.0). A binding of a provider no slot holds gets a new manager.
+So:
+
+- a rollback that binds again a provider a sibling's swap in flight moved the last slot off gets a new manager, and the
+  sibling's queued shutdown closes the provider while it serves;
+- two swaps off one provider from two slots both queue a shutdown under the same manager: a provider the user bound,
+  with no library wrapper to absorb it, is shut down twice;
+- a build, a swap or the user binding such a provider again meets the same queued shutdown.
+
+The library refuses each before it changes anything, with `ProviderInitializationFailed(ShutdownQueued)`, retryable
+once the other swap or call settles. A swap claims the provider its slot moves off for its whole length
+(`ApiInstances.claimSwapOff`). A swap off a provider another instance's swap claimed from another slot, or one a
+timed-out swap's pending `initialize()` replaced, is refused (`SwapStart`'s guards, `SwapRefused`). A build or a swap
+of a claimed provider no slot holds is refused too, and again under the API's lock as it binds
+(`ProviderRegistration.refuseSwappedOff`), so the claimant's own binding cannot slip in between. A rollback to the
+provider its own swap claimed binds. The user's own binding is outside the library: `UserBind` assumes it never binds
+one a swap in flight is moving off, and `docs/providers.md` calls binding again one a timed-out swap left waiting
+unsupported, as the SDK closes it if that call returns.
+
 ## What is outside the model
 
 - **The per-instance swap protocol**: `formal/lifecycle`. A swap here is start and outcome, or a timeout and the
@@ -149,7 +174,10 @@ them one at a time: a mutant usually breaks several, and in one run TLC reports 
     `replaced[q] = None`): the provider then waits on two `initialize()` calls, where `replaced` holds one.
   - *A swap off a timed-out swap's provider while it initializes*, and an init deadline on it (`SwapStart`,
     `FailMark`): the lifecycle model's (`SwapFailNoRollback`).
-  - *The user binding a waiting provider of theirs under a domain no instance is on* (`UserBind`): as below.
+  - *The user binding again a provider of theirs a timed-out swap left waiting* (`UserBind`), when that call then
+    returns: the SDK's queued shutdown closes it under the new binding, which `InitSettle` does not follow. Unsupported
+    (*The SDK's queued shutdown*); `Generate.tla` keeps every such binding out, and trace validation sees the call
+    fail.
 - **The SDK's late shutdown decision** (#1019). A swap off a provider another domain slot still holds queues the SDK's
   `shutDownOld` on its executor; run after the API's shutdown has cleared the domain slots, it shuts that provider
   down a second time. The library's wrapper absorbs it, a provider the user bound does not. The model counts the
@@ -250,13 +278,14 @@ SDK's executor (`openfeature-provider-thread-*`) or the library, the rule the la
 A user-bound instance makes no swap and no instance shares its stack: a swap off a provider the user bound queues the
 SDK's own shutdown of it, which can land after the owner's teardown already shut it down (the SDK's race above, #1019),
 and a provider a slot
-the library can see holds cannot be bound under a second domain. Instances on one stack swap one at a time (#1014).
+the library can see holds cannot be bound under a second domain. Instances on one stack swap concurrently: the second
+swap off it while the first is in flight is refused (`ShutdownQueued`), and never touches its stack.
 The registry simulation checks `OneInstancePerDomain`, `OnlyFailedBuildsEvicted`, `RegisteredNotShutDown` and
 `SharedShutDownOnce` (a provider a retry replaced included) on its own state, and `OneInitializeAtATime`: no leaf ever
 runs two `initialize()` calls at once (`SimLeaf.concurrentInits`). One kind of domain stalls its first build past the
 init timeout, short in such a run, so the watchdog fails it with the call still running; once the replacement the
 run names serves, no slot holds the stalled leaf, and a build of it on another domain must be refused before it binds.
-Each domain's stacks are its own: a provider in two slots (#1014) is kept out.
+Each domain's stacks are its own: the plans put no provider in two slots, which the shared-API simulation drives.
 
 `simmutants.py` puts back each bug these checks exist for and requires the simulation to name the invariant: the
 owner's close not retiring its siblings (`ClosedApiServesNone`), a non-owner's close shutting its slot's provider down
@@ -292,9 +321,14 @@ one replay can drive, so every behaviour it writes is still a behaviour of the m
   wrapper as it binds it (`ProviderStateAccess.bindReclaiming`). What `BindOk` still leaves out is where the model
   abstracts the SDK: a provider another slot holds whose shutdown the library's wrapper absorbed (that registration is
   reused, which `registered` does not follow); a build onto a registration another slot holds that is not ready (the
-  build reads its ERROR); and anything (a build, a swap, the user, or a second swap off it) binding a provider whose
-  shutdown the SDK has queued, one a swap in flight, a timed-out swap or a retry's binding replaced: the SDK decides
-  that shutdown at the binding, where the model decides when the swap or the late call ends (#1014). For the same
+  build reads its ERROR); and a build or swap binding a provider a retry's binding replaced, whose shutdown the SDK
+  has queued where no instance's record shows it. One a swap in flight is moving off, or a timed-out swap left
+  waiting, `Registry.tla` refuses itself (*The SDK's queued shutdown*). A refused build is not generated
+  (`CreateRefused` only of a pending provider): the replay drives no such refusal. Nor is a build that starts a call
+  on such a provider (a registry retry on the slot still holding it): the code's rollback then skips a provider whose
+  `initialize()` is in flight, which is the lifecycle model's `SwapFailNoRollback`. `SwapRefused` is generated only
+  while the claiming swap waits on its call: one that reused a registration already initialized has returned in the
+  code, its claim released, though the model keeps it swapping until `SwapDone`. For the same
   absorption, a failure's decision that may shut a provider down waits while a swap in flight would roll back to it.
 - **No registry build times out** (`BuildTimeouts` is false): its wait runs on the live clock for the registry's
   init timeout, which the replay does not cut short. So no provider is left initializing with no slot holding it, and
@@ -382,9 +416,12 @@ A counterexample from checking `Registry.tla` has no `act` labels to replay. Its
   (the shapes of #728/#800). Trace validation and `SharedApiSwapRaceSpec` cover them.
 - **`FailMark` on an open instance** (an async build's init deadline): the model does not track whether a provider ever
   became ready, so a deadline may fire on any open instance there.
-- **The SDK's queued shutdown** of a provider bound again before the swap that queued it ends (#1014), and the
-  registrations a library-absorbed wrapper leaves for the SDK to reuse, above: the model's `registered` does not
-  follow either.
+- **A swap's SDK task that runs late.** A swap's `shutDownOld` runs on the SDK's executor after the swap ended; when a
+  later swap has moved the last slot off that provider by then, it shuts the provider down although its decision on
+  time was to leave it. The library cannot see that task, so the replay waits for the SDK's executor after each swap
+  ends (`drainSdk`), as before a close, and compares the library.
+- **The registrations a library-absorbed wrapper leaves for the SDK to reuse**, above: the model's `registered` does not
+  follow them.
 
 ## When its code changes
 

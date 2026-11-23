@@ -828,7 +828,9 @@ object ProviderOwnershipShutdownSpec extends ZIOSpecDefault {
         (failed, before) = run
       } yield assertTrue(failed, before == 0, closed == 1, after == 1)
     },
-    test("the owner's close shuts down a wrapper both swapped off, once, when both new providers then fail") {
+    test(
+      "a sibling's swap off a wrapper an owner's timed-out swap left waiting is refused, and the close shuts it once"
+    ) {
       val api      = OpenFeatureAPI.createIsolated()
       val provider = new Gated(open = true)
       val forOwner = new Reporting(Some("boom"))
@@ -839,13 +841,17 @@ object ProviderOwnershipShutdownSpec extends ZIOSpecDefault {
             owner     <- syncBuild(api, provider, None, 300.millis, owns = true)
             nonOwner  <- syncBuild(api, provider, Some("d"), 300.millis)
             ownerSwap <- owner.setProvider(forOwner).exit
+            // The SDK has the wrapper's shutdown queued under the owner's pending call: a second swap off it is refused.
             otherSwap <- nonOwner.setProvider(forOther).exit
-            // Bound, so the swap timed out rather than being refused.
-            bound = ManagedProvider.existing(forOther).exists(w => api.getProvider("d") eq w)
+            refused = otherSwap.causeOption.flatMap(_.failureOption).exists {
+              case FeatureFlagError.ProviderInitializationFailed(_: ProviderRegistration.ShutdownQueued) => true
+              case _                                                                                     => false
+            }
+            kept = api.getProvider("d") eq ManagedProvider.existing(provider).orNull
             _      <- ZIO.succeed { forOwner.gate.countDown(); forOther.gate.countDown() }
-            _      <- ended(forOwner, forOther)
+            _      <- ended(forOwner)
             before <- shutdownsAfterSettling(provider)
-          } yield (ownerSwap.isFailure && otherSwap.isFailure && bound, before)
+          } yield (ownerSwap.isFailure && refused && kept && forOther.ended.getCount == 1, before)
         }
         closed <- shutdownsAfterSettling(provider)
         _      <- Live.live(ZIO.sleep(300.millis))

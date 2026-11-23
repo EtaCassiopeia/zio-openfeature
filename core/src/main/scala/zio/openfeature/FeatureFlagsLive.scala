@@ -342,7 +342,7 @@ final private[openfeature] class FeatureFlagsLive(
         // by the binding (ProviderStateAccess.bindReclaiming); a provider of the user's, bound as it is, is reset here,
         // and only on the SDK's "already attached" refusal: any other failure propagates.
         ProviderRegistration
-          .register(api, domain, oldProvider, reclaimForeign = true)
+          .register(api, domain, oldProvider, reclaimForeign = true, claimant = this)
           .tap(_ => probe.at(Point.RollbackBind))
           .asSome
       }
@@ -388,7 +388,7 @@ final private[openfeature] class FeatureFlagsLive(
             .foldZIO(
               {
                 case e if stillHolds(e) =>
-                  lifecycle.run(LifecycleInput.Replaced(restored, incoming)) *>
+                  replacedBy(restored, incoming) *>
                     ZIO.when(incoming.managed.isDefined)(recordOrphan(incoming, newName, oldName, Some(restored))) *>
                     failed(
                       e,
@@ -466,13 +466,28 @@ final private[openfeature] class FeatureFlagsLive(
   }
 
   /** Whether a registration of this instance that replaced `provider` is still initializing, so the SDK's shutdown of
-    * `provider` is queued: a swap's or rollback's, or a timed-out one's not yet settled.
+    * `provider` is queued: a swap's or rollback's, or a timed-out one's not yet settled, of the library's wrapper or of
+    * a provider the user registered.
     */
   private[openfeature] def queuesShutdownOf(provider: OFFeatureProvider): Boolean = {
     val record = lifecycle.snapshot
     record.replaced.exists { case (holder, previous) => (previous eq provider) && holder.initializing } ||
-    record.orphans.exists(_._1 eq provider)
+    record.orphans.exists(_._1 eq provider) ||
+    foreignReplaced.get().exists { case (holder, previous) => (previous eq provider) && holder.initializing }
   }
+
+  // The user's providers a timed-out swap or rollback of this instance replaced, each with the registration still
+  // initializing whose return makes the SDK shut it down. The lifecycle record keeps only the library's wrappers.
+  private val foreignReplaced =
+    new java.util.concurrent.atomic.AtomicReference[List[(ProviderRegistration.Registration, OFFeatureProvider)]](Nil)
+
+  /** `holder`, still initializing, replaced `previous`: the SDK shuts `previous` down once that call returns. */
+  private def replacedBy(holder: ProviderRegistration.Registration, previous: Bound): UIO[Unit] =
+    lifecycle.run(LifecycleInput.Replaced(holder, previous)) *> ZIO.succeed(previous match {
+      case Bound.Foreign(provider) =>
+        foreignReplaced.updateAndGet(entries => (holder -> provider) :: entries.filter(_._1.initializing)): Unit
+      case Bound.Managed(_) => ()
+    })
 
   /** Whether this instance's slot holds `provider`, whatever state the instance is in. */
   private[openfeature] def slotHolds(provider: OFFeatureProvider): Boolean =
@@ -692,7 +707,34 @@ final private[openfeature] class FeatureFlagsLive(
         ZIO.logDebug(s"setProvider: '$name' is already the bound provider; nothing to change")
       }
 
-  private def runSwap(incoming: Bound, newProvider: OFFeatureProvider): IO[LifecycleError, Unit] = {
+  /** A swap off the provider the SDK binds in this slot claims it for the swap's length, and is refused, before
+    * anything changes, while the SDK has a shutdown of it queued: another instance's swap in flight is moving off it,
+    * or a registration that replaced it is still initializing. The SDK keys that shutdown by the provider's state
+    * manager and runs it once the replacing provider initializes: a second swap off it would queue another (a raw
+    * provider has no wrapper to absorb it), and a rollback binding it again under a new manager would be shut down
+    * while it serves. A swap to a provider another swap is moving off, held by no slot, is refused the same way, and
+    * again under the API's lock as it binds ([[ProviderRegistration.bind]]).
+    */
+  private def runSwap(incoming: Bound, newProvider: OFFeatureProvider): IO[LifecycleError, Unit] =
+    // The claim and its release are one step: an interrupt between them would leave the claim for good. The swap
+    // itself is uninterruptible anyway.
+    ZIO.uninterruptible(ZIO.suspendSucceed {
+      val off                                                = sdkBound
+      val release                                            = ZIO.succeed(ApiInstances.releaseSwapOff(api, this, off))
+      def refuse(error: ProviderRegistration.ShutdownQueued) =
+        ZIO.fail(FeatureFlagError.ProviderInitializationFailed(error))
+      ProviderRegistration.unheldWithShutdownQueued(api, incoming.sdk, this) match {
+        case Some(error)                                                => refuse(error)
+        case None if !ApiInstances.claimSwapOff(api, this, domain, off) =>
+          refuse(ProviderRegistration.ShutdownQueued.swapOff(off))
+        // Checked once claimed: a sibling's timed-out swap records the shutdown it left queued before it drops its claim.
+        case None if ApiInstances.shutdownQueued(api, off) =>
+          release *> refuse(ProviderRegistration.ShutdownQueued.swapOff(off))
+        case None => swapClaimed(incoming, newProvider).ensuring(release)
+      }
+    })
+
+  private def swapClaimed(incoming: Bound, newProvider: OFFeatureProvider): IO[LifecycleError, Unit] = {
     val swap = for {
       _ <- probe.at(Point.SwapStart(newProvider))
       // Read before `initialize()`, as the build reads it: a wrapper around a MultiProvider, which has no metadata
@@ -719,7 +761,7 @@ final private[openfeature] class FeatureFlagsLive(
       //    hanging provider would wedge this swap, the rollback below and `api.shutdown()`.
       _            <- probe.at(Point.SwapBind)
       registration <- ProviderRegistration
-        .register(api, domain, incoming, shareInFlight = false)
+        .register(api, domain, incoming, shareInFlight = false, claimant = this)
         .tap(_ => probe.at(Point.SdkBind))
         .either
       settled <- ZIO
@@ -740,7 +782,7 @@ final private[openfeature] class FeatureFlagsLive(
                 s"setProvider: '$newName' did not finish initializing within $initTimeout; status is Error and the " +
                   s"previous provider '$oldName' was not restored (it is shut down once '$newName' settles)"
               ) *>
-              ZIO.foreachDiscard(registration.toOption)(r => lifecycle.run(LifecycleInput.Replaced(r, oldProvider))) *>
+              ZIO.foreachDiscard(registration.toOption)(replacedBy(_, oldProvider)) *>
               recordOrphan(oldProvider, oldName, newName, registration.toOption)
           case failure =>
             ZIO.when(registration.isRight && !wasSuperseded(failure))(

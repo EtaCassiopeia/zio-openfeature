@@ -21,12 +21,13 @@ Topologies:
 | `BuildTimeout(i, shut)`, `CreateRefused(i, p)` | not generated (`BuildTimeouts` is false): the replay cannot cut a registry build's wait for readiness short; `Builds.cfg` and the registry simulation cover them | |
 | `ReleaseReplaced(i)` | settles the retry's `initialize()` failing | `FailDecided` from the previous failed client's `shutDownFailedBuild` |
 | `SwapStart(i, p)` | forks `registry.setProvider(d, p)` for a domain's client, `FeatureFlagsLive.setProvider(p)` otherwise | `SdkBind`, or `p`'s `initialize()` starting, or the swap ending |
-| `SwapDone(i)` | settles `p`'s `initialize()` ok, if one runs | the swap succeeding |
+| `SwapRefused(i, p)` | calls the swap as `SwapStart` does, and waits for it | the swap failing at once with `ShutdownQueued`, nothing changed |
+| `SwapDone(i)` | settles `p`'s `initialize()` ok, if one runs, then `drainSdk` (below) | the swap succeeding |
 | `SwapTimeout(i)` | fires the swap's deadline (`ScriptedInitDeadline.fire`) once its wait for `initialize()` is armed; the call keeps running | the swap failing with the deadline's `TimeoutException` |
 | `InitSettle(p, ok)` | settles the timed-out swap's still-running `initialize()` of `p` with `ok` | nothing more: the comparison after it waits for the shutdowns that follow |
 | `SwapOldShut(i)` | nothing: the SDK runs it in the binding | the replaced provider's `shutdown()` count reaching the model's |
 | `SwapFailMark(i)` | arms a hold at `FailedRegistration`, settles `p`'s `initialize()` failing | the hold reached |
-| `SwapFail(i)` | releases the hold, and lets the rollback's re-`initialize()` of the previous provider return (the model takes its success) | the swap failing |
+| `SwapFail(i)` | releases the hold, and lets the rollback's re-`initialize()` of the previous provider return (the model takes its success), then `drainSdk` | the swap failing |
 | `FailMark(i)` | as `SwapFailMark`, under a shared build | the hold reached |
 | `FailDecide(i)` | releases the hold | a building instance's build failing |
 | `UserBind(d, p)` | `api.setProviderAndWait(d, p)`, settling `p`'s `initialize()` ok if one runs | the call returning |
@@ -68,3 +69,6 @@ Skipped:
 The drain before a close lets every task the SDK's executor took run, but the `initialize()` calls the behaviour still
 holds. A swap's `shutDownOld` that runs after the API's shutdown shuts a provider another slot held down a second time:
 an SDK race (`SdkLateShutdownCanarySpec`), which the model, counting the SDK's intended single shutdown, leaves out.
+The drain after a swap ends (`SwapDone`, `SwapFail`) keeps out the same task landing late in a running API: decided on
+time it left a provider another slot held, but run after a later swap moved that slot off, it shuts the provider down.
+The library cannot see that task, so the model takes the decision on time.

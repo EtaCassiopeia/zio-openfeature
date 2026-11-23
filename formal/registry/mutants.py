@@ -55,8 +55,8 @@ mutants = {
          "    /\\ lock' = lock\n"),
         ("    /\\ phase[i] = \"checking\"\n    /\\ lock = i\n    /\\ own => owner = None\n",
          "    /\\ phase[i] = \"checking\"\n    /\\ own => owner = None\n"),
-        ("    /\\ p \\notin pending /\\ ~Waiting(p)\n    /\\ lock' = None\n",
-         "    /\\ p \\notin pending /\\ ~Waiting(p)\n    /\\ lock' = lock\n")]),
+        ("    /\\ ~SwappedOffUnheld(p)\n    /\\ lock' = None\n",
+         "    /\\ ~SwappedOffUnheld(p)\n    /\\ lock' = lock\n")]),
     # The rollback of a failed swap shuts the failed provider down although a live sibling is bound to it.
     'the library shuts a provider a sibling holds on rollback': (
         ('LiveSiblingKeepsProvider',), [
@@ -146,8 +146,8 @@ mutants = {
     # dropped): the SDK registers it anew and calls initialize() again alongside the running call.
     'a build binds a provider still initializing that no slot holds': (
         ('OneInitializeAtATime',), [
-        ("    /\\ p \\notin pending /\\ ~Waiting(p)\n    /\\ lock' = None\n    /\\ \\/ bound[d] \\in {None, p}\n",
-         "    /\\ (p \\in pending => SlotsOf(p) = {}) /\\ ~Waiting(p)\n    /\\ lock' = None\n    /\\ \\/ bound[d] \\in {None, p}\n")],
+        ("    /\\ p \\notin pending /\\ ~Waiting(p)\n    /\\ ~SwappedOffUnheld(p)\n    /\\ lock' = None\n",
+         "    /\\ (p \\in pending => SlotsOf(p) = {}) /\\ ~Waiting(p)\n    /\\ ~SwappedOffUnheld(p)\n    /\\ lock' = None\n")],
         # A build that timed out, a retry replacing it, and a third build on its provider: three instances.
         {'Instances': '{i1, i2, i3}', 'MaxSwaps': '0'}),
     # The orphan list counts only a provider of the user's as held by a slot: an owner's timed-out swap off its wrapper

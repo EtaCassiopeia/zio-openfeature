@@ -206,8 +206,6 @@ object ConcurrentSimulationSpec extends ZIOSpecDefault {
       incoming = new java.util.concurrent.atomic.AtomicReference[Built](null)
       // A swap back runs: its binding is not one of the plan's swaps, which `shutdownAfterSwap` counts.
       backing = new java.util.concurrent.atomic.AtomicBoolean(false)
-      // Stacks a timed-out swap replaced: their SDK shutdown waits on the stalled call, so none is swapped back to.
-      waitedOn = new java.util.concurrent.ConcurrentLinkedQueue[Built]()
       // The stack a swap just replaced, when a swap back follows it: checked once that swap back is done.
       leftForBack = new java.util.concurrent.atomic.AtomicReference[Built](null)
       // Waits (bounded, live clock) until every leaf of `b` is shut down once per install; the problem if one is not.
@@ -431,7 +429,6 @@ object ConcurrentSimulationSpec extends ZIOSpecDefault {
                     old <- current.getAndSet(nb)
                     _   <- retired.update(old :: _)
                     _   <- pending.update(_ :+ Pending(nb, old, when))
-                    _   <- ZIO.succeed(waitedOn.add(old))
                     _   <- ZIO.succeed(everPending.updateAndGet(nb :: _))
                   } yield ()
                 case Left(c) if isTimeout(c) =>
@@ -647,11 +644,13 @@ object ConcurrentSimulationSpec extends ZIOSpecDefault {
               } *>
               ZIO.foreachDiscard(plan.backs.flatMap(_.lift(index)).flatten) { k =>
                 (degraded.get <*> pending.get <*> installed.get).flatMap { case (d, ps, ins) =>
-                  // Earlier reusable stacks, most recent first. Not while a rollback is unrestored or a timed-out swap is
-                  // pending: a stack a swap off it left waiting on the SDK's queued shutdown, bound again, is an open gap.
+                  // Earlier reusable stacks, most recent first, one a timed-out swap left waiting on the SDK's queued
+                  // shutdown included, once that call has settled. Not while a rollback is unrestored, nor while a
+                  // timed-out swap is pending: a swap off a stack whose initialize() still runs is the lifecycle
+                  // model's, and the check after a swap back expects the stack it replaced shut down by its end.
                   val earlier = ins.reverse
                     .foldLeft(List.empty[Built])((acc, b) => if (acc.exists(_ eq b)) acc else acc :+ b)
-                    .filter(b => reusable(b.spec) && !waitedOn.stream().anyMatch(_ eq b))
+                    .filter(b => reusable(b.spec))
                   if (d || ps.nonEmpty || earlier.isEmpty) ZIO.succeed(Stats.hit("crun.swapBack.notTaken"))
                   else
                     currentNotShutDown(s"before the swap back after swap $index") *> swapBack(earlier(k % earlier.size))

@@ -23,13 +23,13 @@ REGISTRY_ACTIONS = {
     "BuildFail", "BuildTimeout", "Check", "CloseInstance", "Complete", "Create", "CreateRefused", "Evict", "FailDecide",
     "FailMark", "InitSettle",
     "Lookup", "OwnerClose", "RegistryClose", "ReleaseReplaced", "SwapDone", "SwapFail", "SwapFailMark", "SwapOldShut",
-    "SwapStart", "SwapTimeout", "UserBind",
+    "SwapRefused", "SwapStart", "SwapTimeout", "UserBind",
 }
 
 
 class DiscoverNext(unittest.TestCase):
 
-    def test_the_registry_next_yields_its_twenty_two_actions_and_none_of_its_constants(self):
+    def test_the_registry_next_yields_its_twenty_three_actions_and_none_of_its_constants(self):
         self.assertEqual(shared.discover_next(here, "Registry.tla", "Next"), REGISTRY_ACTIONS)
 
     def test_the_lifecycle_next_is_unchanged(self):
@@ -88,7 +88,7 @@ class ByDesign(unittest.TestCase):
 
     # Each topology guard as Generate.tla writes it, and the actions it keeps out of the other topology.
     GUARDS = [
-        ("registry", "/\\ Shared\n       /\\ \\E d \\in Domains, p \\in Providers :\n            /\\ ~\\E j \\in swapping", "UserBind"),
+        ("registry", "/\\ Shared\n       /\\ \\E d \\in Domains, p \\in Providers :\n            /\\ UserBind", "UserBind"),
         ("registry", "Shared /\\ OwnerClose", "OwnerClose"),
         ("registry", "Shared /\\ \\E i \\in Instances : phase[i] = \"building\" /\\ Fresh(i) /\\ FailMark", "FailMark"),
         ("shared", "/\\ Reg\n       /\\ \\E i \\in Instances, d \\in Domains :\n            /\\ act # [name |-> \"Lookup\"",
@@ -97,7 +97,7 @@ class ByDesign(unittest.TestCase):
         ("shared", "/\\ Reg\n       /\\ \\E i \\in Instances : Free(\"Evict\", i)", "Evict"),
         ("shared", "/\\ Reg\n       /\\ \\E i \\in Instances :\n            /\\ \\A j \\in Retry(i)", "ReleaseReplaced"),
         ("shared", "Reg /\\ RegistryClose", "RegistryClose"),
-        ("shared", "/\\ Reg\n       /\\ \\E i \\in Instances, p \\in Providers :\n            Free(\"Create\", i) /\\ CreateRefused",
+        ("shared", "/\\ Reg\n       /\\ \\E i \\in Instances, p \\in Providers :\n            Free(\"Create\", i) /\\ p \\in pending /\\ CreateRefused",
          "CreateRefused"),
         ("shared", "/\\ Reg\n       /\\ BuildTimeouts", "BuildTimeout"),
     ]

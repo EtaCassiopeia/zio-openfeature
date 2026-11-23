@@ -398,8 +398,8 @@ SwapRefused(i, p) ==
     LET d == domainOf[i] IN
     /\ apiOpen
     /\ phase[i] = "open"
-    /\ i \notin swapping
     /\ swaps < MaxSwaps
+    /\ i \notin swapping
     /\ p # bound[d]
     /\ i \notin deciding
     /\ p \in userOwned => bound[Default] = p \/ Visible(p)

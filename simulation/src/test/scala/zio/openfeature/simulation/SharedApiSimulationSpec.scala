@@ -3,7 +3,7 @@ package zio.openfeature.simulation
 import dev.openfeature.sdk.{NoOpProvider, OpenFeatureAPI, FeatureProvider => OFFeatureProvider}
 import zio._
 import zio.openfeature._
-import zio.openfeature.internal.{FeatureFlagsFactories, LifecycleProbe, ManagedProvider}
+import zio.openfeature.internal.{FeatureFlagsFactories, LifecycleProbe, ManagedProvider, ProviderRegistration}
 import zio.openfeature.testsupport.{LeakCheck, PropertyBudget}
 import zio.test.{Spec => _, _}
 
@@ -13,9 +13,9 @@ import scala.jdk.CollectionConverters._
 
 /** Concurrent simulation of two or three instances on one shared API, under the schedule perturber. The first instance
   * owns the API and the others do not; each is on its own domain, and one may be built on another's provider object, so
-  * one stack serves two slots; instances on one stack swap one at a time. Each instance has its own evaluation workers
-  * and swapper; one mutator changes flags on every stack, and a closer shuts some non-owners down mid-run, then maybe
-  * the owner. It checks:
+  * one stack serves two slots, and both may swap off it at once. Each instance has its own evaluation workers and
+  * swapper; one mutator changes flags on every stack, and a closer shuts some non-owners down mid-run, then maybe the
+  * owner. It checks:
   *   - every evaluation completes (bounded) with a value or a default plus an error code, never a defect;
   *   - each instance's successful answers against its own history ([[History]]): the global writes, and its own
   *     evaluations and swaps. An answer from a leaf after a swap away from it raised its gate is never a success, for
@@ -24,7 +24,9 @@ import scala.jdk.CollectionConverters._
   *   - after an instance's own close returns, no evaluation it invokes from then on succeeds, and after the owner's
   *     close returns the same holds for every instance; a non-owner's close changes nothing in its siblings' checks;
   *   - a swap is refused (`ProviderNotReady`) only once the instance's close, or the owner's, has started, and always
-  *     when invoked after that close returned; a refused swap's stack is never initialized or shut down;
+  *     when invoked after that close returned; a swap off a stack a sibling's swap is moving off is refused too
+  *     (`ShutdownQueued`), only when that instance's stack is shared; a refused swap's stack is never initialized or
+  *     shut down;
   *   - `RegisteredNotShutDown`: while the API is open, the stack a slot holds now, read from the API itself, has no
   *     leaf shut down, after every command and at every lifecycle probe point. A stack whose `initialize()` fails is
   *     left out: a multi-provider shuts its members down itself when it fails, before the rollback binds the previous
@@ -173,13 +175,6 @@ object SharedApiSimulationSpec extends ZIOSpecDefault {
           new Live(k, b, c, r, t, new AtomicBoolean(false), new AtomicLong(Long.MaxValue), insts(k).userBound.nonEmpty)
         }
       }
-      // Instances built on one stack swap one at a time. A swap off a provider no other slot holds makes the SDK queue
-      // its shutdown at the binding, which runs even if a failed sibling swap's rollback binds that provider again
-      // meanwhile: an open gap between the SDK and the library, kept out of the plans as Generate.tla keeps it out.
-      groupLocks <- ZIO.foreach(builts.toList.distinctBy(java.lang.System.identityHashCode))(b =>
-        Semaphore.make(1).map(b -> _)
-      )
-      lockOf = (l: Live) => groupLocks.collectFirst { case (b, s) if b eq l.initial => s }.get
       // Every stack built for the run, so a slot's provider can be matched to its stack before its swap returns.
       stacks = new java.util.concurrent.ConcurrentLinkedQueue[Built](builts.distinct.asJava)
       bound   <- Ref.make(builts.toList.distinct) // stacks a slot held at some point
@@ -270,7 +265,8 @@ object SharedApiSimulationSpec extends ZIOSpecDefault {
           (p match {
             case LifecycleProbe.Point.SwapBind =>
               // The late mark is on the leaf, and the gate is the instance's: a leaf another instance's stack still holds
-              // is not marked (instances on one stack swap one at a time, so that instance's stack is current here).
+              // is not marked. A sibling's swap off that stack that has ended but not yet returned still reads it as
+              // current, which only leaves those leaves unmarked: a weaker check, never a false report.
               (l.current.get <*> ZIO.foreach(lives.filter(_.k != l.k))(_.current.get)).flatMap { case (b, others) =>
                 val held = others.flatMap(_.leaves.values).toSet
                 b.leaves.values.filterNot(held.contains).foreach(_.retiring.set(true))
@@ -363,7 +359,7 @@ object SharedApiSimulationSpec extends ZIOSpecDefault {
                   _  <- perturber.note(s"i${l.k} swap to ${Spec.show(ns)} starts")
                   t0 <- ZIO.succeed(perturber.tick())
                   _  <- ZIO.succeed(l.swapSeq.incrementAndGet())
-                  r  <- lockOf(l).withPermit(byK(l.k).setProvider(nb.provider)).sandbox.either
+                  r  <- byK(l.k).setProvider(nb.provider).sandbox.either
                   _  <- ZIO.succeed(l.swapSeq.incrementAndGet())
                   t1 <- ZIO.succeed(perturber.tick())
                   // Invoked once this instance's close, or the owner's, had returned: it must have been refused.
@@ -380,6 +376,21 @@ object SharedApiSimulationSpec extends ZIOSpecDefault {
                       ZIO.when(!l.closing.get())(
                         report(s"i${l.k} setProvider to ${Spec.show(ns)} refused before any close started")
                       ) *> Stats.generated("rsim.swap.refused") *> refused.update(nb :: _)
+                    // A sibling on the same stack was swapping off it: the SDK has its shutdown queued.
+                    case Left(c) if c.failureOption.exists {
+                          case FeatureFlagError.ProviderInitializationFailed(_: ProviderRegistration.ShutdownQueued) =>
+                            true
+                          case _ => false
+                        } =>
+                      l.current.get.flatMap { b =>
+                        // Only a stack two instances were built on is in two slots: each swap builds its own.
+                        val shared = (b eq l.initial) && lives.exists(o => (o.k != l.k) && (o.initial eq l.initial))
+                        ZIO.when(!shared)(
+                          report(
+                            s"i${l.k} setProvider to ${Spec.show(ns)} refused as queued, with no sibling on its stack"
+                          )
+                        )
+                      } *> Stats.generated("rsim.swap.queued") *> refused.update(nb :: _)
                     case Left(c)
                         if fails && c.defects.isEmpty &&
                           c.failureOption.exists(_.isInstanceOf[FeatureFlagError.ProviderInitializationFailed]) =>

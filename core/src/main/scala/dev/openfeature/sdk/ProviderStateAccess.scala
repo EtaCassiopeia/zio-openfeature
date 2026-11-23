@@ -64,6 +64,18 @@ object ProviderStateAccess {
     finally held.close()
   }
 
+  /** The SDK's own binding of `provider` to `domain`'s slot (the default slot when `domain` is null), after `mayBind`,
+    * both under the API's write lock. `mayBind` refuses the binding by throwing; the SDK's refusals propagate as they
+    * are.
+    */
+  def bindGuarded(api: OpenFeatureAPI, domain: String, provider: FeatureProvider, mayBind: () => Unit): Unit = {
+    val held = api.lock.writeLockAutoCloseable()
+    try {
+      mayBind()
+      if (domain == null) api.setProvider(provider) else api.setProvider(domain, provider)
+    } finally held.close()
+  }
+
   /** Whether `e` is the SDK's refusal of a provider still attached to an earlier registration. */
   def alreadyAttached(e: Throwable): Boolean =
     e.isInstanceOf[IllegalStateException] && Option(e.getMessage).exists(_.endsWith("is already attached."))

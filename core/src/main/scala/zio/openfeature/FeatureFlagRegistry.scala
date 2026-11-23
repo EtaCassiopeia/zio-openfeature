@@ -20,12 +20,14 @@ trait FeatureFlagRegistry {
     * block clients of other domains. A failed initialization surfaces as
     * `FeatureFlagError.ProviderInitializationFailed` and is not cached — a subsequent call retries. So does a build on
     * a provider whose earlier `initialize()`, from a timed-out build or swap, still runs while no slot holds it: it is
-    * refused before it binds, and a call after that `initialize()` returns builds it.
+    * refused before it binds, and a call after that `initialize()` returns builds it. A build on a provider another
+    * domain's swap in flight is moving off, held by no slot, is refused the same way until that swap ends.
     */
   def getClient(domain: String): IO[FeatureFlagError, FeatureFlags]
 
   /** Register (or replace) a provider for a domain. If a client already exists for the domain, the provider is
-    * hot-swapped via `FeatureFlagsAdmin.setProvider`.
+    * hot-swapped via `FeatureFlagsAdmin.setProvider`, with its refusals: a swap off a provider another domain's swap is
+    * moving off, among them.
     */
   def setProvider(domain: String, provider: OFFeatureProvider): IO[FeatureFlagError, Unit]
 

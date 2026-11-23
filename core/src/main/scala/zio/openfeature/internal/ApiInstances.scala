@@ -55,6 +55,38 @@ private[openfeature] object ApiInstances {
   def shutdownQueued(api: OpenFeatureAPI, provider: FeatureProvider): Boolean =
     on(api).exists(_.queuesShutdownOf(provider))
 
+  // The providers a swap in flight on each API is moving off, each with the instance swapping and its slot: the SDK
+  // queued their shutdown at that swap's binding, keyed by the state manager they had there. Compared by identity.
+  private val swappingOff =
+    new java.util.WeakHashMap[OpenFeatureAPI, List[(FeatureProvider, AnyRef, Option[String])]]()
+
+  /** Claim `provider` for the swap of `claimant` moving `domain`'s slot off it, unless another instance's swap claimed
+    * it from another slot first. Checks and claims in one step, so of two swaps off one provider in two slots at most
+    * one gets it. A swap on the same slot binds over the first one's provider, not over `provider`, so it claims too.
+    */
+  def claimSwapOff(api: OpenFeatureAPI, claimant: AnyRef, domain: Option[String], provider: FeatureProvider): Boolean =
+    synchronized {
+      val claims = Option(swappingOff.get(api)).getOrElse(Nil)
+      if (claims.exists { case (p, by, d) => (p eq provider) && (by ne claimant) && d != domain }) false
+      else {
+        val _ = swappingOff.put(api, (provider, claimant, domain) :: claims)
+        true
+      }
+    }
+
+  /** Drop the claim of `claimant` on `provider`. */
+  def releaseSwapOff(api: OpenFeatureAPI, claimant: AnyRef, provider: FeatureProvider): Unit = synchronized {
+    val kept = Option(swappingOff.get(api)).getOrElse(Nil).filterNot { case (p, by, _) =>
+      (p eq provider) && (by eq claimant)
+    }
+    val _ = if (kept.isEmpty) swappingOff.remove(api) else swappingOff.put(api, kept)
+  }
+
+  /** Whether a swap of an instance other than `except` (which may be `null`) is moving off `provider` on `api`. */
+  def swappedOffByAnother(api: OpenFeatureAPI, provider: FeatureProvider, except: AnyRef): Boolean = synchronized {
+    Option(swappingOff.get(api)).exists(_.exists { case (p, by, _) => (p eq provider) && (by ne except) })
+  }
+
   /** Whether an instance was ever built on `domain` of `api`. */
   def knowsSlot(api: OpenFeatureAPI, domain: String): Boolean =
     synchronized(Option(slots.get(api)).exists(_.contains(Some(domain))))

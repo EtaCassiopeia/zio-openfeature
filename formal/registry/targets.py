@@ -27,6 +27,8 @@ TARGETS = [
      {"Instances": "{i1, i2}", "Domains": "{default, d1}", "Providers": "{p1, p2, p3}"}),
     ("left-behind-released-at-owner-close", "shared", "OwnerCloseNeverReleasesLeftBehind",
      {"Instances": "{i1, i2}", "Domains": "{default, d1}", "Providers": "{p1, p2, p3}"}),
+    ("swap-off-refused-as-queued", "shared", "NoSwapIsRefusedAsQueued",
+     {"Instances": "{i1, i2}", "Domains": "{default, d1}", "Providers": "{p1, p2, p3}", "AllowTimeouts": "FALSE"}),
 ]
 
 DEFAULTS = {

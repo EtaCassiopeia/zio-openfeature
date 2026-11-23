@@ -86,6 +86,11 @@ trait FeatureFlagsAdmin {
     * previous provider down itself, since the SDK no longer holds it. Until the new provider has settled, installing
     * the previous provider again fails with `ProviderInitializationFailed`.
     *
+    * On a shared API the SDK queues the shutdown of the provider a swap replaces as the swap binds. While another
+    * instance's swap moves its slot off the provider this instance's slot holds, or a timed-out swap's `initialize()`
+    * still holds it, this swap fails at once with `ProviderInitializationFailed` (cause `ShutdownQueued`) and changes
+    * nothing; so does a swap to a provider another swap is moving off that no slot holds. Retry once that swap ends.
+    *
     * On an instance that has been shut down, the effect fails with `ProviderNotReady(NotReady)` and the provider is not
     * touched: a shut-down instance is never revived.
     *

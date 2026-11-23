@@ -7,6 +7,7 @@
 | `retry-left-behind-released` | registry | a retry with another provider leaves the failed build's wrapper behind (`FeatureFlagRegistry`'s `buildClient`), and the registry's close releases it |
 | `sibling-wrapper-not-orphaned` | shared | the owner's timed-out swap leaves a wrapper an open sibling's named slot holds to that sibling (`OrphanedProviders.heldByVisibleSlot`) |
 | `left-behind-released-at-owner-close` | shared | the owner's close releases a wrapper a non-owner's timed-out swap left behind, whose late `initialize()` failed (`ApiInstances.releaseLeftBehind`) |
+| `swap-off-refused-as-queued` | shared | a swap to a provider a sibling's swap in flight is moving off, held by no slot, is refused before anything changes (`ApiInstances.claimSwapOff`, `ShutdownQueued`): the SDK queued its shutdown at that swap's binding |
 
 After a change to the model, `Generate.tla` or `Targets.tla`, rerun from `..`:
 

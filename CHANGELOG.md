@@ -39,6 +39,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   slot off such a provider while another domain slot still holds it, and the API then shuts down before the SDK has
   decided about it on its executor, the OpenFeature Java SDK (1.23.0) shuts it down a second time. Make its
   `shutdown()` safe to call twice. Providers the library wraps are unaffected (#1019).
+- **A provider a slot serves is no longer shut down by another swap's queued shutdown, nor a provider you registered
+  shut down twice.** The SDK queues the shutdown of the provider a swap replaces when the swap binds, keyed by that
+  provider's registration. Two instances on one shared API swapping off one provider at once, the first swap then
+  failing, left its rollback serving a provider the second swap's shutdown closed; two swaps off a provider you
+  registered yourself, one of them timed out, shut it down twice; and a build or swap of a provider another swap was
+  replacing, while no slot held it, was shut down once that swap finished. Such a swap or build now fails at once with a
+  retryable `ProviderInitializationFailed` (cause `ShutdownQueued`), changing nothing; retry it once the other swap has
+  ended. Binding such a provider again with the API yourself is unsupported (#1014).
 
 ## [2.2.1] — 2026-11-19
 

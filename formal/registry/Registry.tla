@@ -150,6 +150,13 @@ Waiting(p) == replaced[p] \in pending
 \* the library's wrapper a sibling serves (OrphanedProviders.heldByVisibleSlot).
 HeldVisibly(p) == bound[Default] = p \/ Visible(p)
 
+\* p is the provider a swap in flight is moving off, and no slot holds it: the SDK queued its shutdown at that swap's
+\* binding, keyed by the state manager p had there, and runs it once the swap's provider initializes.  A binding of p
+\* now would give it a new state manager, which that shutdown would then close while it serves; one a slot still holds
+\* reuses the queued manager, which the shutdown then finds registered and leaves.  The library refuses the binding
+\* (ApiInstances.claimSwapOff, ProviderRegistration.refuseSwappedOff: ShutdownQueued).
+SwappedOffUnheld(p) == (\E j \in swapping : prior[j] = p) /\ SlotsOf(p) = {}
+
 ---------------------------------------------------------------------------
 \* The registry: getClient(d) / defaultClient.  The semaphore guards the map of promises, never a build: the first
 \* caller finds no promise for the domain and inserts one under the semaphore, then builds outside it, and completes
@@ -196,6 +203,7 @@ Create(i, p, own) ==
     \* A provider whose initialize() a timed-out swap or build left running: refused when no slot holds it
     \* (CreateRefused), and a binding that shares that call is outside the model (README), as is one waiting on it.
     /\ p \notin pending /\ ~Waiting(p)
+    /\ ~SwappedOffUnheld(p)
     /\ lock' = None
     /\ \/ bound[d] \in {None, p}
        \/ /\ \E j \in Instances : domainOf[j] = d /\ phase[j] = "evicted"
@@ -220,11 +228,12 @@ Create(i, p, own) ==
 \* A build on a provider whose initialize() a timed-out swap or build left running, held by no slot: the SDK would give
 \* it a new registration and call initialize() again alongside the running one, so the binding is refused, under the
 \* API's lock, before anything is bound (ProviderRegistration.refuseUnheld: StillInitializing).  The build fails with
-\* nothing bound; a registry evicts its promise (Evict), and the next getClient retries.
+\* nothing bound; a registry evicts its promise (Evict), and the next getClient retries.  So is a build on a provider a
+\* swap in flight is moving off, held by no slot (SwappedOffUnheld: ShutdownQueued).
 CreateRefused(i, p) ==
     /\ phase[i] = "checking"
     /\ lock = i
-    /\ p \in pending
+    /\ p \in pending \/ \E j \in swapping : prior[j] = p
     /\ SlotsOf(p) = {}
     /\ lock' = None
     /\ phase' = [phase EXCEPT ![i] = "failed"]
@@ -349,6 +358,12 @@ BuildTimeout(i, shut) ==
 \* registration from then on.  A swap is refused when a sibling's initialize() of p has started by the time it binds; one
 \* whose SDK task the sibling's task overtakes still shares that call, and then the SDK may shut the provider it replaces
 \* down before the swap's outcome (SwapOldShut).
+\* The SDK queues the shutdown of the provider a swap moves off at the binding, keyed by its state manager, and runs it
+\* once the swap's provider initializes (ProviderRepository.shutDownOld, isStateManagerRegistered).  So the swap claims
+\* that provider (ApiInstances.claimSwapOff), and a swap off one another swap in flight is moving off, or one a
+\* timed-out swap's pending initialize() replaced, is refused before anything changes (runSwap: ShutdownQueued): it would
+\* queue a second shutdown under that same manager, or leave a rollback binding it again under a new one to be shut
+\* down while it serves.  A swap to a provider another swap is moving off, held by no slot, is refused the same way.
 SwapStart(i, p) ==
     LET d == domainOf[i] IN
     /\ apiOpen
@@ -361,7 +376,10 @@ SwapStart(i, p) ==
     \* A swap to a provider still initializing after a timed-out swap, or to one waiting on that call, is refused until
     \* that call settles (refuseSwap); a swap off one is outside the model (README).
     /\ p \notin pending /\ ~Waiting(p)
+    /\ ~SwappedOffUnheld(p)
     /\ bound[d] \notin pending
+    /\ ~\E j \in swapping : prior[j] = bound[d]
+    /\ ~Waiting(bound[d])
     /\ swapping' = swapping \cup {i}
     /\ swaps' = swaps + 1
     /\ prior' = [prior EXCEPT ![i] = bound[d]]
@@ -373,6 +391,24 @@ SwapStart(i, p) ==
     /\ swappedOff' = swappedOff \ {p}
     /\ UNCHANGED << phase, domainOf, owner, apiOpen, lock, userOwned, deciding, builtOn, replaced >>
     /\ UNCHANGED timeoutVars
+
+\* A swap the claim refuses (SwapStart's comment): nothing changes, and the caller gets ShutdownQueued.  The guards
+\* SwapStart shares with it hold, and one of its three claim guards does not.
+SwapRefused(i, p) ==
+    LET d == domainOf[i] IN
+    /\ apiOpen
+    /\ phase[i] = "open"
+    /\ i \notin swapping
+    /\ swaps < MaxSwaps
+    /\ p # bound[d]
+    /\ i \notin deciding
+    /\ p \in userOwned => bound[Default] = p \/ Visible(p)
+    /\ p \notin pending /\ ~Waiting(p)
+    /\ bound[d] \notin pending
+    /\ \/ SwappedOffUnheld(p)
+       \/ \E j \in swapping : prior[j] = bound[d]
+       \/ Waiting(bound[d])
+    /\ UNCHANGED vars
 
 \* It initialized: the SDK shuts the old provider down only when no slot holds it any more (shutDownOld's guard); one
 \* another slot still holds keeps its state manager.
@@ -507,13 +543,16 @@ InitSettle(p, ok) ==
 
 ---------------------------------------------------------------------------
 \* The user binds a provider of their own directly with the API, and the SDK holds it: an instance built on it later
-\* holds it as Bound.Foreign.  Or binds again one of theirs that only a timed-out swap's pending initialize() holds, in
-\* a slot the library can see: an orphan list then leaves it to that slot.
+\* holds it as Bound.Foreign.
+\* An environment assumption: the user binds only a provider not bound before.  Binding again one of theirs that no slot
+\* holds any more is unsupported while the SDK has its shutdown queued (a swap in flight moving off it, or a timed-out
+\* swap's pending initialize() that replaced it), and those are the only ways one ends up held by no slot with its
+\* registration still in place: the SDK would give it a new state manager, and the queued shutdown would close it while
+\* that slot serves it.  The library cannot refuse a binding it does not make (docs/providers.md).
 UserBind(d, p) ==
     /\ apiOpen
     /\ bound[d] = None
-    /\ \/ p \notin everBound
-       \/ p \in userOwned /\ SlotsOf(p) = {} /\ (d = Default \/ \E j \in Instances : domainOf[j] = d)
+    /\ p \notin everBound
     /\ bound' = [bound EXCEPT ![d] = p]
     /\ registered' = registered \cup {p}
     /\ userOwned' = userOwned \cup {p}
@@ -638,6 +677,7 @@ Next ==
     \/ \E i \in Instances : Evict(i)
     \/ \E i \in Instances : ReleaseReplaced(i)
     \/ \E i \in Instances, p \in Providers : SwapStart(i, p)
+    \/ \E i \in Instances, p \in Providers : SwapRefused(i, p)
     \/ \E i \in Instances : SwapDone(i)
     \/ \E i \in Instances : SwapOldShut(i)
     \/ \E i \in Instances : SwapFailMark(i)

@@ -358,10 +358,12 @@ object RegistryReplaySpec extends ZIOSpecDefault {
       }
     }.orDie *> bounded(what)(run.fiber.join)
 
-  /** Lets the SDK's queued work run before a close: every task its executor took, but the `initialize()` calls the
-    * behaviour still holds. A swap's `shutDownOld` that runs after `OpenFeatureAPI.shutdown()` shuts a provider another
-    * slot held down a second time (`SdkLateShutdownCanarySpec`); the model counts the SDK's intended once, so the
-    * replay keeps that race out and compares the library.
+  /** Lets the SDK's queued work run before a close, and after a swap ends: every task its executor took, but the
+    * `initialize()` calls the behaviour still holds. A swap's `shutDownOld` that runs after `OpenFeatureAPI.shutdown()`
+    * shuts a provider another slot held down a second time (`SdkLateShutdownCanarySpec`); one that runs after the swap
+    * ended, once a later swap moved the last slot off that provider, shuts it down although its own decision, on time,
+    * was to leave it. The model counts the SDK's intended decision, so the replay keeps both races out and compares the
+    * library.
     */
   private def drainSdk(env: Env, what: String): IO[String, Unit] =
     ZIO
@@ -595,11 +597,26 @@ object RegistryReplaySpec extends ZIOSpecDefault {
           )
         } yield put(i, _.copy(swap = Some(f), started = begun))
 
+      case "SwapRefused" =>
+        // The swap's claim check refuses it before anything changes: the call returns at once with ShutdownQueued.
+        val i                      = act.str("i"); val p = provider(act.str("p")); val in = inst(i)
+        val h                      = in.handle.getOrElse(sys.error(s"SwapRefused($i): no instance"))
+        val swap: IO[String, Unit] =
+          (env.registry, in.domain) match {
+            case (Some(r), Some(d)) => r.setProvider(d, p).mapError(_.toString)
+            case _                  => h.setProvider(p).mapError(_.toString)
+          }
+        swap.either.timeout(WaitMillis.millis).withClock(Clock.ClockLive).flatMap {
+          case Some(Left(e)) if e.contains("ShutdownQueued") => ZIO.succeed(insts)
+          case other => ZIO.fail(s"SwapRefused($i) to ${p.name}: not refused as queued, but $other")
+        }
+
       case "SwapDone" =>
         val i = act.str("i")
         drive(s"SwapDone($i)", inst(i).swap.get, provider(boundOf(i))).flatMap {
-          case Right(_) => calls(i).as(put(i, _.copy(swap = None, started = None)))
-          case Left(e)  => ZIO.fail(s"SwapDone($i): the swap failed: $e")
+          case Right(_) =>
+            drainSdk(env, s"SwapDone($i)") *> calls(i).as(put(i, _.copy(swap = None, started = None)))
+          case Left(e) => ZIO.fail(s"SwapDone($i): the swap failed: $e")
         }
 
       case "SwapTimeout" =>
@@ -693,7 +710,7 @@ object RegistryReplaySpec extends ZIOSpecDefault {
         val old = provider(prev.asStr(prev.fun("prior")(i)))
         ZIO.succeed(inst(i).hold.foreach(_.go())) *>
           drive(s"SwapFail($i)", inst(i).swap.get, old).flatMap {
-            case Left(_)  => ZIO.succeed(put(i, _.copy(swap = None, hold = None)))
+            case Left(_)  => drainSdk(env, s"SwapFail($i)").as(put(i, _.copy(swap = None, hold = None)))
             case Right(_) => ZIO.fail(s"SwapFail($i): the swap succeeded")
           }
 

@@ -53,15 +53,38 @@ private[openfeature] object ProviderRegistration {
           "until that initialize() returns"
       )
 
-  /** A binding found the SDK's shutdown of this provider queued: a registration that replaced it is still initializing,
-    * and the SDK shuts the provider down once that call returns. Not an `IllegalStateException`, which a binding reads
-    * as the SDK's "already attached" refusal of a stale attachment.
+  /** The SDK has a shutdown of this provider queued, keyed by the state manager it had when a swap or a build replaced
+    * it, and runs it once the replacing registration's `initialize()` returns: a binding that gives the provider a new
+    * state manager meanwhile, or a second swap off it, would have it shut down while a slot serves it, or twice. Retry
+    * once that registration settles. Not an `IllegalStateException`, which a binding reads as the SDK's "already
+    * attached" refusal of a stale attachment.
     */
-  final class ShutdownQueued(provider: OFFeatureProvider)
-      extends RuntimeException(
+  final class ShutdownQueued(message: String) extends RuntimeException(message)
+
+  object ShutdownQueued {
+
+    /** A binding of a provider a registration that replaced it, still initializing, holds. */
+    def replaced(provider: OFFeatureProvider): ShutdownQueued =
+      new ShutdownQueued(
         s"'${ProviderNames.of(provider)}' cannot be installed again until the registration that replaced it, still " +
           "initializing, returns: the SDK shuts it down then"
       )
+
+    /** A binding of a provider no slot holds that another swap in flight is moving off. */
+    def swappedOff(provider: OFFeatureProvider): ShutdownQueued =
+      new ShutdownQueued(
+        s"'${ProviderNames.of(provider)}' cannot be installed while another swap is replacing it and no slot holds it: " +
+          "the SDK shuts it down once that swap's provider initializes; retry once that swap ends"
+      )
+
+    /** A swap off a provider another swap in flight is moving off, or that a registration still initializing replaced.
+      */
+    def swapOff(provider: OFFeatureProvider): ShutdownQueued =
+      new ShutdownQueued(
+        s"'${ProviderNames.of(provider)}' cannot be swapped off while another swap is replacing it or a registration " +
+          "that replaced it is still initializing: the SDK already queued its shutdown; retry once that one ends"
+      )
+  }
 
   /** How a registration settled: the provider's `initialize()` returned, and the SDK reports it in this state. Never
     * `NOT_READY`.
@@ -274,14 +297,15 @@ private[openfeature] object ProviderRegistration {
     domain: Option[String],
     bound: Bound,
     shareInFlight: Boolean = true,
-    reclaimForeign: Boolean = false
+    reclaimForeign: Boolean = false,
+    claimant: AnyRef = null
   ): Task[Registration] =
     ZIO.attemptBlocking {
       val armed = bound.managed.map(_.arm())
       // A slot that already holds it binds nothing, so nothing is shut down: another instance on this slot installed it.
       if (!shareInFlight && armed.exists(_.attempt.entered) && !holdsAlready(api, domain, bound))
         throw new StillInitializing(bound.sdk)
-      bind(api, domain, bound, reclaimForeign)
+      bind(api, domain, bound, reclaimForeign, claimant)
       val state  = domain.fold(api.getClient())(d => api.getClient(d)).getProviderState
       val reader = ProviderStateAccess.stateReader(api, domain.orNull, bound.sdk)
       // The SDK's state for the registration, read through its manager; without one the slot was rebound already.
@@ -303,8 +327,15 @@ private[openfeature] object ProviderRegistration {
     * `initialize()` of it runs and no slot of the API holds it: the SDK would give it a new registration and call
     * `initialize()` again alongside the one running. A slot that holds it shares the running call instead.
     */
-  def bind(api: OpenFeatureAPI, domain: Option[String], bound: Bound, reclaimForeign: Boolean = false): Unit =
-    if (!holdsAlready(api, domain, bound))
+  def bind(
+    api: OpenFeatureAPI,
+    domain: Option[String],
+    bound: Bound,
+    reclaimForeign: Boolean = false,
+    claimant: AnyRef = null
+  ): Unit =
+    if (!holdsAlready(api, domain, bound)) {
+      val unqueued = () => refuseSwappedOff(api, bound.sdk, claimant)
       bound match {
         // The library's wrapper outlives each registration of it: one whose last registration ended without a
         // successful replacement is still attached to it, and is reclaimed here, unless that registration still has
@@ -315,17 +346,44 @@ private[openfeature] object ProviderRegistration {
             domain.orNull,
             bound.sdk,
             () => refuseReclaim(api, wrapper),
-            () => refuseUnheld(api, wrapper)
+            () => { unqueued(); refuseUnheld(api, wrapper) }
           )
         case Bound.Foreign(_) if reclaimForeign =>
-          ProviderStateAccess.bindReclaiming(api, domain.orNull, bound.sdk, () => ())
+          ProviderStateAccess.bindReclaiming(api, domain.orNull, bound.sdk, () => (), unqueued)
         // The user's own provider: the SDK's binding, as the user would make it.
         case Bound.Foreign(_) =>
-          domain match {
-            case Some(d) => api.setProvider(d, bound.sdk)
-            case None    => api.setProvider(bound.sdk)
-          }
+          ProviderStateAccess.bindGuarded(api, domain.orNull, bound.sdk, unqueued)
       }
+    }
+
+  // Under the API's lock, so the swap's own binding, which takes the claim, cannot slip between this check and this
+  // binding.
+  private def refuseSwappedOff(api: OpenFeatureAPI, provider: OFFeatureProvider, claimant: AnyRef): Unit =
+    unheldWithShutdownQueued(api, provider, claimant).foreach(e => throw e)
+
+  /** The refusal of binding `provider` now, if it would meet a shutdown of it the SDK has queued: no slot holds it, and
+    * another instance's swap is moving off it, or a registration that replaced it, still initializing, holds it (for
+    * the library's wrapper, of the provider it wraps too). The SDK keys that shutdown by the state manager the provider
+    * had then: held by a slot, the binding reuses that manager, which the shutdown then finds registered and leaves;
+    * held by none, the binding gets a new manager, and the shutdown closes the provider under it. The claim of
+    * `claimant` (the swapping instance, or `null`) is its own, so a rollback to the provider its own swap moved off
+    * binds.
+    */
+  def unheldWithShutdownQueued(
+    api: OpenFeatureAPI,
+    provider: OFFeatureProvider,
+    claimant: AnyRef
+  ): Option[ShutdownQueued] = {
+    val underlying = provider match {
+      case wrapper: ManagedProvider => List(wrapper, wrapper.delegate)
+      case raw                      => List(raw)
+    }
+    if (ProviderStateAccess.boundIn(api, null, provider) || ApiInstances.boundInAnySlot(api, provider)) None
+    else if (underlying.exists(ApiInstances.swappedOffByAnother(api, _, claimant)))
+      Some(ShutdownQueued.swappedOff(provider))
+    else if (underlying.exists(ApiInstances.shutdownQueued(api, _))) Some(ShutdownQueued.replaced(provider))
+    else None
+  }
 
   // The SDK reuses a registration only from a slot that holds the provider; for an unheld one it starts a new call. The
   // slots the library can see are checked first; a wrapper still attached is held by a slot it cannot see, which shares
@@ -340,7 +398,7 @@ private[openfeature] object ProviderRegistration {
   // shutdown of a wrapper, queued until the registration that replaced it initializes, would close it once bound.
   private def refuseReclaim(api: OpenFeatureAPI, wrapper: ManagedProvider): Unit =
     if (wrapper.initsInFlightAnywhere > 0) throw new StillInitializing(wrapper)
-    else if (ApiInstances.shutdownQueued(api, wrapper)) throw new ShutdownQueued(wrapper)
+    else if (ApiInstances.shutdownQueued(api, wrapper)) throw ShutdownQueued.replaced(wrapper)
 
   /** Whether `domain`'s slot already holds this registration, so binding it again adds nothing. It would add a task on
     * the SDK's executor, with the registration as both new and old: run after a swap rebinds the slot, that task shuts

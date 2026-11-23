@@ -38,6 +38,8 @@ private[openfeature] object Bound {
   /** A provider registered with this API outside the library, in a slot the library can see: the target slot, the
     * default one, or that of an instance built on this API. The SDK owns its lifecycle and reuses its registration;
     * none of the [[ManagedProvider]] guarantees (init outcome, once-per-cycle shutdown, ordered events) apply to it.
+    * The SDK can shut it down twice: a swap off it that another domain slot still holds queues the SDK's decision,
+    * which, run after the API's shutdown, finds it unregistered.
     */
   final case class Foreign(provider: OFFeatureProvider) extends Bound {
     def sdk: OFFeatureProvider           = provider

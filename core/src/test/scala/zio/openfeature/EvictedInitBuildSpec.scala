@@ -95,14 +95,16 @@ object EvictedInitBuildSpec extends ZIOSpecDefault {
       .flatMap(r => ZIO.fail(new RuntimeException(s"$what did not happen $state")).unless(r.isDefined).unit)
 
   /** The owner swaps to `p`, which times out with its call still running, then to a provider that fails: the slot ends
-    * on the failed one, and no slot of the API holds `p`.
+    * on the failed one, and no slot of the API holds `p`. Each swap's deadline fires only once `p`'s call has entered:
+    * one fired while the SDK's task is still queued leaves `p` reading as not initializing, and the failed swap then
+    * rolls back onto it.
     */
   private def evict(api: OpenFeatureAPI, p: Gated) =
     for {
       dl    <- ZIO.succeed(new ScriptedInitDeadline)
       owner <- sync(api, open(), "d1", owns = true, dl)
       swap  <- owner.setProvider(p).either.fork
-      _     <- eventually("p's wait armed")(dl.armed.contains(p))
+      _     <- eventually("p's wait armed, its call started")(dl.armed.contains(p) && p.running.get() == 1)
       _     <- ZIO.succeed(dl.fire(p))
       timed <- swap.join
       q     <- owner.setProvider(failing("q")).either
@@ -172,7 +174,7 @@ object EvictedInitBuildSpec extends ZIOSpecDefault {
         for {
           owner  <- sync(api, open(), "d1", owns = true, dl)
           swap   <- owner.setProvider(p).either.fork
-          _      <- eventually("p's wait armed")(dl.armed.contains(p))
+          _      <- eventually("p's wait armed, its call started")(dl.armed.contains(p) && p.running.get() == 1)
           _      <- ZIO.succeed(dl.fire(p))
           timed  <- swap.join
           build  <- ZIO.scoped(sync(api, p, "d2", owns = false, new ScriptedInitDeadline)).either.fork
@@ -212,7 +214,7 @@ object EvictedInitBuildSpec extends ZIOSpecDefault {
           _     <- sync(api, open(), "d0", owns = true, dl)
           other <- sync(api, open(), "d1", owns = false, dl)
           swap  <- other.setProvider(p).either.fork
-          _     <- eventually("p's wait armed")(dl.armed.contains(p))
+          _     <- eventually("p's wait armed, its call started")(dl.armed.contains(p) && p.running.get() == 1)
           _     <- ZIO.succeed(dl.fire(p))
           timed <- swap.join
           q     <- other.setProvider(failing("q")).either
@@ -242,7 +244,7 @@ object EvictedInitBuildSpec extends ZIOSpecDefault {
         for {
           owner <- sync(api, a, "d1", owns = true, dl)
           swap  <- owner.setProvider(p).either.fork
-          _     <- eventually("p's wait armed")(dl.armed.contains(p))
+          _     <- eventually("p's wait armed, its call started")(dl.armed.contains(p) && p.running.get() == 1)
           _     <- ZIO.succeed(dl.fire(p))
           timed <- swap.join
           // The SDK shuts a down once p initializes: until then a is still attached, and no slot holds it.

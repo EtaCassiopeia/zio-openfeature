@@ -6,6 +6,7 @@ import dev.openfeature.sdk.{
   Metadata,
   NoOpProvider,
   OpenFeatureAPI,
+  SdkExecutorAccess,
   Value
 }
 import dev.openfeature.sdk.exceptions.GeneralError
@@ -46,6 +47,9 @@ object RegistryReplaySpec extends ZIOSpecDefault {
 
   /** Long enough that no deadline ever fires: every outcome is the replay's release. */
   val InitTimeout: Duration = 30.seconds
+  // The polls, 5 ms apart, on which the SDK's executor must read drained before a close.
+  private val DrainPolls     = 6
+  private val DrainPollNanos = 5000000L
 
   private def within(cond: => Boolean): Boolean = {
     val deadline = java.lang.System.nanoTime() + WaitMillis * 1000000L
@@ -59,6 +63,8 @@ object RegistryReplaySpec extends ZIOSpecDefault {
     val shutdowns     = new AtomicInteger(0)
     val inits         = new AtomicInteger(0)
     private val calls = new ConcurrentLinkedQueue[CompletableFuture[java.lang.Boolean]]()
+    // The calls running on the SDK's executor: tasks a drain of it leaves running.
+    val sdkCalls = new AtomicInteger(0)
 
     /** A call has started that the replay has not settled. */
     def initializing: Boolean = calls.asScala.exists(!_.isDone)
@@ -73,11 +79,16 @@ object RegistryReplaySpec extends ZIOSpecDefault {
     override def getMetadata: Metadata                      = new Metadata { override def getName: String = name }
     override def initialize(ctx: OFEvaluationContext): Unit = {
       inits.incrementAndGet()
+      val onSdk = Thread.currentThread().getName.startsWith("openfeature-provider-thread")
+      if (onSdk) sdkCalls.incrementAndGet(): Unit
       val call = new CompletableFuture[java.lang.Boolean]()
       calls.add(call)
       val ok =
         try call.get(InitTimeout.toMillis, TimeUnit.MILLISECONDS).booleanValue()
-        finally calls.remove(call): Unit
+        finally {
+          calls.remove(call)
+          if (onSdk) sdkCalls.decrementAndGet(): Unit
+        }
       if (!ok) throw new GeneralError(s"$name: initialize fails")
     }
     override def shutdown(): Unit = shutdowns.incrementAndGet(): Unit
@@ -346,6 +357,35 @@ object RegistryReplaySpec extends ZIOSpecDefault {
         LockSupport.parkNanos(200000L)
       }
     }.orDie *> bounded(what)(run.fiber.join)
+
+  /** Lets the SDK's queued work run before a close: every task its executor took, but the `initialize()` calls the
+    * behaviour still holds. A swap's `shutDownOld` that runs after `OpenFeatureAPI.shutdown()` shuts a provider another
+    * slot held down a second time (`SdkLateShutdownCanarySpec`); the model counts the SDK's intended once, so the
+    * replay keeps that race out and compares the library.
+    */
+  private def drainSdk(env: Env, what: String): IO[String, Unit] =
+    ZIO
+      .attemptBlocking {
+        def held = env.providers.values.map(_.sdkCalls.get().toLong).sum
+        // A task a cached pool's idle worker has just taken shows nowhere until that worker starts it: the counts must
+        // agree, read on either side of the executor's, across several polls.
+        val deadline = java.lang.System.nanoTime() + WaitMillis * 1000000L
+        var stable   = 0
+        var seen     = (0L, 0L)
+        while (stable < DrainPolls && java.lang.System.nanoTime() < deadline) {
+          val before  = held
+          val pending = SdkExecutorAccess.pending(env.api)
+          val after   = held
+          seen = (pending, after)
+          stable = if (before == after && pending == after) stable + 1 else 0
+          if (stable < DrainPolls) LockSupport.parkNanos(DrainPollNanos)
+        }
+        (stable >= DrainPolls, seen)
+      }
+      .orDie
+      .flatMap { case (drained, (pending, held)) =>
+        ZIO.unless(drained)(ZIO.fail(s"$what: the SDK's executor did not drain (pending=$pending, held=$held)")).unit
+      }
 
   private def joined[A](what: String, run: Running[A]): IO[String, A] =
     bounded(what)(run.fiber.join)
@@ -686,10 +726,12 @@ object RegistryReplaySpec extends ZIOSpecDefault {
 
       case "OwnerClose" =>
         val o = prev.str("owner")
-        bounded("OwnerClose")(inst(o).scope.fold(ZIO.unit)(_.close(Exit.unit))).as(insts)
+        drainSdk(env, "OwnerClose") *>
+          bounded("OwnerClose")(inst(o).scope.fold(ZIO.unit)(_.close(Exit.unit))).as(insts)
 
       case "RegistryClose" =>
-        bounded("RegistryClose")(env.registryScope.fold(ZIO.unit)(_.close(Exit.unit))).as(insts)
+        drainSdk(env, "RegistryClose") *>
+          bounded("RegistryClose")(env.registryScope.fold(ZIO.unit)(_.close(Exit.unit))).as(insts)
 
       case other => ZIO.fail(s"no step for action $other")
     }

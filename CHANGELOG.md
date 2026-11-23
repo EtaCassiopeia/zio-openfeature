@@ -46,7 +46,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   registered yourself, one of them timed out, shut it down twice; and a build or swap of a provider another swap was
   replacing, while no slot held it, was shut down once that swap finished. Such a swap or build now fails at once with a
   retryable `ProviderInitializationFailed` (cause `ShutdownQueued`), changing nothing; retry it once the other swap has
-  ended. Binding such a provider again with the API yourself is unsupported (#1014).
+  ended. Binding such a provider again with the API yourself is unsupported: the SDK shuts it down if the swap's
+  provider then initializes (#1014).
 
 ## [2.2.1] — 2026-11-19
 

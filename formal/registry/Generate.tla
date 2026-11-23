@@ -252,7 +252,10 @@ Work ==
     \/ /\ then = None
        /\ Shared
        /\ \E d \in Domains, p \in Providers :
-            /\ UserBind(d, p) /\ act' = [name |-> "UserBind", d |-> d, p |-> p]
+            /\ UserBind(d, p)
+            \* Not one a timed-out swap left waiting: if that call returns, the SDK shuts it down under the new
+            \* binding, which the model does not follow (unsupported).
+            /\ replaced[p] = None /\ act' = [name |-> "UserBind", d |-> d, p |-> p]
     \/ /\ then = None
        /\ Shared /\ \E i \in Instances : phase[i] = "building" /\ Fresh(i) /\ FailMark(i) /\ act' = [name |-> "FailMark", i |-> i]
     \* Not while a swap in flight would roll back to the provider this decision may shut down: the rollback reuses the

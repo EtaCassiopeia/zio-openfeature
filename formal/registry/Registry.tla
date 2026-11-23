@@ -543,16 +543,17 @@ InitSettle(p, ok) ==
 
 ---------------------------------------------------------------------------
 \* The user binds a provider of their own directly with the API, and the SDK holds it: an instance built on it later
-\* holds it as Bound.Foreign.
-\* An environment assumption: the user binds only a provider not bound before.  Binding again one of theirs that no slot
-\* holds any more is unsupported while the SDK has its shutdown queued (a swap in flight moving off it, or a timed-out
-\* swap's pending initialize() that replaced it), and those are the only ways one ends up held by no slot with its
-\* registration still in place: the SDK would give it a new state manager, and the queued shutdown would close it while
-\* that slot serves it.  The library cannot refuse a binding it does not make (docs/providers.md).
+\* holds it as Bound.Foreign.  Or binds again one of theirs that only a timed-out swap's pending initialize() holds, in
+\* a slot the library can see: an orphan list then leaves it to that slot.  That binding gets a new state manager, so
+\* if that call then returns the SDK's queued shutdown closes the provider under it, which InitSettle does not follow:
+\* unsupported (docs/providers.md), and Generate.tla keeps it out.  An environment assumption: the user does not bind
+\* one a swap in flight is moving off, held by no slot, which the same queued shutdown would close.
 UserBind(d, p) ==
     /\ apiOpen
     /\ bound[d] = None
-    /\ p \notin everBound
+    /\ \/ p \notin everBound
+       \/ p \in userOwned /\ SlotsOf(p) = {} /\ (d = Default \/ \E j \in Instances : domainOf[j] = d)
+    /\ ~SwappedOffUnheld(p)
     /\ bound' = [bound EXCEPT ![d] = p]
     /\ registered' = registered \cup {p}
     /\ userOwned' = userOwned \cup {p}

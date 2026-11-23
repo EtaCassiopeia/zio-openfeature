@@ -116,8 +116,8 @@ One API has one default slot and one slot per domain, so instances on it are not
   `initialize()` still holds: the second swap would queue the shutdown again, or bind it back under a new registration
   that the first shutdown then closes while it serves. So does a swap to such a provider, or a build on it, while no
   slot holds it. Nothing changes; retry once the other swap, or that late `initialize()`, has ended. Binding such a
-  provider again with the API yourself (`api.setProvider`) is unsupported: the SDK then shuts it down while your slot
-  serves it. A swap that has returned may still have that decision waiting on the SDK's executor, which the library
+  provider again with the API yourself (`api.setProvider`) is unsupported: if that swap's provider then initializes,
+  the SDK shuts yours down while your slot serves it. A swap that has returned may still have that decision waiting on the SDK's executor, which the library
   cannot see: a provider you registered yourself, swapped off one slot and then another in quick succession, can see
   a second `shutdown()`, so make it safe to call twice. Providers the library wraps absorb it.
 - **What is per instance and what is shared.** `setGlobalContext` and `addZioApiHook` belong to this instance

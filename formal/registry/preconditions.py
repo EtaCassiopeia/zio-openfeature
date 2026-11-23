@@ -35,13 +35,9 @@ guards = [
      "                            /\\ SlotsOf(q) = {}\n", "", "registry-retry-fails-too-and-releases-the-first-only-at-close"),
     ("SwapDone: no failure marked", "    /\\ i \\in swapping\n    /\\ failedOn[i] # bound[d]\n", "    /\\ i \\in swapping\n",
      "succeeds-after-its-failure"),
-    ("UserBind: an empty slot", "    /\\ bound[d] = None\n    /\\ p \\notin everBound\n",
-     "    /\\ p \\notin everBound\n",
+    ("UserBind: an empty slot", "    /\\ bound[d] = None\n    /\\ \\/ p \\notin everBound\n",
+     "    /\\ \\/ p \\notin everBound\n",
      "user-binds-a-held-slot"),
-    # The user binds only a provider not bound before: binding one again while the SDK has its shutdown queued is
-    # unsupported.
-    ("UserBind: only a provider not bound before", "    /\\ bound[d] = None\n    /\\ p \\notin everBound\n",
-     "    /\\ bound[d] = None\n", "user-binds-again-a-provider-a-timed-out-swap-left-waiting"),
     # A swap claims the provider it moves off: a second swap off it from another slot is refused.
     ("SwapStart: no swap off a provider another swap in flight is moving off",
      "    /\\ ~\\E j \\in swapping : prior[j] = bound[d]\n", "", "two-swaps-off-a-shared-provider-at-once"),

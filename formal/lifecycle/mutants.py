@@ -115,6 +115,15 @@ mutants = {
     'a provider whose queued shutdown has not run is installed again': (
         '    /\\ ~oldPending[p]\n',
         ''),
+    # A rollback refused before it binds leaves the previous provider installed while the slot binds the failed one:
+    # the refs and the SDK's routing disagree, and nothing shuts the failed provider down.
+    'a refused rollback keeps the previous provider installed': (
+        "    /\\ installed' = swap.new\n    /\\ status' = \"Error\"\n",
+        "    /\\ installed' = swap.prev\n    /\\ status' = \"Error\"\n"),
+    # A rollback refused before it binds leaves the previous provider running, bound nowhere.
+    'a refused rollback does not shut the previous provider down': (
+        '    /\\ IF owns THEN CallShutdown(swap.prev) ELSE UNCHANGED << shuts, shutOutcome >>\n',
+        '    /\\ UNCHANGED << shuts, shutOutcome >>\n'),
     # The gate never goes up.
     'no swap gate': (
         '    /\\ gate\' = TRUE\n    /\\ status\' = "NotReady"',

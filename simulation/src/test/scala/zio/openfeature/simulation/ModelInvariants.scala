@@ -59,6 +59,20 @@ object ModelInvariants {
       case _ => Nil
     }
 
+  // InstalledIsBound == (swap = None /\ ~shutDown /\ ~closed) => installed = bound: the provider the instance reports
+  // is the one its slot binds. The slot is read apart from the record, so only while the record is the same object
+  // before and after that read: no step ran in between.
+  private def installedIsBound(ff: FeatureFlagsLive, s: LifecycleState): List[String] =
+    if (s.lock != Lock.Free || s.shutDown || s.closed) Nil
+    else {
+      val bound = ff.sdkBound
+      Option
+        .when((ff.lifecycleSnapshot eq s) && !(bound eq s.installed))(
+          s"InstalledIsBound: the instance reports ${s.name.render}, its slot binds another provider"
+        )
+        .toList
+    }
+
   private def notReadyDuringSwap(where: String, s: LifecycleState): List[String] =
     Option
       .when(s.swap.isEmpty || s.status != ProviderStatus.NotReady)(
@@ -77,7 +91,7 @@ object ModelInvariants {
       ZIO.succeed {
         instance.get().foreach { ff =>
           val s = ff.lifecycleSnapshot
-          (always(s) ++ point.toList.flatMap(atPoint(_, s))).foreach { v =>
+          (always(s) ++ point.toList.flatMap(atPoint(_, s)) ++ installedIsBound(ff, s)).foreach { v =>
             Stats.hit("invariant.violated")
             found.add(s"$v (at $where)")
           }

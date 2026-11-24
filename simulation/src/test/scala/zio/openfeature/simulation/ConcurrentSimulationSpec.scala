@@ -243,9 +243,6 @@ object ConcurrentSimulationSpec extends ZIOSpecDefault {
       // Stacks a failed swap rolled back onto while their own initialize() had failed: such a rollback registers the
       // stack again, and a registration that initializes it again (a wrapper may not) fails again and is shut down.
       failedRollbacks <- Ref.make(List.empty[Built])
-      // A rollback did not restore the previous stack: the failed one stays routed, status Error, until a swap succeeds.
-      // Only a successful setProvider is promised to recover that state, so the run makes no other swap until then.
-      degraded <- Ref.make(false)
       // Times a swap's wait for initialize() out when the run fires it, never by itself: the instance keeps the default
       // init timeout, so no healthy swap races a short one.
       deadline = new ScriptedInitDeadline
@@ -464,7 +461,8 @@ object ConcurrentSimulationSpec extends ZIOSpecDefault {
                     _ <- ZIO.succeed(stalling(nb).foreach(_.initGate.release(abandon = false)))
                     _ <- Stats.generated("crun.swap.rolledBack")
                     // A rollback onto a stack whose initialize() failed may fail to restore it: the SDK slot then
-                    // still binds the failed stack, which serves with status Error until a later swap succeeds.
+                    // still binds the failed stack, which the instance installs again; it serves with status Error,
+                    // and the previous stack is shut down once like any stack a swap replaced.
                     routed = isBound(ad.sdkBound, nb)
                     _ <-
                       if (ontoFailed && routed)
@@ -485,7 +483,6 @@ object ConcurrentSimulationSpec extends ZIOSpecDefault {
                           _   <- ZIO.succeed(cur.leaves.values.foreach(_.retiring.set(true)))
                           old <- current.getAndSet(nb)
                           _   <- retired.update(old :: _)
-                          _   <- degraded.set(true)
                         } yield ()
                       else
                         ZIO.when(routed)(
@@ -501,7 +498,6 @@ object ConcurrentSimulationSpec extends ZIOSpecDefault {
                   report(s"setProvider to ${Spec.show(ns)}, whose initialize() fails or stalls, succeeded")
                 case Right(_) =>
                   for {
-                    _   <- degraded.set(false)
                     _   <- history.update(_ :+ Op.Swap(ns, t0, t1))
                     _   <- perturber.note(s"swap to ${Spec.show(ns)} returned")
                     _   <- installed.update(_ :+ nb)
@@ -567,7 +563,6 @@ object ConcurrentSimulationSpec extends ZIOSpecDefault {
                 case Right(_) =>
                   for {
                     _   <- Stats.generated("crun.swapBack.accepted")
-                    _   <- degraded.set(false)
                     _   <- swapLog.update(_ :+ ((Spec.show(b.spec), t0)))
                     _   <- history.update(_ :+ Op.Swap(b.spec, t0, t1))
                     old <- current.getAndSet(b)
@@ -622,8 +617,8 @@ object ConcurrentSimulationSpec extends ZIOSpecDefault {
           // No shutdown of the current stack's leaves while it is current: each was shut down once per earlier install.
           // Not while a shutdown runs, nor for a stack that serves after its own initialize() failed or still stalls.
           currentNotShutDown = (where: String) =>
-            (current.get <*> shutAt.get <*> degraded.get <*> pending.get).flatMap { case (b, sa, d, ps) =>
-              ZIO.when(sa.isEmpty && !d && ps.isEmpty && Spec.initOutcome(b.spec) == InitOutcome.Ok) {
+            (current.get <*> shutAt.get <*> pending.get).flatMap { case (b, sa, ps) =>
+              ZIO.when(sa.isEmpty && ps.isEmpty && Spec.initOutcome(b.spec) == InitOutcome.Ok) {
                 val shut = b.leaves.values.filter(_.shutdowns.get() >= timesInstalled(b)).map(_.name).toList
                 // Read after the counts: a shutdown that started meanwhile shut the stack down itself.
                 shutAt.get.flatMap(later =>
@@ -635,23 +630,17 @@ object ConcurrentSimulationSpec extends ZIOSpecDefault {
             }
 
           swapper = ZIO.foreachDiscard(plan.swaps.zipWithIndex) { case (s, index) =>
-            currentNotShutDown(s"before swap $index") *>
-              degraded.get.flatMap { d =>
-                if (d && Spec.initOutcome(s) != InitOutcome.Ok)
-                  perturber.note(s"swap to ${Spec.show(s)} skipped: a rollback was not restored") *>
-                    ZIO.succeed(Stats.hit("crun.swap.skippedWhileUnrestored"))
-                else swapOnce(s, index)
-              } *>
+            currentNotShutDown(s"before swap $index") *> swapOnce(s, index) *>
               ZIO.foreachDiscard(plan.backs.flatMap(_.lift(index)).flatten) { k =>
-                (degraded.get <*> pending.get <*> installed.get).flatMap { case (d, ps, ins) =>
+                (pending.get <*> installed.get).flatMap { case (ps, ins) =>
                   // Earlier reusable stacks, most recent first, one a timed-out swap left waiting on the SDK's queued
-                  // shutdown included, once that call has settled. Not while a rollback is unrestored, nor while a
-                  // timed-out swap is pending: a swap off a stack whose initialize() still runs is the lifecycle
-                  // model's, and the check after a swap back expects the stack it replaced shut down by its end.
+                  // shutdown included, once that call has settled. Not while a timed-out swap is pending: a swap off a
+                  // stack whose initialize() still runs is the lifecycle model's, and the check after a swap back
+                  // expects the stack it replaced shut down by its end.
                   val earlier = ins.reverse
                     .foldLeft(List.empty[Built])((acc, b) => if (acc.exists(_ eq b)) acc else acc :+ b)
                     .filter(b => reusable(b.spec))
-                  if (d || ps.nonEmpty || earlier.isEmpty) ZIO.succeed(Stats.hit("crun.swapBack.notTaken"))
+                  if (ps.nonEmpty || earlier.isEmpty) ZIO.succeed(Stats.hit("crun.swapBack.notTaken"))
                   else
                     currentNotShutDown(s"before the swap back after swap $index") *> swapBack(earlier(k % earlier.size))
                 }
@@ -786,12 +775,12 @@ object ConcurrentSimulationSpec extends ZIOSpecDefault {
       _ <- ZIO.foreachDiscard(
         (last :: olds).foldLeft(List.empty[Built])((acc, b) => if (acc.exists(_ eq b)) acc else acc :+ b)
       ) { b =>
-        // Once per install. A stack rolled back onto after its initialize() failed is registered again, and the shutdown
-        // of a registration whose rollback failed is not settled yet: at least once, and at most once per initialize().
+        // Once per install. A stack rolled back onto after its initialize() failed is registered again without a new
+        // cycle, so it too is shut down once per install, whether that rollback restored it or not.
         val reregistered = again.exists(_ eq b)
         val n            = (l: SimLeaf) => l.shutdowns.get()
         ZIO.foreachDiscard(b.leaves.values)(l =>
-          ZIO.when(if (reregistered) n(l) < 1 || n(l) > (l.inits.get() max 1) else n(l) != timesInstalled(b))(
+          ZIO.when(n(l) != timesInstalled(b))(
             report(
               s"${l.name} shut down ${l.shutdowns.get()} times, initialized ${l.inits.get()} times" +
                 (if (reregistered) " (rolled back onto after its initialize() failed)" else "")

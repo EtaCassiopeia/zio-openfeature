@@ -12,6 +12,7 @@ library action, the record's library variables must equal the model's.
 | `SwapTimeout` | `Status(SwapFailed)`, `Replaced(new's registration, prev)`, then `OrphanRecorded(prev, new)` if the instance owns its API | `runSwap`, the timeout branch; `recordOrphan` |
 | `SwapFailNoRollback` | `Status(SwapFailed)`, then `OrphanRecorded(prev, new)` if the instance owns its API | `runSwap`, the failure branch while the previous provider still initializes |
 | `SwapRollback(ok, r, early)` | `Reinstall(prev, name)`, `Status(SwapFailed)`, then `Replaced(prev's new registration, failed)` and `Status(RollbackSucceeded(r))` when `ok`; nothing more when the rollback's registration throws | `runSwap`, the failure branch; `restoreSdkRegistration`. A rollback whose registration times out (`Replaced(prev, failed)`), and one a sibling's swap wins the slot from, are outside the model |
+| `SwapRollbackRefused` | `Reinstall(prev, name)`, `Status(SwapFailed)`, `Reinstall(failed, name)` | `rollBack`'s refused branch |
 | `SwapRollbackUnbound` | `Reinstall(prev, name)`, `Status(SwapFailed)`, `Status(RollbackUnbound(before))` | `failedBeforeBinding` |
 | `SwapReconcile` | `GateDown`; `Status(signal)` for the SDK's state of the slot, none while it is `NOT_READY`; `ReplayDeferred` | the swap's `ensuring`, `reconcileRegistration`, `replayInitTimeout`, after every outcome |
 | `Deliver(ev)` | `Status(EventError(true))` for a `FATAL` event; otherwise `Status(signal)` for the SDK's state of the slot, or `Idle` while it is `NOT_READY` | `EventBridge.applySdkSignal` |

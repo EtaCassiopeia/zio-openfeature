@@ -319,7 +319,11 @@ evaluations keep going. To initialize a provider again, install a new instance.
   provider is shut down once, by the SDK. The same holds for a restored old provider during a rollback, and for a
   timed-out swap's provider that initializes late: the provider it replaced is shut down once.
 - If `initialize()` throws, `setProvider` fails with `ProviderInitializationFailed` and the old provider is restored (if
-  that fails too, the status stays `Error`). A timeout fails the same way, wrapping a `TimeoutException`, with no
+  that fails too, the status stays `Error`). If the Java SDK refuses to register the old provider again before it binds
+  it (a domain-scoped provider now bound under another domain, a shutting-down API), the slot keeps the failed provider:
+  the instance then reports that one as installed, status `Error`, so a later `setProvider` or the close shuts it down,
+  and the old provider, bound nowhere, is shut down at once by an instance that owns its API, or left to the API's
+  owner. A timeout fails the same way, wrapping a `TimeoutException`, with no
   rollback: the SDK would shut the old provider down once the new one became ready.
 - A provider instance already bound to another domain of the same API is reused by the SDK: no `initialize()` runs, and
   the swap or build takes the state the provider has. In `Ready` or `Stale` it serves at once. In `Error` or `Fatal`,

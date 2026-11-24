@@ -21,6 +21,8 @@ The mapping (formal/lifecycle/README.md, "Trace validation"):
                                         step does not include a write that comes after it), and `dropped`: the kinds
                                         of the bound provider's events delivered while the swap's gate was up, which
                                         the gate dropped and the reconcile may still read from the SDK's state
+  RollbackRefused after SwapRollback -> that step becomes SwapRollbackRefused: the rollback's registration was refused
+                                        before it bound, and the failed provider is installed again
   SwapRollback                       -> SwapRollback, or SwapRollbackUnbound when the swap
                                         recorded no SdkBind (its registration was refused), carrying `seenBefore`:
                                         whether the swap's provider instance appeared on any record before the
@@ -260,6 +262,11 @@ def labels(records):
                 swap_outcome = "SwapRollback"
                 rollback = act("SwapRollback" if bound_new else "SwapRollbackUnbound", seenBefore=swap_seen)
                 bound = swap_prev
+            # The rollback's registration was refused before it bound: the slot keeps the failed provider, which the
+            # instance installs again.
+            elif point == "RollbackRefused" and rollback is not None:
+                rollback["action"] = "SwapRollbackRefused"
+                bound = swap_new
             elif point == "OrphanRecorded" and swap_outcome == "SwapRollback":
                 return None
             elif point == "OrphanRecorded" and swap_outcome is None:

@@ -46,6 +46,7 @@ Work ==
     \/ SwapFailNoRollback /\ act' = [name |-> "SwapFailNoRollback"]
     \/ \E ok, early \in BOOLEAN, r \in Rollbacks :
          SwapRollback(ok, r, early) /\ act' = [name |-> "SwapRollback", ok |-> ok, r |-> r, early |-> early]
+    \/ SwapRollbackRefused /\ act' = [name |-> "SwapRollbackRefused"]
     \/ SwapReconcile /\ act' = [name |-> "SwapReconcile"]
     \/ CallerInterrupt /\ act' = [name |-> "CallerInterrupt"]
     \/ \E p \in All, e \in Signals : Emit(p, e) /\ act' = [name |-> "Emit", p |-> p, e |-> e]

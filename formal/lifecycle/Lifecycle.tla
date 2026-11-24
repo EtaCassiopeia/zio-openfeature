@@ -428,6 +428,25 @@ SwapRollback(ok, r, early) ==
     /\ swap' = Outcome("NONE") /\ pending' = None
     /\ UNCHANGED << lock, gate, bridgeOn, shutDown, closed, inits, emitted, shutBehaviour, swaps, owns >>
 
+\* SwapRollbackRefused: the rollback's registration of the previous provider is refused before it binds (the SDK's
+\* domain-scoped binding check, a repository shutting down, a stale attachment whose registration still has work
+\* queued), so the slot keeps binding the failed provider.  The instance installs that one again, so the refs and the
+\* SDK's routing agree, and a later swap or the close shuts it down; the status stays the failed swap's Error.  The
+\* previous provider is bound nowhere this instance can see: an instance that owns its API shuts it down itself, one
+\* that shares its API leaves it to the API's owner (ApiInstances.leaveBehind).  A refusal that names another
+\* registration of it (another domain's binding, an initialize() still running) leaves it to that one: outside this
+\* model's single slot.
+SwapRollbackRefused ==
+    /\ swap # None /\ swap.phase = "wait"
+    /\ sdk[swap.new] \in {"ERROR", "FATAL"} /\ ~ran[swap.new]
+    /\ ~(pending = swap.prev /\ sdk[swap.prev] = "NOT_READY")
+    /\ installed' = swap.new
+    /\ status' = "Error"
+    /\ IF owns THEN CallShutdown(swap.prev) ELSE UNCHANGED << shuts, shutOutcome >>
+    /\ swap' = Outcome("NONE") /\ pending' = None
+    /\ UNCHANGED << lock, gate, orphans, bridgeOn, shutDown, closed, bound, sdk, inits, ran, prevOf, events, emitted,
+                    oldPending, shutBehaviour, twoInits, dead, swaps, owns >>
+
 \* SwapRollbackUnbound: a swap whose registration was refused before binding.  Nothing is registered again: the previous
 \* provider is still bound, in the state its registration has.  The status goes back to the one before the swap, and
 \* SwapReconcile then applies the SDK's state for the slot as an event would be; one still initializing keeps its status
@@ -610,6 +629,7 @@ LifecycleNext ==
     \/ SwapTimeout
     \/ SwapFailNoRollback
     \/ \E ok, early \in BOOLEAN, r \in {"READY", "STALE", "ERROR", "FATAL"} : SwapRollback(ok, r, early)
+    \/ SwapRollbackRefused
     \/ SwapReconcile
     \/ CallerInterrupt
     \/ \E p \in All, e \in {"READY", "STALE", "ERROR", "FATAL"} : Emit(p, e)
@@ -771,6 +791,10 @@ BoundNotShutDown == (~shutDown /\ ~closed) => shuts[bound] = 0
 ClosedCleanly ==
     closed /\ owns => /\ orphans = {}
               /\ \A p \in Used : shuts[p] = 1
+
+\* The refs and the SDK's routing agree whenever no swap runs: the provider the instance reports, and shuts down at its
+\* close, is the one its slot binds.
+InstalledIsBound == (swap = None /\ ~shutDown /\ ~closed) => installed = bound
 
 -----------------------------------------------------------------------------
 (* A blind spot, stated as a check *)

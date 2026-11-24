@@ -46,6 +46,7 @@ into `SwapRollback`), so its handover to the orphan watcher is pinned only by `P
 | `ShutDownAtMostOnce` | No registration of a provider is shut down twice. |
 | `BoundNotShutDown` | While the instance is live, the provider bound to its slot has not been shut down. |
 | `StatusFollowsSdk` | Outside a swap or shutdown, once the installed provider's events are delivered, the status is the one the SDK's state for it implies (or `Fatal`, which no event leaves), and the slot binds the installed provider. |
+| `InstalledIsBound` | Outside a swap and a shutdown, the provider the instance reports, and shuts down at its close, is the one its slot binds. |
 | `ClosedCleanly` | When the scope of an instance that owns its API closes, nothing is pending and the last registration of every provider the instance registered was shut down exactly once. (One that shares its API leaves its providers to the API's owner.) |
 
 `mutants.py` puts each fixed lifecycle bug back into the model and checks that one of these invariants catches it:
@@ -67,6 +68,8 @@ into `SwapRollback`), so its handover to the orphan watcher is pinned only by `P
 | The async build does not record its provider as initializing (#635) | `NoConcurrentInit` |
 | The scope close does not wait for a swap in flight (#636) | `ClosedCleanly` |
 | A swap after the scope close is not refused (#665) | `ClosedCleanly` |
+| A rollback refused before it binds keeps the previous provider installed (#1011) | `InstalledIsBound` |
+| A rollback refused before it binds leaves the previous provider running (#1011) | `ClosedCleanly` |
 | A provider still initializing is installed again (#669) | `NoConcurrentInit` |
 | A provider a timed-out swap still holds is installed again | `BoundNotShutDown` |
 | A provider a registration still initializing replaced is installed again (an instance sharing its API records no orphans) | `BoundNotShutDown` |
@@ -192,6 +195,7 @@ there is one.
 | `SwapTimeout` | `setProvider`, timeout branch: `SwapFailed`, `Replaced`, `OrphanRecorded` (`recordOrphan`) |
 | `SwapFailNoRollback` | `setProvider`, failure branch when the previous provider's `initialize()` still runs: `SwapFailed`, `OrphanRecorded` |
 | `SwapRollback` | `setProvider`, failure branch, `rollBack`: `restoreSdkRegistration` (probe point `RollbackBind`), then `Replaced` and `RollbackSucceeded(settled)`; or `cleanupUnboundFailedProvider` when `initialize()` threw, which is `CallShutdown` of the failed provider through `boundedProviderShutdown` (a throw is logged, a hang abandoned at the bound). On a timeout, which the model folds into this step, `Replaced` and `OrphanRecorded` |
+| `SwapRollbackRefused` | `setProvider`, failure branch, `rollBack`: `restoreSdkRegistration` refused before it binds (the SDK's domain-scoped binding check, a repository shutting down, a stale attachment whose registration still has work queued), with the slot still binding the failed provider: probe point `RollbackRefused`, `Reinstall` of the failed provider, and `releasePrevious`, which is `CallShutdown` of the previous provider through `boundedProviderShutdown` for an instance that owns its API, or `ApiInstances.leaveBehind` for one that shares it |
 | `SwapRollbackUnbound` | `setProvider`, failure branch: `failedBeforeBinding`, `RollbackUnbound(before)` |
 | `SwapReconcile` | `setProvider`, after every outcome: `GateDown`, probe point `SwapReconcile` (and `LateReady` after a timeout), then `reconcileRegistration` and the replay of a deferred watchdog deadline; inside the swap's uninterruptible region, with the lock held |
 | `CallerInterrupt` | an interrupt of `setProvider`'s caller, which takes effect only in the phases in `Interruptible`: none, since the swap body and the re-read run uninterruptibly (`runSwap`'s `.uninterruptible`) |
@@ -473,6 +477,7 @@ outcome).
 | `initialize()` hangs, then throws | `SwapTimeout`, then `SdkInitFail`; `OrphanResolved` reads `ERROR` from a provider whose `initialize()` never returned, and shuts the replaced provider down |
 | The registration is refused before binding | `SdkBindFail`, then `SwapRollbackUnbound` |
 | The rollback's provider fails too | `SwapRollback(ok, r, early)` with `ok = FALSE` and `r` in `{"ERROR", "FATAL"}` |
+| The rollback's registration is refused before it binds | `SwapRollbackRefused`: the failed provider stays bound and is installed again; the previous provider, bound nowhere, is shut down once by an instance that owns its API |
 | A provider reports a failure at runtime | `Emit(p, "ERROR")` or `Emit(p, "FATAL")`; `Fatal` is sticky (`Apply`), and `StatusFollowsSdk` allows for it |
 | Events arrive late, in any order, or never | `events` is a set, and nothing forces `Deliver` |
 | Shutdown or scope close while work is in flight | Both wait for the swap lock; `TearDown` shuts down the bound provider, the providers whose shutdown the SDK had queued, and the predecessors of the orphans not released |

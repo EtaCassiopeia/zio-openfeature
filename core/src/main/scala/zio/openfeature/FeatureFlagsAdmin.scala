@@ -77,14 +77,16 @@ trait FeatureFlagsAdmin {
     * the swap fail with `ProviderNotReady`.
     *
     * If the new provider's `initialize()` fails, the effect fails with `ProviderInitializationFailed` and the previous
-    * provider is registered again. If it does not finish within the init timeout, the effect fails with
-    * `ProviderInitializationFailed` wrapping a `TimeoutException` and status becomes `Error`, but the swap is not
-    * rolled back: the new provider stays registered (status recovers to `Ready` if it finishes initializing later), and
-    * the previous provider is not restored, because the SDK would shut it down if the new one later became ready. Call
-    * `setProvider` again with another provider to recover. If the new provider fails to initialize later instead, or
-    * has not finished when this instance shuts down or its scope closes, an instance that owns its API shuts the
-    * previous provider down itself, since the SDK no longer holds it. Until the new provider has settled, installing
-    * the previous provider again fails with `ProviderInitializationFailed`.
+    * provider is registered again. If the SDK refuses that registration before it binds, the failed provider stays
+    * installed, status `Error`, until a later `setProvider` succeeds or the instance closes, and the previous provider
+    * is shut down, or left to the API's owner on a shared API. If it does not finish within the init timeout, the
+    * effect fails with `ProviderInitializationFailed` wrapping a `TimeoutException` and status becomes `Error`, but the
+    * swap is not rolled back: the new provider stays registered (status recovers to `Ready` if it finishes initializing
+    * later), and the previous provider is not restored, because the SDK would shut it down if the new one later became
+    * ready. Call `setProvider` again with another provider to recover. If the new provider fails to initialize later
+    * instead, or has not finished when this instance shuts down or its scope closes, an instance that owns its API
+    * shuts the previous provider down itself, since the SDK no longer holds it. Until the new provider has settled,
+    * installing the previous provider again fails with `ProviderInitializationFailed`.
     *
     * On a shared API the SDK queues the shutdown of the provider a swap replaces as the swap binds. While another
     * instance's swap moves its slot off the provider this instance's slot holds, or a timed-out swap's `initialize()`

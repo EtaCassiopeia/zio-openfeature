@@ -48,6 +48,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   retryable `ProviderInitializationFailed` (cause `ShutdownQueued`), changing nothing; retry it once the other swap has
   ended. Binding such a provider again with the API yourself is unsupported: the SDK shuts it down if the swap's
   provider then initializes (#1014).
+- **A rollback the SDK refuses before it binds no longer leaks the failed provider.** When a failed swap's rollback
+  could not register the previous provider again, the SDK kept routing to the failed one while the instance reported
+  the previous one, and after one more failed swap nothing ever shut the failed provider down; after a successful swap
+  or the close, the previous one leaked instead. The instance now installs the provider its slot routes to, so a later
+  swap or the close shuts it down, and shuts the previous provider down itself when it owns the API, or leaves it to
+  the API's owner (#1011).
 
 ## [2.2.1] — 2026-11-19
 

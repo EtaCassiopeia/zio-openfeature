@@ -144,6 +144,7 @@ object LifecycleReplaySpec extends ZIOSpecDefault {
     "SwapTimeout",
     "SwapFailNoRollback",
     "SwapRollback",
+    "SwapRollbackRefused",
     "SwapRollbackUnbound",
     "SwapReconcile",
     "Deliver",
@@ -387,6 +388,18 @@ object LifecycleReplaySpec extends ZIOSpecDefault {
         Some(
           List(LifecycleInput.Reinstall(providers(prev), named(prev)), LifecycleInput.Status(Signal.SwapFailed)) ++
             succeeded
+        )
+      // The rollback installs the previous provider and records the failure, as SwapRollback does; its registration is
+      // then refused before it binds, and the failed provider the slot still binds is installed again.
+      case "SwapRollbackRefused" =>
+        val (failed, prev, _, _) = swap
+        if (pre.inits(prev) > 0) sys.error(s"${act.name} with the previous provider still initializing")
+        Some(
+          List(
+            LifecycleInput.Reinstall(providers(prev), named(prev)),
+            LifecycleInput.Status(Signal.SwapFailed),
+            LifecycleInput.Reinstall(providers(failed), named(failed))
+          )
         )
       case "SwapRollbackUnbound" =>
         val (_, prev, before, _) = swap

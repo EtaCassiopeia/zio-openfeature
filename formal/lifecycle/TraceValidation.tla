@@ -91,7 +91,7 @@ TInit ==
 \* allows all of these anywhere; restricting them keeps the search small.  The restriction is not proved
 \* to lose no matching behaviour: an SDK step taken later can read state a library step changed.  The swap, timeout
 \* and rollback cases were checked by hand, and the accept fixtures (formal/lifecycle/traces) keep it honest.
-NeedsInit == Next1 \in {"SwapDone", "SwapRollback", "SwapFailNoRollback", "SwapReconcile", "OrphanResolved", "Deliver",
+NeedsInit == Next1 \in {"SwapDone", "SwapRollback", "SwapRollbackRefused", "SwapFailNoRollback", "SwapReconcile", "OrphanResolved", "Deliver",
                           "ScopeClose", "ShutdownDone"}
 
 \* Whether the recorded name `n` is `p`: a model value q1 prints as "q1" (trace_labels.py).  A record without identity
@@ -142,6 +142,7 @@ PlainNext ==
     \/ Env(CallerInterrupt)
     \/ \E early \in BOOLEAN, r \in {"READY", "STALE", "ERROR", "FATAL"} :
          Lib("SwapRollback", (Step.ok => r = Step.state) /\ SwapRollback(Step.ok, r, early))
+    \/ Lib("SwapRollbackRefused", SwapRollbackRefused)
     \/ \E ev \in events : Lib("Deliver", Recorded(ev.e) /\ DeliverToBridge(ev) /\ WroteStatus)
     \/ \E o \in orphans : Lib("OrphanResolved", Named(o.prev, Step.provider) /\ Named(o.watch, Step.watch) /\ OrphanResolved(o))
     \/ Lib("ShutdownStart", ShutdownStart)

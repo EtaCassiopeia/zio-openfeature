@@ -355,10 +355,12 @@ final private[openfeature] class FeatureFlagsLive(
     * which the SDK shuts down once it returns, so shutting it down here too would use up the wait a later swap makes
     * for that shutdown. An instance that owns its API watches the call instead, for when it throws or never finishes;
     * one that shares its API leaves the provider to the SDK, as it leaves a timed-out swap's, so if the call then
-    * throws nothing shuts it down. It threw, or the registration failed: the failed provider is unbound and no SDK
-    * shutdown is coming, so it is shut down here.
+    * throws nothing shuts it down. It threw after binding: the failed provider is unbound and no SDK shutdown is
+    * coming, so it is shut down here. The registration was refused before it bound: the slot keeps the failed provider,
+    * which is installed again (`refused`), and the previous provider is released (`releasePrevious`).
     */
-  private def rollBack(oldProvider: Bound, oldName: String, incoming: Bound, newName: String): UIO[Unit] = {
+  private def rollBack(oldProvider: Bound, oldName: String, incoming: Bound, incomingName: ProviderName): UIO[Unit] = {
+    val newName = incomingName.render
     // Losing the slot to a sibling swap ends the wait, not the call: the SDK still shuts the failed provider down when it
     // returns. An instance that owns its API has no sibling: for it a lost slot means the API is going down, the call
     // may never run, and nothing is left to wait for.
@@ -379,8 +381,24 @@ final private[openfeature] class FeatureFlagsLive(
         // instance that shares its API leaves it to the API's owner.
         ZIO.succeed(if (!ownsApi) oldProvider.managed.foreach(ApiInstances.leaveBehind(api, _)))
 
+    // Refused before it bound: the slot still binds the failed provider. The instance installs that one again, so the
+    // refs and the SDK's routing agree and a later swap or the close shuts it down, and releases the previous one,
+    // which no slot of this instance holds now.
+    def refused(e: Throwable) =
+      ZIO.suspendSucceed {
+        if (!slotHolds(incoming.sdk)) unrestored(e)
+        else
+          failed(
+            e,
+            s"failed to re-register previous provider '$oldName'; the failed provider '$newName' stays installed " +
+              "until a later setProvider succeeds"
+          ) *> probe.at(Point.RollbackRefused) *>
+            lifecycle.run(LifecycleInput.Reinstall(incoming.sdk, incomingName)) *>
+            ZIO.succeed(failedRegistration.set(None)) *> releasePrevious(oldProvider, e)
+      }
+
     restoreSdkRegistration(oldProvider, incoming).foldZIO(
-      unrestored,
+      refused,
       {
         case Some(restored) =>
           restored
@@ -412,6 +430,39 @@ final private[openfeature] class FeatureFlagsLive(
           ) *> ZIO.succeed(if (!ownsApi) oldProvider.managed.foreach(ApiInstances.leaveBehind(api, _)))
       }
     )
+  }
+
+  /** The previous provider of a rollback refused before it bound: an instance that owns its API shuts the library's
+    * wrapper down itself, bounded, unless a slot it can see still holds it; one that shares its API leaves it to the
+    * API's owner. A provider of the user's is theirs and the SDK's. A refusal that names another registration of it
+    * leaves it to that one, and the owner does not shut it down: the SDK's queued shutdown of it, an initialize() of it
+    * still running, or a domain-scoped binding of it under another domain, whose slot the API's shutdown reaches.
+    */
+  private def releasePrevious(oldProvider: Bound, refusal: Throwable): UIO[Unit] =
+    oldProvider.managed match {
+      case None                      => ZIO.unit
+      case Some(wrapper) if !ownsApi => ZIO.succeed(ApiInstances.leaveBehind(api, wrapper))
+      case Some(wrapper)
+          if heldElsewhere(refusal) || slotHolds(wrapper) || ProviderStateAccess.boundIn(api, null, wrapper) ||
+            ApiInstances.boundElsewhere(api, this, wrapper) =>
+        ZIO.unit
+      case Some(wrapper) =>
+        ProviderRegistration.boundedProviderShutdown(wrapper, "setProvider (rollback refused)") *>
+          ZIO
+            .attemptBlocking {
+              EventProviderAccess.deregisterGlobalProvider(api, wrapper)
+              EventProviderAccess.detach(wrapper)
+            }
+            .tapErrorCause(c =>
+              ZIO.logWarningCause("setProvider (rollback refused): deregistering its events failed", c)
+            )
+            .ignore
+    }
+
+  private def heldElsewhere(refusal: Throwable): Boolean = refusal match {
+    case _: ProviderRegistration.ShutdownQueued | _: ProviderRegistration.StillInitializing => true
+    case _: IllegalArgumentException                                                        => true
+    case _                                                                                  => false
   }
 
   private def failedOnRollback(incoming: Bound): UIO[Boolean] =
@@ -812,7 +863,7 @@ final private[openfeature] class FeatureFlagsLive(
                   lifecycle.run(LifecycleInput.Reinstall(oldProvider.sdk, previousName)) *>
                     applySignal(Signal.SwapFailed) *>
                     probe.at(Point.SwapRollback) *>
-                    rollBack(oldProvider, oldName, incoming, newName)
+                    rollBack(oldProvider, oldName, incoming, incomingName)
                 }
               }
         }

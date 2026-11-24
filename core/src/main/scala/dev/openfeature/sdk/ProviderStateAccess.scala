@@ -57,11 +57,15 @@ object ProviderStateAccess {
     domain: String,
     provider: FeatureProvider,
     mayReclaim: () => Unit,
-    mayBind: () => Unit = () => ()
+    mayBind: () => Unit = () => (),
+    bound: ProviderState => Unit = _ => ()
   ): Unit = {
     val held = api.lock.writeLockAutoCloseable()
-    try { mayBind(); bindOrReclaim(api, domain, provider, mayReclaim) }
-    finally held.close()
+    try {
+      mayBind()
+      bindOrReclaim(api, domain, provider, mayReclaim)
+      bound(api.getFeatureProviderStateManager(domain).getState)
+    } finally held.close()
   }
 
   /** The SDK's own binding of `provider` to `domain`'s slot (the default slot when `domain` is null), after `mayBind`,

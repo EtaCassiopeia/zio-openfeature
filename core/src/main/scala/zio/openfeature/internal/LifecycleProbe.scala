@@ -109,6 +109,9 @@ private[openfeature] object LifecycleProbe {
     /** The bridge's status write moved the status, recorded once per transition with the new status. */
     final case class StatusWritten(status: ProviderStatus) extends Point
 
+    /** The SDK called the wrapper's `initialize()`, on its executor, before the wrapper counts the call. */
+    case object InitEntering extends Point
+
     /** A registered provider's `initialize()` was entered (by the SDK, on its executor), before it runs. */
     case object InitEntered extends Point
 

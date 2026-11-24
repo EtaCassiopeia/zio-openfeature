@@ -11,10 +11,11 @@ sealed abstract private[openfeature] class Bound {
   /** The wrapper, when the library registers one. */
   def managed: Option[ManagedProvider]
 
-  /** Whether an `initialize()` of this registration is still running. Unknown for a foreign provider, whose lifecycle
-    * the SDK owns: `false`, as before the library registered wrappers.
+  /** Whether an `initialize()` of this registration is still running, or queued on the SDK's executor and certain to
+    * start. Unknown for a foreign provider, whose lifecycle the SDK owns: `false`, as before the library registered
+    * wrappers.
     */
-  def initializing: Boolean = managed.exists(_.initsInFlightAnywhere > 0)
+  def initializing: Boolean = managed.exists(_.initUnfinished)
 
   /** Whether the provider's name can be read now: for a wrapper, once an `initialize()` has ended and none runs. Before
     * the first one ends the SDK may not have entered it yet, and a provider that names itself in `initialize()` has no

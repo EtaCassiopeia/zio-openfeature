@@ -37,7 +37,8 @@ class DiscoverNext(unittest.TestCase):
         self.assertEqual(shared.discover_next(lifecycle, "Lifecycle.tla", "LifecycleNext"), {
             "CallerInterrupt", "Deliver", "Die", "Emit", "EmitStaleWhileStarting", "OrphanResolved", "ScopeClose",
             "SdkBind", "SdkBindFail", "SdkInitFail", "SdkInitOk", "SdkShutDownOld", "ShutdownDone", "ShutdownStart",
-            "SwapDone", "SwapFailNoRollback", "SwapReconcile", "SwapRollback", "SwapRollbackUnbound", "SwapStart",
+            "SwapDone", "SwapFailNoRollback", "SwapReconcile", "SwapRollback", "SwapRollbackRefused", "SwapRollbackUnbound",
+            "SwapStart",
             "SwapTimeout"})
 
     def test_constants_declared_in_a_block_or_on_one_line_are_not_actions(self):

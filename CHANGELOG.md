@@ -54,6 +54,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   or the close, the previous one leaked instead. The instance now installs the provider its slot routes to, so a later
   swap or the close shuts it down, and shuts the previous provider down itself when it owns the API, or leaves it to
   the API's owner (#1011).
+- **A provider whose `initialize()` the SDK has queued but not started counts as initializing.** The SDK binds a
+  provider first and runs its `initialize()` later on its executor. When a swap timed out in that window, a later
+  failing swap rolled back onto the provider, and a build or a swap back could bind it again, each starting a second
+  `initialize()` alongside the first. A call now counts from the binding that hands it to the SDK: the rollback
+  leaves the provider to its pending call, and the binding or the swap back is refused as "still initializing" (#1028).
 
 ## [2.2.1] — 2026-11-19
 

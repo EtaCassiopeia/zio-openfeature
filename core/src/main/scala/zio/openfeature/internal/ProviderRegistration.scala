@@ -305,7 +305,7 @@ private[openfeature] object ProviderRegistration {
       // A slot that already holds it binds nothing, so nothing is shut down: another instance on this slot installed it.
       if (!shareInFlight && armed.exists(_.attempt.entered) && !holdsAlready(api, domain, bound))
         throw new StillInitializing(bound.sdk)
-      bind(api, domain, bound, reclaimForeign, claimant)
+      bind(api, domain, bound, reclaimForeign, claimant, armed)
       val state  = domain.fold(api.getClient())(d => api.getClient(d)).getProviderState
       val reader = ProviderStateAccess.stateReader(api, domain.orNull, bound.sdk)
       // The SDK's state for the registration, read through its manager; without one the slot was rebound already.
@@ -332,7 +332,8 @@ private[openfeature] object ProviderRegistration {
     domain: Option[String],
     bound: Bound,
     reclaimForeign: Boolean = false,
-    claimant: AnyRef = null
+    claimant: AnyRef = null,
+    armed: Option[ManagedProvider.Armed] = None
   ): Unit =
     if (!holdsAlready(api, domain, bound)) {
       val unqueued = () => refuseSwappedOff(api, bound.sdk, claimant)
@@ -341,12 +342,17 @@ private[openfeature] object ProviderRegistration {
         // successful replacement is still attached to it, and is reclaimed here, unless that registration still has
         // work queued on the wrapper.
         case Bound.Managed(wrapper) =>
+          // The attempt this binding's initialize() comes into, armed before the binding: one that call has already
+          // entered, or ended, reads as not queued.
+          val attempt = armed.getOrElse(wrapper.arm()).attempt
           ProviderStateAccess.bindReclaiming(
             api,
             domain.orNull,
             bound.sdk,
             () => refuseReclaim(api, wrapper),
-            () => { unqueued(); refuseUnheld(api, wrapper) }
+            () => { unqueued(); refuseUnheld(api, wrapper) },
+            // A registration bound NOT_READY leads to an initialize() of the wrapper: counted from here.
+            state => if (state == ProviderState.NOT_READY) wrapper.submitted(attempt)
           )
         case Bound.Foreign(_) if reclaimForeign =>
           ProviderStateAccess.bindReclaiming(api, domain.orNull, bound.sdk, () => (), unqueued)
@@ -390,14 +396,14 @@ private[openfeature] object ProviderRegistration {
   // the call, or by a dead registration, which the reclaim then refuses.
   private def refuseUnheld(api: OpenFeatureAPI, wrapper: ManagedProvider): Unit =
     if (
-      wrapper.initsInFlightAnywhere > 0 && !ProviderStateAccess.boundIn(api, null, wrapper) &&
+      wrapper.initUnfinished && !ProviderStateAccess.boundIn(api, null, wrapper) &&
       !ApiInstances.boundInAnySlot(api, wrapper) && !EventProviderAccess.attached(wrapper)
     ) throw new StillInitializing(wrapper)
 
   // A dead registration's `initialize()` still running would run alongside the one this binding starts; the SDK's
   // shutdown of a wrapper, queued until the registration that replaced it initializes, would close it once bound.
   private def refuseReclaim(api: OpenFeatureAPI, wrapper: ManagedProvider): Unit =
-    if (wrapper.initsInFlightAnywhere > 0) throw new StillInitializing(wrapper)
+    if (wrapper.initUnfinished) throw new StillInitializing(wrapper)
     else if (ApiInstances.shutdownQueued(api, wrapper)) throw ShutdownQueued.replaced(wrapper)
 
   /** Whether `domain`'s slot already holds this registration, so binding it again adds nothing. It would add a task on

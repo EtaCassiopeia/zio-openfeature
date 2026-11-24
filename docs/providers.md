@@ -362,7 +362,9 @@ evaluations keep going. To initialize a provider again, install a new instance.
   until that call returns, and the provider this slot holds stays in place. So is a build on one whose earlier
   `initialize()`, from a timed-out swap or registry build, still runs while no slot holds it any more: the build fails
   at once ("still initializing"; `ProviderInitializationFailed` from a registry's `getClient`), binds nothing and
-  shuts nothing down, and the next attempt after that call returns builds it.
+  shuts nothing down, and the next attempt after that call returns builds it. A call counts from the moment the
+  binding hands it to the Java SDK, which runs it on its own executor, not from when it starts: one the SDK has queued
+  but not yet started is still initializing.
   A build into a slot that already holds the provider shares the running call instead. If `setProvider` is called while the
   timed-out provider, or the provider an async start was built with, is still initializing and the new provider's
   `initialize()` throws, there is nothing to roll back to: that provider never served and is not initialized a second

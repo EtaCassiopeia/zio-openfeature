@@ -112,6 +112,23 @@ final private[openfeature] class ManagedProvider private (
   /** How many `initialize()` calls are running over every domain. */
   def initsInFlightAnywhere: Int = inFlight.values().stream().mapToInt(_.get()).sum()
 
+  /** Whether a binding has handed the SDK an `initialize()` of this wrapper that has not entered it yet: the SDK binds
+    * first and runs the call on its executor, and a registration it binds in NOT_READY always leads to one.
+    */
+  def initQueued: Boolean = { val a = attempt.get(); a.submitted && !a.entered }
+
+  /** Whether an `initialize()` of this wrapper runs, or the SDK holds one it is certain to start: a call counts from
+    * the binding that hands it to the SDK. The queued one is read first, and a call is counted in flight before it
+    * enters its attempt, so a call read here is either still queued or already counted.
+    */
+  def initUnfinished: Boolean = initQueued || initsInFlightAnywhere > 0
+
+  /** Records that a binding handed the SDK a registration whose `initialize()` comes into `armed`, the attempt the
+    * binding armed before it bound. Under the API's lock. Never re-arms: a call that already entered or ended `armed`
+    * leaves it entered, so nothing reads as queued that no call will enter.
+    */
+  private[internal] def submitted(armed: ManagedProvider.Attempt): Unit = armed.submit()
+
   /** What a registration about to bind waits on: the attempt the next `initialize()` enters (the running one's, when
     * one runs), and the signal of the cycle that call belongs to. Taken before the binding, so nothing a later
     * registration arms can replace them.
@@ -179,11 +196,15 @@ final private[openfeature] class ManagedProvider private (
       )
       .ignore
 
-  override def initialize(context: OFEvaluationContext): Unit =
+  override def initialize(context: OFEvaluationContext): Unit = {
+    at(LifecycleProbe.Point.InitEntering)
     observeInit(None)(current.get().initialize(context))
+  }
 
-  override def initialize(context: OFEvaluationContext, domain: String): Unit =
+  override def initialize(context: OFEvaluationContext, domain: String): Unit = {
+    at(LifecycleProbe.Point.InitEntering)
     observeInit(Option(domain))(current.get().initialize(context, domain))
+  }
 
   /** Reaches the provider once per cycle, then stops that cycle's lane and releases the event attachment, unless a new
     * cycle took it over meanwhile.
@@ -220,7 +241,9 @@ final private[openfeature] class ManagedProvider private (
   }
 
   private def observeInit(domain: Option[String])(body: => Unit): Unit = {
-    val k       = key(domain)
+    val k = key(domain)
+    // Counted before it enters its attempt, so a reader never sees it neither queued nor in flight.
+    inFlight.computeIfAbsent(k, _ => new AtomicInteger(0)).incrementAndGet()
     val current = cycleLock.synchronized {
       startCycle()
       val armed = attempt.get()
@@ -233,7 +256,6 @@ final private[openfeature] class ManagedProvider private (
         fresh
       }
     }
-    inFlight.computeIfAbsent(k, _ => new AtomicInteger(0)).incrementAndGet()
     started.incrementAndGet()
     val target = delegate
     at(LifecycleProbe.Point.InitEntered)
@@ -377,6 +399,15 @@ private[openfeature] object ManagedProvider {
     def entered: Boolean = started.get()
 
     private[ManagedProvider] def enter(): Boolean = started.compareAndSet(false, true)
+
+    private val handed = new java.util.concurrent.atomic.AtomicBoolean(false)
+
+    /** Whether a binding handed the SDK a registration whose `initialize()` comes into this attempt. Never cleared: a
+      * submitted attempt is entered by that call, or superseded once it has entered or ended.
+      */
+    def submitted: Boolean = handed.get()
+
+    private[internal] def submit(): Unit = handed.set(true)
   }
 
   /** What [[ManagedProvider.arm]] hands a registration: its attempt and its cycle's shutdown signal. */

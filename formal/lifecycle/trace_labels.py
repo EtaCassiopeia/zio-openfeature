@@ -66,7 +66,7 @@ gate dropping inside it), deliveries while a swap's gate is up (the model drops 
 the bound provider's, and deliveries once a shutdown
 has started (the bridge is deregistered then; a handler already running records one anyway). Watchdog is not modelled.
 AwaitSdkShutDown is the wait SwapStart's guard stands for, before the swap starts.
-InitEntered and InitReturned, which the registered wrapper records, are SDK steps (an `initialize()` running and
+InitEntering, InitEntered and InitReturned, which the registered wrapper records, are SDK steps (an `initialize()` running and
 returning), which the check leaves free. The model's SdkInitOk and SdkInitFail are pinned to the InitOutcome records,
 and its SdkShutDownOld to the ShutDownOld ones, but only in a run that records some: an older recording leaves them
 free. A recording without OrphanDropped resolves an entry at its OrphanResolved claim, as before. ProviderShutDown and

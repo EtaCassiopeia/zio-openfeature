@@ -325,8 +325,8 @@ final private[openfeature] class FeatureFlagsLive(
     * Caveat: re-registration starts a fresh state manager for the old provider, so the SDK calls its `initialize()`
     * again (an Optimizely poller restarts, an OFREP client re-fetches, ...) — unless the old provider is still bound to
     * another domain of a shared API, whose READY manager is reused and skips re-init. It is never called for an old
-    * provider whose `initialize()` has not returned (a timed-out swap's, or the async build's): that would run two of
-    * its `initialize()` calls at once.
+    * provider whose `initialize()` has not returned, or has not started yet on the SDK's executor (a timed-out swap's,
+    * or the async build's): that would run two of its `initialize()` calls at once.
     */
   private def restoreSdkRegistration(
     oldProvider: Bound,
@@ -948,7 +948,7 @@ final private[openfeature] class FeatureFlagsLive(
         LifecycleInput.Admit(
           newProvider,
           managed,
-          _.initsInFlightAnywhere > 0,
+          _.initUnfinished,
           _.initializing,
           _.released(_),
           _.shutDownRunning

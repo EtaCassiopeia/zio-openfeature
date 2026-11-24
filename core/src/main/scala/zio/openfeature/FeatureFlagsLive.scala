@@ -444,7 +444,7 @@ final private[openfeature] class FeatureFlagsLive(
       case Some(wrapper) if !ownsApi => ZIO.succeed(ApiInstances.leaveBehind(api, wrapper))
       case Some(wrapper)
           if heldElsewhere(refusal) || slotHolds(wrapper) || ProviderStateAccess.boundIn(api, null, wrapper) ||
-            ApiInstances.boundElsewhere(api, this, wrapper) =>
+            ApiInstances.boundInAnySlot(api, wrapper) =>
         ZIO.unit
       case Some(wrapper) =>
         ProviderRegistration.boundedProviderShutdown(wrapper, "setProvider (rollback refused)") *>
@@ -915,13 +915,14 @@ final private[openfeature] class FeatureFlagsLive(
   /** The SDK skips a provider another slot still holds, and a sibling that failed on it may have deferred to this
     * instance, so a swap that failed and moved off it decides here, with the gate down: a shutdown that hangs must not
     * hold up the evaluations of the provider it went back to. One initializing again is being retried by whoever holds
-    * that slot.
+    * that slot. Asked of the slots, not the instances: the sibling that deferred may have been collected since, and its
+    * slot still holds the provider.
     */
   private def decideFailedSwap(incoming: Bound): UIO[Unit] =
     ZIO.suspendSucceed {
       val provider = incoming.sdk
       val decides  = failedRegistration.get().exists(_ eq provider) && !slotHolds(provider) && !incoming.initializing &&
-        ApiInstances.boundElsewhere(api, this, provider)
+        (ProviderStateAccess.boundIn(api, null, provider) || ApiInstances.boundInAnySlot(api, provider))
       ZIO.when(decides)(failedOnRollback(incoming)).unit
     }
 

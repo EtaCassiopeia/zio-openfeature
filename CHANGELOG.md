@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A failed swap no longer leaves its provider running when a sibling's failed build on it was garbage-collected
+  first.** When a swap and another client's build shared one `initialize()` that threw, the build left the shutdown to
+  the swap, and the swap decided by the instances it could still see. Once the build's instance had been collected, the
+  swap saw no other slot holding the provider and shut nothing down. It now decides by the slots.
 - **Two extras wrappers over a multi-provider chain no longer drop every event the chain emits.** In a stack such as
   `CircuitBreakerProvider(CachingProvider(FeatureFlags.multiProvider(...)))`, the outer wrapper read the inner one's
   missing name as `"CachingProvider(null)"` before the chain had initialized, and the library settled that as the

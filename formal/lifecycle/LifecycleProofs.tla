@@ -89,9 +89,11 @@ LEMMA NextType == TypeInv /\ [Next]_vars => TypeInv'
   BY <1>19, FS_EmptySet DEF ScopeClose, TearDown, TearDownShuts
 <1>20. CASE \E p \in All : SdkShutDownOld(p)
   BY <1>20 DEF SdkShutDownOld
+<1>21. CASE SwapRollbackRefused
+  BY <1>21 DEF SwapRollbackRefused, Outcome, sdkVars
 <1> QED
   BY <1>1, <1>2, <1>3, <1>4, <1>5, <1>6, <1>7, <1>8, <1>9, <1>10, <1>11, <1>12, <1>13, <1>14, <1>15, <1>16, <1>17,
-     <1>18, <1>19, <1>20 DEF LifecycleNext
+     <1>18, <1>19, <1>20, <1>21 DEF LifecycleNext
 
 THEOREM TypeCorrect == Spec => []TypeInv
   BY InitType, NextType, PTL DEF Spec
@@ -172,9 +174,12 @@ LEMMA NextInd == IndInv /\ [Next]_vars => IndInv'
        OneLockHolder, GateDownWhenIdle, SwapRec, All, Statuses, SdkStates
 <1>20. CASE \E p \in All : SdkShutDownOld(p)
   BY <1>20, <1>t, ConstantsOK DEF SdkShutDownOld, CallShutdown, CallShutdowns, OneLockHolder, GateDownWhenIdle, SwapRec, All, Statuses, SdkStates
+<1>21. CASE SwapRollbackRefused
+  BY <1>21, <1>t, ConstantsOK DEF SwapRollbackRefused, Outcome, CallShutdown, CallShutdowns,
+       OneLockHolder, GateDownWhenIdle, SwapRec, All, Statuses, SdkStates
 <1> QED
   BY <1>1, <1>2, <1>3, <1>4, <1>5, <1>6, <1>7, <1>8, <1>9, <1>10, <1>11, <1>12, <1>13, <1>14, <1>15, <1>16, <1>17,
-     <1>18, <1>19, <1>20 DEF LifecycleNext
+     <1>18, <1>19, <1>20, <1>21 DEF LifecycleNext
 
 THEOREM LockAndGate == Spec => [](OneLockHolder /\ GateDownWhenIdle)
 <1>1. Spec => []IndInv

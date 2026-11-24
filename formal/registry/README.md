@@ -77,7 +77,7 @@ second instance.
 | `failedOn[i]` | `FeatureFlagsLive.failedRegistration`: the provider a failure under `i` marked, until a swap starts |
 | `deciding` | ghost: the instances between marking a failure and deciding about the shutdown |
 | `prior[i]` | the provider `i`'s swap in flight replaced: what `runSwap` keeps for the rollback |
-| `swappedOff` | ghost: the providers a successful swap moved off a slot |
+| `swappedOff` | ghost: the providers a swap that succeeded or timed out, or a registry retry with another provider, moved off a slot |
 | `builtOn[i]` | the provider `i`'s build bound (`buildClient`'s `provider`) |
 | `replaced[q]` | the provider whose binding after a failed registry build, or in a swap that timed out, replaced `q` in its slot, until its `initialize()` settles or `q` is released: the SDK's `shutDownOld` of `q` pending on that call |
 | `pending` | the providers a timed-out swap left initializing: the `initialize()` an orphan's watcher awaits (`Registration.initOutcome`) |
@@ -95,7 +95,7 @@ second instance.
 | `ForeignNeverShutByLibrary` | a shutdown the library ran never left a provider registered: a failure's shutdown, a rollback's included, ends the wrapper's registration |
 | `UserProviderNeverShutByLibrary` | no failure path shuts down a provider the user registered and the API still holds |
 | `LiveSiblingKeepsProvider` | a failure under one instance never shuts down a wrapper a live sibling that has not failed on it is bound to |
-| `FailedWrapperNotAbandoned` | failures do not each defer to the other: a wrapper every holder has failed on and decided about has been shut down, unless a swap may still return to it or a successful one moved off it, where the slot keeps it for the API's owner |
+| `FailedWrapperNotAbandoned` | failures do not each defer to the other: a wrapper every holder has failed on and decided about has been shut down, unless a swap may still return to it, or a successful one, or a registry retry with another provider, moved off it, where the slot keeps it for the API's owner, or for the registry's retry of that domain and its close |
 | `OneInstancePerDomain` | at most one promise per domain at a time (an evicted one is gone): concurrent `getClient` calls on one domain yield one client |
 | `ClosedNonOwnerKeepsSlot` | the slot of a closed non-owner keeps its provider until the owner closes the API |
 | `ClosedApiServesNone` | once the API is gone, no instance is live: an owner's or the registry's close retires them all |
@@ -103,7 +103,7 @@ second instance.
 | `OnlyFailedBuildsEvicted` (an action property) | only a failed build's promise is evicted: a client a caller got, or a build still running, keeps its promise |
 | `OneInitializeAtATime` (an action property) | no provider whose `initialize()` still runs is registered anew: the SDK starts a call for a new registration only, so no binding starts a second call alongside the running one |
 
-`Registry.cfg` (two instances, two providers, two swaps) and `Concurrent.cfg` (the same with a third provider, about 900k states) check them all on every run of the `tlc` job. `Builds.cfg` adds a third instance and no swaps (about 470k states): a build that timed out, the retry that replaced it and a third build on its provider, the shape `OneInitializeAtATime` is for, which two instances cannot reach. It leaves out `FailedWrapperNotAbandoned`, which fails at three instances on a shape unrelated to builds (two builds on one provider, one failing under a deadline while the other's build fails and is evicted, then a retry with another provider): #1026. Swaps of different instances overlap in both: the model once allowed one swap per API, and recorded runs of instances swapping at once were rejected until it allowed one per instance.
+`Registry.cfg` (two instances, two providers, two swaps) and `Concurrent.cfg` (the same with a third provider, about 900k states) check them all on every run of the `tlc` job. `Builds.cfg` adds a third instance and no swaps (about 470k states): a build that timed out, the retry that replaced it and a third build on its provider, the shape `OneInitializeAtATime` is for, which two instances cannot reach. It checks every invariant too, `FailedWrapperNotAbandoned` included: a registry retry with another provider moves off the provider it replaces, as a swap does, so a failed provider the registry keeps in another slot for a retry is not counted as abandoned. Swaps of different instances overlap in both: the model once allowed one swap per API, and recorded runs of instances swapping at once were rejected until it allowed one per instance.
 
 ## Mutants
 

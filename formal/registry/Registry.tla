@@ -58,7 +58,8 @@ VARIABLES
     failedOn,    \* each instance: the provider a failure under it marked (failedRegistration), or None
     deciding,    \* instances that marked a failure and have not yet decided about the shutdown
     prior,       \* each instance: the provider its swap in flight replaced, or None
-    swappedOff,  \* ghost: providers a swap that succeeded, or timed out, moved off a slot
+    swappedOff,  \* ghost: providers a swap that succeeded or timed out, or a registry retry with another provider, moved
+                 \* off a slot
     builtOn,     \* each instance: the provider its build bound, or None
     replaced,    \* each provider: the provider whose registration replaced it in a slot after a failed registry build,
                  \* or in a swap that timed out, or None; the SDK shuts it down once that one's initialize() succeeds
@@ -218,7 +219,9 @@ Create(i, p, own) ==
     /\ registered' = registered \cup {p}
     /\ everBound' = everBound \cup {p}
     /\ Register(p)
-    /\ swappedOff' = swappedOff \ {p}
+    \* A retry with another provider moves off q, as a swap that succeeded or timed out does: a slot that still holds
+    \* q keeps it for the registry's retry of that domain and for its close.
+    /\ swappedOff' = IF bound[d] \notin {None, p} THEN (swappedOff \ {p}) \cup {bound[d]} ELSE swappedOff \ {p}
     /\ builtOn' = [builtOn EXCEPT ![i] = p]
     /\ replaced' = IF bound[d] \notin {None, p} THEN [replaced EXCEPT ![bound[d]] = p] ELSE replaced
     /\ leftBehind' = IF bound[d] \notin {None, p} THEN leftBehind \cup {bound[d]} ELSE leftBehind
@@ -728,8 +731,9 @@ LiveSiblingKeepsProvider ==
         Live(i) /\ bound[domainOf[i]] # None /\ failedOn[i] # bound[domainOf[i]] => by[bound[domainOf[i]]] # "library"
 
 \* Failures do not each defer to the other: a wrapper whose every holder has failed on it and decided has been shut down.
-\* Except one a swap that succeeded moved off: a sibling a failure deferred to may swap away, and then the failed
-\* instance's slot keeps the wrapper for the API's owner, as a closed non-owner's does.  And except one a failed registry
+\* Except one a swap that succeeded, or a registry retry with another provider, moved off: a sibling a failure deferred
+\* to may swap away, or be retried on another provider, and then the failed instance's slot keeps the wrapper for the
+\* API's owner, as a closed non-owner's does, or for the registry's retry of that domain and its close.  And except one a failed registry
 \* build left in its slot: the registry keeps it running for a retry, unmarked, and its close shuts it down with the API.
 FailedWrapperNotAbandoned ==
     \A p \in (registered \ userOwned) \ swappedOff :

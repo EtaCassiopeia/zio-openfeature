@@ -5,7 +5,13 @@ import zio.test._
 import zio.openfeature.SharedApiFixtures._
 import zio.openfeature.internal.{Bound, LifecycleProbe, ManagedProvider, ProviderEvaluations}
 import zio.openfeature.internal.LifecycleProbe.Point
-import dev.openfeature.sdk.{EvaluationContext => OFEvaluationContext, Metadata, OpenFeatureAPI, ProviderState}
+import dev.openfeature.sdk.{
+  EvaluationContext => OFEvaluationContext,
+  Metadata,
+  OpenFeatureAPI,
+  ProviderState,
+  ProviderStateAccess
+}
 import dev.openfeature.sdk.exceptions.GeneralError
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -125,39 +131,161 @@ object SharedApiSwapRaceSpec extends ZIOSpecDefault {
       val api      = OpenFeatureAPI.createIsolated()
       val first    = new Gated(open = true)
       val stuck    = new Gated()
-      val provider = new Gated(failure = Some("boom"))
-      val armed    = new AtomicBoolean(false)
+      val provider = new Gated(failure = Some("boom"), open = true)
       ZIO.scoped {
         for {
-          sdkBind   <- Hold(at(Point.SdkBind), armed)
-          reconcile <- Hold(at(Point.SwapReconcile), armed)
-          a         <- probedBuild(api, first, "a", new Holds(List(sdkBind, reconcile)), initTimeout = 300.millis)
+          a <- probedBuild(api, first, "a", LifecycleProbe.none, initTimeout = 300.millis)
           // Times out: `a` installs `stuck`, which is still initializing, so there is nothing to roll back to.
           timedOut <- Live.live(a.setProvider(stuck).exit)
-          _        <- ZIO.succeed(armed.set(true))
-          swap     <- a.setProvider(provider).exit.fork
-          _        <- sdkBind.reached.await
-          _        <- ZIO.scoped {
-            for {
-              _ <- asyncBuild(api, provider, "b", 1.hour)
-              _ <- wrapperIn(api, provider, "b")
-              _ <- sdkBind.go
-              _ <- ZIO.succeed(provider.gate.countDown())
-              _ <- reconcile.reached.await
-            } yield ()
-          }
-          _       <- reconcile.go
-          swapped <- swap.join
-          kept    <- ZIO.succeed(binds(api, "a", provider))
-          count   <- ZIO.succeed(provider.shutdowns.get())
-          status  <- a.providerStatus
-          _       <- ZIO.succeed(stuck.gate.countDown())
+          swapped  <- a.setProvider(provider).exit
+          kept     <- ZIO.succeed(binds(api, "a", provider))
+          count    <- ZIO.succeed(provider.shutdowns.get())
+          status   <- a.providerStatus
+          _        <- ZIO.succeed(stuck.gate.countDown())
         } yield assertTrue(
           timedOut.isFailure,
           swapped.isFailure,
           kept,
           count == 0,
           status == ProviderStatus.Error
+        )
+      }
+    },
+    test("a sibling's build is refused a provider a swap with nothing to roll back to is still initializing") {
+      val api      = OpenFeatureAPI.createIsolated()
+      val first    = new Gated(open = true)
+      val stuck    = new Gated()
+      val provider = new Counting(failure = Some("boom"))
+      val armed    = new AtomicBoolean(false)
+      ZIO.scoped {
+        for {
+          sdkBind <- Hold(at(Point.SdkBind), armed)
+          a       <- probedBuild(api, first, "a", new Holds(List(sdkBind)), initTimeout = 300.millis)
+          // Times out: `a` installs `stuck`, which is still initializing, so there is nothing to roll back to.
+          timedOut <- Live.live(a.setProvider(stuck).exit)
+          _        <- ZIO.succeed(armed.set(true))
+          swap     <- a.setProvider(provider).exit.fork
+          _        <- sdkBind.reached.await
+          sibling  <- ZIO.scoped(asyncBuild(api, provider, "b", 1.hour)).exit
+          unbound  <- ZIO.succeed(!binds(api, "b", provider))
+          _        <- sdkBind.go
+          _        <- ZIO.succeed(provider.gate.countDown())
+          swapped  <- swap.join
+          kept     <- ZIO.succeed(binds(api, "a", provider))
+          counts   <- shutdownsAfterSettling(provider).zip(shutdownsAfterSettling(stuck))
+          inits    <- ZIO.succeed(provider.inits.get())
+          status   <- a.providerStatus
+          _        <- ZIO.succeed(stuck.gate.countDown())
+        } yield assertTrue(
+          timedOut.isFailure,
+          message(sibling).contains("is still initializing from another registration"),
+          unbound,
+          swapped.isFailure,
+          kept,
+          counts == (0, 0),
+          inits == 1,
+          status == ProviderStatus.Error
+        )
+      }
+    },
+    test("a sibling's build is refused a provider a swap is still initializing, and the rollback keeps the previous") {
+      val api      = OpenFeatureAPI.createIsolated()
+      val first    = new Gated(open = true)
+      val provider = new Counting(failure = Some("boom"))
+      val armed    = new AtomicBoolean(false)
+      ZIO.scoped {
+        for {
+          sdkBind  <- Hold(at(Point.SdkBind), armed)
+          a        <- probedBuild(api, first, "a", new Holds(List(sdkBind)))
+          _        <- ZIO.succeed(armed.set(true))
+          swap     <- a.setProvider(provider).exit.fork
+          _        <- sdkBind.reached.await
+          sibling  <- ZIO.scoped(syncBuild(api, provider, Some("b"), 5.seconds)).exit
+          _        <- sdkBind.go
+          _        <- ZIO.succeed(provider.gate.countDown())
+          swapped  <- swap.join
+          restored <- ZIO.succeed(binds(api, "a", first))
+          count    <- shutdownsAfterSettling(first)
+          inits    <- ZIO.succeed(provider.inits.get())
+        } yield assertTrue(
+          message(sibling).contains("is still initializing from another registration"),
+          swapped.isFailure,
+          restored,
+          count == 0,
+          inits == 1
+        )
+      }
+    },
+    test("a sibling's build shares a provider once the swap that installed it has finished initializing it") {
+      val api      = OpenFeatureAPI.createIsolated()
+      val first    = new Gated(open = true)
+      val provider = new Counting(open = true)
+      ZIO.scoped {
+        for {
+          a       <- syncBuild(api, first, Some("a"), 5.seconds)
+          swapped <- a.setProvider(provider).exit
+          sibling <- syncBuild(api, provider, Some("b"), 5.seconds).flatMap(_.providerStatus).exit
+          shared  <- ZIO.succeed(binds(api, "a", provider) && binds(api, "b", provider))
+          inits   <- ZIO.succeed(provider.inits.get())
+        } yield assertTrue(
+          swapped.isSuccess,
+          sibling == Exit.succeed(ProviderStatus.Ready),
+          shared,
+          inits == 1
+        )
+      }
+    },
+    test("a binding replaces a provider only when its own slot holds one the SDK would shut down") {
+      val api                               = OpenFeatureAPI.createIsolated()
+      val default                           = new Gated(open = true)
+      val named                             = new Gated(open = true)
+      def replaces(domain: String): Boolean = ProviderStateAccess.replacesProvider(api, domain)
+      for {
+        // The API's own no-op provider in the default slot, and no named slot bound.
+        initially <- ZIO.succeed((replaces(null), replaces("x")))
+        _         <- ZIO.attemptBlocking(api.setProviderAndWait(default))
+        // An unbound named slot answers with the default slot's manager: binding it replaces nothing.
+        withDefault <- ZIO.succeed((replaces(null), replaces("x")))
+        _           <- ZIO.attemptBlocking(api.setProviderAndWait("x", named))
+        // A named slot sharing the default slot's manager leaves it to the default slot.
+        _     <- ZIO.attemptBlocking(api.setProviderAndWait("y", default))
+        bound <- ZIO.succeed((replaces("x"), replaces("y")))
+        _     <- ZIO.attemptBlocking(api.shutdown())
+      } yield assertTrue(
+        initially == (false, false),
+        withDefault == (true, false),
+        bound == (true, false)
+      )
+    },
+    test("a swap is refused a provider another instance's swap has handed the SDK") {
+      val api      = OpenFeatureAPI.createIsolated()
+      val first    = new Gated(open = true)
+      val other    = new Gated(open = true)
+      val provider = new Counting()
+      val armed    = new AtomicBoolean(false)
+      ZIO.scoped {
+        for {
+          sdkBind  <- Hold(at(Point.SdkBind), armed)
+          a        <- probedBuild(api, first, "a", new Holds(List(sdkBind)))
+          c        <- syncBuild(api, other, Some("c"), 5.seconds)
+          _        <- ZIO.succeed(armed.set(true))
+          swap     <- a.setProvider(provider).exit.fork
+          _        <- sdkBind.reached.await
+          refused  <- c.setProvider(provider).exit
+          _        <- sdkBind.go
+          _        <- ZIO.succeed(provider.gate.countDown())
+          swapped  <- swap.join
+          keptC    <- ZIO.succeed(binds(api, "c", other))
+          swappedA <- ZIO.succeed(binds(api, "a", provider))
+          count    <- shutdownsAfterSettling(other)
+          status   <- c.providerStatus
+        } yield assertTrue(
+          message(refused).contains("is still initializing from an"),
+          swapped.isSuccess,
+          keptC,
+          swappedA,
+          count == 0,
+          status == ProviderStatus.Ready
         )
       }
     },

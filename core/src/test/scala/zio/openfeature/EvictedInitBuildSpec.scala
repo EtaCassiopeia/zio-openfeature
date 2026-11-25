@@ -166,22 +166,24 @@ object EvictedInitBuildSpec extends ZIOSpecDefault {
         )
       }
     },
-    test("a build on a provider another slot holds while its initialize() runs shares that call") {
+    test(
+      "a build on a provider a timed-out swap in another slot is still initializing is refused until that call returns"
+    ) {
       val api = OpenFeatureAPI.createIsolated()
       val p   = new Gated("p", fails = false)
       val dl  = new ScriptedInitDeadline
       ZIO.scoped {
         for {
-          owner  <- sync(api, open(), "d1", owns = true, dl)
-          swap   <- owner.setProvider(p).either.fork
-          _      <- eventually("p's wait armed, its call started")(dl.armed.contains(p) && p.running.get() == 1)
-          _      <- ZIO.succeed(dl.fire(p))
-          timed  <- swap.join
-          build  <- ZIO.scoped(sync(api, p, "d2", owns = false, new ScriptedInitDeadline)).either.fork
-          _      <- ZIO.sleep(settle)
-          _      <- ZIO.succeed(p.gate.countDown())
-          result <- build.join
-        } yield assertTrue(timed.isLeft, result.isRight, p.inits.get() == 1)
+          owner   <- sync(api, open(), "d1", owns = true, dl)
+          swap    <- owner.setProvider(p).either.fork
+          _       <- eventually("p's wait armed, its call started")(dl.armed.contains(p) && p.running.get() == 1)
+          _       <- ZIO.succeed(dl.fire(p))
+          timed   <- swap.join
+          refused <- ZIO.scoped(sync(api, p, "d2", owns = false, new ScriptedInitDeadline)).either
+          _       <- ZIO.succeed(p.gate.countDown())
+          _       <- eventually("p's call returning")(!ManagedProvider.existing(p).exists(_.initUnfinished))
+          later   <- ZIO.scoped(sync(api, p, "d2", owns = false, new ScriptedInitDeadline)).either
+        } yield assertTrue(timed.isLeft, refused.left.exists(stillInitializing), later.isRight, p.inits.get() == 1)
       }
     },
     test("once the evicted registration's initialize() returns, a build on the provider initializes it afresh") {

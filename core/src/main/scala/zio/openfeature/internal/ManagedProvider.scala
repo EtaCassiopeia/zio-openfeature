@@ -123,11 +123,18 @@ final private[openfeature] class ManagedProvider private (
     */
   def initUnfinished: Boolean = initQueued || initsInFlightAnywhere > 0
 
-  /** Records that a binding handed the SDK a registration whose `initialize()` comes into `armed`, the attempt the
-    * binding armed before it bound. Under the API's lock. Never re-arms: a call that already entered or ended `armed`
-    * leaves it entered, so nothing reads as queued that no call will enter.
+  /** Whether the `initialize()` a binding would share now is unfinished and was handed to the SDK by a binding that
+    * replaced a provider in its own slot. Read under the API's lock, which every binding that hands the SDK a call
+    * holds.
     */
-  private[internal] def submitted(armed: ManagedProvider.Attempt): Unit = armed.submit()
+  private[internal] def replacingInitUnfinished: Boolean = attempt.get().replacing && initUnfinished
+
+  /** Records that a binding handed the SDK a registration whose `initialize()` comes into `armed`, the attempt the
+    * binding armed before it bound, and whether that binding replaced a provider in its own slot. Under the API's lock.
+    * Never re-arms: a call that already entered or ended `armed` leaves it entered, so nothing reads as queued that no
+    * call will enter.
+    */
+  private[internal] def submitted(armed: ManagedProvider.Attempt, replacing: Boolean): Unit = armed.submit(replacing)
 
   /** What a registration about to bind waits on: the attempt the next `initialize()` enters (the running one's, when
     * one runs), and the signal of the cycle that call belongs to. Taken before the binding, so nothing a later
@@ -407,7 +414,18 @@ private[openfeature] object ManagedProvider {
       */
     def submitted: Boolean = handed.get()
 
-    private[internal] def submit(): Unit = handed.set(true)
+    private val replaced = new AtomicBoolean(false)
+
+    /** Whether a binding that handed the SDK this attempt's call replaced a provider in its own slot. The SDK shuts
+      * that provider down from the binding's own task once the call has ended, even when another slot's task made the
+      * call and it threw. Never cleared, like [[submitted]].
+      */
+    def replacing: Boolean = replaced.get()
+
+    private[internal] def submit(replacing: Boolean): Unit = {
+      if (replacing) replaced.set(true)
+      handed.set(true)
+    }
   }
 
   /** What [[ManagedProvider.arm]] hands a registration: its attempt and its cycle's shutdown signal. */

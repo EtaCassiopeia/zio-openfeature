@@ -43,10 +43,11 @@ object ProviderStateAccess {
     * reclaimed, by detaching and binding once more: any other `IllegalStateException` (the provider live in another
     * API, the API shutting down) propagates untouched, as does a second refusal.
     *
-    * `mayBind` runs first, under the lock, and refuses the binding by throwing, before anything is bound. `mayReclaim`
-    * runs on the refusal, before the reset, and refuses the reset by throwing: a dead registration may still have work
-    * queued on the provider (its `initialize()`, or the SDK's shutdown of it once its replacement initializes), which
-    * would reach the provider once bound again.
+    * `mayBind` runs first, under the lock, and refuses the binding by throwing, before anything is bound. `bound` runs
+    * after it with the slot's state and whether the binding replaced a provider of the slot's own. `mayReclaim` runs on
+    * the refusal, before the reset, and refuses the reset by throwing: a dead registration may still have work queued
+    * on the provider (its `initialize()`, or the SDK's shutdown of it once its replacement initializes), which would
+    * reach the provider once bound again.
     *
     * Under the API's write lock, which `setProvider` takes too (reentrant), so no other registration comes between the
     * refused call and the retry. The refused call bound nothing: it recorded this API's claim on the provider, which
@@ -58,14 +59,25 @@ object ProviderStateAccess {
     provider: FeatureProvider,
     mayReclaim: () => Unit,
     mayBind: () => Unit = () => (),
-    bound: ProviderState => Unit = _ => ()
+    bound: (ProviderState, Boolean) => Unit = (_, _) => ()
   ): Unit = {
     val held = api.lock.writeLockAutoCloseable()
     try {
       mayBind()
+      val replacing = replacesProvider(api, domain)
       bindOrReclaim(api, domain, provider, mayReclaim)
-      bound(api.getFeatureProviderStateManager(domain).getState)
+      bound(api.getFeatureProviderStateManager(domain).getState, replacing)
     } finally held.close()
+  }
+
+  /** Whether binding `domain`'s slot (the default slot when `domain` is null) now replaces a provider of its own, which
+    * the SDK then shuts down once the new registration's `initialize()` has ended. A named slot the SDK has not bound
+    * answers with the default slot's manager: that binding replaces nothing, and neither does one whose manager the
+    * default slot shares, since the SDK leaves a manager another slot still holds.
+    */
+  def replacesProvider(api: OpenFeatureAPI, domain: String): Boolean = {
+    val own = api.getFeatureProviderStateManager(domain)
+    (domain == null || (own ne api.getFeatureProviderStateManager(null))) && !own.getProvider.isInstanceOf[NoOpProvider]
   }
 
   /** The SDK's own binding of `provider` to `domain`'s slot (the default slot when `domain` is null), after `mayBind`,

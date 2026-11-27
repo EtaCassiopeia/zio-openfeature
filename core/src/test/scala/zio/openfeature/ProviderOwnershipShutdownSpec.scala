@@ -299,8 +299,9 @@ object ProviderOwnershipShutdownSpec extends ZIOSpecDefault {
     }
   )
 
-  // `a`, open on `old`, has bound `failing` when a sibling's build on `b` joins it: both share the call that throws. A swap
-  // reaching its binding after the sibling's call has started is refused instead.
+  // `a`, open on `old`, has bound `failing` when a sibling's build on `b` tries to join it: the build is refused, since
+  // the SDK would shut `old` down from the swap's own task once the call ended, even when it throws. A swap reaching its
+  // binding after the sibling's call has started is refused instead.
   private def swapAndBuildFailTogether(api: OpenFeatureAPI, old: Gated, failing: Gated) =
     for {
       reached <- Promise.make[Nothing, Unit]
@@ -308,17 +309,19 @@ object ProviderOwnershipShutdownSpec extends ZIOSpecDefault {
       a       <- probedBuild(api, old, "a", holdAt(LifecycleProbe.Point.SdkBind, reached, release))
       swap    <- a.setProvider(failing).exit.fork
       _       <- reached.await
-      build   <- ZIO.scoped(syncBuild(api, failing, Some("b"), 10.seconds)).exit.fork
-      _       <- wrapperIn(api, failing, "b")
+      built   <- ZIO.scoped(syncBuild(api, failing, Some("b"), 10.seconds)).exit
       _       <- release.succeed(())
-      _       <- wrapperIn(api, failing, "a")
       _       <- ZIO.succeed(failing.gate.countDown())
       swapped <- swap.join
-      built   <- build.join
     } yield (a, swapped, built)
 
-  private val failedSwap = suite("a swap that fails on a wrapper a sibling's build has joined")(
-    test("shuts it down once between them when the rollback succeeds, and goes back to the previous provider") {
+  private def refusedStillInitializing(exit: Exit[Throwable, Any]): Boolean =
+    exit.causeOption
+      .flatMap(_.failureOption)
+      .exists(e => Option(e.getMessage).exists(_.contains("is still initializing from another registration")))
+
+  private val failedSwap = suite("a swap that fails on a wrapper a sibling's build tried to join")(
+    test("refuses the sibling, shuts it down once, and goes back to the previous provider untouched") {
       val api     = OpenFeatureAPI.createIsolated()
       val old     = new Gated(open = true)
       val failing = new Gated(failure = Some("boom"))
@@ -329,16 +332,18 @@ object ProviderOwnershipShutdownSpec extends ZIOSpecDefault {
           count  <- shutdownsAfterSettling(failing)
           status <- a.providerStatus
           kept = ManagedProvider.existing(old).exists(w => api.getProvider("a") eq w)
+          previous <- shutdownsAfterSettling(old)
         } yield assertTrue(
           swapped.isFailure,
-          failedWith[GeneralError](built),
+          refusedStillInitializing(built),
           count == 1,
           kept,
+          previous == 0,
           status == ProviderStatus.Ready
         )
       }
     },
-    test("shuts it down once between them when the rollback fails too") {
+    test("refuses the sibling and shuts it down once when the rollback fails too") {
       val api     = OpenFeatureAPI.createIsolated()
       val old     = new FailsWhenReinitialized
       val failing = new Gated(failure = Some("boom"))
@@ -350,34 +355,10 @@ object ProviderOwnershipShutdownSpec extends ZIOSpecDefault {
           status <- a.providerStatus
         } yield assertTrue(
           swapped.isFailure,
-          failedWith[GeneralError](built),
+          refusedStillInitializing(built),
           count == 1,
           status == ProviderStatus.Error
         )
-      }
-    },
-    test("shuts it down when a sibling failed first and deferred to it, once it has moved off") {
-      val api     = OpenFeatureAPI.createIsolated()
-      val old     = new Gated(open = true)
-      val failing = new Gated(failure = Some("boom"))
-      ZIO.scoped {
-        for {
-          reached  <- Promise.make[Nothing, Unit]
-          release  <- Promise.make[Nothing, Unit]
-          a        <- probedBuild(api, old, "a", holdAt(LifecycleProbe.Point.SdkBind, reached, release))
-          swap     <- a.setProvider(failing).exit.fork
-          _        <- reached.await
-          sibling  <- asyncBuild(api, failing, "b", 1.hour)
-          _        <- wrapperIn(api, failing, "b")
-          _        <- release.succeed(())
-          _        <- wrapperIn(api, failing, "a")
-          wrapper  <- ZIO.getOrFail(ManagedProvider.existing(failing))
-          shutDown <- sibling.shutDownFailedRegistration(Bound.Managed(wrapper), "sibling")
-          deferred <- ZIO.succeed(failing.shutdowns.get())
-          _        <- ZIO.succeed(failing.gate.countDown())
-          swapped  <- swap.join
-          count    <- shutdownsAfterSettling(failing)
-        } yield assertTrue(!shutDown, deferred == 0, swapped.isFailure, count == 1)
       }
     },
     test("leaves it when the slot that kept it is retrying its initialization") {
@@ -404,16 +385,15 @@ object ProviderOwnershipShutdownSpec extends ZIOSpecDefault {
               case _                                  => ZIO.unit
             }
           }
-          a      <- probedBuild(api, old, "a", probe)
-          swap   <- a.setProvider(failing).exit.fork
-          _      <- atBind.await
-          build  <- ZIO.scoped(syncBuild(api, failing, Some("b"), 10.seconds)).exit.fork
+          a    <- probedBuild(api, old, "a", probe)
+          swap <- a.setProvider(failing).exit.fork
+          _    <- atBind.await
+          _    <- goBind.succeed(())
+          _    <- ZIO.succeed(failing.gate.countDown())
+          _    <- atReconcile.await
+          // The swap's call has thrown: a build joining now shares its ERROR registration, which nothing still runs.
+          _      <- ZIO.scoped(syncBuild(api, failing, Some("b"), 10.seconds)).exit
           _      <- wrapperIn(api, failing, "b")
-          _      <- goBind.succeed(())
-          _      <- wrapperIn(api, failing, "a")
-          _      <- ZIO.succeed(failing.gate.countDown())
-          _      <- atReconcile.await
-          _      <- build.join
           before <- ZIO.succeed(failing.shutdowns.get())
           _      <- RegistryRecording.environment("UserRetryInit", Some("b"), Some(failing))
           retry  <- ProviderRegistration.retryFailedInitialization(api, Some("b"), failing, 10.seconds).exit.fork

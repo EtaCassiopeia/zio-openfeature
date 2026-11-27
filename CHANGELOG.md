@@ -39,6 +39,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   once with a retryable `ProviderInitializationFailed` ("still initializing"), binding nothing, and a registry's next
   `getClient` builds it once that call has returned. A refused build also no longer shuts the provider down: it was
   never bound, and the registration still initializing it decides (#1017).
+- **A failed swap no longer gets its previous provider shut down by a sibling that bound the provider meanwhile.**
+  When another instance on a shared API built, in its own slot, the provider a swap was still initializing, the
+  OpenFeature Java SDK (1.23.0) could make the call in the sibling's task; when it threw, the swap's own task still
+  shut down the provider the swap replaced. The swap then rolled back onto a provider that had been shut down,
+  reported `Ready`, and shut the failed provider down from under the sibling. Two bindings now share a running
+  `initialize()` only when neither replaces a provider of its own slot: a build into another slot (or a registry
+  client) of a provider a swap or rollback, timed out or not, is still initializing, and a build into a slot that
+  holds another provider of one still initializing anywhere, fail at once with a retryable
+  `ProviderInitializationFailed` ("still initializing"), binding nothing and shutting nothing down (#1053).
 - **The docs no longer promise a single `shutdown()` for a provider you registered yourself.** When a swap moves one
   slot off such a provider while another domain slot still holds it, and the API then shuts down before the SDK has
   decided about it on its executor, the OpenFeature Java SDK (1.23.0) shuts it down a second time. Make its

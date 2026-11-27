@@ -365,7 +365,12 @@ evaluations keep going. To initialize a provider again, install a new instance.
   shuts nothing down, and the next attempt after that call returns builds it. A call counts from the moment the
   binding hands it to the Java SDK, which runs it on its own executor, not from when it starts: one the SDK has queued
   but not yet started is still initializing.
-  A build into a slot that already holds the provider shares the running call instead. If `setProvider` is called while the
+  A build into a slot that already holds the provider shares the running call instead. Two bindings share a running
+  call only when neither replaces a provider of its own slot: a build into another slot (or a registry client) of a
+  provider a swap or rollback is still initializing, timed out or not, and a build into a slot that holds another
+  provider of one still initializing anywhere, are refused the same way ("still initializing"), bind nothing and shut
+  nothing down. The Java SDK runs one task per binding, and the one that did not make the call shuts down the provider
+  its binding replaced as soon as the call ends, even when it failed. If `setProvider` is called while the
   timed-out provider, or the provider an async start was built with, is still initializing and the new provider's
   `initialize()` throws, there is nothing to roll back to: that provider never served and is not initialized a second
   time. The new provider stays registered with status `Error`, that provider is shut down (by an instance that owns

@@ -43,9 +43,11 @@ private[openfeature] object ProviderRegistration {
   final class RegistrationSuperseded
       extends RuntimeException("Provider registration was superseded by a concurrent registration")
 
-  /** A swap reached its binding with another registration's `initialize()` of this provider already running. Binding
-    * would have the SDK treat that call as this one's and shut the swap's previous provider down at once. Not an
-    * `IllegalStateException`, which a binding reads as the SDK's "already attached" refusal of a stale attachment.
+  /** A binding met another registration's `initialize()` of this provider it must not share: a swap's, whose previous
+    * provider the SDK would shut down at once, taking that call as the swap's own; or any binding's, joining a call a
+    * swap or rollback handed the SDK, which would have the SDK shut that registration's previous provider down even
+    * when the call fails. Not an `IllegalStateException`, which a binding reads as the SDK's "already attached" refusal
+    * of a stale attachment.
     */
   final class StillInitializing(provider: OFFeatureProvider)
       extends RuntimeException(
@@ -325,7 +327,9 @@ private[openfeature] object ProviderRegistration {
     *
     * The library's wrapper is refused with [[StillInitializing]], under the API's lock and before it binds, while an
     * `initialize()` of it runs and no slot of the API holds it: the SDK would give it a new registration and call
-    * `initialize()` again alongside the one running. A slot that holds it shares the running call instead.
+    * `initialize()` again alongside the one running. A slot that holds it shares the running call instead, unless this
+    * binding, or the one that handed the SDK that call, replaces a provider in its own slot (a swap's, a rollback's):
+    * it is refused the same way, since the SDK would shut that provider down once the call ends, even when it fails.
     */
   def bind(
     api: OpenFeatureAPI,
@@ -350,9 +354,13 @@ private[openfeature] object ProviderRegistration {
             domain.orNull,
             bound.sdk,
             () => refuseReclaim(api, wrapper),
-            () => { unqueued(); refuseUnheld(api, wrapper) },
+            () => {
+              unqueued()
+              refuseUnheld(api, wrapper)
+              refuseSharingAcrossReplacement(api, domain, wrapper)
+            },
             // A registration bound NOT_READY leads to an initialize() of the wrapper: counted from here.
-            state => if (state == ProviderState.NOT_READY) wrapper.submitted(attempt)
+            (state, replacing) => if (state == ProviderState.NOT_READY) wrapper.submitted(attempt, replacing)
           )
         case Bound.Foreign(_) if reclaimForeign =>
           ProviderStateAccess.bindReclaiming(api, domain.orNull, bound.sdk, () => (), unqueued)
@@ -398,6 +406,23 @@ private[openfeature] object ProviderRegistration {
     if (
       wrapper.initUnfinished && !ProviderStateAccess.boundIn(api, null, wrapper) &&
       !ApiInstances.boundInAnySlot(api, wrapper) && !EventProviderAccess.attached(wrapper)
+    ) throw new StillInitializing(wrapper)
+
+  // The SDK runs one task per binding, each with its own slot's previous provider. A task that makes the call and sees
+  // it throw keeps that previous provider; a task that finds the call made by another shuts it down, even when the call
+  // threw. So a call is not shared across a binding that replaces a provider in its slot, in either order, while it is
+  // unfinished: the replacing binding's task may not be the one that makes it, and the replacing registration's
+  // previous provider would then be shut down although it failed, or after a rollback has bound it again. Which task
+  // entered a call is not observable, so the whole unfinished call is refused, not only a queued one. Under the API's
+  // lock.
+  private def refuseSharingAcrossReplacement(
+    api: OpenFeatureAPI,
+    domain: Option[String],
+    wrapper: ManagedProvider
+  ): Unit =
+    if (
+      wrapper.replacingInitUnfinished ||
+      (wrapper.initUnfinished && ProviderStateAccess.replacesProvider(api, domain.orNull))
     ) throw new StillInitializing(wrapper)
 
   // A dead registration's `initialize()` still running would run alongside the one this binding starts; the SDK's

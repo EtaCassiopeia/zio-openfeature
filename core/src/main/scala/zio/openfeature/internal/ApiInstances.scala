@@ -44,7 +44,8 @@ private[openfeature] object ApiInstances {
   def heldByAnother(api: OpenFeatureAPI, self: FeatureFlagsLive, provider: FeatureProvider): Boolean =
     on(api).exists(instance => (instance ne self) && instance.serves(provider))
 
-  /** Whether another instance's slot on `api` holds `provider`, live or not. The SDK leaves a provider any slot holds.
+  /** Whether another live instance's slot on `api` holds `provider`. A collected instance is not seen, though its slot
+    * keeps the provider: a decision about what the SDK leaves asks `boundInAnySlot`.
     */
   def boundElsewhere(api: OpenFeatureAPI, self: FeatureFlagsLive, provider: FeatureProvider): Boolean =
     on(api).exists(instance => (instance ne self) && instance.slotHolds(provider))
